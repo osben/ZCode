@@ -40,7 +40,13 @@ export function buildRegistryModelSelectGroups(
   labels: ModelProviderGroupLabelOptions = {},
 ): ModelSelectGroup[] {
   return view.providers.flatMap((provider) => {
-    if (!supportsRegistryApiFormat(selectedProvider, provider.config.api?.type)) {
+    // ACP agents have no HTTP api section by design; the registry's development gate decides whether
+    // they are listed at all (specs/acp-agent-runtime.md "Chat delegation (phase 4)").
+    const isExternalAgent = provider.config.access?.type === "acp-agent";
+    if (
+      !isExternalAgent &&
+      !supportsRegistryApiFormat(selectedProvider, provider.config.api?.type)
+    ) {
       return [];
     }
 

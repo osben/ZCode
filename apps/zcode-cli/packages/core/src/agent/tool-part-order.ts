@@ -1,6 +1,9 @@
 import type { ToolPart } from "@zcode/contracts";
 
-export function selectToolPartsForHistory(parts: ToolPart[]): ToolPart[] {
+export function selectToolPartsForHistory(allParts: ToolPart[]): ToolPart[] {
+  // ACP tool rows of an external agent turn are record-only (external-agent-tool-rows.ts): their
+  // names are not tools the provider declares, so a later regular model never sees them.
+  const parts = allParts.filter((part) => part.metadata?.externalAgent !== true);
   // Early execution failures or stream recovery create another part; restore only the latest record for a declaration so late updates to old parts do not affect selection.
   // Preserve the physical order of selected records; original parts remain available for UI and file read-state recovery.
   const latestByCallId = new Map(parts.map((part) => [part.callID, part]));

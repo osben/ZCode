@@ -5516,6 +5516,8 @@ const enUS: Record<string, string> = {
   "chat.contextCompaction.completed": "Context compressed",
   "chat.modelChange.switched": "Model switched {from} → {to}",
   "chat.modelChange.using": "Using {model}",
+  "chat.agentContextReset":
+    "Agent context was reset. {agent} cannot see earlier messages of this conversation.",
   "chat.contextCompaction.failed": "Context compression failed",
   "chat.contextCompaction.interrupted": "Context compression interrupted",
   "chat.contextCompaction.retry": "Retry",
@@ -5610,6 +5612,22 @@ const enUS: Record<string, string> = {
   "chat.modelSwitch.contextWindowGuard.stillTooLarge":
     "After compression, the context used by this conversation is still larger than the target model's available context after reserving maximum output. Model switching was canceled.",
   "chat.toolbar.mode.label": "Switch mode",
+  // S6: ACP agent selects in the composer (labels from the agent are not translated)
+  "chat.toolbar.externalAgent.mode": "Mode",
+  "chat.toolbar.externalAgent.model": "Model",
+  "chat.toolbar.externalAgent.effort": "Effort",
+  "chat.toolbar.externalAgent.availableAfterFirstMessage": "Available after the first message",
+  "chat.toolbar.externalAgent.hint":
+    "The agent applies its own edits. Shell commands outside its allowlist ask for permission.",
+  "chat.toolbar.externalAgent.searchPlaceholder": "Search",
+  "chat.toolbar.externalAgent.noMatches": "No matches",
+  "chat.toolbar.externalAgent.error.notAvailable":
+    "Agent options are available after the first message.",
+  "chat.toolbar.externalAgent.error.invalid": "The agent does not offer this option.",
+  "chat.toolbar.externalAgent.error.notExternalAgent":
+    "Agent options apply after the next message with this agent.",
+  "chat.toolbar.externalAgent.error.failed": "Couldn't change the agent option.",
+  "chat.externalAgent.stalled": "The agent is not responding…",
   // CUA composer entry button
   "chat.toolbar.computerUse.label": "Computer Use",
   "chat.toolbar.computerUse.tooltip.idle":

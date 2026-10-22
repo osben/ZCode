@@ -150,7 +150,18 @@ interface MergeInput {
   target?: SessionGoal | null;
 }
 
+function isExternalAgentContextResetPayload(payload: unknown): boolean {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    (payload as { type?: unknown }).type === "external_agent_context_reset"
+  );
+}
+
 const LIVE_ONLY_EVENT_TYPES = new Set<string>([
+  // An ACP agent stall is a status of its running turn: the authority-turn check above keeps it for a
+  // turn still running, and this drops it for a settled one, so it never replays after the turn ended.
+  SessionEventType.ExternalAgentStatus,
   SessionEventType.PluginUiResourceUpdated,
   SessionEventType.PluginUiResourceListChanged,
   SessionEventType.PluginUiAppToolCallRequested,
@@ -161,6 +172,8 @@ const MEMORY_ONLY_EVENT_TYPES = new Set<string>([
   SessionEventType.SessionResumed,
   SessionEventType.SessionTitleUpdated,
   SessionEventType.SessionModeChanged,
+  // ACP agent selects (S6): config state that no transcript synthesizes.
+  SessionEventType.ExternalAgentConfigUpdated,
   SessionEventType.PermissionRequested,
   SessionEventType.PermissionResolved,
   SessionEventType.PermissionDenied,
@@ -917,6 +930,22 @@ export function mergeColdConversationEvents(input: MergeInput): ColdEventMergeRe
     if (TRANSCRIPT_DERIVED_EVENT_TYPES.has(event.type)) {
       recordDiagnostic(diagnostics, "cold_merge.durable_event_suppressed", event);
       return;
+    }
+    // An external agent's context reset (S5) is a notice of the turn it starts: it replays before
+    // that turn's first durable event, the same place a live reset sits relative to the turn header.
+    if (event.type === SessionEventType.SystemMessage && isExternalAgentContextResetPayload(event.payload)) {
+      const runtimeTurnId = event.turnId ? String(event.turnId) : undefined;
+      const durableNoticeTurn = runtimeTurnId
+        ? durableTurnIds.has(runtimeTurnId)
+          ? runtimeTurnId
+          : turnByRuntimeAnchor.get(runtimeTurnId)
+        : undefined;
+      if (durableNoticeTurn) {
+        const events = prefixEventsByTurnId.get(durableNoticeTurn) ?? [];
+        events.push({ ...event, turnId: durableNoticeTurn as TurnId });
+        prefixEventsByTurnId.set(durableNoticeTurn, events);
+        return;
+      }
     }
     // ProductProjection may currently ignore these events, but the reader must not
     // silently drop unknown historical facts. Preserve the original event and aggregate

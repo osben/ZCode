@@ -11,7 +11,6 @@ import {
   type ClientCapabilities,
   type ClientConnection,
   type InitializeResponse,
-  type NewSessionResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
@@ -19,6 +18,8 @@ import {
 import { AcpProtocolVersionError } from "./errors.js";
 import { readTextFileViaBridge, writeTextFileViaBridge } from "./fs.js";
 import { buildChildEnv } from "./launch.js";
+import type { AcpSessionConfigSource } from "./runtime-config.js";
+import type { AcpSessionStart } from "./runtime-resume.js";
 import { withTimeout } from "./runtime-helpers.js";
 import { spawnAcpProcess, type SpawnedAcpProcess } from "./transport.js";
 import type { AcpFrameObserver, AcpFsBridge, AcpLaunchOptions } from "./types.js";
@@ -87,16 +88,31 @@ export interface AcpHandshakeOptions {
   readonly capabilities: ClientCapabilities;
   readonly initializeMs: number;
   readonly newSessionMs: number;
+  /** An earlier ACP session to restore with `session/load`, when the agent advertises it. */
+  readonly resumeSessionId?: string;
   /** Races each step against the owning process's spawn and stream failures. */
   readonly race: <T>(operation: Promise<T>) => Promise<T>;
-  /** Runs after a version-checked `initialize`, before `session/new`. */
+  /** Runs after a version-checked `initialize`, before the session is established. */
   readonly onInitialized: (init: InitializeResponse) => void;
 }
 
+export interface AcpHandshakeResult {
+  readonly sessionId: string;
+  readonly start: AcpSessionStart;
+  /** `configOptions` and legacy `modes` of the `session/load` or `session/new` response. */
+  readonly config: AcpSessionConfigSource;
+}
+
+/**
+ * Establishes the session: `session/load` for an earlier session the agent can restore, otherwise
+ * `session/new`. A failed load falls back to `session/new` (the process death or transport failures
+ * surface there too), and the replayed history of a load is not surfaced because the session id is
+ * committed only after the handshake, so its updates are counted as foreign.
+ */
 export async function performAcpHandshake(
   connection: ClientConnection,
   options: AcpHandshakeOptions,
-): Promise<NewSessionResponse> {
+): Promise<AcpHandshakeResult> {
   const init = await options.race(
     withTimeout(
       connection.agent.request(methods.agent.initialize, {
@@ -111,11 +127,41 @@ export async function performAcpHandshake(
     throw new AcpProtocolVersionError(PROTOCOL_VERSION, init.protocolVersion);
   }
   options.onInitialized(init);
-  return options.race(
+  const previous = options.resumeSessionId;
+  if (previous !== undefined && init.agentCapabilities?.loadSession === true) {
+    try {
+      const loaded = await options.race(
+        withTimeout(
+          connection.agent.request(methods.agent.session.load, {
+            sessionId: previous,
+            cwd: options.cwd,
+            mcpServers: [],
+          }),
+          options.newSessionMs,
+          "session/load",
+        ),
+      );
+      return { sessionId: previous, start: "loaded", config: sessionConfigOf(loaded) };
+    } catch {
+      // Not restorable (the agent refused or timed out): a new session replaces it, shown as a reset.
+    }
+  }
+  const session = await options.race(
     withTimeout(
       connection.agent.request(methods.agent.session.new, { cwd: options.cwd, mcpServers: [] }),
       options.newSessionMs,
       "session/new",
     ),
   );
+  return {
+    sessionId: session.sessionId,
+    start: previous === undefined ? "created" : "reset",
+    config: sessionConfigOf(session),
+  };
+}
+
+function sessionConfigOf(
+  response: AcpSessionConfigSource | null | undefined,
+): AcpSessionConfigSource {
+  return { configOptions: response?.configOptions ?? null, modes: response?.modes ?? null };
 }

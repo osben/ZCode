@@ -51,6 +51,11 @@ import {
 } from "react";
 import { Hand } from "lucide-react";
 import {
+  PendingReservationGate,
+  reservedCreateSessionId,
+  trackReservedCreate,
+} from "./pendingReservationGate.js";
+import {
   BUILTIN_MODEL_PROVIDER_IDS,
   buildCustomSupplierKey,
   isHighspeedProviderId,
@@ -96,6 +101,7 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
+import { sendExternalAgentConfigOption } from "@/v4/composer/externalAgentConfig.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -484,6 +490,12 @@ export interface SessionPaneProps {
 }
 
 const MOBILE_PLAN_INTERACTION_RECONCILE_DELAY_MS = 500;
+/**
+ * createSession commands in flight, keyed by the reserved session id. The pane binds the reserved id
+ * before the host acknowledges the create, and a subscribe sent in that window is answered "not found"
+ * (see pendingReservationGate.ts), so the conversation lease waits for the acknowledgement.
+ */
+const pendingReservations = new PendingReservationGate();
 function createSessionErrorKey(
   sessionId: string | null | undefined,
   error: SessionErrorInfo,
@@ -2107,7 +2119,7 @@ export function SessionPane({
     },
     [onSessionCreated, sessionId],
   );
-  const dispatchCommand = useCallback(
+  const dispatchCommandUntracked = useCallback(
     async (
       type: CommandType,
       payload: Record<string, unknown>,
@@ -2399,6 +2411,13 @@ export function SessionPane({
       workspaceIdentity,
       workspacePath,
     ],
+  );
+  // The reservation mark is set before the untracked dispatch runs, so a lease effect cannot subscribe to a
+  // reserved id that is not yet marked (see pendingReservationGate.ts).
+  const dispatchCommand = useMemo(
+    () =>
+      trackReservedCreate(pendingReservations, dispatchCommandUntracked, reservedCreateSessionId),
+    [dispatchCommandUntracked],
   );
   dispatchCommandRef.current = dispatchCommand;
   const updateWorktreePreparationMarker = useCallback(
@@ -3646,10 +3665,21 @@ export function SessionPane({
     workspaceIdentity,
   });
 
+  const [reservationSettledRevision, setReservationSettledRevision] = useState(0);
   useEffect(() => {
     if (!effectiveSessionId) {
       setLease({ sessionId, layer, lease: null });
       return;
+    }
+    if (pendingReservations.isPending(effectiveSessionId)) {
+      // The create of this reserved id is not acknowledged yet; subscribing now would be answered "not found".
+      let cancelled = false;
+      void pendingReservations.whenSettled(effectiveSessionId).then(() => {
+        if (!cancelled) setReservationSettledRevision((revision) => revision + 1);
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     const nextLease = layer.acquire(effectiveSessionId);
     // Bug 原因：acquire 会立即启动 connect，activation 可能在下一轮 effect 前释放
@@ -3662,7 +3692,7 @@ export function SessionPane({
       offOnlineModelTransition();
       nextLease.release();
     };
-  }, [layer, effectiveSessionId]);
+  }, [layer, effectiveSessionId, reservationSettledRevision]);
 
   useEffect(() => {
     if (!sessionId || !lease || snapshot?.sessionId !== sessionId) return;
@@ -5129,6 +5159,20 @@ export function SessionPane({
     [handleDraftSwitchMode],
   );
 
+  // S6: one select of the session's ACP agent. The projection (config.externalAgentConfig) shows the
+  // result, so the pane keeps no optimistic value; a refusal is reported with a toast.
+  const handleSetExternalAgentConfigOption = useCallback(
+    (configId: string, value: string) => {
+      if (!sessionId) return;
+      void sendExternalAgentConfigOption(dispatchCommand, sessionId, configId, value, (detail) => {
+        logger.warn("[v4-pane] setExternalAgentConfigOption refused", { configId, ...detail });
+      }).then((messageId) => {
+        if (messageId) toast(intl.formatMessage({ id: messageId }));
+      });
+    },
+    [dispatchCommand, intl, sessionId],
+  );
+
   // context usage 面板的压缩入口（命令文本 = "/compact"，复用 slash 解析路径）。
   const handleSendCompressionCommand = useCallback(
     (command: string) => {
@@ -6271,6 +6315,7 @@ export function SessionPane({
       onSelectModel={handleSelectModel}
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
+      onSetExternalAgentConfigOption={handleSetExternalAgentConfigOption}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
       }
@@ -6712,6 +6757,7 @@ export function SessionPane({
                   rows={timelineSnapshot?.rows.window ?? []}
                   pendingGuides={timelineSnapshot ? pendingGuideProjection?.pendingGuides : []}
                   apiRetry={timelineSnapshot?.control.apiRetry ?? null}
+                  externalAgentStall={timelineSnapshot?.control.externalAgentStall ?? null}
                   totalCount={timelineSnapshot?.rows.totalCount ?? 0}
                   sessionKey={sessionId ?? "draft"}
                   scrollMemoryKey={timelineScrollMemoryKey}

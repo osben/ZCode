@@ -8,6 +8,7 @@
 export { AcpSessionRuntime } from "./runtime.js";
 export { buildChildEnv, validateLaunchOptions } from "./launch.js";
 export { mapSessionUpdate } from "./updates.js";
+export type { AcpSessionStart } from "./runtime-resume.js";
 export {
   buildPermissionAsk,
   extractPermissionDetail,

@@ -35,6 +35,7 @@ import type {
 } from "@zcode/contracts";
 import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { SessionEventType, isFileSystemPortError } from "@zcode/contracts";
+import { ACP_PROVIDER_ID_PREFIX } from "@zcode/provider";
 import type { ZCodeWorkspaceRef } from "@zcode/shared";
 import { extractMarkdownArtifactImageRefs } from "@zcode/shared";
 import type {
@@ -299,6 +300,13 @@ export interface V4GatewayHost {
    * 会话不在册返回 null（gateway 跳过，保持空初值）；未实现（旧宿主/测试桩）同。
    */
   getSessionConfigSeed?(sessionId: string): SessionConfigSeed | null;
+  /**
+   * Stored selects of the session's ACP agent (specs/acp-agent-runtime.md "S6"). Session events live in
+   * memory only, so a cold projection reads the offered options from the session binding instead.
+   */
+  getSessionExternalAgentConfigSeed?(
+    sessionId: string,
+  ): Promise<ConversationSnapshot["config"]["externalAgentConfig"] | null>;
   /** 只读会话创建期 App 开关，不读取实时设置或推断 Memory 工具使用。 */
   getSessionMemoryEnabled?(sessionId: string): boolean | undefined;
   /**
@@ -1613,6 +1621,9 @@ export class ConversationV4Gateway {
     if (sessionId === null) {
       throw new Error(`Unsupported topic: ${params.topic}`);
     }
+    // A subscribe may race the createSession that reserved this id (the renderer subscribes as soon as it
+    // reserves). Wait for that create, so "not found" is only answered for a session that does not exist.
+    await this.inbox.whenSessionCreationSettles(sessionId);
     await this.host.restorePreparedSession?.(sessionId);
     const isLiveConversation = this.hasLiveConversation(sessionId);
     this.host.onDebug?.(
@@ -3441,6 +3452,7 @@ export class ConversationV4Gateway {
       // 创建时种子可能落空（record 尚未入册），首次订阅补一次（幂等、事件优先）。
       this.hydrationBuffers.delete(sessionId);
       this.seedPublisherConfig(sessionId, latestPublisher);
+      await this.seedPublisherExternalAgentConfig(sessionId, latestPublisher);
       if (loaded.sharedContextImport) {
         latestPublisher.seedSharedContextImport(loaded.sharedContextImport);
       }
@@ -3557,6 +3569,7 @@ export class ConversationV4Gateway {
     // （reconcileResumedRuntimeSettings），而合成/持久化事件里可能没有 ModelSelected——
     // 种子只填事件未触碰的字段，日志有值时以日志为准（冷恢复口径）。
     this.seedPublisherConfig(sessionId, publisher);
+    await this.seedPublisherExternalAgentConfig(sessionId, publisher);
     if (loaded.usageSeed === undefined) {
       await this.seedPublisherUsage(sessionId, publisher, persistedMessages);
     }
@@ -3706,6 +3719,22 @@ export class ConversationV4Gateway {
    */
   private hasLiveConversation(sessionId: string): boolean {
     return this.host.sessionExists(sessionId) || this.detachedLiveSessions.has(sessionId);
+  }
+
+  private async seedPublisherExternalAgentConfig(
+    sessionId: string,
+    publisher: ConversationTopicPublisher,
+  ): Promise<void> {
+    const getSeed = this.host.getSessionExternalAgentConfigSeed;
+    if (!getSeed) return;
+    // Only an ACP agent session has an external config binding. Any other session skips the store, so a
+    // plain subscribe never reads the shared session database for it.
+    if (!publisher.getSnapshot().config.provider.startsWith(ACP_PROVIDER_ID_PREFIX)) return;
+    try {
+      publisher.seedExternalAgentConfig(await getSeed.call(this.host, sessionId));
+    } catch (error) {
+      this.host.onError?.("v4.externalAgentConfigSeed", error);
+    }
   }
 
   private async seedPublisherUsage(

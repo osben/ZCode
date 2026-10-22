@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   encodeForkAcpAgentsFile,
   extractInlineAcpAgentRecords,
@@ -43,6 +44,7 @@ export class NodeForkAcpAgentStore implements ForkAcpAgentStore {
   #pollingInFlight = false;
   #writeGeneration = 0;
   #observedRevision: string | null = null;
+  #recoveryReportedFor: string | null = null;
   #disposed = false;
 
   constructor(options: NodeForkAcpAgentStoreOptions) {
@@ -58,17 +60,37 @@ export class NodeForkAcpAgentStore implements ForkAcpAgentStore {
     try {
       const snapshot = await this.#readFile();
       this.#observedRevision ??= snapshot.revision;
+      this.#recoveryReportedFor = null;
       return snapshot;
     } catch (error) {
       // An invalid sidecar is preserved for the user to repair; read it as empty meanwhile.
-      try {
-        this.#onRecovery?.(error);
-      } catch {
-        // Observation callbacks must not block recovery.
-      }
+      await this.#reportRecoveryOnce(error);
       return snapshotOf([]);
     } finally {
       this.#ensurePolling();
+    }
+  }
+
+  /**
+   * Reports an invalid sidecar once per file content. Every read (and every poll) of an unchanged
+   * invalid file would otherwise log the same recovery again; a repaired and re-broken file reports again.
+   */
+  async #reportRecoveryOnce(error: unknown): Promise<void> {
+    let revision: string;
+    try {
+      revision = createHash("sha256")
+        .update(await readFile(this.#filePath))
+        .digest("hex");
+    } catch {
+      // Unreadable at this moment: key by the error so one failure is still reported once.
+      revision = `unreadable:${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (revision === this.#recoveryReportedFor) return;
+    this.#recoveryReportedFor = revision;
+    try {
+      this.#onRecovery?.(error);
+    } catch {
+      // Observation callbacks must not block recovery.
     }
   }
 
@@ -186,6 +208,11 @@ export interface InlineAcpMigrationResult {
   readonly stripped: boolean;
   /** Provider ids of `acp-agent` rules left in place because the sidecar holds no record for them. */
   readonly kept: readonly string[];
+  /**
+   * Agent ids whose inline rule differs from the sidecar record. The sidecar wins on read; the inline
+   * rule stays in `provider_config.json` (it is not stripped) so no user data is dropped silently.
+   */
+  readonly conflicts: readonly string[];
 }
 
 /**
@@ -198,21 +225,39 @@ export async function migrateInlineAcpProviders(
   store: ForkAcpAgentStore,
 ): Promise<InlineAcpMigrationResult> {
   const personal = await personalRepository.read();
-  if (!hasInlineAcpProviders(personal)) return { copied: [], stripped: false, kept: [] };
+  if (!hasInlineAcpProviders(personal))
+    return { copied: [], stripped: false, kept: [], conflicts: [] };
   const inline = extractInlineAcpAgentRecords(personal);
   let copied: string[] = [];
-  const sidecar =
-    inline.length > 0
-      ? await store.update((current) => {
-          const known = new Set(current.map((agent) => agent.agentId));
-          const added = inline.filter((agent) => !known.has(agent.agentId));
-          copied = added.map((agent) => agent.agentId);
-          return [...current, ...added];
-        })
-      : await store.read();
-  // The strip reruns under the personal file lock; only rules the sidecar now holds may go, so
-  // a rule another writer added in between (or one that could not become a record) survives.
-  const sidecarAgentIds = new Set(sidecar.agents.map((agent) => agent.agentId));
+  // Agent ids whose inline rule is now represented by an identical sidecar record (copied or equal).
+  let strippable = new Set<string>();
+  let conflicts: string[] = [];
+  if (inline.length > 0) {
+    await store.update((current) => {
+      // The transform can be re-run by the store; every result is recomputed from `current`.
+      const byId = new Map(current.map((agent) => [agent.agentId, agent] as const));
+      const next = [...current];
+      copied = [];
+      strippable = new Set();
+      conflicts = [];
+      for (const agent of inline) {
+        const existing = byId.get(agent.agentId);
+        if (existing === undefined) {
+          next.push(agent);
+          copied.push(agent.agentId);
+          strippable.add(agent.agentId);
+        } else if (isDeepStrictEqual(existing, agent)) {
+          strippable.add(agent.agentId);
+        } else {
+          conflicts.push(agent.agentId);
+        }
+      }
+      return next;
+    });
+  }
+  // The strip reruns under the personal file lock; only rules the sidecar now holds identically may
+  // go, so a rule another writer added in between (or one that differs) survives.
+  const sidecarAgentIds = strippable;
   const keptIn = (update: Pick<ProviderConfigLayerUpdate, "providers">) =>
     update.providers
       .rules()
@@ -220,7 +265,7 @@ export async function migrateInlineAcpProviders(
       .map((rule) => rule.providerId);
   if (stripInlineAcpProviders(personal, sidecarAgentIds) === personal) {
     // Nothing migratable: do not rewrite the shared file on every start.
-    return { copied, stripped: false, kept: keptIn(personal) };
+    return { copied, stripped: false, kept: keptIn(personal), conflicts };
   }
   let stripped = false;
   let kept: string[] = [];
@@ -230,5 +275,5 @@ export async function migrateInlineAcpProviders(
     kept = keptIn(next);
     return next;
   });
-  return { copied, stripped, kept };
+  return { copied, stripped, kept, conflicts };
 }

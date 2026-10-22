@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import { isAbsolute } from "node:path";
 
 import type {
@@ -98,7 +99,7 @@ export async function runMemoryAgentLoop(input: {
     const startedAt = Date.now();
     let response: ModelResult;
     try {
-      response = await input.model.generateText(request);
+      response = await assertNotExternalAgentModel(input.model, "memory agent").generateText(request);
     } catch (error) {
       const completedAt = Date.now();
       await input.onRequestSettled?.({

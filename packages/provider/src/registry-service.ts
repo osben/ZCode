@@ -42,6 +42,8 @@ export interface ProviderRegistryServiceDependencies {
   readonly configSource: ProviderSource<ProviderConfigSnapshot>;
   readonly accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly resolver?: ProviderConfigResolver;
+  /** Development-only ACP model gate forwarded to the resolver (default false). */
+  readonly acpExecutable?: boolean;
 }
 
 interface RefreshWaiter {
@@ -54,6 +56,7 @@ export class ProviderRegistryService {
   readonly #configSource: ProviderSource<ProviderConfigSnapshot>;
   readonly #accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly #resolver: ProviderConfigResolver;
+  readonly #acpExecutable: boolean;
   readonly #registry = new ProviderRegistry();
   readonly #changeListeners = new Set<(event: ProviderRegistryServiceChangedEvent) => void>();
   readonly #errorListeners = new Set<(event: ProviderRegistryServiceRefreshErrorEvent) => void>();
@@ -71,6 +74,7 @@ export class ProviderRegistryService {
     this.#configSource = dependencies.configSource;
     this.#accountSource = dependencies.accountSource;
     this.#resolver = dependencies.resolver ?? new ProviderConfigResolver();
+    this.#acpExecutable = dependencies.acpExecutable === true;
   }
 
   async start(): Promise<void> {
@@ -228,6 +232,7 @@ export class ProviderRegistryService {
           accountProviders: account.providers,
           accountStates: account.states,
           personalProviderOrder: config.personalProviderOrder,
+          acpExecutable: this.#acpExecutable,
         });
         this.#registry.replace(resolution.registryProviders, [...reasons].join(","));
         const snapshot = Object.freeze({

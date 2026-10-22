@@ -2,12 +2,10 @@
 /**
  * AcpSessionRuntime — lifecycle owner for one external ACP agent process.
  *
- * Flow: spawn → initialize (protocol version check) → session/new → ready.
- * `prompt()` streams `session/update` events through `on("event", ...)` and
- * resolves when the turn stops. One active prompt per session; `cancel()` is
- * a bounded `session/cancel` with kill escalation; unexpected process death
- * or a fatal transport failure (oversized frame, closed stream) moves the
- * runtime to `failed` and the next `prompt()` restarts it.
+ * Flow: spawn → initialize → session/load or session/new → ready. `prompt()` streams
+ * `session/update` events and resolves when the turn stops. `cancel()` is a bounded
+ * `session/cancel` with kill escalation. Process death or a fatal transport failure marks the
+ * runtime `failed`; the next `prompt()` restarts it.
  */
 import { EventEmitter } from "node:events";
 import {
@@ -22,29 +20,32 @@ import {
 import {
   AcpAgentDiedError,
   AcpCancelledError,
-  AcpRuntimeError,
   AcpStateError,
   AcpStreamClosedError,
 } from "./errors.js";
 import { validateLaunchOptions } from "./launch.js";
 import { answerPermissionRequest, cancelPendingAsks } from "./permissions.js";
+import { AcpConfigState } from "./runtime-config.js";
 import {
   connectAcpClient,
   performAcpHandshake,
   raceProcessFailures,
   spawnAcpAgentProcess,
 } from "./runtime-handshake.js";
-import { planAcpProcessTeardown, runAcpProcessTeardown } from "./runtime-teardown.js";
+import { AcpSessionResume, type AcpSessionStart } from "./runtime-resume.js";
+import {
+  normalizeAcpPromptError,
+  planAcpProcessTeardown,
+  runAcpCancel,
+  runAcpProcessTeardown,
+} from "./runtime-teardown.js";
 import type { SpawnedAcpProcess } from "./transport.js";
-import { mapSessionUpdate } from "./updates.js";
 import {
   DEATH_GRACE_MS,
   DEFAULT_TIMEOUTS,
   StallWatch,
   createRuntimeLog,
   errorMessage,
-  classifyTransportFailure,
-  fulfillsWithin,
   normalizeAuthMethods,
   waitUntil,
   type ActivePromptState,
@@ -52,6 +53,7 @@ import {
 } from "./runtime-helpers.js";
 import type {
   AcpAuthMethod,
+  AcpConfigOption,
   AcpHostBridge,
   AcpPermissionAnswer,
   AcpRuntimeEvent,
@@ -66,11 +68,11 @@ export class AcpSessionRuntime extends EventEmitter {
   private readonly options: AcpSessionRuntimeOptions;
   private readonly bridge: AcpHostBridge;
   private readonly timeouts: Required<AcpTimeouts>;
+  private readonly resume: AcpSessionResume;
   private process: SpawnedAcpProcess | undefined;
   private connection: ClientConnection | undefined;
   private sessionId: string | undefined;
   private authMethods: readonly AcpAuthMethod[] = [];
-  private configOptions: unknown = null;
   private generation = 0;
   /** Last generation whose process exit was handled outside an explicit stop; written only by `handleExit`. */
   private exitedGeneration = 0;
@@ -81,14 +83,18 @@ export class AcpSessionRuntime extends EventEmitter {
   private readonly log: ReturnType<typeof createRuntimeLog>;
   private currentState: AcpRuntimeState = "starting";
   private ignoredUpdateCount = 0;
+  private readonly config = new AcpConfigState();
 
   private constructor(options: AcpSessionRuntimeOptions, bridge: AcpHostBridge) {
     super();
     this.options = options;
     this.bridge = bridge;
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts };
-    this.stallWatch = new StallWatch(this.timeouts.stallWarningMs, (silentMs) =>
-      this.emitEvent({ type: "stalled", silentMs }),
+    this.resume = new AcpSessionResume(options.resumeSessionId);
+    this.stallWatch = new StallWatch(
+      this.timeouts.stallWarningMs,
+      (silentMs) => this.emitEvent({ type: "stalled", silentMs }),
+      () => this.emitEvent({ type: "resumed" }),
     );
     this.log = createRuntimeLog(options.logger, options.agentId);
   }
@@ -115,8 +121,31 @@ export class AcpSessionRuntime extends EventEmitter {
     return this.authMethods;
   }
 
-  get sessionConfigOptions(): unknown {
-    return this.configOptions;
+  /** How the latest session began; read once per connect. */
+  takeSessionStart(): AcpSessionStart | undefined {
+    return this.resume.take();
+  }
+
+  /** Select options of the latest session (spec S6). */
+  get configOptions(): readonly AcpConfigOption[] {
+    return this.config.options;
+  }
+
+  /** Sets one option (spec S6, `AcpConfigState.set`); throws `AcpStateError` unless "ready". */
+  async setConfigOption(configId: string, value: string): Promise<readonly AcpConfigOption[]> {
+    const { connection, sessionId, generation } = this;
+    if (this.currentState !== "ready" || !connection || !sessionId) {
+      throw new AcpStateError(`Cannot set a config option while "${this.currentState}"`);
+    }
+    return this.config.set({
+      connection,
+      sessionId,
+      configId,
+      value,
+      timeoutMs: this.timeouts.newSessionMs,
+      race: (operation) => raceProcessFailures(this.process, operation),
+      isCurrent: () => generation === this.generation && sessionId === this.sessionId,
+    });
   }
 
   get ignoredUpdates(): number {
@@ -177,32 +206,16 @@ export class AcpSessionRuntime extends EventEmitter {
 
   /** Requests `session/cancel`; kills the process when the turn does not settle in time. */
   async cancel(): Promise<void> {
-    const connection = this.connection;
-    const sessionId = this.sessionId;
-    const active = this.activePrompt;
-    const generation = this.generation;
+    const { connection, sessionId, activePrompt: active, generation } = this;
     if (!connection || !sessionId || !active) return;
-    // One deadline bounds the whole cancel: a notify write can stay pending
-    // forever when a live child stops reading stdin (backpressured pipe), and
-    // a closed connection rejects. Escalate on either instead of hanging.
-    const deadline = Date.now() + this.timeouts.cancelGraceMs;
-    const notified = await fulfillsWithin(
-      connection.agent.notify(methods.agent.session.cancel, { sessionId }),
-      this.timeouts.cancelGraceMs,
-    );
-    // The cancelled prompt settled (or was replaced) while the notify raced;
-    // never escalate against a newer prompt or a restarted runtime.
-    if (this.activePrompt !== active || this.generation !== generation) return;
-    if (!notified) {
-      await this.terminateProcess(
-        new AcpCancelledError("Cancel notification failed or did not flush"),
-      );
-      return;
-    }
-    const settled = await waitUntil(() => this.activePrompt !== active, deadline - Date.now(), 50);
-    if (!settled) {
-      await this.terminateProcess(new AcpCancelledError("Prompt did not settle after cancel"));
-    }
+    cancelPendingAsks(this.pendingAsks);
+    await runAcpCancel({
+      notify: () => connection.agent.notify(methods.agent.session.cancel, { sessionId }),
+      graceMs: this.timeouts.cancelGraceMs,
+      isSameTurn: () => this.activePrompt === active && this.generation === generation,
+      isSettled: () => this.activePrompt !== active,
+      terminate: (reason) => this.terminateProcess(reason),
+    });
   }
 
   /** Gracefully stops the runtime; safe to call multiple times. */
@@ -280,6 +293,7 @@ export class AcpSessionRuntime extends EventEmitter {
         capabilities,
         initializeMs: this.timeouts.initializeMs,
         newSessionMs: this.timeouts.newSessionMs,
+        resumeSessionId: this.resume.target,
         race: (operation) => raceProcessFailures(this.process, operation),
         onInitialized: (init) => {
           this.authMethods = normalizeAuthMethods(init);
@@ -297,8 +311,8 @@ export class AcpSessionRuntime extends EventEmitter {
         throw new AcpAgentDiedError("Agent terminated during the handshake");
       }
       this.sessionId = session.sessionId;
-      this.configOptions =
-        (session as unknown as { configOptions?: unknown }).configOptions ?? null;
+      this.config.reset(session.config);
+      this.resume.committed(session.sessionId, session.start);
       this.currentState = this.stopRequested ? "stopped" : "ready";
       this.log("info", "ACP agent session ready");
     } catch (error) {
@@ -340,19 +354,13 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   private handleSessionUpdate(notification: SessionNotification, generation: number): void {
-    if (generation !== this.generation) {
-      // Buffered update from a superseded process: counted, never surfaced,
-      // even when its sessionId collides with the new session's.
-      this.ignoredUpdateCount += 1;
-      return;
-    }
-    if (notification.sessionId !== this.sessionId) {
-      // Updates for other sessions (sub-agents, stale sessions) are counted, not surfaced.
-      this.ignoredUpdateCount += 1;
-      return;
-    }
-    const event = mapSessionUpdate(notification.update);
-    if (event) this.emitEvent(event);
+    // Only the current process and session surface. Buffered updates of a superseded process, updates of
+    // other sessions (sub-agents, stale sessions) and history replayed by `session/load` are counted.
+    const surfaced =
+      generation === this.generation && notification.sessionId === this.sessionId
+        ? this.config.surfaceUpdate(notification.update)
+        : null;
+    if (surfaced) this.emitEvent(surfaced);
     else this.ignoredUpdateCount += 1;
   }
 
@@ -376,36 +384,16 @@ export class AcpSessionRuntime extends EventEmitter {
     void this.terminateProcess(died).catch((error: unknown) => this.reportCleanupFailure(error));
   }
 
-  /**
-   * Normalizes "connection closed" rejections into `AcpAgentDiedError` when
-   * the process actually died; intentional stops keep the original error.
-   * Fatal transport failures (`MessageTooLargeError`, a closed connection
-   * whose child survives) tear the process down before returning, so
-   * `prompt()`'s `finally` cannot restore "ready" on a dead connection.
-   */
-  private async normalizePromptError(error: unknown): Promise<unknown> {
-    if (error instanceof AcpRuntimeError) return error;
-    if (this.currentState === "stopped") return error;
-    const failure = classifyTransportFailure(error);
-    const framingError = failure === "framing";
-    const closedError = failure === "closed";
-    if (closedError) {
-      if (await waitUntil(() => this.currentState === "failed", DEATH_GRACE_MS)) {
-        return new AcpAgentDiedError("Agent process died during the prompt", { cause: error });
-      }
-    }
-    if (
-      this.currentState === "prompting" &&
-      (framingError || closedError || this.connection?.signal.aborted === true)
-    ) {
-      // The SDK connection is unusable while the child may still be alive:
-      // mark the runtime failed and kill the process so the next prompt
-      // restarts instead of reusing the dead connection.
-      await this.terminateProcess(
-        error instanceof Error ? error : new Error(`ACP transport failure: ${String(error)}`),
-      ).catch((cleanupError: unknown) => this.reportCleanupFailure(cleanupError));
-    }
-    return error;
+  /** See `normalizeAcpPromptError`. */
+  private normalizePromptError(error: unknown): Promise<unknown> {
+    return normalizeAcpPromptError(error, {
+      state: () => this.currentState,
+      connectionAborted: () => this.connection?.signal.aborted === true,
+      teardown: (reason) =>
+        this.terminateProcess(reason).catch((cleanupError: unknown) =>
+          this.reportCleanupFailure(cleanupError),
+        ),
+    });
   }
 
   /** Entry point for `streamFailure`: framing errors and stdout closes. */

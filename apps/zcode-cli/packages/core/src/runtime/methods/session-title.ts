@@ -417,3 +417,37 @@ function isVisibleRealUserMessage(message: MessageWithParts): boolean {
   const info = message.info;
   return info.role === "user" && info.synthetic !== true && info.visibility !== "model-only";
 }
+
+/**
+ * Title from an external agent's `session_title` update (specs/acp-agent-runtime.md "S3"). Uses the
+ * same conditional write as generated titles: a `custom` title is never replaced, and an unchanged
+ * title is skipped. The title sidecar itself does not run for external agent turns.
+ */
+export async function setExternalAgentSessionTitle(
+  this: AgentRuntimeInternal,
+  input: { title: string; traceContext: TraceContext },
+): Promise<void> {
+  const title = input.title.trim();
+  if (title.length === 0) return;
+  const session = await this.sessionStore?.getSession(this.sessionId);
+  if (!session || session.parentID || session.taskType !== "interactive") return;
+  if (session.titleSource === "custom" || session.title === title) return;
+
+  const previousTitle = session.title;
+  const updated = await this.sessionStore?.updateSession({
+    expectedTitleSources: GENERATED_TITLE_EXPECTED_SOURCES,
+    id: this.sessionId,
+    title,
+    titleSource: "generated",
+  });
+  if (!updated || updated.title !== title || updated.titleSource !== "generated") return;
+
+  await this.appendEvent(
+    this.createEvent(
+      SessionEventType.SessionTitleUpdated,
+      { previousTitle, source: "generated", title },
+      input.traceContext,
+    ),
+    input.traceContext,
+  );
+}

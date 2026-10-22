@@ -110,22 +110,13 @@ describe("timeouts and cancellation", () => {
 
   it("escalates cancel to a process kill when the agent never settles", async () => {
     const cwd = await createTempDir();
-    const asks: AcpPermissionAsk[] = [];
-    const runtime = await startMockRuntime(
-      cwd,
-      "permission",
-      {
-        requestPermission: (ask) => {
-          asks.push(ask);
-          return new Promise(() => {});
-        },
-      },
-      { timeouts: { cancelGraceMs: 500 } },
-    );
+    const runtime = await startMockRuntime(cwd, "stuck", undefined, {
+      timeouts: { cancelGraceMs: 500 },
+    });
     try {
-      const inFlight = runtime.prompt("run echo");
+      const inFlight = runtime.prompt("stuck: run echo");
       void inFlight.catch(() => {});
-      await waitFor(() => asks.length > 0, 3_000);
+      await waitFor(() => runtime.state === "prompting", 3_000);
       const startedAt = Date.now();
       await runtime.cancel();
       await expect(inFlight).rejects.toMatchObject({ code: "ACP_CANCELLED" });
@@ -215,23 +206,13 @@ describe("timeouts and cancellation", () => {
 
   it("marks the runtime failed after cancel escalation and restarts on the next prompt", async () => {
     const cwd = await createTempDir();
-    const asks: AcpPermissionAsk[] = [];
-    const runtime = await startMockRuntime(
-      cwd,
-      "permission",
-      {
-        requestPermission: (ask) => {
-          asks.push(ask);
-          if (asks.length === 1) return new Promise(() => {});
-          return Promise.resolve({ outcome: "selected", kind: "allow_once" } as const);
-        },
-      },
-      { timeouts: { cancelGraceMs: 400 } },
-    );
+    const runtime = await startMockRuntime(cwd, "stuck", undefined, {
+      timeouts: { cancelGraceMs: 400 },
+    });
     try {
-      const first = runtime.prompt("run echo");
+      const first = runtime.prompt("stuck: run echo");
       void first.catch(() => {});
-      await waitFor(() => asks.length > 0, 3_000);
+      await waitFor(() => runtime.state === "prompting", 3_000);
       await runtime.cancel();
       await expect(first).rejects.toMatchObject({ code: "ACP_CANCELLED" });
       // Regression: an escalated cancel must not leave a "ready" runtime with a

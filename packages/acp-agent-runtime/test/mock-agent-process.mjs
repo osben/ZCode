@@ -6,6 +6,10 @@
  * runtime is exercised against real protocol framing, schemas and handlers.
  *
  * Usage: node mock-agent-process.mjs <scenario>
+ *
+ * `ACP_MOCK_CONFIG` selects the session configuration the agent advertises in `session/new` and
+ * `session/load`: "options" (configOptions: a "mode" select agent|plan|ask, a grouped "model" select
+ * m1|m2 and a boolean that clients must drop), "legacy" (only `modes`: build|plan), or unset (neither).
  */
 import { Readable, Writable } from "node:stream";
 import { agent, methods, ndJsonStream, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
@@ -19,6 +23,56 @@ let cancelled = false;
 let cancelWaiters = [];
 let receivedCapabilities = null;
 let receivedMarker = null;
+
+const configMode = process.env.ACP_MOCK_CONFIG ?? null;
+const configValues = { mode: "agent", model: "m1" };
+let currentModeId = "build";
+
+function configOptions() {
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      category: "mode",
+      type: "select",
+      currentValue: configValues.mode,
+      options: [
+        { value: "agent", name: "Agent", description: "Edits files" },
+        { value: "plan", name: "Plan" },
+        { value: "ask", name: "Ask" },
+      ],
+    },
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: configValues.model,
+      options: [
+        { group: "fast", name: "Fast", options: [{ value: "m1", name: "Model 1" }] },
+        { group: "smart", name: "Smart", options: [{ value: "m2", name: "Model 2" }] },
+      ],
+    },
+    { id: "auto", name: "Auto approve", type: "boolean", currentValue: false },
+  ];
+}
+
+/** The configuration part of a `session/new` or `session/load` response. */
+function sessionConfig() {
+  if (configMode === "options") return { configOptions: configOptions() };
+  if (configMode === "legacy") {
+    return {
+      modes: {
+        currentModeId,
+        availableModes: [
+          { id: "build", name: "Build", description: "Default agent" },
+          { id: "plan", name: "Plan" },
+        ],
+      },
+    };
+  }
+  return {};
+}
 
 const msgChunk = (text) => ({
   sessionUpdate: "agent_message_chunk",
@@ -41,12 +95,28 @@ const app = agent({ name: `mock-agent (${scenario})` })
     receivedMarker = process.env.MOCK_MARKER ?? null;
     return {
       protocolVersion: PROTOCOL_VERSION,
-      agentCapabilities: { loadSession: false },
+      agentCapabilities: { loadSession: scenario.startsWith("load") },
       authMethods:
         scenario === "auth"
           ? [{ id: "mock-login", name: "Mock Login", description: "Mock auth method" }]
           : [],
     };
+  })
+  // `load` replays one history chunk before it answers; `load-fails` refuses the load;
+  // `load-config` also replays a config update that must not reach the client's snapshot.
+  .onRequest(methods.agent.session.load, async (ctx) => {
+    if (scenario === "load-fails") throw new Error("session/load refused");
+    await ctx.client.notify(methods.client.session.update, {
+      sessionId: ctx.params.sessionId,
+      update: msgChunk("replayed"),
+    });
+    if (scenario === "load-config") {
+      await ctx.client.notify(methods.client.session.update, {
+        sessionId: ctx.params.sessionId,
+        update: { sessionUpdate: "current_mode_update", currentModeId: "ask" },
+      });
+    }
+    return sessionConfig();
   })
   .onRequest(methods.agent.session.new, async () => {
     if (scenario === "slow-new") {
@@ -55,7 +125,25 @@ const app = agent({ name: `mock-agent (${scenario})` })
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
     if (scenario === "new-fails") throw new Error("session/new exploded");
-    return { sessionId };
+    return { sessionId, ...sessionConfig() };
+  })
+  .onRequest(methods.agent.session.setConfigOption, (ctx) => {
+    const { configId, value } = ctx.params;
+    const option = configOptions().find((candidate) => candidate.id === configId);
+    if (configMode !== "options" || !option || option.type !== "select") {
+      throw new Error(`unknown config option ${configId}`);
+    }
+    const values = option.options.flatMap((entry) => entry.options ?? [entry]);
+    if (!values.some((entry) => entry.value === value)) {
+      throw new Error(`invalid value ${String(value)} for ${configId}`);
+    }
+    configValues[configId] = value;
+    return { configOptions: configOptions() };
+  })
+  .onRequest(methods.agent.session.setMode, (ctx) => {
+    if (configMode !== "legacy") throw new Error("modes are not supported");
+    currentModeId = ctx.params.modeId;
+    return {};
   })
   .onNotification(methods.agent.session.cancel, () => {
     cancelled = true;
@@ -117,6 +205,15 @@ const app = agent({ name: `mock-agent (${scenario})` })
         await notify(msgChunk(`read:${read.content}`));
         return stop("end_turn");
       }
+      // A prompt whose text contains "stuck" never settles, even after session/cancel: only the runtime's
+      // kill escalation ends it. Other prompts complete, so a restarted process can serve the next turn.
+      case "stuck":
+        if (
+          ctx.params.prompt.some((block) => block.type === "text" && block.text.includes("stuck"))
+        ) {
+          return new Promise(() => {});
+        }
+        return stop("end_turn");
       case "cancel":
       case "silent":
       case "cancel-early": {
@@ -150,7 +247,8 @@ const app = agent({ name: `mock-agent (${scenario})` })
         }
         return stop("end_turn");
       }
-      case "die": {
+      case "die":
+      case "load-die": {
         await notify(msgChunk("alive"));
         setTimeout(() => process.exit(7), 150);
         return stop("end_turn");
@@ -159,6 +257,36 @@ const app = agent({ name: `mock-agent (${scenario})` })
         await notify(thoughtChunk("starting"));
         setTimeout(() => process.exit(9), 150);
         return new Promise(() => {});
+      }
+      // Prompt text markers emit agent-initiated configuration changes during the turn.
+      case "config":
+      case "load-config": {
+        const text = ctx.params.prompt
+          .map((block) => (block.type === "text" ? block.text : ""))
+          .join(" ");
+        if (text.includes("foreign")) {
+          await ctx.client.notify(methods.client.session.update, {
+            sessionId: "other-session",
+            update: { sessionUpdate: "current_mode_update", currentModeId: "plan" },
+          });
+        }
+        if (text.includes("config-update")) {
+          configValues.model = "m2";
+          await notify({ sessionUpdate: "config_option_update", configOptions: configOptions() });
+        }
+        if (text.includes("mode-update")) {
+          currentModeId = "plan";
+          configValues.mode = "plan";
+          await notify({ sessionUpdate: "current_mode_update", currentModeId: "plan" });
+        }
+        return stop("end_turn");
+      }
+      // Silent past the stall window, then two chunks: the first frame after the stall resumes it.
+      case "stall-resume": {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        await notify(msgChunk("back"));
+        await notify(msgChunk("again"));
+        return stop("end_turn");
       }
       case "auth": {
         await notify(msgChunk("ok"));

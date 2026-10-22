@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import { beginLocalTurnPreparation } from "@zcode/contracts";
 import { runWithModelInvocationContext, traceContextToLogContext } from "../deps.js";
 import type { ModelReasoningContentBlock, ModelToolCall, ModelUsage, ToolCallId } from "../deps.js";
@@ -140,7 +141,7 @@ export async function runModelTextRequest(
 
   if (!this.shouldStreamModelText()) {
     const result = await runWithModelInvocationContext(modelInvocationContext, () =>
-      model.generateText(modelRequest),
+      assertNotExternalAgentModel(model, "model text request").generateText(modelRequest),
     );
     const normalizedToolCalls = normalizeModelToolCallsForRuntime(result.toolCalls, {
       logger: this.logger,
@@ -226,7 +227,7 @@ export async function runModelTextRequest(
   };
 
   const modelStream = runWithModelInvocationContext(modelInvocationContext, () =>
-    model.streamText(modelRequest),
+    assertNotExternalAgentModel(model, "model text request").streamText(modelRequest),
   );
   finishAssembly();
   try {

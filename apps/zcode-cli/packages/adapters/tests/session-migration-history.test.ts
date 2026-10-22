@@ -21,6 +21,8 @@ const UPSTREAM_0020 = "681180b4fcb497e13289b6970021678f24c975efdf3538777541105c5
 const TRANSLATED_0020 = "31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2740eda788";
 const OLD_EXECUTION_ID = "0023_session_execution_worktree";
 const NEW_EXECUTION_ID = "9002_fork_session_execution_worktree";
+// Fork ACP binding migrations (specs/acp-agent-runtime.md "S5", "S6"): pending on every fixture.
+const ACP_BINDING_IDS = ["9003_fork_session_acp_binding", "9004_fork_session_acp_config"];
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -86,7 +88,11 @@ describe("session database history: fork build DB before the PR opens with the n
 
     const db = open(path);
     const result = await runSqliteSessionMigrationsAsync(db, path);
-    expect(result.applied).toEqual(["0023_session_soft_delete_outcome", "0024_session_database_identity"]);
+    expect(result.applied).toEqual([
+      "0023_session_soft_delete_outcome",
+      "0024_session_database_identity",
+      ...ACP_BINDING_IDS,
+    ]);
     expect(result.backupSkipped).toBe(false);
 
     const after = ledger(db);
@@ -147,7 +153,7 @@ describe("session database history: pure upstream 3.16.1 DB opens with the fork 
     const before = ledger(db);
     const seedBefore = seedRows(db);
     const result = await runSqliteSessionMigrationsAsync(db, path);
-    expect(result.applied).toEqual(["9001_fork_session_incognito", NEW_EXECUTION_ID]);
+    expect(result.applied).toEqual(["9001_fork_session_incognito", NEW_EXECUTION_ID, ...ACP_BINDING_IDS]);
     const after = ledger(db);
     for (const [id, row] of before) expect(after.get(id)).toEqual(row);
     // The upstream soft-delete columns already exist; the fork build must not re-add them.
@@ -164,7 +170,11 @@ describe("session database history: fork build DB with translated 0020 SQL comme
     expect(before.get("0020_provider_model_selection")?.checksum).toBe(TRANSLATED_0020);
     const seedBefore = seedRows(db);
     const result = await runSqliteSessionMigrationsAsync(db, path);
-    expect(result.applied).toEqual(["0023_session_soft_delete_outcome", "0024_session_database_identity"]);
+    expect(result.applied).toEqual([
+      "0023_session_soft_delete_outcome",
+      "0024_session_database_identity",
+      ...ACP_BINDING_IDS,
+    ]);
     const after = ledger(db);
     expect(after.get("0020_provider_model_selection")).toEqual(before.get("0020_provider_model_selection"));
     expect(seedRows(db)).toEqual(seedBefore);

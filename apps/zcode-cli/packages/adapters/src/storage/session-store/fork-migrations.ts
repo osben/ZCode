@@ -19,6 +19,32 @@ function addSessionColumnsIfMissing(db: DatabaseSync, columns: readonly string[]
   }
 }
 
+/** Same guard as addSessionColumnsIfMissing, for the fork-owned ACP binding table. */
+function addAcpBindingColumnsIfMissing(db: DatabaseSync, columns: readonly string[]): void {
+  const existing = new Set(
+    db
+      .prepare("pragma table_info(fork_acp_session_binding)")
+      .all()
+      .map((row) => row.name),
+  );
+  for (const column of columns) {
+    if (!existing.has(column)) {
+      db.exec(`alter table fork_acp_session_binding add column ${column} text`);
+    }
+  }
+}
+
+const FORK_ACP_SESSION_BINDING_SQL = `
+  create table if not exists fork_acp_session_binding (
+    session_id text primary key,
+    agent_id text not null,
+    acp_session_id text not null,
+    cwd text not null,
+    launch_key text not null,
+    updated_at integer not null
+  );
+`;
+
 export const FORK_SESSION_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.16.9",
@@ -49,6 +75,32 @@ export const FORK_SESSION_MIGRATIONS: readonly SqliteMigration[] = [
 
       alter table session
         add column execution_branch text;
+    `,
+  },
+  {
+    appVersion: "0.16.9",
+    id: "9003_fork_session_acp_binding",
+    // Fork-owned (fork_ prefix, 9003_fork_* id): the ACP session an external agent resumes for a ZCode
+    // session. One row per ZCode session; `launch_key` is a digest of the launch config, never the config
+    // itself, because the launch environment can carry credentials.
+    touchedTables: ["fork_acp_session_binding"],
+    apply: (db) => db.exec(FORK_ACP_SESSION_BINDING_SQL),
+    sql: FORK_ACP_SESSION_BINDING_SQL,
+  },
+  {
+    appVersion: "0.16.9",
+    id: "9004_fork_session_acp_config",
+    // Fork-owned (9004_fork_* id, fork_ table): the agent's offered config options (display copy, JSON)
+    // and the user's chosen values (JSON map of config id to value). Both are nullable: a binding
+    // without a first turn has neither. They are cleared with the binding row.
+    touchedTables: ["fork_acp_session_binding"],
+    apply: (db) => addAcpBindingColumnsIfMissing(db, ["config_options", "config_choices"]),
+    sql: `
+      alter table fork_acp_session_binding
+        add column config_options text;
+
+      alter table fork_acp_session_binding
+        add column config_choices text;
     `,
   },
 ];

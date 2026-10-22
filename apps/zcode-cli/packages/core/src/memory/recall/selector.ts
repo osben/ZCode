@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   modelMessageContentToText,
   type Model,
@@ -107,7 +108,7 @@ export async function runMemorySelector(input: {
     const request = buildMemorySelectorRequest(input);
     request.abortSignal = input.abortSignal;
     request.options = { ...request.options, ...auxiliaryModelOptions(input.model) };
-    const response = await input.model.generateText(request);
+    const response = await assertNotExternalAgentModel(input.model, "memory recall").generateText(request);
     // 修复原因：provider 可能忽略 abort 并返回迟到结果；已取消的 selector 不能污染 sticky conversation。
     if (input.abortSignal?.aborted) return emptySelectorResult();
     const parsed = parseSelectorResponse(response.text);

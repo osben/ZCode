@@ -30,6 +30,7 @@ import type {
   AttachmentRef,
   CommandAck,
   ConversationRow,
+  ExternalAgentStallState,
   ConversationRowTarget,
   QueueItem,
   SessionPhase,
@@ -311,6 +312,8 @@ export interface ConversationTimelineProps {
   pendingGuides?: readonly QueueItem[];
   /** runtime memory 状态，只交给当前 live turn，不进入历史虚拟列表。 */
   apiRetry?: ApiRetryState | null;
+  /** S6: the external agent is silent during the running turn; only the live turn receives it. */
+  externalAgentStall?: ExternalAgentStallState | null;
   /** 投影全序行数（rows.totalCount；窗口截断后大于 rows.length，仅用于滚动条估计/诊断）。 */
   totalCount: number;
   /**
@@ -421,6 +424,7 @@ function ConversationTimelineImpl({
   compactForRemoteControl = false,
   pendingGuides = EMPTY_PENDING_GUIDES,
   apiRetry = null,
+  externalAgentStall = null,
   totalCount,
   sessionKey,
   scrollMemoryKey = null,
@@ -2140,6 +2144,7 @@ function ConversationTimelineImpl({
                     unit={liveUnit}
                     nowMs={liveNowMs}
                     apiRetry={apiRetry}
+                    externalAgentStall={externalAgentStall}
                     context={rowContext}
                     onFork={onFork}
                     onRetry={onRetry}

@@ -1,4 +1,8 @@
-import type { ModelRequestSessionType, ModelRetryBudget } from "@zcode/contracts";
+import {
+  withExternalAgentTurnDriverOf,
+  type ModelRequestSessionType,
+  type ModelRetryBudget,
+} from "@zcode/contracts";
 import {
   CoreErrorType,
   createCoreError,
@@ -79,6 +83,8 @@ export function withModelInvocationContext(
   model: Model,
   createContext: (request: ModelRequest) => ModelInvocationContext,
 ): Model {
+  // A marker Model for an external agent carries its turn driver on a symbol key; the wrapper keeps it
+  // so the turn path still recognizes the model after invocation-context layering.
   const wrapped: Model = {
     providerId: model.providerId,
     modelId: model.modelId,
@@ -103,5 +109,5 @@ export function withModelInvocationContext(
       );
     },
   };
-  return Object.freeze(wrapped);
+  return Object.freeze(withExternalAgentTurnDriverOf(model, wrapped));
 }

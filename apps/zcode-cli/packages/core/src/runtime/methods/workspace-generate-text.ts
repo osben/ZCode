@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   SessionEventType,
   createChildTraceContext,
@@ -91,7 +92,7 @@ export async function testModelConnectivity(
       }),
     },
     async () => {
-      for await (const event of model.streamText(request)) {
+      for await (const event of assertNotExternalAgentModel(model, "connectivity test").streamText(request)) {
         if (event.type === "error") throw normalizeStreamError(event.error);
         if (event.type === "finish") finished = true;
       }
@@ -214,7 +215,7 @@ async function generateWorkspaceTextImpl(
         traceContext: modelTraceContext,
       }),
     },
-    () => model.generateText(modelRequest),
+    () => assertNotExternalAgentModel(model, "workspace text").generateText(modelRequest),
   ).catch(async (error: unknown) => {
     await recordModelUsageFact(this, {
       error,

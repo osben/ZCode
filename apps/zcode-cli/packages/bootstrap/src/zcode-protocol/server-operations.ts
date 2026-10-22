@@ -3051,6 +3051,7 @@ export async function getTaskTokenUsage(
  * 这些事件不 bump record.updatedAt（= sessions-index lastActivityAt），
  * 避免配置操作驱动侧栏列表按活动时间重排。
  * - ModelSelected / SessionModeChanged：纯配置变更（切模型/切模式）。
+ * - ExternalAgentConfigUpdated / ExternalAgentStatus: ACP agent selects and stall status (S6).
  * - FollowupModeChanged：打开会话会自动同步 queue/guide 偏好；这是配置，不应刷新历史活动时间。
  * - SessionTitleUpdated：标题是会话元数据；冷恢复会为了 v4 投影补发标题事件，
  *   不能因此把历史任务当成刚活动过并顶到列表最前。
@@ -3066,6 +3067,8 @@ function isNonActivitySessionEvent(event: SessionEvent): boolean {
   return (
     event.type === SessionEventType.ModelSelected ||
     event.type === SessionEventType.SessionModeChanged ||
+    event.type === SessionEventType.ExternalAgentConfigUpdated ||
+    event.type === SessionEventType.ExternalAgentStatus ||
     event.type === SessionEventType.FollowupModeChanged ||
     event.type === SessionEventType.SessionTitleUpdated ||
     event.type === SessionEventType.SessionResumed ||

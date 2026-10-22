@@ -24,6 +24,8 @@ export interface NodeProviderRegistryRuntimeOptions extends NodeProviderConfigRu
   readonly wrapConfigSource?: (
     source: ProviderSource<ProviderConfigSnapshot>,
   ) => ProviderSource<ProviderConfigSnapshot>;
+  /** Development-only ACP model gate forwarded to the Registry (default false). */
+  readonly acpExecutable?: boolean;
 }
 
 /** Shared Config + Registry lifecycle within one Node.js process. */
@@ -49,6 +51,7 @@ export class NodeProviderRegistryRuntime {
     this.registryService = new ProviderRegistryService({
       configSource: this.registryConfigSource,
       accountSource: this.#accountSource,
+      acpExecutable: options.acpExecutable === true,
     });
   }
 

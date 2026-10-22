@@ -1002,6 +1002,9 @@ export function createConversationV4Gateway(
     hasPreparedSession: (sessionId) => preparedSubmissionMap(context).has(sessionId) || preparedWorktreeMap(context).has(sessionId),
     // 同一注册表对象引用：view 是旧 record 的结构化窄视图，字段变更双向可见。
     getRecord: (sessionId) => context.sessions.get(sessionId),
+    ...(context.deps.externalAgentConfig
+      ? { externalAgentConfig: context.deps.externalAgentConfig }
+      : {}),
     // 同一登记表实例：broker（旧目录）注册反向请求 deferred，
     // v4 resolveInteraction handler 经此投递应答（v4 原生基础设施，非过渡钩子）。
     interactions: context.v4Interactions,
@@ -2301,6 +2304,17 @@ export function createConversationV4Gateway(
     // createSession.config（handler 先应用到 runtime 再种）、历史会话 resume
     // （App 恢复结果可以只有模型身份，不能为了投影而绑定半成品执行模型）。
     getSessionMemoryEnabled: (sessionId) => context.sessions.get(sessionId)?.memoryEnabled,
+    // Stored ACP agent selects (S6): in-memory events are gone after a worker restart.
+    getSessionExternalAgentConfigSeed: async (sessionId) => {
+      const store = context.deps.externalAgentConfig;
+      if (!store) return null;
+      const config = await store.readConfig(sessionId);
+      if (config.agentId === undefined || config.offered === undefined) return null;
+      return {
+        agentId: config.agentId,
+        options: config.offered.map((option) => ({ ...option, options: [...option.options] })),
+      };
+    },
     getSessionConfigSeed: (sessionId) => {
       const record = context.sessions.get(sessionId);
       if (!record) return null;

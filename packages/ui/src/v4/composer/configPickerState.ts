@@ -1,4 +1,10 @@
-export type V4ComposerConfigPicker = "mode" | "model" | "thought";
+export type V4ComposerConfigPicker =
+  | "mode"
+  | "model"
+  | "thought"
+  | "agent-mode"
+  | "agent-model"
+  | "agent-effort";
 
 export function resolveV4ComposerConfigPickerState(
   current: V4ComposerConfigPicker | null,

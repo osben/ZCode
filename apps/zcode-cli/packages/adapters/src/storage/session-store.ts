@@ -37,3 +37,9 @@ export type {
 } from "./session-store/options.js";
 
 export type { AsyncSqliteMigrationOptions, SqliteMigrationProgress } from "./session-store/migration-runner.js";
+export { createForkAcpSessionBindingStore } from "./session-store/fork-acp-session-binding.js";
+export type {
+  ForkAcpSessionBinding,
+  ForkAcpSessionBindingStore,
+  ForkAcpSessionConfig,
+} from "./session-store/fork-acp-session-binding.js";

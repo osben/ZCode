@@ -35,7 +35,8 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-function startRuntime() {
+/** `development` mirrors a development runtime (the dev-only ACP gate); `false` is a packaged host. */
+function startRuntime(development = true) {
   runtime = createProviderRuntime({
     zcodeBuiltinFilePath: fileURLToPath(
       new URL("../../../config/provider/zcode-builtin.json", import.meta.url),
@@ -43,6 +44,7 @@ function startRuntime() {
     personalFilePath,
     watch: false,
     personalPollingIntervalMs: false,
+    acpExecutable: development,
     acpAgentStore: new NodeForkAcpAgentStore({
       filePath: sidecarFilePath,
       pollingIntervalMs: false,
@@ -176,5 +178,23 @@ describe("ACP agents stored in the fork sidecar", () => {
         args: ["acp"],
       },
     ]);
+  });
+});
+
+describe("ACP agents outside a development runtime", () => {
+  it("does not derive acp providers from the sidecar and refuses ACP writes", async () => {
+    // A development host wrote the sidecar; a packaged host reads the same file.
+    await startRuntime(true).providerSettings.saveAcpAgent(SAVE);
+    const sidecarBefore = await readFile(sidecarFilePath, "utf8");
+
+    const packaged = startRuntime(false).providerSettings;
+    const view = await packaged.getView();
+    expect(acpProvider(view)).toBeUndefined();
+
+    await expect(packaged.saveAcpAgent(SAVE)).rejects.toThrow(/not supported/);
+    await expect(
+      packaged.setAcpAgentEnabled({ agentId: "opencode", enabled: false }),
+    ).rejects.toThrow(/not supported/);
+    expect(await readFile(sidecarFilePath, "utf8")).toBe(sidecarBefore);
   });
 });

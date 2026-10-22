@@ -1,4 +1,7 @@
-import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v4";
+import {
+  PERMISSION_FULL_ACCESS_OPTION_ID,
+  externalAgentConfigStateSchema,
+} from "@zcode/shared/zcode-protocol-v4";
 // ProductProjection — the second authoritative reducer in the CLI projection.
 // Input: the CLI event log (SessionEvent, the source of truth); output: ConversationDelta[].
 // Snapshot advancement reuses the protocol's canonical apply function (applyConversationDeltas).
@@ -11,6 +14,7 @@ import { PERMISSION_FULL_ACCESS_OPTION_ID } from "@zcode/shared/zcode-protocol-v
 // (TopicFrame/subscribe) is handled in a later slice.
 import type {
   AssistantFeedbackUpdatedPayload,
+  ExternalAgentStatusPayload,
   RowPinnedUpdatedPayload,
   HighspeedMetricsUpdatedPayload,
   CompactLifecyclePayload,
@@ -28,6 +32,7 @@ import type {
   PluginUiAppToolCallRequestedPayload,
   PluginUiResourceListChangedPayload,
   PluginUiResourceUpdatedPayload,
+  SystemMessagePayload,
   SessionEvent,
   SessionForkedPayload,
   SessionInputPromotedPayload,
@@ -96,6 +101,7 @@ import type {
   ConversationRowTarget,
   ConversationSnapshot,
   CuaAppIdentity,
+  ExternalAgentConfigState,
   GoalState,
   HookExecutionProjection,
   HookInvocationRow,
@@ -443,6 +449,22 @@ function nonNegativeInteger(value: number, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback;
 }
 
+/** The event payload as projected state; a payload that fails the strict schema is ignored. */
+function externalAgentConfigFromPayload(payload: unknown): ExternalAgentConfigState | null {
+  const parsed = externalAgentConfigStateSchema.safeParse(payload);
+  return parsed.success ? parsed.data : null;
+}
+
+function cloneExternalAgentConfig(state: ExternalAgentConfigState): ExternalAgentConfigState {
+  return {
+    agentId: state.agentId,
+    options: state.options.map((option) => ({
+      ...option,
+      options: option.options.map((value) => ({ ...value })),
+    })),
+  };
+}
+
 interface FileToolInputPreviewState {
   lastPublishedAt: number | null;
   pendingAppend: string;
@@ -555,6 +577,8 @@ export class ProductProjection {
   // 又避免后续种子覆盖新事件已原子发布的模型能力。
   private configThoughtLevelsTouchedByEvent = false;
   private configModeTouchedByEvent = false;
+  // An external_agent_config_updated event is authoritative over the stored seed (S6).
+  private configExternalAgentTouchedByEvent = false;
   // assistant 守恒：非运行期拒收的正文流计数（gateway 据此置 stale）。
   private droppedContentStreamEventCount = 0;
   // 读取期 legacy fallback 必须可观测；否则 normalizer 缺字段后仍会退化为“可见但不可寻址”。
@@ -690,6 +714,20 @@ export class ProductProjection {
     if (changed) {
       this.snapshot = { ...this.snapshot, config };
     }
+  }
+
+  /**
+   * External agent config seed (specs/acp-agent-runtime.md "S6"): the offered options stored with the
+   * session's ACP binding. In-memory events do not survive a worker restart, so a cold projection
+   * gets the selects from the store without spawning the agent. Like seedConfig it emits no delta
+   * and never overrides a value an event already set.
+   */
+  seedExternalAgentConfig(state: ExternalAgentConfigState | null | undefined): void {
+    if (this.configExternalAgentTouchedByEvent || !state) return;
+    this.snapshot = {
+      ...this.snapshot,
+      config: { ...this.snapshot.config, externalAgentConfig: cloneExternalAgentConfig(state) },
+    };
   }
 
   /**
@@ -1294,6 +1332,7 @@ export class ProductProjection {
     clone.configModelTouchedByEvent = this.configModelTouchedByEvent;
     clone.configThoughtLevelsTouchedByEvent = this.configThoughtLevelsTouchedByEvent;
     clone.configModeTouchedByEvent = this.configModeTouchedByEvent;
+    clone.configExternalAgentTouchedByEvent = this.configExternalAgentTouchedByEvent;
     clone.droppedContentStreamEventCount = this.droppedContentStreamEventCount;
     clone.normalizationDiagnostics = [...this.normalizationDiagnostics];
     return clone;
@@ -1339,6 +1378,7 @@ export class ProductProjection {
     this.configModelTouchedByEvent = candidate.configModelTouchedByEvent;
     this.configThoughtLevelsTouchedByEvent = candidate.configThoughtLevelsTouchedByEvent;
     this.configModeTouchedByEvent = candidate.configModeTouchedByEvent;
+    this.configExternalAgentTouchedByEvent = candidate.configExternalAgentTouchedByEvent;
     this.droppedContentStreamEventCount = candidate.droppedContentStreamEventCount;
     this.normalizationDiagnostics = candidate.normalizationDiagnostics;
   }
@@ -1494,6 +1534,8 @@ export class ProductProjection {
         return this.onSessionResumed(event);
       case SessionEventType.SessionTitleUpdated:
         return this.onSessionTitleUpdated(event);
+      case SessionEventType.SystemMessage:
+        return this.onSystemMessage(event);
       case SessionEventType.TurnStarted:
         if (fact.semanticKind !== "userIntent") return [];
         return [
@@ -1627,6 +1669,10 @@ export class ProductProjection {
         return this.onFollowupModeChanged(event);
       case SessionEventType.SessionModeChanged:
         return this.onSessionModeChanged(event);
+      case SessionEventType.ExternalAgentConfigUpdated:
+        return this.onExternalAgentConfigUpdated(event);
+      case SessionEventType.ExternalAgentStatus:
+        return this.onExternalAgentStatus(event);
       case SessionEventType.TurnComplete:
         return this.onTurnComplete(event);
       case SessionEventType.TurnError:
@@ -2332,6 +2378,7 @@ export class ProductProjection {
           // 新一轮被接受后，旧错误不再是当前事实（与旧 reducer 同一裁决）。
           lastError: null,
           apiRetry: null,
+          ...this.clearedExternalAgentStall(),
         }),
       });
     }
@@ -2457,6 +2504,7 @@ export class ProductProjection {
             // 旧 V4 reducer 没有消费 ModelNetworkStatus，补投影后若 turn
             // 直接进入终态仍不清理，会让“重新连接中”残留到下一轮。
             apiRetry: null,
+            ...this.clearedExternalAgentStall(),
           },
           pausedGoal,
           heldQueue,
@@ -2562,6 +2610,7 @@ export class ProductProjection {
             },
             // 同 onTurnComplete：终态是重试生命周期的兜底清理边界。
             apiRetry: null,
+            ...this.clearedExternalAgentStall(),
           },
           undefined,
           heldQueue,
@@ -3268,6 +3317,7 @@ export class ProductProjection {
           row: {
             ...existing,
             toolName: payload.toolName,
+            ...(payload.title ? { title: payload.title } : {}),
             ...(payload.assistantMessageId
               ? { assistantResponseId: String(payload.assistantMessageId) }
               : {}),
@@ -3288,6 +3338,7 @@ export class ProductProjection {
         : {}),
       toolCallId,
       toolName: payload.toolName,
+      ...(payload.title ? { title: payload.title } : {}),
       status: "inputStreaming",
       inputText,
       input: payload.input,
@@ -4314,6 +4365,56 @@ export class ProductProjection {
         },
       },
     ];
+  }
+
+  /** S6: the selects of the session's ACP agent (config.externalAgentConfig); no row. */
+  private onExternalAgentConfigUpdated(event: SessionEvent): ConversationDelta[] {
+    const state = externalAgentConfigFromPayload(event.payload);
+    if (!state) return [];
+    this.configExternalAgentTouchedByEvent = true;
+    const current = this.snapshot.config.externalAgentConfig;
+    if (current && JSON.stringify(current) === JSON.stringify(state)) return [];
+    return [
+      {
+        op: "state.updated",
+        patch: { config: { ...this.snapshot.config, externalAgentConfig: state } },
+      },
+    ];
+  }
+
+  /**
+   * S6: a stall of the running turn's ACP agent is a transient, non-blocking status
+   * (control.externalAgentStall). `resumed` and the turn's end clear it; no row is written.
+   */
+  private onExternalAgentStatus(event: SessionEvent): ConversationDelta[] {
+    if (!this.acceptsActiveModelEvent(event)) return [];
+    const payload = event.payload as Partial<ExternalAgentStatusPayload>;
+    if (payload.status === "resumed") {
+      const cleared = this.clearedExternalAgentStall();
+      return "externalAgentStall" in cleared
+        ? [{ op: "state.updated", patch: this.controlPatch(cleared) }]
+        : [];
+    }
+    if (payload.status !== "stalled" || typeof payload.agentId !== "string" || !payload.agentId) {
+      return [];
+    }
+    return [
+      {
+        op: "state.updated",
+        patch: this.controlPatch({
+          externalAgentStall: {
+            agentId: payload.agentId,
+            since: this.ms(event),
+            silentMs: nonNegativeInteger(payload.silentMs ?? 0, 0),
+          },
+        }),
+      },
+    ];
+  }
+
+  /** Control fields that clear a stall; empty when none is shown, so control is not rewritten. */
+  private clearedExternalAgentStall(): Pick<SessionControl, "externalAgentStall"> {
+    return this.snapshot.control.externalAgentStall ? { externalAgentStall: null } : {};
   }
 
   /**
@@ -5541,6 +5642,20 @@ export class ProductProjection {
       if (this.turnHeaderRowIdByTurnId.has(mapped)) return mapped;
     }
     return this.turnIdOf(event);
+  }
+
+  // ── external agent context reset（S5：divider，lane 由投影裁决）──
+
+  private onSystemMessage(event: SessionEvent): ConversationDelta[] {
+    const payload = event.payload as SystemMessagePayload;
+    if (payload.type !== "external_agent_context_reset") return [];
+    const row: TimelineMarkerRow = {
+      ...this.rowBase(event, this.turnIdOf(event)),
+      kind: "timelineMarker",
+      lane: "lightBoundary",
+      marker: { type: "agentContextReset", agentId: payload.content },
+    };
+    return [{ op: "row.appended", row }];
   }
 
   // ── fork marker（forkAssistant 命令效果）──

@@ -13,6 +13,7 @@ import { selectionSideSessionHandlers } from "./selection-side-session.js";
 import { assistantFeedbackHandlers } from "./assistant-feedback.js";
 import { rowPinHandlers } from "./row-pin.js";
 import { highspeedMetricsHandlers } from "./highspeed-metrics.js";
+import { externalAgentConfigHandlers } from "./external-agent-config.js";
 
 export const NATIVE_HANDLERS = {
   ...sessionFlowHandlers,
@@ -27,6 +28,7 @@ export const NATIVE_HANDLERS = {
   ...assistantFeedbackHandlers,
   ...rowPinHandlers,
   ...highspeedMetricsHandlers,
+  ...externalAgentConfigHandlers,
 } as const;
 
 export type NativeCommandType = keyof typeof NATIVE_HANDLERS;

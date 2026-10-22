@@ -21,6 +21,8 @@ import type {
 export * from "./image-media.js";
 export * from "./model.js";
 export * from "./invocation-context.js";
+export * from "./external-agent.js";
+export * from "./external-agent-config.js";
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -552,7 +554,8 @@ export interface ModelUsage {
 }
 
 export interface ModelUsageSummary {
-  source: "provider";
+  /** `external-agent`: usage reported by an ACP agent process, not billed to a ZCode provider. */
+  source: "provider" | "external-agent";
   modelRequestCount: number;
   inputTokens: number;
   outputTokens: number;

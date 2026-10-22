@@ -32,6 +32,7 @@
     "@zcode/dynamic-workflow": "workspace:*",
     "@zcode/dynamic-workflow-runtime": "workspace:*",
     "@zcode/i18n": "workspace:*",
+    "@zcode/acp-agent-runtime": "workspace:*",
     "@zcode/provider": "workspace:*",
     "@zcode/provider-node": "workspace:*",
     "@zcode/shared": "workspace:*",

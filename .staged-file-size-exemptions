@@ -127,6 +127,7 @@ apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/plugins.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol/session-mapper.ts
 apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts
 
 apps/zcode-cli/packages/cli/src/prompt-command.ts
@@ -271,3 +272,5 @@ packages/web/src/web-remote-control/adapters/webRemoteControlTransport.ts
 # can move into its own sibling file.
 apps/zcode-cli/packages/bootstrap/src/app/bundled-plugins.ts
 packages/provider/src/config/model-config.ts
+apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/cold-event-merge.ts
+packages/services/src/conversation-share/conversationSharePublicProjection.ts

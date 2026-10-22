@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.9.0",
-    "@zcode/shared": "workspace:*"
+    "@zcode/shared": "workspace:*",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

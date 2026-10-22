@@ -673,6 +673,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     providerModelRuntime = new ApiProviderModelRuntime({
       registry: options.providerRegistry,
       modelAdapter,
+      ...(options.externalAgents ? { externalAgents: options.externalAgents } : {}),
     });
     providerModelRuntime.start();
     // model factory 提前到三条 workflow child 装配线之前构造：script workflow bridge、dwf actor
@@ -1317,7 +1318,12 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             providerModelRuntime?.dispose();
             await activeSessionLsp?.close();
           } finally {
-            await modelTelemetry.shutdown();
+            try {
+              // The resident ACP agent process belongs to this session (specs/acp-agent-runtime.md).
+              await options.externalAgents?.stopSession(sessionId);
+            } finally {
+              await modelTelemetry.shutdown();
+            }
           }
         }
       },

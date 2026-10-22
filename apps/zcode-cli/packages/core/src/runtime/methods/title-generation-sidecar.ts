@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   SessionEventType,
   createChildTraceContext,
@@ -179,7 +180,7 @@ async function generateTitleCandidateImpl(
   };
 
   const resultPromise = runWithModelInvocationContext(invocationContext, () =>
-    model.generateText({
+    assertNotExternalAgentModel(model, "title generation").generateText({
       abortSignal: titleAbortSignal,
       messages,
       tools: [],

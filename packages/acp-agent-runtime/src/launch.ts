@@ -6,7 +6,7 @@
  * sanitizer predicate, and secret-named variables are scrubbed by segment
  * (see `SECRET_NAME_RE`). Configuration passed explicitly via
  * `AcpLaunchOptions.env` wins and may re-introduce any name, except loader /
- * injection keys (`LD_*`, `DYLD_*`, `NODE_OPTIONS`, `BASH_ENV`), which an
+ * injection keys (the shared list in `@zcode/shared/acp-launch-rules`), which an
  * override may only delete.
  *
  * User capability variables (SSH_AUTH_SOCK, KRB5CCNAME, GPG_AGENT_INFO, …)

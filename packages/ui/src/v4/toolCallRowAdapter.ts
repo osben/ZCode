@@ -93,6 +93,8 @@ export function toolCallRowToLegacyNode(row: ToolCallRow): TaskChatToolCallTreeN
     toolCall: {
       toolId: row.toolCallId,
       toolName: row.toolName,
+      // ACP tool calls carry their own title; ZCode tools have none and keep the generic label.
+      ...(row.title ? { title: row.title } : {}),
       // Keep kind compatible with the old aggregate categories: v4 has no legacy ZCode Agent snapshot shape, so use the fixed tool name directly.
       kind: row.toolName,
       input: inputPreview.input,

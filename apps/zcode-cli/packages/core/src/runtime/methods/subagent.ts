@@ -1,3 +1,4 @@
+import { isExternalAgentModel } from "@zcode/contracts";
 /* eslint-disable max-lines -- subagent runtime wiring 集中衔接 child runtime、tool pool、权限、MCP 与 activity watchdog，拆分需单独迁移。 */
 import {
   RESPOND_TO_COORDINATOR_TOOL_NAME,
@@ -220,13 +221,26 @@ export function createDefaultSubagentPort(
             { recoverable: true },
           );
         }
-        const childModel = baseChildModelFactory({ selection: childSelection });
+        // External-agent (ACP) models run only foreground chat turns. An inherited selection can
+        // carry the parent's ACP model into a child, so every child model is checked here.
+        const requireSubagentModel: NonNullable<AgentRuntimeDeps["modelFactory"]> = (target) => {
+          const model = baseChildModelFactory(target);
+          if (isExternalAgentModel(model)) {
+            throw createCoreError(
+              CoreErrorType.ConfigurationError,
+              `Subagents cannot run the external agent model ${String(model.providerId)}/${String(model.modelId)}; choose a ZCode model for this subagent.`,
+              { recoverable: true },
+            );
+          }
+          return model;
+        };
+        const childModel = requireSubagentModel({ selection: childSelection });
         const childModelFactory: NonNullable<AgentRuntimeDeps["modelFactory"]> = (target) =>
           target.selection.providerId === childSelection.providerId &&
           target.selection.modelId === childSelection.modelId &&
           target.selection.options?.reasoningLevel === childSelection.options?.reasoningLevel
             ? childModel
-            : baseChildModelFactory(target);
+            : requireSubagentModel(target);
         const parentToolCallId = traceStringAttribute(request.traceContext, "parentToolCallId");
         // 对外交互端口（permission broker + provider runtime headers）：与 dwf actor、legacy
         // workflow child 共用同一条派生，路由身份统一落到本 runtime 的会话。

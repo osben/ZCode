@@ -759,6 +759,26 @@ global:
   acceptedUpstreamSnapshot: scripts/architecture/upstream-snapshot.json
 
 exceptions:
+  - id: acp-chat-delegation-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - apps/zcode-cli/packages/contracts/src/model/external-agent.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-turn.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-tool-rows.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-permission.ts
+      - apps/zcode-cli/packages/adapters/src/storage/session-store/fork-acp-session-binding.ts
+      - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-worker-agents.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/sample-model.ts
+      - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-external-agent-host.ts
+      - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-session-pool.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol/runtime-cleanup.ts
+      - apps/zcode-cli/packages/contracts/src/model/external-agent-config.ts
+      - apps/zcode-cli/packages/core/src/runtime/methods/external-agent-session-events.ts
+      - apps/zcode-cli/packages/bootstrap/src/acp-agent/acp-config-reconcile.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/external-agent-config-store.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/external-agent-config.ts
+      - apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/command-inbox-creations.ts
+    reason: Chat delegation to external ACP agents (specs/acp-agent-runtime.md "Chat delegation (phase 4)") adds the external-agent turn port (contract), its turn runner in core (side-effect free apart from the existing turn ports), and the bootstrap composition root (process pool and driver). The zcode-cli tree has no managed module yet; the same reasoning as acp-agent-fork-sidecar-unmanaged-files applies, so adopting apps/zcode-cli needs a separate module boundary refactor. Core keeps no import of the ACP runtime; only bootstrap binds it. S6 (agent configuration options) adds the config option contract, its non-transcript session events in core, the driver reconcile in bootstrap, and the v4 command handler with its narrow store port; none of them imports the ACP runtime outside bootstrap. The createSession wait (command-inbox-creations.ts) keeps the command inbox under the staged-size cap and imports nothing from the ACP runtime.
   - id: opensource-cua-test-project-config
     rule: unmanaged-new-file
     paths: [packages/zcode-cua/vitest.config.ts]
@@ -886,6 +906,8 @@ exceptions:
     paths:
       - packages/acp-agent-runtime/src/runtime-handshake.ts
       - packages/acp-agent-runtime/src/runtime-teardown.ts
+      - packages/acp-agent-runtime/src/runtime-resume.ts
+      - packages/acp-agent-runtime/src/runtime-config.ts
       - packages/services/src/model-provider/acpAgentLogin.ts
     reason: Cohesive pieces split out of the existing ACP runtime and settings bridge to keep each file under the staged-size limit (handshake wiring, process-tree teardown, login helpers); the runtime keeps the single lifecycle state owner. Adopting packages/acp-agent-runtime and the services model-provider directory needs a separate module boundary refactor.
   - id: acp-agent-fork-sidecar-unmanaged-files
@@ -908,6 +930,13 @@ exceptions:
       - packages/ui/src/v4/composer/composerSubmitBlockReason.ts
       - packages/ui/src/v4/firstSubmissionReconciliation.ts
     reason: First-submission review fixes extract the shared submit/Retry block predicate from ConversationComposer and the outcome reconciliation hook from SessionPane (both size-exempt monoliths) instead of growing them; same unmanaged packages/ui/src/v4 tree as worktree-setup-card-slot-unmanaged-files. Adopting packages/ui/src/v4 needs a separate module boundary refactor.
+  - id: acp-agent-config-composer-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/v4/composer/externalAgentConfig.ts
+      - packages/ui/src/v4/composer/V4ExternalAgentConfigControls.tsx
+      - packages/ui/src/v4/pendingReservationGate.ts
+    reason: S6 agent configuration options (specs/acp-agent-runtime.md "UI (as shipped)") add the ACP agent selects beside the existing composer mode switch instead of growing ConversationComposer and V4ComposerToolbar (both size-exempt monoliths). The projection stays the only owner of the values; the pure helpers hold no state and the command goes through the session pane's existing dispatchCommand. Same unmanaged packages/ui/src/v4 tree as first-submission-review-fixes-unmanaged-files; adopting it needs a separate module boundary refactor.
   - id: provider-endpoint-routing-unmanaged-edit
     rule: unmanaged-new-file
     paths:

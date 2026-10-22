@@ -1,3 +1,4 @@
+import { assertNotExternalAgentModel } from "@zcode/contracts";
 import {
   SessionEventType,
   GOAL_COMPLETION_VERIFICATION_QUERY_SOURCE,
@@ -328,7 +329,7 @@ async function generateTargetCompletionVerificationText(
         }),
       };
       return await runWithModelInvocationContext(invocationContext, () =>
-        input.model.generateText({
+        assertNotExternalAgentModel(input.model, "goal completion verification").generateText({
           abortSignal: input.abortSignal,
           ...input.request,
           // Verifier 继承已绑定的思考配置，不能套用低成本辅助调用的降档和封顶策略。

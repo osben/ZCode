@@ -8,7 +8,8 @@ export type AcpRuntimeErrorCode =
   | "ACP_STREAM_CLOSED"
   | "ACP_TIMEOUT"
   | "ACP_CANCELLED"
-  | "ACP_STATE";
+  | "ACP_STATE"
+  | "ACP_INVALID_CONFIG";
 
 export class AcpRuntimeError extends Error {
   readonly code: AcpRuntimeErrorCode;
@@ -83,5 +84,12 @@ export class AcpCancelledError extends AcpRuntimeError {
 export class AcpStateError extends AcpRuntimeError {
   constructor(message: string) {
     super("ACP_STATE", message);
+  }
+}
+
+/** A config option id or value the agent does not offer; raised before any request is sent. */
+export class AcpInvalidConfigError extends AcpRuntimeError {
+  constructor(message: string) {
+    super("ACP_INVALID_CONFIG", message);
   }
 }

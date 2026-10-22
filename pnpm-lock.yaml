@@ -456,6 +456,9 @@ importers:
 
   apps/zcode-cli/packages/bootstrap:
     dependencies:
+      '@zcode/acp-agent-runtime':
+        specifier: workspace:*
+        version: link:../../../../packages/acp-agent-runtime
       '@zcode/adapters':
         specifier: workspace:*
         version: link:../adapters
@@ -1029,10 +1032,13 @@ importers:
     dependencies:
       '@agentclientprotocol/sdk':
         specifier: 1.9.0
-        version: 1.9.0(zod@4.6.7)
+        version: 1.9.0(zod@4.6.5)
       '@zcode/shared':
         specifier: workspace:*
         version: link:../shared
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@types/node':
         specifier: ^26.0.0
@@ -13095,9 +13101,9 @@ snapshots:
     dependencies:
       zod: 4.6.5
 
-  '@agentclientprotocol/sdk@1.9.0(zod@4.6.7)':
+  '@agentclientprotocol/sdk@1.9.0(zod@4.6.5)':
     dependencies:
-      zod: 4.6.7
+      zod: 4.6.5
 
   '@ai-sdk/anthropic@3.0.81(patch_hash=d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18)(zod@4.6.5)':
     dependencies:

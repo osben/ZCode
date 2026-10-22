@@ -36,6 +36,7 @@ import type { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-reg
 import type { ConversationV4Gateway } from "../zcode-protocol-v4/v4-gateway.js";
 import type { SessionResidentPool, SessionResidentPoolOptions } from "./session-resident-pool.js";
 import type { LspProtocolHost } from "./lsp.js";
+import type { V4ExternalAgentConfigStore } from "../zcode-protocol-v4/commands/external-agent-config-store.js";
 import type { DynamicWorkflowMode } from "@zcode/shared";
 
 export interface ParamsSchema<T> {
@@ -46,6 +47,8 @@ export interface ZCodeProtocolAgentDependencies {
   createZCodeApp(options?: Omit<ZCodeAppOptions, "providerRegistry">): ZCodeApp | Promise<ZCodeApp>;
   /** Process-wide LSP protocol host (lsp/* methods); absent when the runtime has no LSP support. */
   lsp?: LspProtocolHost;
+  /** ACP agent selects per session (specs/acp-agent-runtime.md "S6"); absent without ACP support. */
+  externalAgentConfig?: V4ExternalAgentConfigStore;
   /**
    * In-memory event store factory for each session record.
    * Default turn-window retention policy; tests may inject a spy or unbounded implementation for comparison.

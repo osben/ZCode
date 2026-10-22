@@ -21,6 +21,7 @@ import {
   type ProviderConfig,
   type ProviderConfigRule,
   ProviderConfigMap,
+  type ProviderConfigObject,
   type ProviderTemplateMap,
   type ProviderId,
 } from "./config/index.js";
@@ -47,7 +48,30 @@ export type RegistryProviderConfigObject = z.infer<typeof completeProviderConfig
 
 export function serializeRegistryProviderConfig(
   config: RegistryProviderConfig,
-): RegistryProviderConfigObject {
+): ProviderConfigObject {
+  // ACP agents are validated by the ACP schema, not the API-key union. Only composer-facing facts are
+  // projected: `env` is left out because it may carry credentials.
+  if (isRegistryAcpAgentProvider(config)) {
+    const access = config.access as unknown as {
+      readonly agentId: string;
+      readonly command: string;
+      readonly args: readonly string[];
+    };
+    return {
+      group: config.group,
+      access: {
+        type: "acp-agent",
+        agentId: access.agentId,
+        command: access.command,
+        args: [...access.args],
+      },
+      ...(config.personalModelIds == null
+        ? {}
+        : { personalModelIds: [...config.personalModelIds] }),
+      ...(config.modelOrder == null ? {} : { modelOrder: [...config.modelOrder] }),
+      ...(config.visibility === undefined ? {} : { visibility: config.visibility }),
+    };
+  }
   return {
     group: config.group,
     ...(config.logo === undefined ? {} : { logo: config.logo }),
@@ -62,6 +86,11 @@ export function serializeRegistryProviderConfig(
     ...(config.modelOrder == null ? {} : { modelOrder: [...config.modelOrder] }),
     ...(config.visibility === undefined ? {} : { visibility: config.visibility }),
   };
+}
+
+function isRegistryAcpAgentProvider(config: RegistryProviderConfig): boolean {
+  // The registry access union omits `acp-agent` on purpose (see provider-data-schema.ts).
+  return (config.access as { readonly type?: unknown }).type === "acp-agent";
 }
 
 function serializeRegistryProviderAccess(
@@ -156,6 +185,11 @@ export interface ProviderConfigResolverInput {
   readonly accountProviders: ProviderConfigMap;
   readonly accountStates?: AccountProviderStates;
   readonly personalProviderOrder?: readonly ProviderId[];
+  /**
+   * Development-only gate for ACP agent models (specs/acp-agent-runtime.md "Chat delegation").
+   * False keeps `acp:<agentId>` models non-executable: they never reach the chat registry.
+   */
+  readonly acpExecutable?: boolean;
 }
 
 export interface ResolvedProviderModelCandidate {
@@ -251,8 +285,15 @@ export class ProviderConfigResolver {
       // agent execution path lands — a registered-but-unroutable provider would
       // be selectable in chat and fail on send.
       const acpAccess = isAcpAgentAccess(config.access) ? config.access : null;
+      // An ACP provider enters the execution Registry only behind the development gate; its complete
+      // validity is the ACP schema (providerIssues below), so a valid config is admitted as-is.
       const registryProviderResult = acpAccess
-        ? null
+        ? input.acpExecutable === true
+          ? {
+              ok: true as const,
+              config: config as unknown as RegistryProviderConfig,
+            }
+          : null
         : createRegistryProviderConfig(config, providerPath);
       const providerIssues: ConfigValidationIssue[] = acpAccess
         ? [
@@ -318,10 +359,13 @@ export class ProviderConfigResolver {
         const modelIssues = registryModelResult.ok ? [] : registryModelResult.issues;
         issues.push(...modelIssues);
         const modelEnabled = modelConfig.enabled === true;
-        // ACP models stay non-executable until the chat execution path exists;
-        // Settings must not advertise a selectable model that cannot run yet.
+        // ACP models stay non-executable outside the development gate (acpExecutable); Settings must not
+        // advertise a selectable model that cannot run in a packaged build.
         const executable =
-          providerExecutable && modelEnabled && modelIssues.length === 0 && acpAccess === null;
+          providerExecutable &&
+          modelEnabled &&
+          modelIssues.length === 0 &&
+          (acpAccess === null || input.acpExecutable === true);
         const selectable = executable && config.visibility !== "hidden";
         return Object.freeze({
           kind: "candidate",

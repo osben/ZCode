@@ -323,6 +323,12 @@ export class ConversationTopicPublisher {
     this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
   }
 
+  /** Stored ACP agent selects (S6): seeded without a delta; an event value always wins. */
+  seedExternalAgentConfig(state: ConversationSnapshot["config"]["externalAgentConfig"] | null): void {
+    this.projection.seedExternalAgentConfig(state);
+    this.wireSnapshotBytesUpperBound = this.measureWireSnapshotBytes(this.getWireSnapshot());
+  }
+
   /** 分享导入提示是静态只读元数据，不进入 delta/revision；可在 hydration 后幂等补种。 */
   seedSharedContextImport(
     source: ConversationSnapshot["sharedContextImport"] | null | undefined,
