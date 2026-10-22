@@ -29,9 +29,12 @@ is adopted or the final sync PR retires the compatibility member.
   are async again, as in upstream).
 - Removed: `ListSessionsInput.includeArchived` and the `time_archived is null` filters in `repositories/sessions.ts`
   (session listing and the child-session scope), as in upstream. The `time_archived` column stays in the schema
-  (inserts write NULL); no DDL, migration id or checksum changes. Data check on 2026-10-21, read-only on the shared
-  `~/.zcode/cli/db/db.sqlite`: 5053 `session` rows, 0 with non-null `time_archived`, so no listing changes. The
-  upstream app reads the same database without the filter, so a row archived by an older build is already listed there.
+  (inserts write NULL); no DDL, migration id or checksum changes. No fork or upstream build has a production writer of
+  `time_archived`: at `872ad960`, `aac47556` and `integration`, `updateSession` accepted `timeArchived`, but no caller
+  passed it. Data check on 2026-10-21, read-only on the author's local `~/.zcode/cli/db/db.sqlite`: 5053 `session` rows,
+  0 with non-null `time_archived`. If a database did have such rows, they would now appear in `session.list` and in the
+  sidebar child counts and lists. The upstream app already shows them, because it reads the same database without the
+  filter. `scripts/shadow-replay.mjs` no longer passes `includeArchived`.
   The wire fields `session.list.includeArchived` and `session.archivedAt` are removed with it (decision and version
   compatibility: `specs/build-pipeline-entrypoints.md`, "Shared-sync compatibility").
 - `trimTruncatedUtf8Tail` in `adapters/src/fs/text-metadata.ts` (fork tail trim; upstream uses `getUtf8CompletionBytes`).
