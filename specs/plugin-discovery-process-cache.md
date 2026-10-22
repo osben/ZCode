@@ -161,6 +161,74 @@ proposed: persist the stat→hash memo across processes in a `fork_`-prefixed si
 plugin storage, so a new process can skip the cold hash. It is held back because it adds a
 cross-process file format.
 
+## Cold (cache-miss) breakdown and option ranking (2026-10-21)
+
+The cold call is the first discovery in a fresh process. Tier 1 does not change it.
+
+**Method:** a fresh Node process imports the built modules, then makes one call under the
+in-process V8 profiler (50 µs sampling). Only samples inside bootstrap/adapters code are counted;
+the `Profiler.start` overhead is excluded. The workspace is `/Users/osben/Dev/ZCode` with cloned
+plugin storage, 3 runs per scenario. A separate preload counted fs calls on a fresh CLI.
+
+**readPresentation, cold** (in-discovery ≈ 98 ms; wall ≈ 185–205 ms including first-call
+warm-up):
+
+| Area                                        |  ms | Composition                         |
+| ------------------------------------------- | --: | ----------------------------------- |
+| seed: read + SHA-256 of bundled files       |  44 | ~21 syscalls + ~21 SHA-256 CPU      |
+| seed: lock, marker, runtime-manifest writes |   8 | mostly syscalls                     |
+| seed: walk                                  |   6 | syscalls                            |
+| discovery: load/components                  |  10 | ~4.5 syscalls, ~3 JS, ~1 parsing    |
+| discovery: metadata enumeration             |   9 | ~5 syscalls, ~2 frontmatter parsing |
+| createConfig                                |   4 | ~2.7 JSON/zod parsing               |
+| custom commands scan                        | 0.5 |                                     |
+| other JS / first-call warm-up               | ~13 |                                     |
+
+By type, the totals are: syscalls ≈ 45 ms, SHA-256 ≈ 21 ms, parsing ≈ 5–8 ms, other JS ≈ 19 ms.
+
+**fs calls per readPresentation** (fresh CLI):
+
+- **Cold:** 6,200 calls in total:
+  - 1,554 `statSync`, 1,152 `readFileSync`, 807 open/read/close for hashing;
+  - 516 `lstatSync`, 308 `readdirSync`;
+  - 130 `SKILL.md` reads.
+- **Warm, with Tier 1:** 3,088 calls. The 807 open/read/close for hashing are gone. 107 `SKILL.md`
+  reads remain, from plugin metadata enumeration. readPresentation does not need them; it only
+  needs `commandRoots`.
+
+**Resume, cold:**
+
+- createConfig is 4.5 ms.
+- `resolve_plugins` is 93–100 ms: the same split as above, plus about 3 ms more parsing.
+- Skills discovery is 24–42 ms of wall time but only ~4 ms of CPU. The rest is awaiting the
+  libuv threadpool across ~156 skill files one at a time. It is asynchronous, so it does not
+  block the request queue, but it delays runtime readiness.
+
+**Duplicate scans within one request:** none found. One readPresentation and one resume each walk
+the seed source once and read `installed_plugins.json` once. The repeated work is _across_
+requests: readPresentation, then resume, then the next readPresentation each redo the same
+discovery for the same workspace.
+
+**Option ranking:**
+
+| Option                                                                                | readPresentation                | Cold resume                                                             | Staleness / regression risk                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| (a) Tier 1 stat-validated hash memo (this branch)                                     | warm 98 → 48 ms; cold unchanged | `resolve_plugins` 80 → 27 ms after any earlier discovery in the process | None observable. Every file is still stat-ed; seeding still runs every call.                                                                                                                |
+| (a') Tier 2 outcome cache                                                             | ~−25 ms more                    | ~−25 ms more                                                            | Nested plugin edits and re-seeds by another build go stale; needs a generation counter plus file signatures.                                                                                |
+| (b) Remove duplicate scans within a call                                              | 0                               | 0                                                                       | Nothing to remove.                                                                                                                                                                          |
+| (c1) Skip metadata enumeration when only `commandRoots` are needed (readPresentation) | −~9 ms                          | 0 (resume consumers read plugin metadata)                               | Low, but adds a second shape of `PluginLoadOutcome`.                                                                                                                                        |
+| (c2) Read skill files in parallel during skills discovery, keeping order              | 0                               | skills 24–42 → ~10 ms wall (estimate)                                   | Low; priority order must be kept when merging.                                                                                                                                              |
+| (c3) Build-time seed hash manifest for packaged builds (like SEA)                     | cold −~44 ms                    | cold −~44 ms                                                            | Medium. Codesigning or notarization rewrites native binaries after staging, so a stale manifest would fail the copy-time hash check and degrade seeding. Needs a packaging-pipeline change. |
+| (c4) Tier 1b: persist the stat→hash memo in a `fork_` sidecar                         | cold −~40 ms                    | cold −~40 ms                                                            | Low to medium; adds a cross-process file format.                                                                                                                                            |
+| (d) Rust/native discovery                                                             | —                               | —                                                                       | Not justified. Parsing CPU is 5–8 ms of ~100 ms. The syscall count would stay the same. SHA-256 already runs in native OpenSSL.                                                             |
+
+**Recommendation:**
+
+- Ship (a) together with the Host ordering fix below. The ordering fix moves the one remaining cold
+  hash off the first-subscribe path.
+- (c1) and (c2) are small optional follow-ups.
+- Revisit (c4) only if fresh-process latency still matters after the ordering fix.
+
 ## Alternatives considered
 
 ### 1. Ordering fix: defer readPresentation behind the first subscribe (measured)
