@@ -10,8 +10,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   createNodeProviderRuntimePathEnv,
+  NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
+  resolveForkAcpAgentsFilePath,
 } from "@zcode/provider-node";
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
 import { createVoiceDictationService, IVoiceDictationService } from "./voice-dictation/index.js";
@@ -1652,8 +1654,19 @@ export function createLocalServices(options: {
     | undefined;
   // Dev-only stabilization gate, enforced on the host as well as in the UI.
   const acpAgentsBridge = createHostAcpAgentsBridge();
+  const acpAgentStoreLog = createServiceLogger("acp-agent-store");
+  // ACP agents live in a fork-owned sidecar: upstream builds reject provider_config.json
+  // files that contain an `acp-agent` provider (specs/acp-agent-runtime.md).
+  const acpAgentStore = new NodeForkAcpAgentStore({
+    filePath: resolveForkAcpAgentsFilePath(
+      join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
+    ),
+    onRecovery: (error) =>
+      acpAgentStoreLog.warn(undefined, "ACP agent sidecar is invalid", { error }),
+  });
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
+    acpAgentStore,
     wrapConfigSource: chatGptPlanConfigSourceWrapper,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,

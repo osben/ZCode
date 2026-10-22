@@ -16,7 +16,9 @@ the mock-agent tests encode the contract below.
   which collides with unrelated CLIs) with fixed version-probe arguments only.
 - An enabled agent becomes the personal provider `acp:<agentId>` with one synthetic model
   (`modelId = agentId`); ids are stable and validated (not taken, no whitespace). Until phase 4 the
-  model stays out of the chat registry (`executable = false`).
+  model stays out of the chat registry (`executable = false`). The provider is derived from the
+  fork-owned sidecar store, never written to `provider_config.json` (see "Storage and upstream
+  compatibility").
 - Permissions are answered by `kind` (`allow_once` / `allow_always` / `reject_once` /
   `reject_always`); an unavailable kind resolves to `cancelled`. Agents never see host-specific
   option ids.
@@ -127,9 +129,12 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
   form edits are dropped on navigation, the same as other provider details.
 - Status (one rule for the navigation row and the detail header): `ready` when enabled, installed
   and not in conflict; `unavailable` when enabled but the CLI is not installed; otherwise `disabled`.
-- Switching off keeps the saved launch config (command, args, env): the disable write is an overlay
-  save with `enabled: false` that carries the saved `acp-agent` access back. Removing the
-  `acp:<agentId>` provider entirely is out of scope for this section.
+- Enable, edit and disable go through the dedicated settings-service methods `saveAcpAgent` and
+  `setAcpAgentEnabled`, never the generic personal-provider mutations. Each is one atomic sidecar
+  write, so there is no create-provider → add-model → best-effort-delete partial state.
+- Switching off keeps the saved launch config (command, args, env): `setAcpAgentEnabled(false)`
+  only flips the sidecar record's `enabled`. Removing the agent record entirely is out of scope
+  for this section.
 - ACP-managed providers (`acp:<agentId>` with the `acp-agent` access type) are excluded from the
   custom group and from the shared provider display order used by drag reorder. A same-id provider
   with another access type is a conflict and stays visible under custom.
@@ -141,6 +146,72 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Errors from enable, disable, test and scan are announced with `role="alert"`.
 - Tests: effect-running jsdom tests cover one detection per mount, stale-response dropping,
   selection correction, the catalog-to-agent move, and a single login-status probe across rescans.
+
+## Storage and upstream compatibility
+
+The upstream app and this fork share `~/.zcode/v2/provider_config.json` (AGENTS.md "Shared
+Databases and Fork Divergence"). Verdict for the original design, which stored the agent inline as
+a personal provider with `access.type = "acp-agent"`: **unsafe**. Evidence, against the upstream
+code pinned in `fork-upstream-base.json` (3.16.1, `0a1fc56d`):
+
+- `providerAccessDataSchema` is a strict `z.discriminatedUnion("type", …)` over `api-key`,
+  `zhipu-coding-plan-api-key` and `zhipu-account`. An `acp-agent` entry fails the parse; the
+  decoder does not drop the entry, it throws for the whole file.
+- The ACP pseudo-model writes `reasoningLevel.default`, a fork-only key that upstream's strict
+  `enumOptionSpecDataSchema` also rejects.
+- Upstream `NodePersonalProviderConfigRepository.read()` catches the error and falls back to an
+  in-memory empty overlay; the file is preserved, but the upstream build shows no personal
+  providers and loses the configured `defaultModelSelection` (the headless CLI default). Its
+  `update()` has no fallback, so every provider save in the upstream build throws, and upstream
+  provisioning fails too.
+
+Test: `packages/provider-node/test/acp-upstream-compat.test.ts` decodes fork-written files with
+verbatim copies of the pinned upstream schemas (`test/fixtures/upstream-3.16.1/`).
+
+Design (fix):
+
+- Owner: `NodeForkAcpAgentStore` (`@zcode/provider-node`) persists the agents in the fork-owned
+  sidecar `fork_acp_agents.json` next to `provider_config.json` (same directory, own file lock,
+  atomic private write, 1 s polling like the personal repository). Record:
+  `{ agentId, providerName, enabled, command, args, env? }` under `{ schemaVersion: 1, agents }`.
+  An unreadable sidecar is preserved and read as empty; writes then fail until it is repaired.
+- Invariant: `provider_config.json` never contains an `acp:` provider rule, model rule or
+  `providerOrder` entry written by this feature. The upstream repository, codec and schemas stay
+  untouched.
+- Read path: the registry config source is decorated (`createDerivedAcpAgentConfigSource`,
+  `@zcode/provider`), the same pattern as the derived ChatGPT plan providers. Each sidecar record
+  becomes a personal provider rule `acp:<agentId>` with the `acp-agent` access and personal model
+  id `agentId`, plus the synthetic model rule (`buildAcpPseudoModelConfig`). The snapshot's
+  top-level `revision` gains an `#acp:<sidecar revision>` suffix; `personalRevision` stays the raw
+  file revision because personal-model CAS writes compare against it.
+- Conflict: a real `provider_config.json` rule with the same id wins and the derived one is not
+  added. If that rule has a non-ACP access, Settings shows the conflict and `saveAcpAgent` refuses.
+  If it is an inline `acp-agent` rule (legacy data), the sidecar record replaces it.
+- Migration (one-shot, idempotent, at provider runtime start, before the registry starts):
+  inline `acp-agent` rules found in `provider_config.json` are copied into the sidecar (an existing
+  sidecar record wins), then one `update()` strips those rules, their model rules and their
+  `providerOrder` entries. A crash between the two writes leaves both copies; the next start
+  repeats the strip. Migration failure is logged and never blocks startup.
+- Provisioning stays main-file only: ACP launch config is per host (command paths are host-local)
+  and is not synced to remote environments.
+- Wiring: the desktop/web host provider runtime. Process registries in CLI workers do not see ACP
+  providers yet; phase 4 (chat delegation) must wire the same decorator there.
+- `chatgpt-account` / `chatgpt-family` are not affected: they only appear in derived builtin
+  entries and account snapshots, never in `provider_config.json`.
+
+```
+ Settings UI ──saveAcpAgent / setAcpAgentEnabled──▶ ProviderSettingsService
+                                                       │ 1. validate launch rules
+                                                       │ 2. conflict check (personal repo read)
+                                                       ▼
+                                      NodeForkAcpAgentStore.update  ──▶ fork_acp_agents.json
+                                                       │ 3. emit change
+                                                       ▼
+ provider_config.json ─▶ ProviderConfigService ─▶ [ChatGPT wrapper] ─▶ ACP decorator ─▶ Registry
+   (upstream-identical)                                       (adds acp:<id> rules)     │
+                                                                                        ▼
+                                                                         4. settings view refresh
+```
 
 ## Event ordering (runtime → host)
 
@@ -171,6 +242,12 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Launch rules: CR/LF/NUL and loader env keys rejected by the runtime, the provider schema and the
   bridge; the login script contains no heredoc and a crafted command is rejected before any
   terminal opens.
+- Storage: every fork-written `provider_config.json` passes the pinned upstream schemas (inline
+  `acp-agent` and the pseudo-model's `reasoningLevel.default` are shown to fail them); the sidecar
+  store persists, preserves an invalid file and rejects duplicate ids; migration moves inline
+  providers out, is idempotent and keeps the sidecar record after a crash between its two
+  writes; save/enable/disable round-trip through the settings service with no `acp` trace in the
+  main file, an invalid launch or a taken id is refused before any write.
 - Logging: spawn, exit, handshake and cleanup failures are logged through `createServiceLogger`
   with agent id, exit code/signal and error message only (never env, args, frames or stderr).
 - Live (manual, macOS): enable both agents in Model Settings → Test green with raw frames → login

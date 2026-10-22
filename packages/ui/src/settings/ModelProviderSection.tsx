@@ -49,10 +49,8 @@ import { AcpAgentDetail } from "./model-provider-section/AcpAgentCard.js";
 import { isLocalDevelopmentRuntime } from "@/lib/devRuntime.js";
 import {
   acpProviderId,
-  buildAcpAgentAccess,
-  buildAcpDisableOverlay,
+  buildAcpAgentSaveInput,
   buildAcpNavigationGroup,
-  buildAcpPseudoModelConfig,
   withoutAcpManagedProviders,
   type AcpAgentFormValues,
   type AcpSavedAccess,
@@ -1160,11 +1158,10 @@ export function ModelProviderSection({
     [testModelConnectivity],
   );
 
-  // ACP agents become personal providers (`acp:<agentId>`) holding one
-  // synthetic model (modelId = agentId); the model config mirrors the shape
-  // the provider resolver expects (see acpAgentConfig.ts).
-  const handleAcpEnableAgent = useCallback(
-    async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
+  // ACP agents are stored in the fork-owned sidecar and surface as the derived
+  // personal provider `acp:<agentId>`; each action is one atomic sidecar write.
+  const findAcpProvider = useCallback(
+    (agent: AcpAgentSummary) => {
       const providerId = acpProviderId(agent.agentId);
       const existing = providerSettingsView?.providers.find(
         (provider) => provider.providerId === providerId,
@@ -1174,66 +1171,43 @@ export function ModelProviderSection({
           intl.formatMessage({ id: "settings.modelProvider.acp.conflict" }, { providerId }),
         );
       }
-      const access = buildAcpAgentAccess(agent, form);
-      if (!existing) {
-        await createPersonalProvider({
-          providerId,
-          providerName: `${agent.displayName} (ACP)`,
-          initialConfig: { access },
-        });
-      } else {
-        // Re-enable in place: the stable id already exists (general-switch
-        // disable or an interrupted activation), so never create it again.
-        await providerSettingsService.savePersonalProviderOverlay(
-          providerId,
-          { access },
-          { enabled: true },
-        );
-      }
-      const hasModel = existing?.models.some((model) => model.modelId === agent.agentId) ?? false;
-      if (hasModel) return;
-      try {
-        await addPersonalModel(
-          providerId,
-          agent.agentId,
-          buildAcpPseudoModelConfig(agent.agentId),
-          false,
-        );
-      } catch (error) {
-        if (!existing) {
-          // Best effort: a provider without its model is unusable; a retry
-          // reconciles an interrupted activation in place.
-          await deleteProvider(providerId).catch(() => {});
-        }
-        throw error;
-      }
+      return existing;
     },
-    [
-      providerSettingsView,
-      intl,
-      createPersonalProvider,
-      providerSettingsService,
-      addPersonalModel,
-      deleteProvider,
-    ],
+    [providerSettingsView, intl],
+  );
+
+  const handleAcpEnableAgent = useCallback(
+    async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
+      const existing = findAcpProvider(agent);
+      await providerSettingsService.saveAcpAgent(
+        buildAcpAgentSaveInput(agent, form, {
+          enabled: true,
+          providerName: existing?.providerName,
+        }),
+      );
+    },
+    [findAcpProvider, providerSettingsService],
   );
 
   const handleAcpUpdateAgent = useCallback(
     async (agent: AcpAgentSummary, form: AcpAgentFormValues) => {
-      const providerId = acpProviderId(agent.agentId);
-      const existing = providerSettingsView?.providers.find(
-        (provider) => provider.providerId === providerId,
-      );
-      if (!existing || existing.effectiveConfig.access?.type !== "acp-agent") {
+      const existing = findAcpProvider(agent);
+      if (!existing) {
         throw new Error(
-          intl.formatMessage({ id: "settings.modelProvider.acp.conflict" }, { providerId }),
+          intl.formatMessage(
+            { id: "settings.modelProvider.acp.conflict" },
+            { providerId: acpProviderId(agent.agentId) },
+          ),
         );
       }
-      await providerSettingsService.savePersonalProviderOverlay(providerId, {
-        access: buildAcpAgentAccess(agent, form),
-      });
+      await providerSettingsService.saveAcpAgent(
+        buildAcpAgentSaveInput(agent, form, {
+          enabled: existing.enabled,
+          providerName: existing.providerName,
+        }),
+      );
     },
-    [providerSettingsView, intl, providerSettingsService],
+    [findAcpProvider, intl, providerSettingsService],
   );
 
   const handleAcpDisableAgent = useCallback(
@@ -1242,13 +1216,9 @@ export function ModelProviderSection({
       const existing = providerSettingsView?.providers.find(
         (provider) => provider.providerId === providerId,
       );
-      // Switching off keeps the saved launch config: the overlay carries the access back.
-      // Removing the provider entirely is out of scope for this section.
-      const overlay = buildAcpDisableOverlay(existing?.effectiveConfig.access);
-      if (!overlay) return;
-      await providerSettingsService.savePersonalProviderOverlay(providerId, overlay, {
-        enabled: false,
-      });
+      // Only an ACP-managed provider is switched off; the sidecar keeps its launch config.
+      if (existing?.effectiveConfig.access?.type !== "acp-agent") return;
+      await providerSettingsService.setAcpAgentEnabled({ agentId: agent.agentId, enabled: false });
     },
     [providerSettingsView, providerSettingsService],
   );

@@ -86,3 +86,28 @@ export interface AcpAgentLoginInput {
   /** Configured executable override (the enabled provider's saved command). */
   readonly command?: string;
 }
+
+/**
+ * Enable or edit one agent. The record lives in the fork-owned sidecar store and is exposed as
+ * the derived personal provider `acp:<agentId>` (specs/acp-agent-runtime.md "Storage and
+ * upstream compatibility").
+ */
+export interface AcpAgentSaveInput {
+  readonly agentId: string;
+  readonly providerName: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly enabled: boolean;
+}
+
+export interface AcpAgentEnabledInput {
+  readonly agentId: string;
+  readonly enabled: boolean;
+}
+
+/** Host-side writer of the ACP agent records; absent when the host has no sidecar store. */
+export interface ProviderSettingsAcpAgentWriter {
+  save(input: AcpAgentSaveInput): Promise<void>;
+  setEnabled(input: AcpAgentEnabledInput): Promise<void>;
+}

@@ -1,12 +1,15 @@
 import {
   NodeModelSelectionConfigRepository,
   createNodeModelSelectionFacade,
+  migrateInlineAcpProviders,
 } from "@zcode/provider-node";
 import {
   ProviderRegistryService,
   ProviderSettingsFacade,
+  createDerivedAcpAgentConfigSource,
   createFailClosedAccountProviderConfigSnapshot,
   type AccountProviderConfigSnapshot,
+  type ForkAcpAgentStore,
   type ProviderConfigSnapshot,
   type ProviderSettingsMutationTarget,
   type ProviderSource,
@@ -25,6 +28,7 @@ import {
   type ProviderSettingsConnectivityTester,
 } from "./providerFacadeServices.js";
 import type { ProviderSettingsAcpAgentsBridge } from "./acpAgentsContract.js";
+import { createAcpAgentWriter } from "./acpAgentWriter.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 
 const log = createServiceLogger("provider-runtime");
@@ -36,6 +40,7 @@ export interface ProviderRuntimeOptions extends ProviderConfigRuntimeOptions {
   ) => ProviderSource<ProviderConfigSnapshot>;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
   readonly acpAgents?: ProviderSettingsAcpAgentsBridge;
+  readonly acpAgentStore?: ProviderRuntimeDependencies["acpAgentStore"];
 }
 
 export interface ProviderRuntimeDependencies {
@@ -51,6 +56,12 @@ export interface ProviderRuntimeDependencies {
   readonly disposeAccountSource?: () => void;
   readonly testConnectivity?: ProviderSettingsConnectivityTester;
   readonly acpAgents?: ProviderSettingsAcpAgentsBridge;
+  /**
+   * Fork-owned sidecar of ACP agent records. When present, its records are derived into the
+   * registry config source as `acp:<agentId>` personal providers, legacy inline records are
+   * migrated out of `provider_config.json` at start, and Settings can save agents.
+   */
+  readonly acpAgentStore?: ForkAcpAgentStore & { dispose?(): void };
   readonly modelSelectionConfiguredDefaultSource?: ModelSelectionConfiguredDefaultSource;
   readonly disposeModelSelectionConfiguredDefaultSource?: () => void;
 }
@@ -88,6 +99,7 @@ export class ProviderRuntime {
   readonly #disposeBuiltinRecovery: () => void;
   readonly #modelSelectionRuntime: IModelSelectionService & { dispose(): void };
   readonly #disposeModelSelectionConfiguredDefaultSource?: () => void;
+  readonly #acpAgentStore?: ForkAcpAgentStore & { dispose?(): void };
   #startPromise: ReturnType<ProviderRegistryService["start"]> | null = null;
   #disposed = false;
 
@@ -97,9 +109,13 @@ export class ProviderRuntime {
     this.#disposeModelSelectionConfiguredDefaultSource =
       dependencies.disposeModelSelectionConfiguredDefaultSource;
     this.configService = this.#configRuntime.configService;
-    this.registryConfigSource = dependencies.wrapConfigSource
+    this.#acpAgentStore = dependencies.acpAgentStore;
+    const wrappedConfigSource = dependencies.wrapConfigSource
       ? dependencies.wrapConfigSource(this.configService)
       : this.configService;
+    this.registryConfigSource = this.#acpAgentStore
+      ? createDerivedAcpAgentConfigSource(wrappedConfigSource, this.#acpAgentStore)
+      : wrappedConfigSource;
     const accountSource: RefreshableProviderSource<AccountProviderConfigSnapshot> =
       dependencies.accountSource ?? new EmptyAccountProviderConfigSource(this.registryConfigSource);
     this.#disposeBuiltinRecovery = this.#configRuntime.onDidCheckZCodeBuiltin(async () => {
@@ -127,6 +143,9 @@ export class ProviderRuntime {
       ensureReady,
       dependencies.testConnectivity,
       dependencies.acpAgents,
+      this.#acpAgentStore
+        ? createAcpAgentWriter(this.#acpAgentStore, this.#configRuntime.personalRepository)
+        : undefined,
     );
     this.#modelSelectionRuntime = createModelSelectionService(
       createNodeModelSelectionFacade(this.registryService),
@@ -139,7 +158,10 @@ export class ProviderRuntime {
   start(): Promise<void> {
     if (this.#disposed) throw new Error("ProviderRuntime 已 dispose");
     if (this.#startPromise) return this.#startPromise;
-    const startPromise = this.#configRuntime.start().then(() => this.registryService.start());
+    const startPromise = this.#configRuntime
+      .start()
+      .then(() => this.#migrateInlineAcpProviders())
+      .then(() => this.registryService.start());
     this.#startPromise = startPromise;
     void startPromise.catch(() => {
       if (this.#startPromise === startPromise) this.#startPromise = null;
@@ -147,9 +169,28 @@ export class ProviderRuntime {
     return startPromise;
   }
 
+  async #migrateInlineAcpProviders(): Promise<void> {
+    if (!this.#acpAgentStore) return;
+    try {
+      const result = await migrateInlineAcpProviders(
+        this.#configRuntime.personalRepository,
+        this.#acpAgentStore,
+      );
+      if (result.stripped) {
+        log.info(undefined, "moved inline ACP providers to the fork sidecar", {
+          copied: result.copied.length,
+        });
+      }
+    } catch (error) {
+      // Migration is retried on the next start; it must never block the provider runtime.
+      log.warn(undefined, "inline ACP provider migration failed", { error });
+    }
+  }
+
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#acpAgentStore?.dispose?.();
     this.#disposeBuiltinRecovery();
     this.#modelSelectionRuntime.dispose();
     this.registryService.dispose();
@@ -221,8 +262,14 @@ function createSettingsMutationTarget(
 }
 
 export function createProviderRuntime(options: ProviderRuntimeOptions): ProviderRuntime {
-  const { accountSource, testConnectivity, wrapConfigSource, acpAgents, ...configRuntimeOptions } =
-    options;
+  const {
+    accountSource,
+    testConnectivity,
+    wrapConfigSource,
+    acpAgents,
+    acpAgentStore,
+    ...configRuntimeOptions
+  } = options;
   const configRuntime = createProviderConfigRuntime(configRuntimeOptions);
   const modelSelectionConfiguredDefaultSource = new NodeModelSelectionConfigRepository({
     personalRepository: configRuntime.personalRepository,
@@ -233,6 +280,7 @@ export function createProviderRuntime(options: ProviderRuntimeOptions): Provider
     testConnectivity,
     ...(wrapConfigSource ? { wrapConfigSource } : {}),
     ...(acpAgents ? { acpAgents } : {}),
+    ...(acpAgentStore ? { acpAgentStore } : {}),
     modelSelectionConfiguredDefaultSource,
     disposeModelSelectionConfiguredDefaultSource: () =>
       modelSelectionConfiguredDefaultSource.dispose(),

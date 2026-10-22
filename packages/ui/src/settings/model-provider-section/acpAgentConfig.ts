@@ -1,10 +1,8 @@
 /**
- * Pure helpers for the ACP agents section of Model Settings: form ⇄ config
- * translation, the synthetic model configuration of an ACP provider, and the
- * navigation group that lists detected agents.
+ * Pure helpers for the ACP agents section of Model Settings: form ⇄ save
+ * request translation and the navigation group that lists detected agents.
  */
-import type { AcpAgentSummary } from "@zcode/services";
-import type { ModelConfigObject, ProviderConfigObject } from "@zcode/provider";
+import type { AcpAgentSaveInput, AcpAgentSummary } from "@zcode/services";
 import type { ModelProviderNavGroup } from "./constants.js";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
 
@@ -146,63 +144,25 @@ export function formatAcpEnvLines(env: Readonly<Record<string, string>>): string
     .join("\n");
 }
 
-export type AcpAgentAccessConfigObject = NonNullable<ProviderConfigObject["access"]>;
-
-/** Builds the access config saved on the `acp:<agentId>` personal provider. */
-export function buildAcpAgentAccess(
+/**
+ * Save request for one agent. The record goes to the fork-owned sidecar store through
+ * `saveAcpAgent`, never into the shared `provider_config.json` (specs/acp-agent-runtime.md
+ * "Storage and upstream compatibility").
+ */
+export function buildAcpAgentSaveInput(
   agent: AcpAgentSummary,
   form: AcpAgentFormValues,
-): AcpAgentAccessConfigObject {
+  options: { readonly enabled: boolean; readonly providerName?: string | null },
+): AcpAgentSaveInput {
   const command = form.command.trim().length > 0 ? form.command.trim() : (agent.commandPath ?? "");
-  // Always send the env map, including an empty one: overlay merging treats a
-  // missing field as "unchanged", so clearing every row must be explicit.
   return {
-    type: "acp-agent",
     agentId: agent.agentId,
+    providerName: options.providerName?.trim() || `${agent.displayName} (ACP)`,
     command,
     args: [...form.args],
+    // The record is replaced as a whole, so an empty map clears every env row.
     env: Object.fromEntries(Object.entries(form.env)),
-  };
-}
-
-/**
- * Context windows: opencode reports 262144 via `usage_update`; cursor uses a
- * placeholder until real numbers are observed.
- */
-const ACP_CONTEXT_WINDOW_BY_AGENT: Record<string, number> = {
-  opencode: 262144,
-  cursor: 200000,
-};
-const DEFAULT_ACP_CONTEXT_WINDOW = 200000;
-
-/**
- * Complete synthetic model config for the ACP pseudo-model, mirroring the
- * shape the provider resolver expects (every system leaf present, a singular
- * "auto" reasoning level and a no-op option map).
- */
-export function buildAcpPseudoModelConfig(agentId: string): ModelConfigObject {
-  return {
-    enabled: true,
-    properties: {
-      requiresMfjsToolSchema: false,
-      contextWindow: ACP_CONTEXT_WINDOW_BY_AGENT[agentId] ?? DEFAULT_ACP_CONTEXT_WINDOW,
-      inputFormat: {
-        supportsText: true,
-        supportsImage: false,
-        supportsVideo: false,
-        supportsAudio: false,
-        supportsPdf: false,
-      },
-      outputFormat: { supportsText: true },
-      supportsToolCall: true,
-      supportsJsonSchemaOutput: false,
-      supportsNativeWebSearch: false,
-      supportsMidConversationSystem: false,
-    },
-    optionSpecs: {
-      reasoningLevel: { values: ["auto"], default: "auto", map: "{}" },
-      maxOutputTokens: { max: 32000, map: "{}" },
-    },
+    enabled: options.enabled,
   };
 }
 
@@ -356,16 +316,4 @@ export function withoutAcpManagedProviders(
   providers: readonly ProviderSettingsFormProvider[],
 ): ProviderSettingsFormProvider[] {
   return providers.filter((provider) => !isAcpManagedProvider(provider));
-}
-
-/**
- * Overlay that switches an ACP provider off. It carries the saved access back
- * in the same write: the overlay save replaces the config it is given, so a
- * bare `enabled: false` would drop the command, args and env. Returns null for
- * a provider this section does not own.
- */
-export function buildAcpDisableOverlay<A extends { readonly type: string }>(
-  access: A | null | undefined,
-): { readonly access: A } | null {
-  return access?.type === "acp-agent" ? { access } : null;
 }

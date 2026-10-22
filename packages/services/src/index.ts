@@ -11,6 +11,8 @@ export {
 } from "./model-provider/providerFacadeServices.js";
 export type {
   AcpAgentDetectionResult,
+  AcpAgentEnabledInput,
+  AcpAgentSaveInput,
   AcpAgentLoginResult,
   AcpAgentStatusReport,
   AcpAgentSummary,

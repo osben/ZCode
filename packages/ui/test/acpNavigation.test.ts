@@ -8,7 +8,6 @@ import {
   ACP_DETECT_NODE_KEY,
   ACP_LOADING_NODE_KEY,
   acpProviderId,
-  buildAcpDisableOverlay,
   buildAcpNavigationGroup,
   isAcpManagedProvider,
   resolveAcpAgentStatusKind,
@@ -297,12 +296,5 @@ describe("ACP status, ownership and disable helpers", () => {
       "custom-a",
       "custom-b",
     ]);
-  });
-
-  it("builds a disable overlay that carries the saved access, and none for a foreign provider", () => {
-    const access = { type: "acp-agent", command: "/bin/opencode", args: ["acp"], env: {} };
-    expect(buildAcpDisableOverlay(access)).toEqual({ access });
-    expect(buildAcpDisableOverlay({ type: "api-key" })).toBeNull();
-    expect(buildAcpDisableOverlay(undefined)).toBeNull();
   });
 });
