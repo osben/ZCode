@@ -302,12 +302,25 @@ export interface ConversationComposerSendOptions {
   requestedDelivery?: "startNow" | "queue" | "guide";
   /** 提交命令创建后由 Composer 订阅权威 projection，覆盖 ACK 丢失后的收口。 */
   onCommandCreated?: (commandId: string) => void;
+  /**
+   * The command id an earlier attempt of this reserved first submission already created. Only with it
+   * may the pane settle an admitted activation without resending (ConversationComposerSendResult).
+   */
+  originalCommandId?: string;
   sharedContextRefs?: Array<{ kind: "shared_context_import"; context_id: string }>;
   /** 插件 UI 代发：随 sendText 持久化，用户消息卡片显示"来自插件 X"。 */
   source?: import("@zcode/shared/zcode-protocol-v4").ConversationInputSource;
 }
 
-export type ConversationComposerSendResult = "sent" | "blocked" | "confirmationRequired";
+/**
+ * "alreadyAdmitted": a prepared submission whose frozen input the Host had already admitted under its
+ * original command id; the pane sent no new sendText. The composer settles it as sending under that id.
+ */
+export type ConversationComposerSendResult =
+  | "sent"
+  | "blocked"
+  | "confirmationRequired"
+  | "alreadyAdmitted";
 function getComposerAttachmentTypeLabel(filename: string, mimeType: string): string {
   const leaf = filename.split(/[\\/]/u).at(-1) ?? filename;
   const dotIndex = leaf.lastIndexOf(".");
@@ -2004,7 +2017,7 @@ function ConversationComposerImpl({
             ? {
                 firstSubmission: {
                   ...frozenFirstSubmission,
-                  commandId: submittedCommandId ?? undefined,
+                  commandId: submittedCommandId ?? frozenFirstSubmission.commandId,
                   status:
                     submittedCommandId && !submittedCommandResolved
                       ? ("unknown" as const)
@@ -2342,6 +2355,9 @@ function ConversationComposerImpl({
           ownerKey: retryFirstSubmission?.ownerKey ?? draftScopeId,
           generation: draftGeneration,
           status: "preparing",
+          // Freezing overwrites the stored record: keep the id of an earlier attempt's sendText so a
+          // failure before this attempt creates its own command still leaves it reconcilable.
+          ...(retryFirstSubmission?.commandId ? { commandId: retryFirstSubmission.commandId } : {}),
           ...(retryFirstSubmission?.incognito || incognitoSubmission?.profile
             ? { incognito: retryFirstSubmission?.incognito ?? incognitoSubmission?.profile }
             : {}),
@@ -2658,6 +2674,9 @@ function ConversationComposerImpl({
           const sendResult = await onSendText(promptText, {
             ...(frozenFirstSubmission ? { firstSubmissionId: submissionId } : {}),
             ...(reservedSubmissionSessionId ? { reservedSubmissionSessionId } : {}),
+            ...(retryFirstSubmission?.commandId
+              ? { originalCommandId: retryFirstSubmission.commandId }
+              : {}),
             submittedDraftText: submittedDraft.text,
             submission,
             onCommandCreated: subscribeToCommandResolution,
@@ -2740,6 +2759,24 @@ function ConversationComposerImpl({
             });
             sendAction.noop();
             return;
+          }
+          if (sendResult === "alreadyAdmitted" && frozenFirstSubmission) {
+            // The Host already admitted this submission's frozen input under its original command id
+            // (no new sendText was sent). The copy stays outstanding under that id until the real row
+            // projects; the record keeps the id it was retried with, never a new one (FSL rule 4).
+            try {
+              updateV4FirstSubmission(workspacePath, workspaceIdentity, submissionId, {
+                status: "sending",
+                ...(retryFirstSubmission?.commandId
+                  ? { commandId: retryFirstSubmission.commandId }
+                  : {}),
+              });
+            } catch (error) {
+              logger.warn(
+                "[v4-composer] could not persist the admitted first-submission outcome",
+                error,
+              );
+            }
           }
           if (reservedSubmissionSessionId) {
             // Fallback for a bind that could not run at the reservation moment (draft-storage

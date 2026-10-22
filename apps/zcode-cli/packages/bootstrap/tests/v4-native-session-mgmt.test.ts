@@ -438,6 +438,7 @@ describe("v4 原生 createSession", () => {
     expect(result).toEqual({
       type: "createSession",
       sessionId: "s1",
+      preparedActivation: "materialized",
       input: { delivery: "startNow", inputId: "cmd-1" },
     });
     expect(withPreparedWorktreeActivation).toHaveBeenCalledWith("s1", expect.any(Function));
@@ -480,7 +481,11 @@ describe("v4 原生 createSession", () => {
         "s1",
       ),
     );
-    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      preparedActivation: "already-active",
+    });
     expect(getSessionModelSelection).not.toHaveBeenCalled();
     expect(app.sendInput).not.toHaveBeenCalled();
     expect(completePreparedWorktreeActivation).not.toHaveBeenCalled();
@@ -515,7 +520,11 @@ describe("v4 原生 createSession", () => {
         "s1",
       ),
     );
-    expect(result).toEqual({ type: "createSession", sessionId: "s1" });
+    expect(result).toEqual({
+      type: "createSession",
+      sessionId: "s1",
+      preparedActivation: "input-admitted",
+    });
     expect(app.sendInput).not.toHaveBeenCalled();
     expect(completePreparedWorktreeActivation).toHaveBeenCalledWith("s1");
   });
@@ -548,6 +557,7 @@ describe("v4 原生 createSession", () => {
     expect(result).toEqual({
       type: "createSession",
       sessionId: "s1",
+      preparedActivation: "input-pending",
       input: { delivery: "startNow", inputId: "cmd-1" },
     });
     expect(app.sendInput).toHaveBeenCalledTimes(1);

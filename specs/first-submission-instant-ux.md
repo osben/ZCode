@@ -199,11 +199,27 @@ without a receipt), and the bridge's `executeCommand` hook marks the preparation
 settled (`failed`, or `preparing` after restart) the barrier names it as needing Retry
 or Remove, never as "still being delivered".
 
-**Known limitation (CLI follow-up, not fixed here).** The barrier lives in this
-composer only: mobile remote control and other windows can still send into a
-preparing session. The CLI should flip the preparation marker only for the frozen
-submission's own `sendText`, and return `preparedActivation` so the UI skips the
-frozen `sendText` on `input-admitted`.
+**Implemented: prepared activation outcome.** The createSession ACK of a prepared
+submission carries `preparedActivation` (`materialized`, `input-pending`,
+`input-admitted`, `already-active`; closed enum in `commandResultSchema`). The skip is
+taken only when all three hold: the send is a reserved plain submission
+(`reservedSubmissionSessionId`, not a worktree activation); the ACK is `input-admitted`
+or `already-active`; and the record still holds the original sendText command id
+(`originalCommandId`, carried through every freeze and restore). Then the frozen
+`sendText` is not dispatched, the send resolves to `alreadyAdmitted`, and the composer
+sets the record to `sending` under that original id (no new command id). Worktree
+activations complete before any input, so their `already-active` never skips. Without an
+original id, or with `materialized` / `input-pending` / an absent value, the frozen
+`sendText` path is unchanged.
+
+**Known limitation (follow-up, not fixed here).** The ordering barrier above still lives
+in this composer only: mobile remote control and other windows can send into a preparing
+session. The CLI bridge's `executeCommand` hook marks the preparation `active` on any
+`sendText` to it, so `already-active` can come from another window's input. The skip's
+original-id condition keeps that case reconcilable by id (the record is queried, never
+resent under a new id) instead of silently dropping the frozen message. The CLI should
+flip the marker only for the frozen submission's own `sendText`, and admission should be
+identity-checked, not inferred from any admitted row (`sessionHasAdmittedInput`).
 
 ## Status under the message (decided 2026-10-21)
 
@@ -328,8 +344,9 @@ admission — that marker flips when its `sendText` executes. A worktree record 
 that marker (its `worktreePreparation` completes at activation, before any input), so it
 always goes to the command query. Residual risk, not closed here: after a CLI restart the
 command ledger may answer `unknown` for an input that was admitted but not yet projected;
-Retry then reactivates (`already-active`/`input-admitted` is not surfaced to the UI) and
-sends again. Surfacing that activation receipt is a CLI/protocol follow-up.
+Retry then reactivates. When the record still holds the original sendText command id, the
+admitted receipt is surfaced (`preparedActivation`, see Implemented above) and the input is
+not resent; without that id the send repeats. Closing the id-less case is a CLI follow-up.
 
 ```mermaid
 sequenceDiagram

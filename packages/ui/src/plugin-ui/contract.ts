@@ -143,7 +143,7 @@ export interface PluginUiSessionCommandPort {
   sendText(
     prompt: string,
     options: { source: ConversationInputSource; attachments?: AttachmentRef[] },
-  ): Promise<"sent" | "blocked" | "confirmationRequired" | undefined>;
+  ): Promise<"sent" | "blocked" | "confirmationRequired" | "alreadyAdmitted" | undefined>;
   /** Inline image → session attachment reference (goes through v4 attachmentPut, same path as composer paste-screenshot). */
   uploadAttachment(input: {
     fileName: string;

@@ -4147,6 +4147,18 @@ export function SessionPane({
             return;
           }
         }
+        // A reserved plain submission whose sendText was already created under its original command id:
+        // input-admitted / already-active then mean that command reached Core, so resending it under a new
+        // command id would admit it twice. The composer settles it under that id (lifecycle rule 4). Worktree
+        // activations never qualify: their activation completes before any input is sent.
+        if (
+          reservedSubmissionSessionId !== undefined &&
+          options?.originalCommandId !== undefined &&
+          (createAck.result.preparedActivation === "input-admitted" ||
+            createAck.result.preparedActivation === "already-active")
+        ) {
+          return "alreadyAdmitted" as const;
+        }
         // Incognito has no prewarm upload target; worktree refs must belong to the execution session.
         const needsAttachmentUpload =
           deferredIncognitoAttachments || Boolean(executionWorktree && readyAttachments.length > 0);
@@ -4413,7 +4425,7 @@ export function SessionPane({
         if (shouldFocusLatest) {
           focusTimelineToLatest();
         }
-        return "sent";
+        return sendResult === "alreadyAdmitted" ? "alreadyAdmitted" : "sent";
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const incognitoMessageId = incognitoUnsupportedMessageId(detail);

@@ -588,6 +588,45 @@ describe("zcode-protocol-v4 command", () => {
     ).toEqual({ type: "createSelectionSideSession", sessionId: "child-1" });
   });
 
+  it("carries createSession preparedActivation on the ACK result as a closed enum", () => {
+    for (const preparedActivation of [
+      "materialized",
+      "input-pending",
+      "input-admitted",
+      "already-active",
+    ] as const) {
+      const ack = commandAckSchema.parse({
+        commandId: "cmd-prepared-activation",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1", preparedActivation },
+      });
+      expect(ack.result).toEqual({
+        type: "createSession",
+        sessionId: "prepared-1",
+        preparedActivation,
+      });
+    }
+    // Absent from older Core builds: still a valid ACK result.
+    expect(
+      commandAckSchema.parse({
+        commandId: "cmd-prepared-absent",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1" },
+      }).result,
+    ).toEqual({ type: "createSession", sessionId: "prepared-1" });
+    // An unknown outcome is rejected, not silently stripped, so the UI never reads a guess.
+    expect(
+      commandAckSchema.safeParse({
+        commandId: "cmd-prepared-unknown",
+        status: "accepted",
+        revisionAtDecision: 3,
+        result: { type: "createSession", sessionId: "prepared-1", preparedActivation: "resent" },
+      }).success,
+    ).toBe(false);
+  });
+
   it("keeps omitted createSession.config.mode absent so workspace default mode can win", () => {
     const result = parseCommandEnvelope({
       commandId: "cmd-create-config-no-mode",

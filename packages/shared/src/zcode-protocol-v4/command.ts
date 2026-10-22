@@ -368,6 +368,13 @@ export const commandResultSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.enum(["createSession", "createSelectionSideSession", "forkAssistant"]),
     sessionId: z.string(),
+    // Prepared-worktree activation outcome (createSession with preparedSessionId only). Closed
+    // enum: an unknown value fails the ACK parse instead of being stripped into a guess.
+    //  - materialized / input-pending: the frozen input is not admitted yet; the sender dispatches it.
+    //  - input-admitted / already-active: the frozen input is durably admitted; the sender must not resend it.
+    preparedActivation: z
+      .enum(["materialized", "input-pending", "input-admitted", "already-active"])
+      .optional(),
     input: z
       .object({
         delivery: z.enum(["startNow", "queue", "guide"]),
