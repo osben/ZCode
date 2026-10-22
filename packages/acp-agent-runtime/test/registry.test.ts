@@ -139,36 +139,40 @@ describe("detectAcpAgents", () => {
     );
   });
 
-  it("isolates the cache between different detection inputs", () => {
+  it("isolates the cache between different detection inputs", async () => {
     const dirA = makeBinDir();
     writeFakeBinary(dirA, "opencode", "#!/bin/sh\necho 'from-a'\n");
     const dirB = makeBinDir();
 
-    const a = detectAcpAgents({ env: { PATH: dirA }, cacheTtlMs: 60_000 });
+    const a = await detectAcpAgents({ env: { PATH: dirA }, cacheTtlMs: 60_000 });
     expect(a.find((result) => result.agentId === "opencode")?.installed).toBe(true);
     // The cache is keyed by the effective inputs: another environment must not
     // receive this entry within the TTL window.
-    const b = detectAcpAgents({ env: { PATH: dirB }, cacheTtlMs: 60_000 });
+    const b = await detectAcpAgents({ env: { PATH: dirB }, cacheTtlMs: 60_000 });
     expect(b.find((result) => result.agentId === "opencode")?.installed).toBe(false);
   });
 
-  it("does not share cached versions between different probe runners", () => {
+  it("does not share cached versions between different probe runners", async () => {
     const dir = makeBinDir();
     writeFakeBinary(dir, "opencode", "#!/bin/sh\necho 'unused'\n");
     const shared = () => ({ env: { PATH: dir }, cacheTtlMs: 60_000 });
 
-    const a = detectAcpAgents({
-      ...shared(),
-      runProbe: () => ({ status: 0, stdout: "opencode from-a\n", stderr: "" }),
-    }).find((result) => result.agentId === "opencode");
+    const a = (
+      await detectAcpAgents({
+        ...shared(),
+        runProbe: () => ({ status: 0, stdout: "opencode from-a\n", stderr: "" }),
+      })
+    ).find((result) => result.agentId === "opencode");
     expect(a?.version).toBe("opencode from-a");
 
     // The cache is keyed by the probe runner's identity: another runner with
     // the same PATH must not reuse the first runner's version within the TTL.
-    const b = detectAcpAgents({
-      ...shared(),
-      runProbe: () => ({ status: 0, stdout: "opencode from-b\n", stderr: "" }),
-    }).find((result) => result.agentId === "opencode");
+    const b = (
+      await detectAcpAgents({
+        ...shared(),
+        runProbe: () => ({ status: 0, stdout: "opencode from-b\n", stderr: "" }),
+      })
+    ).find((result) => result.agentId === "opencode");
     expect(b?.version).toBe("opencode from-b");
   });
 
@@ -182,6 +186,56 @@ describe("detectAcpAgents", () => {
       "cursor-agent.exe",
     ]);
     expect(buildBinaryCandidateNames("opencode", ".BAT;.CMD", "win32")).toEqual([]);
+  });
+
+  it("runs the default version probe with the scrubbed child environment", async () => {
+    const dir = makeBinDir();
+    writeFakeBinary(
+      dir,
+      "opencode",
+      '#!/bin/sh\necho "opencode token=${ACP_PROBE_TOKEN:-absent} keep=${ACP_PROBE_KEEP:-absent}"\n',
+    );
+    const opencode = (
+      await detectAcpAgents({
+        env: { PATH: dir, ACP_PROBE_TOKEN: "leaked", ACP_PROBE_KEEP: "yes" },
+        cacheTtlMs: 0,
+      })
+    ).find((result) => result.agentId === "opencode");
+    expect(opencode?.version).toBe("opencode token=absent keep=yes");
+  });
+
+  it("shares one in-flight detection between concurrent callers", async () => {
+    const dir = makeBinDir();
+    writeFakeBinary(dir, "opencode", "#!/bin/sh\necho 'unused'\n");
+    let probes = 0;
+    const runProbe = async () => {
+      probes += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { status: 0, stdout: "opencode v1\n", stderr: "" };
+    };
+    const options = { env: { PATH: dir }, cacheTtlMs: 0, runProbe };
+    const [first, second] = await Promise.all([detectAcpAgents(options), detectAcpAgents(options)]);
+    expect(first).toBe(second);
+    expect(probes).toBe(1);
+  });
+
+  it("never caches a run that a refresh superseded", async () => {
+    const dir = makeBinDir();
+    writeFakeBinary(dir, "opencode", "#!/bin/sh\necho 'unused'\n");
+    let calls = 0;
+    const runProbe = async () => {
+      calls += 1;
+      const current = calls === 1 ? "stale" : "fresh";
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { status: 0, stdout: `opencode ${current}\n`, stderr: "" };
+    };
+    const options = { env: { PATH: dir }, cacheTtlMs: 60_000, runProbe };
+    const stale = detectAcpAgents(options);
+    refreshAcpAgentCache();
+    expect((await stale).find((r) => r.agentId === "opencode")?.version).toBe("opencode stale");
+    expect((await detectAcpAgents(options)).find((r) => r.agentId === "opencode")?.version).toBe(
+      "opencode fresh",
+    );
   });
 
   it("uses the injected probe runner with the whitelisted arguments", async () => {

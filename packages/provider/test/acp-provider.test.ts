@@ -83,6 +83,26 @@ describe("acp-agent access", () => {
     ).toThrowError();
   });
 
+  it("enforces the shared launch rules in the complete shape", () => {
+    const issuesFor = (input: ConstructorParameters<typeof AcpAgentAccessConfig>[0]) =>
+      new AcpAgentAccessConfig({
+        agentId: "opencode",
+        command: "opencode",
+        args: ["acp"],
+        ...input,
+      })
+        .validateComplete(["access"])
+        .map((issue) => issue.path.join("."));
+    expect(issuesFor({ command: "opencode\nZCODE_ACP_LOGIN_BANNER\nid" })).toContain(
+      "access.command",
+    );
+    expect(issuesFor({ args: ["acp", "x\r\ny"] })).toContain("access.args");
+    expect(issuesFor({ args: Array.from({ length: 33 }, () => "a") })).toContain("access.args");
+    expect(issuesFor({ env: { LD_PRELOAD: "/tmp/x.so" } })).toContain("access.env");
+    expect(issuesFor({ env: { NODE_OPTIONS: "--require /tmp/x.js" } })).toContain("access.env");
+    expect(issuesFor({ env: { OPENCODE_CONFIG: "/tmp/cfg" } })).toEqual([]);
+  });
+
   it("overlays same-type configs field-wise", () => {
     const base = new AcpAgentAccessConfig({
       agentId: "opencode",
@@ -183,6 +203,22 @@ describe("acp provider resolution", () => {
     expect(provider?.providerIssues.some((issue) => issue.path.join(".").includes("command"))).toBe(
       true,
     );
+    expect(provider?.models[0]?.executable).toBe(false);
+  });
+
+  it("keeps the file loadable but reports a launch-rule violation as a provider issue", () => {
+    // The stored shape stays structural: one bad entry must not fail the whole personal file.
+    const resolution = buildResolution({
+      ...OPENCODE_ACCESS,
+      command: "opencode\nZCODE_ACP_LOGIN_BANNER\nid",
+      env: { DYLD_INSERT_LIBRARIES: "/tmp/x.dylib" },
+    });
+    const provider = resolution.resolvedProviders.find(
+      (item) => item.providerId === "acp:opencode",
+    );
+    const paths = provider?.providerIssues.map((issue) => issue.path.join(".")) ?? [];
+    expect(paths.some((path) => path.endsWith("access.command"))).toBe(true);
+    expect(paths.some((path) => path.endsWith("access.env"))).toBe(true);
     expect(provider?.models[0]?.executable).toBe(false);
   });
 
