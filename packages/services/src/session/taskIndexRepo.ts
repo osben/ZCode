@@ -2547,16 +2547,17 @@ export class TaskIndexRepo {
 
   /**
    * Persist incognito markers into meta_json (specs/incognito-session.md "Sidebar marker durability"). The profile
-   * is frozen per session, so a stored `true` never goes stale: the write only ever adds the marker. Returns the ids
-   * whose row carries the marker after the call. Absent, deleted and unreadable rows are not confirmed; pinned and
-   * archived rows are included, because this method has no membership filter.
+   * is frozen per session, so a stored `true` never goes stale: the write only ever adds the marker. `confirmed` holds
+   * the ids whose row carries the marker after the call; `written` holds only the ids this call changed, so callers can
+   * tell a real write (which must notify list readers) from a repeat confirmation. Absent, deleted and unreadable rows
+   * are in neither; pinned and archived rows are included, because this method has no membership filter.
    */
   async persistIncognitoMarkers(params: {
     workspacePath: string;
     workspaceIdentity?: string;
     taskIds: ReadonlyArray<string>;
-  }): Promise<string[]> {
-    if (params.taskIds.length === 0) return [];
+  }): Promise<{ confirmed: string[]; written: string[] }> {
+    if (params.taskIds.length === 0) return { confirmed: [], written: [] };
     await this.ensureReady();
     const scope = {
       workspacePath: params.workspacePath,
@@ -2568,7 +2569,7 @@ export class TaskIndexRepo {
       params.taskIds.map((taskId) => this.writeChains.get(this.writeKey({ ...scope, taskId }))),
     );
     // The convergence below is synchronous on the single node:sqlite connection, so one transaction covers every id.
-    const confirmed = this.convergeTaskMetas(
+    const { confirmed, written } = this.convergeTaskMetas(
       scope,
       params.taskIds.map((taskId) => ({
         taskId,
@@ -2576,7 +2577,7 @@ export class TaskIndexRepo {
         patch: (meta) => ({ ...meta, incognito: true }),
       })),
     );
-    return Array.from(confirmed);
+    return { confirmed: Array.from(confirmed), written: Array.from(written) };
   }
 
   /**
@@ -2586,14 +2587,16 @@ export class TaskIndexRepo {
    * rows are skipped, so they are not confirmed and the next publish retries them.
    * A read-only pass runs first so repeated publishes never take the write lock. The write pass re-reads after
    * BEGIN IMMEDIATE: enqueueWrite only serializes writers inside this process, and another Host sharing the database
-   * can update the row between the read and the UPDATE. Returns the task ids whose row carries the fact afterwards.
+   * can update the row between the read and the UPDATE. `confirmed` holds the task ids whose row carries the fact afterwards;
+   * `written` is the subset this call's UPDATE changed (a row another Host already converged is confirmed but not written).
    */
   private convergeTaskMetas(
     scope: { workspacePath: string; workspaceIdentity?: string },
     updates: ReadonlyArray<TaskMetaConvergence>,
-  ): Set<string> {
+  ): { confirmed: Set<string>; written: Set<string> } {
     const database = this.getDatabase();
     const confirmed = new Set<string>();
+    const written = new Set<string>();
     const readMeta = (taskId: string): Record<string, unknown> | null => {
       const row = this.getTaskRow({ ...scope, taskId });
       // Cause: a placeholder is not an admitted task yet. A fact written into its '{}' meta_json breaks the placeholder
@@ -2619,7 +2622,7 @@ export class TaskIndexRepo {
       }
       return true;
     });
-    if (stale.length === 0) return confirmed;
+    if (stale.length === 0) return { confirmed, written };
 
     const write = database.prepare(
       "UPDATE tasks SET meta_json = ? WHERE workspace_key = ? AND task_id = ?",
@@ -2632,6 +2635,7 @@ export class TaskIndexRepo {
         if (!meta) continue;
         if (!update.converged(meta)) {
           write.run(JSON.stringify(update.patch(meta)), key, update.taskId);
+          written.add(update.taskId);
         }
         confirmed.add(update.taskId);
       }
@@ -2640,7 +2644,7 @@ export class TaskIndexRepo {
       database.exec("ROLLBACK");
       throw error;
     }
-    return confirmed;
+    return { confirmed, written };
   }
 
   /**

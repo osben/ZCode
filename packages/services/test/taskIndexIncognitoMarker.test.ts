@@ -207,7 +207,8 @@ describe("sidebar incognito marker durability (specs/incognito-session.md)", () 
     } satisfies ZCodeTaskMeta;
     await repo.syncTaskMeta({ meta: base });
     expect(
-      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
+      (await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }))
+        .confirmed,
     ).toEqual([TASK_ID]);
     await repo.syncTaskMeta({ meta: { ...base, updatedAt: 30 } });
     const [after] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false });
@@ -228,10 +229,10 @@ describe("sidebar incognito marker durability (specs/incognito-session.md)", () 
         status: "completed",
       } satisfies ZCodeTaskMeta,
     });
-    // Absent row: not confirmed, no throw.
+    // Absent row: not confirmed, not written, no throw.
     expect(
       await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: ["missing-task"] }),
-    ).toEqual([]);
+    ).toEqual({ confirmed: [], written: [] });
     const [plain] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: false });
     expect(plain!.incognito).toBeUndefined();
   });
@@ -253,9 +254,43 @@ describe("sidebar incognito marker durability (specs/incognito-session.md)", () 
     await repo.archiveStaleTasks({ workspacePath: WORKSPACE, olderThanDays: 1 });
     expect(
       await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
-    ).toEqual([TASK_ID]);
+    ).toEqual({ confirmed: [TASK_ID], written: [TASK_ID] });
     const [archived] = await repo.listTaskMetas({ workspacePath: WORKSPACE, archived: true });
     expect(archived!.incognito).toBe(true);
+  });
+
+  it("reports written separately from confirmed: the first call writes, a repeat call only confirms", async () => {
+    await repo.syncTaskMeta({
+      meta: {
+        taskId: TASK_ID,
+        traceId: `trace-${TASK_ID}`,
+        title: "Plain",
+        workspacePath: WORKSPACE,
+        createdAt: 10,
+        updatedAt: 20,
+        mode: "default",
+        provider: "glm",
+        status: "completed",
+      } satisfies ZCodeTaskMeta,
+    });
+    expect(
+      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
+    ).toEqual({ confirmed: [TASK_ID], written: [TASK_ID] });
+    // Already carries the marker: confirmed again, but nothing written (no broadcast downstream).
+    expect(
+      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
+    ).toEqual({ confirmed: [TASK_ID], written: [] });
+  });
+
+  it("keeps a reservation placeholder in neither confirmed nor written", async () => {
+    const projects = await repo.getProjectRepository();
+    projects.reserveCreatedTask({
+      task: { workspacePath: WORKSPACE, taskId: TASK_ID },
+      projectId: null,
+    });
+    expect(
+      await repo.persistIncognitoMarkers({ workspacePath: WORKSPACE, taskIds: [TASK_ID] }),
+    ).toEqual({ confirmed: [], written: [] });
   });
 });
 

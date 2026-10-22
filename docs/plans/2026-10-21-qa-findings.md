@@ -71,7 +71,7 @@ ISSUE-016 resolved as dev-only: the three `React subtree crashed` entries coinci
 
 | ISSUE-019 | S3 | draft | On startup with a persisted draft whose `projectId` no longer exists (here: the dev project id after swapping the index; in production: a deleted project), the sidecar restore in `Root.tsx` starts the draft with that id and prewarm fails `project.not-found` with two retries. Should validate against the project list and fall back to null. | open |
 | ISSUE-020 | S3 | search | The sidebar Search (command center) is scoped to the open workspace tabs (`workspaceTabs` → `workspace_key IN (...)`), identical to upstream, so tasks in other projects ("привет", "QA S1" from the real index) are not found although they are visible in the sidebar. Product decision: search all local workspaces. | decision |
-| ISSUE-022 | S2 | incognito | Fresh incognito session (prepared-submission path, 4POLL, 01:40) replies fine and the CLI `session` row carries `fork_incognito`, but the index `meta_json` never gets `"incognito":true` and the sidebar row renders no `[data-incognito-task-icon]`. The round-1 incognito session (sandbox repo) did converge. Chain read: CLI `getSessionIndexMeta` → summary `incognito` → Host overlay → `persistIncognitoMarkers`; break point not yet located. | investigating |
+| ISSUE-022 | S2 | incognito | Fresh incognito session (prepared-submission path, 4POLL, 01:40) replies fine and the CLI `session` row carries `fork_incognito`, but the index `meta_json` never gets `"incognito":true` and the sidebar row renders no `[data-incognito-task-icon]`. The round-1 incognito session (sandbox repo) did converge. Chain read: CLI `getSessionIndexMeta` → summary `incognito` → Host overlay → `persistIncognitoMarkers`; break point not yet located. | fixed (a810494d): the Host converged the marker into the reservation placeholder row, the CLI-fact admission then replaced the whole meta_json, and the ack set blocked the retry; placeholders are now absent for convergence and the next publish after admission persists it. Live: fresh incognito session shows the marker; a row healed after restart needs a list broadcast (follow-up in flight) |
 
 ## E2E run (round 2, Phase E, 01:50)
 
@@ -116,3 +116,10 @@ Renderer heap after opening the long session: 288 MB used. Whole conversation is
 
 - Spec audit (agent): 2 missing (`self-hosted-conversation-share`, `rtk-output-compression`, both blocked on decisions), 7 partial. Actionable now: ISSUE-006, `ui-tests-translation-ledger` missing assertion, `ukrainian-locale` plugin-sandbox dialog copy, `first-submission-instant-ux` `preparedActivation` unused in UI.
 - Freeze audit (agent), quick wins: debounce task search (taskIndexRepo LIKE scan per keystroke), O(n²) `JSON.stringify` in `taskRealtimeBus.splitOversizedBatchForOwner`, file index `localeCompare` sort, `nowMs` prop defeating memo on historic turn groups, JSON reviver always on in rpc serialization, composer re-reading localStorage drafts per render. Structural: sync `appendFileSync` per log line on main, no RPC timeout / host-loss signal to renderer.
+
+## Measurements after fix pack 2 perf commit (6e2da170, dev build, same 1052-message session)
+
+| Action                                                      | Long tasks | Worst block                                                                         |
+| ----------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
+| Open session from the sidebar (directory hydration chunked) | 9          | 188 ms (was 570 ms)                                                                 |
+| Turn-navigator jumps 10 → 20 → 1                            | 5          | 266 ms, measured while the pre-push verify loaded the CPU; clean re-measure pending |

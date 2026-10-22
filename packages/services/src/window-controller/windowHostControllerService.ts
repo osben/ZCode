@@ -337,12 +337,15 @@ export function createWindowHostControllerRuntime(options: {
       taskService,
       facts: taskIds,
       signature: (taskId) => taskId,
-      // The repo confirms every id whose row carries the marker, including pinned and archived rows.
+      // The repo confirms every id whose row carries the marker, including pinned and archived rows. Acknowledge from
+      // `confirmed` only; `written` drives the adapter's list broadcast and is not needed here.
       persist: (pending) =>
-        taskService.persistIncognitoMarkers({
-          ...sourceWorkspaceRequest(resolved.scope),
-          taskIds: pending,
-        }),
+        taskService
+          .persistIncognitoMarkers({
+            ...sourceWorkspaceRequest(resolved.scope),
+            taskIds: pending,
+          })
+          .then((result) => result.confirmed),
     });
   }
 
