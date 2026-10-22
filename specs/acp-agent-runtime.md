@@ -282,3 +282,145 @@ Design (fix):
   with agent id, exit code/signal and error message only (never env, args, frames or stderr).
 - Live (manual, macOS): enable both agents in Model Settings → Test green with raw frames → login
   status visible.
+
+## Chat delegation (phase 4)
+
+Status: slices S1 (gate, registry, composer) and S2 (text chat turns) are specified here. S3 (title,
+tool and plan rendering), S4 (permission UI) and S5 (session restore via `session/load`) are
+follow-ups and are only named in this section.
+
+### Decisions
+
+- A turn driver is selected by the model factory and runs inside the CLI worker. CommandInbox
+  admission, persistence, projection, mobile replay and owner/lease stay unchanged.
+- Today's path is `CommandInbox` → `commands/prompt-turn.ts` → core `executeTurnCommand` →
+  `runRegularTurnLoop` → `ApiProviderModelRuntime.modelFactory`.
+- `modelFactory` checks `provider.config.access.type === "acp-agent"` before the AI SDK adapter. It
+  returns a marker `Model` that carries an `ExternalAgentTurnDriver`. The port
+  (`ExternalAgentTurnDriver`, `isExternalAgentModel`) lives in `@zcode/contracts`. Core never
+  imports `@zcode/acp-agent-runtime`; the composition root (bootstrap) is the only place that
+  binds the driver to the runtime.
+- The marker's `generateText` and `streamText` throw `ExternalAgentUnsupportedError`
+  (`external_agent_unsupported`). Side callers that reach the ACP model therefore fail closed.
+- `executeTurnCommand` runs `runExternalAgentTurn` in place of `runRegularTurnLoop` when the loop
+  model is a marker. It skips the title sidecar, memory prefetch and extraction, compaction,
+  microcompact, reminders and ZCode tools. It still runs user hooks, attachment resolution and
+  the normal TurnStarted/user-message persistence.
+- The driver sends only the latest real user input (text) plus the current turn's image
+  attachments as ACP image content blocks. Both agents advertise `promptCapabilities.image`.
+- Process owner: a worker-scoped `AcpSessionPool` (bootstrap) holds one `AcpSessionRuntime` per
+  ZCode `sessionId`. It spawns on the first turn and reuses the runtime while the session is
+  resident. The agent cwd is core `workingDirectory` (worktree-aware), never `workspaceIdentity`.
+  Launch config (command, args, env) is re-read from `fork_acp_agents.json` on every turn. Env
+  comes from the runtime's `buildChildEnv`.
+- Side callers that call `generateText`/`streamText` directly are handled explicitly. They skip
+  when the session model is an external agent, or they use a non-ACP model. They never use the
+  ACP model. Files: `core/src/memory/memory-agent-loop.ts`, `core/src/memory/recall/selector.ts`,
+  `core/src/runtime/methods/compact-summary-model-request.ts`, `core/src/runtime/methods/model.ts`,
+  `core/src/runtime/methods/runtime-model.ts`, `core/src/runtime/methods/sample-model.ts`,
+  `core/src/runtime/methods/target-completion-verification.ts`,
+  `core/src/runtime/methods/title-generation-sidecar.ts`,
+  `core/src/runtime/methods/workspace-generate-text.ts`, `core/src/runtime/off-peak/model-binding.ts`,
+  `core/src/tool/handlers/read-session-context.ts`, `core/src/tool/handlers/webfetch-processing.ts`,
+  `core/src/tool/handlers/websearch.ts`.
+- Event mapping (runtime event → ZCode core event). No protocol schema change is expected.
+  - `message_chunk` → streaming text delta, persisted as a `text` part on the assistant message.
+  - `thought_chunk` → streaming reasoning delta, persisted as a `reasoning` part.
+  - `stopped` → `TurnComplete`. `stopReason: cancelled` takes the existing cancel path.
+  - `prompt_failed` and `process_exit` during a turn → `TurnError`. Auth failures carry an
+    actionable message (`The external agent requires sign-in: run <agent> login in a terminal`).
+  - `usage` → counted as external usage on the assistant step-finish and on `TurnComplete`
+    (labelled as external, not billed to a ZCode provider).
+  - `available_commands`, `stalled` → logs only. `session_title`, `tool_call*`, `plan` are S3/S4.
+- Permissions in S2: the driver's permission handler logs the ask and answers `cancelled`. Asks are
+  never surfaced and never implicitly allowed.
+- Cancel: stop → existing `stopActiveForegroundExecution` → turn abort → driver `cancel()` →
+  `runtime.cancel()` (bounded `session/cancel`). The turn completes as cancelled. An escalation kill
+  marks the runtime `failed`, and the next turn restarts it through the runtime's own restart path.
+- Dev-only gate: the S1 registry gate and the composer gate are the same dev-runtime signal as the
+  host bridge (`isEffectiveDevelopmentNodeEnv`). Packaged builds never execute an `acp:` model.
+
+### Product defaults (v1)
+
+- Switching models is allowed. No transcript is seeded into the ACP agent; the ZCode transcript
+  remains the ZCode record and is updated with the agent's assistant text.
+- Permissions are user-once only (S4).
+- Input is text and images.
+- Blocked for subagents, automations, off-peak and bots. The enforcement point is
+  `executeTurnCommand` for automation, off-peak and bot turns (refused before any model step), and
+  the side-caller fail-closed marker for subagents. Tests cover both.
+- The title comes from the agent's `session_title` (S3). Until then the ZCode title sidecar is
+  skipped for external sessions.
+- Agent slash commands are not exposed.
+- Usage is counted and labelled external.
+- Both opencode v2.0.31 and cursor-agent 2026.10.18 advertise `agentCapabilities.loadSession: true`.
+  Session restore through `session/load` is S5.
+
+### Owner and event order
+
+Submit → admission → ACP prompt → updates → events → stopped:
+
+```text
+renderer submit
+  │
+  ▼
+CommandInbox (owner: CLI runtime) ── admission, queue, owner/lease
+  │
+  ▼
+executeTurnCommand ── TurnStarted + user message persisted (unchanged)
+  │  loop model is marker?  yes ──▶ runExternalAgentTurn (replaces runRegularTurnLoop)
+  ▼
+ExternalAgentTurnDriver.runTurn(sessionId, prompt blocks, signal)
+  │
+  ▼
+AcpSessionPool (owner: worker) ── acquire(sessionId): spawn + handshake on first turn
+  │
+  ▼
+AcpSessionRuntime.prompt(blocks)     state: ready → prompting
+  │  session/update message_chunk   ─▶ text delta (stream) ─▶ text part
+  │  session/update thought_chunk   ─▶ reasoning delta     ─▶ reasoning part
+  │  session/request_permission     ─▶ log, answer cancelled (S2 stub)
+  │  session/update usage           ─▶ usage (external)
+  ▼
+stopped(stopReason) ─▶ step-finish + assistant completed ─▶ TurnComplete ─▶ projection
+prompt_failed / process_exit ─▶ TurnError (auth message if auth)
+```
+
+Cancel:
+
+```text
+Stop ─▶ stopActiveForegroundExecution ─▶ turn abortSignal
+  │
+  ▼
+driver.cancel() ─▶ runtime.cancel()  (session/cancel, bounded by cancelGraceMs)
+  │  prompt settles, stopReason=cancelled ─▶ stopped ─▶ TurnCancelled (existing path)
+  │  does not settle ─▶ escalate: process-tree kill ─▶ prompt_failed ─▶ runtime failed
+  ▼
+next turn: runtime.prompt() restarts the process and session (owner: runtime)
+```
+
+Permission stub (S2):
+
+```text
+agent ─▶ session/request_permission ─▶ runtime isLive check (prompting, same generation)
+  ├ not live (stale/orphaned/foreign session) ─▶ cancelled, never surfaced
+  └ live ─▶ driver permission handler: log "permission cancelled (S2)" ─▶ cancelled
+```
+
+### Acceptance scenarios
+
+- Marker model: `generateText`/`streamText` throw `external_agent_unsupported`; the factory returns
+  a marker only for an `acp-agent` provider.
+- A turn with a fake driver emits text and reasoning deltas in order, then exactly one terminal
+  event (TurnComplete or TurnError), and TurnComplete carries external usage.
+- Cancel during a hung prompt ends the turn as cancelled and leaves the runtime reusable or
+  restarted by the next turn.
+- Side callers never reach the ACP model (each returns its skip result).
+- Automation, off-peak and bot turns with an ACP model are refused before the first model step.
+- Pool: the second turn reuses the process; deactivation stops the runtime; a failed runtime is
+  restarted on the next turn; worker shutdown stops every runtime.
+- Resolver: `acpExecutable: false` keeps the ACP model non-executable and out of the composer;
+  `acpExecutable: true` makes it executable.
+- Desktop E2E (`conversation-session/conversation-session-acp-agent-text.test.ts`): enable the mock
+  agent, select it, send and see "pong" stream to completion; stop during a hang ends as cancelled;
+  a second turn reuses the process.
