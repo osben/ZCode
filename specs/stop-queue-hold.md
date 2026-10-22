@@ -45,10 +45,14 @@ v4 send path does not reach it, so it may not be the QA trigger.
   handling, and `onTargetVerification` for the goal verifier path).
 - Second carrier (ISSUE-039 fix): when the runtime has no foreground token yet, `stopActiveForegroundExecution`
   returns `idle` and cannot store the intent. `preemptActiveTurnAndWait` then aborts the caller's controller with
-  `createPreserveQueueAutoDrainCancelReason(...)` (`core/src/runtime/helpers/turn-errors.ts`, exported from
-  `@zcode/core`). The core turn catch (`turn.ts`) also honours `hasPreserveQueueAutoDrainCancelIntent(turnAbortSignal.reason)`.
-  The reason reaches the turn through the parent abort chain. A user Stop aborts with a plain reason and never carries
-  the marker.
+  `createTurnCancelReason(message, { preserveQueueAutoDrainOnCancel: true })` (`core/src/runtime/helpers/turn-errors.ts`,
+  exported from `@zcode/core`). The marker is a non-enumerable property, so it stays out of JSON and cause logs. The core
+  turn catch (`turn.ts`) also honours `hasPreserveQueueAutoDrainCancelIntent(turnAbortSignal.reason)`. The reason reaches
+  the turn through the parent abort chain. A user Stop aborts with a plain reason and never carries the marker.
+- In-flight cancel (ISSUE-039 D1): `stop` treats a cancel already in flight (the target was aborted by a Steer and has
+  not torn down) as cancelling. It keeps its own hold and does not release it (`isStopCancelInFlight`,
+  `commands/input-admission.ts`). `stop` stays in `commands/handlers/session-flow.ts`; `pauseActiveGoal` moved to
+  `commands/input-admission.ts` to keep that file under the commit size guard.
 - Queue projection owner: `ProductProjection.queue` (`autoDrain`, `pauseReason`). Only `QueueAutoDrainChanged`
   and a cancelled `TurnComplete` without the preserve intent change the hold.
 
@@ -144,13 +148,29 @@ stop(expectedForegroundExecutionId?)
 11. A user Stop after a Steer holds the queue again (rule 1). The hold belongs to the Stop, not to the earlier
     Steer, so a Steer does not suppress a later Stop. A user Stop with no runtime token aborts with a plain reason
     (no intent) and holds, as in rule 1.
-12. Residual (fixed, ISSUE-039 A-1): before this fix a Steer with no runtime token aborted the caller controller
-    without the intent, so the cancelled `TurnComplete` projected `pauseReason: "stopped"`. The fix is rule 9.
-    Reachability note: the native v4 `sendText` path does not set `record.activeAbortController`; the caller-controller
-    branch is reached by the legacy `session/send` path and by compact controllers (`goal-compact.ts`). The E2E
-    cases do not reach it, so the regression guard for it is the unit and core tests.
+12. Runtime-idle Steer (ISSUE-039 A-1, fixed for the Steer path): before this fix a Steer with no runtime token aborted
+    the caller controller without the intent, so the cancelled `TurnComplete` projected `pauseReason: "stopped"`. Rule 9
+    fixes the Steer path for this branch. Known remaining holds, no behavior change:
+    - Manual `/compact` and queued compact (`goal-compact.ts` ~171-179): a cancel with a non-empty queue calls
+      `setQueueAutoDrain(false)` regardless of the intent. Core `compact.ts` ~149-152 reads only the token flag.
+      Steering a queued compact therefore holds.
+    - Dream (`dream.ts` ~134-137) and the goal verifier (`target-completion-verification.ts` ~233-234) read only the
+      token flag. They are not Steer-reachable from the desktop UI and are not changed.
+    - Goal continuation (`goal-compact.ts` ~450-462 → `continueActiveTarget` → `continueActiveTargetLoop`): code read
+      only, unverified by test. The loop runs as a runtime command whose foreground controller takes the caller
+      signal as parent, so the reason should reach `turn.ts`. Not confirmed by a test.
+      Reachability: the native v4 `sendText` path does not set `record.activeAbortController`. The caller-controller
+      branch is reached by the legacy `session/send` path and by compact controllers. The E2E steer cases do not reach
+      it; its regression guards are the unit and core tests.
 13. Edit and retry (`editUserQuery`, `retryTurn`) call `preemptActiveTurnAndWait` without the intent (see Scope).
     A cancel from edit or retry holds the queue like a user Stop. This is documented, not changed.
+14. Stop always wins over an in-flight Steer (ISSUE-039 D1). If a Steer has aborted the target and the turn has not
+    torn down yet, a user Stop keeps its own hold in both branches (runtime token: `stopActiveForegroundExecution`
+    returns idle while the execution is still registered; no token: the controller was already aborted before the
+    stop). The queue stays held after the steered item starts. The stop does not release its hold in this window.
+    A Stop after the turn has torn down releases its hold as before (rule 4). Pinned by CLI unit tests `ISSUE-039 D1`
+    in `v4-native-queue.test.ts` and projection test `ISSUE-039 D1` in `product-projection.test.ts`. The projection
+    shows `pauseReason: "manual"` in this order, because the Stop's hold lands before the Steer's TurnComplete.
 
 ## Acceptance scenarios
 
@@ -181,3 +201,8 @@ auto-drain when a caller abort carries the steer preserve intent` and `ISSUE-039
 abort is a plain user Stop reason`). Runtime-idle is not reachable from the E2E steer path (see rule 12).
 15. ISSUE-039 Steer immediately after the turn enters running (no streamed output yet): the queue still drains
     in order (E2E `STEER 刚进入 running：`).
+16. ISSUE-039 D1 (rule 14): a Stop that lands after a Steer aborted the target and before teardown keeps its hold, in the
+    runtime-token branch and in the no-token branch (CLI unit `ISSUE-039 D1：...`). A Steer alone still drains (rule 10).
+17. ISSUE-039 N2: the preserve marker on the cancel reason is non-enumerable (core unit `turn cancel reason intent`
+    in `core/tests/turn-errors.test.ts`).
+18. E2E `STEER：`: the queue reaches [Q2] (Q1 promoted) with no paused banner, and the steered reply has no banner.
