@@ -66,4 +66,4 @@ These are jsdom interaction tests with real DOM events. No new Electron E2E scen
 
 - `packages/ui/test/projectSidebarNode.test.ts`: PDEL-1 and PDEL-2 (the confirm request is destructive with the project's copy, and the call happens after the confirm).
 - `packages/ui/test/projectEditorRoots.test.ts`: PDEL-3 (existing delete tests now confirm first), PDEL-4 (cancel leaves the form and the project untouched).
-- Desktop E2E specs that click `virtual-project-delete` or `virtual-project-editor-delete` (for example under `packages/desktop/test/e2e/conversation-session/`) were not updated in this change. They click the entry without confirming, so they need a confirm step before they can pass; this was not run.
+- Desktop E2E specs under `manual-review/pending` that delete a project from either entry now click `confirm-dialog-confirm` after the delete click. They are pending and were not run.

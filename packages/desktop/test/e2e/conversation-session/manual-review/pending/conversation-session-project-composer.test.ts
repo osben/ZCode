@@ -71,6 +71,9 @@ describe("Composer project picker", () => {
       '[data-project-name="E2E_PROJECT_PICKER_RENAMED"] [data-testid="virtual-project-row"]',
     ).click({ button: "right" });
     await $('[data-testid="virtual-project-delete"]').click();
+    // Project deletion is confirmed first (ISSUE-028); Delete is the destructive confirm button.
+    await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+    await $('[data-testid="confirm-dialog-confirm"]').click();
     await $('[data-project-name="E2E_PROJECT_PICKER_RENAMED"]').waitForExist({ reverse: true });
     await trigger.click();
     expect(await menuNames()).not.toContain("E2E_PROJECT_PICKER_RENAMED");

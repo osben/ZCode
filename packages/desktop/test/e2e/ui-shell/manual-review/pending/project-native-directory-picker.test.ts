@@ -232,6 +232,9 @@ describe("Local project native multi-folder selection", () => {
     await $('[data-testid="virtual-project-name"]').waitForExist({ reverse: true });
     await $(project).$('[data-testid="virtual-project-menu"]').click();
     await $('[data-testid="virtual-project-delete"]').click();
+    // Project deletion is confirmed first (ISSUE-028).
+    await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+    await $('[data-testid="confirm-dialog-confirm"]').click();
     await $(project).waitForExist({ reverse: true });
   });
 });
