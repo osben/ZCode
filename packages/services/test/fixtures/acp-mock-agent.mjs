@@ -4,11 +4,16 @@
  *
  * Answers `initialize`, `session/new` and `session/prompt` with plain NDJSON
  * JSON-RPC; each prompt emits one agent_message_chunk update and completes.
+ *
+ * A prompt whose text contains "hang" stays pending until `session/cancel`, then
+ * settles with stopReason `cancelled` (the chat-delegation Stop scenario).
  */
 import { createInterface } from "node:readline";
 
 const SESSION_ID = "services-mock-session";
+const HANG_MARKER = "hang";
 const rl = createInterface({ input: process.stdin });
+let pendingHangId;
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 
 process.stderr.write("acp-mock-agent ready\n");
@@ -25,7 +30,14 @@ rl.on("line", (line) => {
     send({
       jsonrpc: "2.0",
       id: message.id,
-      result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: {
+          loadSession: true,
+          promptCapabilities: { image: true },
+        },
+        authMethods: [],
+      },
     });
     return;
   }
@@ -34,6 +46,14 @@ rl.on("line", (line) => {
     return;
   }
   if (message.method === "session/prompt") {
+    const text = (message.params?.prompt ?? [])
+      .filter((block) => block?.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+    if (text.includes(HANG_MARKER)) {
+      pendingHangId = message.id;
+      return;
+    }
     send({
       jsonrpc: "2.0",
       method: "session/update",
@@ -48,7 +68,13 @@ rl.on("line", (line) => {
     send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
     return;
   }
-  if (message.method === "session/cancel") return;
+  if (message.method === "session/cancel") {
+    if (pendingHangId !== undefined) {
+      send({ jsonrpc: "2.0", id: pendingHangId, result: { stopReason: "cancelled" } });
+      pendingHangId = undefined;
+    }
+    return;
+  }
   if (message.id !== undefined) {
     send({ jsonrpc: "2.0", id: message.id, result: {} });
   }
