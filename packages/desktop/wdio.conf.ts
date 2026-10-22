@@ -3577,9 +3577,13 @@ function isSubagentCodingPlanLoginCatalogStaleSpec(specs: string[] = []) {
 }
 
 function usesProviderReadinessColdStartFixture(specs: string[] = []) {
+  // Bug cause: windows-agent-metric-probe-absence.test.ts registers its describe only on win32,
+  // so on macOS/Linux it runs no case. Seeding its fixture there aborts beforeSession because
+  // the CLI DB is never created; gate it on the same platform check the spec uses.
   return (
     workerSpecsContain(specs, PROVIDER_READINESS_AGENT_STARTUP_SPEC) ||
-    workerSpecsContain(specs, WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC)
+    (process.platform === "win32" &&
+      workerSpecsContain(specs, WINDOWS_AGENT_METRIC_PROBE_ABSENCE_SPEC))
   );
 }
 
