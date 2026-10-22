@@ -18,6 +18,14 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
+// Module-level so useSyncExternalStore sees a stable subscribe and does not resubscribe on every render.
+function subscribeSourceSettingsServices(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function registerSourceSettingsServices(
   params: RegisterSourceSettingsServicesParams,
 ): () => void {
@@ -50,10 +58,7 @@ export function useSourceSettingsServices(
   sourceServerId: string | undefined,
 ): IServiceAccessor | undefined {
   return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
+    subscribeSourceSettingsServices,
     () => getSourceSettingsServices(sourceServerId),
     () => undefined,
   );

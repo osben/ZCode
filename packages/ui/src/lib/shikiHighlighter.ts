@@ -57,10 +57,12 @@ const highlighterCache = new Map<
   string,
   Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
 >();
+// Each entry keeps a full ThemedToken grid; without a bound, every diff ever rendered stayed alive for the
+// renderer's lifetime. Map insertion order doubles as LRU order (hits are re-inserted).
+export const SHIKI_TOKENS_CACHE_MAX_ENTRIES = 200;
 const tokensCache = new Map<string, TokenizedCode>();
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
-// In-memory diagnostic counter: tokensCache currently has no eviction and is the renderer's most suspicious growth point in the audit;
-// log its size first.
+// In-memory diagnostic counter for the token cache and highlighter instances.
 uiMemoryDiagnosticsRegistry.register("shiki", () => ({
   tokensCache: tokensCache.size,
   highlighters: highlighterCache.size,
@@ -78,10 +80,18 @@ const getResolvedCodeTheme = (theme?: BundledTheme): BundledTheme => {
   return "github-light";
 };
 
-const getCodeTokensCacheKey = (code: string, language: BundledLanguage, theme: BundledTheme) => {
-  const start = code.slice(0, 100);
-  const end = code.length > 100 ? code.slice(-100) : "";
-  return `${theme}:${language}:${code.length}:${start}:${end}`;
+// Key on the full code: a length + head/tail sample collided for blocks that differ only in the middle,
+// returning another block's tokens and sharing its subscribers.
+const getCodeTokensCacheKey = (code: string, language: BundledLanguage, theme: BundledTheme) =>
+  `${theme}:${language}:${code}`;
+
+const rememberTokens = (key: string, tokenized: TokenizedCode) => {
+  tokensCache.delete(key);
+  tokensCache.set(key, tokenized);
+  if (tokensCache.size > SHIKI_TOKENS_CACHE_MAX_ENTRIES) {
+    const oldestKey = tokensCache.keys().next().value;
+    if (oldestKey !== undefined) tokensCache.delete(oldestKey);
+  }
 };
 const getHighlighter = (
   language: BundledLanguage,
@@ -99,6 +109,11 @@ const getHighlighter = (
   });
 
   highlighterCache.set(cacheKey, highlighterPromise);
+  // A cached rejection would disable highlighting for this language/theme until reload; drop it so the next call retries.
+  // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
+  highlighterPromise.catch(() => {
+    if (highlighterCache.get(cacheKey) === highlighterPromise) highlighterCache.delete(cacheKey);
+  });
   return highlighterPromise;
 };
 
@@ -138,6 +153,7 @@ export const highlightCode = (
 
   const cached = tokensCache.get(tokensCacheKey);
   if (cached) {
+    rememberTokens(tokensCacheKey, cached);
     // Notify the effect on a cache hit too, but do not trigger setState synchronously.
     // Many code blocks mount in the same commit when restoring history; a synchronous callback turns a cache hit into a nested update,
     // which can trigger React #185 when combined with Streamdown rerenders. Defer to a microtask, then use the idempotent setter.
@@ -173,7 +189,7 @@ export const highlightCode = (
         tokens: result.tokens,
       };
 
-      tokensCache.set(tokensCacheKey, tokenized);
+      rememberTokens(tokensCacheKey, tokenized);
 
       const subs = subscribers.get(tokensCacheKey);
       if (subs) {
