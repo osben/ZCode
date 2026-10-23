@@ -289,3 +289,5 @@ packages/ui/src/root/useRemoteWorkspaceHistory.ts
 packages/ui/src/side-pane-full-view/ConversationHost.tsx
 # Already over the cap at upstream 3.16.2 (33739 bytes); the 3.16.3 plugin-store port only edits the manage/detail header.
 packages/ui/src/settings/PluginStorePage.tsx
+# Already over the cap at HEAD (30802 bytes before the 3.16.3 reuseExistingRoot port, which adds about 800 bytes to handleSelectProject).
+packages/ui/src/root/useRootWorkspaceActions.ts
