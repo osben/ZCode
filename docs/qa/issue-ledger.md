@@ -121,6 +121,23 @@ Final status (2026-10-22 wrap-up). Nothing was merged by this run; "merged" mean
 
   Final cleanup: hover-test session archived, `~/qa-sandbox/qa-delete-me` removed, app and watchers stopped. `setting.json`: `localePreference`, `lastActiveWorkspace`, `desktopWindowSize` reverted by key to the run-start backup — 53 keys, `en-US`/`system`, no fork locale overrides left in `fork-settings.json`. Remaining diffs against the backup are the user's own recent-workspace entries, left as they are.
 
+### ISSUE-054 · S2 · composer · open
+
+Scenario: CP-06 · Found: 2026-10-22 23:05 · Build: 9ab8f7cf (QA branch with the ISSUE-051 fix)
+Repro (from a fresh app start):
+
+1. `chmod 555 <repo>-worktrees`; draft in the project → Worktree on → type a prompt → Send. The failed card renders (ISSUE-051 fix).
+2. `chmod 755` the directory; press Retry on the timeline card.
+   Expected (`specs/composer-worktree-setup-steps.md`): "After Git reports a ready path, activate the same session with the frozen submission … admits that submission exactly once."
+   Actual: the worktree is created and the card flips to "Worktree·ready · <name>", but the frozen submission is never admitted — the timeline keeps only the user row, the session's model config is EMPTY ("Choose model"), and Send stays disabled until the user manually picks a model; only then does the session accept input (a manually typed message runs fine). The original frozen prompt never runs at all.
+   Evidence: after Retry (12–45 s): `rows:1`, last row "Reply with exactly: wt-retry", `running:false`, model `""`, sendDisabled true with empty composer; picking a model enabled input; a new manual send produced "wt-retry-2". `git worktree list` shows the created worktree.
+   Root cause: hypothesis — the retry-activation path loses or fails to resolve the frozen submission's model (the frozen pick here was an ACP agent from Recent; resolution may fail in the new worktree session and the activation silently stops), or the ready→activate hand-off does not re-fire after a retry.
+   Fix: — (admit the frozen submission on ready after a retry; if the model cannot resolve, surface the blocked reason instead of a silent idle row)
+   Verify:
+3. Repro steps 1–2 above with a non-ACP frozen model, then repeat with an ACP one.
+   Must see: after the card flips ready, the frozen prompt runs exactly once in the created worktree without a manual model pick. Must not see: an idle session with "Choose model" and a permanently unadmitted frozen row.
+   History: 2026-10-22 open (found while live-verifying the ISSUE-051 fix).
+
 ### ISSUE-053 · S2 · chat · open
 
 Scenario: CH-12 · Found: 2026-10-22 22:4x · Build: 288d26e8
@@ -148,7 +165,7 @@ Fix: —
 Verify: change a nested directory's contents on disk, open Files, press Refresh → the new file appears without toggling the node.
 History: 2026-10-22 open.
 
-### ISSUE-051 · S2 · composer · open
+### ISSUE-051 · S2 · composer · fixed-verified
 
 Scenario: CP-06 · Found: 2026-10-22 21:55 · Build: 288d26e8
 Repro (from a fresh app start):
@@ -164,7 +181,7 @@ Repro (from a fresh app start):
    Verify:
 4. Start the dev app; `chmod 555` on the project's `-worktrees` directory; draft → Worktree on → send.
 5. Must see: the preparing session opens, then shows the setup error with Retry/Cancel/Discard inside its timeline; navigating away and back keeps the same failed state; Discard (or Retry after `chmod 755`) completes the spec'd flow; the frozen text is restorable into an empty editor. Must not see: a silent stranded user row with no error and no recovery action.
-   History: 2026-10-22 open (CP-06, forced via read-only parent).
+   History: 2026-10-22 open (CP-06, forced via read-only parent) → fixing (fixer lane C2, worktree .claude/worktrees/qa-fix-051-worktree-recovery) → fixed-unverified 4636c845 (branch claude/qa-fix-051-worktree-recovery; renderer-only: the failure card and Retry were gated on the Host snapshot marker only (SessionPane.tsx:6910, Retry threw at :2607); the card now also mounts from the renderer's live pipeline entry, Retry params resolve from the frozen entry; spec sharpened same-commit; Host path verified to already persist failed+message+attemptId; tests red-first, full UI suite 11558 green) → reviewer (Lane D): SHIP, no must-fix; two test-hardening should-fixes applied in a follow-up commit → fixed-verified 2026-10-22 23:0x on the restarted dev app (QA branch cherry-pick 9ab8f7cf): chmod 555 → Send → the failed session's timeline shows "Worktree·failed / Worktree setup failed: … Permission denied" with Retry + Discard; navigation away/back keeps the state; chmod 755 → Retry → card flips "Worktree·ready · zcode/tiny-phoenix", git worktree created → FOLLOW-UP DEFECT found in the same verify: the frozen submission is not admitted after a ready retry and the session needs a manual model re-pick → ISSUE-054 → PR opened by the orchestrator.
 
 Final status (2026-10-22 round-2 wrap-up). Nothing was merged by this run; "merged" means the user merged it.
 
