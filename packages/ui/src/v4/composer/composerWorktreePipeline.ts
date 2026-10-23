@@ -583,6 +583,51 @@ export function beginWorktreePipelineCreation({
 export { restoreComposerWorktreePipelineFromPreparation } from "./composerWorktreePreparationRestore.js";
 
 /**
+ * Frozen parameters for retrying a prepared session's creation (ISSUE-051): the entry's frozen
+ * params win per field (Retry re-runs exactly what this session froze), the Host preparation
+ * marker fills the gaps when the pane snapshot carries one, and the marker alone is used when no
+ * entry exists. The durable Host marker stays the compare-and-set authority; this only names the
+ * attempt and destination the retry dispatches with.
+ */
+export function resolveComposerWorktreeRetryPreparation({
+  preparation,
+  pipelineEntry,
+}: {
+  preparation: {
+    branchName: string;
+    targetPath: string;
+    baseBranch?: string;
+    attemptId?: string;
+  } | null;
+  pipelineEntry?: {
+    params?: {
+      branchName: string;
+      targetPath: string;
+      baseBranch?: string;
+      attemptId?: string;
+    };
+  } | null;
+}): {
+  branchName: string;
+  targetPath: string;
+  baseBranch?: string;
+  attemptId?: string;
+} | null {
+  const params = pipelineEntry?.params;
+  const branchName = params?.branchName ?? preparation?.branchName;
+  const targetPath = params?.targetPath ?? preparation?.targetPath;
+  if (!branchName || !targetPath) return null;
+  const baseBranch = params?.baseBranch ?? preparation?.baseBranch;
+  const attemptId = params?.attemptId ?? preparation?.attemptId;
+  return {
+    branchName,
+    targetPath,
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(attemptId ? { attemptId } : {}),
+  };
+}
+
+/**
  * Retry a pipeline with its frozen params; the caller that obtained the Host acknowledgement for
  * `attemptId` is the single owner of starting Git for it. Proceeds from:
  * - `failed` (for `retriedAttemptId` when given): re-marks the entry `creating` for the new attempt;

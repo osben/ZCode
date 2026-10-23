@@ -21,6 +21,7 @@ import {
   isComposerWorktreePipelineInFlight,
   beginWorktreePipelineCreation,
   reconcileCreatingComposerWorktreePipeline,
+  resolveComposerWorktreeRetryPreparation,
   retryComposerWorktreePipeline,
   restoreComposerWorktreePipelineFromPreparation,
   startComposerWorktreePipeline,
@@ -2833,6 +2834,74 @@ describe("shared-context-only worktree submission recovery", () => {
     } finally {
       window.localStorage.clear();
     }
+  });
+});
+
+describe("resolveComposerWorktreeRetryPreparation", () => {
+  const marker = {
+    branchName: "zcode/marker-branch",
+    targetPath: "/repo/worktrees/marker",
+    baseBranch: "main",
+    attemptId: "attempt-marker",
+  };
+
+  it("falls back to the pipeline entry's frozen params when the snapshot has no marker (ISSUE-051)", () => {
+    const entry = {
+      params: {
+        workspacePath: "/repo",
+        branchName: "zcode/entry-branch",
+        targetPath: "/repo/worktrees/entry",
+        baseBranch: "release/1",
+        attemptId: "attempt-entry",
+        baseFromHeadDefault: false,
+      },
+    };
+    expect(
+      resolveComposerWorktreeRetryPreparation({ preparation: null, pipelineEntry: entry }),
+    ).toEqual({
+      branchName: "zcode/entry-branch",
+      targetPath: "/repo/worktrees/entry",
+      baseBranch: "release/1",
+      attemptId: "attempt-entry",
+    });
+  });
+
+  it("prefers the entry's frozen fields and lets the marker fill the gaps when both exist", () => {
+    const entry = {
+      params: {
+        workspacePath: "/repo",
+        branchName: "zcode/entry-branch",
+        targetPath: "/repo/worktrees/entry",
+        attemptId: "attempt-entry",
+        baseFromHeadDefault: true,
+      },
+    };
+    expect(
+      resolveComposerWorktreeRetryPreparation({ preparation: marker, pipelineEntry: entry }),
+    ).toEqual({
+      branchName: "zcode/entry-branch",
+      targetPath: "/repo/worktrees/entry",
+      baseBranch: "main",
+      attemptId: "attempt-entry",
+    });
+  });
+
+  it("uses the marker alone without an entry and returns null when neither names a destination", () => {
+    expect(resolveComposerWorktreeRetryPreparation({ preparation: marker })).toEqual({
+      branchName: "zcode/marker-branch",
+      targetPath: "/repo/worktrees/marker",
+      baseBranch: "main",
+      attemptId: "attempt-marker",
+    });
+    expect(
+      resolveComposerWorktreeRetryPreparation({ preparation: null, pipelineEntry: null }),
+    ).toBeNull();
+    expect(
+      resolveComposerWorktreeRetryPreparation({
+        preparation: null,
+        pipelineEntry: { params: undefined },
+      }),
+    ).toBeNull();
   });
 });
 

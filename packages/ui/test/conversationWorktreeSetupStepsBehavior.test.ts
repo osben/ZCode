@@ -66,6 +66,26 @@ function renderSteps(
   );
 }
 
+/**
+ * The pane mounts the setup card without a Host marker when the session's snapshot carries none
+ * (ISSUE-051): the card must then render from the renderer's own pipeline entry.
+ */
+function renderEntryOnlySteps(sessionId = "session-prepared-1") {
+  return render(
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "en-US" },
+      createElement(ConversationWorktreeSetupSteps, {
+        workspacePath: WORKSPACE_KEY,
+        sessionId,
+        onRetryPreparation: vi.fn(async () => undefined),
+        onCancelPreparation: vi.fn(async () => undefined),
+        onPreparationFailed: vi.fn(async () => undefined),
+      }),
+    ),
+  );
+}
+
 beforeEach(() => {
   useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
   pipelineRunner.inFlight = false;
@@ -197,6 +217,43 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
     // summary trigger is an additional button).
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Discard" })).toBeTruthy();
+  });
+
+  it("renders the failed card from the pipeline entry alone when the snapshot carries no marker (ISSUE-051)", () => {
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "failed",
+      sessionId: "session-prepared-1",
+      params: { ...PARAMS, attemptId: "attempt-entry-only" },
+      failureMessage: "could not create leading directories: Permission denied",
+      createdAt: 1,
+    });
+    const firstVisit = renderEntryOnlySteps();
+    expect(document.querySelector("[data-worktree-setup-step='failed']")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeTruthy();
+    firstVisit.unmount();
+
+    // Returning to the session (fresh mount, still no Host marker) resumes the same failure
+    // state with its Retry action instead of stranding the frozen submission.
+    renderEntryOnlySteps();
+    expect(document.querySelector("[data-worktree-setup-step='failed']")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("keeps the orphan note on an entry-only failed card, same as the marker path", () => {
+    useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
+      status: "failed",
+      sessionId: "session-prepared-1",
+      params: { ...PARAMS, attemptId: "attempt-orphaned" },
+      failureMessage: "git interrupted",
+      createdAt: 1,
+    });
+    useComposerWorktreePipelineStore.getState().withdraw(WORKSPACE_KEY, "session-prepared-1");
+    renderEntryOnlySteps();
+    // An explicitly withdrawn pipeline keeps its failed row and orphan note (the marker path
+    // renders the same today); the frozen submission itself stays on the recovery card.
+    expect(document.querySelector("[data-worktree-setup-steps]")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
   it("collapses ready details behind the summary line and expands on click (reasoning-style)", () => {

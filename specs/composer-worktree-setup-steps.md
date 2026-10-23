@@ -229,6 +229,12 @@ missing in-memory `File` sources.
   content revision. Ask the Host to create the preparing session and open that session immediately.
 - The ordinary session header, navigation, timeline subscription, and composer are bound to this
   session ID during preparation. Progress, failure, Retry, and Cancel render inside its timeline.
+  The setup card mounts from the Host preparation marker when the pane snapshot carries one, and
+  otherwise from the renderer's live pipeline entry for the bound session (`creating` or `failed`,
+  never consumed/discarded), so a lost or not-yet-delivered marker update — including a failure
+  report that never reached the Host — does not blank the failed state after navigating back to
+  the session (ISSUE-051). An orphaned entry renders the same failed card with its orphan note in
+  both paths. An entry-only render never starts Git; the Host marker wins whenever present.
 - Do not render the frozen submission as a sent user message while preparation is pending. Keep the
   editor responsive for newer text; newer text is a separate draft and must survive first-input
   admission or recovery.
@@ -240,7 +246,9 @@ missing in-memory `File` sources.
 - On failure or cancellation, retain frozen text and the attachment manifest in a separate recovery
   record. Restore requires an empty editor and never overwrites newer text. A failed session retains
   its setup error and Retry action. Retry/Discard carry the expected attempt and cannot overlap;
-  terminal local state follows the Host ACK for that attempt.
+  terminal local state follows the Host ACK for that attempt. Retry resolves the expected attempt
+  and the frozen parameters from the session's pipeline entry when the pane snapshot has no marker;
+  the durable Host marker remains the compare-and-set authority for the attempt transition.
 - Navigation away, tab unmount, and reconnect detach the renderer-local callback, save the frozen
   recovery record, and keep Host-owned preparation running. Returning to the session ID resumes the same
   progress state. Explicit Cancel is the only user action that abandons the queued submission.
@@ -266,7 +274,11 @@ once activation clears the marker — same position, same collapsible presentati
 never swaps the row's style or place. Activation clears the marker before the sessions-index
 refresh lands, so the renderer bridges that gap from its settled pipeline entry (`ready` with the
 resolved path, or `consumed`) for the timeline slot only; the index fact stays authoritative for
-Git panels and the header, and the bridge never applies while the preparation marker is live. The preparing/failed setup card uses the same collapsible
+Git panels and the header, and the bridge never applies while the preparation marker is live. When
+the pane snapshot carries no preparation marker for the session at all, the same persistent line
+renders from the renderer's live pipeline entry for the bound session (`creating`/`failed`),
+so navigation away and back resumes the same progress state (ISSUE-051); the marker wins whenever
+present. The preparing/failed setup card uses the same collapsible
 presentation as the reasoning ("Thought") row: a compact trigger line with the worktree icon,
 a "Worktree" label, a dot separator and a status summary (shimmer while creating; the
 branch on ready/existing; a destructive "failed" summary), with a chevron that appears on

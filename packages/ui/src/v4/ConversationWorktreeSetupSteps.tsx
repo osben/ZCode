@@ -75,7 +75,12 @@ export function ConversationWorktreeSetupSteps({
   workspaceIdentity?: string;
   remoteSessionId?: string;
   sessionId: string;
-  preparation: {
+  /**
+   * Host preparation marker. Optional: when the pane snapshot carries none for the session
+   * (ISSUE-051), the card renders from the renderer's live pipeline entry instead; only the
+   * Host-seed restore is skipped, and the stale-creating reconcile stays entry-driven.
+   */
+  preparation?: {
     branchName: string;
     targetPath: string;
     baseBranch?: string;
@@ -186,12 +191,16 @@ export function ConversationWorktreeSetupSteps({
     // Authoritative Host preparation reconciliation: creates the missing renderer entry and also
     // replaces a stale local attempt, fails it for the same attempt, or discards it on Host
     // cancellation. Never resurrects consumed/discarded entries and never starts Git itself.
-    restoreComposerWorktreePipelineFromPreparation({
-      workspaceKey,
-      workspacePath,
-      sessionId,
-      preparation,
-    });
+    // Entry-only mounts (no Host marker in the snapshot) skip the seed restore and keep the
+    // renderer's own pipeline state (ISSUE-051).
+    if (preparation) {
+      restoreComposerWorktreePipelineFromPreparation({
+        workspaceKey,
+        workspacePath,
+        sessionId,
+        preparation,
+      });
+    }
     settleStaleCreating();
     // actionPending: a Retry that ends without starting a runner hands an adopted `creating` entry
     // back to this reconcile, which it skipped while the Host acknowledgement was pending.
@@ -208,7 +217,9 @@ export function ConversationWorktreeSetupSteps({
   ]);
 
   if (!entry) {
-    // First paint during reload; the effect below restores renderer state from the Host seed.
+    // First paint during reload; the effect above restores renderer state from the Host seed.
+    // Without a Host seed there is nothing to restore: a live entry drives the card instead.
+    if (!preparation) return null;
     return preparation.status === "preparing" ? (
       <div
         data-worktree-setup-steps="true"
