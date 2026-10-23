@@ -1,4 +1,8 @@
+import { LOCAL_TOOL_SEARCH_NAME, TOOL_SEARCH_NAME } from "@zcode/contracts";
+
 export function normalizeToolNameAlias(toolName: string): string {
+  // LocalToolSearch is the local-mode model-facing name of ToolSearch; rules always use the canonical name.
+  if (toolName === LOCAL_TOOL_SEARCH_NAME) return TOOL_SEARCH_NAME;
   return toolName === "web_search" ? "WebSearch" : toolName;
 }
 
