@@ -18,6 +18,12 @@ import { NodePersonalProviderConfigRepository } from "../src/personal-provider-c
 import { encodeProviderConfigFile } from "../src/provider-config-file-codec.js";
 import { decodeWithUpstreamSchemas } from "./fixtures/upstream-3.16.1/upstream-decoder.js";
 
+// Wraps readFile so one test can hold a poll's file read open; every other call passes through.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
+
 const OPENCODE: ForkAcpAgentRecord = {
   agentId: "opencode",
   providerName: "opencode (ACP)",
@@ -284,5 +290,57 @@ describe("NodeForkAcpAgentStore recovery reporting", () => {
     } finally {
       recovering.dispose();
     }
+  });
+});
+
+describe("NodeForkAcpAgentStore polling", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("schedules no timer from read() alone, so an unobserved store never polls", async () => {
+    vi.useFakeTimers();
+    const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
+    disposables.push(polling);
+    await polling.read();
+    await polling.read();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("polls only while a change listener is subscribed, and stops when the last one leaves", async () => {
+    vi.useFakeTimers();
+    const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
+    disposables.push(polling);
+    const first = polling.onDidChange(() => undefined);
+    expect(vi.getTimerCount()).toBe(1);
+    const second = polling.onDidChange(() => undefined);
+    expect(vi.getTimerCount()).toBe(1);
+    first();
+    expect(vi.getTimerCount()).toBe(1);
+    second();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not re-arm after the last listener leaves a poll in flight", async () => {
+    vi.useFakeTimers();
+    const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
+    disposables.push(polling);
+    vi.mocked(readFile).mockClear();
+    // Hold the poll's file read open so the unsubscribe lands while the poll is provably in flight.
+    let releaseRead: (text: string) => void = () => undefined;
+    const readHeld = new Promise<string>((resolve) => {
+      releaseRead = resolve;
+    });
+    vi.mocked(readFile).mockImplementationOnce((() => readHeld) as unknown as typeof readFile);
+    const off = polling.onDidChange(() => undefined);
+    expect(vi.getTimerCount()).toBe(1);
+    // The synchronous advance fires the timer and starts the poll, but cannot run the pending read to completion.
+    vi.advanceTimersByTime(1_000);
+    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    off();
+    releaseRead('{"schemaVersion": 1, "agents": []}');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

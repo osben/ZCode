@@ -276,3 +276,92 @@ export async function sendExternalAgentConfigOption(
     return externalAgentConfigRefusalMessageId(undefined);
   }
 }
+
+/**
+ * One draft send's share of its draft choices. Taken synchronously when the send starts, so no other apply can read
+ * the same choices (`begun`), and the pane restores it when it was not delivered (`delivered` stays false).
+ */
+export interface DraftExternalAgentClaim {
+  readonly draftKey: string;
+  readonly agentId: string;
+  readonly choices: Readonly<Record<string, string>>;
+  begun: boolean;
+  delivered: boolean;
+}
+
+/** The state without one agent's choices in a draft; the choices of the draft's other agents stay. */
+function withoutAgentChoices(
+  state: DraftExternalAgentChoices,
+  draftKey: string,
+  agentId: string,
+): DraftExternalAgentChoices {
+  const { [agentId]: _claimed, ...otherAgents } = state[draftKey] ?? {};
+  if (Object.keys(otherAgents).length === 0) return takeDraftExternalAgentChoices(state, draftKey);
+  return { ...state, [draftKey]: otherAgents };
+}
+
+/**
+ * Takes the draft's choices for one send, for the claiming agent only. Only a draft send (no bound session) claims: a bound task never receives a
+ * draft's choices, whatever agent it runs.
+ */
+export function claimDraftExternalAgentChoices(params: {
+  state: DraftExternalAgentChoices;
+  draftKey: string;
+  agentId: string;
+  sessionId: string | null;
+}): { state: DraftExternalAgentChoices; claim: DraftExternalAgentClaim | null } {
+  if (params.sessionId !== null) return { state: params.state, claim: null };
+  const choices = draftExternalAgentChoicesOf(params.state, params.draftKey, params.agentId);
+  if (!choices || Object.keys(choices).length === 0) return { state: params.state, claim: null };
+  return {
+    state: withoutAgentChoices(params.state, params.draftKey, params.agentId),
+    claim: {
+      draftKey: params.draftKey,
+      agentId: params.agentId,
+      choices: { ...choices },
+      begun: false,
+      delivered: false,
+    },
+  };
+}
+
+/**
+ * Puts a claim back after a send that did not deliver it. A choice the user made after the claim wins over the
+ * restored value of the same config id.
+ */
+export function restoreDraftExternalAgentChoices(
+  state: DraftExternalAgentChoices,
+  claim: DraftExternalAgentClaim,
+): DraftExternalAgentChoices {
+  const current = draftExternalAgentChoicesOf(state, claim.draftKey, claim.agentId) ?? {};
+  return {
+    ...state,
+    [claim.draftKey]: {
+      ...state[claim.draftKey],
+      [claim.agentId]: { ...claim.choices, ...current },
+    },
+  };
+}
+
+/**
+ * Sends a claimed draft's choices once. A second call on the same claim does nothing; a refusal leaves the claim
+ * undelivered so the caller restores it.
+ */
+export async function sendClaimedDraftExternalAgentChoices(params: {
+  claim: DraftExternalAgentClaim | null;
+  targetSessionId: string;
+  send(targetSessionId: string, configId: string, value: string): Promise<string | null>;
+}): Promise<{ refusedMessageId: string | null }> {
+  const claim = params.claim;
+  if (!claim || claim.begun) return { refusedMessageId: null };
+  claim.begun = true;
+  const outcome = await sendDraftExternalAgentChoices({
+    state: { [claim.draftKey]: { [claim.agentId]: claim.choices } },
+    draftSessionId: claim.draftKey,
+    agentId: claim.agentId,
+    targetSessionId: params.targetSessionId,
+    send: params.send,
+  });
+  claim.delivered = outcome.refusedMessageId === null;
+  return { refusedMessageId: outcome.refusedMessageId };
+}
