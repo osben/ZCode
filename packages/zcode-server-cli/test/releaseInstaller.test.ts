@@ -217,9 +217,13 @@ describe("release installer", () => {
         version: "1.2.5",
       });
       await new ReleaseManager(layout).applyPending();
-      // runtime/node 换成指向系统 echo 的链接：能观察 launcher 实际 exec 的 release，又不触发 XProtect 首次扫描。
+      // Replace runtime/node with a shell stub that echoes its arguments, so the test observes which release the
+      // launcher execs without an XProtect first-run scan. A symlink to /bin/echo breaks on multicall coreutils
+      // (uutils on Ubuntu 26.04), which refuses to run under a different executable name.
       await rm(join(installed.releaseDir, "runtime", "node"));
-      await symlink("/bin/echo", join(installed.releaseDir, "runtime", "node"));
+      await writeFile(join(installed.releaseDir, "runtime", "node"), '#!/bin/sh\necho "$@"\n', {
+        mode: 0o755,
+      });
       const output = await new Promise<string>((resolve, reject) => {
         execFile(
           "/bin/sh",
