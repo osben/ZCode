@@ -1,5 +1,19 @@
 # Tool Change Chain Spec
 
+## 模型可见的工具定义只用英文（2026-10-23）
+
+Agent、CreateWorkflow、CronCreate、OffPeakCreate 的描述与 schema 字段说明，以及
+`dynamic-workflows` 技能里重复同一条路由规则的文字，原先夹带中文触发词和示例
+（`使用 workflow`、`8分钟后`、`闲时任务`、`每20分钟提醒我喝水` 等），会出现在 trajectory 的
+Schema 页和 provider 请求里。现统一改成与语言无关的英文表述（"in any language"），只改模型可见
+文案：描述在 `packages/core/src/tool/handlers/{agent,create-workflow-description,cron,off-peak}.ts`，
+schema 字段说明在 `packages/contracts/src/tools/{automation,off-peak}.ts`。
+schema 形状、权限、执行、协议与 UI/V4 投影不变；用户输入（prompt、title）仍原样保留，
+ReplyToChannel 描述里作为收件人分隔符的 `、` 属功能字符，保留。
+规格见 `specs/english-tool-descriptions.md`；回归见
+`packages/core/tests/tool-definitions-english-only.test.ts`（全部内置工具定义不含 CJK）和
+`packages/core/tests/workflow-routing-hints.test.ts`（路由措辞仍在）。
+
 ## Bash 临时输出路径隔离
 
 主应用及 workflow 子运行时装配 tmp 父目录 → execution adapter 实际准备具名输出文件 →
