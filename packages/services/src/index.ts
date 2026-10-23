@@ -501,3 +501,7 @@ export { createHighspeedMockTransport } from "./highspeed/highspeedMockTransport
 
 export { IGenUiService } from "./gen-ui/contract.js";
 export type { GenUiPrepareParams } from "./gen-ui/contract.js";
+export {
+  DEFINITION_PREVIEW_CHANNEL,
+  IDefinitionPreviewService,
+} from "./definition-preview/index.js";

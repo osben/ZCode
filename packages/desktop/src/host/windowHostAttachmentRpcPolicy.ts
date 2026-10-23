@@ -12,6 +12,7 @@ import {
   createReadOnlyQuickPromptService,
   type ServiceExposurePolicy,
   type ZCodeAgentV4ClientMode,
+  DEFINITION_PREVIEW_CHANNEL,
 } from "@zcode/services";
 import { ServiceChannels } from "@zcode/shared";
 
@@ -59,6 +60,8 @@ const WEB_REMOTE_REPLAYABLE_ALLOWED_CHANNELS = new Set<string>([
   ServiceChannels.Plugins,
   ServiceChannels.PluginManagement,
   ServiceChannels.Subagents,
+  // Read-only and confined to Host-discovered definition roots.
+  DEFINITION_PREVIEW_CHANNEL,
   ServiceChannels.Commands,
   ServiceChannels.Hooks,
   ServiceChannels.Memory,

@@ -279,6 +279,31 @@ modules:
     layerOrder: [domain, app, adapters]
     owner: conversation
 
+  - id: definition-preview-protocol
+    roots: [packages/shared/src/definition-preview]
+    managed: true
+    requires: []
+    publicEntrypoints:
+      [
+        packages/shared/src/definition-preview/index.ts,
+        packages/shared/src/definition-preview/contract.ts,
+      ]
+    layers: { domain: "." }
+    owner: conversation
+  - id: definition-preview-service
+    roots: [packages/services/src/definition-preview]
+    managed: true
+    requires: [services, shared, rpc, definition-preview-protocol]
+    publicEntrypoints:
+      [
+        packages/services/src/definition-preview/index.ts,
+        packages/services/src/definition-preview/contract.ts,
+        packages/services/src/definition-preview/node.ts,
+      ]
+    layers: { domain: domain, app: app, adapters: adapters }
+    layerOrder: [domain, app, adapters]
+    owner: conversation
+
   - id: gen-ui
     roots: [packages/ui/src/gen-ui]
     managed: true

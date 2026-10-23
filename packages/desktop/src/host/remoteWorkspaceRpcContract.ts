@@ -5,6 +5,7 @@ export const REMOTE_WORKSPACE_RPC_CONTRACT_VERSION = 1 as const;
 export const REMOTE_WORKSPACE_RPC_CHANNELS = [
   "fileService",
   "genUiService",
+  "definitionPreviewService",
   "gitService",
   "gitCheckpointService",
   "systemService",

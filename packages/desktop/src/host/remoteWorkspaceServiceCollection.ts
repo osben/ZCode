@@ -2,6 +2,7 @@ import {
   ServiceCollection,
   IFileService,
   IGenUiService,
+  IDefinitionPreviewService,
   IMediaPreviewService,
   IGitService,
   IGitCheckpointService,
@@ -77,6 +78,7 @@ const CONTROLLER_BROADCAST_CHANNELS: ReadonlySet<string> = new Set([
 export const REMOTE_WORKSPACE_RPC_REGISTRATIONS = [
   ["fileService", IFileService],
   ["genUiService", IGenUiService],
+  ["definitionPreviewService", IDefinitionPreviewService],
   ["mediaPreviewService", IMediaPreviewService],
   ["gitService", IGitService],
   ["gitCheckpointService", IGitCheckpointService],
@@ -203,6 +205,8 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     // 根因：客户端已有 gen-ui 代理，但 Host 漏转发使远端读取成为 Unknown channel。
     // 复用 Source 的读取与输出目录校验；桌面状态/沙箱仍由 base services 提供。
     .register(IGenUiService, params.connectionServices.genUiService)
+    // Definition files live on the workspace host; local catalogs would scan the wrong machine.
+    .register(IDefinitionPreviewService, params.connectionServices.definitionPreviewService)
     .register(IMediaPreviewService, params.connectionServices.mediaPreviewService)
     .register(IGitService, params.connectionServices.gitService)
     .register(IGitCheckpointService, params.connectionServices.gitCheckpointService)

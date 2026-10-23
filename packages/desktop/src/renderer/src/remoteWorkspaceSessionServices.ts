@@ -38,6 +38,8 @@ export function buildRemoteWorkspaceSessionServices(
     // Reusing local base services scanned the remote workspacePath on the local machine, making project
     // capabilities unavailable.
     skillsService: remoteServices.skillsService,
+    // Previews must read definitions from the same host that discovered them.
+    definitionPreviewService: remoteServices.definitionPreviewService,
     // Imports for remote skill synchronization must be written to ~/.zcode/skills on the SSH host.
     // Reusing the base service would make the UI report success while writing to the local user's directory.
     skillSyncService: remoteServices.skillSyncService,

@@ -162,6 +162,8 @@ export default defineConfig({
             // Gen UI 目录回归位于源码旁，默认入口也必须执行，避免只在手动定向运行时生效。
             "packages/shared/src/node/genUiPaths.test.ts",
             "packages/services/src/gen-ui/**/*.test.ts",
+            // Definition preview confinement tests live beside the managed module's source.
+            "packages/services/src/definition-preview/**/*.test.ts",
             // CI runs only the root suite; pin upstream checksums of the shared CLI session DB here.
             "apps/zcode-cli/packages/adapters/tests/upstream-migration-checksum-pin.test.ts",
             // CI runs only the root suite; the model-io timing contract test must run there too.
