@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, type RenderResult } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -98,31 +98,41 @@ function createTask(): ZCodeTaskMeta {
   };
 }
 
-function renderRow(overrides: { hoverEnabled?: boolean } = {}) {
-  return render(
-    createElement(
-      // The app renders sidebar rows under this provider (300 ms delay, hoverable content off),
-      // which is what makes pointer leave close the card immediately.
-      SidebarTooltipProvider,
-      null,
-      createElement(MemoTaskItem, {
-        hoverEnabled: overrides.hoverEnabled ?? true,
-        intl: stableIntl,
-        isActive: false,
-        isArchiveConfirming: false,
-        isPinned: false,
-        onArchiveTask: vi.fn(),
-        onArchiveTaskInline: vi.fn(),
-        onCancelArchiveConfirm: vi.fn(),
-        onMarkTaskAsUnread: vi.fn(),
-        onSelectTask: vi.fn(),
-        onStartRenameTask: vi.fn(),
-        onTogglePinTask: vi.fn(),
-        task: createTask(),
-        workspacePath: "/workspace",
-      }),
-    ),
+type RowOverrides = { hoverEnabled?: boolean };
+
+// Single source of the row element for mount and rerender so required-prop drift between the two
+// paths cannot happen silently.
+function rowElement(overrides: RowOverrides = {}) {
+  return createElement(
+    // The app renders sidebar rows under this provider (300 ms delay, hoverable content off),
+    // which is what makes pointer leave close the card immediately.
+    SidebarTooltipProvider,
+    null,
+    createElement(MemoTaskItem, {
+      hoverEnabled: overrides.hoverEnabled ?? true,
+      intl: stableIntl,
+      isActive: false,
+      isArchiveConfirming: false,
+      isPinned: false,
+      onArchiveTask: vi.fn(),
+      onArchiveTaskInline: vi.fn(),
+      onCancelArchiveConfirm: vi.fn(),
+      onMarkTaskAsUnread: vi.fn(),
+      onSelectTask: vi.fn(),
+      onStartRenameTask: vi.fn(),
+      onTogglePinTask: vi.fn(),
+      task: createTask(),
+      workspacePath: "/workspace",
+    }),
   );
+}
+
+function renderRow(overrides: RowOverrides = {}) {
+  return render(rowElement(overrides));
+}
+
+function rerenderRow(view: RenderResult, overrides: RowOverrides = {}) {
+  view.rerender(rowElement(overrides));
 }
 
 function hoverCard(): Element | null {
@@ -137,6 +147,12 @@ async function openHoverCard(row: Element) {
 async function closeHoverCard(row: Element) {
   fireEvent.pointerLeave(row, { pointerType: "mouse" });
   await waitFor(() => expect(hoverCard()).toBeNull());
+}
+
+// Radix opens on hover only after the sidebar provider's 300 ms delay; a negative assertion must
+// wait past that window.
+async function waitPastHoverDelay() {
+  await new Promise((resolve) => setTimeout(resolve, 400));
 }
 
 describe("TaskListItem flat-row hover card", () => {
@@ -172,6 +188,24 @@ describe("TaskListItem flat-row hover card", () => {
     await closeHoverCard(row);
   });
 
+  it("stays closed on hover while hoverEnabled is false at mount", async () => {
+    const { container } = renderRow({ hoverEnabled: false });
+    const row = container.querySelector<HTMLElement>("[data-task-item-key]")!;
+
+    fireEvent.pointerMove(row, { pointerType: "mouse" });
+    await waitPastHoverDelay();
+
+    expect(hoverCard()).toBeNull();
+  });
+
+  it("opens the hover card on keyboard focus", async () => {
+    const { container } = renderRow();
+    const row = container.querySelector<HTMLElement>("[data-task-item-key]")!;
+
+    fireEvent.focus(row);
+    await waitFor(() => expect(hoverCard()).not.toBeNull());
+  });
+
   it("does not re-render the memoized row body while the hover card opens and closes", async () => {
     const { container } = renderRow();
     const row = container.querySelector<HTMLElement>("[data-task-item-key]")!;
@@ -190,64 +224,17 @@ describe("TaskListItem flat-row hover card", () => {
       vi.spyOn(console, "warn").mockImplementation(() => undefined),
       vi.spyOn(console, "error").mockImplementation(() => undefined),
     ];
-    const { container, rerender } = renderRow();
-    const row = container.querySelector<HTMLElement>("[data-task-item-key]")!;
+    const view = renderRow();
+    const row = view.container.querySelector<HTMLElement>("[data-task-item-key]")!;
 
     await openHoverCard(row);
 
     // hoverEnabled flips on a mounted row (web remote-control presentation): open must stay boolean.
-    const renderWithHoverOff = () =>
-      rerender(
-        createElement(
-          SidebarTooltipProvider,
-          null,
-          createElement(MemoTaskItem, {
-            hoverEnabled: false,
-            intl: stableIntl,
-            isActive: false,
-            isArchiveConfirming: false,
-            isPinned: false,
-            onArchiveTask: vi.fn(),
-            onArchiveTaskInline: vi.fn(),
-            onCancelArchiveConfirm: vi.fn(),
-            onMarkTaskAsUnread: vi.fn(),
-            onSelectTask: vi.fn(),
-            onStartRenameTask: vi.fn(),
-            onTogglePinTask: vi.fn(),
-            task: createTask(),
-            workspacePath: "/workspace",
-          }),
-        ),
-      );
-    const renderWithHoverOn = () =>
-      rerender(
-        createElement(
-          SidebarTooltipProvider,
-          null,
-          createElement(MemoTaskItem, {
-            hoverEnabled: true,
-            intl: stableIntl,
-            isActive: false,
-            isArchiveConfirming: false,
-            isPinned: false,
-            onArchiveTask: vi.fn(),
-            onArchiveTaskInline: vi.fn(),
-            onCancelArchiveConfirm: vi.fn(),
-            onMarkTaskAsUnread: vi.fn(),
-            onSelectTask: vi.fn(),
-            onStartRenameTask: vi.fn(),
-            onTogglePinTask: vi.fn(),
-            task: createTask(),
-            workspacePath: "/workspace",
-          }),
-        ),
-      );
-
-    renderWithHoverOff();
+    rerenderRow(view, { hoverEnabled: false });
     await waitFor(() => expect(hoverCard()).toBeNull());
 
     // Re-enabling hover must not pop the stale card open without a pointer over the row.
-    renderWithHoverOn();
+    rerenderRow(view, { hoverEnabled: true });
     expect(hoverCard()).toBeNull();
 
     const warnings = spies
