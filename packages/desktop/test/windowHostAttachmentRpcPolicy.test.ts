@@ -1,5 +1,10 @@
 import { ChannelClient, ChannelServer, createQueuePair } from "@zcode/rpc";
-import { ISettingService, ITerminalService, ServiceCollection } from "@zcode/services";
+import {
+  DEFINITION_PREVIEW_CHANNEL,
+  ISettingService,
+  ITerminalService,
+  ServiceCollection,
+} from "@zcode/services";
 import { describe, expect, it, vi } from "vitest";
 import { ServiceChannels } from "@zcode/shared";
 import {
@@ -26,11 +31,17 @@ describe("Window Host attachment RPC policy", () => {
     expect(policy?.allowedChannels.has(ServiceChannels.TaskGroups)).toBe(true);
     expect(policy?.allowedChannels.has(ServiceChannels.RemoteProjects)).toBe(true);
     expect(policy?.allowedChannels.has("repo-wiki")).toBe(false);
-    const registeredChannels = new Set<string>(Object.values(ServiceChannels));
+    // Fork channels use literal descriptors (as gen-ui does) so the upstream table stays untouched;
+    // each one is reviewed and listed here explicitly.
+    expect(policy?.allowedChannels.has(DEFINITION_PREVIEW_CHANNEL)).toBe(true);
+    const registeredChannels = new Set<string>([
+      ...Object.values(ServiceChannels),
+      DEFINITION_PREVIEW_CHANNEL,
+    ]);
     expect([...policy!.allowedChannels].every((channel) => registeredChannels.has(channel))).toBe(
       true,
     );
-    expect(policy?.allowedChannels.size).toBe(46);
+    expect(policy?.allowedChannels.size).toBe(47);
   });
 
   it("keeps the complete service surface for desktop attachments", () => {

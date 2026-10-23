@@ -21,6 +21,7 @@ function makeServices(id: string): IServiceAccessor {
     conversationShareService: { id, service: "conversation-share" },
     fileWatcherService: { id, service: "fileWatcher" },
     skillsService: { id, service: "skills" },
+    definitionPreviewService: { id, service: "definition-preview" },
     skillSyncService: { id, service: "skill-sync" },
     mcpSyncService: { id, service: "mcp-sync" },
     pluginSyncService: { id, service: "plugin-sync" },
@@ -64,6 +65,8 @@ describe("buildRemoteWorkspaceSessionServices", () => {
     expect(merged.modelSelectionService).toBe(remoteServices.modelSelectionService);
     expect(merged.providerSettingsService).toBe(remoteServices.providerSettingsService);
     expect(merged.skillsService).toBe(remoteServices.skillsService);
+    // Definition roots are discovered on the remote host, so previews must read there too.
+    expect(merged.definitionPreviewService).toBe(remoteServices.definitionPreviewService);
     expect(merged.skillSyncService).toBe(remoteServices.skillSyncService);
     expect(merged.mcpSyncService).toBe(remoteServices.mcpSyncService);
     expect(merged.pluginSyncService).toBe(remoteServices.pluginSyncService);

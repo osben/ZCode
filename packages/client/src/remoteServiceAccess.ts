@@ -1,4 +1,4 @@
-import { IGenUiService } from "@zcode/services";
+import { IDefinitionPreviewService, IGenUiService } from "@zcode/services";
 import { ProxyChannel, type IChannelClient } from "@zcode/rpc";
 import {
   IFileService,
@@ -114,6 +114,7 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly skillSyncService: ISkillSyncService;
   readonly mcpSyncService: IMcpSyncService;
   readonly genUiService: IGenUiService;
+  readonly definitionPreviewService: IDefinitionPreviewService;
   readonly pluginUiBridgeService: IPluginUiBridgeService;
   readonly pluginUiSamplingService: IPluginUiSamplingService;
   readonly pluginUiAppToolsService: IPluginUiAppToolsService;
@@ -277,6 +278,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.genUiService = ProxyChannel.toService<IGenUiService>(
       channelClient.getChannel(IGenUiService.channelName),
+    );
+    this.definitionPreviewService = ProxyChannel.toService<IDefinitionPreviewService>(
+      channelClient.getChannel(IDefinitionPreviewService.channelName),
     );
     this.pluginUiBridgeService = ProxyChannel.toService<IPluginUiBridgeService>(
       channelClient.getChannel(IPluginUiBridgeService.channelName),

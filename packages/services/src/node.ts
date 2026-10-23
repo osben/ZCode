@@ -1,5 +1,7 @@
 import { IGenUiService } from "./gen-ui/contract.js";
 import { createGenUiService } from "./gen-ui/node.js";
+import { IDefinitionPreviewService } from "./definition-preview/contract.js";
+import { createDefinitionPreviewService } from "./definition-preview/node.js";
 import { channelReplyHostRequestSchema, channelReplyResultSchema } from "@zcode/shared";
 /* eslint-disable max-lines -- Host-process service registration and startup wiring must stay together so dependency injection order remains easy to trace. */
 // Node.js service implementations — NOT safe to import in browser code
@@ -1754,6 +1756,7 @@ export function createLocalServices(options: {
   const subagentsService = createSubagentsService({
     isDesktopRuntime: true,
   });
+  const commandsService = createCommandsService({ isDesktopRuntime: true });
   const hooksService = createHooksService({
     grantWorkspaceHookTrust: (params) => zcodeAgentService.grantWorkspaceHookTrust(params),
   });
@@ -2967,7 +2970,17 @@ export function createLocalServices(options: {
     // protocol terms.
     .register(IPluginManagementService, createPluginManagementService({ zcodeAgentService }))
     .register(ISubagentsService, subagentsService)
-    .register(ICommandsService, createCommandsService({ isDesktopRuntime: true }))
+    .register(ICommandsService, commandsService)
+    .register(
+      IDefinitionPreviewService,
+      createDefinitionPreviewService({
+        catalog: {
+          listSkills: async (target) => (await skillsService.list(target)).skills,
+          listAgents: async (target) => (await subagentsService.list(target)).agents,
+          listCommands: async (target) => (await commandsService.list(target)).commands,
+        },
+      }),
+    )
     .register(
       IHooksService,
       createHooksService({

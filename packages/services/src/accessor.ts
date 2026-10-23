@@ -1,4 +1,5 @@
 import type { IGenUiService } from "./gen-ui/contract.js";
+import type { IDefinitionPreviewService } from "./definition-preview/contract.js";
 import { IOffPeakTaskService } from "./session/offPeakTask.js";
 import type { IHighspeedCardService } from "./highspeed/highspeedCard.js";
 import type { IPluginUiBridgeService } from "./plugin-ui-bridge/contract.js";
@@ -111,6 +112,8 @@ export interface IServiceAccessor {
   readonly mcpSyncService: IMcpSyncService;
   /** Plugin UI bridge; web or older hosts may omit it, and the UI falls back to plain MCP cards. */
   readonly genUiService?: IGenUiService;
+  /** Confined preview of skills, commands and subagents; older or upstream hosts may omit it. */
+  readonly definitionPreviewService?: IDefinitionPreviewService;
   readonly pluginUiBridgeService?: IPluginUiBridgeService;
   /** Page sampling; available only for desktop local tasks. */
   readonly pluginUiSamplingService?: IPluginUiSamplingService;
