@@ -2,6 +2,9 @@
 
 Status: implemented (2026-10-15). Covers the sidebar task-row hover card (`TaskSidebarHoverCard`,
 `data-task-hover-card`). Supersedes the previous status/workspace/diff stacked layout.
+Regression 2026-10-22 (fixed): the grouped row hid its run-state dot on hover/focus, and the regular
+row replaced its run-state slot with the Pin action (`hidden` status span). Both are restored by
+the leading-slot rule below and acceptance #8-#9.
 
 ## Contract
 
@@ -36,6 +39,18 @@ the detail card must not hide the running spinner or error/unread marker.
 For a mobile-active task, the phone marker occupies the leading status slot while visible; when
 hover/focus actions suppress that marker, restore the task's leading run-state indicator in the slot.
 
+Leading-slot owner (regular `TaskListItem` row): the left slot shows one of the phone marker, the
+run-state indicator (error, unread, spinner), or the Pin action. One decision picks the Pin position:
+
+- No run state: Pin stays in the left slot on hover/focus (pinned tasks keep it), as before.
+- Run state present: the slot keeps the indicator. Pin sits in the right-side action cluster next to
+  Archive whenever the cluster is mounted: hover/focus, and always on touch devices (`hover:none`),
+  so Pin stays reachable without hover.
+- When the run state toggles while Pin has keyboard focus, Pin remounts in its new place. Focus then
+  moves to the task row, so keyboard position is kept.
+  The grouped row keeps its run-state dot in the trailing metadata cluster beside the action cluster on
+  hover/focus. Grouped rows have no phone marker.
+
 ## Acceptance scenarios
 
 1. Hovering a completed task shows title + time on line 1, branch + `+N −N` on line 2, provider
@@ -52,4 +67,5 @@ hover/focus actions suppress that marker, restore the task's leading run-state i
 8. Hovering or focusing a running/error task keeps its row status indicator visible beside actions
    in both grouped and regular task rows.
 9. A mobile-active unread/error/running task shows its phone marker at rest and its run-state
-   indicator when hover/focus actions take the leading slot.
+   indicator when hover/focus actions take the leading slot. Regular task rows only: grouped rows
+   have no phone marker.

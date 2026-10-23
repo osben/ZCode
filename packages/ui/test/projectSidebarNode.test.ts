@@ -10,6 +10,7 @@ const probes = vi.hoisted(() => ({
   openExternal: vi.fn(),
   openSettingsTab: vi.fn(),
   setIntent: vi.fn(),
+  confirm: vi.fn(async (_request: unknown) => true),
 }));
 vi.mock("@/hooks/useWorkspaceServices.js", () => ({
   useWorkspaceServices: () => ({
@@ -34,7 +35,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStoreApi: () => ({ getState: () => ({ openSettingsTab: probes.openSettingsTab }) }),
 }));
-vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => async () => true }));
+vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => probes.confirm }));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -150,6 +151,38 @@ it("reads the GitHub remote only when a menu opens and opens it externally", asy
   await waitFor(() => expect(probes.node.mock.lastCall![0].onOpenGitHub).toBeDefined());
   probes.node.mock.lastCall![0].onOpenGitHub();
   expect(probes.openExternal).toHaveBeenCalledWith("https://github.com/o/r");
+});
+
+// Menu entry: "Delete project" must confirm first; the service is only called after an explicit Delete.
+it("row menu delete asks first and deletes the project once after confirmation", async () => {
+  const deleteProject = vi.fn(async () => {});
+  const props = { ...fixture(), service: { deleteProject } as never };
+  render(createElement(ProjectSidebarNode, props));
+  probes.node.mock.lastCall![0].onDelete();
+  await waitFor(() => expect(deleteProject).toHaveBeenCalledOnce());
+  expect(probes.confirm).toHaveBeenCalledOnce();
+  expect(probes.confirm.mock.calls[0]![0]).toMatchObject({
+    title: "project.deleteConfirmTitle",
+    description: "project.deleteConfirmDescription",
+    confirmVariant: "destructive",
+  });
+  expect(probes.confirm.mock.invocationCallOrder[0]).toBeLessThan(
+    deleteProject.mock.invocationCallOrder[0]!,
+  );
+  expect(deleteProject).toHaveBeenCalledWith("p", "local");
+  expect(props.refresh).toHaveBeenCalledOnce();
+});
+
+it("row menu delete leaves the project untouched when cancelled", async () => {
+  probes.confirm.mockResolvedValueOnce(false);
+  const deleteProject = vi.fn(async () => {});
+  const props = { ...fixture(), service: { deleteProject } as never };
+  render(createElement(ProjectSidebarNode, props));
+  probes.node.mock.lastCall![0].onDelete();
+  await waitFor(() => expect(probes.confirm).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(deleteProject).not.toHaveBeenCalled();
+  expect(props.refresh).not.toHaveBeenCalled();
 });
 
 it("shows no GitHub item when the remote is not on GitHub", async () => {

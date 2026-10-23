@@ -45,7 +45,7 @@ describe("grouped task context menu: Move to group titles", () => {
         ],
         intl: { formatMessage: ({ id }: { id: string }) => enUS[id] ?? id },
         fileManagerLabel: "Finder",
-        taskSessionFile: { loading: false, path: null },
+        taskSessionFile: { loading: false, path: null, exists: false },
         taskNativeSessionLogFile: { loading: false, path: null },
         providerConfigFile: { loading: false, path: null },
         onMoveTaskToGroup: noop,
