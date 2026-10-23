@@ -91,10 +91,10 @@ Final status (2026-10-22 wrap-up). Nothing was merged by this run; "merged" mean
 - osben/ZCode#288 — ISSUE-045 (S1, fork locale overrides in `fork-settings.json`) — merged.
 - osben/ZCode#289 — ISSUE-028/029/031/041 — merged.
 - osben/ZCode#290 — ISSUE-039 (Steer never holds the queue; a user Stop always holds) — open.
-- osben/ZCode#291 — ISSUE-026 + ISSUE-035 — open. Decision to confirm: an unresolvable stored pick is never dropped (ISSUE-026's stored-intent rule wins over ISSUE-035's stale-pick clearing).
-- osben/ZCode#292 — ISSUE-036/048/047/027 — open; merged with integration to resolve the `i18nCatalogParity` EN_ONLY_KEYS conflict with #285.
-- osben/ZCode#293 — ISSUE-046 (uk-UA values translated, coverage guard test) — open.
-- Docs PR (this ledger, scenario corrections, verifier shared-settings guard, CodeRabbit fixes from #282) — open.
+- osben/ZCode#291 — ISSUE-026 + ISSUE-035 — merged. Decision to confirm: an unresolvable stored pick is never dropped (ISSUE-026's stored-intent rule wins over ISSUE-035's stale-pick clearing).
+- osben/ZCode#292 — ISSUE-036/048/047/027 — open; integration merged in twice to resolve conflicts: `i18nCatalogParity` EN_ONLY_KEYS (union, against #285) and uk-UA `archives.count` (the ISSUE-047 plural family kept over #293's single key, worded "сеанс" like #293).
+- osben/ZCode#293 — ISSUE-046 (uk-UA values translated, coverage guard test) — merged.
+- osben/ZCode#294 — docs: this ledger, scenario corrections, verifier shared-settings guard, CodeRabbit fixes from #282 — open.
 
   Left open, and why:
 
