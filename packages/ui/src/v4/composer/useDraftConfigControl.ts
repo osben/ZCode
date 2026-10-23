@@ -304,20 +304,25 @@ export function useDraftConfigControl(params: {
       currentState = { ...currentState, observedConfig };
     }
   }
-  // ISSUE-035 (C-1): a pick is stale once the Session model moves away from the model it was made against
+  // ISSUE-035: a pick is stale once the Session model moves away from the model it was made against
   // (another window, a Host fallback, the CLI). Drop the marker and adopt the Session model, so a stale pick
   // cannot silently switch the next send back. The text is kept.
-  // MF3: a pick made before any Snapshot arrived (or a record written before the base existed) takes the
-  // first Snapshot as its base, so it can expire like any other pick.
+  // A pick made before any Snapshot arrived (or a record written before the base existed) takes the
+  // first Snapshot as its base, so it can expire like any other pick. If that Snapshot already has the
+  // picked model, the pick is a no-op and must not keep a marker.
   if (
     sessionId !== null &&
     draft.modelSelectionPicked &&
     !draft.modelSelectionPickedFrom &&
     sessionConfig?.modelSelection
   ) {
-    draft = { ...draft, modelSelectionPickedFrom: sessionConfig.modelSelection };
+    const base = sessionConfig.modelSelection;
+    draft =
+      draft.modelSelection && isSameModel(draft.modelSelection, base)
+        ? withoutModelSelectionPick(draft)
+        : { ...draft, modelSelectionPickedFrom: base };
   }
-  // MF2: the drop applies only to a resolvable stale pick. An unresolvable pick is stored intent (ISSUE-026):
+  // The drop applies only to a resolvable stale pick. An unresolvable pick is stored intent (ISSUE-026):
   // it stays, and the composer keeps naming the model reason.
   if (
     sessionId !== null &&
@@ -366,7 +371,7 @@ export function useDraftConfigControl(params: {
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;
-  // Read by the pick handler at call time, so a new Snapshot does not recreate the handler (ISSUE-035 NIT).
+  // Read by the pick handler at call time, so a new Snapshot does not recreate the handler.
   const sessionConfigRef = useRef(sessionConfig);
   sessionConfigRef.current = sessionConfig;
   const persistDraft = useCallback(
@@ -665,7 +670,7 @@ export function useDraftConfigControl(params: {
         workspaceIdentity: workspaceIdentity ?? null,
       });
       // ISSUE-035: an explicit pick in an existing Session is kept without text. Picking the Session's own
-      // model is a no-op, so it stores no marker and clears an earlier pick (C-4). Root drafts never store one.
+      // model is a no-op, so it stores no marker and clears an earlier pick. Root drafts never store one.
       const base = sessionId !== null ? sessionConfigRef.current?.modelSelection : undefined;
       const isNoOp = base !== undefined && isSameModel(modelSelection, base);
       updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection), {

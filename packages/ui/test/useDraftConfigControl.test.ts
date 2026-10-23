@@ -2013,7 +2013,8 @@ describe("useDraftConfigControl existing-session explicit model pick (ISSUE-035)
     sessionId: string;
     // undefined keeps the default Snapshot; null means no Snapshot has arrived yet.
     snapshot?: Partial<SessionConfigState> | null;
-    view?: ModelSelectionView;
+    // undefined keeps the default view; null means the model selection view is still loading.
+    view?: ModelSelectionView | null;
   };
   // installMinimalDom() creates a fresh storage each call, so remounts must share one container.
   function createProbe(container: Element) {
@@ -2025,7 +2026,7 @@ describe("useDraftConfigControl existing-session explicit model pick (ISSUE-035)
         sessionId: props.sessionId,
         sessionConfig: props.snapshot === undefined ? snapshotA : props.snapshot,
         agentStartupAllowed: false,
-        modelSelectionView: props.view ?? viewAB(),
+        modelSelectionView: props.view === undefined ? viewAB() : props.view,
       });
       return null;
     }
@@ -2268,6 +2269,44 @@ describe("useDraftConfigControl existing-session explicit model pick (ISSUE-035)
     // The Session later moves away from that base, so the pick expires.
     await probe.render({ sessionId: "mf3-base", snapshot: snapshotC, view: viewABC() });
     expect(readV4ComposerDraft(workspacePath, undefined, "mf3-base")).toBeNull();
+    expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-c" });
+    probe.unmount();
+  });
+
+  it("a no-op pick made before the first Snapshot is cleared when that Snapshot adopts it as base", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mf3-noop", snapshot: null, view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-a"));
+    await settle();
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-noop")).toMatchObject({
+      modelSelectionPicked: true,
+    });
+
+    // The first Snapshot reports model-a, which is the pick itself: adopting it as base must not keep a marker.
+    await probe.render({ sessionId: "mf3-noop", snapshot: snapshotA, view: viewABC() });
+
+    expect(readV4ComposerDraft(workspacePath, undefined, "mf3-noop")).toBeNull();
+    expect(probe.control().composerDraft.modelSelectionPicked).toBeUndefined();
+    probe.unmount();
+  });
+
+  it("a pick is kept while the model view is loading and dropped once the view is ready and the Session moved", async () => {
+    const probe = createProbe(installMinimalDom());
+    await probe.render({ sessionId: "mp-loading", view: viewABC() });
+    act(() => probe.control().handleDraftSelectModel("provider", "model-b"));
+    await settle();
+
+    // The view is still loading (no verdict). The Session moved to model-c, but the pick must survive.
+    await probe.render({ sessionId: "mp-loading", snapshot: snapshotC, view: null });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-loading")).toMatchObject({
+      modelSelection: modelB,
+      modelSelectionPicked: true,
+      modelSelectionPickedFrom: modelA,
+    });
+
+    // The view is ready and resolves model-b, and the Session has moved away from model-a: the pick expires.
+    await probe.render({ sessionId: "mp-loading", snapshot: snapshotC, view: viewABC() });
+    expect(readV4ComposerDraft(workspacePath, undefined, "mp-loading")).toBeNull();
     expect(probe.control().composerDraft.modelSelection).toMatchObject({ modelId: "model-c" });
     probe.unmount();
   });
