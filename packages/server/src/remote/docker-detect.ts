@@ -162,9 +162,17 @@ export function parseDockerContainerList(rawOutput: string): DockerContainerInfo
     });
 }
 
+/**
+ * Ask the daemon for its version. Unlike `docker --version` this fails when the CLI exists but the daemon is not running,
+ * and the rejection reason (stderr) is kept so callers can show why Docker is unusable.
+ */
+export async function probeDockerDaemon(): Promise<void> {
+  await execDocker(["version", "--format", "{{.Server.Version}}"]);
+}
+
 export async function isDockerAvailable(): Promise<boolean> {
   try {
-    await execDocker(["version", "--format", "{{.Server.Version}}"]);
+    await probeDockerDaemon();
     return true;
   } catch {
     // Previously only a missing docker command counted as unavailable, so an unstarted daemon was still reported as available

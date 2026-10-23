@@ -148,13 +148,14 @@ v1 文件不做启动迁移：读取时视为 `decisions: []`，下一次业务�
 
 ## 5. 服务接口（IOnboardingRecordService）
 
-| 方法                             | 说明                                                                                |
-| -------------------------------- | ----------------------------------------------------------------------------------- |
-| `appendRecord(deviceMid, entry)` | 文件不存在则创建并固化 deviceMid；存在则追加；损坏时 warn 并重建；userId 由服务补全 |
-| `shouldOnboard(deviceMid)`       | 触发判定；已有 Task 时写入 existing_local_user（见 §4）                             |
-| `dismissOnboarding(deviceMid)`   | 关闭首次引导时写入 dismissed；已有作答时为空操作                                    |
-| `getRecords()`                   | 读取整份文件（后续上传使用）                                                        |
-| `clearRecords()`                 | 删除文件（调试用）                                                                  |
+| 方法                                  | 说明                                                                                                                                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appendRecord(deviceMid, entry)`      | 文件不存在则创建并固化 deviceMid；存在则追加；损坏时 warn 并重建；userId 由服务补全                                                                                                                           |
+| `shouldOnboard(deviceMid)`            | 触发判定；已有 Task 时写入 existing_local_user（见 §4）                                                                                                                                                       |
+| `getOnboardingEligibility(deviceMid)` | 同 `shouldOnboard`，并返回 `{ shouldOnboard, recordFileExisted }`；`recordFileExisted` 为判定前记录文件是否已存在。UI 据此区分 `auto_first_open`（首次）与 `auto_identity_change`（已有文件但无本身份条目）。 |
+| `dismissOnboarding(deviceMid)`        | 关闭首次引导时写入 dismissed；已有作答时为空操作                                                                                                                                                              |
+| `getRecords()`                        | 读取整份文件（后续上传使用）                                                                                                                                                                                  |
+| `clearRecords()`                      | 删除文件（调试用）                                                                                                                                                                                            |
 
 RPC 暴露链路与 settingService 相同：`ServiceChannels.OnboardingRecord` →
 descriptor → `createLocalServices` 注册 → `RemoteServiceAccess` getter → UI hook。

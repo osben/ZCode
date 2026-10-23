@@ -56,6 +56,7 @@ async function projectPrimaryRootStatuses(projects: VirtualProject[]): Promise<V
 
 const saveProjectSchema = z
   .object({
+    reuseExistingRoot: z.boolean().optional(),
     id: z.string().min(1).optional(),
     hostId: z.string().min(1).optional(),
     restoreProjectId: z.string().min(1).optional(),
@@ -66,6 +67,15 @@ const saveProjectSchema = z
     pinned: z.boolean().optional(),
   })
   .strict()
+  // Open-directory intent: one local root, no other fields. Keeps the open path from creating duplicate projects.
+  .refine(
+    (value) =>
+      !value.reuseExistingRoot ||
+      (value.roots?.length === 1 &&
+        (!value.hostId || value.hostId === "local") &&
+        Object.keys(value).every((key) => ["roots", "hostId", "reuseExistingRoot"].includes(key))),
+    "project.invalid-directory-open",
+  )
   .refine((value) => !(value.id && value.restoreProjectId), "project.ambiguous-save")
   .refine(
     (value) => !value.restoreProjectId || value.roots !== undefined,

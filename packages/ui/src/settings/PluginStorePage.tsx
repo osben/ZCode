@@ -553,7 +553,8 @@ export function PluginStorePage({
       ) : null}
       {view === "detail" ? (
         <Button variant="ghost" data-testid="plugin-store-detail-back" onClick={backToStore}>
-          {intl.formatMessage({ id: "settings.plugins.store.browseAll" })}
+          <ArrowLeft className="size-4" aria-hidden="true" />
+          {intl.formatMessage({ id: "settings.plugins.store.back" })}
         </Button>
       ) : null}
       {view === "store" ? (
@@ -656,13 +657,19 @@ export function PluginStorePage({
 
       {view === "manage" ? (
         <div data-testid="plugin-store-manage" className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="plugin-store-manage-back"
+              aria-label={intl.formatMessage({ id: "project.back" })}
+              onClick={backToStore}
+            >
+              <ArrowLeft className="size-4" aria-hidden="true" />
+            </Button>
             <h1 className="text-ui-xl font-semibold">
               {intl.formatMessage({ id: "settings.plugins.store.manageInstalled" })}
             </h1>
-            <Button variant="outline" data-testid="plugin-store-browse-all" onClick={backToStore}>
-              {intl.formatMessage({ id: "settings.plugins.store.browseAll" })}
-            </Button>
           </div>
           <PluginsSection
             mode="market"

@@ -1,7 +1,7 @@
 import { spawn, execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import type { DockerConnectOptions } from "@zcode/shared";
+import type { DockerConnectOptions, PublicZCodeErrorCode } from "@zcode/shared";
 import type {
   IRemoteBackend,
   RemoteEnvironment,
@@ -10,8 +10,8 @@ import type {
 } from "@zcode/server/remote/backend.js";
 import { createCloseEventController } from "@zcode/server/remote/closeEvent.js";
 import {
-  isDockerAvailable,
   listDockerContainers,
+  probeDockerDaemon,
   resolveDockerCommand,
   type DockerContainerInfo,
 } from "@zcode/server/remote/docker-detect.js";
@@ -262,20 +262,31 @@ export class DockerBackend implements IRemoteBackend {
     // Docker backend commands are one-shot child processes; there are no persistent connections to clean up explicitly.
   }
 
+  async diagnoseExecFailure(): Promise<void> {
+    // A failed exec after a successful availability check may mean the daemon stopped in between; re-probe instead of trusting the cache.
+    this.availabilityPromise = null;
+    await this.ensureAvailable();
+  }
+
   private async ensureAvailable(): Promise<void> {
     if (!this.availabilityPromise) {
       // Bug 原因：Source probe 内的每条 Docker exec 都重复执行 `docker version`；首次解析
       // container/home 又重复 `docker ps`。应用冷启动峰值下，四五个 CLI round-trip 会让
       // 单个本地 Docker Source 在真正 probe 前就耗尽 10 秒预算。Backend 生命周期内只需
       // 探测一次 daemon；失败清空 promise，后续显式重试仍可重新检测。
-      this.availabilityPromise = isDockerAvailable()
-        .then((available) => {
-          if (!available) throw new Error("当前系统未检测到可用的 Docker 环境");
-        })
-        .catch((error) => {
-          this.availabilityPromise = null;
-          throw error;
-        });
+      // The daemon probe error carries the reason (for example "Cannot connect to the Docker daemon"), which is kept in the message.
+      this.availabilityPromise = probeDockerDaemon().catch((error: unknown) => {
+        this.availabilityPromise = null;
+        const reason = error instanceof Error ? error.message.trim() : String(error).trim();
+        throw Object.assign(
+          new Error(
+            reason
+              ? `当前系统未检测到可用的 Docker 环境：${reason}`
+              : "当前系统未检测到可用的 Docker 环境",
+          ),
+          { code: "remote-connection-unknown" satisfies PublicZCodeErrorCode },
+        );
+      });
     }
     await this.availabilityPromise;
   }

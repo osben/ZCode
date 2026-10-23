@@ -9,6 +9,7 @@ import type {
 } from "@zcode/shared";
 import {
   REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE,
+  REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE,
   stripRemoteTargetSecrets,
 } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
@@ -228,19 +229,21 @@ export async function reconnectRemoteWorkspaceHistoryEntry({
     let sessionId: string;
     try {
       sessionId = await connectRemoteWorkspaceTarget(reconnectTarget, options?.requestId, {
-      workspacePath: sessionEntry.workspacePath,
-      workspaceIdentity: fallbackWorkspaceIdentity,
-      connectTrigger: "reconnect",
-    });
+        workspacePath: sessionEntry.workspacePath,
+        workspaceIdentity: fallbackWorkspaceIdentity,
+        connectTrigger: "reconnect",
+      });
     } catch (error) {
       // 该结构化错误只由 Host 在 Source 已上线后的目录 admission 发出。发起项目被删
       // 不代表 SSH 凭据失败；先放行复用同一凭据的 siblings，再按原路径记录该项目失败。
+      // An unresponsive folder is also a per-project failure: the Source is online, so siblings may reuse its credentials.
       if (
         reconnectTarget.kind === "ssh" &&
         error &&
         typeof error === "object" &&
         "code" in error &&
-        error.code === REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE
+        (error.code === REMOTE_WORKSPACE_DIRECTORY_UNAVAILABLE_ERROR_CODE ||
+          error.code === REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE)
       ) {
         options?.onSshHostReady?.(sshCredentials);
       }

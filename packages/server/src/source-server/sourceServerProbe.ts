@@ -4,7 +4,11 @@ import {
   resolveRemotePlatform,
 } from "@zcode/server/remote/detectEnv.js";
 import type { IRemoteBackend } from "@zcode/server/remote/backend.js";
-import { assertSupportedRemoteEnvironment } from "@zcode/server/remote/remotePlatformSupport.js";
+import {
+  assertSupportedRemoteEnvironment,
+  createUnsupportedRemotePlatformError,
+  REMOTE_POSIX_SHELL_ONLY_MESSAGE,
+} from "@zcode/server/remote/remotePlatformSupport.js";
 import {
   collectCommand,
   readLastJsonLine,
@@ -69,15 +73,22 @@ export class SourceServerProbeEnvironmentError extends Error {
   public override readonly name = "SourceServerProbeEnvironmentError";
 }
 
-// archive 内置官方 Node（SERVER_RUNTIME_NODE_VERSION）Linux 构建的动态链接下限，随 Node 大版本同步。
+// Minimum glibc of the Linux build of the Node runtime bundled in the Source Server archive. Kept in step with SERVER_RUNTIME_NODE_VERSION.
 const SOURCE_SERVER_MIN_GLIBC_VERSION = [2, 28] as const;
 
-function assertSupportedGlibc(platform: string, libcText: string): void {
+// Windows shell signatures in stderr when the POSIX probe runs under PowerShell or cmd.exe.
+const WINDOWS_NATIVE_SHELL_FAILURE_PATTERN =
+  /CommandNotFoundException|FullyQualifiedErrorId|is not recognized as (?:an internal or external command|the name of a cmdlet)|The system cannot find the path specified/iu;
+
+function isWindowsNativeShellFailure(stderr: string): boolean {
+  return WINDOWS_NATIVE_SHELL_FAILURE_PATTERN.test(stderr);
+}
+
+// Warn-only since 3.16.3. Previously a rejection (ZCT-2112008575366098944): a glibc 2.17 host uploaded an
+// ~87 MB archive before ld.so failed on the bundled runtime. The probe now logs the risk and lets install continue.
+// An unreadable libc (musl, missing getconf, unrecognized output) cannot be judged and stays silent.
+function warnUnsupportedGlibc(platform: string, libcText: string, context: TransportContext): void {
   if (platform !== "linux") return;
-  // Bug 原因（ZCT-2112008575366098944）：probe 过去只看平台/架构，CentOS 7 等 glibc 2.17
-  // 的远端要先上传约 87MB archive，解压后执行 bin/zcode 才由 ld.so 报一串 `not found`，
-  // 并被归为安装失败。glibc 下限是 release 的平台事实，归入远端环境检查，在确认安装前拒绝。
-  // 读不到版本（musl、缺 getconf、输出无法识别）时无法判定，保持原安装链，不凭猜测拒绝。
   const match = /^glibc\s+(\d+)\.(\d+)/iu.exec(libcText);
   if (!match) return;
   const major = Number(match[1]);
@@ -85,10 +96,13 @@ function assertSupportedGlibc(platform: string, libcText: string): void {
   const [minMajor, minMinor] = SOURCE_SERVER_MIN_GLIBC_VERSION;
   if (major > minMajor || (major === minMajor && minor >= minMinor)) return;
   const required = SOURCE_SERVER_MIN_GLIBC_VERSION.join(".");
-  throw new SourceServerProbeEnvironmentError(
-    `Remote glibc ${major}.${minor} is older than glibc ${required} required by ZCode Source Server. ` +
-      `Use a Linux system with glibc ${required} or later, such as RHEL 8+, Ubuntu 20.04+ or Debian 10+.`,
-  );
+  context.onLog?.({
+    phase: "probe",
+    level: "warn",
+    message:
+      `Remote glibc ${major}.${minor} is older than glibc ${required} required by the bundled ZCode Source Server runtime. ` +
+      "ZCode Source Server may fail to start. Continuing installation or connection.",
+  });
 }
 
 export async function probeSourceServer(
@@ -104,6 +118,14 @@ export async function probeSourceServer(
     await backend.exec(buildSourceServerProbeCommand(options.includeReleaseIdentity === true)),
   );
   if (result.exitCode !== 0) {
+    // A failed probe may be a daemon-level failure (for example Docker stopped). Let the backend re-check and throw its
+    // own diagnosis first, so the user sees the root cause instead of a generic exit status.
+    await backend.diagnoseExecFailure?.();
+    if (isWindowsNativeShellFailure(result.stderr)) {
+      throw Object.assign(createUnsupportedRemotePlatformError(REMOTE_POSIX_SHELL_ONLY_MESSAGE), {
+        cause: new Error(result.stderr.trim()),
+      });
+    }
     throw new SourceServerProbeEnvironmentError(
       result.stderr.trim() || "Source Server environment probe failed",
     );
@@ -116,14 +138,9 @@ export async function probeSourceServer(
     arch: normalizeRemoteArch(sections.get("ARCH") ?? ""),
     ...(sections.get("ROOT") ? { installPath: sections.get("ROOT") } : {}),
   };
-  try {
-    assertSupportedRemoteEnvironment(environment);
-  } catch (error) {
-    throw new SourceServerProbeEnvironmentError(
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-  assertSupportedGlibc(environment.platform, sections.get("LIBC") ?? "");
+  // The platform error keeps its public code; it is not wrapped as a probe-environment failure.
+  assertSupportedRemoteEnvironment(environment);
+  warnUnsupportedGlibc(environment.platform, sections.get("LIBC") ?? "", context);
   const installed = sections.get("INSTALLED") === "1";
   if (!installed) return { ...environment, installed: false };
 

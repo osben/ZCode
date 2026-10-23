@@ -2260,11 +2260,25 @@ const windowRemoteConnectionRegistry = createWindowRemoteConnectionRegistry<
   resolveSourceServerId: (handle) => handle.capabilities?.sourceServerId,
   shouldKeepConnectionAlive: (handle) => handle.capabilities?.persistentSourceConnection === true,
   prepareWorkspaceIdentity: async (handle, input) => {
-    await prepareRemoteWorkspaceIdentity(
-      handle.services.get(IFileService),
-      input,
-      handle.capabilities?.bindWorkspaceIdentity,
-    );
+    // The workspace step of the connecting progress is driven by these [source-server:workspace] lines.
+    remoteConnectionProgressContext.report("info", [
+      `[source-server:workspace] Preparing ${input.workspacePath}`,
+    ]);
+    try {
+      await prepareRemoteWorkspaceIdentity(
+        handle.services.get(IFileService),
+        input,
+        handle.capabilities?.bindWorkspaceIdentity,
+      );
+    } catch (error) {
+      // A caller abort is a cancellation, not a folder failure, so it does not appear as a workspace error line.
+      if (!input.signal?.aborted) {
+        remoteConnectionProgressContext.report("error", [
+          `[source-server:workspace] ${error instanceof Error ? error.message : String(error)}`,
+        ]);
+      }
+      throw error;
+    }
   },
   releaseWorkspace: async (services, context) => {
     await services.get(IZCodeTaskService).releaseWorkspacePreparation({

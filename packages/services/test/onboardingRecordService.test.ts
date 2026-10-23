@@ -360,4 +360,46 @@ describe("onboardingRecordService", () => {
     expect(records?.deviceMid).toBe("device-a");
     expect(records?.entries).toHaveLength(1);
   });
+
+  it("getOnboardingEligibility 同时报告 shouldOnboard 与 recordFileExisted，且与 shouldOnboard 一致", async () => {
+    const home = mkdtempSync(join(tmpdir(), "zcode-onboarding-home-"));
+    tempHomes.push(home);
+    const service = await createServiceInHome(home, "u1");
+
+    // 首次打开：没有记录文件，应引导
+    expect(await service.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: true,
+      recordFileExisted: false,
+    });
+    expect(await service.shouldOnboard("device-a")).toBe(true);
+
+    await service.appendRecord("device-a", makeEntry());
+    // 当前用户已有作答：不再引导，记录文件存在
+    expect(await service.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: false,
+      recordFileExisted: true,
+    });
+    expect(await service.shouldOnboard("device-a")).toBe(false);
+
+    // 同一设备换另一身份：记录文件存在但没有该身份条目，仍需引导
+    const serviceU2 = await createServiceInHome(home, "u2");
+    expect(await serviceU2.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: true,
+      recordFileExisted: true,
+    });
+  });
+
+  it("getOnboardingEligibility 在本机存量用户判定中报告 recordFileExisted=false，并写入存量决定", async () => {
+    const home = mkdtempSync(join(tmpdir(), "zcode-onboarding-home-"));
+    tempHomes.push(home);
+    const service = await createServiceInHome(home, "u1", true);
+
+    expect(await service.getOnboardingEligibility("device-a")).toEqual({
+      shouldOnboard: false,
+      recordFileExisted: false,
+    });
+    expect(await service.getRecords()).toMatchObject({
+      decisions: [{ userId: "u1", status: "existing_local_user" }],
+    });
+  });
 });

@@ -980,6 +980,10 @@ const ukUA: Record<string, string> = {
   "login.oauth.regionTag.zai": "Глобальний",
   "login.oauth.regionTag.bigmodel": "Китай",
   "login.oauth.waiting": "Очікування автентифікації {provider}...",
+  "login.oauth.browserNotOpened": "Браузер не відкрився?",
+  "login.oauth.copyLoginLink": "Копіювати посилання для входу",
+  "login.oauth.copyLinkSuccess": "Скопійовано. Вставте й відкрийте його у браузері.",
+  "login.oauth.copyLinkFailed": "Не вдалося скопіювати посилання для входу. Спробуйте ще раз.",
   "login.oauth.loginFailure": "Не вдалося ввійти. Спробуйте ще раз",
   "login.oauth.cancel": "Скасувати",
   "login.oauth.retry": "Повторити вхід",
@@ -1743,6 +1747,10 @@ const ukUA: Record<string, string> = {
   "workspaceHeader.help.productRequest": "Запропонувати функцію",
   "workspaceHeader.help.community": "Спільнота користувачів",
   "workspaceHeader.help.docs": "Документація продукту",
+  "workspaceHeader.help.copyDeviceMid": "Копіювати MID пристрою",
+  "workspaceHeader.help.deviceMidCopied": "MID пристрою скопійовано",
+  "workspaceHeader.help.deviceMidCopyFailed":
+    "Не вдалося скопіювати MID пристрою. Перевірте доступ до буфера обміну й спробуйте ще раз.",
   "titleBar.menu.file": "Файл",
   "titleBar.menu.view": "Вигляд",
   "titleBar.menu.help": "Довідка",
@@ -3004,9 +3012,6 @@ const ukUA: Record<string, string> = {
   "settings.scope.user": "Користувач",
   "settings.scope.workspace": "Робочий простір",
   "settings.scope.default": "За замовчуванням",
-  "settings.plugins.scope.inheritedUser": "Успадковує налаштування користувача",
-  "settings.plugins.scope.userDefault": "Налаштування користувача",
-  "settings.plugins.scope.workspaceOverride": "Перевизначення для робочого простору",
   "settings.plugins.scope.restoreUserDefault": "Відновити налаштування користувача",
   "settings.plugins.scope.restored": "Для {plugin} відновлено налаштування користувача",
   "settings.plugins.scope.workspaceHint":
@@ -4422,7 +4427,6 @@ const ukUA: Record<string, string> = {
   "settings.plugin.plugins.emptyInstalledTitle": "Плагінів не встановлено",
   "settings.plugin.plugins.emptyInstalledDescription":
     "Знаходьте та встановлюйте плагіни, щоб додати MCP, навички тощо.",
-  "settings.plugin.plugins.browse": "Переглянути плагіни",
   "settings.plugin.mcp.emptyInstalledTitle": "Серверів MCP не встановлено",
   "settings.plugin.mcp.emptyInstalledDescription":
     "Додайте сервер вручну або імпортуйте наявну конфігурацію.",
@@ -8646,6 +8650,7 @@ const ukUA: Record<string, string> = {
   "remote.action.details": "Переглянути деталі",
   "remote.action.retry": "Повторити",
   "remote.action.none": "",
+  "remote.error.authenticationUnsupported": "Сервер вимагає додаткової перевірки",
   "remote.error.authentication": "Не вдалося пройти автентифікацію SSH",
   "remote.error.details": "Деталі",
   "remote.error.hostUnreachable.reason":
@@ -8724,6 +8729,12 @@ const ukUA: Record<string, string> = {
   "remote.error.bindCanceled.reason": "Перегляньте деталі, виконайте вказівки та повторіть спробу.",
   "remote.error.bindSessionMissing.reason":
     "Перегляньте деталі, виконайте вказівки та повторіть спробу.",
+  "remote.error.authenticationUnsupported.reason":
+    "Після пароля цей сервер вимагає додаткову перевірку (наприклад, одноразовий код). Підтримується лише вхід за паролем, приватним ключем і SSH agent. Скористайтеся приватним ключем.",
+  "remote.error.platformUnsupported.reason":
+    "Віддалене підключення підтримує Linux і macOS на x64 та arm64. У Windows підключайтеся через WSL або використовуйте пристрій з Linux.",
+  "remote.error.workspaceDirectoryUnresponsive.reason":
+    "Якщо віддалений пристрій — Mac, перевірте на Mac запит доступу до папки. Якщо папка на мережевому або зовнішньому диску, переконайтеся, що диск доступний. Потім повторіть спробу.",
   "remote.error.workspaceDirectoryUnavailable.reason":
     "Перегляньте деталі, виконайте вказівки та повторіть спробу.",
   "remote.error.recoveryBudgetExhausted.reason":
@@ -8874,6 +8885,8 @@ const ukUA: Record<string, string> = {
   "remote.error.bindCanceled": "Прив'язку віддаленого робочого простору скасовано.",
   "remote.error.bindSessionMissing":
     "Сесія віддаленого робочого простору більше недоступна. Перепідключіться й повторіть спробу.",
+  "remote.error.workspaceDirectoryUnresponsive":
+    "Віддалений пристрій не відповідав 30 секунд під час читання папки проєкту",
   "remote.error.workspaceDirectoryUnavailable":
     "Віддаленої теки проєкту немає, вона не є текою або до неї немає доступу. Перевірте теку та дозволи, а потім повторіть спробу.",
   "remote.error.recoveryBudgetExhausted":
@@ -8891,6 +8904,7 @@ const ukUA: Record<string, string> = {
   "remote.error.preflightFailed": "Не пройшла перевірка віддаленого середовища",
   "remote.error.installFailed": "Не вдалося встановити віддалену частину",
   "remote.error.spaceInsufficient": "Недостатньо місця на віддаленому пристрої",
+  "remote.error.platformUnsupported": "Система цього пристрою не підтримується",
   "remote.error.permissionDenied": "Немає дозволу на запис на віддаленому пристрої",
   "remote.error.connectionCanceled": "Підключення скасовано",
   "remote.error.unknown": "Не вдалося підключитися",
@@ -8949,12 +8963,14 @@ const ukUA: Record<string, string> = {
   "remote.phaseSub.verifyingArchive": "Перевірка архіву",
   "remote.phaseSub.verifyingFiles": "Перевірка файлів сервера",
   "remote.phaseSub.restarting": "Перезапуск віддаленого сервера",
+  "remote.phaseSub.workspaceReading": "Читання {path}",
   "remote.connectingSubtitleFailed":
     "Не вдалося підключитися · повторіть спробу або змініть конфігурацію і спробуйте знову",
   "remote.phase.channel": "Підключення до пристрою",
   "remote.phase.identify": "Ідентифікація пристрою",
   "remote.phase.deploy": "Встановлення ZCode Server",
   "remote.phase.handshake": "Запуск і перевірка сумісності",
+  "remote.phase.workspace": "Відкриття папки проєкту",
   "remote.progress.step": "Крок {current}/{total}",
   "remote.progress.elapsedSeconds": "Минуло {seconds} с",
   "remote.progress.elapsedMinutesSeconds": "Минуло {minutes} хв {seconds} с",
@@ -9248,7 +9264,6 @@ const ukUA: Record<string, string> = {
   "settings.plugins.store.ui.capability":
     "Надає інтерактивні інтерфейси, які відкриваються в бічній панелі.",
   "settings.plugins.store.ui.title": "Плагіни-застосунки",
-  "settings.plugins.store.browseAll": "Переглянути всі плагіни",
   "settings.plugins.marketplace.recommendTitle": "Рекомендовані",
   "chat.empty.newRemoteConnection": "Нове віддалене підключення…",
   "chat.remoteFolder.restored": "Повернуто до {device} · {project}",
