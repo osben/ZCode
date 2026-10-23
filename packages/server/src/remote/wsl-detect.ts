@@ -39,10 +39,9 @@ export function createWslExecError(error: Error, stdout: Buffer, stderr: Buffer)
     normalizeWslOutput(decodeWslOutput(stderr)).trim() ||
     normalizeWslOutput(decodeWslOutput(stdout)).trim() ||
     error.message;
-  const exitCode =
-    typeof (error as { code?: unknown }).code === "number"
-      ? (error as { code: number }).code
-      : undefined;
+  // execFile reports a numeric exit code; a string code (for example ENOENT) is a spawn failure with no exit status.
+  const code: unknown = Reflect.get(error, "code");
+  const exitCode = typeof code === "number" ? code : undefined;
   return Object.assign(
     new Error(
       exitCode === undefined ? message : `${message}\uFF08\u9000\u51FA\u7801 ${exitCode}\uFF09`,

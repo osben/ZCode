@@ -134,3 +134,14 @@ uk-UA translations are written by hand for the same keys (the bundle has no Ukra
 - glibc behavior reversal. The fork blocked glibc < 2.28 in `sourceServerProbe.ts` because CentOS 7 remotes failed after a 87 MB upload (bug ZCT-2112008575366098944). 3.16.3 warns and continues. The port follows 3.16.3 as instructed. Reviewer should confirm with the user whether the fork keeps the early block; if so this change should be reverted and this section updated.
 - Docker message change: `ensureAvailable` now includes the daemon error reason. Tests that matched the old text need updating.
 - The connecting step gains a fifth phase only when a folder path is known. The sidebar progress (`RemoteConnectionProgress`) keeps the four-step default.
+- Architecture gate. `pnpm architecture:check --changed` reports two `unmanaged-new-file` violations: `packages/desktop/src/host/remoteWorkspacePreparation.ts` and `packages/ui/src/lib/remoteConnectionPresentationErrors.ts`. Both are fork-owned files that already exist on `integration` but are absent from the upstream merge base, so touching them counts as a new file. Not registered with `architecture:adopt` and no baseline update was made; the reviewer decides between adopting the `desktop`/`ui` directories and a baseline update.
+- Size gate. `packages/ui/src/remote-connection-flow/index.ts` is already above the staged-file cap on `integration`. It was added to `.staged-file-size-exemptions` with a comment, not split, because splitting is a separate refactor.
+
+## Verification (this port)
+
+- `pnpm typecheck`: passes.
+- `pnpm lint`: 0 errors, 98 warnings (repository-wide). One of them is the existing `max-lines` warning for `packages/ui/src/remote-connection-flow/index.ts`.
+- `pnpm fmt:check`: passes.
+- `pnpm test-copy:check`: passes.
+- `pnpm architecture:check --changed`: fails with the two violations above (baseline 0).
+- Unit tests: `packages/server/test` (35 files, 382 tests), `packages/shared/test` plus desktop remote workspace tests (166 files, 2048 tests), `packages/ui/test` (1257 files, 11630 tests), all passing.
