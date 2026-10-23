@@ -8,8 +8,10 @@ import {
   IConversationShareService,
   IZCodeAgentService,
   IProviderProvisioningTargetService,
+  IQuickPromptService,
   ServiceCollection,
   readTrustedZCodeAgentV4Connection,
+  type QuickPromptSnapshot,
 } from "@zcode/services";
 import {
   serverRemoteAnonymousInfoSchema,
@@ -400,6 +402,63 @@ describe("standalone Server Core ingress", () => {
     await expectWebSocketOpens(
       `ws://${server.host}:${server.port}/ws?token=${encodeURIComponent("ingress-secret")}`,
     );
+  });
+
+  it("serves quick prompts read-only on /ws and in full on /ws/host (mobile cannot mutate the controller's prompts)", async () => {
+    const snapshot: QuickPromptSnapshot = { project: null, globals: [], projectPrompts: [] };
+    const quickPromptService = {
+      read: vi.fn(async () => snapshot),
+      readProjects: vi.fn(async () => []),
+      create: vi.fn(async () => {
+        throw new Error("create reached the service");
+      }),
+    };
+    const services = new ServiceCollection().register(
+      IQuickPromptService,
+      quickPromptService as never,
+    );
+    const server = await createCoreHttpServer(services);
+    servers.push(server);
+    const channelName = IQuickPromptService.channelName;
+    const createInput = {
+      scope: "global",
+      project: null,
+      name: "x",
+      body: { markdown: "x", nodes: "[]" },
+      pinned: true,
+    };
+
+    const webClient = await connectChannelClient(`ws://${server.host}:${server.port}/ws`);
+    try {
+      await expect(
+        webClient.client.getChannel(channelName).call("read", [{ project: null }]),
+      ).resolves.toEqual(snapshot);
+      await expect(
+        webClient.client.getChannel(channelName).call("create", [createInput]),
+      ).rejects.toThrow("quick-prompt.read-only");
+      expect(quickPromptService.create).not.toHaveBeenCalled();
+    } finally {
+      webClient.dispose();
+    }
+
+    const capabilityResponse = await fetch(
+      `http://${server.host}:${server.port}/api/rpc-host-capability`,
+      {
+        method: "POST",
+      },
+    );
+    const { capability } = (await capabilityResponse.json()) as { capability: string };
+    const hostClient = await connectChannelClient(`ws://${server.host}:${server.port}/ws/host`, {
+      "x-zcode-rpc-host-capability": capability,
+    });
+    try {
+      await expect(
+        hostClient.client.getChannel(channelName).call("create", [createInput]),
+      ).rejects.toThrow("create reached the service");
+      expect(quickPromptService.create).toHaveBeenCalledOnce();
+    } finally {
+      hostClient.dispose();
+    }
   });
 
   it("only lets desktop continuous hosts reach the provider provisioning target", async () => {

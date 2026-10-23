@@ -52,6 +52,7 @@ import type { IConversationShareService } from "./conversation-share/conversatio
 import type { IVoiceDictationService } from "./voice-dictation/voiceDictation.js";
 // API members used by packages/ui (upstream 3.16.1). Optional so existing hosts and test doubles still compile.
 import type { ITaskGroupService } from "#src/task-groups/contract.js";
+import type { IQuickPromptService } from "#src/quick-prompts/contract.js";
 import type { IProjectService } from "#src/project/contract.js";
 import type { IRemoteProjectService } from "#src/remote-projects/contract.js";
 import type { WindowProjectDirectoryServices } from "#src/window-project-directory/contract.js";
@@ -62,6 +63,8 @@ import type { ISourceServerManagementService } from "./source-server-management/
 export interface IServiceAccessor {
   /** Task-group owner. Exported only; no writer is wired (the UI grouped-view PR switches to it). */
   readonly taskGroupService?: ITaskGroupService;
+  /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
+  readonly quickPromptService?: IQuickPromptService;
   readonly projectService?: IProjectService;
   readonly remoteProjectService?: IRemoteProjectService;
   readonly windowProjectDirectory?: WindowProjectDirectoryServices;

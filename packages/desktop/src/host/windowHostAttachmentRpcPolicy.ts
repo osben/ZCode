@@ -8,6 +8,8 @@ import {
   IWindowRemoteProjectService,
   IWindowProjectChangesService,
   createWindowProjectChangesService,
+  IQuickPromptService,
+  createReadOnlyQuickPromptService,
   type ServiceExposurePolicy,
   type ZCodeAgentV4ClientMode,
 } from "@zcode/services";
@@ -32,6 +34,8 @@ const WEB_REMOTE_REPLAYABLE_ALLOWED_CHANNELS = new Set<string>([
   ServiceChannels.ZCodeSession,
   ServiceChannels.Project,
   ServiceChannels.TaskGroups,
+  // Mobile gets the controller's quick prompts read-only (createReadOnlyQuickPromptService below).
+  ServiceChannels.QuickPrompts,
   ServiceChannels.RemoteProjects,
   ServiceChannels.WindowProject,
   ServiceChannels.WindowRemoteProjects,
@@ -104,9 +108,20 @@ export function exposeWindowHostAttachmentServices(params: {
       resolveWindowHostServiceExposurePolicy(params.clientMode),
     );
   }
+  // Wrap whatever source is exposed (the override when present, else the registered service), so a mobile
+  // attachment is read-only regardless of its scope. Desktop attachments keep the full service.
+  const overrides = new Map(params.overrides ?? []);
+  if (params.clientMode === "web-remote-replayable") {
+    const source =
+      (overrides.get(IQuickPromptService.channelName) as IQuickPromptService | undefined) ??
+      params.services.getOptional(IQuickPromptService);
+    if (source) {
+      overrides.set(IQuickPromptService.channelName, createReadOnlyQuickPromptService(source));
+    }
+  }
   params.services.exposeOnChannelServer(
     params.server,
-    params.overrides,
+    overrides,
     resolveWindowHostServiceExposurePolicy(params.clientMode),
   );
 }

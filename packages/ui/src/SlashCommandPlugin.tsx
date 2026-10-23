@@ -41,6 +41,9 @@ import {
 import { MentionPanel } from "./mentions/components/MentionPanel.js";
 import {
   buildAppSlashCommandSuggestions,
+  buildQuickPromptSuggestions,
+  isQuickPromptSuggestion,
+  QUICK_PROMPT_SUGGESTION_ID_PREFIX,
   buildSkillSuggestions,
   buildSubagentSuggestions,
   buildSlashSuggestions,
@@ -49,7 +52,10 @@ import {
   normalizeSlashCommandValue,
   type SlashCommandPluginProps,
 } from "./slashCommandHelpers.js";
-import { useSlashCommandMentionPanelSections } from "./slashCommandPanelSections.js";
+import {
+  buildSlashFlatSuggestions,
+  useSlashCommandMentionPanelSections,
+} from "./slashCommandPanelSections.js";
 import { getCurrentTextNodeSelection } from "./mentions/mentionHelpers.js";
 import {
   getActivePromptInputTokenReplacementRange,
@@ -57,6 +63,11 @@ import {
   type ActivePromptInputTokenSnapshot,
 } from "./mentions/activePromptInputToken.js";
 import { shouldSlashPanelProcessUpdate } from "./lib/slashPanelUpdateFilter.js";
+import {
+  $replaceSelectionWithSerializedPromptBody,
+  parseSerializedPromptBodyNodes,
+} from "@/prompt-body/index.js";
+import { logger } from "./logger.js";
 
 export function SlashCommandPlugin({
   workspacePath,
@@ -67,6 +78,7 @@ export function SlashCommandPlugin({
   disabled = false,
   excludedCommandNames,
   appCommands,
+  quickPrompts,
 }: SlashCommandPluginProps & { provider: ZCodeProvider }) {
   const [editor] = useLexicalComposerContext();
   const { intl, locale } = useZCodeIntl();
@@ -126,13 +138,40 @@ export function SlashCommandPlugin({
     () => filterPromptInputSuggestions(skillSuggestions, activeTrigger?.query ?? null),
     [skillSuggestions, activeTrigger?.query],
   );
+  const quickPromptSuggestions = useMemo(
+    () => (quickPrompts ? buildQuickPromptSuggestions(quickPrompts) : undefined),
+    [quickPrompts],
+  );
+  const filteredQuickPromptSuggestions = useMemo(
+    () =>
+      quickPromptSuggestions
+        ? filterPromptInputSuggestions(quickPromptSuggestions, activeTrigger?.query ?? null)
+        : undefined,
+    [quickPromptSuggestions, activeTrigger?.query],
+  );
+  // Same order and visibility as the panel sections, so the flat keyboard index addresses the rendered rows.
   const filteredSuggestions = useMemo(
-    () => [
-      ...filteredCommandSuggestions,
-      ...filteredSkillSuggestions,
-      ...filteredSubagentSuggestions,
+    () =>
+      buildSlashFlatSuggestions({
+        commands: filteredCommandSuggestions,
+        skills: filteredSkillSuggestions,
+        skillsLoading,
+        skillsError,
+        subagents: filteredSubagentSuggestions,
+        subagentsLoading,
+        subagentsError,
+        quickPrompts: filteredQuickPromptSuggestions,
+      }),
+    [
+      filteredCommandSuggestions,
+      filteredSkillSuggestions,
+      skillsLoading,
+      skillsError,
+      filteredSubagentSuggestions,
+      subagentsLoading,
+      subagentsError,
+      filteredQuickPromptSuggestions,
     ],
-    [filteredCommandSuggestions, filteredSkillSuggestions, filteredSubagentSuggestions],
   );
   const activeSignature = useMemo(
     () => getPromptInputTriggerSignature(activeTrigger),
@@ -246,6 +285,20 @@ export function SlashCommandPlugin({
   const applySuggestion = useCallback(
     (suggestion: PromptInputSuggestionItem) => {
       const isAppCommand = isAppSlashCommandSuggestion(suggestion);
+      // Quick prompts insert their stored body (mention chips intact) in place of the typed `/query` token.
+      let quickPromptNodes: ReturnType<typeof parseSerializedPromptBodyNodes> | null = null;
+      if (isQuickPromptSuggestion(suggestion)) {
+        const promptId = suggestion.id.slice(QUICK_PROMPT_SUGGESTION_ID_PREFIX.length);
+        const item = quickPrompts?.find((candidate) => candidate.promptId === promptId);
+        if (!item) return;
+        try {
+          quickPromptNodes = parseSerializedPromptBodyNodes(item.nodes);
+        } catch (cause) {
+          // Never log the body or the name; the id alone identifies the broken row.
+          logger.warn("[quick-prompts] 快捷提示正文无法解析，已取消插入", { promptId, cause });
+          return;
+        }
+      }
       editor.update(() => {
         const selectionState = getCurrentTextNodeSelection();
         if (!selectionState) {
@@ -286,6 +339,12 @@ export function SlashCommandPlugin({
           return;
         }
 
+        if (quickPromptNodes) {
+          // The token range is removed before inserting, so a body with no paragraphs leaves no "/query" behind.
+          $replaceSelectionWithSerializedPromptBody(selectionState.selection, quickPromptNodes);
+          return;
+        }
+
         const mentionNode = $createPromptMentionNode(buildSlashApplyMentionPayload(suggestion));
         const trailingWhitespace = $createTextNode(" ");
         selectionState.selection.insertNodes([mentionNode, trailingWhitespace]);
@@ -308,7 +367,7 @@ export function SlashCommandPlugin({
         editor.focus();
       });
     },
-    [appCommands, editor],
+    [appCommands, editor, quickPrompts],
   );
 
   const selectSuggestion = useCallback(
@@ -441,6 +500,7 @@ export function SlashCommandPlugin({
     filteredSubagentSuggestions,
     subagentsLoading,
     subagentsError,
+    filteredQuickPromptSuggestions,
   );
 
   if (!isOpen || !container) {

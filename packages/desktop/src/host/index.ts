@@ -46,6 +46,7 @@ import {
   type RemoteProjectHost,
   IProjectService,
   ITaskGroupService,
+  IQuickPromptService,
   IBroadcastService,
   IModelSelectionService,
   ISettingService,
@@ -2660,6 +2661,10 @@ function exposeServicesOnMessagePort(
     overrides.set(IProjectService.channelName, activeServices.get(IProjectService));
     overrides.set(IRemoteProjectService.channelName, activeServices.get(IRemoteProjectService));
     services.register(ITaskGroupService, activeServices.get(ITaskGroupService));
+    // Quick prompts are owned by the controller Host; mobile reads them through the read-only scope in
+    // exposeWindowHostAttachmentServices. Skip when the controller does not expose them.
+    const controllerQuickPrompts = activeServices.getOptional(IQuickPromptService);
+    if (controllerQuickPrompts) services.register(IQuickPromptService, controllerQuickPrompts);
   }
   // 远端媒体必须按 attachment 的 clientMode 选择数据面：桌面使用 Host loopback Range，手机保持 inline。
   const remoteMediaPreviewProxy =

@@ -3887,3 +3887,15 @@ SHARE-TOOLS01 图片正文回归：`packages/web/test/e2e/manual-review/pending/
 SHARE-REVIEW：accepted，manual-review/pending。浏览器组件用例 `packages/ui/test/browser/manual-review/pending/tool-presentation-failures.test.mjs` 覆盖图片失败、空结果、迟到结果隔离，以及 SSH 应用菜单过滤和两种打开失败 Toast。390/1200 × 深浅主题 × 中英文 × 返回失败/请求拒绝，共 16 组通过；捕获到预期日志，无 pageerror。审批能力注入与插件入口由 `toolPresentationHost.test.ts` 覆盖。
 
 2026-10-13：真实 Desktop APC14 初次在思考档位准备失败；显式空档位后进入会话，但预览卡片集合仍为空，未到达菜单断言，不记为通过。真实 SSH、手机配对与插件沙箱链路未验证。
+
+## Composer quick prompt coverage
+
+specs/composer-quick-prompts.md acceptance scenarios 1, 2, 4, 5 and 7, plus the insert-only half of scenario 3, are in
+`packages/desktop/test/e2e/conversation-session/quick-prompts-composer.test.ts`. That case is formal with
+`providerRequestPolicy` "none"; its manifest and case fixture sit under `fixtures/cases` and `fixtures/upstream`.
+Scenario 3's send half (empty draft plus Cmd-click submits) is pending in
+`conversation-session/manual-review/pending/quick-prompts-composer-send.test.ts`, because it needs a recorded provider
+fixture. Settings → Quick prompts (rule 20: create, Pinned, Shown in project, drag reorder, delete) is in
+`packages/desktop/test/e2e/settings/quick-prompts-settings.test.ts`. Scenario 10 (mobile remote) is not covered.
+2026-10-22: both specs pass locally on macOS (`pnpm exec wdio run wdio.conf.ts --spec ...` from `packages/desktop`).
+The send-half pending case was not run: it needs a live or recorded provider.

@@ -15,6 +15,7 @@ export type SettingsSectionId =
   | "remoteDevices"
   | "memory"
   | "incognito"
+  | "quickPrompts"
   | "plugin"
   | "mcp"
   | "skill"
@@ -92,6 +93,7 @@ function isSettingsSectionId(value: string): value is SettingsSectionId {
     value === "remoteDevices" ||
     value === "memory" ||
     value === "incognito" ||
+    value === "quickPrompts" ||
     value === "plugin" ||
     value === "mcp" ||
     value === "skill" ||

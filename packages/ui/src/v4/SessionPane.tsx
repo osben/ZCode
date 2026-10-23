@@ -216,6 +216,7 @@ import { useDraftModelReadinessGate } from "@/v4/composer/useDraftModelReadiness
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeStoreWithDefault } from "@/store/StoreProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useQuickPromptProject } from "@/quick-prompts/index.js";
 import {
   DEFAULT_CONVERSATION_SHARE_ACCESS_MODE,
   DEFAULT_CONVERSATION_SHARE_DOCK_STATE,
@@ -758,6 +759,12 @@ export function SessionPane({
     () => resolveComposerScope(composerProjectId, workspaceIdentity, composerClientNamespace),
     [composerProjectId, workspaceIdentity, composerClientNamespace],
   );
+  // Project identity for the quick prompt row: the session's task in the project tree, or the draft's project.
+  const quickPromptProject = useQuickPromptProject({
+    sessionId,
+    workspaceKey: workspaceIdentity?.trim() || workspacePath,
+    workspaceIdentity,
+  });
   const composerDraftGeneration = useZCodeSessionStore(
     (store) => store.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
   );
@@ -6369,6 +6376,7 @@ export function SessionPane({
       workspacePath={workspacePath}
       workspaceIdentity={workspaceIdentity}
       remoteSessionId={remoteSessionId ?? undefined}
+      quickPromptProject={quickPromptProject}
       modelSelectionView={
         modelSelectionView ??
         (modelSelectionRead.state.status === "loading" ? modelSelectionRead.state.catalog : null)

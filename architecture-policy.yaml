@@ -745,6 +745,51 @@ modules:
     layers:
       app: .
     owner: remote
+  # quick-prompts：由 architecture:adopt 登记
+  - id: quick-prompts
+    roots:
+      - packages/services/src/quick-prompts
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/quick-prompts/index.ts
+      - packages/services/src/quick-prompts/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  # quick-prompts-ui：由 architecture:adopt 登记
+  - id: quick-prompts-ui
+    roots:
+      - packages/ui/src/quick-prompts
+    managed: true
+    requires:
+      - services
+      - ui
+      - project-sidebar
+      - prompt-body
+      - mobile-ui
+    publicEntrypoints:
+      - packages/ui/src/quick-prompts/index.ts
+      - packages/ui/src/quick-prompts/contract.ts
+    layers:
+      contract: contract.ts
+      ui: .
+    owner: conversation
+  # prompt-body：由 architecture:adopt 登记
+  - id: prompt-body
+    roots:
+      - packages/ui/src/prompt-body
+    managed: true
+    requires:
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/prompt-body/index.ts
+      - packages/ui/src/prompt-body/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
   # model-trajectory-v2-projection：由 architecture:adopt 登记
   - id: model-trajectory-v2-projection
     roots:
