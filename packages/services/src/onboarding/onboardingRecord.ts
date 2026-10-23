@@ -16,6 +16,13 @@ export interface OnboardingSettingsSyncPatch {
 
 type AppSettingsPatchOccupation = NonNullable<AppSettings["onboardingOccupation"]>;
 
+/** Result of the first-run eligibility decision; see IOnboardingRecordService.getOnboardingEligibility. */
+export interface OnboardingEligibility {
+  shouldOnboard: boolean;
+  /** Whether onboarding-record.json existed before this decision. */
+  recordFileExisted: boolean;
+}
+
 export interface IOnboardingRecordService {
   /**
    * Append an onboarding completion record. If the file is absent, create it and persist deviceMid (the file value is authoritative afterward);
@@ -24,6 +31,11 @@ export interface IOnboardingRecordService {
   appendRecord(deviceMid: string, entry: OnboardingRecordEntryInput): Promise<void>;
   /** Trigger condition: true when the current user (logged in → userId; apikey/not logged in → null) has no matching record or the file is absent. */
   shouldOnboard(deviceMid: string): Promise<boolean>;
+  /**
+   * shouldOnboard plus whether the record file already existed before this decision. The first-run trigger uses
+   * recordFileExisted to tell a fresh install (auto_first_open) from an identity change on an existing file (auto_identity_change).
+   */
+  getOnboardingEligibility(deviceMid: string): Promise<OnboardingEligibility>;
   /** Persist dismissed when the user closes first-run onboarding; no-op if answers already exist. */
   dismissOnboarding(deviceMid: string): Promise<void>;
   /**
