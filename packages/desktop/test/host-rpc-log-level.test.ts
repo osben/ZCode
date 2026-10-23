@@ -160,11 +160,26 @@ describe("host RPC log level: saved-workflows directory watch before the directo
     ).toBe("info");
   });
 
+  it("logs a missing user-global ~/.zcode/workflows watch at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/.zcode/workflows"),
+      ),
+    ).toBe("info");
+  });
+
   it("keeps ENOENT on other paths, other errors, and other watch calls at warn", () => {
     expect(
       resolveRpcLogLevel(
         "[rpc:call] file-watcher.watch FAIL (1.2ms)",
         watchEnoent("/Users/me/project/src"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/.zcode/workflows/nested"),
       ),
     ).toBe("warn");
     expect(

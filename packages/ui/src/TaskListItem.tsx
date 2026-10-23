@@ -199,10 +199,6 @@ export const MemoTaskItem = memo(function TaskListItem({
 }: TaskListItemProps) {
   const [hoverActionsVisible, setHoverActionsVisible] = useState(false);
   const [focusActionsVisible, setFocusActionsVisible] = useState(false);
-  // Radix Tooltip warns when `open` switches between undefined and a boolean. hoverEnabled can change while the row stays
-  // mounted (web remote-control presentation), so `open` is always a boolean; a stale open state is dropped while hover is off.
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  if (!hoverEnabled && tooltipOpen) setTooltipOpen(false);
   const [isHoverNone] = useState(
     () =>
       typeof window !== "undefined" &&
@@ -626,10 +622,9 @@ export const MemoTaskItem = memo(function TaskListItem({
       </span>
     ) : null;
   return (
-    <Tooltip
-      open={hoverEnabled && tooltipOpen}
-      onOpenChange={(next) => setTooltipOpen(hoverEnabled && next)}
-    >
+    // This Tooltip has no TooltipContent, so nothing renders from its open state. A lifted open state would re-render
+    // the memoized row on every hover; the constant boolean keeps Radix controlled without that cost.
+    <Tooltip open={false}>
       <TooltipTrigger asChild>
         <li
           ref={itemRef}

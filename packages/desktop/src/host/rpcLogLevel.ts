@@ -5,7 +5,8 @@ type RpcLogLevel = "debug" | "info" | "warn";
 
 // Message fragment the CLI bridge puts in its structured sessionNotFound error for listDynamicWorkflowRuns.
 const WORKFLOW_RUNS_SESSION_NOT_FOUND_MESSAGE = "fault.workflowRuns.sessionNotFound";
-// Quoted project-local saved-workflows directory as the file-watcher embeds it in its error message.
+// Quoted saved-workflows directory as the file-watcher embeds it in its error message: any `.zcode/workflows`
+// directory, project-local or user-global (`~/.zcode/workflows`).
 const SAVED_WORKFLOWS_DIRECTORY_SUFFIX = /[\\/]\.zcode[\\/]workflows'/;
 
 /**
@@ -51,9 +52,10 @@ export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogL
     return "info";
   }
 
-  // The Automations > Workflow tab watches <project>/.zcode/workflows, which most projects never create. The renderer
-  // treats that watch failure as normal (useSavedWorkflowsDirectoryWatch logs it at debug and retries on tab change), so
-  // only this exact missing-directory failure is lowered; ENOENT on any other path or watch call stays at warn.
+  // The Automations > Workflow tabs watch any `.zcode/workflows` directory (<project>/.zcode/workflows or the user-global
+  // ~/.zcode/workflows), and most projects and users never create one. The renderer treats that watch failure as normal
+  // (useSavedWorkflowsDirectoryWatch, shared by the project and global groups, logs it at debug and catches up on tab
+  // change), so only this exact missing-directory failure is lowered; ENOENT on any other path or watch call stays at warn.
   if (
     message.startsWith("[rpc:call] file-watcher.watch FAIL (") &&
     args.some((arg) => isMissingSavedWorkflowsDirectoryError(errorMessageOf(arg)))
@@ -62,7 +64,8 @@ export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogL
   }
 
   // A workflow run list is requested right after a session is created, before the host has registered its record; the
-  // CLI rejects it with fault.workflowRuns.sessionNotFound and the renderer retries. Only this RPC's failure is lowered.
+  // CLI rejects it with fault.workflowRuns.sessionNotFound. The renderer requests once per (session, live, refreshKey)
+  // and requests again when the session goes live (useWorkflowRunJournalSummaries). Only this RPC's failure is lowered.
   if (
     message.startsWith("[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (") &&
     args.some((arg) => errorMessageOf(arg)?.includes(WORKFLOW_RUNS_SESSION_NOT_FOUND_MESSAGE))
@@ -75,7 +78,7 @@ export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogL
 
 /**
  * The file-watcher wraps the fs error as `无法监视目录 '<path>': ENOENT ... watch '<path>'`, so the quoted path is the only
- * reliable signal across the wrapper. Both POSIX and Windows separators are accepted for the project-local directory.
+ * reliable signal across the wrapper. Both POSIX and Windows separators are accepted, for any `.zcode/workflows` directory.
  */
 function isMissingSavedWorkflowsDirectoryError(message: string | undefined): boolean {
   return (

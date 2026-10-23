@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createElement, type ReactNode } from "react";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -46,5 +46,39 @@ describe("ControlHintTooltip open flip", () => {
     rerender(hint(undefined));
 
     expect(modeSwitchWarnings(spies)).toEqual([]);
+  });
+
+  // Radix renders the content into a portal with role="tooltip" only while it is open.
+  function openTooltip(): Element | null {
+    return document.querySelector('[role="tooltip"]');
+  }
+
+  // Radix opens on hover after its delay timer, so a negative assertion needs to wait past it.
+  async function waitPastHoverDelay() {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  it("opens the hint on hover and focus when open is undefined", async () => {
+    const { getByRole, unmount } = render(hint(undefined));
+    const trigger = getByRole("button", { name: "trigger" });
+
+    fireEvent.pointerMove(trigger, { pointerType: "mouse" });
+    await waitFor(() => expect(openTooltip()?.textContent).toContain("Mode"));
+    unmount();
+
+    const focused = render(hint(undefined));
+    fireEvent.focus(focused.getByRole("button", { name: "trigger" }));
+    await waitFor(() => expect(openTooltip()?.textContent).toContain("Mode"));
+  });
+
+  it("does not open the hint on hover or focus while open is false", async () => {
+    const { getByRole } = render(hint(false));
+    const trigger = getByRole("button", { name: "trigger" });
+
+    fireEvent.pointerMove(trigger, { pointerType: "mouse" });
+    fireEvent.focus(trigger);
+    await waitPastHoverDelay();
+
+    expect(openTooltip()).toBeNull();
   });
 });
