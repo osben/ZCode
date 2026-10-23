@@ -165,7 +165,7 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 **CP-06 · Destination: worktree and branch** (sandbox only)
 
 - Steps: in `qa-sandbox` open the destination trigger ("Choose where this task runs") → switch Worktree on → status `destination-worktree-status` → send "Reply with the current git branch name only." → rename `qa-worktree`; new draft → Worktree off → task branch `feature/qa-branch` → send → "Switch branch?" guard → confirm; try a branch that is checked out in another worktree.
-- Expected: worktree created under `<repo>-worktrees/`, header chip "Worktree · branch", agent reply = that branch; branch case checks out at send time; branches used by another worktree are disabled; a forced failure opens `worktree-failure-modal` with Retry / Change / Close.
+- Expected: worktree created under `<repo>-worktrees/`, header chip "Worktree · branch", agent reply = that branch; branch case checks out at send time; branches used by another worktree are disabled; a forced creation failure (e.g. `chmod 555` on the `-worktrees` parent) must render the setup error with Retry/Cancel inside the failed session's timeline and survive navigation away (`specs/composer-worktree-setup-steps.md`); the `worktree-failure-modal` belongs to the worktree-RETURN failure flow, not creation failures.
 - Spec: `specs/composer-destination-control.md`, `specs/composer-branch-switcher-semantics.md`, `specs/composer-worktree-setup-steps.md`.
 
 **CP-07 · Incognito** (regression ISSUE-022)
@@ -363,6 +363,47 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 - **MI-05** Remote connection dialog → cancel path.
 - **MI-06** Check for updates (dev build: skipped message, no crash).
 - **MI-07** Idle hygiene: leave the app idle on the home screen 60 s and count log lines: settings reads, voice polls, `meta_json` warnings, `git.refresh` (baseline: settings 0–4/min, voice ≤ 10/min, meta warns 0).
+
+## Round-2 additions (run 2026-10-22, branch claude/qa-run-20261022-2)
+
+Cases for #286 (model trajectory v2), #287/#277 (ACP agents), #296 (quick prompts). Harness corrections from this run are at the end.
+
+### TV — Model trajectory v2 (side-pane tab; run after CH-17)
+
+- **TV-01 · Open + summary line** — header menu → "View model trajectory v2". Expected: opens ≤ 300 ms worst block (observed 176 ms); summary line shows `N calls (+M other) · in/out tokens · cache % · context peak % · model time · tools time · models used`. Refresh (`model-trajectory-v2-refresh`) updates counts after new turns.
+- **TV-02 · Overview strip** — Model/Tools lanes with per-span `timestamp · duration`; hint "Drag to filter · Ctrl/⌘+wheel to zoom · Shift+wheel to pan". Drag-to-filter and zoom are not drivable over CDP (synthetic wheel/pointer events have no effect) — E2E-only; check lanes render and spans match the ledger requests.
+- **TV-03 · Event ledger** — virtualized `listbox` "Trajectory events": Request rows show params (`max N`, `thinking`, `effort`, `tools · KB`), delta from the previous request (`maxOutputTokens 384000 → 128000 … system prompt changed`); User/Assistant/Context rows; "Context rewritten (input is not a continuation)" marker after a compact; Tool rows appear after scrolling (virtualized) once "Show sidecar and subagent calls" is on.
+- **TV-04 · Inspector** — click a Request row → drill-in with Summary / Payload / Timing; click a Tool row → Summary / Payload / Result / Schema / Timing (all five). Payload shows parameters (maxOutputTokens, thinking, effort, toolChoice, temperature, stream) and system-prompt blocks with sizes; Timing shows Started/Completed/Duration/TTFT/Decoding/time-to-first-text/Streaming.
+- **TV-05 · Context chart** — `#N · tokens · %` groups per main call, compact markers ("Context rewritten…") in the chart; click filters the ledger.
+- **TV-06 · Time by tool + categories** — per-tool exec time and call count plus a Model bar (observed `Model 5m 20s · 33×, Bash 5m 6s · 11×, Skill 37 ms · 1×`); summary line gains `skills: <name>` after a skill turn. Memory/MCP entries need respective usage (generate with a memory write / an MCP call, or mark n/a).
+- **TV-07 · Old records without timing** — open v2 on a session created before the timing change: TTFT shows "—" and model spans render solid (unit-covered; needs an old-format session to see live).
+- **TV-08 · Layouts** — wide (default side pane), narrow (drag `role=separator` splitter), mobile layout manual-only.
+
+### AC — ACP agents on macOS (#287)
+
+- **AC-01 · Settings group + detection** — Settings → Model settings → "ACP agents": opencode, Cursor, Qwen Code, Gemini CLI (brand SVG marks). Codex/Claude Code appear only when the adapter binaries (`codex-acp`, `claude-agent-acp`) are on PATH — their absence is spec behavior, not a bug. Each detail shows version, resolved command path, Enable switch, Login status.
+- **AC-02 · Test roundtrip** — detail → Test: handshake runs without sending a prompt. Expected "Roundtrip OK · N ms" + raw JSON-RPC frames; auth-required agents surface the sign-in message (Qwen "authenticate first", Gemini authMethods). Expect 2 warn log lines per failed (auth) test — expected failures.
+- **AC-03 · Composer agent choice + pre-turn options** — draft → model menu → provider submenu `composer-provider-trigger` lists `<agent> (ACP)`; after picking, `v4-model-config` has `provider=acp:<agent>` and the agent's catalog options render as `external-agent-config-trigger-{mode,model,effort}` from `fork_acp_agent_catalog.json`.
+- **AC-04 · Draft choice isolation** — with agent choices set on a draft (mode Plan, model X), open another draft with the same agent: it must show catalog defaults, not the other draft's choices (Codex finding a). Choose mode, then model: the mode must survive (Codex finding b).
+- **AC-05 · Live delegation** — one turn with an agent whose model is free (opencode `*-free`); reply arrives; trajectory shows the ACP session. Other agents: detection only (paid sign-in).
+- **AC-06 · Enable/login** — the Enable switch flips Ready/Disabled; Login section shows stored credentials state ("API key stored") with Check login / Log in (never change credentials).
+
+### QP — Quick prompts (#296)
+
+- **QP-01 · Settings CRUD** — Settings → Quick prompts: Project picker, "…quick prompts" + "Global quick prompts" sections, `quick-prompts-settings-new` opens the editor (Name `quick-prompt-editor-name`, Project/Global scope, prompt body with /, $, @). Save disabled until valid. Row: Pinned + Shown-in-project switches, drag handle, edit/duplicate/delete.
+- **QP-02 · Composer row** — `quick-prompt-row` above the composer (drafts and sessions) lists pinned globals (not hidden in the project) then pinned project prompts. Click inserts at the caret (mention chips intact); ⌘-click sends only when the draft is empty, otherwise inserts. `quick-prompt-save-draft` saves the current draft content.
+- **QP-03 · "/" panel** — type `/` → "Quick prompts" section (virtualized — scroll); Enter replaces the `/token` with the stored body.
+- **QP-04 · Row menu + management** — right-click a chip → Edit / Hide in this project / Remove from row / Delete; Settings lists reflect immediately (state broadcast).
+- **QP-05 · Scope rules** — a global prompt with an `@file` mention is rejected with a readable reason; project prompts may reference the project; restart restores rows and switches.
+
+### Harness corrections (round 2)
+
+- `worktree-failure-modal` is the worktree-RETURN failure flow; creation failures render progress/failure/Retry in the destination entry and (per spec) the failed session's timeline. See CP-06 and ISSUE-051.
+- `agent-browser eval` prints **pretty-printed JSON across multiple lines** — capture the whole output and parse with `jq`; `tail -1`/quoted-string parsing produces garbage coordinates that click random UI (cost ~15 min in the AC-04 retest).
+- Radix menus/popovers do **not** open from JS `.click()`/`keydown` dispatch on the trigger — only real CDP pointer `move → down → up` at the element centre; but items inside an open menu accept JS pointer event sequences. Keyboard Enter works on `workspace-more-button`.
+- Lexical draft text: `document.execCommand('selectAll'/'delete')` does not clear the composer; use `__zcodeLexicalInputE2E.setText(...)`.
+- A failed attachment chip persists with the project-scoped draft and keeps Send disabled until removed (also blocks sends after project re-select round-trips).
+- `pnpm verify:pre-push` standalone passing does not guarantee the hook passes (first push failed transiently at 6 s with exit 2; the immediate retry passed in 44 s). Retry once before diagnosing.
 
 ## Manual only (do not attempt over CDP)
 

@@ -65,6 +65,14 @@ History: 2026-10-23 open → fixing (fixer lane C1) → fixed-unverified <sha> �
 
 <!-- Append ISSUE-025 and later below this line. -->
 
+## Run 2026-10-22 20:01 · branch claude/qa-run-20261022-2 · base 5e8df047
+
+PRs included in base: #283, #284, #285, #286, #287, #288, #289, #290, #291, #292, #293, #294, #295, #296 (all merged)
+Baseline gates: typecheck pass (exit 0), lint 0 errors / 98 warnings; `pnpm install --frozen-lockfile` exit 0, `pnpm build:cua` pass, CLI `turbo run build` pass, `check-workspace-freshness` fresh
+Environment: macOS 27.2, Node 26.12.0 (mise.toml pins 26.11.1), dev desktop, ZCODE_DATA_BASE_DIR=~/.zcode-dev-home, model `deepseek/deepseek-v4.1-flash-1017` (OpenRouter, cheapest configured), `ZCODE_QA_NO_OCCLUSION=1` local switch active. Shared `~/.zcode/v2/setting.json` snapshot at 53 keys (backup `~/qa-sandbox/run-20261022/setting.json.bak`).
+Scenario results (final, 2026-10-22 23:10): R1 all live-verifiable fixes verified (see per-issue History; ISSUE-026 live re-check env-blocked, ISSUE-027 external-agent trigger verified with the ACP cases). R2: #295, #283, #286, #287, #296 all exercised live (details in scenarios.md TV/AC/QP sections; strip drag/zoom and MCP/memory chips E2E-only; Codex findings on #287 not reproducible). R3: CH-11 ✓ (load-older sub-case env: 199-row session still fits one window), CH-17 perf ✓ ("show next" is per-input-card, catalog corrected), CP-06 → ISSUE-051. R4: 38 cases pass (many as covered-by-round-1 plus this run's spot checks), 3 blocked/env (tool-dependent chat cluster — OpenRouter tool-format drift; drag re-runs harness), new issues ISSUE-052, ISSUE-053.
+Fix packs: osben/ZCode#298 (ISSUE-049, open); ISSUE-051 fix in review (lane C2); no other product defects fixed this round.
+
 ## Run 2026-10-22 12:08 · branch claude/qa-run-20261022 · base 520a1bf1
 
 PRs included in base: #275, #276, #280, #277 (merged); #282 (open; merged locally into the QA branch to get this kit)
@@ -112,6 +120,110 @@ Final status (2026-10-22 wrap-up). Nothing was merged by this run; "merged" mean
 - osascript has no assistive access from the agent shell, so the ISSUE-028 native-confirm path was verified through Cancel only.
 
   Final cleanup: hover-test session archived, `~/qa-sandbox/qa-delete-me` removed, app and watchers stopped. `setting.json`: `localePreference`, `lastActiveWorkspace`, `desktopWindowSize` reverted by key to the run-start backup — 53 keys, `en-US`/`system`, no fork locale overrides left in `fork-settings.json`. Remaining diffs against the backup are the user's own recent-workspace entries, left as they are.
+
+### ISSUE-054 · S2 · composer · open
+
+Scenario: CP-06 · Found: 2026-10-22 23:05 · Build: 9ab8f7cf (QA branch with the ISSUE-051 fix)
+Repro (from a fresh app start):
+
+1. `chmod 555 <repo>-worktrees`; draft in the project → Worktree on → type a prompt → Send. The failed card renders (ISSUE-051 fix).
+2. `chmod 755` the directory; press Retry on the timeline card.
+   Expected (`specs/composer-worktree-setup-steps.md`): "After Git reports a ready path, activate the same session with the frozen submission … admits that submission exactly once."
+   Actual: the worktree is created and the card flips to "Worktree·ready · <name>", but the frozen submission is never admitted — the timeline keeps only the user row, the session's model config is EMPTY ("Choose model"), and Send stays disabled until the user manually picks a model; only then does the session accept input (a manually typed message runs fine). The original frozen prompt never runs at all.
+   Evidence: after Retry (12–45 s): `rows:1`, last row "Reply with exactly: wt-retry", `running:false`, model `""`, sendDisabled true with empty composer; picking a model enabled input; a new manual send produced "wt-retry-2". `git worktree list` shows the created worktree.
+   Root cause: hypothesis — the retry-activation path loses or fails to resolve the frozen submission's model (the frozen pick here was an ACP agent from Recent; resolution may fail in the new worktree session and the activation silently stops), or the ready→activate hand-off does not re-fire after a retry.
+   Fix: — (admit the frozen submission on ready after a retry; if the model cannot resolve, surface the blocked reason instead of a silent idle row)
+   Verify:
+3. Repro steps 1–2 above with a non-ACP frozen model, then repeat with an ACP one.
+   Must see: after the card flips ready, the frozen prompt runs exactly once in the created worktree without a manual model pick. Must not see: an idle session with "Choose model" and a permanently unadmitted frozen row.
+   History: 2026-10-22 open (found while live-verifying the ISSUE-051 fix).
+
+### ISSUE-053 · S2 · chat · open
+
+Scenario: CH-12 · Found: 2026-10-22 22:4x · Build: 288d26e8
+Repro (from a fresh app start):
+
+1. Open a session with several turns (here qa-r2-smoke: rows contain "Reply with exactly the word pong.", "Count from 1 to 300, one number per line…", "qa queue item A"…"H", markdown/table turn).
+2. ⌘F → type "pong" (setter input or keystrokes). Repeat with "Count", "queue item", "qa".
+   Expected (`docs/ui/task-find-dialog.md`, `docs/v4-session-find-highlight.md`): the counter "{current} / {total} results" reflects existing matches; hits highlight and Enter/Shift+Enter navigate.
+   Actual: "pong" → 0/0, "Count" → 0/0, "queue item" → 0/0 although those strings are plainly present in timeline rows; "qa" → 1/9. No highlights for the 0/0 terms.
+   Evidence: bar text captured per term (parent of the "Search messages…" input shows "0/0" / "1/9"); session rows enumerated in the same probe.
+   Root cause: hypothesis — the find index covers only a subset of row kinds (e.g. only rendered/virtualized rows, or assistant rows without tool/markdown projections); "qa" matching 9 suggests partial coverage, not a dead feature.
+   Fix: —
+   Verify: in any multi-turn session, ⌘F for a word visible in a user row AND an assistant row → the counter is ≥1/≥1 for both; hits highlight; Enter moves between them.
+   History: 2026-10-22 open.
+
+### ISSUE-052 · S3 · side pane · open
+
+Scenario: SP-05 · Found: 2026-10-22 22:2x · Build: 288d26e8
+Repro: open the Files side-pane tab in a session whose project tree changed on disk (here: `src/math.js` existed all along; the tree showed `src` containing only `.DS_Store`).
+Expected: Refresh (`workspace-file-tree-refresh-button`) re-reads directory children.
+Actual: Refresh ×2 left `src` showing only `.DS_Store`; collapsing/re-expanding the `src` node re-read it and `math.js` appeared.
+Evidence: tree text before `…src.DS_Store notes.md…`, after node toggle `…srcmath.js.DS_Store…`; file present on disk and tracked (`git ls-files`).
+Root cause: hypothesis — the refresh action re-reads only the root level (or the changed-file set) and does not invalidate expanded-directory caches.
+Fix: —
+Verify: change a nested directory's contents on disk, open Files, press Refresh → the new file appears without toggling the node.
+History: 2026-10-22 open.
+
+### ISSUE-051 · S2 · composer · fixed-verified
+
+Scenario: CP-06 · Found: 2026-10-22 21:55 · Build: 288d26e8
+Repro (from a fresh app start):
+
+1. Make the worktree parent read-only: `chmod 555 ~/qa-sandbox/zcode-qa-repo-worktrees` (the default `<repo>-worktrees` location).
+2. New draft in the project → destination control → Worktree on → type a prompt → Send.
+3. The preparing session opens (title "Worktree zcode/<name>"); creation fails. Navigate to another task and back to the failed session; also open a new draft in the project.
+   Expected (`specs/composer-worktree-setup-steps.md` §"Submission and editor behavior"): "Progress, failure, Retry, and Cancel render inside its timeline"; "A failed session retains its setup error and Retry action"; "Navigation away … Returning to the session ID resumes the same progress state"; frozen text retained in a recovery record and restored into an empty editor.
+   Actual: the failed session's timeline shows only the user row — no setup error, no Retry. At failure time a `composer-worktree-recovery` entry (Retry/Discard) exists in the destination popover, but after navigating away it is unreachable (the destination control is draft-only; the failed session's composer has no destination trigger, no error banner, empty composer, disabled Send). The catalog's old expectation (`worktree-failure-modal` with Retry/Change/Close) belongs to the worktree-RETURN failure flow (`worktreeFailureReturnStore`), not to creation failures.
+   Evidence: session "Worktree zcode/orbital-yeti" (qa-sandbox): `rows:1`, `err:[]`, `markers:[]`, composerText empty, sendDisabled true; `git worktree list` has no orbital-yeti; popover at failure time: testid `composer-worktree-recovery` with Retry/Discard and "Failed to send"; after navigation the same query finds no entry.
+   Root cause: hypothesis — the preparation recovery state lives renderer-local on the composer/destination control and is not rebound to the failed session's timeline on return; the spec's session-bound failure rendering is not implemented (or was lost in a refactor).
+   Fix: — (render setup error + Retry/Discard inside the failed session's timeline per spec; restore the frozen text into the empty editor on return)
+   Verify:
+4. Start the dev app; `chmod 555` on the project's `-worktrees` directory; draft → Worktree on → send.
+5. Must see: the preparing session opens, then shows the setup error with Retry/Cancel/Discard inside its timeline; navigating away and back keeps the same failed state; Discard (or Retry after `chmod 755`) completes the spec'd flow; the frozen text is restorable into an empty editor. Must not see: a silent stranded user row with no error and no recovery action.
+   History: 2026-10-22 open (CP-06, forced via read-only parent) → fixing (fixer lane C2, worktree .claude/worktrees/qa-fix-051-worktree-recovery) → fixed-unverified 4636c845 (branch claude/qa-fix-051-worktree-recovery; renderer-only: the failure card and Retry were gated on the Host snapshot marker only (SessionPane.tsx:6910, Retry threw at :2607); the card now also mounts from the renderer's live pipeline entry, Retry params resolve from the frozen entry; spec sharpened same-commit; Host path verified to already persist failed+message+attemptId; tests red-first, full UI suite 11558 green) → reviewer (Lane D): SHIP, no must-fix; two test-hardening should-fixes applied in a follow-up commit → fixed-verified 2026-10-22 23:0x on the restarted dev app (QA branch cherry-pick 9ab8f7cf): chmod 555 → Send → the failed session's timeline shows "Worktree·failed / Worktree setup failed: … Permission denied" with Retry + Discard; navigation away/back keeps the state; chmod 755 → Retry → card flips "Worktree·ready · zcode/tiny-phoenix", git worktree created → FOLLOW-UP DEFECT found in the same verify: the frozen submission is not admitted after a ready retry and the session needs a manual model re-pick → ISSUE-054 → PR opened by the orchestrator.
+
+Final status (2026-10-22 round-2 wrap-up). Nothing was merged by this run; "merged" means the user merged it.
+
+- osben/ZCode#298 — ISSUE-049 (S2, flat-list hover card dead since #292) — open, CI green (typecheck/lint/arch + unit), fresh-context reviewer verdict SHIP (nits fixed in-branch), live-verified on the restarted dev app.
+- claude/qa-fix-051-worktree-recovery — ISSUE-051 (S2, worktree preparation failure strands the first prompt) — fix 4636c845, reviewer pass + live verification recorded in the issue History; PR opened by the orchestrator.
+- New S3s filed, no fix requested this round: ISSUE-050 (stale renderer instance warn), ISSUE-052 (file tree refresh misses nested dirs).
+- New S2 filed: ISSUE-053 (find-in-conversation returns 0/0 for existing terms).
+
+  Round-1 fixes re-verified live this round: ISSUE-025, 027 (all four trigger kinds incl. the ACP external-agent control), 029, 031, 032, 033, 035, 036, 037, 039 (Steer drains; user Stop always holds, incl. right after a Steer; Continue resumes), 040, 041, 042, 043, 044, 045 (both directions, shared file intact at 53 keys, upstream log clean), 046, 047 (1 сеанс singular + 2 files plural; branch-dialog variant unit-covered), 048. ISSUE-026: live re-check env-blocked (no touchable unavailable-provider session); round-1 evidence stands; the "unresolvable stored pick is kept" decision confirmed by code (typed selectionIssue values; pick kept as intent).
+
+  New since round 1, exercised live: #295 (spawn preflight resolves this checkout's CLI), #283 (v1 tool-call inputs pair with results), #286 trajectory v2 (summary/strip/ledger/inspector 5 tabs/context chart/time-by-tool/skills chips; opens 86-207 ms; strip drag/zoom + MCP/memory chips E2E-only; old-records "—" unit-covered), #287 ACP on macOS (group + 4 detected agents with brand marks; codex/claude hidden — adapters not installed, spec behavior; Test roundtrips OK for opencode/Cursor, auth surfaced for Qwen/Gemini; pre-turn options catalog; draft-choice isolation and mode/model interplay — the two #287 review findings NOT reproducible; one live opencode free-model turn), #296 quick prompts (settings CRUD, scope, pinned/shown switches, composer row insert, "/" section with token replace).
+
+  Blocked/manual-only this round: tool-dependent chat flows (CH-06/07/09 full paths, CH-05 cards, CH-14 background bash) — OpenRouter tool-format drift made cheap models emit raw `<tool_call>` text from ~22:00 (worked at 20:12); no merge this round touches those areas. Drag re-runs (SB-03/SB-09/SB-12): synthetic drag did not engage dnd-kit; round-1 passes + rAF healthy all session. CH-11 load-older sub-case: even 199 rows fit one window (needs a bigger fixture). CH-17 "show next": collapse is per-input-card (catalog corrected). CP-14 held-unlock: code path documented, not forced live. SB-03 real "Delete project" confirm on a throwaway: needs one native-picker step (user).
+
+### ISSUE-050 · S3 · main · open
+
+Scenario: MI-07 (idle hygiene) · Found: 2026-10-22 21:29 · Build: 288d26e8
+Repro: reload the renderer (Vite hot update of a context provider, or a dev restart) and let telemetry batches report from the old renderer instance.
+Expected: an expected post-reload race is not a warning (the renderer already drops the batch).
+Actual: `[warn] … [renderer-action-trace] stale renderer instance for sender {"senderId":1}` — 5 occurrences today (20:39, 20:49, 21:29, …), one per reload; each carries no stack and the batch is dropped.
+Evidence: `~/.zcode-dev-home/.zcode/v2/logs/2026-10-22.log`; code `packages/desktop/src/main/rendererActionTraceIpc.ts:88` — the `stale` set exists exactly to catch retired instance ids, so the warn fires on the designed path (same family as ISSUE-025/036/048).
+Root cause: confirmed (code) — expected condition mapped to warn.
+Fix: — (log at info/debug in `rendererActionTraceIpc.ts`, or fold into the rpcLogLevel-style exemptions)
+Verify: reload the renderer, send a turn → no `stale renderer instance` line at warn (it may appear at info).
+History: 2026-10-22 open.
+
+### ISSUE-049 · S2 · sidebar · fixed-verified
+
+Scenario: SB-08 · Found: 2026-10-22 20:47 · Build: 5e8df047
+Repro (from a fresh app start):
+
+1. By project view. Hover any task row for ≥ 300 ms (here `qa-r2-smoke`, then the fresh `done` row; tried 0.8–2 s hovers, centred and title-area, after moving away first).
+   Expected (`specs/task-hover-card-layout.md`): `[data-task-hover-card]` appears with title, time, branch + change stats, provider/model/effort, PR section; `data-task-hover-status` matches the run state.
+   Actual: the card never renders in the flat/project list (grouped view renders it). Regression: round 1 SB-08 passed at build 7754958f (2026-10-22 12:xx); #292 (pack 7, merged 2026-10-23) changed the row wrapper.
+   Evidence: repeated runtime hovers with no `[data-task-hover-card]` in the DOM (project view); code — `packages/ui/src/TaskListItem.tsx:627` wraps the row in `<Tooltip open={false}>` ("This Tooltip has no TooltipContent… constant boolean", the ISSUE-027 fix) but `TaskSidebarHoverCard` (a bare `TooltipContent`, `packages/ui/src/components/TaskSidebarHoverCard.tsx:56`) is rendered inside that same Tooltip at `TaskListItem.tsx:928`, so Radix never opens it. The grouped row keeps an uncontrolled `<Tooltip>` with the same card inside (`packages/ui/src/project-sidebar/grouped/task-row.tsx:704-712`), so only the flat list is affected.
+   Root cause: confirmed (code + runtime) — #292's constant-closed Tooltip swallows the hover card's TooltipContent.
+   Fix: — (the fixer must (a) render the card again in the flat list, (b) keep the ISSUE-027 guarantee: no "changing from uncontrolled to controlled" warnings, (c) not re-render the memoized row on every hover — the comment at TaskListItem.tsx:625 is why `open={false}` was chosen; e.g. own Tooltip/trigger around the card, or hover state lifted into a non-memoized wrapper)
+   Verify:
+1. Start the dev app from the fix branch; By project view.
+1. Hover a task row for 500 ms.
+   Must see: `[data-task-hover-card]` with `data-task-hover-status`, title, relative time; branch/model lines when applicable. Must not see: "changing from uncontrolled to controlled" warnings in the console; the row re-rendering per mousemove (React DevTools not required — the pack-7 tests `taskListItemHoverActions.test.ts` must still pass).
+   History: 2026-10-22 open (SB-08, round-2 re-run with rAF probe passing) → fixing (fixer lane C1, worktree .claude/worktrees/qa-fix-049-hover-card) → fixed-unverified cbbd4476 + b14369c6 (branch claude/qa-fix-049-hover-card; spec-first specs/task-hover-card-layout.md #10-#11; tests taskListItemHoverCard.test.ts failing-first, 26/26; root cause pinned to 15d3d06f which replaced 78ca8e4c's lifted state with constant open={false} under a false "no TooltipContent" comment) → reviewer (Lane D, fresh context): SHIP, no must/should-fix; nits (rerenderRow twin, hover-disabled + focus cases) fixed in b14369c6 → fixed-verified 2026-10-22 22:0x on the restarted dev app built from the QA branch (cherry-picks 9bb0e6e9+288d26e8): By project view hover ≥300 ms renders [data-task-hover-card] with data-task-hover-status="completed", title, time, provider/effort; 0 controlled/uncontrolled warnings; grouped view unaffected; post-restart smoke CP-02 (reply ~12 s) and CH-04 (fork + first send, no host-mismatch) pass → PR osben/ZCode#298 (open)
 
 ### ISSUE-028 · S3 · sidebar · fixed-verified
 
