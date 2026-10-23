@@ -754,6 +754,18 @@ export function WorkspaceHeaderTitleSection({
                       }
                     : undefined
                 }
+                onViewModelTrajectoryV2={
+                  resolvedTaskActionTaskId
+                    ? () => {
+                        useModelTrajectoryStore.getState().requestOpen({
+                          taskId: resolvedTaskActionTaskId,
+                          workspaceKey: workspaceIdentity?.trim() || workspaceAbsPath,
+                          title: activeTaskMeta?.title ?? null,
+                          kind: "v2",
+                        });
+                      }
+                    : undefined
+                }
                 onOpenProviderConfig={() => {
                   void handleOpenProviderConfig();
                 }}

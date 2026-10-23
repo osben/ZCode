@@ -3,6 +3,7 @@ import type { Event } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
 import type { CommandPayloadMap } from "@zcode/shared/zcode-protocol-v4";
 import { createServiceDescriptor } from "#src/descriptors.js";
+import type { ZCodeModelTrajectoryV2 } from "#src/model-trajectory-v2/contract.js";
 import type {
   ZCodeImportSessionsResult,
   ZCodeImportableSessionCandidate,
@@ -841,6 +842,12 @@ export interface IZCodeTaskService {
     /** Maximum number of calls to return (keep the most recent N in reverse chronological order); defaults to 200. */
     limit?: number;
   }): Promise<ZCodeModelTrajectory>;
+
+  /**
+   * Read the v2 trajectory (specs/model-trajectory-v2.md): v1 records with wire facts, interned tool catalogs and
+   * system blocks, tool timing from the CLI session database, and model context windows. Read-only.
+   */
+  getModelTrajectoryV2(params: { taskId: string; limit?: number }): Promise<ZCodeModelTrajectoryV2>;
 
   /** Read cumulative model-token usage for a task/session from the agent usage database. */
   getTaskTokenUsage(params: {

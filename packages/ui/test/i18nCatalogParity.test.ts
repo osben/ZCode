@@ -10,6 +10,7 @@ const EN_ONLY_KEYS = [
   "archives.count.one",
   "branchSwitchGuard.taskCount.one",
   "chat.queue.sendConfirm.description.one",
+  "git.actionMenu.commitDialog.changesValue.one",
   "git.branchSwitcher.commitDialog.changesValue.one",
   "git.branchSwitcher.currentDirty.one",
   "settings.memory.viewer.disabled",

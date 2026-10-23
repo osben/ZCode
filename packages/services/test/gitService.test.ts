@@ -556,6 +556,39 @@ describeIfGit("gitService", () => {
     );
   });
 
+  it("lists empty untracked and staged files like git status, but still hides binary ones (ISSUE-042)", async () => {
+    const { workspacePath } = await createRepo();
+    const service = createGitService();
+
+    writeFileSync(join(workspacePath, "qa.txt"), "one line\n");
+    writeFileSync(join(workspacePath, "qa2.txt"), "");
+    writeFileSync(join(workspacePath, "staged-empty.txt"), "");
+    writeFileSync(join(workspacePath, "binary.dat"), Buffer.from([0x00, 0x01, 0x02, 0x00]));
+    runGit(workspacePath, ["add", "staged-empty.txt"]);
+
+    const unstaged = await service.getChanges({ workspacePath, sourceId: "unstaged" });
+    expect(unstaged.map((change) => change.workspaceRelativePath).sort()).toEqual([
+      "qa.txt",
+      "qa2.txt",
+    ]);
+    expect(unstaged.find((change) => change.workspaceRelativePath === "qa2.txt")).toMatchObject({
+      section: "untracked",
+      kind: "added",
+      added: 0,
+      removed: 0,
+      isUntracked: true,
+    });
+
+    const staged = await service.getChanges({ workspacePath, sourceId: "staged" });
+    expect(staged).toHaveLength(1);
+    expect(staged[0]).toMatchObject({
+      workspaceRelativePath: "staged-empty.txt",
+      kind: "added",
+      added: 0,
+      removed: 0,
+    });
+  });
+
   it("filters changes to the current workspace scope and exposes summary plus identity", async () => {
     const { repoPath, workspacePath } = await createRepo();
     const service = createGitService();
@@ -584,16 +617,16 @@ describeIfGit("gitService", () => {
       workspacePath,
       sourceId: "unstaged",
     });
+    // ISSUE-042: a zero-byte untracked file is a real added file and must match `git status`.
     expect(
       unstagedChanges.map((change) => `${change.section}:${change.workspaceRelativePath}`).sort(),
-    ).toEqual(["unstaged:tracked.txt", "untracked:untracked.txt"]);
+    ).toEqual([
+      "unstaged:tracked.txt",
+      "untracked:.build/empty-generated.h",
+      "untracked:untracked.txt",
+    ]);
     expect(
       unstagedChanges.some((change) => change.repoRelativePath.includes("packages/other")),
-    ).toBe(false);
-    expect(
-      unstagedChanges.some((change) =>
-        change.repoRelativePath.endsWith(".build/empty-generated.h"),
-      ),
     ).toBe(false);
 
     const stagedChanges = await service.getChanges({
@@ -612,12 +645,11 @@ describeIfGit("gitService", () => {
       refresh.unstagedChanges
         .map((change) => `${change.section}:${change.workspaceRelativePath}`)
         .sort(),
-    ).toEqual(["unstaged:tracked.txt", "untracked:untracked.txt"]);
-    expect(
-      refresh.unstagedChanges.some((change) =>
-        change.workspaceRelativePath.endsWith(".build/empty-generated.h"),
-      ),
-    ).toBe(false);
+    ).toEqual([
+      "unstaged:tracked.txt",
+      "untracked:.build/empty-generated.h",
+      "untracked:untracked.txt",
+    ]);
     expect(refresh.stagedChanges.map((change) => change.workspaceRelativePath)).toEqual([
       "staged.txt",
     ]);

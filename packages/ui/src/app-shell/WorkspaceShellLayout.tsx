@@ -1912,6 +1912,15 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       title: resolvedActiveTaskMeta?.title ?? null,
     });
   }, [activeTaskId, handleOpenModelTrajectory, resolvedActiveTaskMeta]);
+  // The v2 launcher entry targets the active task only; its tab dedupes by `model-trajectory-v2:<taskId>` independently of v1.
+  const handleOpenModelTrajectoryV2Launcher = useCallback(() => {
+    if (!activeTaskId) return;
+    handleOpenModelTrajectory({
+      taskId: activeTaskId,
+      title: resolvedActiveTaskMeta?.title ?? null,
+      kind: "v2",
+    });
+  }, [activeTaskId, handleOpenModelTrajectory, resolvedActiveTaskMeta]);
   const renderSidePanePanel = (options: { mobileOverlay?: boolean } = {}) => (
     <AnimatedSidePanePanel
       services={services}
@@ -1980,6 +1989,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       isMacDesktop={isMacDesktop}
       onOpenTerminalTab={handleOpenTerminalTab}
       onOpenModelTrajectory={handleOpenModelTrajectoryLauncher}
+      onOpenModelTrajectoryV2={handleOpenModelTrajectoryV2Launcher}
       onOpenReviewTab={handleToggleGit}
       onOpenSelectionSideConversation={handleOpenSelectionSideConversationLauncher}
       onOpenPlanDetail={handleOpenPlanDetail}

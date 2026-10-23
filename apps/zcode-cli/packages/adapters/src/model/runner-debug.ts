@@ -42,6 +42,34 @@ const MAX_ROLLOUT_BASELINE_MESSAGES = 64;
 const MAX_DEBUG_BASELINE_MESSAGES = 256;
 const FINGERPRINT_STRING_LIMIT = 512;
 
+interface ModelIOStreamTimingInput {
+  timeToFirstProviderEventMs?: number;
+  timeToFirstContentMs?: number;
+  timeToFirstTextMs?: number;
+}
+
+interface ModelIOTiming extends ModelIOStreamTimingInput {
+  stream: boolean;
+}
+
+// timing is top level because response is absent when a call fails before producing
+// output. Field names match model_request_completed so the status event and the durable
+// record never drift (specs/model-io-stream-timing.md).
+function buildModelIOTiming(stream: boolean, timing?: ModelIOStreamTimingInput): ModelIOTiming {
+  return {
+    stream,
+    ...(timing?.timeToFirstProviderEventMs !== undefined
+      ? { timeToFirstProviderEventMs: Math.round(timing.timeToFirstProviderEventMs) }
+      : {}),
+    ...(timing?.timeToFirstContentMs !== undefined
+      ? { timeToFirstContentMs: Math.round(timing.timeToFirstContentMs) }
+      : {}),
+    ...(timing?.timeToFirstTextMs !== undefined
+      ? { timeToFirstTextMs: Math.round(timing.timeToFirstTextMs) }
+      : {}),
+  };
+}
+
 interface ModelIOCollectionState {
   count: number;
   firstFingerprint?: string;
@@ -151,6 +179,7 @@ export function recordGenerateTextDebug(input: {
       sessionId: stringMetadata(metadata.sessionId),
       querySource: stringMetadata(metadata.querySource),
       startedAt: new Date(input.startedAt).toISOString(),
+      timing: buildModelIOTiming(false),
       traceId: stringMetadata(metadata.traceId),
       turnId: stringMetadata(metadata.turnId),
       type: "model_io",
@@ -190,6 +219,7 @@ export async function recordStreamTextDebug(input: {
   resolved: ResolvedAiSdkModel;
   result?: AiSdkStreamTextResult;
   startedAt: number;
+  timing?: ModelIOStreamTimingInput;
 }): Promise<void> {
   if (!input.recordModelIO) {
     return;
@@ -265,6 +295,7 @@ export async function recordStreamTextDebug(input: {
         sessionId: stringMetadata(metadata.sessionId),
         querySource: stringMetadata(metadata.querySource),
         startedAt: new Date(input.startedAt).toISOString(),
+        timing: buildModelIOTiming(true, input.timing),
         traceId: stringMetadata(metadata.traceId),
         turnId: stringMetadata(metadata.turnId),
         type: "model_io",
