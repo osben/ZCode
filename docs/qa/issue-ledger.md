@@ -121,7 +121,7 @@ Final status (2026-10-22 wrap-up). Nothing was merged by this run; "merged" mean
 
   Final cleanup: hover-test session archived, `~/qa-sandbox/qa-delete-me` removed, app and watchers stopped. `setting.json`: `localePreference`, `lastActiveWorkspace`, `desktopWindowSize` reverted by key to the run-start backup — 53 keys, `en-US`/`system`, no fork locale overrides left in `fork-settings.json`. Remaining diffs against the backup are the user's own recent-workspace entries, left as they are.
 
-### ISSUE-049 · S2 · sidebar · open
+### ISSUE-049 · S2 · sidebar · fixed-verified
 
 Scenario: SB-08 · Found: 2026-10-22 20:47 · Build: 5e8df047
 Repro (from a fresh app start):
@@ -136,7 +136,7 @@ Repro (from a fresh app start):
 1. Start the dev app from the fix branch; By project view.
 1. Hover a task row for 500 ms.
    Must see: `[data-task-hover-card]` with `data-task-hover-status`, title, relative time; branch/model lines when applicable. Must not see: "changing from uncontrolled to controlled" warnings in the console; the row re-rendering per mousemove (React DevTools not required — the pack-7 tests `taskListItemHoverActions.test.ts` must still pass).
-   History: 2026-10-22 open (SB-08, round-2 re-run with rAF probe passing).
+   History: 2026-10-22 open (SB-08, round-2 re-run with rAF probe passing) → fixing (fixer lane C1, worktree .claude/worktrees/qa-fix-049-hover-card) → fixed-unverified cbbd4476 + b14369c6 (branch claude/qa-fix-049-hover-card; spec-first specs/task-hover-card-layout.md #10-#11; tests taskListItemHoverCard.test.ts failing-first, 26/26; root cause pinned to 15d3d06f which replaced 78ca8e4c's lifted state with constant open={false} under a false "no TooltipContent" comment) → reviewer (Lane D, fresh context): SHIP, no must/should-fix; nits (rerenderRow twin, hover-disabled + focus cases) fixed in b14369c6 → fixed-verified 2026-10-22 22:0x on the restarted dev app built from the QA branch (cherry-picks 9bb0e6e9+288d26e8): By project view hover ≥300 ms renders [data-task-hover-card] with data-task-hover-status="completed", title, time, provider/effort; 0 controlled/uncontrolled warnings; grouped view unaffected; post-restart smoke CP-02 (reply ~12 s) and CH-04 (fork + first send, no host-mismatch) pass → PR osben/ZCode#298 (open)
 
 ### ISSUE-028 · S3 · sidebar · fixed-verified
 
