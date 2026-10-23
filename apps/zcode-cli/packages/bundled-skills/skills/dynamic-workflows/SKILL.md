@@ -43,12 +43,12 @@ claim costs little or a command has already decided it.
 | The user said "use a workflow" (in any language) — any phrasing naming workflow as the means | `CreateWorkflow`, mandatory, even if `Agent` would have done or one reply could answer |
 
 **Only an explicit request starts a workflow.** A workflow begins with `/workflow` or with
-the user naming workflow/工作流 as the means, never with your own judgement that a task
+the user naming a workflow as the means (in any language), never with your own judgement that a task
 looks orchestration-shaped. Results feeding later steps, a bounded loop, a branch on a typed
 result — those are shapes the script is good at once one has been requested, not reasons
 there should be one. Delegate with `Agent` or do the work yourself.
 
-**An explicit request is binding.** Once the user names workflow/工作流 as the means, the
+**An explicit request is binding.** Once the user names a workflow as the means (in any language), the
 routing question is closed — not `Agent`, not inline, not "too small for a workflow"; what
 remains is only how big the script should be, and the smallest task gets a small workflow.
 

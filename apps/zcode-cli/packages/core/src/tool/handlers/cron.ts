@@ -196,11 +196,12 @@ export const cronCreateToolEntry: ToolEntry = {
     modelInstructions: [
       "Use this only when the user explicitly asks to schedule future automatic work.",
       "Interpret cron in the user's local timezone using fields: minute hour day-of-month month day-of-week. Do not convert to UTC.",
-      // 'in 8 minutes, class reminder' 既是相对延迟又是一次性提醒；旧指令里“一次性提醒就 pin
-      // 绝对月日时分”的措辞覆盖了相对延迟规则，模型据此自算出 '29 7 29 7 *' 这类固定日历 cron。
-      // 模型对“现在”的时刻常是陈旧的，自算的一次性时刻一旦刚过去就被 host 静默滚到下一年。
-      // 修复：任何“从现在起 N 后”的表达（含小时、中英文）一律走 delayMinutes；pin 绝对 cron 只
-      // 用于用户明确点名的墙钟日期，且显式声明相对一次性必须改用 delayMinutes。
+      // 'In 8 minutes, class reminder' is both a relative delay and a one-shot reminder. The old wording
+      // ("pin an absolute month/day/hour/minute for a one-shot reminder") overrode the relative-delay rule, so
+      // the model computed fixed-calendar crons such as '29 7 29 7 *' itself. The model's idea of "now" is
+      // often stale, and a self-computed one-shot time that has just passed is silently rolled to next year by
+      // the host. Fix: any "N from now" expression (minutes or hours, any language) goes through delayMinutes;
+      // pinned absolute cron is only for wall-clock dates the user names outright.
       "For any schedule expressed as a delay from now — 'in 3 minutes' sets delayMinutes=3, 'in 8 minutes' sets delayMinutes=8, 'in 2 hours' sets delayMinutes=120, 'later' — in any language — set delayMinutes to the total whole minutes, omit cron, set recurring=false, and omit maxRuns. The host anchors to its real current clock; never infer the current time or convert a relative delay into a cron or clock time yourself.",
       "Use '*/20 * * * *' for every 20 minutes, '0 * * * *' for hourly, and '0 9 * * 1-5' for weekdays at 09:00.",
       // 只用 cron 表达“每 N 单位”会受字段上限影响，且即使 N 未越界也会变成墙钟对齐，
