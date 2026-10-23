@@ -70,8 +70,8 @@ History: 2026-10-23 open → fixing (fixer lane C1) → fixed-unverified <sha> �
 PRs included in base: #283, #284, #285, #286, #287, #288, #289, #290, #291, #292, #293, #294, #295, #296 (all merged)
 Baseline gates: typecheck pass (exit 0), lint 0 errors / 98 warnings; `pnpm install --frozen-lockfile` exit 0, `pnpm build:cua` pass, CLI `turbo run build` pass, `check-workspace-freshness` fresh
 Environment: macOS 27.2, Node 26.12.0 (mise.toml pins 26.11.1), dev desktop, ZCODE_DATA_BASE_DIR=~/.zcode-dev-home, model `deepseek/deepseek-v4.1-flash-1017` (OpenRouter, cheapest configured), `ZCODE_QA_NO_OCCLUSION=1` local switch active. Shared `~/.zcode/v2/setting.json` snapshot at 53 keys (backup `~/qa-sandbox/run-20261022/setting.json.bak`).
-Scenario results: (fill at wrap-up)
-Fix packs: (fill at wrap-up)
+Scenario results (final, 2026-10-22 23:10): R1 all live-verifiable fixes verified (see per-issue History; ISSUE-026 live re-check env-blocked, ISSUE-027 external-agent trigger verified with the ACP cases). R2: #295, #283, #286, #287, #296 all exercised live (details in scenarios.md TV/AC/QP sections; strip drag/zoom and MCP/memory chips E2E-only; Codex findings on #287 not reproducible). R3: CH-11 ✓ (load-older sub-case env: 199-row session still fits one window), CH-17 perf ✓ ("show next" is per-input-card, catalog corrected), CP-06 → ISSUE-051. R4: 38 cases pass (many as covered-by-round-1 plus this run's spot checks), 3 blocked/env (tool-dependent chat cluster — OpenRouter tool-format drift; drag re-runs harness), new issues ISSUE-052, ISSUE-053.
+Fix packs: osben/ZCode#298 (ISSUE-049, open); ISSUE-051 fix in review (lane C2); no other product defects fixed this round.
 
 ## Run 2026-10-22 12:08 · branch claude/qa-run-20261022 · base 520a1bf1
 
@@ -120,6 +120,63 @@ Final status (2026-10-22 wrap-up). Nothing was merged by this run; "merged" mean
 - osascript has no assistive access from the agent shell, so the ISSUE-028 native-confirm path was verified through Cancel only.
 
   Final cleanup: hover-test session archived, `~/qa-sandbox/qa-delete-me` removed, app and watchers stopped. `setting.json`: `localePreference`, `lastActiveWorkspace`, `desktopWindowSize` reverted by key to the run-start backup — 53 keys, `en-US`/`system`, no fork locale overrides left in `fork-settings.json`. Remaining diffs against the backup are the user's own recent-workspace entries, left as they are.
+
+### ISSUE-053 · S2 · chat · open
+
+Scenario: CH-12 · Found: 2026-10-22 22:4x · Build: 288d26e8
+Repro (from a fresh app start):
+
+1. Open a session with several turns (here qa-r2-smoke: rows contain "Reply with exactly the word pong.", "Count from 1 to 300, one number per line…", "qa queue item A"…"H", markdown/table turn).
+2. ⌘F → type "pong" (setter input or keystrokes). Repeat with "Count", "queue item", "qa".
+   Expected (`docs/ui/task-find-dialog.md`, `docs/v4-session-find-highlight.md`): the counter "{current} / {total} results" reflects existing matches; hits highlight and Enter/Shift+Enter navigate.
+   Actual: "pong" → 0/0, "Count" → 0/0, "queue item" → 0/0 although those strings are plainly present in timeline rows; "qa" → 1/9. No highlights for the 0/0 terms.
+   Evidence: bar text captured per term (parent of the "Search messages…" input shows "0/0" / "1/9"); session rows enumerated in the same probe.
+   Root cause: hypothesis — the find index covers only a subset of row kinds (e.g. only rendered/virtualized rows, or assistant rows without tool/markdown projections); "qa" matching 9 suggests partial coverage, not a dead feature.
+   Fix: —
+   Verify: in any multi-turn session, ⌘F for a word visible in a user row AND an assistant row → the counter is ≥1/≥1 for both; hits highlight; Enter moves between them.
+   History: 2026-10-22 open.
+
+### ISSUE-052 · S3 · side pane · open
+
+Scenario: SP-05 · Found: 2026-10-22 22:2x · Build: 288d26e8
+Repro: open the Files side-pane tab in a session whose project tree changed on disk (here: `src/math.js` existed all along; the tree showed `src` containing only `.DS_Store`).
+Expected: Refresh (`workspace-file-tree-refresh-button`) re-reads directory children.
+Actual: Refresh ×2 left `src` showing only `.DS_Store`; collapsing/re-expanding the `src` node re-read it and `math.js` appeared.
+Evidence: tree text before `…src.DS_Store notes.md…`, after node toggle `…srcmath.js.DS_Store…`; file present on disk and tracked (`git ls-files`).
+Root cause: hypothesis — the refresh action re-reads only the root level (or the changed-file set) and does not invalidate expanded-directory caches.
+Fix: —
+Verify: change a nested directory's contents on disk, open Files, press Refresh → the new file appears without toggling the node.
+History: 2026-10-22 open.
+
+### ISSUE-051 · S2 · composer · open
+
+Scenario: CP-06 · Found: 2026-10-22 21:55 · Build: 288d26e8
+Repro (from a fresh app start):
+
+1. Make the worktree parent read-only: `chmod 555 ~/qa-sandbox/zcode-qa-repo-worktrees` (the default `<repo>-worktrees` location).
+2. New draft in the project → destination control → Worktree on → type a prompt → Send.
+3. The preparing session opens (title "Worktree zcode/<name>"); creation fails. Navigate to another task and back to the failed session; also open a new draft in the project.
+   Expected (`specs/composer-worktree-setup-steps.md` §"Submission and editor behavior"): "Progress, failure, Retry, and Cancel render inside its timeline"; "A failed session retains its setup error and Retry action"; "Navigation away … Returning to the session ID resumes the same progress state"; frozen text retained in a recovery record and restored into an empty editor.
+   Actual: the failed session's timeline shows only the user row — no setup error, no Retry. At failure time a `composer-worktree-recovery` entry (Retry/Discard) exists in the destination popover, but after navigating away it is unreachable (the destination control is draft-only; the failed session's composer has no destination trigger, no error banner, empty composer, disabled Send). The catalog's old expectation (`worktree-failure-modal` with Retry/Change/Close) belongs to the worktree-RETURN failure flow (`worktreeFailureReturnStore`), not to creation failures.
+   Evidence: session "Worktree zcode/orbital-yeti" (qa-sandbox): `rows:1`, `err:[]`, `markers:[]`, composerText empty, sendDisabled true; `git worktree list` has no orbital-yeti; popover at failure time: testid `composer-worktree-recovery` with Retry/Discard and "Failed to send"; after navigation the same query finds no entry.
+   Root cause: hypothesis — the preparation recovery state lives renderer-local on the composer/destination control and is not rebound to the failed session's timeline on return; the spec's session-bound failure rendering is not implemented (or was lost in a refactor).
+   Fix: — (render setup error + Retry/Discard inside the failed session's timeline per spec; restore the frozen text into the empty editor on return)
+   Verify:
+4. Start the dev app; `chmod 555` on the project's `-worktrees` directory; draft → Worktree on → send.
+5. Must see: the preparing session opens, then shows the setup error with Retry/Cancel/Discard inside its timeline; navigating away and back keeps the same failed state; Discard (or Retry after `chmod 755`) completes the spec'd flow; the frozen text is restorable into an empty editor. Must not see: a silent stranded user row with no error and no recovery action.
+   History: 2026-10-22 open (CP-06, forced via read-only parent).
+
+### ISSUE-050 · S3 · main · open
+
+Scenario: MI-07 (idle hygiene) · Found: 2026-10-22 21:29 · Build: 288d26e8
+Repro: reload the renderer (Vite hot update of a context provider, or a dev restart) and let telemetry batches report from the old renderer instance.
+Expected: an expected post-reload race is not a warning (the renderer already drops the batch).
+Actual: `[warn] … [renderer-action-trace] stale renderer instance for sender {"senderId":1}` — 5 occurrences today (20:39, 20:49, 21:29, …), one per reload; each carries no stack and the batch is dropped.
+Evidence: `~/.zcode-dev-home/.zcode/v2/logs/2026-10-22.log`; code `packages/desktop/src/main/rendererActionTraceIpc.ts:88` — the `stale` set exists exactly to catch retired instance ids, so the warn fires on the designed path (same family as ISSUE-025/036/048).
+Root cause: confirmed (code) — expected condition mapped to warn.
+Fix: — (log at info/debug in `rendererActionTraceIpc.ts`, or fold into the rpcLogLevel-style exemptions)
+Verify: reload the renderer, send a turn → no `stale renderer instance` line at warn (it may appear at info).
+History: 2026-10-22 open.
 
 ### ISSUE-049 · S2 · sidebar · fixed-verified
 

@@ -165,7 +165,7 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 **CP-06 · Destination: worktree and branch** (sandbox only)
 
 - Steps: in `qa-sandbox` open the destination trigger ("Choose where this task runs") → switch Worktree on → status `destination-worktree-status` → send "Reply with the current git branch name only." → rename `qa-worktree`; new draft → Worktree off → task branch `feature/qa-branch` → send → "Switch branch?" guard → confirm; try a branch that is checked out in another worktree.
-- Expected: worktree created under `<repo>-worktrees/`, header chip "Worktree · branch", agent reply = that branch; branch case checks out at send time; branches used by another worktree are disabled; a forced failure opens `worktree-failure-modal` with Retry / Change / Close.
+- Expected: worktree created under `<repo>-worktrees/`, header chip "Worktree · branch", agent reply = that branch; branch case checks out at send time; branches used by another worktree are disabled; a forced creation failure (e.g. `chmod 555` on the `-worktrees` parent) must render the setup error with Retry/Cancel inside the failed session's timeline and survive navigation away (`specs/composer-worktree-setup-steps.md`); the `worktree-failure-modal` belongs to the worktree-RETURN failure flow, not creation failures.
 - Spec: `specs/composer-destination-control.md`, `specs/composer-branch-switcher-semantics.md`, `specs/composer-worktree-setup-steps.md`.
 
 **CP-07 · Incognito** (regression ISSUE-022)
@@ -398,6 +398,7 @@ Cases for #286 (model trajectory v2), #287/#277 (ACP agents), #296 (quick prompt
 
 ### Harness corrections (round 2)
 
+- `worktree-failure-modal` is the worktree-RETURN failure flow; creation failures render progress/failure/Retry in the destination entry and (per spec) the failed session's timeline. See CP-06 and ISSUE-051.
 - `agent-browser eval` prints **pretty-printed JSON across multiple lines** — capture the whole output and parse with `jq`; `tail -1`/quoted-string parsing produces garbage coordinates that click random UI (cost ~15 min in the AC-04 retest).
 - Radix menus/popovers do **not** open from JS `.click()`/`keydown` dispatch on the trigger — only real CDP pointer `move → down → up` at the element centre; but items inside an open menu accept JS pointer event sequences. Keyboard Enter works on `workspace-more-button`.
 - Lexical draft text: `document.execCommand('selectAll'/'delete')` does not clear the composer; use `__zcodeLexicalInputE2E.setText(...)`.
