@@ -32,6 +32,9 @@ export function useOAuth() {
   const [activeProvider, setActiveProvider] = useState<OAuthProviderId | null>(null);
   const [loadingProviders, setLoadingProviders] = useState(true);
   const [pendingProvider, setPendingProvider] = useState<OAuthProviderId | null>(null);
+  // The URL that was opened in the browser. Kept only while waiting so the login screen can offer
+  // "Copy login link" when the browser did not open; every terminal transition clears it.
+  const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const loginAttemptRef = useRef(0);
   const setOAuthPollingActive = useZCodeStore((state) => state.setOAuthPollingActive);
 
@@ -75,9 +78,10 @@ export function useOAuth() {
         setStatus("waiting");
         setError(null);
         setPendingProvider(provider);
+        setAuthorizeUrl(null);
 
         const {
-          authorizeUrl,
+          authorizeUrl: startedAuthorizeUrl,
           state,
           provider: startedProvider,
         } = await oauthService.startOAuthWithPolling(provider);
@@ -86,11 +90,12 @@ export function useOAuth() {
           return;
         }
 
+        setAuthorizeUrl(startedAuthorizeUrl);
         platform.registerOAuthState({ state, provider: startedProvider });
         setOAuthPollingActive(
           startedProvider === ZAI_PROVIDER_ID || startedProvider === BIGMODEL_PROVIDER_ID,
         );
-        platform.openExternal(authorizeUrl);
+        platform.openExternal(startedAuthorizeUrl);
         void reportAppTelemetryEvent(
           platform,
           {
@@ -99,7 +104,7 @@ export function useOAuth() {
             eventType: "ck",
             eventExtraDetail: {
               // The authorization URL contains state/credential parameters; telemetry records only the hostname while the browser uses the full URL above.
-              login_url: resolveSafeTelemetryHostname(authorizeUrl),
+              login_url: resolveSafeTelemetryHostname(startedAuthorizeUrl),
             },
           },
           "useOAuth",
@@ -116,6 +121,7 @@ export function useOAuth() {
         }
         logger.error("[useOAuth] 启动 OAuth 失败:", err);
         setOAuthPollingActive(false);
+        setAuthorizeUrl(null);
         setStatus("error");
         // An OAuth startup failure is still a login failure; do not show raw server/platform errors to the user.
         // Render a localized message instead of exposing provider/token details on the login page.
@@ -129,6 +135,7 @@ export function useOAuth() {
   const cancel = useCallback(
     async (provider?: OAuthProviderId) => {
       loginAttemptRef.current += 1;
+      setAuthorizeUrl(null);
       await oauthService.cancelPending(provider);
       setOAuthPollingActive(false);
       setStatus("idle");
@@ -142,6 +149,7 @@ export function useOAuth() {
     setStatus("idle");
     setError(null);
     setPendingProvider(null);
+    setAuthorizeUrl(null);
   }, []);
 
   /** Called by the Root/App callback listener to update UI state. */
@@ -149,12 +157,14 @@ export function useOAuth() {
     setStatus("error");
     setError(message);
     setPendingProvider(null);
+    setAuthorizeUrl(null);
   }, []);
 
   const setOAuthSuccess = useCallback(async () => {
     setStatus("idle");
     setError(null);
     setPendingProvider(null);
+    setAuthorizeUrl(null);
     await refreshProviders();
   }, [refreshProviders]);
 
@@ -164,6 +174,7 @@ export function useOAuth() {
     reset,
     status,
     error,
+    authorizeUrl,
     providers,
     activeProvider,
     loadingProviders,

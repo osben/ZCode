@@ -30,6 +30,7 @@ export const TID_LOGIN_API_KEY_ERROR = "login-api-key-error";
 export const TID_OAUTH_LOGIN_BUTTON = "oauth-login-button";
 /** OAuth dialog cancel button. */
 export const TID_OAUTH_CANCEL = "oauth-cancel";
+export const TID_OAUTH_COPY_LOGIN_LINK = "oauth-copy-login-link";
 /** OAuth error text. */
 export const TID_OAUTH_ERROR = "oauth-error";
 

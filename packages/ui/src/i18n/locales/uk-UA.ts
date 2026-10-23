@@ -980,6 +980,10 @@ const ukUA: Record<string, string> = {
   "login.oauth.regionTag.zai": "Глобальний",
   "login.oauth.regionTag.bigmodel": "Китай",
   "login.oauth.waiting": "Очікування автентифікації {provider}...",
+  "login.oauth.browserNotOpened": "Браузер не відкрився?",
+  "login.oauth.copyLoginLink": "Копіювати посилання для входу",
+  "login.oauth.copyLinkSuccess": "Скопійовано. Вставте й відкрийте його у браузері.",
+  "login.oauth.copyLinkFailed": "Не вдалося скопіювати посилання для входу. Спробуйте ще раз.",
   "login.oauth.loginFailure": "Не вдалося ввійти. Спробуйте ще раз",
   "login.oauth.cancel": "Скасувати",
   "login.oauth.retry": "Повторити вхід",
@@ -1743,6 +1747,10 @@ const ukUA: Record<string, string> = {
   "workspaceHeader.help.productRequest": "Запропонувати функцію",
   "workspaceHeader.help.community": "Спільнота користувачів",
   "workspaceHeader.help.docs": "Документація продукту",
+  "workspaceHeader.help.copyDeviceMid": "Копіювати MID пристрою",
+  "workspaceHeader.help.deviceMidCopied": "MID пристрою скопійовано",
+  "workspaceHeader.help.deviceMidCopyFailed":
+    "Не вдалося скопіювати MID пристрою. Перевірте доступ до буфера обміну й спробуйте ще раз.",
   "titleBar.menu.file": "Файл",
   "titleBar.menu.view": "Вигляд",
   "titleBar.menu.help": "Довідка",
@@ -3004,9 +3012,6 @@ const ukUA: Record<string, string> = {
   "settings.scope.user": "Користувач",
   "settings.scope.workspace": "Робочий простір",
   "settings.scope.default": "За замовчуванням",
-  "settings.plugins.scope.inheritedUser": "Успадковує налаштування користувача",
-  "settings.plugins.scope.userDefault": "Налаштування користувача",
-  "settings.plugins.scope.workspaceOverride": "Перевизначення для робочого простору",
   "settings.plugins.scope.restoreUserDefault": "Відновити налаштування користувача",
   "settings.plugins.scope.restored": "Для {plugin} відновлено налаштування користувача",
   "settings.plugins.scope.workspaceHint":
@@ -4422,7 +4427,6 @@ const ukUA: Record<string, string> = {
   "settings.plugin.plugins.emptyInstalledTitle": "Плагінів не встановлено",
   "settings.plugin.plugins.emptyInstalledDescription":
     "Знаходьте та встановлюйте плагіни, щоб додати MCP, навички тощо.",
-  "settings.plugin.plugins.browse": "Переглянути плагіни",
   "settings.plugin.mcp.emptyInstalledTitle": "Серверів MCP не встановлено",
   "settings.plugin.mcp.emptyInstalledDescription":
     "Додайте сервер вручну або імпортуйте наявну конфігурацію.",
@@ -9248,7 +9252,6 @@ const ukUA: Record<string, string> = {
   "settings.plugins.store.ui.capability":
     "Надає інтерактивні інтерфейси, які відкриваються в бічній панелі.",
   "settings.plugins.store.ui.title": "Плагіни-застосунки",
-  "settings.plugins.store.browseAll": "Переглянути всі плагіни",
   "settings.plugins.marketplace.recommendTitle": "Рекомендовані",
   "chat.empty.newRemoteConnection": "Нове віддалене підключення…",
   "chat.remoteFolder.restored": "Повернуто до {device} · {project}",

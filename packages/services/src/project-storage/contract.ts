@@ -100,6 +100,11 @@ export interface SaveProjectInput {
   primaryRoot?: string;
   pinned?: boolean;
   restoreProjectId?: string;
+  /**
+   * Open-directory intent: return the local project already bound to this single root instead of creating a
+   * duplicate. Only valid for one local root with no other fields (see the project service schema).
+   */
+  reuseExistingRoot?: boolean;
 }
 export interface ProjectDirectories {
   workspacePath: string;

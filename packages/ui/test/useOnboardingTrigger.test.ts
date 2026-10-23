@@ -23,11 +23,18 @@ import type { IOnboardingRecordService } from "@zcode/services";
 function createRecordService(
   overrides: Partial<IOnboardingRecordService> = {},
 ): IOnboardingRecordService {
+  // The trigger reads getOnboardingEligibility; tests that only override shouldOnboard keep their
+  // meaning by deriving eligibility from it (recordFileExisted defaults to false).
+  const shouldOnboard = overrides.shouldOnboard ?? (async () => true);
   return {
     appendRecord: async () => {},
     dismissOnboarding: async () => {},
     claimAnonymousRecord: async () => {},
-    shouldOnboard: async () => true,
+    shouldOnboard,
+    getOnboardingEligibility: async (deviceMid: string) => ({
+      shouldOnboard: await shouldOnboard(deviceMid),
+      recordFileExisted: false,
+    }),
     getLatestEntry: async () => null,
     syncSettingsFromRecord: async () => null,
     updateRecordPreferences: async () => {},
@@ -78,6 +85,34 @@ describe("useOnboardingTrigger", () => {
       result.current[1]();
     });
     expect(result.current[0]).toBe(false);
+  });
+
+  it("首次打开输出 source=auto_first_open；记录文件已存在但无本身份条目输出 auto_identity_change", async () => {
+    const first = createRecordService({
+      getOnboardingEligibility: async () => ({ shouldOnboard: true, recordFileExisted: false }),
+    });
+    const { result: firstResult } = renderTrigger({ service: first });
+    await waitFor(() => expect(firstResult.current[0]).toBe(true));
+    expect(firstResult.current[2]).toBe("auto_first_open");
+
+    const switched = createRecordService({
+      getOnboardingEligibility: async () => ({ shouldOnboard: true, recordFileExisted: true }),
+    });
+    const { result: switchedResult } = renderTrigger({ service: switched });
+    await waitFor(() => expect(switchedResult.current[0]).toBe(true));
+    expect(switchedResult.current[2]).toBe("auto_identity_change");
+  });
+
+  it("不需要引导时 source 为 null，并按 getOnboardingEligibility 的设备 id 判定", async () => {
+    const getOnboardingEligibility = vi.fn(async () => ({
+      shouldOnboard: false,
+      recordFileExisted: true,
+    }));
+    const service = createRecordService({ getOnboardingEligibility });
+    const { result } = renderTrigger({ service });
+    await waitFor(() => expect(result.current[0]).toBe(false));
+    expect(result.current[2]).toBeNull();
+    expect(getOnboardingEligibility).toHaveBeenCalledWith("device-a");
   });
 
   it("服务不可用保守判不引导，不依赖 settings", async () => {

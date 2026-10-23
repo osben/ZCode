@@ -17,6 +17,7 @@ import { createServiceLogger } from "../logger/serviceLogger.js";
 import type {
   CreateOnboardingRecordServiceOptions,
   IOnboardingRecordService,
+  OnboardingEligibility,
   OnboardingSettingsSyncPatch,
 } from "./onboardingRecord.js";
 
@@ -70,7 +71,34 @@ export function createOnboardingRecordService(
     file.entries.some((entry) => entry.userId === userId) ||
     file.decisions.some((decision) => decision.userId === userId);
 
+  // Eligibility decision for the current identity. recordFileExisted is read before any decision is written,
+  // so it reports the state the user arrived with.
+  const getOnboardingEligibility = async (deviceMid: string): Promise<OnboardingEligibility> => {
+    const userId = await options.loadUserId();
+    const file = await readRecordFile(getRecordFile());
+    const recordFileExisted = file !== null;
+    if (file && hasIdentityRecord(file, userId)) return { shouldOnboard: false, recordFileExisted };
+    if (!(await options.hasExistingLocalTask())) return { shouldOnboard: true, recordFileExisted };
+    await enqueueWrite(async () => {
+      const filePath = getRecordFile();
+      const current = (await readRecordFile(filePath)) ?? createFile(deviceMid);
+      if (hasIdentityRecord(current, userId)) return;
+      current.decisions.push(
+        onboardingDecisionSchema.parse({
+          userId,
+          status: "existing_local_user",
+          reason: "existing_local_task",
+          decidedAt: new Date().toISOString(),
+        }),
+      );
+      await mkdir(join(filePath, ".."), { recursive: true });
+      await atomicWriteText(filePath, JSON.stringify(current, null, 2));
+    });
+    return { shouldOnboard: false, recordFileExisted };
+  };
+
   return {
+    getOnboardingEligibility,
     async appendRecord(deviceMid: string, entry: OnboardingRecordEntryInput): Promise<void> {
       const userId = await options.loadUserId();
       await enqueueWrite(async () => {
@@ -139,26 +167,7 @@ export function createOnboardingRecordService(
     },
 
     async shouldOnboard(deviceMid: string): Promise<boolean> {
-      const userId = await options.loadUserId();
-      const file = await readRecordFile(getRecordFile());
-      if (file && hasIdentityRecord(file, userId)) return false;
-      if (!(await options.hasExistingLocalTask())) return true;
-      await enqueueWrite(async () => {
-        const filePath = getRecordFile();
-        const current = (await readRecordFile(filePath)) ?? createFile(deviceMid);
-        if (hasIdentityRecord(current, userId)) return;
-        current.decisions.push(
-          onboardingDecisionSchema.parse({
-            userId,
-            status: "existing_local_user",
-            reason: "existing_local_task",
-            decidedAt: new Date().toISOString(),
-          }),
-        );
-        await mkdir(join(filePath, ".."), { recursive: true });
-        await atomicWriteText(filePath, JSON.stringify(current, null, 2));
-      });
-      return false;
+      return (await getOnboardingEligibility(deviceMid)).shouldOnboard;
     },
 
     async dismissOnboarding(deviceMid: string): Promise<void> {

@@ -188,7 +188,7 @@ describe("PLM-UI-001 UI 插件市场与项目配置", () => {
         )
         .waitForDisplayed({ timeout: 15000 });
       await step("11-side-pane-manage-open-button");
-      await clickPluginControl("plugin-store-browse-all");
+      await clickPluginControl("plugin-store-manage-back");
       await browser.$('[data-side-pane-tab-id="plugin-market"] button').click();
 
       // 项目内暂停：主导航详情不提供启用并打开；右侧市场按钮显示「启用」，先启用再打开。
@@ -209,9 +209,9 @@ describe("PLM-UI-001 UI 插件市场与项目配置", () => {
         (await getPluginList(other)).plugins.find((plugin) => plugin.id === PLUGIN_LIFECYCLE_ID)
           ?.enabled,
       ).toBe(true);
-      await browser.$('[data-testid="plugin-store-browse-all"]').scrollIntoView();
+      await browser.$('[data-testid="plugin-store-manage-back"]').scrollIntoView();
       await step("12-project-override");
-      await clickPluginControl("plugin-store-browse-all");
+      await clickPluginControl("plugin-store-manage-back");
       await clickPluginControl("plugin-store-segment-personal");
       await openCardDetail();
       expect(

@@ -725,6 +725,7 @@ function RootInner({
       setWelcomeScreenOpenReason("logout-provider-required");
     },
     userId: user?.id,
+    isDesktop,
     onOpenRemoteConnection: allowRemoteWorkspace ? handleOpenRemoteConnection : undefined,
     openRemoteProjectWorkspace: openPreparedRemoteProjectWorkspace,
     openMobileProjectDraft: webRemoteControlWorkspaceSwitcher?.openProjectDraft,

@@ -1218,6 +1218,10 @@ const enUS: Record<string, string> = {
   "login.oauth.regionTag.zai": "Global",
   "login.oauth.regionTag.bigmodel": "CN",
   "login.oauth.waiting": "Waiting for {provider} authentication...",
+  "login.oauth.browserNotOpened": "Browser didn't open?",
+  "login.oauth.copyLoginLink": "Copy login link",
+  "login.oauth.copyLinkSuccess": "Copied. Paste and open it in your browser.",
+  "login.oauth.copyLinkFailed": "Could not copy the login link. Please try again.",
   "login.oauth.loginFailure": "Login failed, please try again",
   "login.oauth.cancel": "Cancel",
   "login.oauth.retry": "Retry login",
@@ -2066,6 +2070,10 @@ const enUS: Record<string, string> = {
   "workspaceHeader.help.productRequest": "Request a feature",
   "workspaceHeader.help.community": "User community",
   "workspaceHeader.help.docs": "Product docs",
+  "workspaceHeader.help.copyDeviceMid": "Copy device MID",
+  "workspaceHeader.help.deviceMidCopied": "Device MID copied",
+  "workspaceHeader.help.deviceMidCopyFailed":
+    "Could not copy device MID. Check clipboard access and try again.",
   "titleBar.menu.file": "File",
   "titleBar.menu.view": "View",
   "titleBar.menu.help": "Help",
@@ -3654,9 +3662,6 @@ const enUS: Record<string, string> = {
   "settings.scope.user": "User",
   "settings.scope.workspace": "Workspace",
   "settings.scope.default": "Default",
-  "settings.plugins.scope.inheritedUser": "Inherits User default",
-  "settings.plugins.scope.userDefault": "User default",
-  "settings.plugins.scope.workspaceOverride": "Workspace override",
   "settings.plugins.scope.restoreUserDefault": "Restore User default",
   "settings.plugins.scope.restored": "Restored {plugin} to User default",
   "settings.plugins.scope.workspaceHint":
@@ -4930,7 +4935,6 @@ const enUS: Record<string, string> = {
   "settings.plugin.plugins.emptyInstalledTitle": "No plugins installed",
   "settings.plugin.plugins.emptyInstalledDescription":
     "Discover and install plugins to add MCPs, skills, and more.",
-  "settings.plugin.plugins.browse": "Browse plugins",
   "settings.plugin.mcp.emptyInstalledTitle": "No MCP servers installed",
   "settings.plugin.mcp.emptyInstalledDescription":
     "Add a server manually or import an existing configuration.",
@@ -4978,7 +4982,6 @@ const enUS: Record<string, string> = {
   "settings.plugins.store.ui.capability":
     "Provides interactive interfaces that open in the side pane.",
   "settings.plugins.store.ui.title": "App plugins",
-  "settings.plugins.store.browseAll": "Browse all plugins",
   "settings.plugins.store.segment.public": "Public",
   "settings.plugins.store.segment.personal": "Personal",
   "settings.plugins.store.featured": "Featured",
