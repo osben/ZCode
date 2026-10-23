@@ -6,6 +6,7 @@ import {
   type ReactElement,
   isValidElement,
   useCallback,
+  useState,
   type ComponentProps,
   type ReactNode,
   type Ref,
@@ -66,6 +67,18 @@ export function ControlHintTooltip({
   triggerClassName,
   triggerRef,
 }: ControlHintTooltipProps) {
+  // Callers suppress the hint with `open={menuOpen ? false : undefined}`, so `open` flips between undefined and a boolean.
+  // Radix Tooltip warns on every such switch, so this wrapper always hands Radix a boolean and keeps the uncontrolled
+  // state itself; a request while the caller controls `open` only reaches the caller's onOpenChange, as before.
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isControlled = open !== undefined;
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!isControlled) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    },
+    [isControlled, onOpenChange],
+  );
   const isTriggerElement = isValidElement<TriggerChildProps>(children);
   const childRef = isTriggerElement ? children.props.ref : undefined;
   // Radix Tooltip/Dropdown/Popper 的 asChild trigger 会在 ref 变化时同步 setState。
@@ -96,7 +109,7 @@ export function ControlHintTooltip({
   // 大会话会为每条消息动作渲染大量 ControlHintTooltip，逐个创建 Provider
   // 会把 Radix 上下文树放大到消息数量级；共享 Provider 统一放在 Root。
   const tooltip = (
-    <Tooltip open={open} onOpenChange={onOpenChange}>
+    <Tooltip open={open ?? uncontrolledOpen} onOpenChange={handleOpenChange}>
       <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent
         align={align}

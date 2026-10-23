@@ -622,7 +622,9 @@ export const MemoTaskItem = memo(function TaskListItem({
       </span>
     ) : null;
   return (
-    <Tooltip open={hoverEnabled ? undefined : false}>
+    // This Tooltip has no TooltipContent, so nothing renders from its open state. A lifted open state would re-render
+    // the memoized row on every hover; the constant boolean keeps Radix controlled without that cost.
+    <Tooltip open={false}>
       <TooltipTrigger asChild>
         <li
           ref={itemRef}

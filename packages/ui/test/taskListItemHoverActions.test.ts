@@ -28,6 +28,7 @@ const {
   leadingIndicatorState,
   formatRelativeTimeCalls,
   tooltipCalls,
+  rootTooltipProps,
   triggerChildren,
   stableIntl,
 } = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ const {
   leadingIndicatorState: { value: "none" },
   formatRelativeTimeCalls: [] as number[],
   tooltipCalls: [] as Array<Record<string, unknown>>,
+  rootTooltipProps: [] as Array<Record<string, unknown>>,
   triggerChildren: [] as ReactElement[],
   stableIntl: {
     formatMessage: ({ id }: { id: string }) => id,
@@ -71,7 +73,10 @@ vi.mock("@/components/ui/badge.js", () => ({
 
 vi.mock("@/components/ui/tooltip.js", () => ({
   TooltipProvider: ({ children }: { children?: ReactNode }) => children,
-  Tooltip: ({ children }: { children?: ReactNode }) => children,
+  Tooltip: (props: { children?: ReactNode }) => {
+    rootTooltipProps.push(props as Record<string, unknown>);
+    return props.children;
+  },
   TooltipTrigger: ({ children }: { children?: ReactNode }) => children,
   TooltipContent: ({ children }: { children?: ReactNode }) => children,
 }));
@@ -337,6 +342,7 @@ describe("TaskListItem hover action rendering", () => {
     leadingIndicatorState.value = "none";
     formatRelativeTimeCalls.length = 0;
     tooltipCalls.length = 0;
+    rootTooltipProps.length = 0;
     triggerChildren.length = 0;
     delete (globalThis as { document?: unknown }).document;
     delete (globalThis as { window?: unknown }).window;
@@ -371,6 +377,46 @@ describe("TaskListItem hover action rendering", () => {
     expect(contextMenuMounts).toHaveLength(0);
     expect(contextActionsCalls).toHaveLength(0);
     expect(tooltipCalls).toHaveLength(0);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("keeps the row Tooltip open prop boolean when hoverEnabled flips on a mounted row", async () => {
+    const { MemoTaskItem } = await import("@/TaskListItem.js");
+    const root: Root = createRoot(installMinimalDom());
+    const renderRow = (hoverEnabled: boolean) =>
+      act(() => {
+        root.render(
+          createElement(MemoTaskItem, {
+            hoverEnabled,
+            intl: stableIntl,
+            isActive: false,
+            isArchiveConfirming: false,
+            isPinned: false,
+            onArchiveTask: vi.fn(),
+            onArchiveTaskInline: vi.fn(),
+            onCancelArchiveConfirm: vi.fn(),
+            onMarkTaskAsUnread: vi.fn(),
+            onSelectTask: vi.fn(),
+            onStartRenameTask: vi.fn(),
+            onTogglePinTask: vi.fn(),
+            task: createTask(),
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+
+    // Radix warns when `open` switches between undefined and a boolean; every render must hand it a boolean.
+    renderRow(true);
+    renderRow(false);
+    renderRow(true);
+
+    expect(rootTooltipProps.length).toBeGreaterThan(0);
+    expect(rootTooltipProps.map((props) => typeof props.open)).toEqual(
+      rootTooltipProps.map(() => "boolean"),
+    );
 
     act(() => {
       root.unmount();

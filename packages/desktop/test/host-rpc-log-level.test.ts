@@ -93,3 +93,106 @@ describe("host RPC log level: expected runtime-unavailable sessions-index probe"
     ).toBe("warn");
   });
 });
+
+describe("host RPC log level: expected not-found for a just-created session's workflow run list", () => {
+  const sessionNotFound = (sessionId: string) =>
+    new Error(`fault.workflowRuns.sessionNotFound: ${sessionId}`);
+
+  it("logs the cold-session workflowRuns sessionNotFound failure at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (2.0ms)",
+        sessionNotFound("sess-1"),
+      ),
+    ).toBe("info");
+  });
+
+  it("keeps other workflowRuns failures at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (2.0ms)",
+        new Error("fault.command.capabilityUnsupported: sess-1"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (2.0ms)",
+        new Error("socket hang up"),
+      ),
+    ).toBe("warn");
+  });
+
+  it("keeps the same sessionNotFound message on other workflow RPCs at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunArtifactsV4 FAIL (2.0ms)",
+        sessionNotFound("sess-1"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunEventsV4 FAIL (2.0ms)",
+        new Error("fault.workflowRunEvents.sessionNotFound: sess-1"),
+      ),
+    ).toBe("warn");
+  });
+});
+
+describe("host RPC log level: saved-workflows directory watch before the directory exists", () => {
+  const watchEnoent = (path: string) =>
+    new Error(`无法监视目录 '${path}': ENOENT: no such file or directory, watch '${path}'`);
+
+  it("logs a missing <project>/.zcode/workflows watch at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/project/.zcode/workflows"),
+      ),
+    ).toBe("info");
+  });
+
+  it("logs a missing Windows-style .zcode\\workflows watch at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("C:\\Users\\me\\project\\.zcode\\workflows"),
+      ),
+    ).toBe("info");
+  });
+
+  it("logs a missing user-global ~/.zcode/workflows watch at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/.zcode/workflows"),
+      ),
+    ).toBe("info");
+  });
+
+  it("keeps ENOENT on other paths, other errors, and other watch calls at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/project/src"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/.zcode/workflows/nested"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        new Error("无法监视目录 '/Users/me/project/.zcode/workflows': EACCES: permission denied"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.unwatch FAIL (1.2ms)",
+        watchEnoent("/Users/me/project/.zcode/workflows"),
+      ),
+    ).toBe("warn");
+  });
+});
