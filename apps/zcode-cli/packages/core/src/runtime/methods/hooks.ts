@@ -175,28 +175,28 @@ export async function runSessionEndHooks(
   // The whole SessionEnd dispatch shares one short budget: hooks cancelled by it are recorded
   // as cancelled lifecycle events instead of delaying session teardown.
   const controller = new AbortController();
+  // The timer is deliberately not cleared when run() returns: `async: true` hooks keep running
+  // after dispatch resolves and must still be cancelled by this budget. unref() keeps an
+  // unfired timer from holding the process open.
   const budget = setTimeout(
     () => controller.abort("session_end_hook_budget_exceeded"),
     SESSION_END_HOOK_BUDGET_MS,
   );
-  try {
-    return await this.hookRunner.run(
-      {
-        agentName: this.config.agentName,
-        cwd: this.workingDirectory,
-        hookEventName: HookEventName.SessionEnd,
-        mode: this.getMode(),
-        reason: "close",
-        sessionId: this.sessionId,
-        timestamp: new Date().toISOString(),
-        traceId: traceContext.traceId,
-        turnId: traceContext.turnId,
-      },
-      { signal: controller.signal },
-    );
-  } finally {
-    clearTimeout(budget);
-  }
+  budget.unref?.();
+  return this.hookRunner.run(
+    {
+      agentName: this.config.agentName,
+      cwd: this.workingDirectory,
+      hookEventName: HookEventName.SessionEnd,
+      mode: this.getMode(),
+      reason: "close",
+      sessionId: this.sessionId,
+      timestamp: new Date().toISOString(),
+      traceId: traceContext.traceId,
+      turnId: traceContext.turnId,
+    },
+    { signal: controller.signal },
+  );
 }
 
 export function injectHookAdditionalContextIntoMessageHistory(

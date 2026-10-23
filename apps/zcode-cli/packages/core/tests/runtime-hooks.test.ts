@@ -437,6 +437,69 @@ describe("AgentRuntime lifecycle hooks", () => {
     }
   });
 
+  it("keeps the SessionEnd budget effective for async hooks after dispatch resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionId = createSessionId("runtime-session-end-async-hook-budget");
+      const eventStore = createTestSessionEventStore();
+      const hookEvents: SessionEvent[] = [];
+      const started = Promise.withResolvers<AbortSignal>();
+      const executionPort: ExecutionPort = {
+        run: async (_request, options) => {
+          const signal = options?.signal;
+          expect(signal).toBeDefined();
+          started.resolve(signal!);
+          return new Promise<ExecutionResult>((_resolve, reject) => {
+            signal!.addEventListener(
+              "abort",
+              () => reject(new Error("execution aborted")),
+              { once: true },
+            );
+          });
+        },
+      };
+      const runner = createConfiguredHookRunner({
+        config: {
+          enabled: true,
+          events: {
+            SessionEnd: [{ hooks: [{ type: "command", command: "slow-session-end-hook", async: true }] }],
+          },
+          maxOutputBytes: 4096,
+          timeoutMs: 60_000,
+        },
+        emitEvent: async (event) => {
+          hookEvents.push(event);
+        },
+        executionPort,
+        getWorkingDirectory: () => "/workspace",
+      });
+      const runtime = createTestAgentRuntime(sessionId, {}, {
+        eventStore,
+        hookRunner: runner ?? undefined,
+      });
+
+      const dispatch = (
+        runtime as unknown as { runSessionEndHooks(traceContext: unknown): Promise<unknown> }
+      ).runSessionEndHooks(createRootTraceContext({ sessionId }));
+      // An async hook does not block dispatch, so run() resolves while the command still runs.
+      await dispatch;
+      const executionSignal = await started.promise;
+      expect(executionSignal.aborted).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(executionSignal.aborted).toBe(true);
+      expect(hookEvents).toContainEqual(
+        expect.objectContaining({
+          type: SessionEventType.HookRunFailed,
+          payload: expect.objectContaining({ outcome: "cancelled" }),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("injects built-in session mailbox context when messaging is enabled", async () => {
     const sessionId = createSessionId("runtime-mailbox-hooks");
     const eventStore = createTestSessionEventStore();
