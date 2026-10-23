@@ -62,19 +62,19 @@ describe("CreateWorkflow tool description", () => {
 
   it("给出 when-to-use，并把「点名即绑定」写进去", () => {
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("When to use");
-    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("工作流");
+    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("in any language");
     // Simple delegation still belongs to Agent — the other half of the shape nudge, preventing over-triggering.
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("Agent");
   });
 
-  it("点名即绑定是强制的：列出「use a workflow / 使用 workflow」这类措辞，并禁止以「太小」为由改道", () => {
+  it("点名即绑定是强制的：列出「use a workflow / in any language」这类措辞，并禁止以「太小」为由改道", () => {
     // Addendum in docs/dynamic-workflow/launch.md "Run introspection tools" (2026-09-07): the original wording
     // only said "use this tool", and the model would still judge a small task as not worth a workflow and
     // switch to Agent or do it directly. Three signals are pinned here: mandatory tone, wording users would
     // actually say, and "size only decides the scale, not whether".
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("mandatory");
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("use a workflow");
-    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("使用 workflow");
+    expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("in any language");
     expect(CREATE_WORKFLOW_TOOL_DESCRIPTION).toContain("too small");
   });
 
@@ -213,7 +213,7 @@ describe("Agent tool description", () => {
   it("在 When to use 里交叉指向 CreateWorkflow", () => {
     const description = agentToolEntry.metadata.description ?? "";
     expect(description).toContain("When to use");
-    expect(description).toContain("工作流");
+    expect(description).toContain("in any language");
     expect(description).toContain("CreateWorkflow");
     // The reverse pointer is mandatory in tone too: Agent must not accept a request naming a workflow on the grounds that the task is small.
     expect(description).toContain("mandatory");

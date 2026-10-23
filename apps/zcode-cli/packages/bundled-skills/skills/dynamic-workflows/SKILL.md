@@ -40,7 +40,7 @@ claim costs little or a command has already decided it.
 | One thing delegated to one agent | `Agent` |
 | A few independent lookups, nobody reading anybody's answer | `Agent`, in parallel |
 | Anything else the user did not name a workflow for, however many steps it needs | `Agent`, or do it yourself |
-| The user said "use a workflow" / "使用 workflow" / "用工作流" — any phrasing naming workflow as the means | `CreateWorkflow`, mandatory, even if `Agent` would have done or one reply could answer |
+| The user said "use a workflow" (in any language) — any phrasing naming workflow as the means | `CreateWorkflow`, mandatory, even if `Agent` would have done or one reply could answer |
 
 **Only an explicit request starts a workflow.** A workflow begins with `/workflow` or with
 the user naming workflow/工作流 as the means, never with your own judgement that a task
