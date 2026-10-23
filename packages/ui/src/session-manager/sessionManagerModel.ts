@@ -240,3 +240,16 @@ export function computeSessionManagerDeleteCandidates(
     active: deletable.filter((row) => !row.archived),
   };
 }
+
+/**
+ * `meta.model` is the raw `providerId/modelName` selection; the table shows only the model name and
+ * keeps the full value in the tooltip. Values without a usable name segment render unchanged.
+ */
+export function formatSessionManagerModelLabel(model: string | undefined): string | null {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const name = trimmed.slice(trimmed.lastIndexOf("/") + 1);
+  return name.length > 0 ? name : trimmed;
+}

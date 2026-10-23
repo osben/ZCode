@@ -1,3 +1,4 @@
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import type { SessionManagerToggleableColumn } from "./sessionManagerTypes.js";
 
 /** Fixed chrome columns around the toggleable set. */
@@ -75,3 +76,40 @@ export const SESSION_MANAGER_SORTABLE_COLUMNS: readonly SessionManagerToggleable
   "updated",
   "created",
 ];
+
+type ColumnDataRow = { task: Pick<ZCodeTaskMeta, "changeSummary" | "executionWorktree"> };
+
+function hasChangeData({ task }: ColumnDataRow): boolean {
+  const summary = task.changeSummary;
+  return Boolean(summary && (summary.added > 0 || summary.removed > 0));
+}
+
+function hasWorktree({ task }: ColumnDataRow): boolean {
+  return Boolean(task.executionWorktree);
+}
+
+/** Row predicate per data-dependent column; PR probing only targets worktree rows. */
+const COLUMN_DATA_PREDICATES: Partial<
+  Record<SessionManagerToggleableColumn, (row: ColumnDataRow) => boolean>
+> = {
+  changes: hasChangeData,
+  branch: hasWorktree,
+  pullRequests: hasWorktree,
+};
+
+/**
+ * Render-time reduction of the user's column selection: columns that would show "—" in every row
+ * are dropped. Persisted view state is untouched. With no rows (loading/empty) nothing is hidden.
+ */
+export function resolveSessionManagerVisibleColumns(
+  columns: readonly SessionManagerToggleableColumn[],
+  rows: readonly ColumnDataRow[],
+): SessionManagerToggleableColumn[] {
+  if (rows.length === 0) {
+    return [...columns];
+  }
+  return columns.filter((column) => {
+    const hasData = COLUMN_DATA_PREDICATES[column];
+    return !hasData || rows.some(hasData);
+  });
+}
