@@ -3,6 +3,9 @@ import { ZCODE_AGENT_PROVIDER_NOT_READY_CODE } from "@zcode/shared";
 
 type RpcLogLevel = "debug" | "info" | "warn";
 
+// Message fragment the CLI bridge puts in its structured sessionNotFound error for listDynamicWorkflowRuns.
+const WORKFLOW_RUNS_SESSION_NOT_FOUND_MESSAGE = "fault.workflowRuns.sessionNotFound";
+
 /**
  * Host previously logged all RPC messages at error, making the main log look as if every RPC had failed.
  * Apply minimal message-based levels here: FAIL is warn, frequent polling successes are debug, and everything else is info.
@@ -46,5 +49,20 @@ export function resolveRpcLogLevel(message: string, ...args: unknown[]): RpcLogL
     return "info";
   }
 
+  // A workflow run list is requested right after a session is created, before the host has registered its record; the
+  // CLI rejects it with fault.workflowRuns.sessionNotFound and the renderer retries. Only this RPC's failure is lowered.
+  if (
+    message.startsWith("[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (") &&
+    args.some((arg) => errorMessageOf(arg)?.includes(WORKFLOW_RUNS_SESSION_NOT_FOUND_MESSAGE))
+  ) {
+    return "info";
+  }
+
   return message.includes(" FAIL ") ? "warn" : "info";
+}
+
+function errorMessageOf(arg: unknown): string | undefined {
+  if (typeof arg !== "object" || arg === null || !("message" in arg)) return undefined;
+  const { message } = arg as { message?: unknown };
+  return typeof message === "string" ? message : undefined;
 }

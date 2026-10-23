@@ -93,3 +93,47 @@ describe("host RPC log level: expected runtime-unavailable sessions-index probe"
     ).toBe("warn");
   });
 });
+
+describe("host RPC log level: expected not-found for a just-created session's workflow run list", () => {
+  const sessionNotFound = (sessionId: string) =>
+    new Error(`fault.workflowRuns.sessionNotFound: ${sessionId}`);
+
+  it("logs the cold-session workflowRuns sessionNotFound failure at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (2.0ms)",
+        sessionNotFound("sess-1"),
+      ),
+    ).toBe("info");
+  });
+
+  it("keeps other workflowRuns failures at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (2.0ms)",
+        new Error("fault.command.capabilityUnsupported: sess-1"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunsV4 FAIL (2.0ms)",
+        new Error("socket hang up"),
+      ),
+    ).toBe("warn");
+  });
+
+  it("keeps the same sessionNotFound message on other workflow RPCs at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunArtifactsV4 FAIL (2.0ms)",
+        sessionNotFound("sess-1"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] zcode-agent.conversationWorkflowRunEventsV4 FAIL (2.0ms)",
+        new Error("fault.workflowRunEvents.sessionNotFound: sess-1"),
+      ),
+    ).toBe("warn");
+  });
+});
