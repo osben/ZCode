@@ -65,6 +65,14 @@ History: 2026-10-23 open → fixing (fixer lane C1) → fixed-unverified <sha> �
 
 <!-- Append ISSUE-025 and later below this line. -->
 
+## Run 2026-10-22 20:01 · branch claude/qa-run-20261022-2 · base 5e8df047
+
+PRs included in base: #283, #284, #285, #286, #287, #288, #289, #290, #291, #292, #293, #294, #295, #296 (all merged)
+Baseline gates: typecheck pass (exit 0), lint 0 errors / 98 warnings; `pnpm install --frozen-lockfile` exit 0, `pnpm build:cua` pass, CLI `turbo run build` pass, `check-workspace-freshness` fresh
+Environment: macOS 27.2, Node 26.12.0 (mise.toml pins 26.11.1), dev desktop, ZCODE_DATA_BASE_DIR=~/.zcode-dev-home, model `deepseek/deepseek-v4.1-flash-1017` (OpenRouter, cheapest configured), `ZCODE_QA_NO_OCCLUSION=1` local switch active. Shared `~/.zcode/v2/setting.json` snapshot at 53 keys (backup `~/qa-sandbox/run-20261022/setting.json.bak`).
+Scenario results: (fill at wrap-up)
+Fix packs: (fill at wrap-up)
+
 ## Run 2026-10-22 12:08 · branch claude/qa-run-20261022 · base 520a1bf1
 
 PRs included in base: #275, #276, #280, #277 (merged); #282 (open; merged locally into the QA branch to get this kit)
@@ -112,6 +120,23 @@ Final status (2026-10-22 wrap-up). Nothing was merged by this run; "merged" mean
 - osascript has no assistive access from the agent shell, so the ISSUE-028 native-confirm path was verified through Cancel only.
 
   Final cleanup: hover-test session archived, `~/qa-sandbox/qa-delete-me` removed, app and watchers stopped. `setting.json`: `localePreference`, `lastActiveWorkspace`, `desktopWindowSize` reverted by key to the run-start backup — 53 keys, `en-US`/`system`, no fork locale overrides left in `fork-settings.json`. Remaining diffs against the backup are the user's own recent-workspace entries, left as they are.
+
+### ISSUE-049 · S2 · sidebar · open
+
+Scenario: SB-08 · Found: 2026-10-22 20:47 · Build: 5e8df047
+Repro (from a fresh app start):
+
+1. By project view. Hover any task row for ≥ 300 ms (here `qa-r2-smoke`, then the fresh `done` row; tried 0.8–2 s hovers, centred and title-area, after moving away first).
+   Expected (`specs/task-hover-card-layout.md`): `[data-task-hover-card]` appears with title, time, branch + change stats, provider/model/effort, PR section; `data-task-hover-status` matches the run state.
+   Actual: the card never renders in the flat/project list (grouped view renders it). Regression: round 1 SB-08 passed at build 7754958f (2026-10-22 12:xx); #292 (pack 7, merged 2026-10-23) changed the row wrapper.
+   Evidence: repeated runtime hovers with no `[data-task-hover-card]` in the DOM (project view); code — `packages/ui/src/TaskListItem.tsx:627` wraps the row in `<Tooltip open={false}>` ("This Tooltip has no TooltipContent… constant boolean", the ISSUE-027 fix) but `TaskSidebarHoverCard` (a bare `TooltipContent`, `packages/ui/src/components/TaskSidebarHoverCard.tsx:56`) is rendered inside that same Tooltip at `TaskListItem.tsx:928`, so Radix never opens it. The grouped row keeps an uncontrolled `<Tooltip>` with the same card inside (`packages/ui/src/project-sidebar/grouped/task-row.tsx:704-712`), so only the flat list is affected.
+   Root cause: confirmed (code + runtime) — #292's constant-closed Tooltip swallows the hover card's TooltipContent.
+   Fix: — (the fixer must (a) render the card again in the flat list, (b) keep the ISSUE-027 guarantee: no "changing from uncontrolled to controlled" warnings, (c) not re-render the memoized row on every hover — the comment at TaskListItem.tsx:625 is why `open={false}` was chosen; e.g. own Tooltip/trigger around the card, or hover state lifted into a non-memoized wrapper)
+   Verify:
+1. Start the dev app from the fix branch; By project view.
+1. Hover a task row for 500 ms.
+   Must see: `[data-task-hover-card]` with `data-task-hover-status`, title, relative time; branch/model lines when applicable. Must not see: "changing from uncontrolled to controlled" warnings in the console; the row re-rendering per mousemove (React DevTools not required — the pack-7 tests `taskListItemHoverActions.test.ts` must still pass).
+   History: 2026-10-22 open (SB-08, round-2 re-run with rAF probe passing).
 
 ### ISSUE-028 · S3 · sidebar · fixed-verified
 
