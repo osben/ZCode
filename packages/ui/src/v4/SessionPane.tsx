@@ -17,6 +17,7 @@ import type {
   ComposerWorktreePreparationParams,
   ComposerWorktreePreparationSyncParams,
 } from "@/v4/composer/composerDraftWorktreeIntent.js";
+import { resolveComposerWorktreeRetryPreparation } from "@/v4/composer/composerWorktreePipeline.js";
 import { ConversationWorktreeCreatedNotice } from "@/v4/ConversationWorktreeCreatedNotice.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { FirstSubmissionStatus } from "@/v4/composer/ComposerWorktreeRecovery.js";
@@ -2605,24 +2606,28 @@ export function SessionPane({
   const handleWorktreePreparationRetry = useCallback(
     async (expectedAttemptId?: string) => {
       if (!sessionId) throw new Error("Worktree preparation session is unavailable");
-      const preparation = snapshotRef.current?.meta.worktreePreparation;
-      if (!preparation) throw new Error("Preparation is unavailable");
-      const pipeline = selectComposerWorktreePipeline(
-        useComposerWorktreePipelineStore.getState(),
-        workspaceKey,
-        sessionId,
-      );
-      const frozen = pipeline?.params;
+      // The durable Host marker is the compare-and-set authority; when the pane snapshot carries
+      // none (lost or not-yet-delivered failure report), the pipeline entry's frozen parameters
+      // still name the same attempt and destination, so the retry can proceed (ISSUE-051).
+      const frozen = resolveComposerWorktreeRetryPreparation({
+        preparation: snapshotRef.current?.meta.worktreePreparation ?? null,
+        pipelineEntry: selectComposerWorktreePipeline(
+          useComposerWorktreePipelineStore.getState(),
+          workspaceKey,
+          sessionId,
+        ),
+      });
+      if (!frozen) throw new Error("Preparation is unavailable");
       const attemptId = crypto.randomUUID();
       const ack = await dispatchCommand(
         "updateWorktreePreparation",
         {
           status: "preparing",
-          expectedAttemptId: expectedAttemptId ?? frozen?.attemptId ?? preparation.attemptId,
+          expectedAttemptId: expectedAttemptId ?? frozen.attemptId,
           worktreePreparation: {
-            branchName: frozen?.branchName ?? preparation.branchName,
-            targetPath: frozen?.targetPath ?? preparation.targetPath,
-            baseBranch: frozen?.baseBranch ?? preparation.baseBranch,
+            branchName: frozen.branchName,
+            targetPath: frozen.targetPath,
+            ...(frozen.baseBranch ? { baseBranch: frozen.baseBranch } : {}),
             attemptId,
           },
         },
@@ -5586,6 +5591,17 @@ export function SessionPane({
             : {}),
         }
       : undefined);
+  // Entry-driven setup slot (ISSUE-051): the Host preparation marker drives the persistent
+  // worktree line whenever the pane snapshot carries it; when the snapshot has no marker (lost or
+  // not-yet-delivered failure report), the renderer's live pipeline entry for the bound session
+  // keeps the failed/creating card visible, so navigation away and back resumes the same progress
+  // state. Same rule as the marker path: an orphaned entry renders with its orphan note, and this
+  // never starts Git by itself.
+  const liveWorktreeSetupEntry =
+    !isDraft &&
+    settledWorktreePipelineEntry?.sessionId === sessionId &&
+    (settledWorktreePipelineEntry.status === "creating" ||
+      settledWorktreePipelineEntry.status === "failed");
   const executionGitPath = sessionExecutionWorktree?.path ?? workspacePath;
   const [worktreeGitRefreshVersion, setWorktreeGitRefreshVersion] = useState(0);
   const worktreeGitState = useGitRepository({
@@ -6907,7 +6923,9 @@ export function SessionPane({
                   afterFirstUserInputSlot={
                     firstSubmission ||
                     (!isDraft &&
-                      (snapshot?.meta.worktreePreparation || bridgedExecutionWorktree)) ? (
+                      (snapshot?.meta.worktreePreparation ||
+                        bridgedExecutionWorktree ||
+                        liveWorktreeSetupEntry)) ? (
                       <>
                         {firstSubmission ? (
                           <FirstSubmissionStatus
@@ -6920,13 +6938,28 @@ export function SessionPane({
                           />
                         ) : null}
                         {!isDraft &&
-                        (snapshot?.meta.worktreePreparation || bridgedExecutionWorktree) ? (
+                        (snapshot?.meta.worktreePreparation ||
+                          bridgedExecutionWorktree ||
+                          liveWorktreeSetupEntry) ? (
                           snapshot?.meta.worktreePreparation ? (
                             <ConversationWorktreeSetupSteps
                               workspacePath={workspacePath}
                               {...(workspaceIdentity ? { workspaceIdentity } : {})}
                               sessionId={sessionId!}
                               preparation={snapshot.meta.worktreePreparation}
+                              remoteSessionId={remoteSessionId ?? undefined}
+                              onRetryPreparation={handleWorktreePreparationRetry}
+                              onCancelPreparation={handleWorktreePreparationCancel}
+                              onPreparationFailed={handleWorktreePreparationFailed}
+                              onSyncPreparation={syncWorktreePreparation}
+                            />
+                          ) : liveWorktreeSetupEntry ? (
+                            // No Host marker in this snapshot (ISSUE-051): the card renders from
+                            // the renderer's live pipeline entry alone.
+                            <ConversationWorktreeSetupSteps
+                              workspacePath={workspacePath}
+                              {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                              sessionId={sessionId!}
                               remoteSessionId={remoteSessionId ?? undefined}
                               onRetryPreparation={handleWorktreePreparationRetry}
                               onCancelPreparation={handleWorktreePreparationCancel}
