@@ -1201,6 +1201,9 @@ function ConversationComposerImpl({
   });
   const draftPersistTimerRef = useRef<number | null>(null);
   const suppressDraftPersistRef = useRef(false);
+  // ISSUE-060: set while a scope switch waits for the editor to receive the new scope's draft. The
+  // editor (and textRef) still hold the previous scope's text then, so no writer may persist it.
+  const scopeRestorePendingRef = useRef(false);
   const draftPersistClaimRef = useRef<string | null>(null);
   const updateComposerContentRef = useRef(updateComposerContent);
   updateComposerContentRef.current = updateComposerContent;
@@ -1226,14 +1229,16 @@ function ConversationComposerImpl({
     // 新建 scope 已包含项目身份；不能只匹配旧的裸 __draft__ 而漏掉当前编辑器。
     if (!draftScopeId.startsWith(V4_DRAFT_SCOPE_ROOT)) return;
     return registerV4ComposerDraftReader(workspaceKey, () => ({
-      draft: { ...ownerDraftRef.current.draft, ...snapshotDraftOfEditor() },
+      draft: scopeRestorePendingRef.current
+        ? ownerDraftRef.current.draft
+        : { ...ownerDraftRef.current.draft, ...snapshotDraftOfEditor() },
       attachments: attachmentsApi.attachments,
     }));
   }, [draftScopeId, workspaceKey, snapshotDraftOfEditor, attachmentsApi.attachments]);
 
   const persistDraftNow = useCallback(
     (scopeId: string) => {
-      if (suppressDraftPersistRef.current) return;
+      if (suppressDraftPersistRef.current || scopeRestorePendingRef.current) return;
       const content = snapshotDraftOfEditor();
       if (scopeId === draftScopeRef.current) {
         updateComposerContent(content);
@@ -1449,6 +1454,7 @@ function ConversationComposerImpl({
       const api = inputApiRef.current;
       if (!api) return;
       restoreDraftInto(api);
+      scopeRestorePendingRef.current = false;
       // Bug 根因（R3A-B-07）：ACK 丢失时传输先 reject，提交正文被恢复回草稿；随即断连让
       // SessionPane 连同本组件卸载，闭包里的结算订阅一起消失。重连重挂后正文从草稿回填，
       // 权威 projection 到达却无人清空，用户再点发送就重复归属。这里在回填后向模块级账本
@@ -1475,9 +1481,28 @@ function ConversationComposerImpl({
       // 草稿恢复后把光标交还输入框（切会话/切草稿/挂载）；连接中会话待可编辑后兑现。
       requestComposerFocus();
     };
+    if (targetChanged) {
+      // ISSUE-060: the reused editor still shows the previous scope's text while every writer
+      // already targets the new scope. The next frame can be late (a throttled background window
+      // delays it), so restore in this effect when the editor exists, and block writes until the
+      // restore lands.
+      scopeRestorePendingRef.current = true;
+      if (inputApiRef.current) {
+        applyDraft();
+        return () => unsubscribeSettled?.();
+      }
+    }
     // Lexical root 可能晚一帧就绪；draft 恢复排到下一帧（与旧 initialValue 回填同款时序）。
     if (typeof requestAnimationFrame === "function") {
-      const frame = requestAnimationFrame(applyDraft);
+      // A switched scope keeps writes blocked until its draft lands, so wait for the editor to attach.
+      const applyWhenReady = () => {
+        if (scopeRestorePendingRef.current && !inputApiRef.current) {
+          frame = requestAnimationFrame(applyWhenReady);
+          return;
+        }
+        applyDraft();
+      };
+      let frame = requestAnimationFrame(applyWhenReady);
       return () => {
         cancelAnimationFrame(frame);
         unsubscribeSettled?.();
@@ -3479,6 +3504,8 @@ function ConversationComposerImpl({
         meta?.programmatic !== true &&
         value.trim().length === 0 &&
         textRef.current.trim().length > 0;
+      // The editor has not received the current scope's draft yet; this change is not that scope's.
+      if (scopeRestorePendingRef.current) return;
       suppressDraftPersistRef.current = false;
       conversationTelemetry?.recordComposerTextChange(value);
       updateText(value);
