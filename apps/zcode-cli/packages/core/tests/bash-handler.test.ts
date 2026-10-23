@@ -1254,9 +1254,10 @@ describe("bashHandler", () => {
   });
 
   // Fork divergence (see specs/upstream-sync-cli-divergences.md): idle/off-peak turns reject explicit
-  // background Bash and never auto-background on timeout. Upstream 3.16.1 instead keeps idle background
-  // ownership in the runtime lifecycle; the fork keeps this guard.
-  it("idle turns reuse the explicit background and timeout auto-background Bash lifecycle", async () => {
+  // background Bash and never auto-background on timeout, so a background notification turn cannot
+  // run a full agent loop on the user's plan. Upstream 3.16.1 keeps idle background ownership in the
+  // runtime lifecycle instead; the fork keeps this guard.
+  it("rejects background execution and disables auto-background in idle-time turns", async () => {
     const runBashWithBackgroundLifecycle = vi.fn(async () => ({
       kind: "completed" as const,
       result: executionResult({ status: "completed", exitCode: 0 }),
@@ -1272,16 +1273,43 @@ describe("bashHandler", () => {
         { command: "long-running command", run_in_background: true } satisfies BashInput,
         contextWith(executionPort, { offPeakTurn: true }),
       ),
-    ).resolves.toBeDefined();
-    expect(runBashWithBackgroundLifecycle).toHaveBeenCalledTimes(1);
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("Idle-time tasks do not support background commands"),
+      recoverable: true,
+    });
+    expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
 
     const output = (await bashHandler(
       { command: "long-running command" } satisfies BashInput,
       contextWith(executionPort, { offPeakTurn: true }),
     )) as BashOutput;
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
+    expect(output.status).toBe("completed");
+  });
+
+  it("keeps explicit and timeout auto-background in ordinary turns", async () => {
+    const runBashWithBackgroundLifecycle = vi.fn(async () => ({
+      kind: "completed" as const,
+      result: executionResult({ status: "completed", exitCode: 0 }),
+    }));
+    const run = vi.fn(async () => executionResult({ status: "completed", exitCode: 0 }));
+    const executionPort: BashBackgroundLifecycleExecutionPort = {
+      run,
+      runBashWithBackgroundLifecycle,
+    };
+
+    await bashHandler(
+      { command: "long-running command", run_in_background: true } satisfies BashInput,
+      contextWith(executionPort, {}),
+    );
+    await bashHandler(
+      { command: "long-running command" } satisfies BashInput,
+      contextWith(executionPort, {}),
+    );
     expect(runBashWithBackgroundLifecycle).toHaveBeenCalledTimes(2);
     expect(run).not.toHaveBeenCalled();
-    expect(output.status).toBe("completed");
   });
 
   it("starts background execution when requested", async () => {

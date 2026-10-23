@@ -182,8 +182,25 @@ async function executeBashHandler(
   const progressTiming: BashProgressTiming = {};
   const commandTelemetry = startBashCommandTelemetry(parsed, context);
   const runOptions = createExecutionRunOptions(context, progressTiming, commandTelemetry);
-  // Idle-turn background ownership stays with the Runtime lifecycle; Bash reuses the ordinary explicit and timeout background paths.
-  const eligibleForAutoBackground = isBashAutoBackgroundEligible(parsed);
+  // After a background command completes, runTaskNotificationBatch starts a separate notification turn without
+  // turnExecutionModel. Once the idle turn completes or fails, it would run a full agent loop on the user's own plan.
+  // Match the subagent runner's BACKGROUND_UNAVAILABLE behavior: reject explicit background execution in idle turns and disable automatic backgrounding on timeout.
+  // Fork divergence from upstream 3.16.1 (specs/upstream-sync-cli-divergences.md).
+  const backgroundDisabled = context.offPeakTurn === true;
+  if (parsed.run_in_background && backgroundDisabled) {
+    throw createCoreError(
+      CoreErrorType.ToolExecutionFailed,
+      "Idle-time tasks do not support background commands. Run this command in the foreground without run_in_background.",
+      {
+        context: {
+          toolCallId: context.toolCallId,
+          toolName: "Bash",
+        },
+        recoverable: true,
+      },
+    );
+  }
+  const eligibleForAutoBackground = !backgroundDisabled && isBashAutoBackgroundEligible(parsed);
   const backgroundLifecyclePort = supportsBashBackgroundLifecycle(executionPort)
     ? executionPort
     : undefined;
