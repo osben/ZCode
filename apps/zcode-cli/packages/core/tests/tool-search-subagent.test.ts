@@ -100,7 +100,11 @@ it.each([
       await runtime.executeTurn("Run the researcher.");
       expect(childRequests.length).toBe(childEnabled ? 2 : 1);
       expect(childRequests[0]?.toolSearchEnabled).toBe(childEnabled && !local);
-      expect(childRequests[0]?.tools?.some((tool) => tool.name === "ToolSearch")).toBe(
+      expect(
+        childRequests[0]?.tools?.some(
+          (tool) => tool.name === (local ? "LocalToolSearch" : "ToolSearch"),
+        ),
+      ).toBe(
         childEnabled,
       );
       if (childEnabled) {

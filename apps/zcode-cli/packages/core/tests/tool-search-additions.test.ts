@@ -158,7 +158,7 @@ it.each(["native", "local"] as const)(
     const guidance =
       "\n\nThis tool's schema was not sent to the API — it was not in the discovered-tool set derived from message history. " +
       "Without the schema in your prompt, typed parameters (arrays, numbers, booleans) get emitted as strings and the client-side parser rejects them. " +
-      'Load the tool first: call ToolSearch with query "select:WebFetch", then retry this call. ' +
+      `Load the tool first: call ${mode === "local" ? "LocalToolSearch" : "ToolSearch"} with query "select:WebFetch", then retry this call. ` +
       `For reference, this tool's input schema is: ${JSON.stringify(webFetchToolEntry.inputSchema)}`;
     expect(invalid.modelContent).toBe(
       `${known.modelContent}${guidance}` +

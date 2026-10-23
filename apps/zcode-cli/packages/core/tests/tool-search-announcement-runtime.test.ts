@@ -368,7 +368,7 @@ it.each(["off", "on"] as const)(
     );
     await runtime.executeTurn("start");
     expect(announcements(internal)).toHaveLength(1);
-    const notice = "The following deferred tools are available via ToolSearch.";
+    const notice = "The following deferred tools are available via LocalToolSearch.";
     expect(
       requests.map((request) => requestText(request.messages).split(notice).length - 1),
     ).toEqual([1, 1, 1, 1]);
