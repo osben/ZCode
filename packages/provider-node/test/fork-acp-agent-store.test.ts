@@ -286,3 +286,43 @@ describe("NodeForkAcpAgentStore recovery reporting", () => {
     }
   });
 });
+
+describe("NodeForkAcpAgentStore polling", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("schedules no timer from read() alone, so an unobserved store never polls", async () => {
+    vi.useFakeTimers();
+    const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
+    disposables.push(polling);
+    await polling.read();
+    await polling.read();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("polls only while a change listener is subscribed, and stops when the last one leaves", async () => {
+    vi.useFakeTimers();
+    const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
+    disposables.push(polling);
+    const first = polling.onDidChange(() => undefined);
+    expect(vi.getTimerCount()).toBe(1);
+    const second = polling.onDidChange(() => undefined);
+    expect(vi.getTimerCount()).toBe(1);
+    first();
+    expect(vi.getTimerCount()).toBe(1);
+    second();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not re-arm after the last listener leaves a poll in flight", async () => {
+    vi.useFakeTimers();
+    const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
+    disposables.push(polling);
+    const off = polling.onDidChange(() => undefined);
+    await vi.advanceTimersByTimeAsync(1_000);
+    off();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
