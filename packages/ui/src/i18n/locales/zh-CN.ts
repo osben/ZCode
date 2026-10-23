@@ -20,7 +20,7 @@ const zhCN: Record<string, string> = {
   "archives.unclassified": "未归类",
   "archives.removedProject": "已移除项目",
   "archives.removed": "已移除",
-  "archives.count": "{count} 个会话",
+  "archives.count.other": "{count} 个会话",
   "archives.groupActions": "{name}的归档操作",
   "archives.delete": "删除",
   "archives.deleteTask": "删除“{title}”",
@@ -1571,7 +1571,7 @@ const zhCN: Record<string, string> = {
   "git.branchSwitcher.commitDialog.description": "提交完成后会自动继续切换到 {branchName}。",
   "git.branchSwitcher.commitDialog.currentBranchLabel": "当前分支",
   "git.branchSwitcher.commitDialog.changesLabel": "更改",
-  "git.branchSwitcher.commitDialog.changesValue": "{count} 个文件",
+  "git.branchSwitcher.commitDialog.changesValue.other": "{count} 个文件",
   "git.branchSwitcher.commitDialog.messageLabel": "提交消息",
   "git.branchSwitcher.commitDialog.messagePlaceholder": "留空以自动生成提交消息",
   "git.branchSwitcher.commitDialog.messageHelper":
@@ -5094,7 +5094,8 @@ const zhCN: Record<string, string> = {
   "chat.queue.resume": "继续",
   "chat.queue.resume.description": "继续按顺序自动发送队列中的内容",
   "chat.queue.sendConfirm.title": "发送消息？",
-  "chat.queue.sendConfirm.description": "你即将发送一条消息。要清除之前已排队的 {count} 条消息吗？",
+  "chat.queue.sendConfirm.description.other":
+    "你即将发送一条消息。要清除之前已排队的 {count} 条消息吗？",
   "chat.queue.sendConfirm.clear": "清空队列",
   "chat.queue.sendConfirm.keep": "发送消息",
   "chat.message.turnSteer.guided": "已引导对话",

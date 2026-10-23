@@ -4561,11 +4561,9 @@ function ConversationComposerImpl({
               {intl.formatMessage({ id: "chat.queue.sendConfirm.title" })}
             </DialogTitle>
             <DialogDescription className="text-ui-base sm:text-ui-lg">
-              {intl.formatMessage(
+              {intl.formatPlural(
                 { id: "chat.queue.sendConfirm.description" },
-                {
-                  count: String(heldQueueConfirmation?.queueItemIds.length ?? 0),
-                },
+                heldQueueConfirmation?.queueItemIds.length ?? 0,
               )}
             </DialogDescription>
           </DialogHeader>

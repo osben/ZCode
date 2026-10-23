@@ -21,7 +21,8 @@ const enUS: Record<string, string> = {
   "archives.unclassified": "Unclassified",
   "archives.removedProject": "Removed project",
   "archives.removed": "Removed",
-  "archives.count": "{count} sessions",
+  "archives.count.one": "{count} session",
+  "archives.count.other": "{count} sessions",
   "archives.groupActions": "Archive actions for {name}",
   "archives.delete": "Delete",
   "archives.deleteTask": "Delete “{title}”",
@@ -1702,7 +1703,8 @@ const enUS: Record<string, string> = {
     "After the commit finishes, switching to {branchName} will continue automatically.",
   "git.branchSwitcher.commitDialog.currentBranchLabel": "Current branch",
   "git.branchSwitcher.commitDialog.changesLabel": "Changes",
-  "git.branchSwitcher.commitDialog.changesValue": "{count} files",
+  "git.branchSwitcher.commitDialog.changesValue.one": "{count} file",
+  "git.branchSwitcher.commitDialog.changesValue.other": "{count} files",
   "git.branchSwitcher.commitDialog.messageLabel": "Commit message",
   "git.branchSwitcher.commitDialog.messagePlaceholder":
     "Leave empty to generate a commit message automatically",
@@ -5447,7 +5449,9 @@ const enUS: Record<string, string> = {
   "chat.queue.resume": "Continue",
   "chat.queue.resume.description": "Continue sending queued items in order",
   "chat.queue.sendConfirm.title": "Send message?",
-  "chat.queue.sendConfirm.description":
+  "chat.queue.sendConfirm.description.one":
+    "You're about to send a message. Clear the {count} previously queued message?",
+  "chat.queue.sendConfirm.description.other":
     "You're about to send a message. Clear the {count} previously queued messages?",
   "chat.queue.sendConfirm.clear": "Clear queue",
   "chat.queue.sendConfirm.keep": "Send message",

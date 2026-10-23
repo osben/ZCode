@@ -1376,7 +1376,10 @@ const ukUA: Record<string, string> = {
     "Після завершення коміту автоматично продовжиться перехід на {branchName}.",
   "git.branchSwitcher.commitDialog.currentBranchLabel": "Поточна гілка",
   "git.branchSwitcher.commitDialog.changesLabel": "Зміни",
-  "git.branchSwitcher.commitDialog.changesValue": "Файлів: {count}",
+  "git.branchSwitcher.commitDialog.changesValue.one": "{count} файл",
+  "git.branchSwitcher.commitDialog.changesValue.few": "{count} файли",
+  "git.branchSwitcher.commitDialog.changesValue.many": "{count} файлів",
+  "git.branchSwitcher.commitDialog.changesValue.other": "{count} файлу",
   "git.branchSwitcher.commitDialog.messageLabel": "Повідомлення коміту",
   "git.branchSwitcher.commitDialog.messagePlaceholder":
     "Залиште порожнім, щоб автоматично згенерувати повідомлення коміту",
@@ -4987,8 +4990,14 @@ const ukUA: Record<string, string> = {
   "chat.queue.resume": "Продовжити",
   "chat.queue.resume.description": "Продовжити послідовне надсилання елементів черги",
   "chat.queue.sendConfirm.title": "Надіслати повідомлення?",
-  "chat.queue.sendConfirm.description":
-    "Ви збираєтеся надіслати повідомлення. Очистити повідомлення, раніше додані в чергу ({count})?",
+  "chat.queue.sendConfirm.description.one":
+    "Ви збираєтеся надіслати повідомлення. Очистити {count} раніше додане повідомлення з черги?",
+  "chat.queue.sendConfirm.description.few":
+    "Ви збираєтеся надіслати повідомлення. Очистити {count} раніше додані повідомлення з черги?",
+  "chat.queue.sendConfirm.description.many":
+    "Ви збираєтеся надіслати повідомлення. Очистити {count} раніше доданих повідомлень з черги?",
+  "chat.queue.sendConfirm.description.other":
+    "Ви збираєтеся надіслати повідомлення. Очистити {count} раніше доданих повідомлень з черги?",
   "chat.queue.sendConfirm.clear": "Очистити чергу",
   "chat.queue.sendConfirm.keep": "Надіслати повідомлення",
   "chat.message.turnSteer.guided": "Розмову скеровано",
@@ -8302,7 +8311,10 @@ const ukUA: Record<string, string> = {
   "archives.unclassified": "Unclassified",
   "archives.removedProject": "Removed project",
   "archives.removed": "Removed",
-  "archives.count": "{count} sessions",
+  "archives.count.one": "{count} сесія",
+  "archives.count.few": "{count} сесії",
+  "archives.count.many": "{count} сесій",
+  "archives.count.other": "{count} сесії",
   "archives.groupActions": "Archive actions for {name}",
   "archives.delete": "Delete",
   "archives.deleteTask": "Delete “{title}”",

@@ -9,15 +9,26 @@ import zhCN from "@/i18n/locales/zh-CN.js";
 import enUS from "@/i18n/locales/en-US.js";
 import { TEST_LOCALE } from "./helpers/uiCopy.js";
 const mock = vi.hoisted(() => ({ locale: "en-US" }));
+function interpolateCatalog(message: string, values: Record<string, number | string>): string {
+  return Object.entries(values).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, String(v)), message);
+}
+
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({
     locale: mock.locale,
     intl: {
       formatMessage: ({ id }: { id: string }, values: Record<string, number | string> = {}) =>
-        Object.entries(values).reduce(
-          (s, [k, v]) => s.replaceAll(`{${k}}`, String(v)),
-          (mock.locale === TEST_LOCALE ? enUS : zhCN)[id] ?? id,
-        ),
+        interpolateCatalog((mock.locale === TEST_LOCALE ? enUS : zhCN)[id] ?? id, values),
+      // Mirrors createIntl.formatPlural for the two catalogs used here: one for count 1 (en only), otherwise other.
+      formatPlural: (
+        { id }: { id: string },
+        count: number,
+        values: Record<string, number | string> = {},
+      ) => {
+        const catalog = mock.locale === TEST_LOCALE ? enUS : zhCN;
+        const message = catalog[`${id}.${count === 1 ? "one" : "other"}`] ?? catalog[`${id}.other`];
+        return interpolateCatalog(message ?? `${id}.other`, { count, ...values });
+      },
     },
   }),
 }));
