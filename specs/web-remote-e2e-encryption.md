@@ -214,9 +214,12 @@ All are imported non-extractable.
 **Sealing:**
 
 - Seal at send time. Never seal inside the serializer cache. `WebRemoteControlRelayPayloadSerializer` keeps
-  caching the plaintext JSON for metering. `replayUnacknowledged()` resends through `sendPayloadResult`,
-  which reseals with the current keys and counter. A cached ciphertext would replay under old keys and be
-  rejected as a replay.
+  caching the plaintext JSON. `replayUnacknowledged()` resends through `sendPayloadResult`, which reseals
+  with the current keys and counter. A cached ciphertext would replay under old keys and be rejected as a
+  replay.
+- Metering reports what goes on the wire. When E2E is active, `measurePayloadBytes`, the `sent` result's
+  `bytes` and the oversize check all use `sealed(P)` of the cached plaintext, never `P`. Replay accounting
+  therefore still records the bytes actually written, which is the reason the serializer cache exists.
 - Sealed size depends only on plaintext size, because AES-GCM adds no padding:
   `sealed(P) = F + ceil(4·(P + 16) / 3)`. `F` is the fixed envelope byte count measured with a 16-digit
   `c`.
@@ -256,6 +259,20 @@ All of this counts against the open tier's 512 MiB/day inbound budget, so the us
 `reconnected-socket` is used for every new session, because a new phone session always needs the flush,
 `requestMobileTaskView` and `replayUnacknowledged`.
 
+**Gating rules (both transports):**
+
+- **Heartbeat ACKs while securing.** Today both sides call the pair-state mapping on every `pair_status_ack`.
+  The Desktop calls `setState(webRemoteControlV2PairState(...))` and the web calls `applyPairStatus`. Every
+  `matched` heartbeat ACK therefore reports `paired`, and on the web it also fires
+  `onSendReady(same-socket)`. While securing, a `matched` ACK only refreshes the heartbeat: it never reports
+  `paired` and never fires `onSendReady`. A same-socket `onSendReady` fires only while a session is
+  established.
+- **Data while securing.** Both transports drop incoming `data` unless the state is `paired`. While securing,
+  they accept `zcode-e2e` handshake frames (`hello`, `welcome`, `finish`, `reset`, `reject`). Every other
+  payload stays gated.
+- **Leaving `matched`.** Either side drops its session on any relay `waiting`. The phone keeps the same
+  socket across `waiting → matched`, and that is still a transition into `matched`, so a new handshake starts.
+
 **Link semantics:**
 
 | Link                    | Behaviour                                                                                                                                         |
@@ -265,12 +282,13 @@ All of this counts against the open tier's 512 MiB/day inbound budget, so the us
 
 ## 9. Compatibility and rollout
 
-| Desktop                             | Web page               | Result                                                                                                                                                                                                                      |
-| ----------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| New, `device-key`                   | New                    | E2E                                                                                                                                                                                                                         |
-| New, `device-key`                   | Old (stale cached tab) | The phone sends plaintext, which the Desktop drops, and it never sends a `hello`. The phone stays on "Connecting" until its existing timers fail. `packages/web` has no service worker, so a fresh scan loads the new page. |
-| Old, `device-key` (QR without `ek`) | New                    | D2. Recommended: a terminal failure screen, "Update ZCode Desktop to connect securely".                                                                                                                                     |
-| Any, `zai-jwt`                      | Any                    | Unchanged plaintext                                                                                                                                                                                                         |
+| Desktop                             | Web page                                                                               | Result                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New, `device-key`                   | New                                                                                    | E2E                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| New, `device-key`                   | Old (stale cached tab)                                                                 | The old page has no securing step. It reports `paired` on relay match and sends plaintext bootstrap requests, which the Desktop drops, and it never sends a `hello`. The requests end in the existing `desktop-bootstrap-timeout` failure (`payloadRequester`, 10 s). The Desktop sends it nothing. `packages/web` has no service worker, so a fresh scan loads the new page.                                        |
+| New, `device-key`                   | Page on plain `http://` other than localhost (`ZCODE_WEB_REMOTE_CONTROL_URL` override) | `crypto.subtle` does not exist outside a secure context, and `#ek` would cross the network in clear. The Desktop refuses to start `device-key` remote control with such a base URL and reports `relay-unavailable` with a log line naming `ZCODE_WEB_REMOTE_CONTROL_URL`. If the page runs without `crypto.subtle` anyway, it shows the failure `insecure-context` ("Open this page over HTTPS") and does not crash. |
+| Old, `device-key` (QR without `ek`) | New                                                                                    | D2. Recommended: a terminal failure screen, "Update ZCode Desktop to connect securely".                                                                                                                                                                                                                                                                                                                              |
+| Any, `zai-jwt`                      | Any                                                                                    | Unchanged plaintext                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 - Deploy order: the web host first, then the Desktop release. This is the same rule as the `#pk` move in
   section 15.6.
@@ -299,9 +317,15 @@ All of this counts against the open tier's 512 MiB/day inbound budget, so the us
 - `warn`, at most once per session: box failure (`tag`, `counter`, `stale-session`), plaintext dropped while
   E2E is required, unknown `v`.
 - `debug`: per-box counters, never content.
-- The phone has two new failure reasons: `e2e-repair-needed`, shown for `reject` with the copy "Scan the QR
-  code again", and `desktop-update-required`, shown for D2. Both need English and Chinese copy and the
-  mobile layout from `DESIGN.md`.
+- The phone has three new failure reasons:
+
+| Reason                    | Shown for                      | Copy                        |
+| ------------------------- | ------------------------------ | --------------------------- |
+| `e2e-repair-needed`       | `reject`                       | "Scan the QR code again"    |
+| `desktop-update-required` | D2                             | "Update ZCode Desktop"      |
+| `insecure-context`        | `crypto.subtle` is unavailable | "Open this page over HTTPS" |
+
+Each needs English and Chinese copy and the mobile layout from `DESIGN.md`.
 
 ## 12. Acceptance scenarios
 
@@ -327,6 +351,8 @@ Tests come first, at implementation.
 - `paired` and `onSendReady(reconnected-socket)` fire after the handshake. Unacknowledged frames are resealed
   on replay.
 - Plaintext data is dropped while E2E is required.
+- `matched` heartbeat ACKs while securing do not report `paired`. Measured and sent bytes equal `sealed(P)`.
+- A `device-key` start with a plain `http://` page URL other than localhost is refused.
 - The `hello` token bucket applies, and only one handshake is in flight.
 - A pending `S` expires after 300 s, and caps and eviction work. A bound `pid` is accepted after a phone
   reconnect. One phone can open two windows.
@@ -339,6 +365,9 @@ Tests come first, at implementation.
   malformed `ek` is a failure.
 - A missing `ek` with a pairing bearer follows D2.
 - A repeated `matched` ACK does not start a handshake. A new socket does, without a re-scan.
+- While securing, a `matched` ACK neither reports `paired` nor fires `onSendReady(same-socket)`.
+- `waiting` on the same socket drops the session, and the next `matched` starts a new handshake.
+- With no `crypto.subtle`, the page shows `insecure-context`.
 - `reset` starts a new handshake. `reject` shows "Scan the QR code again". The handshake timeout reconnects.
 
 **End to end through the fake relay (`@zcode/shared/testing/fake-relay-v2`, both real transports):**
