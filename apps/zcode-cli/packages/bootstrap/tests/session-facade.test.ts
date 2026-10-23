@@ -93,6 +93,9 @@ describe("session facade shutdown", () => {
           await dreamGate.promise;
           calls.push("dream");
         }),
+        runSessionEndHooks: vi.fn(async () => {
+          calls.push("session_end");
+        }),
         getModelRef: () => ({ providerId: "builtin:zai", modelId: "GLM-5" }),
       } as unknown as AgentRuntime,
       sessionId: createSessionId("session-facade-memory-drain"),
@@ -108,7 +111,7 @@ describe("session facade shutdown", () => {
 
     const closing = facade.close?.();
     await nextTask();
-    expect(calls).toEqual(["shutdown", "drain:start", "dream:start"]);
+    expect(calls).toEqual(["session_end", "shutdown", "drain:start", "dream:start"]);
 
     drainGate.resolve();
     await nextTask();
@@ -118,6 +121,7 @@ describe("session facade shutdown", () => {
 
     expect(drainMemoryExtractions).toHaveBeenCalledTimes(1);
     expect(calls).toEqual([
+      "session_end",
       "shutdown",
       "drain:start",
       "dream:start",
@@ -180,6 +184,9 @@ describe("session facade shutdown", () => {
         drainMemoryExtractions: async () => {
           calls.push("drain");
         },
+        runSessionEndHooks: vi.fn(async () => {
+          calls.push("session_end");
+        }),
       } as unknown as AgentRuntime,
       sessionId: createSessionId("session-facade-dwf-close-throws"),
       sessionStore: {
@@ -195,6 +202,7 @@ describe("session facade shutdown", () => {
     await facade.close?.();
 
     expect(calls).toEqual([
+      "session_end",
       "shutdown",
       "drain",
       "dwf",
@@ -205,6 +213,85 @@ describe("session facade shutdown", () => {
       "store",
     ]);
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  // SessionEnd хук запускается первым, пока все ресурсы сессии живы, но его отказ не должен
+  // мешать закрытию: иначе зависший хук удерживал бы подпроцессы, MCP-соединения и sqlite-хендлы.
+  it("continues resource cleanup when the SessionEnd hook dispatch rejects", async () => {
+    const calls: string[] = [];
+    const warn = vi.fn();
+    const facade = createSessionFacade({
+      configResult: {
+        config: DefaultRuntimeConfig,
+        configPort: {} as never,
+        sources: {} as never,
+      },
+      configuredMcpServers: {},
+      executionPort: {
+        async close() {
+          calls.push("execution");
+        },
+      } as never,
+      logger: { warn } as never,
+      loggerFactory: {} as never,
+      mcpPort: {
+        async close() {
+          calls.push("mcp");
+        },
+      } as never,
+      modelAdapter: {} as never,
+      modelConfig: undefined,
+      ownsExecutionPort: true,
+      ownsMcpPort: true,
+      ownsSessionStore: true,
+      prepareResume: async () => {},
+      prepareUserExecutionBoundary: async () => {},
+      projectID: createProjectId("session-facade-session-end-hook-throws"),
+      resolveUiLocale: () => "en-US",
+      runtime: {
+        beginShutdown: () => {
+          calls.push("shutdown");
+        },
+        closeBrowserSession: async () => {
+          calls.push("browser");
+        },
+        drainBackgroundDreams: async () => {},
+        drainMemoryExtractions: async () => {
+          calls.push("drain");
+        },
+        runSessionEndHooks: vi.fn(async () => {
+          calls.push("session_end");
+          throw new Error("session end hook crashed");
+        }),
+      } as unknown as AgentRuntime,
+      sessionId: createSessionId("session-facade-session-end-hook-throws"),
+      sessionStore: {
+        close() {
+          calls.push("store");
+        },
+      } as never,
+      traceContext: {} as never,
+      untrustedProjectMcpServers: new Set(),
+      workingDirectory: "/workspace",
+    });
+
+    await facade.close?.();
+
+    expect(calls).toEqual([
+      "session_end",
+      "shutdown",
+      "drain",
+      "shutdown",
+      "browser",
+      "execution",
+      "mcp",
+      "store",
+    ]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "SessionEnd hook dispatch failed; continuing to close",
+      expect.objectContaining({ event: "session.hooks.session_end_failed" }),
+    );
   });
 });
 

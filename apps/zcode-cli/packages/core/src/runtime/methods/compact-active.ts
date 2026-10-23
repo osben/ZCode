@@ -246,6 +246,26 @@ async function compactActiveConversationImpl(
     };
   }
 
+  const preCompactHookResult = await this.runPreCompactHooks(
+    trigger,
+    customInstructions,
+    preCompactTokenCount,
+    turnTraceContext,
+    options.abortSignal,
+  );
+  if (preCompactHookResult.blockRequested) {
+    // A blocked PreCompact skips only this compaction call; the next trigger (for example the
+    // next auto-compact check) dispatches the hook again.
+    return {
+      displayText: preCompactHookResult.stopReason
+        ? `Compaction blocked by hook: ${preCompactHookResult.stopReason.slice(0, 500)}`
+        : "Compaction blocked by hook",
+      entries: activeEntries,
+      outcome: "skipped",
+      tokenCount: preCompactTokenCount,
+    };
+  }
+
   const compactStartedPayload = this.buildCompactTimelinePayload(compactTimeline, {
     ...(maxAttempts > 1 ? { attempt, maxAttempts } : {}),
     status: CompactTimelineStatus.Started,
@@ -680,6 +700,16 @@ async function compactActiveConversationImpl(
       );
       this.readFileState.clear();
       resetProjectMemoryRecall(this);
+
+      // Diagnostic-only: runs after the history replacement is committed and never alters the
+      // compaction result (per docs/hooks-runtime-contract.md).
+      await this.runPostCompactHooks(
+        trigger,
+        preCompactTokenCount,
+        providerPostCompactTokenCount,
+        turnTraceContext,
+        options.abortSignal,
+      );
 
       return {
         displayText: "Compacted",

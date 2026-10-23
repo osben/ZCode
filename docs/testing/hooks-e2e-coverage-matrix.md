@@ -51,7 +51,7 @@
 
 剪枝：
 
-- 不把 7 个事件与所有 tool 名、mode、provider、theme、locale 做笛卡尔积。
+- 不把 10 个事件与所有 tool 名、mode、provider、theme、locale 做笛卡尔积。
 - E2E 使用一个 Node recorder：`process` 覆盖 7 事件，`command` 同步/异步分别代表 shell 与
   fire-and-forget 路径；不扩展为 7 事件 x 3 执行模式的重复组合。
 - `PreToolUse` 和 `PermissionRequest` 使用需要审批的成功工具；`PostToolUseFailure` 使用确定失败工具。
@@ -61,19 +61,22 @@
 
 ## Accepted Cases
 
-| Case ID  | Setup                                                                                           | Action                      | Assertions                                                                                          | Evidence                                                     | Status  |
-| -------- | ----------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------- |
-| HK-01    | SessionStart process hook                                                                       | 创建新 session 并首发       | hook 只运行一次；source/stdin/context 正确                                                          | `hooks-seven-events.test.ts`、`runtime-hooks.test.ts`        | covered |
-| HK-02    | UserPromptSubmit process hook                                                                   | 提交 prompt                 | prompt 字段正确；block/context 生效                                                                 | `hooks-seven-events.test.ts`、`runtime-hooks.test.ts`        | covered |
-| HK-03    | PreToolUse process hook                                                                         | 模型调用 tool               | matcher、updatedInput/deny/context 生效；deny 提前返回仍保留 context                                | `hooks-seven-events.test.ts`、`tool-executor-trace.test.ts`  | covered |
-| HK-04    | PermissionRequest process hook                                                                  | ask permission tool         | hook allow/deny/modify 替代 broker                                                                  | `hooks-seven-events.test.ts`、`tool-executor-trace.test.ts`  | covered |
-| HK-05    | PostToolUse process hook                                                                        | tool 成功                   | `tool_response` 是完整输出；context 进入下一请求                                                    | `hooks-seven-events.test.ts`、`tool-executor-trace.test.ts`  | covered |
-| HK-06    | PostToolUseFailure process hook                                                                 | tool 抛错                   | string error/is_interrupt；recovery context 生效                                                    | `hooks-seven-events.test.ts`                                 | covered |
-| HK-07    | Stop process hook                                                                               | final assistant 即将结束    | transcript/last message 正确；block 可续跑且最多连续 3 次                                           | `hooks-seven-events.test.ts`、`runtime-hooks.test.ts`        | covered |
-| HK-LC-01 | 隔离 user 配置 7 事件 process hooks，加同步/异步 command；provider 固定修改、审批、成功、失败链 | 从 UI 首发并等待最终 marker | 7 事件、三种执行模式、兼容 stdin、Pre/Permission 两级输入修改、allow、成功/失败 context 和最终 idle | desktop UI + runtime file + isolated/default replay requests | covered |
-| HK-EF-01 | PreToolUse 按输入依次 deny、返回非法 updatedInput、要求 PermissionRequest deny                  | provider 连续触发三个 Write | handler 均未执行；每个提前失败结果保留对应 additionalContext；PermissionRequest 只在 ask 路径触发   | desktop runtime file + provider-visible tool results         | covered |
-| HK-ST-01 | Stop 每次 block；fixture 仅提供初始响应和三次续跑响应                                           | 发送 Stop cap marker        | Stop 执行 4 次但只续跑 3 次；第 4 个 context 不进入新请求；最终响应和 idle 正确                     | request count + trace + desktop UI                           | covered |
-| HK-UP-01 | 同一 UserPromptSubmit 上配置同步 process block 和异步 command block                             | 发送 prompt block marker    | 同步 block 在模型前结束；异步 command 启动/完成但输出不改变当前边界                                 | zero main request + trace + desktop UI                       | covered |
+| Case ID  | Setup                                                                                           | Action                      | Assertions                                                                                          | Evidence                                                                          | Status  |
+| -------- | ----------------------------------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------- |
+| HK-01    | SessionStart process hook                                                                       | 创建新 session 并首发       | hook 只运行一次；source/stdin/context 正确                                                          | `hooks-event-contract.test.ts`、`runtime-hooks.test.ts`                           | covered |
+| HK-02    | UserPromptSubmit process hook                                                                   | 提交 prompt                 | prompt 字段正确；block/context 生效                                                                 | `hooks-event-contract.test.ts`、`runtime-hooks.test.ts`                           | covered |
+| HK-03    | PreToolUse process hook                                                                         | 模型调用 tool               | matcher、updatedInput/deny/context 生效；deny 提前返回仍保留 context                                | `hooks-event-contract.test.ts`、`tool-executor-trace.test.ts`                     | covered |
+| HK-04    | PermissionRequest process hook                                                                  | ask permission tool         | hook allow/deny/modify 替代 broker                                                                  | `hooks-event-contract.test.ts`、`tool-executor-trace.test.ts`                     | covered |
+| HK-05    | PostToolUse process hook                                                                        | tool 成功                   | `tool_response` 是完整输出；context 进入下一请求                                                    | `hooks-event-contract.test.ts`、`tool-executor-trace.test.ts`                     | covered |
+| HK-06    | PostToolUseFailure process hook                                                                 | tool 抛错                   | string error/is_interrupt；recovery context 生效                                                    | `hooks-event-contract.test.ts`                                                    | covered |
+| HK-07    | Stop process hook                                                                               | final assistant 即将结束    | transcript/last message 正确；block 可续跑且最多连续 3 次                                           | `hooks-event-contract.test.ts`、`runtime-hooks.test.ts`                           | covered |
+| HK-11    | PreCompact process hook                                                                         | 触发真实压缩（manual/auto） | trigger matcher、`custom_instructions` stdin、block 跳过本次压缩且不写 failure                      | `hooks-event-contract.test.ts`、`runtime-compact.test.ts`                         | covered |
+| HK-12    | PostCompact process hook                                                                        | 压缩成功后                  | 仅真实压缩成功后触发；skip/失败/重试中途不触发；输出仅诊断                                          | `hooks-event-contract.test.ts`、`runtime-compact.test.ts`                         | covered |
+| HK-13    | SessionEnd process hook                                                                         | session close               | close 开头恰好一次；5 秒共享预算超时记 cancelled；hook 失败不阻断 close                             | `hooks-event-contract.test.ts`、`runtime-hooks.test.ts`、`session-facade.test.ts` | covered |
+| HK-LC-01 | 隔离 user 配置 7 事件 process hooks，加同步/异步 command；provider 固定修改、审批、成功、失败链 | 从 UI 首发并等待最终 marker | 7 事件、三种执行模式、兼容 stdin、Pre/Permission 两级输入修改、allow、成功/失败 context 和最终 idle | desktop UI + runtime file + isolated/default replay requests                      | covered |
+| HK-EF-01 | PreToolUse 按输入依次 deny、返回非法 updatedInput、要求 PermissionRequest deny                  | provider 连续触发三个 Write | handler 均未执行；每个提前失败结果保留对应 additionalContext；PermissionRequest 只在 ask 路径触发   | desktop runtime file + provider-visible tool results                              | covered |
+| HK-ST-01 | Stop 每次 block；fixture 仅提供初始响应和三次续跑响应                                           | 发送 Stop cap marker        | Stop 执行 4 次但只续跑 3 次；第 4 个 context 不进入新请求；最终响应和 idle 正确                     | request count + trace + desktop UI                                                | covered |
+| HK-UP-01 | 同一 UserPromptSubmit 上配置同步 process block 和异步 command block                             | 发送 prompt block marker    | 同步 block 在模型前结束；异步 command 启动/完成但输出不改变当前边界                                 | zero main request + trace + desktop UI                                            | covered |
 
 补充回归边界：
 
@@ -116,7 +119,7 @@ Case-local artifacts：
 
 ## Lifecycle Decision
 
-- `manual-review/pending`：不使用。7 个事件及其效果已由用户明确确认，直接编写正式
+- `manual-review/pending`：不使用。10 个事件及其效果已由用户明确确认，直接编写正式
   deterministic replay case。
 - `e2e:promote`：不使用；case 不是待人工判定的 live probe。
 - `e2e:fixture:check`：必跑。

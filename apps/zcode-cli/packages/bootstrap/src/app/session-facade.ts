@@ -289,6 +289,17 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
   return {
     close: async () => {
       closePromise ??= (async () => {
+        // SessionEnd hooks run first, while every session resource is still alive. A hook
+        // failure must never block the close chain: log it and continue releasing resources.
+        try {
+          await deps.runtime.runSessionEndHooks(deps.traceContext);
+        } catch (error: unknown) {
+          deps.logger.warn?.("SessionEnd hook dispatch failed; continuing to close", {
+            errorMessage: error instanceof Error ? error.message : String(error),
+            event: "session.hooks.session_end_failed",
+            module: "bootstrap.app",
+          });
+        }
         // The close entry point first blocks new scheduling and cancels in-flight Memory Extraction,
         // then waits for cancellation to settle.
         deps.runtime.beginShutdown();

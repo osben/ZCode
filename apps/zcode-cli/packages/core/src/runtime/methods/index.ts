@@ -123,6 +123,9 @@ import { pauseActiveTargetForCancellation } from "./target.js";
 import { activatePausedTargetAfterResume } from "./target.js";
 import {
   injectHookAdditionalContextIntoMessageHistory,
+  runPostCompactHooks,
+  runPreCompactHooks,
+  runSessionEndHooks,
   runSessionStartHooks,
   runStopHooks,
   runUserPromptSubmitHooks,
@@ -334,6 +337,9 @@ export function installAgentRuntimeMethods(ctor: AgentRuntimeConstructor): void 
   proto.runSessionStartHooks = runSessionStartHooks;
   proto.runUserPromptSubmitHooks = runUserPromptSubmitHooks;
   proto.runStopHooks = runStopHooks;
+  proto.runPreCompactHooks = runPreCompactHooks;
+  proto.runPostCompactHooks = runPostCompactHooks;
+  proto.runSessionEndHooks = runSessionEndHooks;
   proto.injectHookAdditionalContextIntoMessageHistory =
     injectHookAdditionalContextIntoMessageHistory;
   proto.shouldContinueAfterStopHooks = shouldContinueAfterStopHooks;

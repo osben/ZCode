@@ -6,7 +6,7 @@
 
 ## 目标与边界
 
-本期只支持 ZCode 已存在的 7 个事件：
+支持 10 个事件：
 
 - `SessionStart`
 - `UserPromptSubmit`
@@ -15,10 +15,15 @@
 - `PostToolUse`
 - `PostToolUseFailure`
 - `Stop`
+- `PreCompact`
+- `PostCompact`
+- `SessionEnd`
 
-本期不增加新的 Hook 事件。每个已支持事件都必须形成完整闭环：配置可加载、matcher
-语义明确、stdin 与 Claude Code 兼容、stdout 能影响对应运行时行为、失败可观测，并有独立
-自动化测试。
+后续候选事件（`SubagentStart`、`SubagentStop`、`Notification`、`Interrupt`、
+`WorktreeCreate`、`WorktreeRemove` 等）记录在 `docs/specs/hooks-future-events.md`，
+未进入本契约前不得被 UI 写入或被文档标记为已支持。每个已支持事件都必须形成完整闭环：
+配置可加载、matcher 语义明确、stdin 与 Claude Code 兼容、stdout 能影响对应运行时行为
+（诊断型事件除外）、失败可观测，并有独立自动化测试。
 
 持久化 Hook 类型限定为：
 
@@ -115,7 +120,8 @@ Matcher 规则：
 - 其他字符串：按 JavaScript 正则匹配；非法正则不执行该 matcher，并记录诊断。
 - tool 事件匹配 `tool_name`，同时兼容 `Agent` / `Task` 等 ZCode alias。
 - `SessionStart` 匹配 `source`。
-- `UserPromptSubmit` 和 `Stop` 没有 matcher query；即使配置带 matcher，也执行该组 hooks。
+- `PreCompact` / `PostCompact` 匹配 `trigger`（`manual` / `auto` / `partial` / `reactive` / `session_memory`）。
+- `UserPromptSubmit`、`Stop` 和 `SessionEnd` 没有 matcher query；即使配置带 matcher，也执行该组 hooks。
 
 ## Claude 兼容 stdin
 
@@ -142,6 +148,13 @@ snake_case 字段。
 | `PostToolUse`        | `tool_name`、`tool_input`、`tool_use_id`、完整 `tool_response`           |
 | `PostToolUseFailure` | `tool_name`、`tool_input`、`tool_use_id`、字符串 `error`、`is_interrupt` |
 | `Stop`               | `stop_hook_active`、`last_assistant_message`                             |
+| `PreCompact`         | `trigger`、可选 `custom_instructions`                                    |
+| `PostCompact`        | `trigger`                                                                |
+| `SessionEnd`         | `reason`                                                                 |
+
+`PreCompact` / `PostCompact` 的 stdin 同时携带 ZCode 扩展字段 `preCompactTokenCount` /
+`postCompactTokenCount`（camelCase，估算值），不提供 Claude 兼容别名。`SessionEnd.reason`
+当前只有 `close` 一个值，为未来区分退出原因保留。
 
 `PostToolUse.tool_response` 使用工具 handler 的完整结构化输出；`toolResultPreview` 继续作为
 ZCode 扩展字段保留，但不能替代 `tool_response`。
@@ -177,13 +190,27 @@ stdout 规则：
 | `PostToolUse`        | 否               | 本期不替换 tool output                       | 追加 `additionalContext`                         |
 | `PostToolUseFailure` | 否               | 否                                           | 追加 recovery `additionalContext`                |
 | `Stop`               | 是，表示不要结束 | 否                                           | block reason/context 注入下一轮，最多连续 3 次   |
+| `PreCompact`         | 是，跳过本次压缩 | 否                                           | 否（诊断）                                       |
+| `PostCompact`        | 否               | 否                                           | 否（诊断）                                       |
+| `SessionEnd`         | 否               | 否                                           | 否（尽力而为）                                   |
+
+`PreCompact` 在 `compactActiveConversationImpl` 判定确有内容可压缩之后、写入
+`CompactStarted` 之前触发；被 block 时本次调用返回 `outcome: "skipped"`，不写入 compact
+timeline failure。`PostCompact` 只在一次真实压缩成功完成（history 已替换）后触发；early
+skip、失败和重试中途不触发。microcompact 不经过这两个事件。`SessionEnd` 在 session
+facade `close()` 的 memoized 块开头、`beginShutdown()` 之前触发一次；共享 5 秒总预算，
+超时 hook 记为 cancelled，hook 失败只记日志，绝不阻断 close。进程被硬杀或崩溃时不保证
+触发（与 Claude Code 语义一致）。
 
 兼容字段：
 
 - 顶层 `decision:"approve"|"block"`。
-- 顶层 `continue:false` 在 `UserPromptSubmit`、`PreToolUse`、`PermissionRequest` 中阻断。
+- 顶层 `continue:false` 在 `UserPromptSubmit`、`PreToolUse`、`PermissionRequest` 中阻断；
+  在 `PreCompact` 中表示跳过本次压缩。
 - Stop 使用 `decision:"block"`；为兼容已发布的 ZCode 配置，`continue:true` 且带
   `additionalContext` 也可继续一轮。
+- `PreCompact` / `PostCompact` / `SessionEnd` 不接受 `hookSpecificOutput`；这些事件返回的
+  `hookSpecificOutput` 会被 schema 拒绝并记为该 Hook 的可恢复失败。
 - `PermissionRequest` 同时接受 Claude 的 `updatedPermissions` 和 ZCode 历史字段
   `permissionUpdates`。
 - `suppressOutput:true` 表示不投影 Hook stdout；它不抑制结构化 decision/context。
@@ -203,12 +230,15 @@ stdout 规则：
 
 `process` hook 本期保持同步。`asyncRewake` 不在本期能力声明中。
 
+`SessionEnd` 的 async command hook 不保证在进程退出前完成：close 的总预算（5 秒）耗尽或
+进程退出后，后台命令即被取消/终止，其输出不会产生任何效果。
+
 ## 设置页契约
 
 Hooks 设置页必须在 desktop 和 Web UI 使用同一组件，并满足：
 
 - `.zcode` hooks 支持新增、编辑、删除、启停和 user/workspace scope。
-- 表单支持 7 个事件、`process` / `command` 类型、matcher、argv、timeout、`statusMessage`
+- 表单支持 10 个事件、`process` / `command` 类型、matcher、argv、timeout、`statusMessage`
   和 command async。
 - `.agents` / `.claude` hooks 标记为兼容来源、不可直接编辑或启停，并提供显式导入 `.zcode`。
 - 插件 hooks 单独分组；列表只读展示 event 与 command，并以分组标题和插件图标表达来源。
@@ -243,6 +273,9 @@ Hooks 设置页必须在 desktop 和 Web UI 使用同一组件，并满足：
 | HK-05 | `PostToolUse`        | 完整 `tool_response`、context                                                     | core + desktop E2E       |
 | HK-06 | `PostToolUseFailure` | 字符串 error、interrupt、recovery context                                         | core + desktop E2E       |
 | HK-07 | `Stop`               | last assistant、transcript、block 续跑上限                                        | core + desktop E2E       |
+| HK-11 | `PreCompact`         | trigger matcher、`custom_instructions` stdin、block 跳过本次压缩                  | core                     |
+| HK-12 | `PostCompact`        | 仅真实压缩成功后触发、skip/失败不触发、诊断不影响结果                             | core                     |
+| HK-13 | `SessionEnd`         | close 时恰好一次、5 秒总预算、hook 失败不阻断 close                               | core + bootstrap         |
 | HK-08 | Config/source        | user+project+plugin 顺序、逐 Hook disabled 真跳过                                 | adapter/bootstrap/core   |
 | HK-09 | Settings             | `.zcode` 可写、legacy 可导入、plugin 只读可见                                     | service/UI + desktop E2E |
 | HK-10 | Executors/async      | process argv、command shell/fire-and-forget、父级取消、后台 lifecycle、错误隔离   | core + desktop E2E       |

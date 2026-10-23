@@ -23,6 +23,7 @@ import {
   createTraceId,
   getCurrentModelInvocationContext,
   type CompactBoundaryPayload,
+  type HookInput,
   type CompactTimelinePayload,
   type MicrocompactBoundaryPayload,
   type MessageInfo,
@@ -4930,6 +4931,128 @@ describe("AgentRuntime manual compact", () => {
     );
     expect(events.filter((event) => event.type === SessionEventType.CompactBoundary)).toHaveLength(
       1,
+    );
+  });
+
+  it("skips compaction when a PreCompact hook blocks and runs PostCompact only after a real compact", async () => {
+    const sessionId = createSessionId("runtime-pre-post-compact-hooks");
+    const eventStore = createTestSessionEventStore();
+    let preCompactBlocks = true;
+    let compactSummaries = 0;
+    let postCompactRuns = 0;
+    let preCompactInput: Extract<HookInput, { hookEventName: "PreCompact" }> | undefined;
+    let postCompactInput: Extract<HookInput, { hookEventName: "PostCompact" }> | undefined;
+    const hookRunner = createInMemoryHookRunner({
+      hooks: [
+        {
+          event: HookEventName.PreCompact,
+          callback: async (input) => {
+            if (input.hookEventName === HookEventName.PreCompact) preCompactInput = input;
+            if (!preCompactBlocks) return undefined;
+            return { continue: false, reason: "compact paused for audit" };
+          },
+        },
+        {
+          event: HookEventName.PostCompact,
+          callback: async (input) => {
+            if (input.hookEventName === HookEventName.PostCompact) postCompactInput = input;
+            postCompactRuns++;
+            return undefined;
+          },
+        },
+      ],
+    });
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      { systemPrompt: "You are a compact hook gate test agent." },
+      {
+        eventStore,
+        hookRunner,
+        modelFactory: createTestModelFactory(
+          withStreamTextFromGenerateText({
+            async generateText(request: ModelRequest) {
+              const lastContent = providerContentToText(request.messages.at(-1)?.content);
+              if (lastContent.includes("create a detailed summary")) {
+                compactSummaries++;
+                return {
+                  finishReason: "stop",
+                  text: "<summary>Compact hook gate test summary.</summary>",
+                  usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+                };
+              }
+              return {
+                finishReason: "stop",
+                text: "normal response",
+                usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
+              };
+            },
+          }) as never,
+        ),
+      },
+    );
+
+    await runtime.executeTurn("first turn before compact hook gate");
+    await runtime.executeTurn("second turn before compact hook gate");
+
+    const runtimeInternals = runtime as unknown as {
+      compactActiveConversation(
+        customInstructions: string | undefined,
+        traceContext: { traceId: string },
+        events: unknown[],
+        options: {
+          compactReason: CompactReason;
+          phase: CompactPhase;
+          trigger: CompactTrigger;
+        },
+      ): Promise<{ displayText: string; outcome: string }>;
+    };
+
+    const blocked = await runtimeInternals.compactActiveConversation(
+      "keep API notes",
+      { traceId: "trace-pre-compact-hook-block" },
+      [],
+      {
+        compactReason: CompactReason.UserRequested,
+        phase: CompactPhase.StandaloneTurn,
+        trigger: CompactTrigger.Manual,
+      },
+    );
+
+    expect(blocked.outcome).toBe("skipped");
+    expect(blocked.displayText).toContain("compact paused for audit");
+    expect(preCompactInput).toMatchObject({
+      customInstructions: "keep API notes",
+      hookEventName: HookEventName.PreCompact,
+      trigger: CompactTrigger.Manual,
+    });
+    expect(compactSummaries).toBe(0);
+    expect(postCompactRuns).toBe(0);
+    const eventsAfterBlock = await eventStore.getEvents(sessionId);
+    expect(
+      eventsAfterBlock.filter((event) => event.type === SessionEventType.CompactBoundary),
+    ).toHaveLength(0);
+
+    preCompactBlocks = false;
+    const compacted = await runtimeInternals.compactActiveConversation(
+      undefined,
+      { traceId: "trace-post-compact-hook-run" },
+      [],
+      {
+        compactReason: CompactReason.UserRequested,
+        phase: CompactPhase.StandaloneTurn,
+        trigger: CompactTrigger.Manual,
+      },
+    );
+
+    expect(compacted.outcome).toBe("compacted");
+    expect(compactSummaries).toBe(1);
+    expect(postCompactRuns).toBe(1);
+    expect(postCompactInput).toMatchObject({
+      hookEventName: HookEventName.PostCompact,
+      trigger: CompactTrigger.Manual,
+    });
+    expect((postCompactInput?.preCompactTokenCount ?? 0)).toBeGreaterThan(
+      postCompactInput?.postCompactTokenCount ?? 0,
     );
   });
 

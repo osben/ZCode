@@ -20,6 +20,7 @@ import {
 } from "./deps.js";
 import type {
   CollaborationMode,
+  HookRunResult,
   Logger,
   BackgroundTaskCancelResult,
   SessionEvent,
@@ -778,6 +779,8 @@ export interface AgentRuntime {
   /** Wait up to 60 seconds by default; null waits for all scheduled extractions without a drain deadline. */
   drainMemoryExtractions(timeoutMs?: number | null): Promise<void>;
   drainBackgroundDreams(timeoutMs?: number): Promise<void>;
+  /** Best-effort SessionEnd dispatch with a 5s shared budget; a hook failure never blocks close. */
+  runSessionEndHooks(traceContext: TraceContext): Promise<HookRunResult>;
 }
 
 installAgentRuntimeMethods(AgentRuntime);

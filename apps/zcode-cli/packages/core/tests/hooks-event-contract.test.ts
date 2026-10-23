@@ -16,8 +16,8 @@ import {
 import { createConfiguredHookRunner } from "../src/hooks/index.js";
 import { matchesHookMatcher } from "../src/hooks/output.js";
 
-const sessionId = createSessionId("hooks-seven-events");
-const turnId = createTurnId("hooks-seven-events-turn");
+const sessionId = createSessionId("hooks-event-contract");
+const turnId = createTurnId("hooks-event-contract-turn");
 const traceContext = createRootTraceContext({ sessionId, turnId });
 const base = {
   agentName: "zcode",
@@ -151,9 +151,57 @@ const cases: HookCase[] = [
       expect(result.additionalContexts).toEqual(["revise"]);
     },
   },
+  {
+    event: HookEventName.PreCompact,
+    expectedInput: {
+      custom_instructions: "keep API notes",
+      preCompactTokenCount: 12000,
+      trigger: "auto",
+    },
+    input: {
+      ...base,
+      hookEventName: HookEventName.PreCompact,
+      customInstructions: "keep API notes",
+      preCompactTokenCount: 12000,
+      trigger: "auto",
+    },
+    matcher: "auto",
+    output: { continue: false, reason: "compact denied by policy" },
+    verifyResult: (result) => {
+      expect(result.blockRequested).toBe(true);
+      expect(result.preventContinuation).toBeUndefined();
+      expect(result.stopReason).toBe("compact denied by policy");
+    },
+  },
+  {
+    event: HookEventName.PostCompact,
+    expectedInput: {
+      postCompactTokenCount: 2100,
+      preCompactTokenCount: 12000,
+      trigger: "manual",
+    },
+    input: {
+      ...base,
+      hookEventName: HookEventName.PostCompact,
+      postCompactTokenCount: 2100,
+      preCompactTokenCount: 12000,
+      trigger: "manual",
+    },
+    matcher: "manual",
+    output: { additionalContext: "post-compact-context" },
+    verifyResult: (result) => expect(result.additionalContexts).toEqual(["post-compact-context"]),
+  },
+  {
+    event: HookEventName.SessionEnd,
+    expectedInput: { reason: "close" },
+    input: { ...base, hookEventName: HookEventName.SessionEnd, reason: "close" },
+    matcher: "matcher-is-not-applied-to-reason",
+    output: { systemMessage: "session closed" },
+    verifyResult: (result) => expect(result.additionalContexts).toEqual([]),
+  },
 ];
 
-describe("configured hooks seven-event contract", () => {
+describe("configured hooks event contract", () => {
   it.each(cases)("runs $event with Claude-compatible input and output", async (hookCase) => {
     let capturedInput: Record<string, unknown> | undefined;
     let transcriptReadable = false;
@@ -368,6 +416,7 @@ describe("configured hooks seven-event contract", () => {
 function getMatchValue(input: HookInput): string | undefined {
   if ("toolName" in input) return input.toolName;
   if (input.hookEventName === HookEventName.SessionStart) return input.source;
+  if ("trigger" in input) return input.trigger;
   return undefined;
 }
 

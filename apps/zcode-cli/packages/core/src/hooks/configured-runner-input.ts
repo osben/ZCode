@@ -53,6 +53,11 @@ export async function createCompatibleHookStdin(input: HookInput): Promise<{
       compatible.last_assistant_message = input.responseText ?? input.responsePreview;
       compatible.stop_hook_active = input.stopHookActive;
       break;
+    case HookEventName.PreCompact:
+      compatible.custom_instructions = input.customInstructions;
+      break;
+    case HookEventName.PostCompact:
+    case HookEventName.SessionEnd:
     case HookEventName.SessionStart:
     case HookEventName.UserPromptSubmit:
     case HookEventName.PreToolUse:
