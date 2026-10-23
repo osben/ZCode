@@ -7,6 +7,7 @@ export type OpenTabLauncherItemId =
   | "terminal"
   | "browser"
   | "model-trajectory"
+  | "model-trajectory-v2"
   | "developer-tools";
 
 export function resolveOpenTabLauncherItemIds({
@@ -41,6 +42,7 @@ export function resolveOpenTabLauncherItemIds({
 
   if (hasActiveTask) {
     itemIds.push("model-trajectory");
+    itemIds.push("model-trajectory-v2");
   }
 
   if (developerToolsEnabled) {

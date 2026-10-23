@@ -162,6 +162,8 @@ export type {
   ZCodeTaskListWorkspaceScope,
   ZCodeTaskReadyOutcome,
 } from "./session/zcodeTaskService.js";
+// Model trajectory v2 response types (specs/model-trajectory-v2.md).
+export type * from "./model-trajectory-v2/contract.js";
 export type {
   ZCodeGroupedTaskRef,
   ZCodeGroupedTaskView,

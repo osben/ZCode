@@ -110,6 +110,17 @@ export interface ModelTrajectorySidePaneTab {
   title?: string | null;
 }
 
+export interface ModelTrajectoryV2SidePaneTab {
+  id: string;
+  type: "model-trajectory-v2";
+  ownerTaskId?: string | null;
+  workspaceKey?: string | null;
+  openedAt?: number;
+  /** Target task/session id; independent of the v1 tab. */
+  taskId: string;
+  title?: string | null;
+}
+
 export interface PluginMarketSidePaneTab {
   id: "plugin-market";
   type: "plugin-market";
@@ -575,6 +586,7 @@ export type WorkspaceSidePaneTab =
   | TreemappingSidePaneTab
   | WhiteboardSidePaneTab
   | ModelTrajectorySidePaneTab
+  | ModelTrajectoryV2SidePaneTab
   | PluginMarketSidePaneTab
   | DeveloperToolsSidePaneTab
   | TerminalSidePaneTab
@@ -725,6 +737,20 @@ function createModelTrajectorySidePaneTab(options: {
     // 同一个 task 复用同一个 tab，避免重复打开多份相同轨迹。
     id: `model-trajectory:${options.taskId}`,
     type: "model-trajectory",
+    openedAt: Date.now(),
+    taskId: options.taskId,
+    title: options.title ?? null,
+  };
+}
+
+function createModelTrajectoryV2SidePaneTab(options: {
+  taskId: string;
+  title?: string | null;
+}): ModelTrajectoryV2SidePaneTab {
+  return {
+    // Deduped separately from v1, so the v1 and v2 views of one task can be open together.
+    id: `model-trajectory-v2:${options.taskId}`,
+    type: "model-trajectory-v2",
     openedAt: Date.now(),
     taskId: options.taskId,
     title: options.title ?? null,
@@ -1197,6 +1223,7 @@ export function isSidePaneTabVisibleInScope(
     case "code-viewer":
     case "whiteboard":
     case "model-trajectory":
+    case "model-trajectory-v2":
     case "new-tab":
     case "terminal":
       return sidePaneOwnerKey(tab.ownerTaskId) === sidePaneOwnerKey(scope.ownerTaskId);
@@ -1826,6 +1853,16 @@ export function openModelTrajectorySidePane(
   },
 ): WorkspaceSidePaneState {
   return activateSidePaneTab(current, createModelTrajectorySidePaneTab(options));
+}
+
+export function openModelTrajectoryV2SidePane(
+  current: WorkspaceSidePaneState | null,
+  options: {
+    taskId: string;
+    title?: string | null;
+  },
+): WorkspaceSidePaneState {
+  return activateSidePaneTab(current, createModelTrajectoryV2SidePaneTab(options));
 }
 
 export function activatePluginMarketSidePane(

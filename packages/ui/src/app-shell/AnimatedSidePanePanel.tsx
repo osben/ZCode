@@ -33,6 +33,7 @@ import { GitPane } from "@/GitPane.js";
 import { TreemappingPane } from "@/TreemappingPane.js";
 import { WhiteboardPane } from "@/WhiteboardPane.js";
 import { ModelTrajectoryPane } from "@/ModelTrajectoryPane.js";
+import { ModelTrajectoryV2Pane } from "@/model-trajectory-v2/index.js";
 import { PluginStorePage } from "@/settings/PluginStorePage.js";
 import { DeveloperToolsPane } from "@/DeveloperToolsPane.js";
 import { cn } from "@/components/lib/utils.js";
@@ -106,6 +107,7 @@ import { getVisibleSidePaneTabs } from "@/lib/workspaceSidePane.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import {
   BugIcon,
+  ChartNoAxesGanttIcon,
   ChartLineIcon,
   ChevronRightIcon,
   FileDiffIcon,
@@ -342,6 +344,7 @@ export function AnimatedSidePanePanel({
   onOpenTerminalTab,
   onOpenReviewTab,
   onOpenModelTrajectory,
+  onOpenModelTrajectoryV2,
   onOpenSelectionSideConversation,
   onOpenPlanDetail,
   onRevealGitFileInTree,
@@ -423,6 +426,8 @@ export function AnimatedSidePanePanel({
   onOpenReviewTab: () => void;
   /** Opens the model trajectory tab for the active task; launcher entry is hidden without one. */
   onOpenModelTrajectory: () => void;
+  /** Opens the model trajectory v2 tab for the active task; launcher entry is hidden without one. */
+  onOpenModelTrajectoryV2: () => void;
   onOpenSelectionSideConversation: () => void;
   onOpenPlanDetail: (request: OpenScopedPlanDetailSideTabRequest) => void;
   onRevealGitFileInTree?: (path: string) => void;
@@ -804,6 +809,13 @@ export function AnimatedSidePanePanel({
       icon: ChartLineIcon,
       onOpen: onOpenModelTrajectory,
     },
+    "model-trajectory-v2": {
+      id: "model-trajectory-v2",
+      label: intl.formatMessage({ id: "modelTrajectoryV2.title" }),
+      description: intl.formatMessage({ id: "sidePane.launcher.model-trajectory-v2" }),
+      icon: ChartNoAxesGanttIcon,
+      onOpen: onOpenModelTrajectoryV2,
+    },
     "developer-tools": {
       id: "developer-tools",
       label: intl.formatMessage({ id: "developerTools.title" }),
@@ -924,6 +936,9 @@ export function AnimatedSidePanePanel({
         whiteboardTitle: intl.formatMessage({ id: "whiteboard.title" }),
         modelTrajectoryTitle: intl.formatMessage({
           id: "modelTrajectory.title",
+        }),
+        modelTrajectoryV2Title: intl.formatMessage({
+          id: "modelTrajectoryV2.title",
         }),
         newTabTitle: intl.formatMessage({ id: "sidePane.newTab" }),
         pluginMarketTitle: intl.formatMessage({ id: "workspace.openPluginsSettings" }),
@@ -1325,6 +1340,14 @@ export function AnimatedSidePanePanel({
                           />
                         ) : tab.type === "model-trajectory" ? (
                           <ModelTrajectoryPane
+                            taskId={tab.taskId}
+                            title={tab.title}
+                            workspacePath={workspaceAbsPath}
+                            workspaceIdentity={workspaceIdentity}
+                            onClose={() => onCloseTab(tab.id)}
+                          />
+                        ) : tab.type === "model-trajectory-v2" ? (
+                          <ModelTrajectoryV2Pane
                             taskId={tab.taskId}
                             title={tab.title}
                             workspacePath={workspaceAbsPath}

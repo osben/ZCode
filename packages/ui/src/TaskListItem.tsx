@@ -1127,6 +1127,15 @@ export function TaskListItemContextMenuContent({
           title: taskTitle,
         });
       }}
+      onViewModelTrajectoryV2={() => {
+        // Same entry as v1, but requests the v2 tab (kind routes to openModelTrajectoryV2SidePane).
+        useModelTrajectoryStore.getState().requestOpen({
+          taskId: task.taskId,
+          workspaceKey: task.workspaceIdentity?.trim() || workspacePath,
+          title: taskTitle,
+          kind: "v2",
+        });
+      }}
       onOpenProviderConfig={() => {
         void handleOpenProviderConfig();
       }}

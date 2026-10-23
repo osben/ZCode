@@ -2,6 +2,10 @@
 
 > E2E 行为目录与覆盖状态见
 > [`docs/testing/model-trajectory-e2e-coverage-matrix.md`](./testing/model-trajectory-e2e-coverage-matrix.md)。
+>
+> Trajectory v2（事件账本、时间概览、请求参数与工具目录、工具耗时与 TTFT）是独立的侧栏标签，
+> 规格见 [`specs/model-trajectory-v2.md`](../specs/model-trajectory-v2.md)；本文描述的 v1 视图保持不变。
+> model-io 记录新增的 `timing` 字段见 [`specs/model-io-stream-timing.md`](../specs/model-io-stream-timing.md)。
 
 在任务右键菜单 / Header 更多菜单里新增「查看调用轨迹」，在右侧边栏以专业、可读的方式
 可视化某个 task/session 的模型调用全过程：区分 system / user / assistant / tool 角色，

@@ -774,6 +774,10 @@ export const TID_V4_TASK_OPEN_IN_SPLIT = "v4-task-open-in-split";
 export const TID_TASK_VIEW_MODEL_TRAJECTORY = "task-view-model-trajectory";
 /** Refresh button in the model trajectory pane. */
 export const TID_MODEL_TRAJECTORY_REFRESH = "model-trajectory-refresh";
+/** View model trajectory v2 in a task context menu. */
+export const TID_TASK_VIEW_MODEL_TRAJECTORY_V2 = "task-view-model-trajectory-v2";
+/** Refresh button in the model trajectory v2 pane. */
+export const TID_MODEL_TRAJECTORY_V2_REFRESH = "model-trajectory-v2-refresh";
 /** v4 timeline "Load older" button (cursor pagination; appears when the first visible row is not the first row in the full order). */
 export const TID_V4_TIMELINE_LOAD_OLDER = "v4-timeline-load-older";
 /** v4 global conversation-turn navigation rail (appears on wide screens when 2+ turns can be navigated). */

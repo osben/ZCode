@@ -2525,6 +2525,11 @@ export function createLocalServices(options: {
     getOpenWorkspacePaths: options?.getOpenWorkspacePaths,
     settingService,
     cuaProductMcpServerResolver,
+    resolveModelContextWindow: async (model) => {
+      const resolution = await providerRuntime.providerSettings.resolveModelConfig(model);
+      const contextWindow = resolution.effectiveConfig.properties?.contextWindow;
+      return typeof contextWindow === "number" ? contextWindow : undefined;
+    },
   });
   const botRemoteWorkspaceService = createBotRemoteWorkspaceService({
     parentPort: options?.parentPort,
