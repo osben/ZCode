@@ -32,6 +32,8 @@ import {
   findBrowserSidePaneTabByUrl,
   openCodeViewerSidePane,
   openFileManagerSidePane,
+  openModelTrajectorySidePane,
+  openModelTrajectoryV2SidePane,
   navigateFileManagerSidePane,
   openCodeViewerSidePanes,
   openTerminalSidePane,
@@ -2495,6 +2497,29 @@ describe("workspaceSidePane", () => {
     });
   });
 
+  describe("model trajectory v2 tab", () => {
+    it("opens with a v2-scoped tab id and coexists with the v1 tab for the same task", () => {
+      const v1 = openModelTrajectorySidePane(null, { taskId: "task-1", title: "Demo" });
+      expect(v1.tabs).toHaveLength(1);
+      expect(v1.tabs[0]).toMatchObject({ id: "model-trajectory:task-1", type: "model-trajectory" });
+
+      const both = openModelTrajectoryV2SidePane(v1, { taskId: "task-1", title: "Demo" });
+      expect(both.tabs.map((tab) => tab.id)).toEqual([
+        "model-trajectory:task-1",
+        "model-trajectory-v2:task-1",
+      ]);
+      expect(both.activeTabId).toBe("model-trajectory-v2:task-1");
+    });
+
+    it("reuses the existing v2 tab instead of opening a second one per task", () => {
+      const first = openModelTrajectoryV2SidePane(null, { taskId: "task-1", title: null });
+      const reopened = openModelTrajectoryV2SidePane(first, { taskId: "task-1", title: "Renamed" });
+      expect(reopened.tabs).toHaveLength(1);
+      expect(reopened.activeTabId).toBe("model-trajectory-v2:task-1");
+      expect(reopened.tabs[0]).toMatchObject({ type: "model-trajectory-v2", title: "Renamed" });
+    });
+  });
+
   describe("所有标签类型的归属契约", () => {
     const base = {
       id: "tab",
@@ -2524,6 +2549,10 @@ describe("workspaceSidePane", () => {
       whiteboard: { tab: { ...base, type: "whiteboard", boardId: "board" }, owner: "owner" },
       "model-trajectory": {
         tab: { ...base, type: "model-trajectory", taskId: "target" },
+        owner: "owner",
+      },
+      "model-trajectory-v2": {
+        tab: { ...base, type: "model-trajectory-v2", taskId: "target" },
         owner: "owner",
       },
       terminal: { tab: { ...base, type: "terminal" }, owner: "owner" },

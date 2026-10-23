@@ -133,4 +133,42 @@ describe("TaskActionMenuContent", () => {
     expect(html).toContain("taskList.openInSplitPane");
     expect(itemStates[OPEN_IN_SPLIT_ITEM_INDEX]?.disabled).toBe(true);
   });
+
+  // The sidebar task menu and the header more menu both render this component, so one
+  // exists check covers both. The snapshot path is computed even when the file is missing.
+  it("hides Copy task path when the session snapshot file does not exist", () => {
+    const shown = renderMenu();
+    const hidden = renderMenu({
+      taskSessionFile: {
+        loading: false,
+        path: "/tmp/workspace/task-1.zcode-session",
+        exists: false,
+      },
+    });
+
+    expect(hidden.html).not.toContain("appHeader.copyTaskPath");
+    expect(hidden.html).toContain("appHeader.copyLogPath");
+    expect(hidden.itemStates).toHaveLength(shown.itemStates.length - 1);
+  });
+
+  it("hides Copy task path while the snapshot path is still resolving", () => {
+    const { html } = renderMenu({
+      taskSessionFile: { loading: true, path: null, exists: false },
+    });
+
+    expect(html).not.toContain("appHeader.copyTaskPath");
+  });
+
+  it("shows Copy task path when the session snapshot file exists", () => {
+    const { html, itemStates } = renderMenu({
+      taskSessionFile: {
+        loading: false,
+        path: "/tmp/workspace/task-1.zcode-session",
+        exists: true,
+      },
+    });
+
+    expect(html).toContain("appHeader.copyTaskPath");
+    expect(itemStates).toHaveLength(renderMenu().itemStates.length);
+  });
 });

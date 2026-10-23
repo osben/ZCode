@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ACP_AGENT_DEFINITIONS,
+  acpAgentPlatformSupported,
   detectAcpAgents,
   isSafeVersionProbeArgs,
   refreshAcpAgentCache,
@@ -258,10 +259,24 @@ describe("detectAcpAgents", () => {
 });
 
 describe("agent definitions", () => {
-  it("declares only whitelisted version-probe arguments and acp spawn arguments", () => {
+  it("declares the fixed agent set with each adapter's own spawn arguments", () => {
+    // Pinned per agent (specs/acp-agent-runtime.md "Agents"). Codex and Claude run through npm
+    // adapters that serve ACP with no arguments; Gemini (`--experimental-acp`) is not live-verified.
+    const spawnArgsByAgent: Record<string, readonly string[]> = {
+      opencode: ["acp"],
+      cursor: ["acp"],
+      qwen: ["--acp"],
+      codex: [],
+      claude: [],
+      gemini: ["--experimental-acp"],
+    };
+    expect(ACP_AGENT_DEFINITIONS.map((definition) => definition.agentId)).toEqual(
+      Object.keys(spawnArgsByAgent),
+    );
     for (const definition of ACP_AGENT_DEFINITIONS) {
       expect(isSafeVersionProbeArgs(definition.versionArgs)).toBe(true);
-      expect(definition.spawnArgs).toEqual(["acp"]);
+      expect(definition.versionArgs).toEqual(["--version"]);
+      expect(definition.spawnArgs).toEqual(spawnArgsByAgent[definition.agentId]);
       expect(definition.binaries.length).toBeGreaterThan(0);
       expect(definition.displayName.length).toBeGreaterThan(0);
     }
@@ -272,8 +287,16 @@ describe("agent definitions", () => {
     expect(isSafeVersionProbeArgs([])).toBe(false);
   });
 
-  it("declares fixed login and status arguments for the settings UI", () => {
+  it("declares fixed login and status arguments only where the agent binary has them", () => {
+    // Qwen, Codex, Claude and Gemini have no login or status subcommand on the adapter binary
+    // (qwen `auth` is removed; the adapters use the vendor login). No helper is invented for them.
+    const withoutHelpers = ["qwen", "codex", "claude", "gemini"];
     for (const definition of ACP_AGENT_DEFINITIONS) {
+      if (withoutHelpers.includes(definition.agentId)) {
+        expect(definition.loginArgs).toEqual([]);
+        expect(definition.statusArgs).toBeUndefined();
+        continue;
+      }
       expect(definition.loginArgs.length).toBeGreaterThan(0);
       expect(definition.loginArgs.every((arg) => typeof arg === "string" && arg.length > 0)).toBe(
         true,
@@ -288,5 +311,13 @@ describe("agent definitions", () => {
     expect(ACP_AGENT_DEFINITIONS.find((item) => item.agentId === "cursor")?.statusArgs).toEqual([
       "status",
     ]);
+  });
+});
+
+describe("ACP agent platform scope", () => {
+  it("supports macOS only until Windows and Linux are verified", () => {
+    expect(acpAgentPlatformSupported("darwin")).toBe(true);
+    expect(acpAgentPlatformSupported("linux")).toBe(false);
+    expect(acpAgentPlatformSupported("win32")).toBe(false);
   });
 });

@@ -138,6 +138,10 @@ async function writeForkSettings(
   });
 }
 
+function hasDefinedValue(settings: object): boolean {
+  return Object.values(settings).some((value) => value !== undefined);
+}
+
 /**
  * Merge a fork patch into the sidecar. The whole read-merge-write runs under the sidecar's file
  * lock because separate setting-service instances (Desktop main, window Host, remote collections)
@@ -149,12 +153,16 @@ export async function updateForkSettings(
   location: LocationArg = resolveSettingsLocation(),
 ): Promise<void> {
   await withAtomicFileLock(location.forkFile, async () => {
+    const stored = await readStoredForkSettings({ throwOnIoError: true }, location);
     const merged = forkAppSettingsStoredSchema.parse({
       // A non-ENOENT I/O error must abort the merge instead of rewriting the sidecar from an
       // empty base, which would delete every other stored fork setting.
-      ...(await readStoredForkSettings({ throwOnIoError: true }, location)),
+      ...stored,
       ...forkAppSettingsPatchSchema.parse(forkPatch),
     });
+    // Clearing an override that was never stored (for example, choosing English on a fresh install)
+    // must not create an empty sidecar file.
+    if (!hasDefinedValue(merged) && !hasDefinedValue(stored)) return;
     await writeForkSettings(merged, { useFileLock: false, guards }, location);
   });
 }

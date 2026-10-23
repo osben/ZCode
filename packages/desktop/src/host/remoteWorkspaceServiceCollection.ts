@@ -42,6 +42,8 @@ import {
   ISettingsSyncService,
   IProjectService,
   ITaskGroupService,
+  IQuickPromptService,
+  QUICK_PROMPTS_CHANGED_CHANNEL,
   IRemoteProjectService,
   IPromptAttachmentTransferService,
   IUserInstructionsService,
@@ -66,6 +68,12 @@ import {
   createRemoteProviderProvisioningExecutorFromWorkspace,
   registerRemoteProviderProvisioningExecutor,
 } from "./remoteProviderProvisioningService.js";
+
+// Broadcasts that originate on the controller Host, not on the remote Source.
+const CONTROLLER_BROADCAST_CHANNELS: ReadonlySet<string> = new Set([
+  "state:task-groups",
+  QUICK_PROMPTS_CHANGED_CHANNEL,
+]);
 
 export const REMOTE_WORKSPACE_RPC_REGISTRATIONS = [
   ["fileService", IFileService],
@@ -281,25 +289,28 @@ export function createServerRemoteWorkspaceServiceCollection(params: {
     );
   }
   const controllerGroups = params.sourceServices?.getOptional(ITaskGroupService);
+  const controllerQuickPrompts = params.sourceServices?.getOptional(IQuickPromptService);
   const controllerBroadcast = params.sourceServices?.getOptional(IBroadcastService);
   if (controllerGroups) services.register(ITaskGroupService, controllerGroups);
-  if (controllerGroups && controllerBroadcast) {
+  if (controllerQuickPrompts) services.register(IQuickPromptService, controllerQuickPrompts);
+  if ((controllerGroups || controllerQuickPrompts) && controllerBroadcast) {
     const remoteBroadcast = params.connectionServices.broadcastService;
     services.register(IBroadcastService, {
       send: (message) =>
-        (message.channel === "state:task-groups" ? controllerBroadcast : remoteBroadcast).send(
-          message,
-        ),
+        (CONTROLLER_BROADCAST_CHANNELS.has(message.channel)
+          ? controllerBroadcast
+          : remoteBroadcast
+        ).send(message),
       acquireClaim: (key) => remoteBroadcast.acquireClaim(key),
       commitClaim: (lease) => remoteBroadcast.commitClaim(lease),
       releaseClaim: (lease) => remoteBroadcast.releaseClaim(lease),
       tryClaim: (key) => remoteBroadcast.tryClaim(key),
       onMessage: (listener) => {
         const remote = remoteBroadcast.onMessage((event) => {
-          if (event.channel !== "state:task-groups") listener(event);
+          if (!CONTROLLER_BROADCAST_CHANNELS.has(event.channel)) listener(event);
         });
         const local = controllerBroadcast.onMessage((event) => {
-          if (event.channel === "state:task-groups") listener(event);
+          if (CONTROLLER_BROADCAST_CHANNELS.has(event.channel)) listener(event);
         });
         return {
           dispose: () => {

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { Locale } from "@zcode/shared";
 import { createIntl } from "../src/i18n/createIntl.js";
 import enUS from "../src/i18n/locales/en-US.js";
+import ukUA from "../src/i18n/locales/uk-UA.js";
 import zhCN from "../src/i18n/locales/zh-CN.js";
 
 const COUNTS = [0, 1, 2, 5, 21];
@@ -79,6 +80,66 @@ describe("createIntl formatPlural", () => {
     assert.equal(intl.formatPlural({ id: "enOnly" }, 21), "21 items");
     assert.equal(intl.formatPlural({ id: "missing" }, 3), "missing.other");
   });
+});
+
+// Count strings that were a single "{count} …s" message now resolve through formatPlural; these are the real catalogs.
+describe("count strings resolve through plural families in the shipped catalogs", () => {
+  const cases: Array<{
+    id: string;
+    en: [string, string];
+    zh: [string, string];
+    uk: [string, string, string];
+  }> = [
+    {
+      id: "archives.count",
+      en: ["1 session", "2 sessions"],
+      zh: ["1 个会话", "2 个会话"],
+      uk: ["1 сеанс", "2 сеанси", "5 сеансів"],
+    },
+    {
+      id: "git.branchSwitcher.commitDialog.changesValue",
+      en: ["1 file", "2 files"],
+      zh: ["1 个文件", "2 个文件"],
+      uk: ["1 файл", "2 файли", "5 файлів"],
+    },
+    {
+      id: "chat.queue.sendConfirm.description",
+      en: [
+        "You're about to send a message. Clear the 1 previously queued message?",
+        "You're about to send a message. Clear the 2 previously queued messages?",
+      ],
+      zh: [
+        "你即将发送一条消息。要清除之前已排队的 1 条消息吗？",
+        "你即将发送一条消息。要清除之前已排队的 2 条消息吗？",
+      ],
+      uk: [
+        "Ви збираєтеся надіслати повідомлення. Очистити 1 раніше додане повідомлення з черги?",
+        "Ви збираєтеся надіслати повідомлення. Очистити 2 раніше додані повідомлення з черги?",
+        "Ви збираєтеся надіслати повідомлення. Очистити 5 раніше доданих повідомлень з черги?",
+      ],
+    },
+  ];
+
+  for (const { id, en, zh, uk } of cases) {
+    it(`${id}: en uses one/other`, () => {
+      const intl = createIntl("en-US", { "en-US": enUS });
+      assert.equal(intl.formatPlural({ id }, 1), en[0]);
+      assert.equal(intl.formatPlural({ id }, 2), en[1]);
+    });
+
+    it(`${id}: zh uses the single other form`, () => {
+      const intl = createIntl("zh-CN", { "en-US": enUS, "zh-CN": zhCN });
+      assert.equal(intl.formatPlural({ id }, 1), zh[0]);
+      assert.equal(intl.formatPlural({ id }, 2), zh[1]);
+    });
+
+    it(`${id}: uk uses one/few/many`, () => {
+      const intl = createIntl(UK, { "en-US": enUS, [UK]: ukUA });
+      assert.equal(intl.formatPlural({ id }, 1), uk[0]);
+      assert.equal(intl.formatPlural({ id }, 2), uk[1]);
+      assert.equal(intl.formatPlural({ id }, 5), uk[2]);
+    });
+  }
 });
 
 describe("createIntl formatMessage fallback", () => {

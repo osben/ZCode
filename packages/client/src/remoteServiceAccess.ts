@@ -16,6 +16,7 @@ import {
   IZCodeSessionService,
   IProjectService,
   ITaskGroupService,
+  IQuickPromptService,
   IRemoteProjectService,
   ICuaPermissionService,
   IVoiceDictationService,
@@ -85,6 +86,8 @@ export class RemoteServiceAccess implements IServiceAccessor {
   readonly zcodeAgentService: IZCodeAgentService;
   readonly zcodeSessionService: IZCodeSessionService;
   readonly taskGroupService: ITaskGroupService;
+  /** Fork: composer quick prompts, owned by the controller Host (specs/composer-quick-prompts.md). */
+  readonly quickPromptService: IQuickPromptService;
   readonly projectService: IProjectService;
   readonly remoteProjectService: IRemoteProjectService;
   // cuaPermissionService is optional on IServiceAccessor (remote/bots hosts do not provide it), but the Desktop renderer
@@ -196,6 +199,9 @@ export class RemoteServiceAccess implements IServiceAccessor {
     );
     this.taskGroupService = ProxyChannel.toService<ITaskGroupService>(
       channelClient.getChannel(ITaskGroupService.channelName),
+    );
+    this.quickPromptService = ProxyChannel.toService<IQuickPromptService>(
+      channelClient.getChannel(IQuickPromptService.channelName),
     );
     this.projectService = ProxyChannel.toService<IProjectService>(
       channelClient.getChannel(IProjectService.channelName),

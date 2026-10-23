@@ -23,9 +23,16 @@ export type AcpSessionConfigStore = Pick<
   "readConfig" | "writeOffered" | "writeChoice"
 >;
 
+/** The catalog of offered options per agent (S6 readiness); the store skips an equal snapshot itself. */
+export interface AcpAgentCatalogWriter {
+  write(agentId: string, options: readonly ExternalAgentConfigOption[]): Promise<unknown>;
+}
+
 /** The runtime surface the reconcile uses; `AcpSessionRuntime` satisfies it. */
 export interface AcpConfigRuntime {
   readonly configOptions?: readonly AcpConfigOption[];
+  /** The handshake's offered options with their starting values (what the catalog stores). */
+  readonly handshakeConfigOptions?: readonly AcpConfigOption[];
   setConfigOption?(configId: string, value: string): Promise<readonly AcpConfigOption[]>;
 }
 
@@ -35,6 +42,8 @@ export interface AcpConfigReconcileInput {
   readonly sessionId: string;
   readonly agentId: string;
   readonly logger?: Logger;
+  /** Keeps the agent's last offered snapshot for the composer before the next first turn. */
+  readonly catalog?: AcpAgentCatalogWriter;
   /** Receives the offered snapshot when it differs from the stored display copy. */
   readonly onOptions: (options: readonly ExternalAgentConfigOption[]) => void;
 }
@@ -89,6 +98,22 @@ export async function reconcileAcpSessionConfig(input: AcpConfigReconcileInput):
     }
   }
   const snapshot = toExternalAgentConfig(runtime.configOptions);
+  // The catalog is the agent's offer. The values applied above belong to this session, so they are not written to it:
+  // a new draft would otherwise show another session's choice as the default.
+  const offered = toExternalAgentConfig(runtime.handshakeConfigOptions ?? runtime.configOptions);
+  if (input.catalog !== undefined && offered.length > 0) {
+    try {
+      await input.catalog.write(agentId, offered);
+    } catch (error) {
+      // The catalog only feeds the composer before the first turn; the turn itself goes on.
+      logger?.warn("ACP agent catalog could not be stored", {
+        event: "external_agent.catalog_store_failed",
+        module: "bootstrap.acp-agent",
+        agentId,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
   // An agent without options and a session without a stored copy have nothing to show.
   if (stored.offered === undefined && snapshot.length === 0) return;
   if (

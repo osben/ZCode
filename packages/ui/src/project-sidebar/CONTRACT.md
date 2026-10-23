@@ -28,7 +28,7 @@ UI 纠偏：分区复用 WorkspacePurposeSection 和原折叠/顺序偏好；项
 
 每个 Host + project ID 的折叠状态归常驻侧栏，项目行只接收值与切换命令；文件树替换列表后返回不能重置折叠状态。
 
-编辑器的 roots/primary 只属于表单草稿，保存才通过 saveProject 提交；有 roots 显示紧凑列表和末行添加，空 roots 才展示整块空态。已有项目的删除入口复用 deleteProject，并携带原 hostId；成功刷新后关闭，失败保留弹窗，保存/删除互斥。主要目录只决定后续新任务 cwd，不重绑旧任务。
+编辑器的 roots/primary 只属于表单草稿，保存才通过 saveProject 提交；有 roots 显示紧凑列表和末行添加，空 roots 才展示整块空态。已有项目的删除入口（行菜单与编辑器）先经确认弹窗（`projectDeleteConfirmRequest`），确认后复用 deleteProject 并携带原 hostId；取消不调用任何删除；成功刷新后关闭，失败保留弹窗，保存/删除互斥。主要目录只决定后续新任务 cwd，不重绑旧任务。
 
 旧体验保留：按项目选择器复用运行层稳定排序和更新时间，从同 Host/project 的未归档成员（含置顶）派生收起未读点。偏好 hook 只拥有视图/折叠的 browser persistence；项目点击无导航。任务交互 owner 只保存尚在途的 pin 意图，Host 树始终是唯一已提交行集合；归档成功复用 UI 清理。任务行按 Shell 当前 workspaceKey 定位选中态，手机标记按完整目标地址；只有置顶区任务提供文件树按钮，按任务固化 cwd 与精确 identity/session 打开，不读取项目新主目录。远端同步/日志沿用既有接口与桌面 SSH/WSL、手机 replayable 边界，不新增业务状态所有者。
 

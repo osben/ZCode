@@ -186,7 +186,7 @@ export interface ProviderConfigResolverInput {
   readonly accountStates?: AccountProviderStates;
   readonly personalProviderOrder?: readonly ProviderId[];
   /**
-   * Development-only gate for ACP agent models (specs/acp-agent-runtime.md "Chat delegation").
+   * Availability gate for ACP agent models (specs/acp-agent-runtime.md "Availability (platform rule)").
    * False keeps `acp:<agentId>` models non-executable: they never reach the chat registry.
    */
   readonly acpExecutable?: boolean;
@@ -285,7 +285,7 @@ export class ProviderConfigResolver {
       // agent execution path lands — a registered-but-unroutable provider would
       // be selectable in chat and fail on send.
       const acpAccess = isAcpAgentAccess(config.access) ? config.access : null;
-      // An ACP provider enters the execution Registry only behind the development gate; its complete
+      // An ACP provider enters the execution Registry only when ACP is available; its complete
       // validity is the ACP schema (providerIssues below), so a valid config is admitted as-is.
       const registryProviderResult = acpAccess
         ? input.acpExecutable === true
@@ -359,7 +359,7 @@ export class ProviderConfigResolver {
         const modelIssues = registryModelResult.ok ? [] : registryModelResult.issues;
         issues.push(...modelIssues);
         const modelEnabled = modelConfig.enabled === true;
-        // ACP models stay non-executable outside the development gate (acpExecutable); Settings must not
+        // ACP models stay non-executable when ACP is unavailable (acpExecutable); Settings must not
         // advertise a selectable model that cannot run in a packaged build.
         const executable =
           providerExecutable &&

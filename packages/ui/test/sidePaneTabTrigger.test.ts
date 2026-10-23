@@ -276,6 +276,28 @@ describe("getSidePaneTabTitle", () => {
   });
 });
 
+describe("getSidePaneTabTitle model-trajectory-v2", () => {
+  const trajectoryV2Tab: Extract<WorkspaceSidePaneTab, { type: "model-trajectory-v2" }> = {
+    id: "model-trajectory-v2:task-1",
+    type: "model-trajectory-v2",
+    workspaceKey: "/workspace",
+    taskId: "task-1",
+    title: "Debug hang",
+  };
+
+  it("uses the task title when present", () => {
+    expect(getSidePaneTabTitle(trajectoryV2Tab, ({ id }) => id)).toBe("Debug hang");
+  });
+
+  it("falls back to modelTrajectoryV2.title when the title is blank", () => {
+    expect(
+      getSidePaneTabTitle({ ...trajectoryV2Tab, title: "  " }, ({ id }) =>
+        id === "modelTrajectoryV2.title" ? "Model trajectory v2" : id,
+      ),
+    ).toBe("Model trajectory v2");
+  });
+});
+
 describe("SortableSidePaneTabTrigger", () => {
   it("keeps active state markers on the real side pane tab element", () => {
     const html = renderSidePaneTab(true);

@@ -46,7 +46,6 @@ import {
   useAcpAgentDetection,
 } from "./model-provider-section/AcpAgentsPanel.js";
 import { AcpAgentDetail } from "./model-provider-section/AcpAgentCard.js";
-import { isLocalDevelopmentRuntime } from "@/lib/devRuntime.js";
 import {
   acpProviderId,
   buildAcpAgentSaveInput,
@@ -698,9 +697,8 @@ export function ModelProviderSection({
     };
   }, [presetSubscriptionProviderId]);
 
-  // Dev-only gate (specs/acp-agent-runtime.md "Dev-only visibility"): with the gate off nothing is probed or listed.
-  const acpEnabled = isLocalDevelopmentRuntime(platform);
-  const acpDetection = useAcpAgentDetection({ enabled: acpEnabled });
+  // Availability comes from the host's detection `supported` (specs/acp-agent-runtime.md "Availability (platform rule)").
+  const acpDetection = useAcpAgentDetection();
   const acpProviderInfo = useMemo(() => {
     const accessByAgentId = new Map<string, AcpSavedAccess>();
     const conflictAgentIds = new Set<string>();
@@ -732,7 +730,6 @@ export function ModelProviderSection({
   const acpGroup = useMemo(
     () =>
       buildAcpNavigationGroup({
-        enabled: acpEnabled,
         title: intl.formatMessage({ id: "settings.modelProvider.acp.title" }),
         detectLabel: intl.formatMessage({ id: "settings.modelProvider.acp.detectEntry" }),
         detectingLabel: intl.formatMessage({ id: "settings.modelProvider.acp.detecting" }),
@@ -743,7 +740,6 @@ export function ModelProviderSection({
       }),
     [
       acpDetection,
-      acpEnabled,
       acpEnabledProviderIds,
       acpManagedAgentIds,
       acpProviderInfo.conflictAgentIds,
@@ -769,7 +765,7 @@ export function ModelProviderSection({
       selectedNodeKey,
       setSelectedNodeKey,
       acpGroup,
-      acpDetectionPending: acpEnabled && acpDetection.status === "loading",
+      acpDetectionPending: acpDetection.status === "loading",
       intl,
     });
   const selectedPlanAccessKey =
@@ -1257,7 +1253,7 @@ export function ModelProviderSection({
           });
           refreshCodingPlanEntitlements();
           // The page refresh also rescans ACP agents, so a newly installed CLI shows up without a reload.
-          if (acpEnabled) acpDetection.rescan();
+          acpDetection.rescan();
         }}
         addProviderLabel={intl.formatMessage({ id: "settings.modelProvider.addProviderAction" })}
         onAddProvider={() => setTemplatePickerOpen(true)}

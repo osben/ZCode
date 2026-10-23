@@ -264,6 +264,7 @@ Feedback
 ```
 
 - `Move to group` 是二级菜单，列出当前 grouped view 内全部 group，并在名称前显示 group color dot。
+- `Move to group` 里的系统分组（cron、闲时）与组头一致，使用本地化展示标题（`getTaskGroupDisplayTitle`），不得显示 DB 中的占位标题（`cron` / `off-peak`）。
 - 当前所在 group 在二级菜单内禁用，避免重复移动。
 - root task 的 `Remove from group` 禁用；group 内 task 点击后移回 root。
 - `Remove from group` 会把 task 放到原 group 后面，保持用户操作后的空间上下文。

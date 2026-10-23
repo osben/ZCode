@@ -1,4 +1,4 @@
-import { formatProjectError } from "@/project-sidebar/view.js";
+import { formatProjectError, projectDeleteConfirmRequest } from "@/project-sidebar/view.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/ProjectDirectoryProvider.js";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -381,6 +381,8 @@ export function ProjectEditor({
   };
   const remove = async () => {
     if (!project) return;
+    // Confirm before entering the busy state, so Cancel leaves the form exactly as it was.
+    if (!(await confirm(projectDeleteConfirmRequest(intl.formatMessage, project.name)))) return;
     setBusy(true);
     setError(null);
     try {

@@ -770,6 +770,80 @@ modules:
     layers:
       app: .
     owner: remote
+  # quick-prompts：由 architecture:adopt 登记
+  - id: quick-prompts
+    roots:
+      - packages/services/src/quick-prompts
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/quick-prompts/index.ts
+      - packages/services/src/quick-prompts/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  # quick-prompts-ui：由 architecture:adopt 登记
+  - id: quick-prompts-ui
+    roots:
+      - packages/ui/src/quick-prompts
+    managed: true
+    requires:
+      - services
+      - ui
+      - project-sidebar
+      - prompt-body
+      - mobile-ui
+    publicEntrypoints:
+      - packages/ui/src/quick-prompts/index.ts
+      - packages/ui/src/quick-prompts/contract.ts
+    layers:
+      contract: contract.ts
+      ui: .
+    owner: conversation
+  # prompt-body：由 architecture:adopt 登记
+  - id: prompt-body
+    roots:
+      - packages/ui/src/prompt-body
+    managed: true
+    requires:
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/prompt-body/index.ts
+      - packages/ui/src/prompt-body/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  # model-trajectory-v2-projection：由 architecture:adopt 登记
+  - id: model-trajectory-v2-projection
+    roots:
+      - packages/services/src/model-trajectory-v2
+    managed: true
+    requires:
+      - services
+    publicEntrypoints:
+      - packages/services/src/model-trajectory-v2/index.ts
+      - packages/services/src/model-trajectory-v2/contract.ts
+    layers: { domain: domain, app: app, adapters: adapters }
+    layerOrder: [domain, app, adapters]
+    owner: conversation
+  # model-trajectory-v2：由 architecture:adopt 登记
+  - id: model-trajectory-v2
+    roots:
+      - packages/ui/src/model-trajectory-v2
+    managed: true
+    requires:
+      - mobile-ui
+      - services
+      - shared
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/model-trajectory-v2/index.ts
+      - packages/ui/src/model-trajectory-v2/contract.ts
+    layers: { domain: domain, app: app, ui: components }
+    layerOrder: [domain, app, ui]
+    owner: conversation
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。
@@ -934,6 +1008,7 @@ exceptions:
       - packages/acp-agent-runtime/src/runtime-resume.ts
       - packages/acp-agent-runtime/src/runtime-config.ts
       - packages/services/src/model-provider/acpAgentLogin.ts
+      - packages/services/src/model-provider/acpAgentCommand.ts
     reason: Cohesive pieces split out of the existing ACP runtime and settings bridge to keep each file under the staged-size limit (handshake wiring, process-tree teardown, login helpers); the runtime keeps the single lifecycle state owner. Adopting packages/acp-agent-runtime and the services model-provider directory needs a separate module boundary refactor.
   - id: acp-agent-fork-sidecar-unmanaged-files
     rule: unmanaged-new-file
@@ -942,6 +1017,12 @@ exceptions:
       - packages/provider-node/src/fork-acp-agent-store.ts
       - packages/services/src/model-provider/acpAgentWriter.ts
     reason: ACP agent records move out of the upstream-shared provider_config.json into the fork_acp_agents.json sidecar (specs/acp-agent-runtime.md "Storage and upstream compatibility"). The files follow the existing ChatGPT plan derivation layering inside the legacy provider, provider-node and services packages — pure derivation in provider, file owner in provider-node, settings writer in services — so the upstream-identical repository and codec stay untouched. Adopting those packages as managed modules needs a separate module boundary refactor.
+  - id: acp-agent-brand-mark-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/ui/src/settings/model-provider-section/AcpAgentMark.tsx
+      - packages/ui/src/settings/model-provider-section/acpAgentLogo.ts
+    reason: The ACP agent brand mark (specs/acp-agent-runtime.md "Agent registry") sits next to its neighbours in the unmanaged packages/ui settings model-provider-section tree (AcpAgentCard, AcpAgentsPanel). Keeping it there avoids a boundary refactor of the settings tree; adopting packages/ui/src/settings needs a separate module boundary refactor.
   - id: worktree-setup-card-slot-unmanaged-files
     rule: unmanaged-new-file
     paths:
@@ -960,8 +1041,9 @@ exceptions:
     paths:
       - packages/ui/src/v4/composer/externalAgentConfig.ts
       - packages/ui/src/v4/composer/V4ExternalAgentConfigControls.tsx
+      - packages/ui/src/hooks/useAcpAgentCatalog.ts
       - packages/ui/src/v4/pendingReservationGate.ts
-    reason: S6 agent configuration options (specs/acp-agent-runtime.md "UI (as shipped)") add the ACP agent selects beside the existing composer mode switch instead of growing ConversationComposer and V4ComposerToolbar (both size-exempt monoliths). The projection stays the only owner of the values; the pure helpers hold no state and the command goes through the session pane's existing dispatchCommand. Same unmanaged packages/ui/src/v4 tree as first-submission-review-fixes-unmanaged-files; adopting it needs a separate module boundary refactor.
+    reason: S6 agent configuration options (specs/acp-agent-runtime.md "UI (as shipped)") add the ACP agent selects beside the existing composer mode switch instead of growing ConversationComposer and V4ComposerToolbar (both size-exempt monoliths). The projection owns the values once a session exists; before it, the catalog hook (S6 readiness) reads the host catalog through the provider settings service, and the draft choices live in SessionPane state. The pure helpers hold no state and the command goes through the session pane's existing dispatchCommand. Same unmanaged packages/ui tree as first-submission-review-fixes-unmanaged-files; adopting it needs a separate module boundary refactor.
   - id: provider-endpoint-routing-unmanaged-edit
     rule: unmanaged-new-file
     paths:

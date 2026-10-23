@@ -15,6 +15,8 @@ export interface ModelTrajectoryOpenRequest {
   /** workspaceIdentity?.trim() || workspacePath, used to locate the target workspace sidebar. */
   workspaceKey: string;
   title?: string | null;
+  /** Which trajectory pane to open; absent means v1. */
+  kind?: "v1" | "v2";
 }
 
 interface ModelTrajectoryStoreState {

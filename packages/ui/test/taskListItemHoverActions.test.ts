@@ -28,6 +28,7 @@ const {
   leadingIndicatorState,
   formatRelativeTimeCalls,
   tooltipCalls,
+  rootTooltipProps,
   triggerChildren,
   stableIntl,
 } = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ const {
   leadingIndicatorState: { value: "none" },
   formatRelativeTimeCalls: [] as number[],
   tooltipCalls: [] as Array<Record<string, unknown>>,
+  rootTooltipProps: [] as Array<Record<string, unknown>>,
   triggerChildren: [] as ReactElement[],
   stableIntl: {
     formatMessage: ({ id }: { id: string }) => id,
@@ -71,7 +73,10 @@ vi.mock("@/components/ui/badge.js", () => ({
 
 vi.mock("@/components/ui/tooltip.js", () => ({
   TooltipProvider: ({ children }: { children?: ReactNode }) => children,
-  Tooltip: ({ children }: { children?: ReactNode }) => children,
+  Tooltip: (props: { children?: ReactNode }) => {
+    rootTooltipProps.push(props as Record<string, unknown>);
+    return props.children;
+  },
   TooltipTrigger: ({ children }: { children?: ReactNode }) => children,
   TooltipContent: ({ children }: { children?: ReactNode }) => children,
 }));
@@ -337,6 +342,7 @@ describe("TaskListItem hover action rendering", () => {
     leadingIndicatorState.value = "none";
     formatRelativeTimeCalls.length = 0;
     tooltipCalls.length = 0;
+    rootTooltipProps.length = 0;
     triggerChildren.length = 0;
     delete (globalThis as { document?: unknown }).document;
     delete (globalThis as { window?: unknown }).window;
@@ -371,6 +377,46 @@ describe("TaskListItem hover action rendering", () => {
     expect(contextMenuMounts).toHaveLength(0);
     expect(contextActionsCalls).toHaveLength(0);
     expect(tooltipCalls).toHaveLength(0);
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("keeps the row Tooltip open prop boolean when hoverEnabled flips on a mounted row", async () => {
+    const { MemoTaskItem } = await import("@/TaskListItem.js");
+    const root: Root = createRoot(installMinimalDom());
+    const renderRow = (hoverEnabled: boolean) =>
+      act(() => {
+        root.render(
+          createElement(MemoTaskItem, {
+            hoverEnabled,
+            intl: stableIntl,
+            isActive: false,
+            isArchiveConfirming: false,
+            isPinned: false,
+            onArchiveTask: vi.fn(),
+            onArchiveTaskInline: vi.fn(),
+            onCancelArchiveConfirm: vi.fn(),
+            onMarkTaskAsUnread: vi.fn(),
+            onSelectTask: vi.fn(),
+            onStartRenameTask: vi.fn(),
+            onTogglePinTask: vi.fn(),
+            task: createTask(),
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+
+    // Radix warns when `open` switches between undefined and a boolean; every render must hand it a boolean.
+    renderRow(true);
+    renderRow(false);
+    renderRow(true);
+
+    expect(rootTooltipProps.length).toBeGreaterThan(0);
+    expect(rootTooltipProps.map((props) => typeof props.open)).toEqual(
+      rootTooltipProps.map(() => "boolean"),
+    );
 
     act(() => {
       root.unmount();
@@ -452,7 +498,159 @@ describe("TaskListItem hover action rendering", () => {
       row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
     });
 
+    // Hover swaps the phone marker out, so the run-state slot must be visible, not merely un-invisible.
     expect(unreadIndicator?.parentNode?.__attrs.get("class")).not.toContain("invisible");
+    expect(unreadIndicator?.parentNode?.__attrs.get("class")).not.toContain("hidden");
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  // task-hover-card-layout #9 (regular row only; grouped rows have no phone marker).
+  it.each([
+    { name: "error", attribute: "data-error-indicator", value: "true", indicator: "error" },
+    { name: "unread", attribute: "data-unread-indicator", value: "true", indicator: "unread" },
+    { name: "running", attribute: "data-icon", value: "loader", indicator: "loading" },
+  ] as const)(
+    "shows a mobile-active $name task's run-state indicator in the slot once hover actions take it",
+    async ({ attribute, value, indicator }) => {
+      const { MemoTaskItem } = await import("@/TaskListItem.js");
+      const container = installMinimalDom();
+      const root: Root = createRoot(container);
+      leadingIndicatorState.value = indicator;
+
+      act(() => {
+        root.render(
+          createElement(MemoTaskItem, {
+            intl: stableIntl,
+            isActive: false,
+            isArchiveConfirming: false,
+            isMobileActive: true,
+            isPinned: false,
+            onArchiveTask: vi.fn(),
+            onArchiveTaskInline: vi.fn(),
+            onCancelArchiveConfirm: vi.fn(),
+            onMarkTaskAsUnread: vi.fn(),
+            onSelectTask: vi.fn(),
+            onStartRenameTask: vi.fn(),
+            onTogglePinTask: vi.fn(),
+            task: createTask(),
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+
+      const indicatorNode = findByAttributeValue(container, attribute, value);
+      expect(indicatorNode).not.toBeNull();
+      // At rest the phone marker owns the slot, so the run-state node is only invisible.
+      expect(indicatorNode?.parentNode?.__attrs.get("class")).toContain("invisible");
+
+      const row = findByAttribute(container, "data-task-item-key");
+      act(() => {
+        row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
+      });
+
+      const slotClass = findByAttributeValue(container, attribute, value)?.parentNode?.__attrs.get(
+        "class",
+      );
+      expect(slotClass).not.toContain("invisible");
+      expect(slotClass).not.toContain("hidden");
+
+      act(() => {
+        root.unmount();
+      });
+    },
+  );
+
+  it.each([
+    { name: "error", indicatorAttribute: "data-error-indicator", indicator: "error" },
+    { name: "unread", indicatorAttribute: "data-unread-indicator", indicator: "unread" },
+  ] as const)(
+    "keeps the $name run-state indicator visible in the leading slot on hover, with actions",
+    async ({ indicatorAttribute, indicator }) => {
+      const { MemoTaskItem } = await import("@/TaskListItem.js");
+      const container = installMinimalDom();
+      const root: Root = createRoot(container);
+      leadingIndicatorState.value = indicator;
+
+      act(() => {
+        root.render(
+          createElement(MemoTaskItem, {
+            intl: stableIntl,
+            isActive: false,
+            isArchiveConfirming: false,
+            isPinned: false,
+            onArchiveTask: vi.fn(),
+            onArchiveTaskInline: vi.fn(),
+            onCancelArchiveConfirm: vi.fn(),
+            onMarkTaskAsUnread: vi.fn(),
+            onSelectTask: vi.fn(),
+            onStartRenameTask: vi.fn(),
+            onTogglePinTask: vi.fn(),
+            task: createTask(),
+            workspacePath: "/workspace",
+          }),
+        );
+      });
+
+      const row = findByAttribute(container, "data-task-item-key");
+      act(() => {
+        row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
+      });
+
+      const indicatorNode = findByAttribute(container, indicatorAttribute);
+      expect(indicatorNode).not.toBeNull();
+      const slotClass = indicatorNode?.parentNode?.__attrs.get("class") ?? "";
+      expect(slotClass).not.toContain("hidden");
+      expect(slotClass).not.toContain("invisible");
+      // The Pin action must not take the slot away from the status; it moves into the action cluster.
+      expect(findByAttribute(container, "data-task-row-actions")).not.toBeNull();
+      expect(findByAttributeValue(container, "aria-label", "taskList.pin")).not.toBeNull();
+
+      act(() => {
+        root.unmount();
+      });
+    },
+  );
+
+  it("keeps the running spinner visible in the leading slot on hover, with actions", async () => {
+    const { MemoTaskItem } = await import("@/TaskListItem.js");
+    const container = installMinimalDom();
+    const root: Root = createRoot(container);
+    leadingIndicatorState.value = "loading";
+
+    act(() => {
+      root.render(
+        createElement(MemoTaskItem, {
+          intl: stableIntl,
+          isActive: false,
+          isArchiveConfirming: false,
+          isPinned: false,
+          onArchiveTask: vi.fn(),
+          onArchiveTaskInline: vi.fn(),
+          onCancelArchiveConfirm: vi.fn(),
+          onMarkTaskAsUnread: vi.fn(),
+          onSelectTask: vi.fn(),
+          onStartRenameTask: vi.fn(),
+          onTogglePinTask: vi.fn(),
+          task: createTask(),
+          workspacePath: "/workspace",
+        }),
+      );
+    });
+
+    const row = findByAttribute(container, "data-task-item-key");
+    act(() => {
+      row?.dispatchEvent({ bubbles: true, relatedTarget: null, type: "mouseover" });
+    });
+
+    const spinner = findByAttributeValue(container, "data-icon", "loader");
+    expect(spinner).not.toBeNull();
+    const slotClass = spinner?.parentNode?.__attrs.get("class") ?? "";
+    expect(slotClass).toContain("animate-spin");
+    expect(slotClass).not.toContain("hidden");
+    expect(findByAttribute(container, "data-task-row-actions")).not.toBeNull();
 
     act(() => {
       root.unmount();

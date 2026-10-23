@@ -21,7 +21,7 @@ import {
   type LexicalChatInputHandle,
 } from "@/LexicalChatInput.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import type { AppSlashCommand } from "@/slashCommandHelpers.js";
+import type { AppSlashCommand, QuickPromptSlashItem } from "@/slashCommandHelpers.js";
 import {
   hasWorkspaceFileDragPayload,
   readWorkspaceFileDragPayload,
@@ -52,6 +52,7 @@ export function ChatPromptEditor({
   disabledReason,
   submitting = false,
   submitDisabled = false,
+  onSubmitBlocked,
   allowSubmitWhenEmpty = false,
   enterSubmits = true,
   submitLabel,
@@ -92,6 +93,7 @@ export function ChatPromptEditor({
   excludedSlashCommandNames,
   appSlashCommands,
   enableMentionPanel,
+  quickPrompts,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -105,6 +107,8 @@ export function ChatPromptEditor({
   disabledReason?: string;
   submitting?: boolean;
   submitDisabled?: boolean;
+  /** Enter while submitDisabled is taken by the composer (keeps the draft, no newline) when provided. */
+  onSubmitBlocked?: () => void;
   allowSubmitWhenEmpty?: boolean;
   enterSubmits?: boolean;
   submitLabel: string;
@@ -140,7 +144,8 @@ export function ChatPromptEditor({
   shellClassName?: string;
   avoidIosInputFocusZoom?: boolean;
   compactPlaceholder?: boolean;
-  onChange?: (value: string) => void;
+  /** `programmatic` is true for the editor's own clears and restores, false for typing. */
+  onChange?: (value: string, meta: { programmatic: boolean }) => void;
   // 适配：返回 false 表示业务层拒绝/延迟本次提交，Lexical 不自行 reset（草稿保留）。
   onSubmit: (value: string) => boolean | void;
   onModifiedSubmit?: (value: string) => boolean | void;
@@ -156,6 +161,8 @@ export function ChatPromptEditor({
   appSlashCommands?: readonly AppSlashCommand[];
   /** mention 面板开关（透传 LexicalChatInput）。 */
   enableMentionPanel?: boolean;
+  /** Quick prompts for the "/" panel; the quick prompt editor omits it so its own body cannot insert quick prompts. */
+  quickPrompts?: readonly QuickPromptSlashItem[];
 }) {
   const { intl } = useZCodeIntl();
   const toolbarRef = useComposerToolbarFit();
@@ -209,9 +216,9 @@ export function ChatPromptEditor({
   }, [initialValue, resolvedInputApiRef, syncInitialValueOnMount]);
 
   const handleTextChange = useCallback(
-    (value: string) => {
+    (value: string, meta: { programmatic: boolean }) => {
       latestTextRef.current = value;
-      onChange?.(value);
+      onChange?.(value, meta);
     },
     [onChange],
   );
@@ -309,7 +316,8 @@ export function ChatPromptEditor({
           payload: workspaceFilePayload,
           workspacePath,
           workspaceIdentity,
-          onTextChange: handleTextChange,
+          // A dropped file mention is an insertion the editor performs, not typing.
+          onTextChange: (text) => handleTextChange(text, { programmatic: true }),
         });
         return;
       }
@@ -345,6 +353,7 @@ export function ChatPromptEditor({
       placeholder={placeholder}
       disabled={disabled}
       submitDisabled={submitDisabled}
+      onSubmitBlocked={onSubmitBlocked}
       allowSubmitWhenEmpty={allowSubmitWhenEmpty}
       enterSubmits={enterSubmits}
       onSubmit={handleEditorSubmit}
@@ -366,6 +375,7 @@ export function ChatPromptEditor({
       excludedSlashCommandNames={excludedSlashCommandNames}
       appSlashCommands={appSlashCommands}
       enableMentionPanel={enableMentionPanel}
+      quickPrompts={quickPrompts}
     />
   );
 

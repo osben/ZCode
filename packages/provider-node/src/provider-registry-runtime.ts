@@ -24,7 +24,7 @@ export interface NodeProviderRegistryRuntimeOptions extends NodeProviderConfigRu
   readonly wrapConfigSource?: (
     source: ProviderSource<ProviderConfigSnapshot>,
   ) => ProviderSource<ProviderConfigSnapshot>;
-  /** Development-only ACP model gate forwarded to the Registry (default false). */
+  /** ACP availability (specs/acp-agent-runtime.md "Availability (platform rule)") forwarded to the Registry (default false). */
   readonly acpExecutable?: boolean;
 }
 

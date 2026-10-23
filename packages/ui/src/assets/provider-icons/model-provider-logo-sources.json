@@ -119,6 +119,42 @@
       "sourceUrl": "https://avatars.githubusercontent.com/u/130314967?v=4",
       "sourceOwner": "xAI",
       "normalization": "Official GitHub organization avatar downsampled from 460x460 to 80x80 RGB."
+    },
+    {
+      "brand": "Cursor",
+      "file": "acp-agent-cursor-light.svg",
+      "darkFile": "acp-agent-cursor-dark.svg",
+      "providerIds": ["acp:cursor"],
+      "sourceUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16.35.0/icons/cursor.svg",
+      "sourceOwner": "Simple Icons (CC0-1.0); mark owned by Cursor",
+      "normalization": "Simple Icons 16.35.0 single-path 24x24 SVG, unchanged except a fill colour (#211E1E light, #F2F0ED dark). Retrieved 2026-10-22."
+    },
+    {
+      "brand": "Qwen",
+      "file": "acp-agent-qwen-light.svg",
+      "darkFile": "acp-agent-qwen-dark.svg",
+      "providerIds": ["acp:qwen"],
+      "sourceUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16.35.0/icons/qwen.svg",
+      "sourceOwner": "Simple Icons (CC0-1.0); mark owned by Qwen",
+      "normalization": "Simple Icons 16.35.0 single-path 24x24 SVG, unchanged except a fill colour (#211E1E light, #F2F0ED dark). Retrieved 2026-10-22."
+    },
+    {
+      "brand": "Google Gemini",
+      "file": "acp-agent-gemini-light.svg",
+      "darkFile": "acp-agent-gemini-dark.svg",
+      "providerIds": ["acp:gemini"],
+      "sourceUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16.35.0/icons/googlegemini.svg",
+      "sourceOwner": "Simple Icons (CC0-1.0); mark owned by Google Gemini",
+      "normalization": "Simple Icons 16.35.0 single-path 24x24 SVG, unchanged except a fill colour (#211E1E light, #F2F0ED dark). Retrieved 2026-10-22."
+    },
+    {
+      "brand": "Claude",
+      "file": "acp-agent-claude-light.svg",
+      "darkFile": "acp-agent-claude-dark.svg",
+      "providerIds": ["acp:claude"],
+      "sourceUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16.35.0/icons/claude.svg",
+      "sourceOwner": "Simple Icons (CC0-1.0); mark owned by Claude",
+      "normalization": "Simple Icons 16.35.0 single-path 24x24 SVG, unchanged except a fill colour (#211E1E light, #F2F0ED dark). Retrieved 2026-10-22."
     }
   ]
 }

@@ -317,6 +317,12 @@ function findUpward(relativePath: string): string | null {
     if (existsSync(candidate)) {
       return candidate;
     }
+    // Stop at the nearest checkout root (`.git` dir or worktree `.git` file): worktrees live
+    // inside the main checkout, so an unbounded walk ran the parent repo's stale CLI build
+    // instead of the worktree's code (specs/agent-cli-checkout-resolution.md).
+    if (existsSync(join(current, ".git"))) {
+      return null;
+    }
     const parent = dirname(current);
     if (parent === current) {
       return null;
@@ -384,6 +390,12 @@ function resolveBundledWorkspaceZCodeAgentCommand(
   const sourceEntrypoint = findUpward("apps/zcode-cli/packages/cli/src/main.ts");
   const tsxEntrypoint = findUpward("node_modules/.bin/tsx");
   if (!sourceEntrypoint || !tsxEntrypoint) {
+    if (sourceEntrypoint) {
+      // Without this the resolver silently falls through to a packaged build.
+      warnLog("ZCode agent source found but node_modules/.bin/tsx is missing", {
+        sourceEntrypoint,
+      });
+    }
     return null;
   }
   return {

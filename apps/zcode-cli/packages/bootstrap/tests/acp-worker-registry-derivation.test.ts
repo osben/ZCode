@@ -56,35 +56,42 @@ async function workerEnv(runtimeEnv: "development" | "production") {
   };
 }
 
+// specs/acp-agent-runtime.md "Availability (platform rule)": derivation follows the platform predicate
+// alone. The runtime env must change nothing, so both envs are checked on each platform.
+const runtimeEnvs = ["development", "production"] as const;
 describe("worker provider registry derives ACP agents", () => {
-  it("exposes the agent model to the chat Registry only in the development runtime", async () => {
-    const development = await startProcessProviderRegistryRuntime(await workerEnv("development"));
-    try {
-      const provider = development.snapshot.registry.providers.find(
-        (entry) => entry.providerId === ACP_PROVIDER_ID,
-      );
-      expect(provider?.models.map((model) => model.modelId)).toEqual(["opencode"]);
-      const records = await development.acpAgentStore.read();
-      expect(records.agents.map((agent) => agent.agentId)).toEqual(["opencode"]);
-    } finally {
-      development.dispose();
-    }
-  });
+  for (const runtimeEnv of runtimeEnvs) {
+    it(`exposes the agent model on a supported platform (${runtimeEnv} env)`, async () => {
+      const runtime = await startProcessProviderRegistryRuntime(await workerEnv(runtimeEnv), {
+        acpPlatform: "darwin",
+      });
+      try {
+        const provider = runtime.snapshot.registry.providers.find(
+          (entry) => entry.providerId === ACP_PROVIDER_ID,
+        );
+        expect(provider?.models.map((model) => model.modelId)).toEqual(["opencode"]);
+        const records = await runtime.acpAgentStore.read();
+        expect(records.agents.map((agent) => agent.agentId)).toEqual(["opencode"]);
+      } finally {
+        runtime.dispose();
+      }
+    });
 
-  it("keeps the agent out of the chat Registry in a production runtime without deleting it", async () => {
-    const env = await workerEnv("production");
-    const production = await startProcessProviderRegistryRuntime(env);
-    try {
-      expect(
-        production.snapshot.registry.providers.some((entry) => entry.providerId === ACP_PROVIDER_ID),
-      ).toBe(false);
-      // The gate hides the model; the sidecar record stays on disk for a development run.
-      const records = await production.acpAgentStore.read();
-      expect(records.agents).toHaveLength(1);
-    } finally {
-      production.dispose();
-    }
-  });
+    it(`keeps the agent out of the chat Registry on an unsupported platform (${runtimeEnv} env)`, async () => {
+      const env = await workerEnv(runtimeEnv);
+      const runtime = await startProcessProviderRegistryRuntime(env, { acpPlatform: "win32" });
+      try {
+        expect(
+          runtime.snapshot.registry.providers.some((entry) => entry.providerId === ACP_PROVIDER_ID),
+        ).toBe(false);
+        // Availability hides the model; the sidecar record stays on disk untouched.
+        const records = await runtime.acpAgentStore.read();
+        expect(records.agents).toHaveLength(1);
+      } finally {
+        runtime.dispose();
+      }
+    });
+  }
 
   it("does not write provider_config.json while deriving (the worker never migrates)", async () => {
     const env = await workerEnv("development");

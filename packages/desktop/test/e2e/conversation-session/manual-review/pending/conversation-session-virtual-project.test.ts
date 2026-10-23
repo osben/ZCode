@@ -283,6 +283,9 @@ describe("Virtual project", () => {
       await waitForWorkspaceApp(paths[1]!, 30_000);
       await edit();
       await $('[data-testid="virtual-project-editor-delete"]').click();
+      // Deleting from the editor confirms first (ISSUE-028).
+      await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+      await $('[data-testid="confirm-dialog-confirm"]').click();
       await $('[role="dialog"]').waitForExist({ reverse: true });
       await project.waitForExist({ reverse: true });
       expect(db.prepare("SELECT deleted FROM projects WHERE project_id=?").get(id)?.deleted).toBe(
@@ -1044,6 +1047,9 @@ describe("Virtual project", () => {
       button: "right",
     });
     await $('[data-testid="virtual-project-delete"]').click();
+    // Project deletion is confirmed first (ISSUE-028).
+    await $('[data-testid="confirm-dialog-confirm"]').waitForDisplayed();
+    await $('[data-testid="confirm-dialog-confirm"]').click();
     await $('[data-project-name="E2E_VP04_Renamed"]').waitForDisplayed({ reverse: true });
     await openLocalProjectEditor();
     await $('[data-testid="virtual-project-name"]').setValue("E2E_VP04_Restored");

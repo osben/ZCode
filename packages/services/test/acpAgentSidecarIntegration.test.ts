@@ -14,6 +14,7 @@ import {
   encodeProviderConfigFile,
   resolveForkAcpAgentsFilePath,
 } from "@zcode/provider-node";
+import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
 import { createProviderRuntime } from "../src/model-provider/providerRuntime.js";
 
 // specs/acp-agent-runtime.md "Storage and upstream compatibility": ACP agents live in the fork
@@ -35,8 +36,11 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
-/** `development` mirrors a development runtime (the dev-only ACP gate); `false` is a packaged host. */
-function startRuntime(development = true) {
+/**
+ * `available` is the host's availability flag: the one value the composition root computes from
+ * `acpAgentPlatformSupported` (specs/acp-agent-runtime.md "Availability (platform rule)").
+ */
+function startRuntime(available = true) {
   runtime = createProviderRuntime({
     zcodeBuiltinFilePath: fileURLToPath(
       new URL("../../../config/provider/zcode-builtin.json", import.meta.url),
@@ -44,7 +48,7 @@ function startRuntime(development = true) {
     personalFilePath,
     watch: false,
     personalPollingIntervalMs: false,
-    acpExecutable: development,
+    acpExecutable: available,
     acpAgentStore: new NodeForkAcpAgentStore({
       filePath: sidecarFilePath,
       pollingIntervalMs: false,
@@ -181,19 +185,35 @@ describe("ACP agents stored in the fork sidecar", () => {
   });
 });
 
-describe("ACP agents outside a development runtime", () => {
+describe("ACP agents on a supported platform", () => {
+  it("derives, lists and writes the agent in a packaged darwin host (no dev runtime)", async () => {
+    // The host's availability is the platform predicate alone; nothing about the runtime env enters.
+    const available = acpAgentPlatformSupported("darwin");
+    const packagedDarwin = startRuntime(available).providerSettings;
+    await packagedDarwin.saveAcpAgent(SAVE);
+    const view = await packagedDarwin.getView();
+    expect(acpProvider(view)?.providerId).toBe("acp:opencode");
+    expect(acpProvider(view)?.models.map((model) => model.modelId)).toEqual(["opencode"]);
+    expect(acpProvider(view)?.models[0]?.executable).toBe(true);
+    const sidecar = JSON.parse(await readFile(sidecarFilePath, "utf8")) as { agents: unknown[] };
+    expect(sidecar.agents).toHaveLength(1);
+    expect(await readMainFileText()).not.toContain("acp:opencode");
+  });
+});
+
+describe("ACP agents on an unsupported platform", () => {
   it("does not derive acp providers from the sidecar and refuses ACP writes", async () => {
-    // A development host wrote the sidecar; a packaged host reads the same file.
-    await startRuntime(true).providerSettings.saveAcpAgent(SAVE);
+    // A supported host wrote the sidecar; an unsupported host reads the same file.
+    await startRuntime(acpAgentPlatformSupported("darwin")).providerSettings.saveAcpAgent(SAVE);
     const sidecarBefore = await readFile(sidecarFilePath, "utf8");
 
-    const packaged = startRuntime(false).providerSettings;
-    const view = await packaged.getView();
+    const unsupported = startRuntime(acpAgentPlatformSupported("win32")).providerSettings;
+    const view = await unsupported.getView();
     expect(acpProvider(view)).toBeUndefined();
 
-    await expect(packaged.saveAcpAgent(SAVE)).rejects.toThrow(/not supported/);
+    await expect(unsupported.saveAcpAgent(SAVE)).rejects.toThrow(/not supported/);
     await expect(
-      packaged.setAcpAgentEnabled({ agentId: "opencode", enabled: false }),
+      unsupported.setAcpAgentEnabled({ agentId: "opencode", enabled: false }),
     ).rejects.toThrow(/not supported/);
     expect(await readFile(sidecarFilePath, "utf8")).toBe(sidecarBefore);
   });

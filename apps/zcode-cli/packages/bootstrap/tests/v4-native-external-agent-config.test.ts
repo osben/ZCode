@@ -31,15 +31,19 @@ function makeStore(initial: {
   agentId?: string;
   offered?: readonly ExternalAgentConfigOption[];
   choices?: Record<string, string>;
+  /** The agent's catalog (S6 readiness); absent means the agent was never run or tested. */
+  catalog?: readonly ExternalAgentConfigOption[];
 }) {
   let offered = initial.offered;
   const choices: Record<string, string> = { ...initial.choices };
   const store: V4ExternalAgentConfigStore = {
     readConfig: vi.fn(async () => ({ agentId: initial.agentId, offered, choices: { ...choices } })),
+    readCatalog: vi.fn(async () => initial.catalog),
+    // Like the real store: the offered copy exists only for a binding (an offered snapshot); pending sessions have none.
     writeOffered: vi.fn(async (_sessionId, options) => {
-      offered = options;
+      if (offered !== undefined) offered = options;
     }),
-    writeChoice: vi.fn(async (_sessionId, configId, value) => {
+    writeChoice: vi.fn(async (_sessionId, _agentId, configId, value) => {
       choices[configId] = value;
     }),
   };
@@ -82,7 +86,7 @@ function command(payload: { sessionId?: string; configId: string; value: string 
 }
 
 describe("v4 setExternalAgentConfigOption", () => {
-  it("refuses before the first message with config.notAvailable", async () => {
+  it("refuses before the first turn when the agent has no catalog, with config.notAvailable", async () => {
     const { store } = makeStore({ agentId: "opencode" });
     const { host, appended } = makeHost(store);
 
@@ -91,6 +95,61 @@ describe("v4 setExternalAgentConfigOption", () => {
     ).rejects.toMatchObject({ reasonCode: "config.notAvailable" });
     expect(store.writeChoice).not.toHaveBeenCalled();
     expect(appended).toEqual([]);
+  });
+
+  // S6 readiness: the catalog offers the options before the first turn; the choice is pending, and the event
+  // carries the catalog with the chosen value.
+  it("accepts a choice before the first turn when the catalog offers it, and appends the catalog", async () => {
+    const { store, read } = makeStore({ agentId: "opencode", catalog: [MODE] });
+    const { host, appended } = makeHost(store);
+
+    await new V4CommandExecutor(host).execute(command({ configId: "mode", value: "plan" }));
+
+    expect(store.writeChoice).toHaveBeenCalledWith("s1", "opencode", "mode", "plan");
+    expect(read().choices).toEqual({ mode: "plan" });
+    const updated = [{ ...MODE, currentValue: "plan" }];
+    expect(appended[0]?.payload).toEqual({ agentId: "opencode", options: updated });
+  });
+
+  // Pending choices are all shown: the event after a second choice still reflects the first one.
+  it("reflects every pre-turn choice made so far in the event, not only the latest", async () => {
+    const MODEL: ExternalAgentConfigOption = {
+      id: "model",
+      name: "Model",
+      description: null,
+      category: "model",
+      currentValue: "fast",
+      options: [
+        { value: "fast", name: "Fast", description: null, group: null },
+        { value: "slow", name: "Slow", description: null, group: null },
+      ],
+    };
+    const { store } = makeStore({ agentId: "opencode", catalog: [MODE, MODEL] });
+    const { host, appended } = makeHost(store);
+    const executor = new V4CommandExecutor(host);
+
+    await executor.execute(command({ configId: "mode", value: "plan" }));
+    await executor.execute(command({ configId: "model", value: "slow" }));
+
+    const options = (appended[1]?.payload as { options: ExternalAgentConfigOption[] }).options;
+    expect(options.find((option) => option.id === "mode")?.currentValue).toBe("plan");
+    expect(options.find((option) => option.id === "model")?.currentValue).toBe("slow");
+  });
+
+  it("refuses a pre-turn choice the catalog does not offer with config.invalid", async () => {
+    const { store } = makeStore({ agentId: "opencode", catalog: [MODE] });
+    await expect(
+      new V4CommandExecutor(makeHost(store).host).execute(command({ configId: "mode", value: "yolo" })),
+    ).rejects.toMatchObject({ reasonCode: "config.invalid" });
+    expect(store.writeChoice).not.toHaveBeenCalled();
+  });
+
+  it("refuses a pre-turn choice when the pending session belongs to another agent", async () => {
+    const { store } = makeStore({ agentId: "claude", catalog: [MODE] });
+    await expect(
+      new V4CommandExecutor(makeHost(store).host).execute(command({ configId: "mode", value: "plan" })),
+    ).rejects.toMatchObject({ reasonCode: "config.notAvailable" });
+    expect(store.writeChoice).not.toHaveBeenCalled();
   });
 
   it("refuses an id or value the agent does not offer with config.invalid", async () => {

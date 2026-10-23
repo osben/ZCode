@@ -19,6 +19,13 @@ import { buildRemoteHostWorkspaceIdentity } from "@/project-sidebar/contract.js"
 import { logger } from "@/logger.js";
 import { useProjectUnreadSignals } from "@/project-sidebar/useProjectUnreadSignals.js";
 import { areStabilizedValuesEquivalent } from "@/v4/taskListItemStabilization.js";
+import {
+  EMPTY_DELETED_TASK_FACTS,
+  isKnownDeletedTask,
+  reconcileDeletedTaskFacts,
+  type DeletedTaskFacts,
+} from "@/project-sidebar/deletedTaskFacts.js";
+import type { TaskIdentityRef } from "@/lib/taskNavigationHistory.js";
 
 const subscribeToNothing = () => () => {};
 const zeroRevision = () => 0;
@@ -67,6 +74,11 @@ export function useProjectTree(isDesktop = false) {
     }>(),
   );
   const removeTaskState = useZCodeSessionStore((state) => state.removeTaskState);
+  const deletedTaskFacts = useRef<DeletedTaskFacts>(EMPTY_DELETED_TASK_FACTS);
+  const isTaskKnownDeleted = useCallback(
+    (task: TaskIdentityRef) => isKnownDeletedTask(deletedTaskFacts.current, task),
+    [],
+  );
   const accepted = useRef<{
     service: typeof service;
     remote: typeof remoteService;
@@ -98,6 +110,13 @@ export function useProjectTree(isDesktop = false) {
           }
         }
         accepted.current = { service, remote: remoteService, tree: result.tree };
+        // Deletion facts are owned here and retained per host: a failed or offline host keeps its last-known tombstones,
+        // and a host leaves the facts only when it leaves directory membership. A different service starts from empty facts.
+        deletedTaskFacts.current = reconcileDeletedTaskFacts({
+          previous:
+            previous?.service === service ? deletedTaskFacts.current : EMPTY_DELETED_TASK_FACTS,
+          read: result,
+        });
         // Bugfix: 自动归档只改 Host archived，未执行手动归档的 UI 清理，导致列表消失而详情残留。
         // 只处理已接受快照中的明确状态转换；首次已归档、离线缺行与迟到响应都不是归档事件。
         if (previous?.service === service && previous.remote === remoteService) {
@@ -354,6 +373,7 @@ export function useProjectTree(isDesktop = false) {
       remoteService,
       refresh: refreshDirectory,
       commitCreatedTask,
+      isTaskKnownDeleted,
       error,
       loading,
     }),
@@ -366,6 +386,7 @@ export function useProjectTree(isDesktop = false) {
       remoteService,
       refreshDirectory,
       commitCreatedTask,
+      isTaskKnownDeleted,
       error,
       loading,
     ],

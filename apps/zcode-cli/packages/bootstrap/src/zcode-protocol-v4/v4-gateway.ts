@@ -306,6 +306,7 @@ export interface V4GatewayHost {
    */
   getSessionExternalAgentConfigSeed?(
     sessionId: string,
+    providerId: string,
   ): Promise<ConversationSnapshot["config"]["externalAgentConfig"] | null>;
   /** 只读会话创建期 App 开关，不读取实时设置或推断 Memory 工具使用。 */
   getSessionMemoryEnabled?(sessionId: string): boolean | undefined;
@@ -3731,7 +3732,9 @@ export class ConversationV4Gateway {
     // plain subscribe never reads the shared session database for it.
     if (!publisher.getSnapshot().config.provider.startsWith(ACP_PROVIDER_ID_PREFIX)) return;
     try {
-      publisher.seedExternalAgentConfig(await getSeed.call(this.host, sessionId));
+      publisher.seedExternalAgentConfig(
+        await getSeed.call(this.host, sessionId, publisher.getSnapshot().config.provider),
+      );
     } catch (error) {
       this.host.onError?.("v4.externalAgentConfigSeed", error);
     }

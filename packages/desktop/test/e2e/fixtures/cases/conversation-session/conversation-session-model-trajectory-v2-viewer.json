@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-model-trajectory-v2-viewer",
+  "spec": "./test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts",
+  "providerFixtures": [
+    "./test/e2e/fixtures/upstream/common.json",
+    "./test/e2e/fixtures/upstream/conversation-session/conversation-session-model-trajectory-v2-viewer.json"
+  ],
+  "fileFixtures": [
+    {
+      "path": "trv2-e2e/target.txt",
+      "source": "created-by-spec",
+      "description": "spec 在默认工作区写入的目标文件；TRV01 的只读 Bash cat 读取它，使 tool_result 进入后续请求。"
+    },
+    {
+      "path": ".zcode/cli/debug/model-io-<runtime-task-id>.jsonl",
+      "source": "created-by-spec",
+      "description": "spec 按真实 task id 追加确定性 model-io 记录（含 request.body 与 timing），覆盖请求差异、载荷、范围过滤、虚拟列表与刷新语义。"
+    }
+  ],
+  "requests": [
+    {
+      "id": "model-trajectory-v2-title",
+      "description": "TRV01 任务标题生成的固定响应。",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "标题生成不是轨迹 v2 交互的产品语义，只需稳定完成。"
+    },
+    {
+      "id": "model-trajectory-v2-bash-call",
+      "description": "TRV01 首段响应：只读 Bash cat tool_use。",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "真实 provider 不一定稳定选择 Bash cat；本响应固定触发只读 Bash 调用，验证 live timing/tool_usage 落盘链路。"
+    },
+    {
+      "id": "model-trajectory-v2-final",
+      "description": "TRV01 最终响应：thinking+text stream 结束回合。",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "固定 thinking/text stream 使 CLI model-io 的 timing 与 reasoningText 落盘可被稳定断言。"
+    },
+    {
+      "id": "model-trajectory-v2-title-task2",
+      "description": "TRV02 任务标题生成的固定响应。",
+      "kind": "common",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "标题生成不是轨迹 v2 交互的产品语义，只需稳定完成。"
+    },
+    {
+      "id": "model-trajectory-v2-task-seed",
+      "description": "TRV02-TRV05 任务建立：真实 task/session 与带 thinking 的 stream。",
+      "kind": "main",
+      "source": "synthetic",
+      "timingPolicy": "fast-text",
+      "syntheticReason": "固定 thinking/text stream 使真实 task 的 model-io timing 可被读取；确定性投影语义全部由 spec 追加的 case-local 记录驱动。"
+    }
+  ]
+}

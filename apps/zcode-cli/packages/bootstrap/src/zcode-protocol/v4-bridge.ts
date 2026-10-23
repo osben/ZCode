@@ -1,3 +1,4 @@
+import { ACP_PROVIDER_ID_PREFIX } from "@zcode/provider";
 import { worktreePreparationStateSchema } from "@zcode/shared/zcode-protocol-v4";
 import {
   assertWorktreePreparationMutation,
@@ -88,6 +89,7 @@ import {
   createEventId,
   createSessionId,
 } from "@zcode/contracts";
+import type { V4ExternalAgentConfigStore } from "../zcode-protocol-v4/commands/external-agent-config-store.js";
 import type {
   CollaborationMode,
   DynamicWorkflowRunProgressPayload,
@@ -514,6 +516,25 @@ function admissionAttachmentRefs(
  * admission 只持久化真正会产生输入的命令。edit/retry 不能从 payload 猜 intent；
  * 必须复用 projection 的 canonical target，并把旧来源折叠进 provenance。
  */
+/**
+ * The selects a session shows for its ACP agent from the binding (specs/acp-agent-runtime.md "S6"): the offered
+ * snapshot of this agent. The agent catalog is not a projection input; the composer reads it from the host.
+ */
+async function readExternalAgentConfigSeed(
+  store: V4ExternalAgentConfigStore,
+  sessionId: string,
+  providerId: string,
+): Promise<NonNullable<ConversationSnapshot["config"]["externalAgentConfig"]> | null> {
+  if (!providerId.startsWith(ACP_PROVIDER_ID_PREFIX)) return null;
+  const agentId = providerId.slice(ACP_PROVIDER_ID_PREFIX.length);
+  const config = await store.readConfig(sessionId);
+  if (config.agentId !== agentId || config.offered === undefined) return null;
+  return {
+    agentId,
+    options: config.offered.map((option) => ({ ...option, options: [...option.options] })),
+  };
+}
+
 export function resolveInputCommandForAdmission(
   envelope: CommandEnvelope,
   admissionSessionId: string,
@@ -2305,15 +2326,10 @@ export function createConversationV4Gateway(
     // （App 恢复结果可以只有模型身份，不能为了投影而绑定半成品执行模型）。
     getSessionMemoryEnabled: (sessionId) => context.sessions.get(sessionId)?.memoryEnabled,
     // Stored ACP agent selects (S6): in-memory events are gone after a worker restart.
-    getSessionExternalAgentConfigSeed: async (sessionId) => {
+    getSessionExternalAgentConfigSeed: (sessionId, providerId) => {
       const store = context.deps.externalAgentConfig;
-      if (!store) return null;
-      const config = await store.readConfig(sessionId);
-      if (config.agentId === undefined || config.offered === undefined) return null;
-      return {
-        agentId: config.agentId,
-        options: config.offered.map((option) => ({ ...option, options: [...option.options] })),
-      };
+      if (!store) return Promise.resolve(null);
+      return readExternalAgentConfigSeed(store, sessionId, providerId);
     },
     getSessionConfigSeed: (sessionId) => {
       const record = context.sessions.get(sessionId);

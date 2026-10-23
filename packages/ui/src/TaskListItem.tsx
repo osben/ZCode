@@ -1,6 +1,6 @@
 import { RemoteTaskDeviceLabel } from "@/remote-connection/RemoteTaskDeviceLabel.js";
 /* eslint-disable max-lines -- task item 同时承载默认列表和 timeline 两行布局的共享交互，先保持动作链路集中避免归档/置顶回归。 */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   Clock,
@@ -529,13 +529,6 @@ export const MemoTaskItem = memo(function TaskListItem({
         <ListTree className="size-3.5" />
       </TaskRowActionButton>
     ) : null;
-  const taskActionGroupNode =
-    fileTreeActionNode || archiveActionNode ? (
-      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
-        {fileTreeActionNode}
-        {archiveActionNode}
-      </span>
-    ) : null;
   const pinActionButton = (
     <Button
       type="button"
@@ -551,16 +544,87 @@ export const MemoTaskItem = memo(function TaskListItem({
       aria-label={intl.formatMessage({
         id: isPinned ? "taskList.unpin" : "taskList.pin",
       })}
+      onFocus={() => {
+        pinFocusedRef.current = true;
+      }}
+      onBlur={(event) => {
+        if (event.relatedTarget) {
+          pinFocusedRef.current = false;
+        }
+      }}
     >
       <Pin className="size-4" />
     </Button>
   );
   // hover:none 只让右侧 task actions 常驻；如果也用它接管 leading 槽，
   // 触屏端的错误、未读和 loading 状态会被 Pin 永久替换。
-  const shouldRenderPinAction =
-    showPinAction && (showPinnedState || shouldSuppressWorkspaceTaskMetadata);
+  // Single owner of the left slot (task-hover-card-layout, leading-slot rule): the phone marker, the
+  // run-state indicator, or Pin. A present run-state indicator keeps the slot on hover/focus, so Pin
+  // moves into the action cluster instead of hiding the status.
+  // Single owner of the Pin position. A run-state indicator keeps the left slot, so Pin lives in the
+  // action cluster while a run state is present. Touch devices keep the cluster mounted (isHoverNone),
+  // so Pin stays reachable there without hover.
+  const hasRunState = leadingIndicator !== "none";
+  const pinPlacement: "left" | "actions" | "none" = !showPinAction
+    ? "none"
+    : hasRunState
+      ? shouldSuppressWorkspaceTaskMetadata || isHoverNone
+        ? "actions"
+        : "none"
+      : showPinnedState || shouldSuppressWorkspaceTaskMetadata
+        ? "left"
+        : "none";
+  // Pin changes element (left slot <-> action cluster) when the run state toggles. Remounting a
+  // focused button drops focus to the body, so hand focus back to the row to keep keyboard position.
+  const pinFocusedRef = useRef(false);
+  const previousPinPlacementRef = useRef(pinPlacement);
+  useLayoutEffect(() => {
+    if (previousPinPlacementRef.current === pinPlacement) {
+      return;
+    }
+    previousPinPlacementRef.current = pinPlacement;
+    const active = document.activeElement;
+    if (pinFocusedRef.current && (!active || active === document.body)) {
+      itemRef.current?.focus({ preventScroll: true });
+    }
+  }, [pinPlacement]);
+  const pinActionInActionsNode =
+    pinPlacement === "actions" ? (
+      <span
+        className="inline-flex shrink-0"
+        onFocusCapture={() => {
+          pinFocusedRef.current = true;
+        }}
+        onBlurCapture={(event) => {
+          if (event.relatedTarget) {
+            pinFocusedRef.current = false;
+          }
+        }}
+      >
+        <TaskRowActionButton
+          label={intl.formatMessage({
+            id: isPinned ? "taskList.unpin" : "taskList.pin",
+          })}
+          onClick={handleTogglePin}
+          showTooltip
+          disabledReason={workspaceActionsDisabledReason}
+        >
+          <Pin className="size-3.5" />
+        </TaskRowActionButton>
+      </span>
+    ) : null;
+  const taskActionGroupNode =
+    pinActionInActionsNode || fileTreeActionNode || archiveActionNode ? (
+      <span data-task-row-actions="true" className="flex shrink-0 items-center gap-0.5">
+        {pinActionInActionsNode}
+        {fileTreeActionNode}
+        {archiveActionNode}
+      </span>
+    ) : null;
   return (
-    <Tooltip open={hoverEnabled ? undefined : false}>
+    // This Tooltip has no TooltipContent, so nothing renders from its open state. A lifted open state would re-render
+    // the memoized row on every hover; the constant boolean keeps Radix controlled without that cost.
+    <Tooltip open={false}>
       <TooltipTrigger asChild>
         <li
           ref={itemRef}
@@ -619,7 +683,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 "flex size-4 items-center justify-center transition-opacity",
                 // SVG 自身旋转会逐帧重算样式；让现有 HTML 槽位合成旋转，保留图标与状态语义。
                 leadingIndicator === "loading" && "animate-spin",
-                shouldRenderPinAction && "hidden",
+                pinPlacement === "left" && "hidden",
                 // Phone marker owns the slot only while no hover/focus actions suppress it (task-hover-card-layout #9).
                 isMobileActive && !shouldSuppressWorkspaceTaskMetadata && "invisible",
               )}
@@ -639,7 +703,7 @@ export const MemoTaskItem = memo(function TaskListItem({
                 <LoaderIcon className="size-4 text-foreground-subtle" />
               ) : null}
             </span>
-            {shouldRenderPinAction ? (
+            {pinPlacement === "left" ? (
               <ControlHintTooltip
                 title={
                   workspaceActionsDisabledReason ??
@@ -1063,6 +1127,15 @@ export function TaskListItemContextMenuContent({
           taskId: task.taskId,
           workspaceKey: task.workspaceIdentity?.trim() || workspacePath,
           title: taskTitle,
+        });
+      }}
+      onViewModelTrajectoryV2={() => {
+        // Same entry as v1, but requests the v2 tab (kind routes to openModelTrajectoryV2SidePane).
+        useModelTrajectoryStore.getState().requestOpen({
+          taskId: task.taskId,
+          workspaceKey: task.workspaceIdentity?.trim() || workspacePath,
+          title: taskTitle,
+          kind: "v2",
         });
       }}
       onOpenProviderConfig={() => {

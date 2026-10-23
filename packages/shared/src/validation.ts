@@ -60,15 +60,28 @@ export {
   appSettingsSchema,
   localeSchema,
   postUpdateReleaseNotesPayloadSchema,
+  sharedLocalePreferenceSchema,
+  sharedLocaleSchema,
 } from "./validationAppSettings.js";
+export type {
+  LegacyLocaleMigrationPlan,
+  LocaleOverrides,
+  LocaleSplit,
+  SharedLocale,
+  SharedLocalePreference,
+} from "./forkAppSettings.js";
 export {
   FORK_SETTING_KEYS,
   extractLegacyForkSettings,
   forkAppSettingsPatchSchema,
   forkAppSettingsSchema,
   forkAppSettingsStoredSchema,
+  appSettingsSyncPatchSchema,
   pickForkSettings,
+  planLegacyLocaleMigration,
+  resolveEffectiveLocale,
   splitForkSettingsPatch,
+  splitLocaleSettings,
 } from "./forkAppSettings.js";
 export type { ForkAppSettings, ForkAppSettingsStored, ForkSettingKey } from "./forkAppSettings.js";
 export { isValidWslUser, WSL_USER_MAX_LENGTH, wslUserSchema } from "./wslUserValidation.js";

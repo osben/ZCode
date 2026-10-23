@@ -244,3 +244,41 @@ export async function releaseFollowingQueue(
     });
   }
 }
+
+/**
+ * ISSUE-039 D1. Any cancel already in flight (a Steer, a goal pause, a projection-fault termination): the target was
+ * aborted and has not torn down yet. A stop that wrote its own hold keeps it (a user Stop always holds). The inputs are observed by the
+ * caller: runtimeIdle (stopActiveForegroundExecution returned idle), runtimeIdRegistered (the execution is still
+ * registered, so idle means aborted, not torn down), compatAbortedBefore (no runtime token, the controller was
+ * aborted before the stop began).
+ */
+export function isStopCancelInFlight(input: {
+  held: boolean;
+  runtimeIdle: boolean;
+  runtimeIdRegistered: boolean;
+  compatAbortedBefore: boolean;
+}): boolean {
+  return input.held && input.runtimeIdle && (input.runtimeIdRegistered || input.compatAbortedBefore);
+}
+
+/** goal-pause barrier 共用件：stop 与 sendQueuedNow（抢占重发）复用，不复制。 */
+export async function pauseActiveGoal(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<boolean> {
+  // 注意：方法必须经 app 调用（不可解构，实现可能依赖 this 绑定）。
+  const target = await record.app.readTarget();
+  if (!target || target.status !== "active") {
+    return false;
+  }
+  try {
+    const paused = await record.app.updateTargetStatus("paused");
+    return Boolean(paused);
+  } catch (error) {
+    host.logger?.warn?.("v4 stop failed to pause active goal", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
+    return false;
+  }
+}

@@ -143,6 +143,41 @@ function deriveGroupedTaskRowPresentation({
   };
 }
 
+// Single render owner of the grouped run-state dot/spinner. Both the interactive row and the drag
+// overlay use it; the interactive row keeps it mounted on hover/focus (task-hover-card-layout #8).
+function GroupedRunStateIndicator({
+  leadingIndicator,
+  statusDotClassName,
+}: {
+  leadingIndicator: "error" | "unread" | "loading" | "none";
+  statusDotClassName: string | null;
+}) {
+  if (leadingIndicator === "loading") {
+    // Rotate the HTML wrapper, not the SVG, matching TaskListItem: SVG rotation is assumed to cost a style
+    // recalc per frame (hypothesis from the TaskListItem precedent, not profiled here).
+    return (
+      <span
+        aria-hidden="true"
+        className="flex size-3.5 shrink-0 items-center justify-center animate-spin"
+      >
+        <LoaderIcon className="size-3.5 text-foreground-subtle" />
+      </span>
+    );
+  }
+  if (!statusDotClassName) {
+    return null;
+  }
+  return (
+    <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
+      <span
+        data-error-indicator={leadingIndicator === "error" ? "true" : undefined}
+        data-unread-indicator={leadingIndicator === "unread" ? "true" : undefined}
+        className={cn("size-1.5 rounded-full", statusDotClassName)}
+      />
+    </span>
+  );
+}
+
 // DragOverlay 高频渲染时只返回纯展示节点，避免隐藏 action tooltip 的 Radix ref 循环和 task 路径 RPC。
 function GroupedTaskDragOverlayRow({
   task,
@@ -201,20 +236,10 @@ function GroupedTaskDragOverlayRow({
             </Badge>
           ) : null}
           <span className="flex shrink-0 items-center gap-1">
-            {leadingIndicator === "loading" ? (
-              // Rotate the HTML wrapper, not the SVG, matching TaskListItem: SVG rotation is assumed to cost a style
-              // recalc per frame (hypothesis from the TaskListItem precedent, not profiled here).
-              <span
-                aria-hidden="true"
-                className="flex size-3.5 shrink-0 items-center justify-center animate-spin"
-              >
-                <LoaderIcon className="size-3.5 text-foreground-subtle" />
-              </span>
-            ) : statusDotClassName ? (
-              <span aria-hidden="true" className="flex size-4 shrink-0 items-center justify-center">
-                <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
-              </span>
-            ) : null}
+            <GroupedRunStateIndicator
+              leadingIndicator={leadingIndicator}
+              statusDotClassName={statusDotClassName}
+            />
             {!hasPendingInteraction && isTaskCron ? (
               // drag overlay 也复用 grouped row 元信息；clock 放时间前面，不能跟未读点互斥。
               <Clock
@@ -538,23 +563,23 @@ function GroupedTaskInteractiveRow({
               {taskAttentionDisplay}
             </Badge>
           ) : null}
-          {!shouldSuppressTaskMetadata ? (
+          {/* Bugfix (task-hover-card-layout #8): the run-state dot stays visible beside the hover/focus
+              action cluster; only the time and marker metadata yield to it. */}
+          {shouldSuppressTaskMetadata ? (
+            statusDotClassName || leadingIndicator === "loading" ? (
+              <span className="flex shrink-0 items-center gap-1">
+                <GroupedRunStateIndicator
+                  leadingIndicator={leadingIndicator}
+                  statusDotClassName={statusDotClassName}
+                />
+              </span>
+            ) : null
+          ) : (
             <span className="flex shrink-0 items-center gap-1">
-              {leadingIndicator === "loading" ? (
-                <span
-                  aria-hidden="true"
-                  className="flex size-3.5 shrink-0 items-center justify-center animate-spin"
-                >
-                  <LoaderIcon className="size-3.5 text-foreground-subtle" />
-                </span>
-              ) : statusDotClassName ? (
-                <span
-                  aria-hidden="true"
-                  className="flex size-4 shrink-0 items-center justify-center"
-                >
-                  <span className={cn("size-1.5 rounded-full", statusDotClassName)} />
-                </span>
-              ) : null}
+              <GroupedRunStateIndicator
+                leadingIndicator={leadingIndicator}
+                statusDotClassName={statusDotClassName}
+              />
               {!hasPendingInteraction && isTaskCron ? (
                 // 可交互 grouped row 之前漏渲染 clock，导致 Projects 分组里的定时任务没有 icon。
                 // 这里和普通 task list 一样放在时间前面，同时不再被未读/运行状态顶掉。
@@ -586,7 +611,7 @@ function GroupedTaskInteractiveRow({
                 </span>
               ) : null}
             </span>
-          ) : null}
+          )}
           {!hasPendingInteraction ? (
             // Outside the hover-suppressed span: the marker is also the child-list expander and must
             // stay clickable while hover/focus swap the metadata for the action cluster.

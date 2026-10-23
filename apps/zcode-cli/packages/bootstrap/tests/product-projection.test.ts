@@ -6764,6 +6764,165 @@ describe("fork / modelChange marker", () => {
     expect(snapshot.inputRouting.mode).toBe("startNow");
   });
 
+  // ISSUE-039 / specs/stop-queue-hold.md: steer keeps the remaining queue draining in order; only a
+  // user Stop (a cancelled TurnComplete without the preserve intent) holds it.
+  // Projection scope only: the FIFO drain itself is performed by the CLI bridge auto-drain (E2E STEER cases cover it).
+  it("ISSUE-039：steer 的 cancelled TurnComplete 不 hold 投影（剩余项保留）；随后的用户 Stop 才 hold", () => {
+    const intent = (queueItemId: string, sourceCommandId: string, admissionSeq: number) => ({
+      sourceCommandId,
+      queueItemId,
+      clientId: "desktop-client",
+      kind: "sendText",
+      admissionSeq,
+      admittedAt: admissionSeq * 10,
+      requestedDelivery: "queue",
+      admittedDelivery: "queue",
+      attachmentRefs: [],
+    });
+    const log = new EventLog();
+    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "跑" }, { turnId: "t1" });
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q1",
+        input: "第一条",
+        inputPreview: "第一条",
+        inputSize: 9,
+        queueLength: 1,
+        targetTurnId: "t1",
+        intent: intent("q1", "source-q1", 1),
+      },
+      { turnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q2",
+        input: "第二条",
+        inputPreview: "第二条",
+        inputSize: 9,
+        queueLength: 2,
+        targetTurnId: "t1",
+        intent: intent("q2", "source-q2", 2),
+      },
+      { turnId: "t1" },
+    );
+    // Steer (sendQueuedNow on q1): the interrupted turn is cancelled with the preserve intent.
+    log.push(
+      SessionEventType.TurnSteerDispatchChanged,
+      { pendingInputId: "q1", reservationId: "send-now-1", state: "promoting", targetTurnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+        preserveQueueAutoDrainOnCancel: true,
+      },
+      { turnId: "t1" },
+    );
+    log.push(SessionEventType.SessionInputPromoted, {
+      pendingInputId: "q1",
+      sourceCommandId: "source-q1",
+      messageId: "message-q1",
+    });
+    log.push(
+      SessionEventType.TurnStarted,
+      { turnNumber: 2, input: "第一条", inputId: "source-q1" },
+      { turnId: "t2" },
+    );
+    log.push(
+      SessionEventType.TurnComplete,
+      { response: "ok", tokenCount: 1, toolCallCount: 0, duration: 1, resultType: "success" },
+      { turnId: "t2" },
+    );
+
+    const drained = runAll(log.events).projection.getSnapshot();
+    expect(drained.control.phase).toBe("completedSuccess");
+    expect(drained.queue).toMatchObject({
+      autoDrain: true,
+      items: [expect.objectContaining({ queueItemId: "q2" })],
+    });
+    expect(drained.queue.pauseReason).toBeUndefined();
+    expect(drained.inputRouting.mode).toBe("startNow");
+
+    // A later user Stop on the next turn holds the remaining queue exactly as before.
+    log.push(SessionEventType.TurnStarted, { turnNumber: 3, input: "第二条" }, { turnId: "t3" });
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+      },
+      { turnId: "t3" },
+    );
+    const stopped = runAll(log.events).projection.getSnapshot();
+    expect(stopped.queue).toMatchObject({
+      autoDrain: false,
+      pauseReason: "stopped",
+      items: [expect.objectContaining({ queueItemId: "q2" })],
+    });
+  });
+
+  // ISSUE-039 D1 (characterization guard, not a red-first test: the projection already kept this hold). The Stop's
+  // hold is written before the Steer's cancelled TurnComplete (which carries the preserve intent). The projection
+  // keeps the hold. QueueAutoDrainChanged(false) projects pauseReason "manual", which the UI shows as the generic copy
+  // (ConversationQueuePanel: only "stopped" and "error" get their own copy).
+  it("ISSUE-039 D1：steer 的 cancelled TurnComplete 不清除先写入的用户 Stop hold", () => {
+    const log = new EventLog();
+    log.push(SessionEventType.SessionCreated, { mode: "default", contextWindow: 200_000 });
+    log.push(SessionEventType.TurnStarted, { turnNumber: 1, input: "跑" }, { turnId: "t1" });
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q1",
+        input: "第一条",
+        inputPreview: "第一条",
+        inputSize: 9,
+        queueLength: 1,
+        targetTurnId: "t1",
+      },
+      { turnId: "t1" },
+    );
+    log.push(
+      SessionEventType.TurnSteerQueued,
+      {
+        pendingInputId: "q2",
+        input: "第二条",
+        inputPreview: "第二条",
+        inputSize: 9,
+        queueLength: 2,
+        targetTurnId: "t1",
+      },
+      { turnId: "t1" },
+    );
+    log.push(SessionEventType.QueueAutoDrainChanged, { autoDrain: false });
+    log.push(
+      SessionEventType.TurnComplete,
+      {
+        response: "",
+        tokenCount: 0,
+        toolCallCount: 0,
+        duration: 0,
+        resultType: "cancelled",
+        preserveQueueAutoDrainOnCancel: true,
+      },
+      { turnId: "t1" },
+    );
+
+    const snapshot = runAll(log.events).projection.getSnapshot();
+    expect(snapshot.queue.autoDrain).toBe(false);
+    expect(snapshot.queue.items).toHaveLength(2);
+    expect(snapshot.queue.pauseReason).toBe("manual");
+  });
+
   // ── M4: setFollowupMode (FollowupModeChanged → enqueue vs guide while running) ──
   it("A/B：setFollowupMode(guide) → running 时输入路由为 guide", () => {
     const log = new EventLog();

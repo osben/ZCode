@@ -343,7 +343,11 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleNavigateFileManager: (tabId: string, source: CodeViewerSource) => void;
   handleOpenPluginMarket: () => void;
   handleOpenTerminalTab: () => void;
-  handleOpenModelTrajectory: (params: { taskId: string; title?: string | null }) => void;
+  handleOpenModelTrajectory: (params: {
+    taskId: string;
+    title?: string | null;
+    kind?: "v1" | "v2";
+  }) => void;
   handleToggleGit: () => void;
   handleOpenGitReview: (sourceId?: GitChangeSourceId) => void;
   handleToggleSidePane: () => void;

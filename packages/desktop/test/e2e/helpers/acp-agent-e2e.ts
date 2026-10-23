@@ -28,6 +28,7 @@ const OPENCODE_SHIM = join(ACP_AGENT_DIR, "opencode");
 const SPAWN_LOG = join(ACP_AGENT_DIR, "spawns.log");
 const MOCK_STATE_FILE = join(ACP_AGENT_DIR, "mock-state.json");
 const SIDECAR_FILE = join(dirname(getE2EAppDataPaths().configFile), "fork_acp_agents.json");
+const CATALOG_FILE = join(dirname(getE2EAppDataPaths().configFile), "fork_acp_agent_catalog.json");
 
 export interface AcpMockState {
   memory: string | null;
@@ -85,6 +86,57 @@ export async function seedEnabledAcpAgent() {
           enabled: true,
           command: OPENCODE_SHIM,
           args: ["acp"],
+        },
+      ],
+    }),
+    "utf8",
+  );
+}
+
+/**
+ * Catalog of the mock agent's offered options (specs/acp-agent-runtime.md "S6 readiness"), written while
+ * Electron is down. It stands for a Settings Test that already ran, so the composer shows the selects before
+ * the first message. Values match the mock's `--config options` snapshot (mode agent, model m1).
+ */
+export async function seedAcpCatalog() {
+  const select = (
+    id: string,
+    name: string,
+    category: string,
+    currentValue: string,
+    values: ReadonlyArray<readonly [value: string, name: string]>,
+  ) => ({
+    id,
+    name,
+    description: null,
+    category,
+    currentValue,
+    options: values.map(([value, valueName]) => ({
+      value,
+      name: valueName,
+      description: null,
+      group: null,
+    })),
+  });
+  await writeFile(
+    CATALOG_FILE,
+    JSON.stringify({
+      schemaVersion: 1,
+      agents: [
+        {
+          agentId: "opencode",
+          capturedAt: Date.now(),
+          options: [
+            select("mode", "Mode", "mode", "agent", [
+              ["agent", "Agent"],
+              ["plan", "Plan"],
+              ["ask", "Ask"],
+            ]),
+            select("model", "Model", "model", "m1", [
+              ["m1", "Model 1"],
+              ["m2", "Model 2"],
+            ]),
+          ],
         },
       ],
     }),

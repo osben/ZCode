@@ -8,17 +8,17 @@
  * the host's runtime environment, which the services assembly has already
  * enriched with the user's login-shell PATH.
  */
-import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ACP_AGENT_DEFINITIONS,
   AcpSessionRuntime,
-  buildChildEnv,
+  acpAgentPlatformSupported,
   detectAcpAgents,
   refreshAcpAgentCache,
   type AcpAgentDefinition,
+  type AcpConfigOption,
   type AcpRawFrame,
   type AcpRuntimeLogger,
   type AcpSessionRuntimeOptions,
@@ -29,8 +29,12 @@ import {
 } from "@zcode/shared/acp-launch-rules";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import { defaultOpenTerminal, formatLoginCommand } from "./acpAgentLogin.js";
+import { defaultRunCommand, STATUS_TIMEOUT_MS } from "./acpAgentCommand.js";
 import { isEffectiveDevelopmentNodeEnv } from "../runtime-tools/nodeEnv.js";
 import type {
+  AcpAgentCatalogInput,
+  AcpAgentCatalogOption,
+  AcpAgentCatalogResult,
   AcpAgentDetectionResult,
   AcpAgentLoginResult,
   AcpAgentStatusReport,
@@ -59,6 +63,8 @@ export interface AcpTestRuntime {
   cancel(): Promise<void>;
   stop(): Promise<void>;
   stderrTail(): string;
+  /** The session configuration offered by the handshake (S6); absent for a runtime without options. */
+  readonly configOptions?: readonly AcpConfigOption[];
 }
 
 export interface AcpAgentsBridgeDependencies {
@@ -78,12 +84,22 @@ export interface AcpAgentsBridgeDependencies {
   readonly startRuntime?: (options: AcpSessionRuntimeOptions) => Promise<AcpTestRuntime>;
   /** Temp-dir factory for the smoke-test sandbox. */
   readonly makeSandboxDir?: () => Promise<string>;
+  /** Host platform; defaults to `process.platform`. ACP is macOS only (`acpAgentPlatformSupported`). */
+  readonly platform?: NodeJS.Platform;
+  /** Reads the agent catalog written by Test and by the turn reconcile (S6 readiness). */
+  readonly readCatalog?: (agentId: string) => Promise<readonly AcpAgentCatalogOption[] | undefined>;
+  /**
+   * Stores the options a successful handshake offered for a known agent (specs/acp-agent-runtime.md,
+   * "S6 readiness"). A failure is reported and never fails the test.
+   */
+  readonly recordCatalog?: (
+    agentId: string,
+    options: readonly AcpConfigOption[],
+  ) => Promise<unknown>;
 }
 
 const MAX_TEST_FRAMES = 400;
 const MAX_TEST_FRAME_BYTES = 1024 * 1024;
-const MAX_STATUS_OUTPUT_CHARS = 16 * 1024;
-const STATUS_TIMEOUT_MS = 10_000;
 
 /** The smoke test allows slow agents to think, but stays bounded. */
 const TEST_INITIALIZE_MS = 30_000;
@@ -97,6 +113,9 @@ const TEST_PROMPT_TEXT =
 
 const log = createServiceLogger("acp-agent");
 
+/** The one refusal of an unsupported host (specs/acp-agent-runtime.md "Platform scope"). */
+const UNSUPPORTED_PLATFORM_MESSAGE = "ACP agents are supported on macOS only.";
+
 /**
  * Runtime logger adapter. Callers pass only agent ids, exit codes/signals and
  * error messages: never env, args, frames or stderr, which can carry tokens.
@@ -108,16 +127,15 @@ const runtimeLogger: AcpRuntimeLogger = {
 };
 
 /**
- * Host-side stabilization gate (specs/acp-agent-runtime.md, "Dev-only
- * visibility"): the bridge spawns caller-supplied commands, so it exists only
- * in development runtimes. Without it the provider settings service answers
- * `supported: false` and never spawns anything.
+ * The host settings bridge (specs/acp-agent-runtime.md, "Availability (platform rule)"). Its only
+ * condition is the one availability predicate, `acpAgentPlatformSupported`. Unsupported platforms get no
+ * bridge at all, so nothing can spawn a caller-supplied command there. The runtime env changes nothing.
  */
 export function createHostAcpAgentsBridge(
   env: Record<string, string | undefined> = process.env,
   dependencies: AcpAgentsBridgeDependencies = {},
 ): ProviderSettingsAcpAgentsBridge | undefined {
-  if (!isEffectiveDevelopmentNodeEnv(env)) return undefined;
+  if (!acpAgentPlatformSupported(dependencies.platform ?? process.platform)) return undefined;
   const e2eAgentPath = resolveE2eAcpAgentPath(env);
   if (e2eAgentPath === undefined || dependencies.detectAgents) {
     return createAcpAgentsBridge(dependencies);
@@ -130,7 +148,7 @@ export function createHostAcpAgentsBridge(
   });
 }
 
-/** E2E detection seam (specs/acp-agent-runtime.md, "Dev-only visibility"). */
+/** E2E detection seam (specs/acp-agent-runtime.md, "E2E seam"). */
 export const ACP_E2E_AGENT_PATH_ENV = "ZCODE_E2E_ACP_AGENT_PATH";
 
 /**
@@ -155,6 +173,7 @@ export function createAcpAgentsBridge(
   const startRuntime = dependencies.startRuntime ?? ((options) => AcpSessionRuntime.start(options));
   const makeSandboxDir =
     dependencies.makeSandboxDir ?? (() => mkdtemp(join(tmpdir(), "zcode-acp-test-")));
+  const supported = acpAgentPlatformSupported(dependencies.platform ?? process.platform);
 
   const findDefinition = (agentId: string): AcpAgentDefinition | undefined =>
     ACP_AGENT_DEFINITIONS.find((definition) => definition.agentId === agentId);
@@ -175,12 +194,30 @@ export function createAcpAgentsBridge(
 
   return {
     async detect(input = {}) {
+      // The single owner of detection support: an unsupported platform reports no agents at all.
+      if (!supported) return { supported: false, agents: [], detectedAt: Date.now() };
       const agents = await detectAgents({ refresh: input.refresh === true });
       return { supported: true, agents, detectedAt: Date.now() };
     },
 
+    async catalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult> {
+      if (!supported) return { supported: false };
+      const options = await dependencies.readCatalog?.(input.agentId);
+      return options === undefined ? { supported: true } : { supported: true, options };
+    },
+
     async test(input) {
       const startedAt = Date.now();
+      // The platform refusal comes first, whatever the input: nothing is looked up, spawned or written here.
+      if (!supported) {
+        return {
+          ok: false,
+          error: { message: UNSUPPORTED_PLATFORM_MESSAGE },
+          frames: [],
+          framesDropped: 0,
+          durationMs: Date.now() - startedAt,
+        };
+      }
       const definition = input.agentId ? findDefinition(input.agentId) : undefined;
       if (input.agentId && !definition) {
         return {
@@ -263,6 +300,24 @@ export function createAcpAgentsBridge(
           },
           onFrame,
         });
+        // An empty snapshot has nothing for the composer; it must not replace a catalog that has options.
+        if (
+          input.agentId &&
+          definition &&
+          dependencies.recordCatalog &&
+          runtime.configOptions &&
+          runtime.configOptions.length > 0
+        ) {
+          // The handshake has answered session/new: the offered options are known before any prompt.
+          try {
+            await dependencies.recordCatalog(definition.agentId, runtime.configOptions);
+          } catch (catalogError) {
+            log.warn(undefined, "ACP agent catalog could not be stored", {
+              agentId: definition.agentId,
+              error: catalogError instanceof Error ? catalogError.message : String(catalogError),
+            });
+          }
+        }
         let promptTimeout: NodeJS.Timeout | undefined;
         try {
           const promptPromise = runtime.prompt(TEST_PROMPT_TEXT);
@@ -313,6 +368,7 @@ export function createAcpAgentsBridge(
     },
 
     async status(input) {
+      if (!supported) return { supported: false };
       const definition = findDefinition(input.agentId);
       if (!definition) {
         return { supported: false, error: `Unknown ACP agent: ${input.agentId}` };
@@ -330,6 +386,7 @@ export function createAcpAgentsBridge(
     },
 
     async startLogin(input) {
+      if (!supported) return { opened: false, command: "", error: UNSUPPORTED_PLATFORM_MESSAGE };
       const definition = findDefinition(input.agentId);
       if (!definition || definition.loginArgs.length === 0) {
         return {
@@ -375,97 +432,4 @@ async function defaultDetectAgents(
       statusArgs: definition?.statusArgs ?? null,
     };
   });
-}
-
-function defaultRunCommand(
-  command: string,
-  args: readonly string[],
-  timeoutMs: number,
-): Promise<{ exitCode: number | null; output: string }> {
-  return new Promise((resolve) => {
-    let output = "";
-    let settled = false;
-    let timedOut = false;
-    let timer: NodeJS.Timeout | undefined;
-    const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      const suffix = timedOut ? `\n[timed out after ${timeoutMs}ms]` : "";
-      resolve({ exitCode, output: `${output.trim()}${suffix}`.trim() });
-    };
-    const append = (chunk: string): void => {
-      if (output.length >= MAX_STATUS_OUTPUT_CHARS) return;
-      output += chunk;
-      if (output.length > MAX_STATUS_OUTPUT_CHARS)
-        output = output.slice(0, MAX_STATUS_OUTPUT_CHARS);
-    };
-    let child: ChildProcess;
-    try {
-      child = spawn(command, [...args], {
-        // Same scrubbed environment as the ACP session process.
-        env: buildChildEnv(process.env),
-        stdio: ["ignore", "pipe", "pipe"],
-        shell: false,
-        windowsHide: true,
-        detached: process.platform !== "win32",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log.warn(undefined, "ACP status command failed to spawn", { error: message });
-      resolve({ exitCode: null, output: message });
-      return;
-    }
-    timer = setTimeout(() => {
-      timedOut = true;
-      // Descendants may inherit the pipes and keep them open after the direct
-      // child dies; terminate the tree and settle now instead of waiting for
-      // a `close` that may never come.
-      killCommandTree(child);
-      finish(null);
-    }, timeoutMs);
-    // String decoding via setEncoding keeps a multibyte character that is
-    // split across two chunks intact (per-chunk toString would corrupt it).
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", append);
-    child.stderr?.on("data", append);
-    child.once("error", (error: Error) => {
-      log.warn(undefined, "ACP status command failed", { error: error.message });
-      append(error.message);
-      finish(null);
-    });
-    child.once("close", (code) => finish(code));
-  });
-}
-
-/** Best-effort termination of a command and its descendants (non-blocking). */
-function killCommandTree(child: ChildProcess): void {
-  const pid = child.pid;
-  if (process.platform === "win32" && pid !== undefined) {
-    try {
-      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-        timeout: 2_000,
-      });
-      killer.once("error", (error: Error) => {
-        log.warn(undefined, "ACP status command tree kill failed", { error: error.message });
-      });
-    } catch {
-      // Fall through to the direct-child signal.
-    }
-  } else if (pid !== undefined) {
-    try {
-      process.kill(-pid, "SIGKILL");
-      return;
-    } catch {
-      // Not a group leader (spawn failed before detaching).
-    }
-  }
-  try {
-    child.kill("SIGKILL");
-  } catch {
-    // Already gone.
-  }
 }
