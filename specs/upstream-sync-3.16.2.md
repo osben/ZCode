@@ -79,7 +79,7 @@ Upstream released 3.16.3 (build commit `a82dd43e`, 2026-10-23) before publishing
 - Terminals scoped to an owner window: the host message `set-terminal-owner` and the reconnect reason `terminal-owner-ended`.
 - OAuth login fallback "Browser didn't open? Copy login link" (`login.oauth.*`, 4 keys).
 - Help menu "Copy device MID" (`workspaceHeader.help.*Mid*`, 3 keys).
-- `LocalToolSearch`, a separate tool name for local tool search (`toolSearchNameForMode`). **Risk:** sessions written by stock 3.16.3 may contain `LocalToolSearch` tool parts that this fork's history hydrator does not recognize.
+- `LocalToolSearch`, a separate tool name for local tool search (`toolSearchNameForMode`). **Risk (checked):** sessions written by stock 3.16.3 may contain `LocalToolSearch` tool results. The fork's `core/src/tool/search/history.ts` counts only `ToolSearch` as a successful search, so those results degrade: their deferred tools are not marked as loaded, and the model can search again. Nothing throws.
 - Project open: the `reuseExistingRoot` option and the `project.invalid-directory-open` error.
 - Docker daemon probe and WSL exec error formatting.
 - Onboarding eligibility check (`getOnboardingEligibility`).
