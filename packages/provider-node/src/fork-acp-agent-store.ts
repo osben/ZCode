@@ -3,8 +3,11 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
+  encodeForkAcpAgentCatalogFile,
   encodeForkAcpAgentsFile,
   extractInlineAcpAgentRecords,
+  normalizeForkAcpAgentCatalogOptions,
+  parseForkAcpAgentCatalogFile,
   forkAcpAgentsFileSchema,
   hasInlineAcpProviders,
   stripInlineAcpProviders,
@@ -12,6 +15,10 @@ import {
   type PersonalProviderConfigRepository,
   type ProviderConfigLayerUpdate,
   type ForkAcpAgentSnapshot,
+  type ForkAcpAgentCatalogEntry,
+  type ForkAcpAgentCatalogOption,
+  type ForkAcpAgentCatalogOptionInput,
+  type ForkAcpAgentCatalogSnapshot,
   type ForkAcpAgentStore,
 } from "@zcode/provider";
 import { atomicWritePrivateTextFile, withFileLock } from "@zcode/shared/node";
@@ -276,4 +283,119 @@ export async function migrateInlineAcpProviders(
     return next;
   });
   return { copied, stripped, kept, conflicts };
+}
+
+/** Fork-owned catalog next to `provider_config.json` (specs/acp-agent-runtime.md, "S6 readiness"). */
+export const FORK_ACP_AGENT_CATALOG_FILE_NAME = "fork_acp_agent_catalog.json";
+
+export function resolveForkAcpAgentCatalogFilePath(personalProviderConfigFilePath: string): string {
+  return join(dirname(personalProviderConfigFilePath), FORK_ACP_AGENT_CATALOG_FILE_NAME);
+}
+
+export interface NodeForkAcpAgentCatalogStoreOptions {
+  readonly filePath: string;
+  /** Receives an invalid catalog file once per file content; the catalog then reads as empty. */
+  readonly onRecovery?: (error: unknown) => void;
+}
+
+/**
+ * Single owner of the per-agent option catalog. Writers run in the worker (turn reconcile) and in the host
+ * (Settings Test) and share one file, so every write takes the file lock and rereads under it. Reads are
+ * lock-free and tolerant. The catalog is a cache, so an invalid file is overwritten by the next write.
+ */
+export class NodeForkAcpAgentCatalogStore {
+  readonly #filePath: string;
+  readonly #onRecovery?: (error: unknown) => void;
+  #recoveryReportedFor: string | null = null;
+
+  constructor(options: NodeForkAcpAgentCatalogStoreOptions) {
+    if (!options.filePath.trim()) {
+      throw new Error("Fork ACP agent catalog filePath must not be empty");
+    }
+    this.#filePath = options.filePath;
+    this.#onRecovery = options.onRecovery;
+  }
+
+  async read(): Promise<ForkAcpAgentCatalogSnapshot> {
+    try {
+      return await this.#readFile();
+    } catch (error) {
+      await this.#reportRecoveryOnce(error);
+      return Object.freeze({ agents: Object.freeze([]) });
+    }
+  }
+
+  /** The last offered options of one agent, or undefined when the agent was never run or tested. */
+  async readAgent(agentId: string): Promise<readonly ForkAcpAgentCatalogOption[] | undefined> {
+    const entry = (await this.read()).agents.find((agent) => agent.agentId === agentId);
+    return entry?.options;
+  }
+
+  /**
+   * Stores the offered options of one agent. Returns false (and writes nothing) when the stored options are
+   * already equal, so a turn that offers an unchanged snapshot causes no file write.
+   */
+  async write(
+    agentId: string,
+    offered: readonly ForkAcpAgentCatalogOptionInput[],
+    capturedAt: number = Date.now(),
+  ): Promise<boolean> {
+    const options = normalizeForkAcpAgentCatalogOptions(offered);
+    return withFileLock(this.#filePath, async () => {
+      let current: readonly ForkAcpAgentCatalogEntry[];
+      try {
+        current = (await this.#readFile()).agents;
+      } catch (error) {
+        await this.#reportRecoveryOnce(error);
+        current = [];
+      }
+      const existing = current.find((agent) => agent.agentId === agentId);
+      if (existing !== undefined && isDeepStrictEqual(existing.options, options)) return false;
+      const next: ForkAcpAgentCatalogEntry[] = [
+        ...current.filter((agent) => agent.agentId !== agentId),
+        { agentId, capturedAt, options: [...options] },
+      ];
+      const encoded = encodeForkAcpAgentCatalogFile(next);
+      await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
+      return true;
+    });
+  }
+
+  async #readFile(): Promise<ForkAcpAgentCatalogSnapshot> {
+    let text: string;
+    try {
+      text = await readFile(this.#filePath, "utf8");
+    } catch (error) {
+      if (isCatalogFileNotFound(error)) return Object.freeze({ agents: Object.freeze([]) });
+      throw error;
+    }
+    return parseForkAcpAgentCatalogFile(JSON.parse(text) as unknown);
+  }
+
+  async #reportRecoveryOnce(error: unknown): Promise<void> {
+    let revision: string;
+    try {
+      revision = createHash("sha256")
+        .update(await readFile(this.#filePath))
+        .digest("hex");
+    } catch {
+      revision = `unreadable:${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (revision === this.#recoveryReportedFor) return;
+    this.#recoveryReportedFor = revision;
+    try {
+      this.#onRecovery?.(error);
+    } catch {
+      // Observation callbacks must not block recovery.
+    }
+  }
+}
+
+function isCatalogFileNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
 }

@@ -31,6 +31,7 @@ import type { AcpPoolRuntime, AcpSessionPool } from "./acp-session-pool.js";
 import {
   reconcileAcpSessionConfig,
   toExternalAgentConfig,
+  type AcpAgentCatalogWriter,
   type AcpSessionConfigStore,
 } from "./acp-config-reconcile.js";
 
@@ -64,6 +65,8 @@ export interface AcpExternalAgentHostOptions {
   readonly logger?: Logger;
   /** Offered options and chosen values per session (S6). Without it no choice is re-applied. */
   readonly config?: AcpSessionConfigStore;
+  /** Last offered options per agent (S6 readiness). Without it the composer has no catalog. */
+  readonly catalog?: AcpAgentCatalogWriter;
 }
 
 export function createAcpExternalAgentHost(
@@ -120,6 +123,7 @@ function createAcpTurnDriver(
             sessionId: request.sessionId,
             agentId,
             ...(options.logger === undefined ? {} : { logger: options.logger }),
+            ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
             onOptions: (configOptions) =>
               request.onEvent({ type: "config_options", options: configOptions }),
           });

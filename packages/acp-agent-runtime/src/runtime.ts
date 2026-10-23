@@ -127,6 +127,11 @@ export class AcpSessionRuntime extends EventEmitter {
   }
 
   /** Select options of the latest session (spec S6). */
+  /** The handshake's offered options with their starting values; choices set later do not change it (S6 readiness). */
+  get handshakeConfigOptions(): readonly AcpConfigOption[] {
+    return this.config.handshakeOptions;
+  }
+
   get configOptions(): readonly AcpConfigOption[] {
     return this.config.options;
   }

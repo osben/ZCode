@@ -96,7 +96,7 @@ describe("ACP agents derived from the fork sidecar", () => {
     ).toEqual([["opencode", true, false]]);
   });
 
-  it("makes the ACP model executable only behind the development gate", () => {
+  it("makes the ACP model executable only when ACP is available (acpExecutable)", () => {
     const derived = deriveAcpAgentConfigSnapshot(baseSnapshot(), acp([OPENCODE]));
     const modelStates = (acpExecutable?: boolean) =>
       resolve(derived, acpExecutable)
@@ -107,7 +107,7 @@ describe("ACP agents derived from the fork sidecar", () => {
     expect(modelStates(false)).toEqual([["opencode", false, false]]);
     expect(modelStates(true)).toEqual([["opencode", true, true]]);
 
-    // Only the gate admits the provider to the execution Registry; its projection drops env.
+    // Only availability admits the provider to the execution Registry; its projection drops env.
     const registryIds = (acpExecutable: boolean) =>
       resolve(derived, acpExecutable)
         .registryProviders.find((item) => item.providerId === "acp:opencode")

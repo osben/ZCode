@@ -178,6 +178,17 @@ describe("agent configuration options", () => {
     });
   });
 
+  // The handshake snapshot keeps the starting values: a choice set later changes the live snapshot, not this one.
+  it("keeps the handshake snapshot unchanged after a choice is set", async () => {
+    await withRuntime("config", "options", async (runtime) => {
+      const offered = runtime.handshakeConfigOptions;
+      await runtime.setConfigOption("mode", "plan");
+      expect(runtime.configOptions).toEqual(withCurrent(OPTIONS_SNAPSHOT, "mode", "plan"));
+      expect(runtime.handshakeConfigOptions).toEqual(offered);
+      expect(runtime.handshakeConfigOptions).toEqual(OPTIONS_SNAPSHOT);
+    });
+  });
+
   it("sets a synthesized legacy mode with session/set_mode", async () => {
     await withRuntime("config", "legacy", async (runtime, sent) => {
       const snapshot = await runtime.setConfigOption("mode", "plan");

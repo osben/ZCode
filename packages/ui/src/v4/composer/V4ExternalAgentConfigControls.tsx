@@ -41,6 +41,7 @@ import type { V4ComposerConfigPicker } from "@/v4/composer/configPickerState.js"
 import { useToolbarShortcutBindings } from "@/v4/composer/toolbarShortcuts.js";
 // Same entry ConversationComposer used before the S6 branch, so existing composer test doubles still apply.
 import { V4ComposerModeSwitch } from "@/v4/composer/V4ComposerToolbar.js";
+import { useAcpAgentCatalog } from "@/hooks/useAcpAgentCatalog.js";
 import {
   EXTERNAL_AGENT_CONFIG_SEARCH_THRESHOLD,
   EXTERNAL_AGENT_CONTROL_KINDS,
@@ -50,10 +51,13 @@ import {
   TID_EXTERNAL_AGENT_CONFIG_TRIGGER,
   currentExternalAgentConfigValue,
   filterExternalAgentConfigValues,
+  resolveExternalAgentId,
   nextExternalAgentConfigValue,
   resolveExternalAgentComposerState,
   type ExternalAgentComposerState,
   type ExternalAgentControlKind,
+  draftExternalAgentChoicesOf,
+  type DraftExternalAgentChoices,
 } from "@/v4/composer/externalAgentConfig.js";
 
 function noop(): void {}
@@ -80,6 +84,8 @@ interface ExternalAgentConfigSelectProps {
   kind: ExternalAgentControlKind;
   /** Null renders the disabled placeholder ("available after the first message"). */
   option: ExternalAgentConfigOption | null;
+  /** False while the composer has no session of this agent: the values show, but a choice is not sent. */
+  enabled: boolean;
   disabled: boolean;
   open: boolean;
   shortcut?: string;
@@ -90,6 +96,7 @@ interface ExternalAgentConfigSelectProps {
 function ExternalAgentConfigSelect({
   kind,
   option,
+  enabled,
   disabled,
   open,
   shortcut,
@@ -104,6 +111,7 @@ function ExternalAgentConfigSelect({
     id: "chat.toolbar.externalAgent.availableAfterFirstMessage",
   });
   const current = option ? currentExternalAgentConfigValue(option) : null;
+  const available = Boolean(option) && enabled;
   // Agent labels and value names are shown as the agent sends them; only ZCode strings are translated.
   const title = option?.name || intl.formatMessage({ id: KIND_LABEL_ID[kind] });
   const label = option ? (current?.name ?? option.currentValue) : title;
@@ -124,7 +132,7 @@ function ExternalAgentConfigSelect({
     <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <ControlHintTooltip
         title={option ? title : `${title} · ${unavailableText}`}
-        shortcut={option ? shortcut : undefined}
+        shortcut={available ? shortcut : undefined}
         open={open ? false : undefined}
       >
         <DropdownMenuTrigger asChild>
@@ -133,14 +141,14 @@ function ExternalAgentConfigSelect({
             variant="ghost"
             size="sm"
             disabled={disabled}
-            aria-disabled={option ? undefined : true}
+            aria-disabled={available ? undefined : true}
             data-testid={testId(TID_EXTERNAL_AGENT_CONFIG_TRIGGER, kind)}
-            data-external-agent-config-available={option ? "true" : "false"}
+            data-external-agent-config-available={available ? "true" : "false"}
             data-composer-collapse-priority="1"
             aria-label={option ? `${title}: ${label}` : `${title}: ${unavailableText}`}
             className={cn(
               "group/agent-config h-7 min-w-0 gap-1 rounded-lg px-2 text-ui-base data-[composer-compact=true]:w-7 data-[composer-compact=true]:px-0",
-              !option && "text-foreground-subtle hover:text-foreground-subtle",
+              !available && "text-foreground-subtle hover:text-foreground-subtle",
             )}
           >
             <Icon className="size-4 shrink-0" />
@@ -190,7 +198,9 @@ function ExternalAgentConfigSelect({
               <DropdownMenuRadioGroup
                 value={option.currentValue}
                 // The shown value may be agent-initiated; choosing it pins it (the server no-ops a repeat).
-                onValueChange={(value) => onSelect(option.id, value)}
+                onValueChange={(value) => {
+                  if (enabled) onSelect(option.id, value);
+                }}
               >
                 {values.map((value, index) => (
                   <div key={value.value} className="contents">
@@ -277,12 +287,12 @@ function V4ExternalAgentConfigControlsImpl({
     [mode],
   );
   const cycleMode = useCallback(() => {
-    if (!mode) return;
+    if (!mode || !state.enabled) return;
     const next = nextExternalAgentConfigValue(mode);
     if (next) onSetOption(mode.id, next);
-  }, [mode, onSetOption]);
+  }, [mode, onSetOption, state.enabled]);
   useToolbarShortcutBindings({
-    hasAnyOption: Boolean(modeOption),
+    hasAnyOption: Boolean(modeOption) && state.enabled,
     toolbarDisabled: disabled,
     modelMenuDisabled: true,
     modeOption,
@@ -301,6 +311,7 @@ function V4ExternalAgentConfigControlsImpl({
           key={kind}
           kind={kind}
           option={state.options?.[kind] ?? null}
+          enabled={state.enabled}
           disabled={disabled}
           open={activeConfigPicker === KIND_PICKER[kind]}
           shortcut={kind === "mode" ? modeShortcutLabel : undefined}
@@ -320,28 +331,89 @@ export interface V4ComposerModeAreaProps extends ModeSwitchProps {
   /** Session model provider (`config.modelSelection.providerId`), not the draft's. */
   sessionProviderId: string | null | undefined;
   externalAgentConfig: ExternalAgentConfigState | null | undefined;
+  /** A session choice (setExternalAgentConfigOption) once the session exists. */
   onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
+  /** S6 readiness: every draft's pre-submission choices, and the draft session they belong to (null: no draft). */
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentKey?: string | null;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
 }
 
-/** ACP models get the agent's selects; every other model renders the ZCode mode switch unchanged. */
-function V4ComposerModeAreaImpl({
+/**
+ * The ACP agent's selects for an ACP draft. The catalog read (`useAcpAgentCatalog`) needs the services context, so
+ * only an ACP draft mounts this component; every other model never calls it.
+ */
+function V4ExternalAgentModeAreaImpl({
+  agentId,
   sessionId,
   sessionProviderId,
   externalAgentConfig,
+  draftProviderId,
+  draftExternalAgentChoices,
+  draftExternalAgentKey,
   onSetExternalAgentConfigOption,
-  ...modeSwitchProps
-}: V4ComposerModeAreaProps) {
-  const draftProviderId = modeSwitchProps.draftConfig?.modelSelection?.providerId;
-  const canSend = Boolean(onSetExternalAgentConfigOption);
+  onSetDraftExternalAgentChoice,
+  modeSwitchProps,
+}: {
+  agentId: string;
+  sessionId: string | null;
+  sessionProviderId: string | null | undefined;
+  externalAgentConfig: ExternalAgentConfigState | null | undefined;
+  draftProviderId: string | null | undefined;
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentKey: string | null;
+  onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
+  modeSwitchProps: ModeSwitchProps;
+}) {
+  const catalog = useAcpAgentCatalog(agentId);
+  // A draft choice needs the draft session it belongs to; without one the selects show the catalog only.
+  const draftChoices = draftExternalAgentKey
+    ? draftExternalAgentChoicesOf(draftExternalAgentChoices ?? {}, draftExternalAgentKey, agentId)
+    : undefined;
+  const canSend = Boolean(
+    sessionId
+      ? onSetExternalAgentConfigOption
+      : onSetDraftExternalAgentChoice && draftExternalAgentKey,
+  );
   const state = useMemo(() => {
     const resolved = resolveExternalAgentComposerState({
       draftProviderId,
       sessionId,
       sessionProviderId,
       projection: externalAgentConfig,
+      catalog: catalog.options,
+      draftChoices,
     });
     return resolved && !canSend ? { ...resolved, options: null } : resolved;
-  }, [canSend, draftProviderId, externalAgentConfig, sessionId, sessionProviderId]);
+  }, [
+    canSend,
+    catalog.options,
+    draftChoices,
+    draftProviderId,
+    externalAgentConfig,
+    sessionId,
+    sessionProviderId,
+  ]);
+  // A stable identity keeps the shortcut bindings (which hold it) from re-registering on every render.
+  const draftTarget = state?.draft ? draftExternalAgentKey : null;
+  const onSetOption = useCallback(
+    (configId: string, value: string) => {
+      if (draftTarget) onSetDraftExternalAgentChoice?.(draftTarget, agentId, configId, value);
+      else onSetExternalAgentConfigOption?.(configId, value);
+    },
+    [agentId, draftTarget, onSetDraftExternalAgentChoice, onSetExternalAgentConfigOption],
+  );
   if (!state) return <V4ComposerModeSwitch {...modeSwitchProps} />;
   return (
     <V4ExternalAgentConfigControls
@@ -349,7 +421,41 @@ function V4ComposerModeAreaImpl({
       disabled={modeSwitchProps.disabled}
       activeConfigPicker={modeSwitchProps.activeConfigPicker}
       onConfigPickerOpenChange={modeSwitchProps.onConfigPickerOpenChange}
-      onSetOption={onSetExternalAgentConfigOption ?? noop}
+      onSetOption={onSetOption}
+    />
+  );
+}
+
+/**
+ * ACP models get the agent's selects; every other model renders the ZCode mode switch unchanged. Before the session
+ * exists the selects show the agent catalog (the host reads it) with the draft's choices, and a choice only updates
+ * the draft.
+ */
+function V4ComposerModeAreaImpl({
+  sessionId,
+  sessionProviderId,
+  externalAgentConfig,
+  onSetExternalAgentConfigOption,
+  draftExternalAgentChoices,
+  draftExternalAgentKey,
+  onSetDraftExternalAgentChoice,
+  ...modeSwitchProps
+}: V4ComposerModeAreaProps) {
+  const draftProviderId = modeSwitchProps.draftConfig?.modelSelection?.providerId;
+  const agentId = resolveExternalAgentId(draftProviderId);
+  if (!agentId) return <V4ComposerModeSwitch {...modeSwitchProps} />;
+  return (
+    <V4ExternalAgentModeAreaImpl
+      agentId={agentId}
+      sessionId={sessionId}
+      sessionProviderId={sessionProviderId}
+      externalAgentConfig={externalAgentConfig}
+      draftProviderId={draftProviderId}
+      draftExternalAgentChoices={draftExternalAgentChoices}
+      draftExternalAgentKey={draftExternalAgentKey ?? null}
+      onSetExternalAgentConfigOption={onSetExternalAgentConfigOption}
+      onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
+      modeSwitchProps={modeSwitchProps}
     />
   );
 }

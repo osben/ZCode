@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { type BuiltinModelProviderId, type OAuthProviderId } from "@zcode/shared";
 import { PackageIcon } from "lucide-react";
 import { ProviderLogo } from "./ProviderLogo.js";
-import { AcpAgentMark } from "./AcpAgentCard.js";
+import { AcpAgentMark } from "./AcpAgentMark.js";
 import {
   CODING_PLAN_PROVIDER_SPECS,
   PRESET_PROVIDER_SPEC_BY_ID,
@@ -42,7 +42,7 @@ export function renderModelProviderNavIcon(item: ModelProviderNavItem): ReactNod
     return <ProviderLogo logo={resolveModelProviderNavLogo(item)} className="size-4" />;
   }
   if (item.type === "acpAgent") {
-    return <AcpAgentMark name={item.label} />;
+    return <AcpAgentMark agentId={item.agentId} name={item.label} />;
   }
   return <PackageIcon className="size-4 shrink-0" />;
 }

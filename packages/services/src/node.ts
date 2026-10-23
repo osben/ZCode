@@ -8,11 +8,14 @@ import { readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
 import {
   createNodeProviderRuntimePathEnv,
+  NodeForkAcpAgentCatalogStore,
   NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   PERSONAL_PROVIDER_CONFIG_FILE_NAME,
+  resolveForkAcpAgentCatalogFilePath,
   resolveForkAcpAgentsFilePath,
 } from "@zcode/provider-node";
 import { getAppConfigDir as resolveAppConfigDir } from "./paths.js";
@@ -472,7 +475,6 @@ import { createProviderProvisioningTarget } from "./model-provider/providerProvi
 import { IProviderProvisioningTargetService } from "./model-provider/providerProvisioning.js";
 import { buildOffPeakModelSelectionView } from "./model-provider/offPeakModelSelectionView.js";
 import { resolveClientConfigPlatform } from "./runtime-tools/clientPlatform.js";
-import { isEffectiveDevelopmentNodeEnv } from "./runtime-tools/nodeEnv.js";
 import {
   createAccountRequestAuthService,
   type IAccountRequestAuthService,
@@ -1649,8 +1651,25 @@ export function createLocalServices(options: {
   let providerConnectivityAgentService:
     | Pick<IZCodeAgentService, "testModelConnectivity">
     | undefined;
-  // Dev-only stabilization gate, enforced on the host as well as in the UI.
-  const acpAgentsBridge = createHostAcpAgentsBridge();
+  // Last offered options per agent (S6 readiness): the Settings Test roundtrip writes them.
+  const acpAgentCatalogStore = new NodeForkAcpAgentCatalogStore({
+    filePath: resolveForkAcpAgentCatalogFilePath(
+      join(resolveAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME),
+    ),
+    onRecovery: (error) =>
+      createServiceLogger("acp-agent-store").warn(undefined, "ACP agent catalog is invalid", {
+        error,
+      }),
+  });
+  // One availability value for the host (specs/acp-agent-runtime.md "Availability (platform rule)"):
+  // it gates the settings bridge and the provider runtime's `acpExecutable` alike.
+  const acpAgentPlatform = process.platform;
+  const acpAgentsAvailable = acpAgentPlatformSupported(acpAgentPlatform);
+  const acpAgentsBridge = createHostAcpAgentsBridge(undefined, {
+    platform: acpAgentPlatform,
+    recordCatalog: (agentId, options) => acpAgentCatalogStore.write(agentId, options),
+    readCatalog: (agentId) => acpAgentCatalogStore.readAgent(agentId),
+  });
   const acpAgentStoreLog = createServiceLogger("acp-agent-store");
   // ACP agents live in a fork-owned sidecar: upstream builds reject provider_config.json
   // files that contain an `acp-agent` provider (specs/acp-agent-runtime.md).
@@ -1664,8 +1683,7 @@ export function createLocalServices(options: {
   const providerRuntime = createProviderRuntimeFromConfigRuntime({
     configRuntime: providerConfigRuntime,
     acpAgentStore,
-    // Same dev-runtime signal as the host ACP bridge (specs/acp-agent-runtime.md "Dev-only visibility").
-    acpExecutable: isEffectiveDevelopmentNodeEnv(),
+    acpExecutable: acpAgentsAvailable,
     wrapConfigSource: chatGptPlanConfigSourceWrapper,
     accountSource: accountProviderConfigSource,
     modelSelectionConfiguredDefaultSource,

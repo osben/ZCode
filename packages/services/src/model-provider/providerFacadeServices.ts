@@ -20,6 +20,8 @@ import { createServiceDescriptor } from "../descriptors.js";
 import type { ModelConnectivityResult } from "@zcode/shared";
 import { createServiceLogger } from "../logger/serviceLogger.js";
 import type {
+  AcpAgentCatalogInput,
+  AcpAgentCatalogResult,
   AcpAgentDetectionResult,
   AcpAgentEnabledInput,
   AcpAgentSaveInput,
@@ -81,6 +83,8 @@ export interface IProviderSettingsService {
   ): Promise<ModelConnectivityResult>;
   /** Detect the ACP agent CLIs (opencode, cursor) installed on the host environment. */
   detectAcpAgents(input?: { readonly refresh?: boolean }): Promise<AcpAgentDetectionResult>;
+  /** The options an ACP agent offered in its last handshake; read by the composer before a session exists. */
+  getAcpAgentCatalog(input: AcpAgentCatalogInput): Promise<AcpAgentCatalogResult>;
   /** Run a full ACP roundtrip (spawn → initialize → session/new → prompt) and return the raw frames. */
   testAcpAgent(input: AcpAgentTestInput): Promise<AcpAgentTestResult>;
   /** Best-effort login status for an agent CLI; `supported: false` when unknown. */
@@ -243,6 +247,8 @@ export function createProviderSettingsService(
       acpAgents
         ? acpAgents.detect(input)
         : { supported: false, agents: [], detectedAt: Date.now() },
+    getAcpAgentCatalog: async (input) =>
+      acpAgents ? acpAgents.catalog(input) : { supported: false },
     testAcpAgent: async (input) =>
       acpAgents
         ? acpAgents.test(input)

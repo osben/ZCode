@@ -34,7 +34,7 @@ const IDLE_TIMEOUT = 120000;
 describe("Conversation with an ACP agent (tools, plan, title, permissions)", () => {
   before(async function () {
     this.timeout(240000);
-    if (process.platform === "win32") this.skip();
+    if (process.platform !== "darwin") this.skip();
     assert.ok(ACP_AGENT_DIR, "ZCODE_E2E_ACP_AGENT_PATH is not set by wdio.conf.ts");
     await browser.waitUntil(
       async () =>

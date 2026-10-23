@@ -46,7 +46,7 @@ const mockSummary = (overrides: Partial<AcpAgentSummary> = {}): AcpAgentSummary 
 describe("ACP agents bridge", () => {
   it("passes refresh through to detection", async () => {
     const detectAgents = vi.fn(async () => [mockSummary()]);
-    const bridge = createAcpAgentsBridge({ detectAgents });
+    const bridge = createAcpAgentsBridge({ platform: "darwin", detectAgents });
 
     const result = await bridge.detect({ refresh: true });
 
@@ -59,6 +59,7 @@ describe("ACP agents bridge", () => {
   it("rejects unknown agent ids without spawning anything", async () => {
     const startRuntime = vi.fn();
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => []),
       startRuntime: startRuntime as unknown as AcpAgentsBridgeDependencies["startRuntime"],
     });
@@ -72,7 +73,10 @@ describe("ACP agents bridge", () => {
   });
 
   it("runs a full roundtrip against the mock agent and captures both directions", async () => {
-    const bridge = createAcpAgentsBridge({ detectAgents: vi.fn(async () => []) });
+    const bridge = createAcpAgentsBridge({
+      platform: "darwin",
+      detectAgents: vi.fn(async () => []),
+    });
 
     const result = await bridge.test({ command: process.execPath, args: [MOCK_AGENT_PATH] });
 
@@ -96,7 +100,10 @@ describe("ACP agents bridge", () => {
   });
 
   it("reports spawn failures honestly", async () => {
-    const bridge = createAcpAgentsBridge({ detectAgents: vi.fn(async () => []) });
+    const bridge = createAcpAgentsBridge({
+      platform: "darwin",
+      detectAgents: vi.fn(async () => []),
+    });
 
     const result = await bridge.test({ command: "/definitely/missing/zcode-acp-binary" });
 
@@ -110,6 +117,7 @@ describe("ACP agents bridge", () => {
       output: "✓ Logged in as test@example.com",
     }));
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => [mockSummary()]),
       runCommand,
     });
@@ -129,7 +137,10 @@ describe("ACP agents bridge", () => {
   });
 
   it("status reports unsupported for unknown agents", async () => {
-    const bridge = createAcpAgentsBridge({ detectAgents: vi.fn(async () => []) });
+    const bridge = createAcpAgentsBridge({
+      platform: "darwin",
+      detectAgents: vi.fn(async () => []),
+    });
 
     const report = await bridge.status({ agentId: "who" });
 
@@ -139,6 +150,7 @@ describe("ACP agents bridge", () => {
   it("startLogin quotes paths with spaces and delegates to the terminal opener", async () => {
     const openTerminal = vi.fn(async () => ({ opened: true }));
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => [
         mockSummary({
           agentId: "cursor",
@@ -164,6 +176,7 @@ describe("ACP agents bridge", () => {
     const runCommand = vi.fn(async () => ({ exitCode: 0, output: "ok" }));
     const openTerminal = vi.fn(async () => ({ opened: true }));
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => [mockSummary()]),
       runCommand,
       openTerminal,
@@ -193,10 +206,175 @@ describe("ACP agents bridge", () => {
   });
 });
 
+// S6 readiness: ACP agents are macOS only, and a Test roundtrip records the offered options (the catalog).
+describe("ACP agents bridge platform scope and catalog", () => {
+  it("reports unsupported and spawns nothing outside macOS", async () => {
+    const detectAgents = vi.fn(async () => [mockSummary()]);
+    const bridge = createAcpAgentsBridge({ detectAgents, platform: "linux" });
+
+    const result = await bridge.detect();
+
+    expect(result).toMatchObject({ supported: false, agents: [] });
+    expect(detectAgents).not.toHaveBeenCalled();
+    const roundtrip = await bridge.test({ command: process.execPath, args: [MOCK_AGENT_PATH] });
+    expect(roundtrip.ok).toBe(false);
+    expect(roundtrip.error?.message).toContain("macOS");
+    expect(roundtrip.frames).toEqual([]);
+  });
+
+  // The platform refusal is the first answer on an unsupported host, whatever the input, and nothing is spawned.
+  it("refuses every entry point before doing anything on an unsupported platform", async () => {
+    const detectAgents = vi.fn(async () => [mockSummary()]);
+    const startRuntime = vi.fn();
+    const readCatalog = vi.fn(async () => undefined);
+    const bridge = createAcpAgentsBridge({
+      platform: "linux",
+      detectAgents,
+      startRuntime: startRuntime as never,
+      readCatalog,
+    });
+
+    const unknownAgent = await bridge.test({ agentId: "no-such-agent", command: process.execPath });
+    expect(unknownAgent).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining("macOS") },
+    });
+    const knownAgent = await bridge.test({ agentId: "opencode", command: process.execPath });
+    expect(knownAgent.error?.message).toContain("macOS");
+    expect(await bridge.status({ agentId: "no-such-agent" })).toEqual({ supported: false });
+    expect(await bridge.status({ agentId: "opencode" })).toEqual({ supported: false });
+    expect((await bridge.startLogin({ agentId: "no-such-agent" })).error).toContain("macOS");
+    expect(await bridge.catalog({ agentId: "opencode" })).toEqual({ supported: false });
+
+    expect(startRuntime).not.toHaveBeenCalled();
+    expect(detectAgents).not.toHaveBeenCalled();
+    expect(readCatalog).not.toHaveBeenCalled();
+  });
+
+  // A handshake that offers no options has nothing for the composer; the catalog must not be overwritten with it.
+  it("does not record an empty catalog when the handshake offers no options", async () => {
+    const recordCatalog = vi.fn(async () => true);
+    const fake = {
+      configOptions: [],
+      prompt: vi.fn(async () => ({ stopReason: "end_turn" })),
+      cancel: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      stderrTail: () => "",
+    };
+    const bridge = createAcpAgentsBridge({
+      platform: "darwin",
+      detectAgents: vi.fn(async () => []),
+      startRuntime: vi.fn(async () => fake) as never,
+      makeSandboxDir: async () => mkdtemp(join(tmpdir(), "acp-empty-catalog-")),
+      recordCatalog,
+    });
+
+    const result = await bridge.test({ agentId: "opencode", command: process.execPath });
+
+    expect(result.ok).toBe(true);
+    expect(recordCatalog).not.toHaveBeenCalled();
+  });
+
+  it("is not wired on non-macOS hosts, in any runtime environment", () => {
+    for (const env of [
+      { ZCODE_RUNTIME_ENV: "development" },
+      { ZCODE_RUNTIME_ENV: "production" },
+      {},
+    ]) {
+      expect(createHostAcpAgentsBridge(env, { platform: "linux" })).toBeUndefined();
+      expect(createHostAcpAgentsBridge(env, { platform: "win32" })).toBeUndefined();
+      expect(createHostAcpAgentsBridge(env, { platform: "darwin" })).toBeDefined();
+    }
+  });
+
+  it("records the options a handshake offered for a known agent", async () => {
+    const recordCatalog = vi.fn(async () => true);
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "darwin",
+      recordCatalog,
+    });
+
+    const result = await bridge.test({
+      agentId: "opencode",
+      command: process.execPath,
+      args: [MOCK_AGENT_PATH, "--config", "options"],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(recordCatalog).toHaveBeenCalledTimes(1);
+    const [agentId, options] = recordCatalog.mock.calls[0] as unknown as [
+      string,
+      Array<{ id: string }>,
+    ];
+    expect(agentId).toBe("opencode");
+    expect(options.map((option) => option.id)).toEqual(["mode", "model"]);
+  });
+
+  it("reads the stored catalog on macOS and reports unsupported elsewhere", async () => {
+    const options = [
+      {
+        id: "mode",
+        name: "Mode",
+        description: null,
+        category: "mode",
+        currentValue: "agent",
+        options: [{ value: "plan", name: "Plan", description: null, group: null }],
+      },
+    ];
+    const readCatalog = vi.fn(async (agentId: string) =>
+      agentId === "opencode" ? options : undefined,
+    );
+    const mac = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "darwin",
+      readCatalog,
+    });
+
+    expect(await mac.catalog({ agentId: "opencode" })).toEqual({ supported: true, options });
+    expect(await mac.catalog({ agentId: "cursor" })).toEqual({ supported: true });
+
+    const linux = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "linux",
+      readCatalog,
+    });
+    expect(await linux.catalog({ agentId: "opencode" })).toEqual({ supported: false });
+    expect(readCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not record a catalog for a custom command, and a failing store never fails the test", async () => {
+    const recordCatalog = vi.fn(async () => {
+      throw new Error("disk full");
+    });
+    const bridge = createAcpAgentsBridge({
+      detectAgents: vi.fn(async () => []),
+      platform: "darwin",
+      recordCatalog,
+    });
+
+    const custom = await bridge.test({
+      command: process.execPath,
+      args: [MOCK_AGENT_PATH, "--config", "options"],
+    });
+    expect(custom.ok).toBe(true);
+    expect(recordCatalog).not.toHaveBeenCalled();
+
+    const known = await bridge.test({
+      agentId: "opencode",
+      command: process.execPath,
+      args: [MOCK_AGENT_PATH, "--config", "options"],
+    });
+    expect(known.ok).toBe(true);
+    expect(recordCatalog).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ACP agents bridge hardening", () => {
   it("rejects a crafted login command before any terminal opens", async () => {
     const openTerminal = vi.fn(async () => ({ opened: true }));
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => [mockSummary()]),
       openTerminal,
     });
@@ -211,6 +389,7 @@ describe("ACP agents bridge hardening", () => {
   it("rejects a crafted status command without running it", async () => {
     const runCommand = vi.fn(async () => ({ exitCode: 0, output: "" }));
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => [mockSummary()]),
       runCommand,
     });
@@ -225,6 +404,7 @@ describe("ACP agents bridge hardening", () => {
     const startRuntime = vi.fn();
     const makeSandboxDir = vi.fn(async () => "/tmp/unused");
     const bridge = createAcpAgentsBridge({
+      platform: "darwin",
       detectAgents: vi.fn(async () => []),
       startRuntime: startRuntime as unknown as AcpAgentsBridgeDependencies["startRuntime"],
       makeSandboxDir,
@@ -276,7 +456,10 @@ describe("ACP agents bridge hardening", () => {
     );
     await chmod(scriptPath, 0o755);
     process.env.ZCODE_ACP_TEST_TOKEN = "leaked-secret";
-    const bridge = createAcpAgentsBridge({ detectAgents: vi.fn(async () => []) });
+    const bridge = createAcpAgentsBridge({
+      platform: "darwin",
+      detectAgents: vi.fn(async () => []),
+    });
 
     const report = await bridge.status({ agentId: "opencode", command: scriptPath });
 
@@ -284,14 +467,26 @@ describe("ACP agents bridge hardening", () => {
     expect(report.output).toBe("token=absent path=set");
   });
 
-  it("wires the bridge only in development host runtimes", () => {
-    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "development" })).toBeDefined();
-    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "production" })).toBeUndefined();
-    expect(createHostAcpAgentsBridge({ ZCODE_RUNTIME_ENV: "test" })).toBeUndefined();
-    // NODE_ENV leaks from user shells and never enables the gate.
-    expect(createHostAcpAgentsBridge({ NODE_ENV: "development" })).toBeUndefined();
-    expect(createHostAcpAgentsBridge({})).toBeUndefined();
-  });
+  // specs/acp-agent-runtime.md "Availability (platform rule)": the runtime env changes nothing.
+  const runtimeEnvs = [
+    { ZCODE_RUNTIME_ENV: "development" },
+    { ZCODE_RUNTIME_ENV: "production" },
+    { ZCODE_RUNTIME_ENV: "test" },
+    { NODE_ENV: "development" },
+    {},
+  ];
+  for (const env of runtimeEnvs) {
+    for (const platform of ["darwin", "win32"] as const) {
+      it(`exposes the bridge exactly on darwin for ${JSON.stringify(env)} on ${platform}`, async () => {
+        const bridge = createHostAcpAgentsBridge(env, {
+          platform,
+          detectAgents: vi.fn(async () => []),
+        });
+        expect(bridge !== undefined).toBe(platform === "darwin");
+        if (bridge) expect(await bridge.detect()).toMatchObject({ supported: true });
+      });
+    }
+  }
 
   it("honors the E2E detection path only in a development host running ZCODE_ENV=test", () => {
     const dir = "/tmp/zcode-e2e-acp-bin";
@@ -329,14 +524,20 @@ describe("ACP agents bridge hardening", () => {
         ZCODE_E2E_ACP_AGENT_PATH: dir,
       };
 
-      const seamed = await createHostAcpAgentsBridge({ ...env, ZCODE_ENV: "test" })!.detect({
+      const seamed = await createHostAcpAgentsBridge(
+        { ...env, ZCODE_ENV: "test" },
+        { platform: "darwin" },
+      )!.detect({
         refresh: true,
       });
       const opencode = seamed.agents.find((agent) => agent.agentId === "opencode");
       expect(opencode).toMatchObject({ installed: true, commandPath: shim, version: "9.9.9-e2e" });
       expect(seamed.agents.find((agent) => agent.agentId === "cursor")?.installed).toBe(false);
 
-      const ignored = await createHostAcpAgentsBridge({ ...env, ZCODE_ENV: "production" })!.detect({
+      const ignored = await createHostAcpAgentsBridge(
+        { ...env, ZCODE_ENV: "production" },
+        { platform: "darwin" },
+      )!.detect({
         refresh: true,
       });
       expect(ignored.agents.find((agent) => agent.agentId === "opencode")?.commandPath).not.toBe(

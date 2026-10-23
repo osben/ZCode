@@ -38,11 +38,15 @@ export interface ForkAcpSessionBindingStore {
   write(sessionId: string, binding: ForkAcpSessionBinding): Promise<void>;
   /** Deletes the row, so the offered options and the choices go with the binding. */
   clear(sessionId: string): Promise<void>;
+  /** Binding config, or the pending choices of a session whose first turn has not run (S6 readiness). */
   readConfig(sessionId: string): Promise<ForkAcpSessionConfig>;
   /** Replaces the offered options of an existing binding; no-op without a row. */
   writeOffered(sessionId: string, options: readonly ExternalAgentConfigOption[]): Promise<void>;
-  /** Sets one chosen value of an existing binding; no-op without a row. */
-  writeChoice(sessionId: string, configId: string, value: string): Promise<void>;
+  /**
+   * Sets one chosen value. An existing binding of `agentId` keeps it in `config_choices`; without a binding the
+   * value is kept as a pending choice that the binding write moves over. A binding of another agent is refused.
+   */
+  writeChoice(sessionId: string, agentId: string, configId: string, value: string): Promise<void>;
 }
 
 interface BindingRow {
@@ -56,6 +60,11 @@ interface ConfigRow {
   agent_id: string;
   config_options: string | null;
   config_choices: string | null;
+}
+
+interface PendingChoiceRow {
+  agent_id: string;
+  config_choices: string;
 }
 
 /** Bounded so a long-lived worker does not keep every session it has ever seen. */
@@ -81,10 +90,19 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
     const version = writeVersion;
     const config = await withDatabase((db) => {
       const row = readConfigRow(db, sessionId);
+      if (row === undefined) {
+        // No binding yet: the pending choices (if any) stand for the session's configuration.
+        const pending = readPendingRow(db, sessionId);
+        return {
+          agentId: pending?.agent_id,
+          offered: undefined,
+          choices: parseChoices(pending?.config_choices ?? null),
+        };
+      }
       return {
-        agentId: row?.agent_id,
-        offered: parseOffered(row?.config_options ?? null),
-        choices: parseChoices(row?.config_choices ?? null),
+        agentId: row.agent_id,
+        offered: parseOffered(row.config_options ?? null),
+        choices: parseChoices(row.config_choices ?? null),
       };
     });
     if (version === writeVersion) {
@@ -114,30 +132,53 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
       }),
     write: async (sessionId, binding) => {
       await withDatabase((db) => {
-        db.prepare(
-          `insert into fork_acp_session_binding
-             (session_id, agent_id, acp_session_id, cwd, launch_key, updated_at)
-           values (?, ?, ?, ?, ?, ?)
-           on conflict(session_id) do update set
-             agent_id = excluded.agent_id,
-             acp_session_id = excluded.acp_session_id,
-             cwd = excluded.cwd,
-             launch_key = excluded.launch_key,
-             updated_at = excluded.updated_at`,
-        ).run(
-          sessionId,
-          binding.agentId,
-          binding.acpSessionId,
-          binding.cwd,
-          binding.launchKey,
-          Date.now(),
-        );
+        // The upsert and the pending handoff share one write lock, so a choice is never both pending and bound.
+        db.exec("begin immediate");
+        try {
+          db.prepare(
+            `insert into fork_acp_session_binding
+               (session_id, agent_id, acp_session_id, cwd, launch_key, updated_at)
+             values (?, ?, ?, ?, ?, ?)
+             on conflict(session_id) do update set
+               agent_id = excluded.agent_id,
+               acp_session_id = excluded.acp_session_id,
+               cwd = excluded.cwd,
+               launch_key = excluded.launch_key,
+               updated_at = excluded.updated_at`,
+          ).run(
+            sessionId,
+            binding.agentId,
+            binding.acpSessionId,
+            binding.cwd,
+            binding.launchKey,
+            Date.now(),
+          );
+          const pending = readPendingRow(db, sessionId);
+          if (pending !== undefined) {
+            // A pending row of another agent describes a process configuration that never ran: it is dropped.
+            if (pending.agent_id === binding.agentId) {
+              const choices = {
+                ...parseChoices(readConfigRow(db, sessionId)?.config_choices ?? null),
+                ...parseChoices(pending.config_choices),
+              };
+              db.prepare(
+                "update fork_acp_session_binding set config_choices = ? where session_id = ?",
+              ).run(JSON.stringify(choices), sessionId);
+            }
+            db.prepare("delete from fork_acp_session_choice where session_id = ?").run(sessionId);
+          }
+          db.exec("commit");
+        } catch (error) {
+          db.exec("rollback");
+          throw error;
+        }
       });
       written(sessionId);
     },
     clear: async (sessionId) => {
       await withDatabase((db) => {
         db.prepare("delete from fork_acp_session_binding where session_id = ?").run(sessionId);
+        db.prepare("delete from fork_acp_session_choice where session_id = ?").run(sessionId);
       });
       written(sessionId);
     },
@@ -153,17 +194,32 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
       });
       written(sessionId);
     },
-    writeChoice: async (sessionId, configId, value) => {
+    writeChoice: async (sessionId, agentId, configId, value) => {
       await withDatabase((db) => {
         // Read-modify-write under one write lock, so two choices never overwrite each other.
         db.exec("begin immediate");
         try {
           const row = readConfigRow(db, sessionId);
           if (row !== undefined) {
+            if (row.agent_id !== agentId) {
+              throw new Error("the ACP session is bound to another agent");
+            }
             const choices = { ...parseChoices(row.config_choices), [configId]: value };
             db.prepare(
               "update fork_acp_session_binding set config_choices = ?, updated_at = ? where session_id = ?",
             ).run(JSON.stringify(choices), Date.now(), sessionId);
+          } else {
+            const pending = readPendingRow(db, sessionId);
+            const earlier = pending?.agent_id === agentId ? parseChoices(pending.config_choices) : {};
+            const choices = { ...earlier, [configId]: value };
+            db.prepare(
+              `insert into fork_acp_session_choice (session_id, agent_id, config_choices, updated_at)
+               values (?, ?, ?, ?)
+               on conflict(session_id) do update set
+                 agent_id = excluded.agent_id,
+                 config_choices = excluded.config_choices,
+                 updated_at = excluded.updated_at`,
+            ).run(sessionId, agentId, JSON.stringify(choices), Date.now());
           }
           db.exec("commit");
         } catch (error) {
@@ -174,6 +230,12 @@ export function createForkAcpSessionBindingStore(dbPath: string): ForkAcpSession
       written(sessionId);
     },
   };
+}
+
+function readPendingRow(db: DatabaseSync, sessionId: string): PendingChoiceRow | undefined {
+  return db
+    .prepare("select agent_id, config_choices from fork_acp_session_choice where session_id = ?")
+    .get(sessionId) as PendingChoiceRow | undefined;
 }
 
 function readConfigRow(db: DatabaseSync, sessionId: string): ConfigRow | undefined {

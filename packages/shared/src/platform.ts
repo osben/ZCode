@@ -1262,10 +1262,10 @@ export interface IPlatformService {
 /**
  * Preload argument that carries Electron main's `!app.isPackaged` to app renderer windows.
  *
- * The desktop renderer's dev-only gate must come from main, not from a Vite `define`: Vite only
+ * The desktop renderer's development-runtime flag must come from main, not from a Vite `define`: Vite only
  * applies `globalThis.<define>` under `vite dev`, so every built renderer (including the unpackaged
- * desktop E2E app) would read it as false while its host runs as a development runtime
- * (specs/acp-agent-runtime.md, "Dev-only visibility").
+ * desktop E2E app) would read it as false while its host runs as a development runtime. ACP availability
+ * no longer reads this flag (specs/acp-agent-runtime.md, "Availability (platform rule)").
  */
 export const DESKTOP_LOCAL_DEVELOPMENT_RUNTIME_ARG = "--zcode-local-development-runtime";
 

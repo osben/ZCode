@@ -9,14 +9,16 @@ import {
 import {
   isBuiltinModelProviderId,
   resolveRuntimeZCodeEndpointOrigin,
-  resolveZCodeRuntimeEnv,
   ZCODE_VERSION,
 } from "@zcode/shared";
 import { dirname, join } from "node:path";
+import { acpAgentPlatformSupported } from "@zcode/acp-agent-runtime";
 import {
+  NodeForkAcpAgentCatalogStore,
   NodeForkAcpAgentStore,
   NodeModelSelectionConfigRepository,
   NodeProviderRegistryRuntime,
+  resolveForkAcpAgentCatalogFilePath,
   resolveForkAcpAgentsFilePath,
   resolveNodeProviderRuntimePaths,
   downloadZCodeBuiltinRelease,
@@ -37,6 +39,8 @@ import {
 } from "./standalone-account-provider-runtime.js";
 
 export interface ProcessProviderRegistryRuntimeOptions {
+  /** Host platform for the ACP availability predicate; defaults to `process.platform` (tests inject it). */
+  readonly acpPlatform?: NodeJS.Platform;
 /** Standalone Prompt CLI / TUI owns its account credentials and one-time import of legacy config. */
   readonly standalone?: {
     readonly credentialStore?: SharedZCodeCredentialStore;
@@ -86,16 +90,20 @@ export async function startProcessProviderRegistryRuntime(
   const acpAgentStore = new NodeForkAcpAgentStore({
     filePath: resolveForkAcpAgentsFilePath(paths.personalFilePath),
   });
-  // Same development-runtime signal as the host ACP gate (specs/acp-agent-runtime.md "Dev-only visibility"):
-  // a packaged worker does not derive `acp:` providers from the sidecar.
-  const acpDevelopmentRuntime = resolveZCodeRuntimeEnv(env) === "development";
+  // The worker writes the catalog (last offered options) from its turns; the file lock serializes it with the host.
+  const acpAgentCatalog = new NodeForkAcpAgentCatalogStore({
+    filePath: resolveForkAcpAgentCatalogFilePath(paths.personalFilePath),
+  });
+  // Same availability value as the host (specs/acp-agent-runtime.md "Availability (platform rule)"):
+  // the worker derives `acp:` providers from the sidecar only on a supported platform.
+  const acpAgentsAvailable = acpAgentPlatformSupported(options.acpPlatform ?? process.platform);
   const runtime = new NodeProviderRegistryRuntime({
     ...paths,
     wrapConfigSource: (source) =>
-      acpDevelopmentRuntime
+      acpAgentsAvailable
         ? createDerivedAcpAgentConfigSource(chatGptPlanConfigWrapper(source), acpAgentStore)
         : chatGptPlanConfigWrapper(source),
-    acpExecutable: acpDevelopmentRuntime,
+    acpExecutable: acpAgentsAvailable,
     ...(bundledFile
       ? {
           zcodeBuiltinFilePath: bundledFile,
@@ -221,6 +229,7 @@ export async function startProcessProviderRegistryRuntime(
         runtime,
         /** Read-only view of the ACP sidecar for turn-time launch config (no migration here). */
         acpAgentStore,
+        acpAgentCatalog,
         snapshot,
         modelSelectionConfigRepository,
         configuredDefaultModelSelection,

@@ -294,9 +294,9 @@ export async function runZCodeProtocolAgent(
     });
     const activeLspRuntimeHub = lspRuntimeHub;
     const activeProviderRegistryRuntime = providerRegistryRuntime;
-    // One resident ACP agent process per ZCode session; the sidecar store is read per turn.
     const acpAgents = createAcpWorkerAgents({
       records: activeProviderRegistryRuntime.acpAgentStore,
+      catalog: activeProviderRegistryRuntime.acpAgentCatalog,
       logger,
       sessionDbPath: getSessionDbPath(configResult),
     });

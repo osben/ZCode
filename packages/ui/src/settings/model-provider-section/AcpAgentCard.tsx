@@ -19,6 +19,7 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { AcpAgentFrames } from "./AcpAgentFrames.js";
+import { AcpAgentMark } from "./AcpAgentMark.js";
 import { ProviderStatusIndicator, type ProviderStatusKind } from "./ProviderStatusIndicator.js";
 import {
   defaultAcpAgentFormValues,
@@ -38,20 +39,6 @@ interface AcpAgentStatusState {
   readonly loading: boolean;
   readonly report?: AcpAgentStatusReport;
   readonly error?: string;
-}
-
-/** Initial letter of the agent name; the agent has no logo asset. Sized like the nav icon or the detail header logo. */
-export function AcpAgentMark({ name, size = "nav" }: { name: string; size?: "nav" | "header" }) {
-  const initial = name.trim().charAt(0).toUpperCase() || "?";
-  const sizeClass = size === "header" ? "size-5 text-ui-sm" : "size-4 text-ui-xs";
-  return (
-    <span
-      aria-hidden="true"
-      className={`flex ${sizeClass} shrink-0 items-center justify-center rounded border border-border bg-surface font-semibold text-foreground-subtle`}
-    >
-      {initial}
-    </span>
-  );
 }
 
 /** Same rhythm as the Model settings detail: a separator, then a text-ui-base section title. */
@@ -275,7 +262,7 @@ export function AcpAgentDetail({
     <div className="flex min-w-0 flex-col" data-acp-agent-card={agent.agentId}>
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <AcpAgentMark name={agent.displayName} size="header" />
+          <AcpAgentMark agentId={agent.agentId} name={agent.displayName} size="header" />
           <div className="min-w-0">
             <div className="truncate text-ui-lg font-semibold text-foreground">
               {agent.displayName}
