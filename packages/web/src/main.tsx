@@ -4,7 +4,6 @@ import {
   type RendererTelemetryEventPayload,
   WEB_REMOTE_CONTROL_WORKSPACE_RECONNECT_TIMEOUT_MS,
   createWebRemoteControlConnectionRecoveryTimeoutFailure,
-  resolveWebRemoteControlRelayWsUrl,
   matchesWebRemoteControlRoutePath,
   resolveWebRemoteControlInitialWorkspaceSelection,
   resolveWebRemoteControlWorkspaceKey,
@@ -79,6 +78,7 @@ import {
   isWebRemoteControlOAuthCallback,
   type WebRemoteControlEntryConnection,
   createWebRemoteControlV2PairingClient,
+  resolveWebRemoteControlRelayEndpoints,
   createWebRemoteControlV2TokenClient,
   readKnownDevices,
   createWebRemoteControlDeviceClient,
@@ -385,13 +385,18 @@ const webRemoteControlStorage: Pick<Storage, "getItem" | "setItem"> = {
   setItem: (key, value) => window.localStorage.setItem(key, value),
 };
 
+const externalRelayEndpoints = resolveWebRemoteControlRelayEndpoints({
+  configuredRelayUrl: import.meta.env.VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL,
+  pageOrigin: window.location.origin,
+});
+
 const remoteEntry = new WebRemoteControlEntry({
   auth: webAuthService,
   getHref: () => window.location.href,
   replaceHref: (href) => window.history.replaceState(window.history.state, "", href),
   storage: webRemoteControlStorage,
   locale: resolveWebRemoteControlScreenLocale(navigator.language),
-  devices: createWebRemoteControlDeviceClient(window.location.origin),
+  devices: createWebRemoteControlDeviceClient(externalRelayEndpoints.httpOrigin),
   subscribeVisible: (listener) => {
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") listener();
@@ -400,8 +405,8 @@ const remoteEntry = new WebRemoteControlEntry({
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   },
   loginOptions: { devReturnTo: resolveWebAuthDevReturnTo(WEB_ZAI_OAUTH_CONFIG) },
-  token: createWebRemoteControlV2TokenClient(window.location.origin),
-  pairing: createWebRemoteControlV2PairingClient(window.location.origin),
+  token: createWebRemoteControlV2TokenClient(externalRelayEndpoints.httpOrigin),
+  pairing: createWebRemoteControlV2PairingClient(externalRelayEndpoints.httpOrigin),
   connect: (connection) => {
     void bootstrapExternalRelayWebRemoteControl(connection);
   },
@@ -1048,10 +1053,6 @@ export function createHomeOnlyWebRemoteControlServices(): RootServices {
   };
 }
 
-function resolveExternalRelayWsUrl(): string {
-  return resolveWebRemoteControlRelayWsUrl({ endpointOrigin: window.location.origin });
-}
-
 function isZhLocale(): boolean {
   return /^zh\b/i.test(navigator.language);
 }
@@ -1369,7 +1370,7 @@ async function bootstrapExternalRelayWebRemoteControl(
     (payload) => !terminated && !versionGuard.isBlocked() && transport.sendPayload(payload),
   );
   const transport = new WebRemoteControlTerminalTransport({
-    relayWsUrl: resolveExternalRelayWsUrl(),
+    relayWsUrl: externalRelayEndpoints.wsUrl,
     deviceSid: relayParams.deviceSid,
     deviceMid: relayParams.deviceMid,
     appVersion: relayParams.appVersion,

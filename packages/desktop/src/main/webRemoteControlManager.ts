@@ -18,6 +18,7 @@ import {
   type ZCodeEndpointUrls,
   type HostPreparedProjectWorkspace,
   type HostProjectWorkspaceNavigationInput,
+  resolveWebRemoteControlRelayHttpOrigin,
   resolveWebRemoteControlWorkspaceKey,
   type WebRemoteControlAppPayload,
   type WebRemoteControlAuthStateChange,
@@ -293,13 +294,6 @@ function getPathLabel(workspacePath: string): string {
   const normalized = workspacePath.replace(/\\/g, "/");
   const segments = normalized.split("/").filter(Boolean);
   return segments[segments.length - 1] ?? workspacePath;
-}
-
-/** Relay HTTP origin for a relay WS URL: wss to https, ws to http; the path is always the relay API root. */
-function relayHttpOriginFromWsUrl(relayWsUrl: string): string {
-  const url = new URL(relayWsUrl);
-  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
-  return url.origin;
 }
 
 function isBridgeableRemoteTarget(target: WebRemoteControlWorkspaceTarget): boolean {
@@ -1652,7 +1646,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         }
         assertActive();
         // Relay HTTP shares the origin of the relay WS URL (self-hosted relays are configured as one origin).
-        const relayOrigin = relayHttpOriginFromWsUrl(relayWsUrl);
+        const relayOrigin = resolveWebRemoteControlRelayHttpOrigin(relayWsUrl);
         const http = createWebRemoteControlV2Http(relayOrigin);
         const currentLogin = async (): Promise<WebRemoteControlLogin> => {
           const current = await dependencies.getLogin();
@@ -1667,7 +1661,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
           }
           if (!dependencies.relayBearer) return current;
           const jwt = await dependencies.relayBearer.getJwt({
-            relayOrigin: relayHttpOriginFromWsUrl(relayWsUrl),
+            relayOrigin: resolveWebRemoteControlRelayHttpOrigin(relayWsUrl),
             identityJwt: current.jwt,
             signal,
           });
@@ -2198,7 +2192,7 @@ export function createWebRemoteControlManager(dependencies: WebRemoteControlMana
         let pairingCode: string | undefined;
         if (dependencies.pairing) {
           pairingCode = await dependencies.pairing.issueCode({
-            relayOrigin: relayHttpOriginFromWsUrl(
+            relayOrigin: resolveWebRemoteControlRelayHttpOrigin(
               endpointUrls?.relayWsUrl ?? dependencies.relayWsUrl,
             ),
             signal: AbortSignal.timeout(15_000),

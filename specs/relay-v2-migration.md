@@ -294,6 +294,14 @@ Status: implemented on this branch; desktop (`claude/relay-v2-desktop`) and serv
 - Relay origin: `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` (web: `VITE_` variant) is an origin; the path
   `/api/v1/remote/ws2` is derived in `resolveWebRemoteControlRelayWsUrl`. Unset falls back to the
   endpoint origin. No production host is hardcoded in the web client.
+- Relay HTTP origin (web): same rule as Desktop §12.3. `resolveWebRemoteControlRelayEndpoints` resolves
+  the WS URL once from `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` (normalized by
+  `normalizeConfiguredWebRemoteControlRelayWsUrl`) and derives the HTTP origin from it with
+  `resolveWebRemoteControlRelayHttpOrigin`. The pairing (`/session`), token and device clients and the
+  `ws2` transport all use that one result, so a web page hosted on its own domain (Railway
+  `zcode-web-remote`) reaches a relay on another domain. Unset keeps the page origin for both.
+  Acceptance: with the variable set to `wss://relay.example`, a QR `pk` exchange posts to
+  `https://relay.example/api/v1/remote/session`, never to the page origin.
 - Bearer seam: `getToken` and `token(jwt)` are injected by `WebRemoteControlEntry` from the logged-in
   account (`webAuthService.getZCodeJwtToken()`). Relay JWTs are never placed in URLs or payloads.
 - Login callback: `webRemoteCallbackUrl` is `${origin}/remote/v4`. The fork's `/web-remote/callback`
