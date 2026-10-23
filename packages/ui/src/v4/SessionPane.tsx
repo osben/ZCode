@@ -3619,9 +3619,9 @@ export function SessionPane({
     async () => undefined,
   );
   // S6 readiness: a draft's pre-submission choices. The key is one draft instance: the new-task generation
-  // (draftFocusVersion, bumped by every startDraft). It is not the project scope, which can resolve after the
-  // choice is made. A new-task entry starts a new key, and the effect below clears the store whenever the instance
-  // or the bound session changes.
+  // (draftFocusVersion, bumped by every startDraft) within one workspace. It is not the project scope, which can
+  // resolve after the choice is made. A new-task entry starts a new key, and the effect below clears the store
+  // whenever the instance changes.
   const [draftExternalAgentChoices, setDraftExternalAgentChoices] =
     useState<DraftExternalAgentChoices>({});
   // The ref is the source of truth for the send path: it changes synchronously when a send takes the choices.
@@ -3630,9 +3630,12 @@ export function SessionPane({
     draftExternalAgentChoicesRef.current = next;
     setDraftExternalAgentChoices(next);
   }, []);
-  const draftChoiceKey = `draft#${composerDraftGeneration}`;
+  const draftChoiceKey = `draft#${workspaceIdentity?.trim() || workspacePath}#${composerDraftGeneration}`;
+  // Committed key only: React can abandon a render, and a restore must compare against the key that is on screen.
   const draftChoiceKeyRef = useRef(draftChoiceKey);
-  draftChoiceKeyRef.current = draftChoiceKey;
+  useLayoutEffect(() => {
+    draftChoiceKeyRef.current = draftChoiceKey;
+  }, [draftChoiceKey]);
   // A new-task entry is a new draft instance (new key): the store is cleared then. The pane's bound session does not
   // reset the choices: the pane can bind the draft's own session while the draft is still being written (the
   // prewarm/created session). A send claims the choices only on the draft route (see claimDraftChoicesForSend).
@@ -4398,7 +4401,11 @@ export function SessionPane({
       if (draftBinding) {
         await ensureDraftPrewarmConfigBeforeSendRef.current(draftBinding.sessionId);
         await applyDraftExternalAgentChoicesRef.current(draftClaim, draftBinding.sessionId);
-        if (!draftBinding.beginPromotion()) throw new Error("草稿会话已切换，请重新发送");
+        if (!draftBinding.beginPromotion()) {
+          // The choices went to the replaced draft session; the finally block must restore them for the retry.
+          if (draftClaim) draftClaim.delivered = false;
+          throw new Error("草稿会话已切换，请重新发送");
+        }
       }
       const targetSessionId = sessionId ?? draftBinding!.sessionId;
       if (draftBinding && draftSlashCommand) {

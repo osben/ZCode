@@ -289,8 +289,19 @@ export interface DraftExternalAgentClaim {
   delivered: boolean;
 }
 
+/** The state without one agent's choices in a draft; the choices of the draft's other agents stay. */
+function withoutAgentChoices(
+  state: DraftExternalAgentChoices,
+  draftKey: string,
+  agentId: string,
+): DraftExternalAgentChoices {
+  const { [agentId]: _claimed, ...otherAgents } = state[draftKey] ?? {};
+  if (Object.keys(otherAgents).length === 0) return takeDraftExternalAgentChoices(state, draftKey);
+  return { ...state, [draftKey]: otherAgents };
+}
+
 /**
- * Takes the draft's choices for one send. Only a draft send (no bound session) claims: a bound task never receives a
+ * Takes the draft's choices for one send, for the claiming agent only. Only a draft send (no bound session) claims: a bound task never receives a
  * draft's choices, whatever agent it runs.
  */
 export function claimDraftExternalAgentChoices(params: {
@@ -303,7 +314,7 @@ export function claimDraftExternalAgentChoices(params: {
   const choices = draftExternalAgentChoicesOf(params.state, params.draftKey, params.agentId);
   if (!choices || Object.keys(choices).length === 0) return { state: params.state, claim: null };
   return {
-    state: takeDraftExternalAgentChoices(params.state, params.draftKey),
+    state: withoutAgentChoices(params.state, params.draftKey, params.agentId),
     claim: {
       draftKey: params.draftKey,
       agentId: params.agentId,

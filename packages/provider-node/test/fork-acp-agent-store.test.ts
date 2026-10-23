@@ -18,6 +18,12 @@ import { NodePersonalProviderConfigRepository } from "../src/personal-provider-c
 import { encodeProviderConfigFile } from "../src/provider-config-file-codec.js";
 import { decodeWithUpstreamSchemas } from "./fixtures/upstream-3.16.1/upstream-decoder.js";
 
+// Wraps readFile so one test can hold a poll's file read open; every other call passes through.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readFile: vi.fn(actual.readFile) };
+});
+
 const OPENCODE: ForkAcpAgentRecord = {
   agentId: "opencode",
   providerName: "opencode (ACP)",
@@ -319,9 +325,21 @@ describe("NodeForkAcpAgentStore polling", () => {
     vi.useFakeTimers();
     const polling = new NodeForkAcpAgentStore({ filePath: sidecarFilePath });
     disposables.push(polling);
+    vi.mocked(readFile).mockClear();
+    // Hold the poll's file read open so the unsubscribe lands while the poll is provably in flight.
+    let releaseRead: (text: string) => void = () => undefined;
+    const readHeld = new Promise<string>((resolve) => {
+      releaseRead = resolve;
+    });
+    vi.mocked(readFile).mockImplementationOnce((() => readHeld) as unknown as typeof readFile);
     const off = polling.onDidChange(() => undefined);
-    await vi.advanceTimersByTimeAsync(1_000);
+    expect(vi.getTimerCount()).toBe(1);
+    // The synchronous advance fires the timer and starts the poll, but cannot run the pending read to completion.
+    vi.advanceTimersByTime(1_000);
+    expect(readFile).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
     off();
+    releaseRead('{"schemaVersion": 1, "agents": []}');
     await vi.advanceTimersByTimeAsync(5_000);
     expect(vi.getTimerCount()).toBe(0);
   });

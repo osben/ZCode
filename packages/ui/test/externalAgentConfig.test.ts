@@ -297,6 +297,31 @@ describe("draft choice lifecycle", () => {
     });
   });
 
+  it("claims only the claiming agent's choices and keeps the other agents' choices, also across a restore", () => {
+    const state = setDraftExternalAgentChoice(
+      setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan"),
+      "draft-key",
+      "cursor",
+      "model",
+      "fast",
+    );
+    const { state: taken, claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    expect(draftExternalAgentChoicesOf(taken, "draft-key", "opencode")).toBeUndefined();
+    expect(draftExternalAgentChoicesOf(taken, "draft-key", "cursor")).toEqual({ model: "fast" });
+    const restored = restoreDraftExternalAgentChoices(taken, claim!);
+    expect(draftExternalAgentChoicesOf(restored, "draft-key", "opencode")).toEqual({
+      mode: "plan",
+    });
+    expect(draftExternalAgentChoicesOf(restored, "draft-key", "cursor")).toEqual({
+      model: "fast",
+    });
+  });
+
   it("sends a draft's choices exactly once, even when two applies overlap", async () => {
     const state = setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan");
     const { claim } = claimDraftExternalAgentChoices({

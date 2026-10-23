@@ -865,11 +865,18 @@ Composer (`V4ComposerModeArea`):
 - Before a session exists (draft): the selects show the catalog options, overlaid with the draft's choices. A
   selection updates the draft state only. Nothing is dispatched. Enabled when the catalog has options.
 - Draft state key (one draft instance): the composer scope plus the new-task generation (`draftFocusVersion`, bumped by
-  every `startDraft`). A new-task entry starts a new instance, so choices never carry into another draft, and the
-  store is cleared whenever the instance or the pane's bound session changes (including from a draft).
+  every `startDraft`) scoped by the workspace identity (`workspaceIdentity?.trim() || workspacePath`), so a pane that
+  switches workspace without remounting does not reuse another workspace's choices. A new-task entry starts a new
+  instance, so choices never carry into another draft, and the store is cleared whenever the instance changes. The
+  pane's bound session does not clear it: the pane can bind the draft's own prewarm session before the first
+  submission, which still needs the choices. The project id is not part of the key, because it can resolve during the
+  same draft.
 - Only a draft send claims the draft's choices, synchronously at the click, before any await. A bound task never
-  receives a draft's choices. A claim is delivered once (a second apply on the same claim sends nothing). A refused
-  or undelivered claim is restored into the draft, except for a config id the user set again meanwhile.
+  receives a draft's choices. A claim is delivered once (a second apply on the same claim sends nothing). A claim takes
+  only the claiming agent's choices; the draft's choices for other agents stay. A refused or undelivered claim is
+  restored into the draft, except for a config id the user set again meanwhile. A promotion that the draft binding
+  refuses (the draft session was replaced after the choices were applied to it) counts as undelivered, so a retry on
+  the replacement binding re-applies them.
 - Delivery target is the session that receives the first submission: the created session (create route) or the
   draft's bound prewarm session (draft binding). The prewarm route applies after the binding, not before it.
 - Once a session exists: the live projection (`config.externalAgentConfig`) wins when it belongs to this agent. Otherwise the
