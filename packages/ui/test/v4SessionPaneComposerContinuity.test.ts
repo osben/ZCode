@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationRow, ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { useComposerWorktreePipelineStore } from "@/store/composerWorktreePipelineStore.js";
 import { pendingCommandRegistry, type PendingCommandEntry } from "@/v4/pendingCommandRegistry.js";
 import { SessionPane } from "@/v4/SessionPane.js";
+import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import {
   composerScopeKey,
@@ -750,10 +752,13 @@ beforeEach(() => {
   };
 });
 
-afterEach(() => {
+afterEach(async () => {
   for (const root of mountedRoots.splice(0)) {
     act(() => root.unmount());
   }
+  // Scheduler tasks queued by the last unmount must fire before window cleanup, otherwise
+  // react-dom's work loop dereferences the deleted global window (unhandled ReferenceError).
+  await new Promise((resolve) => setTimeout(resolve, 0));
   delete (globalThis as { document?: unknown }).document;
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: unknown }).IS_REACT_ACT_ENVIRONMENT;
@@ -2262,5 +2267,96 @@ describe("SessionPane first-submission instant UX (IUX04/05/06/08)", () => {
     expect(commitCreatedTask).not.toHaveBeenCalled();
     expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, "wt-session-1")).toHaveLength(1);
     expect(readV4WorktreeRecoveryDrafts(WORKSPACE, undefined, paneDraftScope())).toHaveLength(0);
+  });
+});
+
+// Regression pin for the entry-driven setup slot (ISSUE-051): the timeline's worktree card
+// must mount from the renderer's live pipeline entry when the pane snapshot carries no Host
+// preparation marker. Reverting SessionPane's liveWorktreeSetupEntry gate makes this fail:
+// the slot would stay null and the failed session would show no setup error and no Retry.
+describe("SessionPane worktree setup slot without a Host marker", () => {
+  const SESSION = "session-failed-entry";
+
+  function failedEntrySnapshot(): ProjectionState {
+    const base = makeDraftSnapshot();
+    return {
+      status: "live",
+      snapshot: {
+        ...base,
+        sessionId: SESSION,
+        // No `meta.worktreePreparation`: the marker is absent from this snapshot.
+        queue: { autoDrain: true, items: [] },
+        rows: { window: [], totalCount: 0, firstRowId: null },
+      },
+      subscriptionId: `sub-${SESSION}`,
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+  }
+
+  beforeEach(() => {
+    useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
+  });
+
+  afterEach(() => {
+    useComposerWorktreePipelineStore.setState({ pipelineByWorkspaceKey: {} });
+  });
+
+  it("a failed pipeline entry alone mounts the failed card with Retry in the bound session", async () => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    projectionState.current = failedEntrySnapshot();
+    // Control: without a pipeline entry and without a marker the pane renders no slot at all.
+    renderPane(root, SESSION);
+    expect(timelineFocus.props?.afterFirstUserInputSlot ?? null).toBeNull();
+
+    // The memory-only pipeline entry (lost marker case) drives the same slot: the pane mounts
+    // ConversationWorktreeSetupSteps in its entry-only form (no Host marker prop). The card body
+    // (failed marker, Retry/Discard) is pinned by conversationWorktreeSetupStepsBehavior.test.ts;
+    // this asserts the gate — the regression site. The element tree is inspected instead of
+    // renderToStaticMarkup because the static renderer reads zustand's initial state, not the
+    // live store the pane gated on.
+    act(() => {
+      useComposerWorktreePipelineStore.getState().startPipeline("/workspace", {
+        status: "failed",
+        sessionId: SESSION,
+        params: {
+          workspacePath: "/workspace",
+          branchName: "zcode/pinned-branch",
+          targetPath: "/workspace-worktrees/zcode-pinned-branch",
+          baseFromHeadDefault: true,
+          attemptId: "attempt-entry-pin",
+        },
+        failureMessage: "could not create leading directories: Permission denied",
+        createdAt: 1,
+      });
+    });
+    renderPane(root, SESSION);
+    const slot = timelineFocus.props?.afterFirstUserInputSlot ?? null;
+    expect(slot).not.toBeNull();
+    const setupStepsNodes: Array<Record<string, unknown>> = [];
+    const visit = (node: unknown): void => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) {
+        node.forEach(visit);
+        return;
+      }
+      const element = node as { type?: unknown; props?: { children?: unknown } };
+      if (element.type === ConversationWorktreeSetupSteps) {
+        setupStepsNodes.push(element.props as Record<string, unknown>);
+      }
+      visit(element.props?.children);
+    };
+    visit(slot);
+    expect(setupStepsNodes).toHaveLength(1);
+    // Entry-only mount: no Host marker prop; addressed to the failed session.
+    expect(setupStepsNodes[0]).toMatchObject({ sessionId: SESSION });
+    expect(setupStepsNodes[0]).not.toHaveProperty("preparation");
+    // Drain the scheduler while the minimal DOM still exists: the pane's re-render on the
+    // store change schedules work that must not fire after window cleanup.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
   });
 });

@@ -614,6 +614,7 @@ export function resolveComposerWorktreeRetryPreparation({
   attemptId?: string;
 } | null {
   const params = pipelineEntry?.params;
+  // Entry wins per field only because Host CAS rejects attempt mismatches.
   const branchName = params?.branchName ?? preparation?.branchName;
   const targetPath = params?.targetPath ?? preparation?.targetPath;
   if (!branchName || !targetPath) return null;

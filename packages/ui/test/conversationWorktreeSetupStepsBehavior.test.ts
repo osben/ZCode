@@ -240,19 +240,25 @@ describe("ConversationWorktreeSetupSteps rendering", () => {
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
-  it("keeps the orphan note on an entry-only failed card, same as the marker path", () => {
+  it("keeps the orphan note on a failed card after withdrawing during creation (ISSUE-051 entry-only path)", () => {
     useComposerWorktreePipelineStore.getState().startPipeline(WORKSPACE_KEY, {
-      status: "failed",
+      status: "creating",
       sessionId: "session-prepared-1",
       params: { ...PARAMS, attemptId: "attempt-orphaned" },
-      failureMessage: "git interrupted",
       createdAt: 1,
     });
+    // The honest orphan sequence: the user unchecks Worktree while Git is in flight (withdraw),
+    // the runner is not cancellable, and its failure lands on the same orphaned entry.
     useComposerWorktreePipelineStore.getState().withdraw(WORKSPACE_KEY, "session-prepared-1");
+    useComposerWorktreePipelineStore
+      .getState()
+      .markFailed(WORKSPACE_KEY, "git interrupted", "session-prepared-1", "attempt-orphaned");
     renderEntryOnlySteps();
-    // An explicitly withdrawn pipeline keeps its failed row and orphan note (the marker path
-    // renders the same today); the frozen submission itself stays on the recovery card.
-    expect(document.querySelector("[data-worktree-setup-steps]")).not.toBeNull();
+    expect(document.querySelector("[data-worktree-setup-step='failed']")).not.toBeNull();
+    // A failure auto-expands the card, so the orphan note text is in the DOM without clicking.
+    expect(
+      screen.getByText("This setup no longer belongs to an active session and can be discarded."),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
   });
 
