@@ -137,3 +137,47 @@ describe("host RPC log level: expected not-found for a just-created session's wo
     ).toBe("warn");
   });
 });
+
+describe("host RPC log level: saved-workflows directory watch before the directory exists", () => {
+  const watchEnoent = (path: string) =>
+    new Error(`无法监视目录 '${path}': ENOENT: no such file or directory, watch '${path}'`);
+
+  it("logs a missing <project>/.zcode/workflows watch at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/project/.zcode/workflows"),
+      ),
+    ).toBe("info");
+  });
+
+  it("logs a missing Windows-style .zcode\\workflows watch at info", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("C:\\Users\\me\\project\\.zcode\\workflows"),
+      ),
+    ).toBe("info");
+  });
+
+  it("keeps ENOENT on other paths, other errors, and other watch calls at warn", () => {
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        watchEnoent("/Users/me/project/src"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.watch FAIL (1.2ms)",
+        new Error("无法监视目录 '/Users/me/project/.zcode/workflows': EACCES: permission denied"),
+      ),
+    ).toBe("warn");
+    expect(
+      resolveRpcLogLevel(
+        "[rpc:call] file-watcher.unwatch FAIL (1.2ms)",
+        watchEnoent("/Users/me/project/.zcode/workflows"),
+      ),
+    ).toBe("warn");
+  });
+});
