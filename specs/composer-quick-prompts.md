@@ -30,8 +30,9 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
 
 1. **Row above the composer** (board A). Rendered inside `ConversationComposer` directly above the input surface,
    in new-session drafts and existing sessions, so it follows the composer's hide and width rules. Chips show the
-   name only. The row scrolls horizontally with edge fades on every platform; there is no overflow popover and
-   no collapse control.
+   name only. The row scrolls horizontally on every platform; an edge fade shows only on a side that has hidden
+   content (left once scrolled away from the start, right while more chips are off-screen), so a row that fits
+   shows no fade. There is no overflow popover and no collapse control.
 2. **Row content** for a session's project P: pinned global quick prompts not hidden in P, in global order, then
    pinned project quick prompts of P, in their order. A session with no project (`projectId === null`) or in a
    legacy single-root project shows pinned globals only.
@@ -75,6 +76,8 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
     **Duplicate**, **Delete**. No other fields. Save stays disabled until a stored body has loaded into the editor;
     if it cannot be loaded, only the name can be saved. "Save draft" appears only when the draft has text;
     attachments and contexts are never part of a quick prompt.
+    The dialog has exactly two dismissal/commit controls: the header ✕ (close) and the footer **Save**; the embedded
+    prompt editor renders no cancel ✕ and no send arrow of its own (they duplicated close/Save).
 16. Editing a global quick prompt from a session shows "This quick prompt is global. Changes apply in every
     project." with **Duplicate to <project>** (independent project copy, pinned) and **Edit everywhere**.
 17. **Right-click** on a chip (desktop): **Edit…**, **Hide in this project** (global chips; "Remove from row" for
