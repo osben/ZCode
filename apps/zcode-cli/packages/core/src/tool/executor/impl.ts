@@ -22,6 +22,9 @@ import type {
 } from "./types.js";
 import { validateInput } from "./validation.js";
 
+/** Per-batch executor concurrency when the runtime does not configure `toolConcurrency`. */
+export const DEFAULT_TOOL_MAX_CONCURRENCY = 10;
+
 export class ToolExecutorImpl implements ToolExecutor {
   private readonly deps: ToolExecutorDeps;
   private readonly backgroundTasks: BackgroundTaskTracker;
@@ -92,7 +95,7 @@ export class ToolExecutorImpl implements ToolExecutor {
       runtimeScope: options.runtimeScope ?? "main",
       traceContext: options.traceContext,
       getMode: options.getMode ?? (() => options.mode ?? "build"),
-      maxConcurrency: options.maxConcurrency ?? 10,
+      maxConcurrency: options.maxConcurrency ?? DEFAULT_TOOL_MAX_CONCURRENCY,
       hookRunner: options.hookRunner,
       validateToolExecution: options.validateToolExecution,
     };
