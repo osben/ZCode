@@ -8,8 +8,8 @@ An orderly app quit logged one `[warn]` per open workspace topic plus one more:
 
 - `[zcode-task-index-syncer] 清理 task index sessions-index 订阅失败 …` and the
   `workspace-config` twin, error `ZCode Protocol client disposed`;
-- `[zcode-host] failed to forward attachment connection flow state {"state":"closed",
-  "message":"ZCode Protocol client disposed"}`.
+- `[zcode-host] failed to forward attachment connection flow state`, payload state
+  `closed`, message `ZCode Protocol client disposed`.
 
 `AGENTS.md` reserves `warn` for recoverable exceptions. None of these is one.
 
