@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   execFile: vi.fn(),
-  isDockerAvailable: vi.fn(),
+  probeDockerDaemon: vi.fn(),
   listDockerContainers: vi.fn(),
   resolveDockerCommand: vi.fn(),
   spawn: vi.fn(),
@@ -20,7 +20,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 vi.mock("@zcode/server/remote/docker-detect.js", () => ({
-  isDockerAvailable: mocks.isDockerAvailable,
+  probeDockerDaemon: mocks.probeDockerDaemon,
   listDockerContainers: mocks.listDockerContainers,
   resolveDockerCommand: mocks.resolveDockerCommand,
 }));
@@ -73,12 +73,12 @@ describe("DockerBackend docker command resolution", () => {
   beforeEach(() => {
     mocks.execFile.mockReset();
     mocks.spawn.mockReset();
-    mocks.isDockerAvailable.mockReset();
+    mocks.probeDockerDaemon.mockReset();
     mocks.listDockerContainers.mockReset();
     mocks.resolveDockerCommand.mockReset();
 
     mocks.resolveDockerCommand.mockReturnValue(RESOLVED_DOCKER_COMMAND);
-    mocks.isDockerAvailable.mockResolvedValue(true);
+    mocks.probeDockerDaemon.mockResolvedValue(undefined);
     mocks.listDockerContainers.mockResolvedValue([
       {
         id: "abc123",
@@ -142,7 +142,7 @@ describe("DockerBackend docker command resolution", () => {
       expect.any(Object),
     );
     await backend.exec("printf again");
-    expect(mocks.isDockerAvailable).not.toHaveBeenCalled();
+    expect(mocks.probeDockerDaemon).not.toHaveBeenCalled();
     expect(mocks.listDockerContainers).not.toHaveBeenCalled();
   });
 
@@ -197,7 +197,7 @@ describe("DockerBackend docker command resolution", () => {
       "test-ingress-token\n",
     );
 
-    expect(mocks.isDockerAvailable).not.toHaveBeenCalled();
+    expect(mocks.probeDockerDaemon).not.toHaveBeenCalled();
     expect(mocks.listDockerContainers).not.toHaveBeenCalled();
     expect(mocks.execFile).toHaveBeenCalledTimes(1);
     expect(mocks.execFile).toHaveBeenCalledWith(
@@ -234,5 +234,45 @@ describe("DockerBackend docker command resolution", () => {
       uploadedBytes: 96 * 1024,
       totalBytes: 96 * 1024,
     });
+  });
+
+  it("守护进程不可用时 Docker 可用性检查应携带探测原因并保留 remote-connection-unknown 码", async () => {
+    mocks.probeDockerDaemon.mockRejectedValueOnce(
+      new Error("Cannot connect to the Docker daemon. Is the docker daemon running?"),
+    );
+    const backend = createBackend();
+
+    const error = await backend.detect().catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "remote-connection-unknown",
+      message:
+        "当前系统未检测到可用的 Docker 环境：Cannot connect to the Docker daemon. Is the docker daemon running?",
+    });
+  });
+
+  it("探测没有原因文本时只报告未检测到 Docker 环境", async () => {
+    mocks.probeDockerDaemon.mockRejectedValueOnce(new Error(""));
+    const backend = createBackend();
+
+    const error = await backend.detect().catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "remote-connection-unknown",
+      message: "当前系统未检测到可用的 Docker 环境",
+    });
+  });
+
+  it("diagnoseExecFailure 应重新探测 daemon 并在失败时抛出诊断，而不是复用缓存结果", async () => {
+    const backend = createBackend();
+    await expect(backend.diagnoseExecFailure()).resolves.toBeUndefined();
+    expect(mocks.probeDockerDaemon).toHaveBeenCalledTimes(1);
+
+    mocks.probeDockerDaemon.mockRejectedValueOnce(new Error("daemon stopped"));
+    await expect(backend.diagnoseExecFailure()).rejects.toMatchObject({
+      code: "remote-connection-unknown",
+      message: "当前系统未检测到可用的 Docker 环境：daemon stopped",
+    });
+    expect(mocks.probeDockerDaemon).toHaveBeenCalledTimes(2);
   });
 });

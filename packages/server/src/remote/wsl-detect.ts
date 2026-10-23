@@ -29,6 +29,31 @@ function normalizeWslOutput(raw: string): string {
     .replace(/\r/g, "");
 }
 
+/**
+ * Builds the error for a failed wsl.exe call. The message prefers stderr, then stdout, then the Node error text, and
+ * appends the numeric exit code so the user can tell apart failures that print the same text.
+ * The original error stays as `cause`; the numeric code is exposed as `exitCode`.
+ */
+export function createWslExecError(error: Error, stdout: Buffer, stderr: Buffer): Error {
+  const message =
+    normalizeWslOutput(decodeWslOutput(stderr)).trim() ||
+    normalizeWslOutput(decodeWslOutput(stdout)).trim() ||
+    error.message;
+  const exitCode =
+    typeof (error as { code?: unknown }).code === "number"
+      ? (error as { code: number }).code
+      : undefined;
+  return Object.assign(
+    new Error(
+      exitCode === undefined ? message : `${message}\uFF08\u9000\u51FA\u7801 ${exitCode}\uFF09`,
+      {
+        cause: error,
+      },
+    ),
+    exitCode === undefined ? {} : { exitCode },
+  );
+}
+
 export function parseWSLDistroList(rawOutput: string): WSLDistro[] {
   const lines = normalizeWslOutput(rawOutput)
     .split("\n")
@@ -86,8 +111,7 @@ async function execWslForBuffer(args: string[]): Promise<Buffer> {
         const stderrBuffer = Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr ?? "");
 
         if (error) {
-          const stderrText = normalizeWslOutput(decodeWslOutput(stderrBuffer)).trim();
-          reject(new Error(stderrText || error.message));
+          reject(createWslExecError(error, stdoutBuffer, stderrBuffer));
           return;
         }
 
