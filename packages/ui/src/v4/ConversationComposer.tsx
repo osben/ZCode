@@ -207,7 +207,10 @@ import {
 import { V4ComposerDictationControl } from "@/v4/composer/V4ComposerDictationControl.js";
 import { isComposerSubmissionOwnerCurrent } from "@/v4/composer/composerSubmissionOwner.js";
 import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
-import { resolveComposerSubmitBlockReason } from "@/v4/composer/composerSubmitBlockReason.js";
+import {
+  isComposerModelBlockReason,
+  resolveComposerSubmitBlockReason,
+} from "@/v4/composer/composerSubmitBlockReason.js";
 import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { toast } from "@/components/ui/toast.js";
 import { useOptionalWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
@@ -555,6 +558,8 @@ export interface ConversationComposerProps {
   remoteSessionId?: string;
   /** SessionPane 从目标 Host 原子读取的选择事实；Composer 不自行解析 Host。 */
   modelSelectionView?: ModelSelectionView | null;
+  /** Provider startup has settled; until then a stored-model verdict keeps the generic reason (ISSUE-026). */
+  modelSelectionSettled?: boolean;
   modelSelectionState?: ModelSelectionState;
   /** Model Selection 首次读取失败后的显式重试入口。 */
   modelSelectionReload?: () => void;
@@ -702,6 +707,7 @@ function ConversationComposerImpl({
   workspaceIdentity,
   remoteSessionId,
   modelSelectionView = null,
+  modelSelectionSettled = false,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   modelSelectionRefresh,
@@ -1597,6 +1603,8 @@ function ConversationComposerImpl({
       runtimeBlocked,
       submissionReady,
       submissionConfigured: true,
+      modelSelectionIssue: modelSelectionView?.selectionIssue,
+      modelSelectionSettled,
       sendInProgress: pendingOwner !== null || worktreeQueued,
       preparedSessionAwaitingFirstInput: Boolean(sessionId && snapshot?.meta.submissionPreparation),
       retrying,
@@ -1635,6 +1643,12 @@ function ConversationComposerImpl({
       : sendBlockReason
         ? `composer.sendBlocked.${sendBlockReason}`
         : null;
+  // Enter during a model block keeps the draft (no newline) and repeats the inline copy, so the
+  // reason is never only visible after a silent keypress (ISSUE-026).
+  const handleModelBlockedEnter = useCallback(() => {
+    if (!hasDraftToSubmit || !sendBlockMessageId) return;
+    toast(intl.formatMessage({ id: sendBlockMessageId }), { dedupeKey: sendBlockMessageId });
+  }, [hasDraftToSubmit, intl, sendBlockMessageId]);
   // 旧 UI 状态机：streaming + 空草稿 → Stop；有草稿 → 发送键（入队）。
   const showStopControl = canStop && !hasDraftToSubmit;
 
@@ -2290,6 +2304,8 @@ function ConversationComposerImpl({
         runtimeBlocked,
         submissionReady,
         submissionConfigured: !(createSubmissionFromComposer !== undefined && submission === null),
+        modelSelectionIssue: modelSelectionView?.selectionIssue,
+        modelSelectionSettled,
         sendInProgress:
           pendingRef.current !== null ||
           targetSelectionPendingRef.current ||
@@ -3034,6 +3050,7 @@ function ConversationComposerImpl({
       getCodeCommentContexts,
       telemetryDraftConfig,
       modelSelectionView,
+      modelSelectionSettled,
       intl,
       onPrepareWorktreeSession,
       onSyncWorktreePreparation,
@@ -4423,13 +4440,18 @@ function ConversationComposerImpl({
                 ? "!border-incognito hover:!border-incognito focus-within:!border-incognito"
                 : undefined
           }
+          onSubmitBlocked={
+            isComposerModelBlockReason(sendBlockReason) ? handleModelBlockedEnter : undefined
+          }
           onChange={handleEditorChange}
           onFocus={handleEditorFocus}
           onSubmit={handleEditorSubmit}
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
         />
-        {sendBarrierActive && hasDraftToSubmit && sendBlockMessageId ? (
+        {(sendBarrierActive || isComposerModelBlockReason(sendBlockReason)) &&
+        hasDraftToSubmit &&
+        sendBlockMessageId ? (
           <div className="flex flex-col gap-2 px-3 pb-2 text-ui-sm text-foreground-subtle">
             <p role="status" data-testid="composer-send-blocked-reason">
               {intl.formatMessage({ id: sendBlockMessageId })}

@@ -2488,8 +2488,15 @@ describe("SessionPane model switch recovery", () => {
       await flushMicrotasks();
     });
 
+    // ISSUE-035: a manual pick in an existing session announces its switch once, before any send.
     expect(mocks.sendCommand).not.toHaveBeenCalled();
-    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith(
+      expectedCopy("chat.modelChangeNotice.changed", {
+        fromModel: "primary-provider/deepseek-v4-flash",
+        toModel: "alternate-provider/deepseek-v4-pro",
+      }),
+    );
 
     await act(async () => {
       await captured.composerProps?.onSendText("use the selected model");
@@ -2497,6 +2504,8 @@ describe("SessionPane model switch recovery", () => {
     });
 
     expect(mocks.sendCommand).toHaveBeenCalledTimes(1);
+    // The send does not repeat the switch notice: the pick already announced it.
+    expect(mocks.toast).toHaveBeenCalledTimes(1);
     expect(mocks.sendCommand.mock.calls[0]?.[0]).toMatchObject({
       type: "sendText",
       payload: {

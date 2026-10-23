@@ -94,7 +94,7 @@ describe("count strings resolve through plural families in the shipped catalogs"
       id: "archives.count",
       en: ["1 session", "2 sessions"],
       zh: ["1 个会话", "2 个会话"],
-      uk: ["1 сесія", "2 сесії", "5 сесій"],
+      uk: ["1 сеанс", "2 сеанси", "5 сеансів"],
     },
     {
       id: "git.branchSwitcher.commitDialog.changesValue",
