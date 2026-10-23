@@ -287,3 +287,5 @@ docs/testing/unit-test-review/ui-tail.jsonl
 packages/ui/src/project-sidebar/TaskGroupedView.tsx
 packages/ui/src/root/useRemoteWorkspaceHistory.ts
 packages/ui/src/side-pane-full-view/ConversationHost.tsx
+# Already over the cap at upstream 3.16.2 (33739 bytes); the 3.16.3 plugin-store port only edits the manage/detail header.
+packages/ui/src/settings/PluginStorePage.tsx

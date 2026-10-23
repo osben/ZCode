@@ -3012,9 +3012,6 @@ const ukUA: Record<string, string> = {
   "settings.scope.user": "Користувач",
   "settings.scope.workspace": "Робочий простір",
   "settings.scope.default": "За замовчуванням",
-  "settings.plugins.scope.inheritedUser": "Успадковує налаштування користувача",
-  "settings.plugins.scope.userDefault": "Налаштування користувача",
-  "settings.plugins.scope.workspaceOverride": "Перевизначення для робочого простору",
   "settings.plugins.scope.restoreUserDefault": "Відновити налаштування користувача",
   "settings.plugins.scope.restored": "Для {plugin} відновлено налаштування користувача",
   "settings.plugins.scope.workspaceHint":
@@ -4430,7 +4427,6 @@ const ukUA: Record<string, string> = {
   "settings.plugin.plugins.emptyInstalledTitle": "Плагінів не встановлено",
   "settings.plugin.plugins.emptyInstalledDescription":
     "Знаходьте та встановлюйте плагіни, щоб додати MCP, навички тощо.",
-  "settings.plugin.plugins.browse": "Переглянути плагіни",
   "settings.plugin.mcp.emptyInstalledTitle": "Серверів MCP не встановлено",
   "settings.plugin.mcp.emptyInstalledDescription":
     "Додайте сервер вручну або імпортуйте наявну конфігурацію.",
@@ -9256,7 +9252,6 @@ const ukUA: Record<string, string> = {
   "settings.plugins.store.ui.capability":
     "Надає інтерактивні інтерфейси, які відкриваються в бічній панелі.",
   "settings.plugins.store.ui.title": "Плагіни-застосунки",
-  "settings.plugins.store.browseAll": "Переглянути всі плагіни",
   "settings.plugins.marketplace.recommendTitle": "Рекомендовані",
   "chat.empty.newRemoteConnection": "Нове віддалене підключення…",
   "chat.remoteFolder.restored": "Повернуто до {device} · {project}",
