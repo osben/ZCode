@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CommandAck, ExternalAgentConfigOption } from "@zcode/shared/zcode-protocol-v4";
 import {
+  claimDraftExternalAgentChoices,
   draftExternalAgentChoicesOf,
+  restoreDraftExternalAgentChoices,
+  sendClaimedDraftExternalAgentChoices,
   sendDraftExternalAgentChoices,
   setDraftExternalAgentChoice,
   takeDraftExternalAgentChoices,
@@ -223,5 +226,134 @@ describe("sendExternalAgentConfigOption", () => {
       sent: false,
       refusedMessageId: "chat.toolbar.externalAgent.error.invalid",
     });
+  });
+});
+
+describe("draft choice lifecycle", () => {
+  const send = (sessionId: string | null) => ({ sessionId });
+
+  it("never takes a draft's choices for a bound task (draft to an existing same-agent task sends nothing)", () => {
+    const state = setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan");
+    const { state: next, claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send("existing-task"),
+    });
+    expect(claim).toBeNull();
+    expect(next).toBe(state);
+  });
+
+  it("takes a draft's choices once: a second claim after the first sees nothing", () => {
+    const state = setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan");
+    const first = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    expect(first.claim?.choices).toEqual({ mode: "plan" });
+    const second = claimDraftExternalAgentChoices({
+      state: first.state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    expect(second.claim).toBeNull();
+  });
+
+  it("does not carry choices into another draft instance of the same project", () => {
+    // A new-task entry bumps the draft instance (the composer generation), so the key changes.
+    const state = setDraftExternalAgentChoice({}, "scope#1", "opencode", "mode", "plan");
+    expect(draftExternalAgentChoicesOf(state, "scope#2", "opencode")).toBeUndefined();
+    const { claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "scope#2",
+      agentId: "opencode",
+      ...send(null),
+    });
+    expect(claim).toBeNull();
+  });
+
+  it("restores a refused claim without overwriting a choice the user made meanwhile", () => {
+    const state = setDraftExternalAgentChoice(
+      setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan"),
+      "draft-key",
+      "opencode",
+      "model",
+      "fast",
+    );
+    const { state: taken, claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    const edited = setDraftExternalAgentChoice(taken, "draft-key", "opencode", "mode", "build");
+    const restored = restoreDraftExternalAgentChoices(edited, claim!);
+    expect(draftExternalAgentChoicesOf(restored, "draft-key", "opencode")).toEqual({
+      mode: "build",
+      model: "fast",
+    });
+  });
+
+  it("claims only the claiming agent's choices and keeps the other agents' choices, also across a restore", () => {
+    const state = setDraftExternalAgentChoice(
+      setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan"),
+      "draft-key",
+      "cursor",
+      "model",
+      "fast",
+    );
+    const { state: taken, claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    expect(draftExternalAgentChoicesOf(taken, "draft-key", "opencode")).toBeUndefined();
+    expect(draftExternalAgentChoicesOf(taken, "draft-key", "cursor")).toEqual({ model: "fast" });
+    const restored = restoreDraftExternalAgentChoices(taken, claim!);
+    expect(draftExternalAgentChoicesOf(restored, "draft-key", "opencode")).toEqual({
+      mode: "plan",
+    });
+    expect(draftExternalAgentChoicesOf(restored, "draft-key", "cursor")).toEqual({
+      model: "fast",
+    });
+  });
+
+  it("sends a draft's choices exactly once, even when two applies overlap", async () => {
+    const state = setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan");
+    const { claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    const sent = vi.fn(async () => null);
+    await Promise.all([
+      sendClaimedDraftExternalAgentChoices({ claim, targetSessionId: "s1", send: sent }),
+      sendClaimedDraftExternalAgentChoices({ claim, targetSessionId: "s1", send: sent }),
+    ]);
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveBeenCalledWith("s1", "mode", "plan");
+    expect(claim?.delivered).toBe(true);
+  });
+
+  it("leaves a refused claim undelivered so the caller can restore it", async () => {
+    const state = setDraftExternalAgentChoice({}, "draft-key", "opencode", "mode", "plan");
+    const { claim } = claimDraftExternalAgentChoices({
+      state,
+      draftKey: "draft-key",
+      agentId: "opencode",
+      ...send(null),
+    });
+    const outcome = await sendClaimedDraftExternalAgentChoices({
+      claim,
+      targetSessionId: "s1",
+      send: async () => "chat.toolbar.externalAgent.error.invalid",
+    });
+    expect(outcome.refusedMessageId).toBe("chat.toolbar.externalAgent.error.invalid");
+    expect(claim?.delivered).toBe(false);
   });
 });

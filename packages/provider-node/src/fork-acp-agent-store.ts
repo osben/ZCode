@@ -73,8 +73,6 @@ export class NodeForkAcpAgentStore implements ForkAcpAgentStore {
       // An invalid sidecar is preserved for the user to repair; read it as empty meanwhile.
       await this.#reportRecoveryOnce(error);
       return snapshotOf([]);
-    } finally {
-      this.#ensurePolling();
     }
   }
 
@@ -105,35 +103,37 @@ export class NodeForkAcpAgentStore implements ForkAcpAgentStore {
     transform: (current: readonly ForkAcpAgentRecord[]) => readonly ForkAcpAgentRecord[],
   ): Promise<ForkAcpAgentSnapshot> {
     this.#assertNotDisposed();
-    try {
-      const snapshot = await withFileLock(this.#filePath, async () => {
-        // Reread under the lock; an invalid file throws here instead of being overwritten.
-        const current = await this.#readFile();
-        const encoded = encodeForkAcpAgentsFile(transform(current.agents));
-        await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
-        this.#writeGeneration += 1;
-        const next = snapshotOf(encoded.agents);
-        this.#observedRevision = next.revision;
-        return next;
-      });
-      this.#emit("updated");
-      return snapshot;
-    } finally {
-      this.#ensurePolling();
-    }
+    const snapshot = await withFileLock(this.#filePath, async () => {
+      // Reread under the lock; an invalid file throws here instead of being overwritten.
+      const current = await this.#readFile();
+      const encoded = encodeForkAcpAgentsFile(transform(current.agents));
+      await atomicWritePrivateTextFile(this.#filePath, JSON.stringify(encoded, null, 2));
+      this.#writeGeneration += 1;
+      const next = snapshotOf(encoded.agents);
+      this.#observedRevision = next.revision;
+      return next;
+    });
+    this.#emit("updated");
+    return snapshot;
   }
 
+  /**
+   * Polling runs only while at least one listener is subscribed: an unobserved store (plain reads) schedules no timer.
+   */
   onDidChange(listener: (reason: string) => void): () => void {
     this.#assertNotDisposed();
     this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    this.#ensurePolling();
+    return () => {
+      this.#listeners.delete(listener);
+      if (this.#listeners.size === 0) this.#stopPolling();
+    };
   }
 
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
-    if (this.#pollingTimer) clearTimeout(this.#pollingTimer);
-    this.#pollingTimer = null;
+    this.#stopPolling();
     this.#listeners.clear();
   }
 
@@ -148,9 +148,15 @@ export class NodeForkAcpAgentStore implements ForkAcpAgentStore {
     return snapshotOf(forkAcpAgentsFileSchema.parse(JSON.parse(text) as unknown).agents);
   }
 
+  #stopPolling(): void {
+    if (this.#pollingTimer) clearTimeout(this.#pollingTimer);
+    this.#pollingTimer = null;
+  }
+
   #ensurePolling(): void {
     if (
       this.#pollingIntervalMs === false ||
+      this.#listeners.size === 0 ||
       this.#pollingTimer ||
       this.#pollingInFlight ||
       this.#disposed
