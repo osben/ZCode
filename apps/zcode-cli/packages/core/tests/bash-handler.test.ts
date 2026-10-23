@@ -1268,15 +1268,19 @@ describe("bashHandler", () => {
       runBashWithBackgroundLifecycle,
     };
 
+    const telemetry = recordingBashTelemetry([]);
+    const startCommand = vi.spyOn(telemetry, "startCommand");
     await expect(
       bashHandler(
         { command: "long-running command", run_in_background: true } satisfies BashInput,
-        contextWith(executionPort, { offPeakTurn: true }),
+        contextWith(executionPort, { offPeakTurn: true, telemetry }),
       ),
     ).rejects.toMatchObject({
       message: expect.stringContaining("Idle-time tasks do not support background commands"),
       recoverable: true,
     });
+    // The rejection must precede the command span, otherwise the span is never finished.
+    expect(startCommand).not.toHaveBeenCalled();
     expect(runBashWithBackgroundLifecycle).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
 

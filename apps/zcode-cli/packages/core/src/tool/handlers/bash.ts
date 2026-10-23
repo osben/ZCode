@@ -178,10 +178,6 @@ async function executeBashHandler(
     return emptyBashOutput(parsed);
   }
 
-  const request = createExecutionRequest(parsed, context, timeoutPolicy);
-  const progressTiming: BashProgressTiming = {};
-  const commandTelemetry = startBashCommandTelemetry(parsed, context);
-  const runOptions = createExecutionRunOptions(context, progressTiming, commandTelemetry);
   // After a background command completes, runTaskNotificationBatch starts a separate notification turn without
   // turnExecutionModel. Once the idle turn completes or fails, it would run a full agent loop on the user's own plan.
   // Match the subagent runner's BACKGROUND_UNAVAILABLE behavior: reject explicit background execution in idle turns and disable automatic backgrounding on timeout.
@@ -200,6 +196,10 @@ async function executeBashHandler(
       },
     );
   }
+  const request = createExecutionRequest(parsed, context, timeoutPolicy);
+  const progressTiming: BashProgressTiming = {};
+  const commandTelemetry = startBashCommandTelemetry(parsed, context);
+  const runOptions = createExecutionRunOptions(context, progressTiming, commandTelemetry);
   const eligibleForAutoBackground = !backgroundDisabled && isBashAutoBackgroundEligible(parsed);
   const backgroundLifecyclePort = supportsBashBackgroundLifecycle(executionPort)
     ? executionPort
