@@ -17,7 +17,12 @@ import {
   normalizeRemotePlatform,
   resolveRemotePlatform,
 } from "@zcode/server/remote/detectEnv.js";
-import { isWSLAvailable, listWSLDistros, type WSLDistro } from "@zcode/server/remote/wsl-detect.js";
+import {
+  createWslExecError,
+  isWSLAvailable,
+  listWSLDistros,
+  type WSLDistro,
+} from "@zcode/server/remote/wsl-detect.js";
 import {
   buildWslHostGatewayCommand,
   buildWslProxyPortProbeCommand,
@@ -656,10 +661,8 @@ export class WSLBackend implements IRemoteBackend {
         (error, stdout, stderr) => {
           const stdoutBuffer = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? "");
           const stderrBuffer = Buffer.isBuffer(stderr) ? stderr : Buffer.from(stderr ?? "");
-          const stderrText = normalizeWslOutput(decodeWslOutput(stderrBuffer)).trim();
-
           if (error) {
-            reject(new Error(stderrText || error.message));
+            reject(createWslExecError(error, stdoutBuffer, stderrBuffer));
             return;
           }
 

@@ -114,6 +114,116 @@ function expectSSHExecCommand(command: string, rawCommand: string): void {
 }
 
 describe("SSHBackend", () => {
+  it("密码之后出现额外验证提示并认证失败时应报告 remote-authentication-unsupported", async () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "secret",
+    });
+    const mutableBackend = backend as unknown as {
+      client: EventEmitter & { connect: (config: unknown) => void };
+    };
+    const connectSpy = vi
+      .spyOn(mutableBackend.client, "connect")
+      .mockImplementation(() => undefined);
+    const finish = vi.fn();
+
+    const detecting = backend.detect();
+    expect(connectSpy).toHaveBeenCalledTimes(1);
+    mutableBackend.client.emit(
+      "keyboard-interactive",
+      "",
+      "",
+      "",
+      [{ prompt: "Enter OTP:", echo: true }],
+      finish,
+    );
+    expect(finish).toHaveBeenCalledWith(["secret"]);
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("All configured authentication methods failed"), {
+        level: "client-authentication",
+      }),
+    );
+
+    const error = await detecting.catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect(Reflect.get(error as object, "code")).toBe("remote-authentication-unsupported");
+    backend.dispose();
+  });
+
+  it("未出现额外验证提示时认证失败仍报告 remote-authentication-failed，且每次连接前重置标记", async () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "secret",
+    });
+    const mutableBackend = backend as unknown as {
+      client: EventEmitter & { connect: (config: unknown) => void };
+      additionalVerificationPrompted: boolean;
+    };
+    const seenAtConnect: boolean[] = [];
+    vi.spyOn(mutableBackend.client, "connect").mockImplementation(() => {
+      seenAtConnect.push(mutableBackend.additionalVerificationPrompted);
+    });
+
+    // First attempt: the server asks a second-factor prompt, then authentication fails.
+    const first = backend.detect();
+    mutableBackend.client.emit(
+      "keyboard-interactive",
+      "",
+      "",
+      "",
+      [{ prompt: "OTP:", echo: true }],
+      () => undefined,
+    );
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("auth"), { level: "client-authentication" }),
+    );
+    await first.catch(() => undefined);
+
+    // Second attempt: no prompt, plain authentication failure must not inherit the old flag.
+    const second = backend.detect();
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("auth"), { level: "client-authentication" }),
+    );
+    const error = await second.catch((caught: unknown) => caught);
+
+    expect(seenAtConnect).toEqual([false, false]);
+    expect(Reflect.get(error as object, "code")).toBe("remote-authentication-failed");
+    backend.dispose();
+  });
+
+  it("已建立会话后的 client-timeout 应报告心跳无响应", () => {
+    const backend = new SSHBackend({
+      host: "example.com",
+      username: "root",
+      password: "secret",
+    });
+    const events: Array<{ reason: string; error?: Error }> = [];
+    const disposable = backend.onDidDisconnect((event) => {
+      events.push(event);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mutableBackend = backend as unknown as { client: EventEmitter; connected: boolean };
+    mutableBackend.connected = true;
+
+    mutableBackend.client.emit(
+      "error",
+      Object.assign(new Error("Keepalive timed out"), { level: "client-timeout" }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.error?.message).toBe(
+      "SSH 连接无响应：约 60 秒没有收到服务器的心跳响应，连接已断开，请检查网络或服务器状态",
+    );
+    disposable.dispose();
+    backend.dispose();
+    errorSpy.mockRestore();
+  });
+
   it("ready 后 SSH client error 应触发一次断连事件", () => {
     const backend = new SSHBackend({
       host: "example.com",

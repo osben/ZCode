@@ -291,3 +291,6 @@ packages/ui/src/side-pane-full-view/ConversationHost.tsx
 packages/ui/src/settings/PluginStorePage.tsx
 # Already over the cap at HEAD (30802 bytes before the 3.16.3 reuseExistingRoot port, which adds about 800 bytes to handleSelectProject).
 packages/ui/src/root/useRootWorkspaceActions.ts
+
+# Existing remote connection flow owner, already above the staged cap on integration (3.16.3 workspace step adds two lines).
+packages/ui/src/remote-connection-flow/index.ts

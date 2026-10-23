@@ -882,6 +882,12 @@ exceptions:
       - apps/zcode-cli/packages/core/src/tool/search/local-projection.ts
       - apps/zcode-cli/tools/prompt-trajectory/src/tool-search-comparison.ts
     reason: Pre-port of the upstream 3.16.3 LocalToolSearch name (specs/port-3.16.3-local-tool-search.md) edits existing upstream tool-search files in place. The zcode-cli tree has no managed module yet; adopting it needs a separate module boundary refactor. Remove this entry when the real 3.16.3 source replaces the port.
+  - id: port-3163-remote-ssh-unmanaged-edit
+    rule: unmanaged-new-file
+    paths:
+      - packages/desktop/src/host/remoteWorkspacePreparation.ts
+      - packages/ui/src/lib/remoteConnectionPresentationErrors.ts
+    reason: Pre-port of the upstream 3.16.3 remote SSH hardening (specs/port-3.16.3-remote-ssh.md) edits these admitted upstream files in place (30 s workspace folder budget, new error codes). Adopting packages/desktop/src/host and packages/ui/src/lib needs a separate module boundary refactor. Remove this entry when the real 3.16.3 source replaces the port.
   - id: acp-chat-delegation-unmanaged-files
     rule: unmanaged-new-file
     paths:

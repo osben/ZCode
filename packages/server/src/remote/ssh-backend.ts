@@ -99,6 +99,9 @@ export class SSHBackend implements IRemoteBackend {
   private disposed = false;
   private hasEverConnected = false;
   private disconnectReported = false;
+  // Set by the keyboard-interactive responder when the server asks a second-factor prompt. It is reset before every
+  // connect attempt so one attempt's prompt cannot change the classification of a later, unrelated failure.
+  private additionalVerificationPrompted = false;
   private readonly disconnectEmitter = new Emitter<RemoteDisconnectEvent>();
   readonly onDidDisconnect = this.disconnectEmitter.event;
 
@@ -109,7 +112,10 @@ export class SSHBackend implements IRemoteBackend {
       // layers again or trigger an uncaught exception.
       return;
     }
-    const normalizedError = normalizeSSHConnectError(error);
+    const normalizedError = normalizeSSHConnectError(error, {
+      established: this.connected,
+      additionalVerificationPrompted: this.additionalVerificationPrompted,
+    });
     // ssh2 may emit an "error" event if the underlying connection becomes unstable after ready. Without
     // a persistent listener, Node treats it as an uncaught exception and may crash the host process.
     // Record the error details before reporting disconnection; upper layers exit the host after receiving
@@ -161,9 +167,9 @@ export class SSHBackend implements IRemoteBackend {
         }
       ).on(
         "keyboard-interactive",
-        createKeyboardInteractiveResponder(options.password) as unknown as (
-          ...args: unknown[]
-        ) => void,
+        createKeyboardInteractiveResponder(options.password, () => {
+          this.additionalVerificationPrompted = true;
+        }) as unknown as (...args: unknown[]) => void,
       );
     }
   }
@@ -198,10 +204,15 @@ export class SSHBackend implements IRemoteBackend {
       };
       const handleConnectError = (error: unknown) => {
         this.client.off("ready", handleReady);
-        reject(normalizeSSHConnectError(error));
+        reject(
+          normalizeSSHConnectError(error, {
+            additionalVerificationPrompted: this.additionalVerificationPrompted,
+          }),
+        );
       };
       this.client.once("ready", handleReady);
       this.client.once("error", handleConnectError);
+      this.additionalVerificationPrompted = false;
       this.client.connect(this.config);
     });
   }

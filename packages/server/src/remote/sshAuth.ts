@@ -52,10 +52,17 @@ export function buildSSHConnectConfig(input: SSHConnectConfigInput): ConnectConf
   };
 }
 
-export function createKeyboardInteractiveResponder(password?: string) {
+// Prompts that ask for a second factor (one-time code, OTP, MFA). Matched against the name, instructions and each prompt.
+const VERIFICATION_PROMPT_PATTERN =
+  /verification code|one[- ]?time|\bOTP\b|pass ?code|(?:second|two|2nd)[- ]?factor|\b(?:2FA|MFA)\b|authenticator|动态口令|动态密码/iu;
+
+export function createKeyboardInteractiveResponder(
+  password?: string,
+  onAdditionalVerification?: () => void,
+) {
   return (
-    _name: string,
-    _instructions: string,
+    name: string,
+    instructions: string,
     _lang: string,
     prompts: Array<{ prompt: string; echo: boolean }>,
     finish: (responses: string[]) => void,
@@ -65,17 +72,47 @@ export function createKeyboardInteractiveResponder(password?: string) {
       return;
     }
 
+    // Record the request for the connect error path; the password is still sent so password-only prompts keep working.
+    if (
+      [name, instructions, ...prompts.map(({ prompt }) => prompt)].some((text) =>
+        VERIFICATION_PROMPT_PATTERN.test(text),
+      )
+    ) {
+      onAdditionalVerification?.();
+    }
+
     finish(prompts.map(() => password));
   };
 }
 
-export function normalizeSSHConnectError(error: unknown): Error {
+export interface NormalizeSSHConnectErrorOptions {
+  /** The session had reached ready before the error; keepalive timeouts then mean the link dropped. */
+  established?: boolean;
+  /** The server asked a second-factor keyboard-interactive prompt during this connect attempt. */
+  additionalVerificationPrompted?: boolean;
+}
+
+export function normalizeSSHConnectError(
+  error: unknown,
+  options: NormalizeSSHConnectErrorOptions = {},
+): Error {
   if (
     typeof error === "object" &&
     error !== null &&
     "level" in error &&
     (error as { level?: string }).level === "client-authentication"
   ) {
+    if (options.additionalVerificationPrompted) {
+      // The server accepted the password and then asked for a second factor. The password path cannot answer it,
+      // so report a distinct code instead of the generic credential-check message.
+      return Object.assign(
+        new Error(
+          "SSH 认证失败：服务器在密码之后还要求额外验证（例如动态口令），当前不支持，请改用私钥或 SSH agent 登录",
+          { cause: error },
+        ),
+        { code: "remote-authentication-unsupported" satisfies PublicZCodeErrorCode },
+      );
+    }
     return authenticationError("SSH 认证失败：请检查用户名、密码或私钥配置", error);
   }
 
@@ -85,6 +122,12 @@ export function normalizeSSHConnectError(error: unknown): Error {
     "level" in error &&
     (error as { level?: string }).level === "client-timeout"
   ) {
+    if (options.established) {
+      return new Error(
+        `SSH 连接无响应：约 ${SSH_READY_TIMEOUT_MS / 1000} 秒没有收到服务器的心跳响应，连接已断开，请检查网络或服务器状态`,
+        { cause: error },
+      );
+    }
     return new Error(
       `SSH 连接握手超时：未能在 ${SSH_READY_TIMEOUT_MS / 1000} 秒内建立 SSH 会话，请检查网络、服务器 SSH 服务或终端 SSH 配置差异`,
     );

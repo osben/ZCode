@@ -123,6 +123,8 @@ export interface RemoteConnectionProgress {
   sourceServerId?: string;
   profileId?: string;
   name?: string;
+  /** The project folder this connection opens; when set, the progress includes the "Open project folder" step. */
+  workspacePath?: string;
   logs: import("@/hooks/useRemoteConnectionLogs.js").RemoteConnectionLogEntry[];
   error: string;
   reason: string;

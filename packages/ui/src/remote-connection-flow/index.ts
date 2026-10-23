@@ -168,6 +168,9 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focusCredentials, setFocusCredentials] = useState(false);
   const [directoryPath, setDirectoryPath] = useState("");
+  // Device-management flows never open a project folder, so the folder step is not shown for them.
+  const connectingWorkspacePath =
+    completion === "device-management" ? undefined : directoryPath.trim() || undefined;
   const consumedKindPreferenceRef = useRef<string | null>(null);
   const [step, setCurrentStep] = useState<RemoteWizardStep>("device");
   // Root 常驻挂载，设置入口的首帧也直接展示分类表单，不等待 effect 隐藏旧选择屏。
@@ -1762,6 +1765,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
             cancelled,
             target: displayTarget,
             name: recognizedDeviceName ?? activeProfileName,
+            workspacePath: connectingWorkspacePath,
             logs: visibleConnectionLogs,
             error: errorCode === "credentials-required" ? "" : error,
             reason: error
@@ -1970,6 +1974,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       backToDevicesLabel: addingDevice
         ? intl.formatMessage({ id: "settings.source.newConnection" })
         : undefined,
+      // A chosen project folder means this connection also opens it, so the progress shows the folder step.
+      workspacePath: connectingWorkspacePath,
       onClose: () => {
         void handleCloseRequest();
       },
