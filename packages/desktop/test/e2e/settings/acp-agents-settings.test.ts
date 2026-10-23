@@ -174,7 +174,7 @@ async function openModelProviderSettings() {
 describe("ACP agents settings", () => {
   before(async function () {
     this.timeout(180000);
-    if (process.platform === "win32") this.skip();
+    if (process.platform !== "darwin") this.skip();
     assert.ok(AGENT_DIR, "ZCODE_E2E_ACP_AGENT_PATH is not set by wdio.conf.ts");
     await skipOccupationOnboardingIfPresent();
     // Only Settings is needed: restart without the project-sidebar readiness wait.

@@ -616,7 +616,7 @@ export interface ConversationComposerProps {
   onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
   /** S6 readiness: the draft's choices per ACP agent, and the setter (no session command before the first submission). */
   draftExternalAgentChoices?: DraftExternalAgentChoices;
-  draftExternalAgentSessionId?: string | null;
+  draftExternalAgentKey?: string | null;
   onSetDraftExternalAgentChoice?: (
     draftSessionId: string,
     agentId: string,
@@ -731,7 +731,7 @@ function ConversationComposerImpl({
   onSwitchMode,
   onSetExternalAgentConfigOption,
   draftExternalAgentChoices,
-  draftExternalAgentSessionId,
+  draftExternalAgentKey,
   onSetDraftExternalAgentChoice,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
@@ -4197,7 +4197,7 @@ function ConversationComposerImpl({
           externalAgentConfig={externalAgentConfig}
           onSetExternalAgentConfigOption={onSetExternalAgentConfigOption}
           draftExternalAgentChoices={draftExternalAgentChoices}
-          draftExternalAgentSessionId={draftExternalAgentSessionId}
+          draftExternalAgentKey={draftExternalAgentKey}
           onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
         />
         {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
@@ -4230,7 +4230,7 @@ function ConversationComposerImpl({
       onSwitchMode,
       onSetExternalAgentConfigOption,
       draftExternalAgentChoices,
-      draftExternalAgentSessionId,
+      draftExternalAgentKey,
       onSetDraftExternalAgentChoice,
       externalAgentConfig,
       externalAgentSessionProviderId,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CommandAck, ExternalAgentConfigOption } from "@zcode/shared/zcode-protocol-v4";
 import {
   draftExternalAgentChoicesOf,
+  sendDraftExternalAgentChoices,
   setDraftExternalAgentChoice,
   takeDraftExternalAgentChoices,
   filterExternalAgentConfigValues,
@@ -174,6 +175,53 @@ describe("sendExternalAgentConfigOption", () => {
     expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({
       mode: "plan",
       model: "fast",
+    });
+  });
+
+  // Worktree drafts create a separate prepared session. The choices are read from the draft they were made in and sent to
+  // the session that receives the first submission, never to the draft.
+  it("worktree draft: reads the draft's choices and sends them to the created session", async () => {
+    const state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "plan");
+    const send = vi.fn(async () => null);
+
+    const outcome = await sendDraftExternalAgentChoices({
+      state,
+      draftSessionId: "draft-A",
+      agentId: "mock",
+      targetSessionId: "worktree-session-1",
+      send,
+    });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("worktree-session-1", "mode", "plan");
+    expect(outcome).toEqual({ sent: true, refusedMessageId: null });
+  });
+
+  it("sends nothing when the draft made no choices, and reports a refusal without clearing", async () => {
+    const send = vi.fn(async () => "chat.toolbar.externalAgent.error.invalid");
+    const state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "yolo");
+
+    expect(
+      await sendDraftExternalAgentChoices({
+        state,
+        draftSessionId: "draft-B",
+        agentId: "mock",
+        targetSessionId: "session-B",
+        send,
+      }),
+    ).toEqual({ sent: false, refusedMessageId: null });
+    expect(send).not.toHaveBeenCalled();
+
+    const refused = await sendDraftExternalAgentChoices({
+      state,
+      draftSessionId: "draft-A",
+      agentId: "mock",
+      targetSessionId: "session-A",
+      send,
+    });
+    expect(refused).toEqual({
+      sent: false,
+      refusedMessageId: "chat.toolbar.externalAgent.error.invalid",
     });
   });
 });

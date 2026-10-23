@@ -113,6 +113,9 @@ const TEST_PROMPT_TEXT =
 
 const log = createServiceLogger("acp-agent");
 
+/** The one refusal of an unsupported host (specs/acp-agent-runtime.md "Platform scope"). */
+const UNSUPPORTED_PLATFORM_MESSAGE = "ACP agents are supported on macOS only.";
+
 /**
  * Runtime logger adapter. Callers pass only agent ids, exit codes/signals and
  * error messages: never env, args, frames or stderr, which can carry tokens.
@@ -205,6 +208,16 @@ export function createAcpAgentsBridge(
 
     async test(input) {
       const startedAt = Date.now();
+      // The platform refusal comes first, whatever the input: nothing is looked up, spawned or written here.
+      if (!supported) {
+        return {
+          ok: false,
+          error: { message: UNSUPPORTED_PLATFORM_MESSAGE },
+          frames: [],
+          framesDropped: 0,
+          durationMs: Date.now() - startedAt,
+        };
+      }
       const definition = input.agentId ? findDefinition(input.agentId) : undefined;
       if (input.agentId && !definition) {
         return {
@@ -234,16 +247,6 @@ export function createAcpAgentsBridge(
         return {
           ok: false,
           error: { message: `Invalid ACP launch: ${launchProblem}` },
-          frames: [],
-          framesDropped: 0,
-          durationMs: Date.now() - startedAt,
-        };
-      }
-
-      if (!supported) {
-        return {
-          ok: false,
-          error: { message: "ACP agents are supported on macOS only." },
           frames: [],
           framesDropped: 0,
           durationMs: Date.now() - startedAt,
@@ -297,7 +300,14 @@ export function createAcpAgentsBridge(
           },
           onFrame,
         });
-        if (input.agentId && definition && dependencies.recordCatalog && runtime.configOptions) {
+        // An empty snapshot has nothing for the composer; it must not replace a catalog that has options.
+        if (
+          input.agentId &&
+          definition &&
+          dependencies.recordCatalog &&
+          runtime.configOptions &&
+          runtime.configOptions.length > 0
+        ) {
           // The handshake has answered session/new: the offered options are known before any prompt.
           try {
             await dependencies.recordCatalog(definition.agentId, runtime.configOptions);
@@ -376,8 +386,7 @@ export function createAcpAgentsBridge(
     },
 
     async startLogin(input) {
-      if (!supported)
-        return { opened: false, command: "", error: "ACP agents are supported on macOS only." };
+      if (!supported) return { opened: false, command: "", error: UNSUPPORTED_PLATFORM_MESSAGE };
       const definition = findDefinition(input.agentId);
       if (!definition || definition.loginArgs.length === 0) {
         return {

@@ -63,6 +63,9 @@ function fakeRuntime(options: { mode: string; failSet?: Error; onPrompt?: () => 
     get configOptions() {
       return configOptions;
     },
+    get handshakeConfigOptions() {
+      return [modeOption(options.mode)];
+    },
     setConfigOption: vi.fn(async (configId: string, value: string) => {
       calls.push(`set:${configId}=${value}`);
       if (options.failSet) throw options.failSet;
@@ -288,6 +291,20 @@ describe("ACP config reconcile", () => {
     expect(catalog.write.mock.invocationCallOrder[0]).toBeLessThan(
       runtime.prompt.mock.invocationCallOrder[0]!,
     );
+  });
+
+  // The catalog is what the agent offers. A choice applied before the prompt belongs to the session, so it must not
+  // become the default that the next new draft shows.
+  it("writes the catalog from the handshake's values, not from a choice applied before the prompt", async () => {
+    const runtime = fakeRuntime({ mode: "build" });
+    const config = memoryConfig({ offered: OFFERED_BUILD, choices: { mode: "plan" } });
+    const catalog = { write: vi.fn(async () => true) };
+
+    await hostWith(runtime, config, undefined, catalog).driverFor("opencode").runTurn(turnRequest([]));
+
+    expect(runtime.calls).toEqual(["set:mode=plan", "prompt"]);
+    expect(catalog.write).toHaveBeenCalledWith("opencode", OFFERED_BUILD);
+    expect(catalog.write.mock.calls[0]?.[1]?.[0]?.currentValue).toBe("build");
   });
 
   it("a failed catalog write never fails the turn", async () => {

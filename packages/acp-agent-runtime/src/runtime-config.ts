@@ -41,11 +41,18 @@ const SYNTHESIZED_MODE_ID = "mode";
 
 export class AcpConfigState {
   #options: readonly AcpConfigOption[] = [];
+  /** The snapshot of the last handshake (session/new or session/load), before any choice was set. */
+  #handshake: readonly AcpConfigOption[] = [];
   /** True while the snapshot is the `mode` select synthesized from legacy `modes`. */
   #synthesizedMode = false;
 
   get options(): readonly AcpConfigOption[] {
     return this.#options;
+  }
+
+  /** What the agent offered in its last handshake, with the values it started with (not the chosen ones). */
+  get handshakeOptions(): readonly AcpConfigOption[] {
+    return this.#handshake;
   }
 
   /** Replaces the snapshot from a handshake response; `configOptions` wins over `modes`. */
@@ -54,10 +61,11 @@ export class AcpConfigState {
     if (normalized.length > 0 || !source.modes) {
       this.#options = normalized;
       this.#synthesizedMode = false;
-      return;
+    } else {
+      this.#options = [synthesizeModeOption(source.modes)];
+      this.#synthesizedMode = true;
     }
-    this.#options = [synthesizeModeOption(source.modes)];
-    this.#synthesizedMode = true;
+    this.#handshake = this.#options;
   }
 
   /**

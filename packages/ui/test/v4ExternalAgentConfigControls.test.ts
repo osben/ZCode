@@ -110,7 +110,7 @@ function render(
     externalAgentConfig?: ExternalAgentConfigState;
     catalog?: ExternalAgentConfigOption[] | null;
     draftExternalAgentChoices?: Record<string, Record<string, Record<string, string>>>;
-    draftExternalAgentSessionId?: string | null;
+    draftExternalAgentKey?: string | null;
     onSetDraftExternalAgentChoice?: (
       draftSessionId: string,
       agentId: string,
@@ -141,10 +141,8 @@ function render(
         ? overrides.onSetExternalAgentConfigOption
         : vi.fn(),
     draftExternalAgentChoices: overrides.draftExternalAgentChoices,
-    draftExternalAgentSessionId:
-      "draftExternalAgentSessionId" in overrides
-        ? overrides.draftExternalAgentSessionId
-        : "draft-1",
+    draftExternalAgentKey:
+      "draftExternalAgentKey" in overrides ? overrides.draftExternalAgentKey : "draft-1",
     onSetDraftExternalAgentChoice: overrides.onSetDraftExternalAgentChoice,
   };
   const html = renderToStaticMarkup(
@@ -258,7 +256,7 @@ describe("V4ComposerModeArea (S6 agent configuration options)", () => {
       externalAgentConfig: undefined,
       catalog: projection.options,
       sessionId: null,
-      draftExternalAgentSessionId: null,
+      draftExternalAgentKey: null,
       onSetDraftExternalAgentChoice: onDraft,
     });
 

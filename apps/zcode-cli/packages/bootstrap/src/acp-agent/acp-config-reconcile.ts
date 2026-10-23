@@ -31,6 +31,8 @@ export interface AcpAgentCatalogWriter {
 /** The runtime surface the reconcile uses; `AcpSessionRuntime` satisfies it. */
 export interface AcpConfigRuntime {
   readonly configOptions?: readonly AcpConfigOption[];
+  /** The handshake's offered options with their starting values (what the catalog stores). */
+  readonly handshakeConfigOptions?: readonly AcpConfigOption[];
   setConfigOption?(configId: string, value: string): Promise<readonly AcpConfigOption[]>;
 }
 
@@ -96,9 +98,12 @@ export async function reconcileAcpSessionConfig(input: AcpConfigReconcileInput):
     }
   }
   const snapshot = toExternalAgentConfig(runtime.configOptions);
-  if (input.catalog !== undefined && snapshot.length > 0) {
+  // The catalog is the agent's offer. The values applied above belong to this session, so they are not written to it:
+  // a new draft would otherwise show another session's choice as the default.
+  const offered = toExternalAgentConfig(runtime.handshakeConfigOptions ?? runtime.configOptions);
+  if (input.catalog !== undefined && offered.length > 0) {
     try {
-      await input.catalog.write(agentId, snapshot);
+      await input.catalog.write(agentId, offered);
     } catch (error) {
       // The catalog only feeds the composer before the first turn; the turn itself goes on.
       logger?.warn("ACP agent catalog could not be stored", {

@@ -168,6 +168,28 @@ export function takeDraftExternalAgentChoices(
   return next;
 }
 
+/**
+ * Sends one draft's choices to the session that receives its first submission. The choices are read from the draft
+ * they belong to (`draftSessionId`); the target can be another session (a worktree draft creates its own). Returns
+ * the refusal message of the first choice the session did not accept (nothing else is sent after it), or null. The
+ * caller clears the draft only when `sent` is true, so a refused draft keeps its choices.
+ */
+export async function sendDraftExternalAgentChoices(params: {
+  state: DraftExternalAgentChoices;
+  draftSessionId: string;
+  agentId: string;
+  targetSessionId: string;
+  send(targetSessionId: string, configId: string, value: string): Promise<string | null>;
+}): Promise<{ sent: boolean; refusedMessageId: string | null }> {
+  const choices = draftExternalAgentChoicesOf(params.state, params.draftSessionId, params.agentId);
+  if (!choices) return { sent: false, refusedMessageId: null };
+  for (const [configId, value] of Object.entries(choices)) {
+    const refusedMessageId = await params.send(params.targetSessionId, configId, value);
+    if (refusedMessageId !== null) return { sent: false, refusedMessageId };
+  }
+  return { sent: true, refusedMessageId: null };
+}
+
 /** The offered options with a draft's choices as their current values (only values the option offers). */
 export function overlayDraftChoices(
   options: readonly ExternalAgentConfigOption[],
