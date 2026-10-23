@@ -1743,6 +1743,10 @@ const ukUA: Record<string, string> = {
   "workspaceHeader.help.productRequest": "Запропонувати функцію",
   "workspaceHeader.help.community": "Спільнота користувачів",
   "workspaceHeader.help.docs": "Документація продукту",
+  "workspaceHeader.help.copyDeviceMid": "Копіювати MID пристрою",
+  "workspaceHeader.help.deviceMidCopied": "MID пристрою скопійовано",
+  "workspaceHeader.help.deviceMidCopyFailed":
+    "Не вдалося скопіювати MID пристрою. Перевірте доступ до буфера обміну й спробуйте ще раз.",
   "titleBar.menu.file": "Файл",
   "titleBar.menu.view": "Вигляд",
   "titleBar.menu.help": "Довідка",
