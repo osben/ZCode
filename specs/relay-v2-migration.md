@@ -722,3 +722,9 @@ close, owner 4x; inbound byte budget closes the socket; pairing terminal closes 
 device socket does not; `2001:db8::1` and `2001:db8:0:0:ffff::2` share a limiter bucket while an IPv4
 address does not; startup: unknown mode, `open` without secret starts, `secret` without secret fails; Desktop
 PoW yields to timers and aborts; shared QR builder writes the fragment, parser reads it.
+
+## 16. End-to-end payload encryption (proposed)
+
+Design for sealing `data` payloads between Desktop and phone in `device-key` mode, so the relay forwards only
+ciphertext: [`specs/web-remote-e2e-encryption.md`](web-remote-e2e-encryption.md). Status: awaiting owner
+approval; the relay contract and code are unchanged by it.
