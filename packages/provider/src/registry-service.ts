@@ -42,7 +42,7 @@ export interface ProviderRegistryServiceDependencies {
   readonly configSource: ProviderSource<ProviderConfigSnapshot>;
   readonly accountSource: ProviderSource<AccountProviderConfigSnapshot>;
   readonly resolver?: ProviderConfigResolver;
-  /** Development-only ACP model gate forwarded to the resolver (default false). */
+  /** ACP availability (specs/acp-agent-runtime.md "Availability (platform rule)") forwarded to the resolver (default false). */
   readonly acpExecutable?: boolean;
 }
 

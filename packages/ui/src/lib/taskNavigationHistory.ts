@@ -5,6 +5,8 @@
  * zcodeSessionStore owns the instance and drives UI state.
  */
 
+import { getWorkspaceKey } from "@/lib/workspaceKey.js";
+
 interface WorkspaceNavEntryBase {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -50,6 +52,18 @@ export function createTaskNavigationHistory(): TaskNavigationHistory {
 
 export function isTaskNavEntry(entry: WorkspaceNavEntry): entry is TaskNavEntry {
   return entry.kind === "task";
+}
+
+/** Identity of a task across workspaces: the same taskId in two workspaces is two different tasks. */
+export interface TaskIdentityRef {
+  taskId: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
+}
+
+/** Full identity key, using the workspace identity rule: `workspaceIdentity?.trim() || workspacePath`. */
+export function taskRefKey(ref: TaskIdentityRef): string {
+  return `${getWorkspaceKey(ref.workspacePath, ref.workspaceIdentity)}::${ref.taskId}`;
 }
 
 export function isAutomationsNavEntry(entry: WorkspaceNavEntry): entry is AutomationsNavEntry {
@@ -199,30 +213,117 @@ export function goForward(
 }
 
 /**
+ * Keeps the cursor on the same surviving entry. When the current entry was removed, it moves to the
+ * first survivor after the removed position, counting only survivors before the old cursor so earlier removals cannot overshoot.
+ */
+function cursorAfterRemoval(
+  entries: readonly WorkspaceNavEntry[],
+  kept: readonly WorkspaceNavEntry[],
+  cursor: number,
+): number {
+  if (kept.length === 0) {
+    return -1;
+  }
+
+  const current = cursor >= 0 ? entries[cursor] : undefined;
+  const keptIndex = current ? kept.indexOf(current) : -1;
+  if (keptIndex >= 0) {
+    return keptIndex;
+  }
+
+  const survivorsBeforeCursor = entries
+    .slice(0, Math.max(cursor, 0))
+    .filter((entry) => kept.includes(entry)).length;
+  return Math.min(survivorsBeforeCursor, kept.length - 1);
+}
+
+/**
  * Remove all task entries with the given taskId from history (called when a task is deleted).
  * Automations entries are not part of the task lifecycle and must be preserved as-is.
  */
 export function removeTaskFromHistory(
   history: TaskNavigationHistory,
-  taskId: string,
+  task: TaskIdentityRef,
 ): TaskNavigationHistory {
-  const currentEntry = history.cursor >= 0 ? history.entries[history.cursor] : null;
-  const filtered = history.entries.filter(
-    (entry) => !isTaskNavEntry(entry) || entry.taskId !== taskId,
+  const taskKey = taskRefKey(task);
+  const kept = history.entries.filter(
+    (entry) => !isTaskNavEntry(entry) || taskRefKey(entry) !== taskKey,
   );
 
-  if (filtered.length === history.entries.length) {
+  if (kept.length === history.entries.length) {
     return history;
   }
 
-  if (filtered.length === 0) {
+  if (kept.length === 0) {
     return createTaskNavigationHistory();
   }
 
-  // Keep pointing to the current entry if it was not removed; otherwise use its former position to select the nearest target.
-  const currentEntryIndex = currentEntry ? filtered.indexOf(currentEntry) : -1;
-  const cursor =
-    currentEntryIndex >= 0 ? currentEntryIndex : Math.min(history.cursor, filtered.length - 1);
+  return { entries: kept, cursor: cursorAfterRemoval(history.entries, kept, history.cursor) };
+}
 
-  return { entries: filtered, cursor };
+export type TaskNavigationDirection = "back" | "forward";
+
+export interface TaskNavigationStep {
+  history: TaskNavigationHistory;
+  /** Entry to open, or null when nothing reachable remains in that direction. */
+  entry: WorkspaceNavEntry | null;
+}
+
+/**
+ * Moves one step in `direction`, purging task entries whose target `isAvailable` rejects.
+ *
+ * The walk and the purge are computed from one snapshot, so a purged entry never shifts the cursor that
+ * the next step reads. Replaying back or forward therefore visits surviving entries in their recorded order.
+ * When nothing reachable remains, only the purge is kept and the cursor stays on the current entry.
+ */
+export function stepTaskNavigationHistory(
+  history: TaskNavigationHistory,
+  direction: TaskNavigationDirection,
+  isAvailable: (entry: TaskNavEntry) => boolean,
+): TaskNavigationStep {
+  const stride = direction === "back" ? -1 : 1;
+  const unavailableTaskKeys = new Set<string>();
+  let target: WorkspaceNavEntry | undefined;
+
+  for (
+    let index = history.cursor + stride;
+    index >= 0 && index < history.entries.length;
+    index += stride
+  ) {
+    const entry = history.entries[index];
+    if (!entry) {
+      break;
+    }
+    if (isTaskNavEntry(entry)) {
+      const key = taskRefKey(entry);
+      if (unavailableTaskKeys.has(key)) {
+        continue;
+      }
+      if (!isAvailable(entry)) {
+        unavailableTaskKeys.add(key);
+        continue;
+      }
+    }
+    target = entry;
+    break;
+  }
+
+  const kept =
+    unavailableTaskKeys.size === 0
+      ? history.entries
+      : history.entries.filter(
+          (entry) => !(isTaskNavEntry(entry) && unavailableTaskKeys.has(taskRefKey(entry))),
+        );
+
+  if (target) {
+    return { history: { entries: kept, cursor: kept.indexOf(target) }, entry: target };
+  }
+
+  if (kept.length === history.entries.length) {
+    return { history, entry: null };
+  }
+  return {
+    history: { entries: kept, cursor: cursorAfterRemoval(history.entries, kept, history.cursor) },
+    entry: null,
+  };
 }

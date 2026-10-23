@@ -47,16 +47,20 @@ describe("useAcpAgentDetection", () => {
   it("runs one detection per mount", async () => {
     detectAcpAgents.mockReset();
     detectAcpAgents.mockResolvedValue(result([agent("opencode", true)]));
-    const { result: hook } = renderHook(() => useAcpAgentDetection({ enabled: true }));
+    const { result: hook } = renderHook(() => useAcpAgentDetection());
     await waitFor(() => expect(hook.current.status).toBe("ready"));
     expect(detectAcpAgents).toHaveBeenCalledTimes(1);
     expect(hook.current.agents.map((item) => item.agentId)).toEqual(["opencode"]);
   });
 
-  it("probes nothing while the gate is off", () => {
+  it("reports the host's supported flag and keeps no agents on an unsupported host", async () => {
+    // Availability is the host's answer (specs/acp-agent-runtime.md "Availability (platform rule)").
     detectAcpAgents.mockReset();
-    renderHook(() => useAcpAgentDetection({ enabled: false }));
-    expect(detectAcpAgents).not.toHaveBeenCalled();
+    detectAcpAgents.mockResolvedValue({ supported: false, agents: [], detectedAt: 0 });
+    const { result: hook } = renderHook(() => useAcpAgentDetection());
+    await waitFor(() => expect(hook.current.status).toBe("ready"));
+    expect(hook.current.supported).toBe(false);
+    expect(hook.current.agents).toEqual([]);
   });
 
   it("drops a stale response that arrives after a newer rescan", async () => {
@@ -64,7 +68,7 @@ describe("useAcpAgentDetection", () => {
     const first = deferred<AcpAgentDetectionResult>();
     const second = deferred<AcpAgentDetectionResult>();
     detectAcpAgents.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    const { result: hook } = renderHook(() => useAcpAgentDetection({ enabled: true }));
+    const { result: hook } = renderHook(() => useAcpAgentDetection());
     act(() => hook.current.rescan());
     await act(async () => {
       second.resolve(result([agent("cursor", true)]));

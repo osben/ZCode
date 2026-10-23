@@ -9,6 +9,7 @@ export interface SidePaneTabPresentationLabels {
   treemappingTitle: string;
   whiteboardTitle: string;
   modelTrajectoryTitle: string;
+  modelTrajectoryV2Title: string;
   developerToolsTitle: string;
   pluginMarketTitle: string;
   newTabTitle?: string;
@@ -70,6 +71,9 @@ export function getSidePaneTabSearchHint(tab: WorkspaceSidePaneTab): string {
   if (tab.type === "model-trajectory") {
     return `${tab.title ?? ""} ${tab.taskId} model trajectory call io`;
   }
+  if (tab.type === "model-trajectory-v2") {
+    return `${tab.title ?? ""} ${tab.taskId} model trajectory v2 call io timing ledger`;
+  }
   if (tab.type === "plugin-market") return "plugin marketplace store plugins";
   if (tab.type === "developer-tools") {
     return "developer tools token debug network status request response headers";
@@ -95,6 +99,7 @@ export function getLocalizedSidePaneTabTitle(
       "treemapping.title": labels.treemappingTitle,
       "whiteboard.title": labels.whiteboardTitle,
       "modelTrajectory.title": labels.modelTrajectoryTitle,
+      "modelTrajectoryV2.title": labels.modelTrajectoryV2Title,
       "developerTools.title": labels.developerToolsTitle,
       "workspace.openPluginsSettings": labels.pluginMarketTitle,
       "terminal.title": labels.terminalTitle,
@@ -135,6 +140,7 @@ export function getSidePaneTabTypeLabel(
   if (tab.type === "treemapping") return labels.treemappingTitle;
   if (tab.type === "whiteboard") return labels.whiteboardTitle;
   if (tab.type === "model-trajectory") return labels.modelTrajectoryTitle;
+  if (tab.type === "model-trajectory-v2") return labels.modelTrajectoryV2Title;
   if (tab.type === "developer-tools") return labels.developerToolsTitle;
   if (tab.type === "terminal" || tab.type === "bash-output") return labels.terminalTitle;
   return labels.codeViewerTitle;

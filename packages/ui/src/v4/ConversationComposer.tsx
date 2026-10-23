@@ -211,7 +211,10 @@ import {
 import { V4ComposerDictationControl } from "@/v4/composer/V4ComposerDictationControl.js";
 import { isComposerSubmissionOwnerCurrent } from "@/v4/composer/composerSubmissionOwner.js";
 import { ComposerWorktreeRecovery } from "@/v4/composer/ComposerWorktreeRecovery.js";
-import { resolveComposerSubmitBlockReason } from "@/v4/composer/composerSubmitBlockReason.js";
+import {
+  isComposerModelBlockReason,
+  resolveComposerSubmitBlockReason,
+} from "@/v4/composer/composerSubmitBlockReason.js";
 import { useBranchSwitchGuard } from "@/v4/composer/branchSwitchGuard.js";
 import { toast } from "@/components/ui/toast.js";
 import { useOptionalWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
@@ -260,6 +263,7 @@ import {
   type ModelSelectionSource,
 } from "@/v4/composer/V4ComposerToolbar.js";
 import { V4ComposerModeArea } from "@/v4/composer/V4ExternalAgentConfigControls.js";
+import type { DraftExternalAgentChoices } from "@/v4/composer/externalAgentConfig.js";
 import {
   resolveV4ComposerConfigPickerState,
   type V4ComposerConfigPicker,
@@ -566,6 +570,8 @@ export interface ConversationComposerProps {
   quickPromptProject?: QuickPromptProjectRef | null;
   /** SessionPane 从目标 Host 原子读取的选择事实；Composer 不自行解析 Host。 */
   modelSelectionView?: ModelSelectionView | null;
+  /** Provider startup has settled; until then a stored-model verdict keeps the generic reason (ISSUE-026). */
+  modelSelectionSettled?: boolean;
   modelSelectionState?: ModelSelectionState;
   /** Model Selection 首次读取失败后的显式重试入口。 */
   modelSelectionReload?: () => void;
@@ -624,6 +630,15 @@ export interface ConversationComposerProps {
   onSwitchMode: (mode: string) => void;
   /** S6: sends the user's choice for one select of the session's ACP agent (setExternalAgentConfigOption). */
   onSetExternalAgentConfigOption?: (configId: string, value: string) => void;
+  /** S6 readiness: the draft's choices per ACP agent, and the setter (no session command before the first submission). */
+  draftExternalAgentChoices?: DraftExternalAgentChoices;
+  draftExternalAgentKey?: string | null;
+  onSetDraftExternalAgentChoice?: (
+    draftSessionId: string,
+    agentId: string,
+    configId: string,
+    value: string,
+  ) => void;
   /** 打开当前 session 的 Status panel，并直达 Running 明细。 */
   onOpenRunningBackgroundWorks?: () => void;
   /**
@@ -714,6 +729,7 @@ function ConversationComposerImpl({
   remoteSessionId,
   quickPromptProject = null,
   modelSelectionView = null,
+  modelSelectionSettled = false,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
   modelSelectionRefresh,
@@ -732,6 +748,9 @@ function ConversationComposerImpl({
   onSelectThought,
   onSwitchMode,
   onSetExternalAgentConfigOption,
+  draftExternalAgentChoices,
+  draftExternalAgentKey,
+  onSetDraftExternalAgentChoice,
   onOpenRunningBackgroundWorks,
   backgroundWorkOpenTarget = "panel",
   runningSubagentCount = 0,
@@ -1615,6 +1634,8 @@ function ConversationComposerImpl({
       runtimeBlocked,
       submissionReady,
       submissionConfigured: true,
+      modelSelectionIssue: modelSelectionView?.selectionIssue,
+      modelSelectionSettled,
       sendInProgress: pendingOwner !== null || worktreeQueued,
       preparedSessionAwaitingFirstInput: Boolean(sessionId && snapshot?.meta.submissionPreparation),
       retrying,
@@ -1653,6 +1674,12 @@ function ConversationComposerImpl({
       : sendBlockReason
         ? `composer.sendBlocked.${sendBlockReason}`
         : null;
+  // Enter during a model block keeps the draft (no newline) and repeats the inline copy, so the
+  // reason is never only visible after a silent keypress (ISSUE-026).
+  const handleModelBlockedEnter = useCallback(() => {
+    if (!hasDraftToSubmit || !sendBlockMessageId) return;
+    toast(intl.formatMessage({ id: sendBlockMessageId }), { dedupeKey: sendBlockMessageId });
+  }, [hasDraftToSubmit, intl, sendBlockMessageId]);
   // 旧 UI 状态机：streaming + 空草稿 → Stop；有草稿 → 发送键（入队）。
   const showStopControl = canStop && !hasDraftToSubmit;
 
@@ -1857,24 +1884,6 @@ function ConversationComposerImpl({
     },
     [workspaceKey],
   );
-
-  // Draft branch intent clears when the user empties a non-empty draft (spec §1 "cleared with the
-  // draft"). Picking a branch before typing anything is unaffected: the transition requires prior
-  // content.
-  const draftHadTextRef = useRef(false);
-  useEffect(() => {
-    const hasText = text.trim().length > 0;
-    if (hasText) {
-      draftHadTextRef.current = true;
-      return;
-    }
-    if (draftHadTextRef.current) {
-      draftHadTextRef.current = false;
-      if (draftMode && sessionId === null) {
-        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
-      }
-    }
-  }, [draftMode, sessionId, text, workspaceKey]);
 
   const submit = useCallback(
     async (
@@ -2326,6 +2335,8 @@ function ConversationComposerImpl({
         runtimeBlocked,
         submissionReady,
         submissionConfigured: !(createSubmissionFromComposer !== undefined && submission === null),
+        modelSelectionIssue: modelSelectionView?.selectionIssue,
+        modelSelectionSettled,
         sendInProgress:
           pendingRef.current !== null ||
           targetSelectionPendingRef.current ||
@@ -2992,6 +3003,13 @@ function ConversationComposerImpl({
           restoreSubmittedDraft();
           return;
         }
+        // Worktree send acceptance: every failure check above has passed, so the send is committed.
+        // The worktree creation keeps the base it captured at registration (its pipeline params
+        // carry baseBranch), and the draft's base intent is consumed here, the worktree-mode
+        // counterpart of applyDraftBranchIntentForSend's checkout success clear. Failures before this
+        // point restore the draft with its base intent intact.
+        if (draftMode && sessionId === null)
+          useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
         const joinedPipeline = selectComposerWorktreePipeline(
           useComposerWorktreePipelineStore.getState(),
           workspaceKey,
@@ -3063,6 +3081,7 @@ function ConversationComposerImpl({
       getCodeCommentContexts,
       telemetryDraftConfig,
       modelSelectionView,
+      modelSelectionSettled,
       intl,
       onPrepareWorktreeSession,
       onSyncWorktreePreparation,
@@ -3440,16 +3459,35 @@ function ConversationComposerImpl({
 
   // Lexical onChange (the first character is also reported reliably; see LexicalChatInput.TextContentPlugin).
   // Lexical onChange（首字符也稳定回传，见 LexicalChatInput.TextContentPlugin）。
+  // The only writer that drops the draft branch intent: the user emptying a non-empty draft
+  // (spec §1). Programmatic editor updates (send claim, restore, replace) are reported with
+  // `programmatic: true` and never clear it; a successful send consumes the intent separately.
   const handleEditorChange = useCallback(
-    (value: string) => {
+    (value: string, meta?: { programmatic: boolean }) => {
+      // An absent flag means a direct call, which is typing as far as the draft is concerned.
+      const userEmptiedDraft =
+        meta?.programmatic !== true &&
+        value.trim().length === 0 &&
+        textRef.current.trim().length > 0;
       suppressDraftPersistRef.current = false;
       conversationTelemetry?.recordComposerTextChange(value);
       updateText(value);
+      if (userEmptiedDraft && draftMode && sessionId === null) {
+        useDraftBranchIntentStore.getState().clearDraftBranchIntent(workspaceKey);
+      }
       // 正文先进入与 mode/model 相同的内存 Draft；防抖只负责补充最新 Lexical JSON。
       updateComposerContent({ text: value });
       scheduleDraftPersist();
     },
-    [conversationTelemetry, scheduleDraftPersist, updateComposerContent, updateText],
+    [
+      conversationTelemetry,
+      draftMode,
+      scheduleDraftPersist,
+      sessionId,
+      updateComposerContent,
+      updateText,
+      workspaceKey,
+    ],
   );
 
   const handleEditorFocus = useCallback(() => {
@@ -4201,6 +4239,9 @@ function ConversationComposerImpl({
           sessionProviderId={externalAgentSessionProviderId}
           externalAgentConfig={externalAgentConfig}
           onSetExternalAgentConfigOption={onSetExternalAgentConfigOption}
+          draftExternalAgentChoices={draftExternalAgentChoices}
+          draftExternalAgentKey={draftExternalAgentKey}
+          onSetDraftExternalAgentChoice={onSetDraftExternalAgentChoice}
         />
         {/* Bug 原因：附件画廊 rebase 曾整段覆盖 leadingActions，误删 staging 的 CUA 常驻入口。
             入口自身继续负责平台、远程与设置可见性，不在 composer 重复判定。 */}
@@ -4231,6 +4272,9 @@ function ConversationComposerImpl({
       onOpenRunningBackgroundWorks,
       onSwitchMode,
       onSetExternalAgentConfigOption,
+      draftExternalAgentChoices,
+      draftExternalAgentKey,
+      onSetDraftExternalAgentChoice,
       externalAgentConfig,
       externalAgentSessionProviderId,
       sessionId,
@@ -4455,13 +4499,18 @@ function ConversationComposerImpl({
                 ? "!border-incognito hover:!border-incognito focus-within:!border-incognito"
                 : undefined
           }
+          onSubmitBlocked={
+            isComposerModelBlockReason(sendBlockReason) ? handleModelBlockedEnter : undefined
+          }
           onChange={handleEditorChange}
           onFocus={handleEditorFocus}
           onSubmit={handleEditorSubmit}
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
         />
-        {sendBarrierActive && hasDraftToSubmit && sendBlockMessageId ? (
+        {(sendBarrierActive || isComposerModelBlockReason(sendBlockReason)) &&
+        hasDraftToSubmit &&
+        sendBlockMessageId ? (
           <div className="flex flex-col gap-2 px-3 pb-2 text-ui-sm text-foreground-subtle">
             <p role="status" data-testid="composer-send-blocked-reason">
               {intl.formatMessage({ id: sendBlockMessageId })}
@@ -4593,11 +4642,9 @@ function ConversationComposerImpl({
               {intl.formatMessage({ id: "chat.queue.sendConfirm.title" })}
             </DialogTitle>
             <DialogDescription className="text-ui-base sm:text-ui-lg">
-              {intl.formatMessage(
+              {intl.formatPlural(
                 { id: "chat.queue.sendConfirm.description" },
-                {
-                  count: String(heldQueueConfirmation?.queueItemIds.length ?? 0),
-                },
+                heldQueueConfirmation?.queueItemIds.length ?? 0,
               )}
             </DialogDescription>
           </DialogHeader>

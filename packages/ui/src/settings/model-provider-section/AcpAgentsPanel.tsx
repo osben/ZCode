@@ -12,6 +12,7 @@ import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { logger } from "@/logger.js";
 import { ACP_AGENT_CATALOG, type AcpDetectionState } from "./acpAgentConfig.js";
+import { AcpAgentMark } from "./AcpAgentMark.js";
 import { ModelProviderLoadingCard } from "./StatusCards.js";
 
 export interface AcpAgentDetection extends AcpDetectionState {
@@ -19,11 +20,11 @@ export interface AcpAgentDetection extends AcpDetectionState {
 }
 
 /**
- * Owns the one detection scan of the settings page. `enabled` is the dev-only
- * gate: when off, nothing is probed at all. A rescan keeps the previous agents
- * visible (`refreshing`), so mounted detail forms are not discarded.
+ * Owns the one detection scan of the settings page. The scan runs once per mount on every platform:
+ * the host answers `supported` from the one availability predicate, and an unsupported host spawns
+ * nothing. A rescan keeps the previous agents visible (`refreshing`), so mounted detail forms are not discarded.
  */
-export function useAcpAgentDetection({ enabled }: { enabled: boolean }): AcpAgentDetection {
+export function useAcpAgentDetection(): AcpAgentDetection {
   const { providerSettingsService } = useServices();
   const [state, setState] = useState<AcpDetectionState>({
     status: "loading",
@@ -66,9 +67,8 @@ export function useAcpAgentDetection({ enabled }: { enabled: boolean }): AcpAgen
   );
 
   useEffect(() => {
-    if (!enabled) return;
     void load(false);
-  }, [enabled, load]);
+  }, [load]);
 
   const rescan = useCallback(() => {
     void load(true);
@@ -142,6 +142,7 @@ export function AcpAgentCatalogDetail({
                   className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2"
                   data-acp-catalog-agent={agent.agentId}
                 >
+                  <AcpAgentMark agentId={agent.agentId} name={agent.displayName} />
                   <span className="text-ui-base font-medium text-foreground">
                     {agent.displayName}
                   </span>

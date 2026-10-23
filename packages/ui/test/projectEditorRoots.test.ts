@@ -11,6 +11,8 @@ import {
 
 const native = vi.hoisted(() => ({ select: undefined as undefined | (() => Promise<string[]>) }));
 const readTree = vi.hoisted(() => vi.fn());
+// Default: the user accepts the delete confirmation; cancel tests override it per call.
+const confirm = vi.hoisted(() => vi.fn(async (_request: unknown) => true));
 vi.mock("@/project-sidebar/useProjectTree.js", () => ({ useProjectTree: readTree }));
 vi.mock("@/hooks/useSourceServerDisplayNames.js", () => ({
   useSourceServerDisplayNames: () => new Map(),
@@ -32,11 +34,12 @@ vi.mock("@/DirectoryBrowser.js", () => ({
   DirectoryBrowser: ({ onSelect }: { onSelect(path: string): void }) =>
     createElement("button", { onClick: () => onSelect("/source/added") }, "choose-root"),
 }));
-vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => vi.fn() }));
+vi.mock("@/hooks/useConfirmDialog.js", () => ({ useConfirmDialog: () => confirm }));
 afterEach(() => {
   cleanup();
   native.select = undefined;
   localStorage.clear();
+  confirm.mockClear();
 });
 
 const project: VirtualProject = {
@@ -144,7 +147,8 @@ it.each(["local", "remote:server:source"])(
     );
     const { onDeleted, onClose, saveProject } = editor({ ...project, hostId }, remove);
     fireEvent.click(screen.getByTestId("virtual-project-editor-delete"));
-    expect(remove).toHaveBeenCalledWith("p", hostId);
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("p", hostId));
+    expect(remove).toHaveBeenCalledOnce();
     expect(screen.getByTestId("virtual-project-save").hasAttribute("disabled")).toBe(true);
     expect(screen.getByTestId("virtual-project-editor-delete").hasAttribute("disabled")).toBe(true);
     expect(onDeleted).not.toHaveBeenCalled();
@@ -158,6 +162,24 @@ it.each(["local", "remote:server:source"])(
     expect(saveProject).not.toHaveBeenCalled();
   },
 );
+
+it("asks for confirmation before deleting and leaves the project untouched when cancelled", async () => {
+  confirm.mockResolvedValueOnce(false);
+  const { remove, onDeleted, onClose, saveProject } = editor();
+  fireEvent.click(screen.getByTestId("virtual-project-editor-delete"));
+  await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(confirm.mock.calls[0]![0]).toMatchObject({
+    title: "project.deleteConfirmTitle",
+    description: "project.deleteConfirmDescription",
+    confirmVariant: "destructive",
+  });
+  expect(remove).not.toHaveBeenCalled();
+  expect(onDeleted).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  expect(saveProject).not.toHaveBeenCalled();
+  expect(screen.getByTestId("virtual-project-editor-delete").hasAttribute("disabled")).toBe(false);
+});
 
 it("keeps the editor open on a failed remote deletion without saving the draft", async () => {
   const { onDeleted, onClose, saveProject } = editor(

@@ -14,7 +14,7 @@ import { reloadElectronSessionSafely } from "../helpers/e2e-electron-reload.js";
 import { seedPersonalProviderConfig } from "../helpers/model-provider-restart-config.js";
 import { skipOccupationOnboardingIfPresent } from "../helpers/occupation-onboarding.js";
 
-// Contract: specs/acp-agent-runtime.md "Settings UI placement" and "Dev-only visibility".
+// Contract: specs/acp-agent-runtime.md "Settings UI placement" and "Availability (platform rule)".
 // Detection only probes ZCODE_E2E_ACP_AGENT_PATH (wdio.conf.ts), so the real opencode /
 // cursor-agent on the machine is never detected; this spec writes a mock `opencode` there.
 
@@ -174,7 +174,7 @@ async function openModelProviderSettings() {
 describe("ACP agents settings", () => {
   before(async function () {
     this.timeout(180000);
-    if (process.platform === "win32") this.skip();
+    if (process.platform !== "darwin") this.skip();
     assert.ok(AGENT_DIR, "ZCODE_E2E_ACP_AGENT_PATH is not set by wdio.conf.ts");
     await skipOccupationOnboardingIfPresent();
     // Only Settings is needed: restart without the project-sidebar readiness wait.
@@ -238,6 +238,23 @@ describe("ACP agents settings", () => {
     await catalogRow.waitForDisplayed();
     await expect(catalogRow).toHaveText(expect.stringContaining("Not installed"));
     assert.equal(await isNavPresent(NAV_OPENCODE), false);
+
+    // The catalog lists every supported agent, each with its bundled brand mark
+    // (specs/acp-agent-runtime.md "Settings UI placement").
+    const logoByAgent: Record<string, boolean> = {
+      opencode: true,
+      cursor: true,
+      codex: true,
+      claude: true,
+      qwen: true,
+      gemini: true,
+    };
+    for (const [agentId, hasLogo] of Object.entries(logoByAgent)) {
+      const row = await $(`[data-acp-catalog-agent="${agentId}"]`);
+      await row.waitForDisplayed();
+      const images = await row.$$("img");
+      assert.equal(images.length, hasLogo ? 1 : 0, `${agentId} catalog logo`);
+    }
   });
 
   it("ACP-E2E-02: rescan finds the mock agent and selecting it opens its detail", async function () {

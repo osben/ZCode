@@ -22,7 +22,11 @@ const TRANSLATED_0020 = "31fdaa50915e6ee967de3d8072a7f98bab64da0ac2864275589e4a2
 const OLD_EXECUTION_ID = "0023_session_execution_worktree";
 const NEW_EXECUTION_ID = "9002_fork_session_execution_worktree";
 // Fork ACP binding migrations (specs/acp-agent-runtime.md "S5", "S6"): pending on every fixture.
-const ACP_BINDING_IDS = ["9003_fork_session_acp_binding", "9004_fork_session_acp_config"];
+const ACP_BINDING_IDS = [
+  "9003_fork_session_acp_binding",
+  "9004_fork_session_acp_config",
+  "9005_fork_session_acp_pending_choice",
+];
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];

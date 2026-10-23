@@ -21,6 +21,7 @@ import {
   shouldBareEnterFallThroughToNewline,
 } from "@/shortcuts/composerShortcuts.js";
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
+import { isShortcutEventNoise } from "@/shortcuts/bindings.js";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
@@ -601,9 +602,10 @@ function selectAfterPromptMentionById(mentionId: string): boolean {
  *
  * Intercept Enter with COMMAND_PRIORITY_HIGH to prevent Lexical's default paragraph insertion behavior.
  */
-function KeyboardPlugin({
+export function KeyboardPlugin({
   onSubmit,
   onModifiedSubmit,
+  onSubmitBlocked,
   disabled,
   submitDisabled,
   allowSubmitWhenEmpty,
@@ -611,6 +613,7 @@ function KeyboardPlugin({
 }: {
   onSubmit: (text: string) => LexicalSubmitResult;
   onModifiedSubmit?: (text: string) => LexicalSubmitResult;
+  onSubmitBlocked?: () => void;
   disabled?: boolean;
   submitDisabled?: boolean;
   allowSubmitWhenEmpty?: boolean;
@@ -643,6 +646,13 @@ function KeyboardPlugin({
         if (event.isComposing) {
           return false;
         }
+        // Safari fires compositionend before the IME-commit Enter (keyCode 229 / "Process"), so that
+        // keystroke reaches here with isComposing false. It belongs to the IME: consume it silently on
+        // every path (no submit, no blocked notice, no newline). Key repeat keeps its existing behavior.
+        if (event.repeat !== true && isShortcutEventNoise(event)) {
+          event.preventDefault();
+          return true;
+        }
 
         const text = getEditorMarkdown(editor.getEditorState());
 
@@ -656,6 +666,13 @@ function KeyboardPlugin({
         }
         if (scopedAction === "send") {
           const modifiedScopedEnter = event.shiftKey || event.ctrlKey || event.metaKey;
+          // A send key blocked by a named reason keeps the draft and reports it, for default and rebound
+          // bindings alike (ISSUE-026). Other blocked states still fall through to Lexical, unchanged.
+          if (submitDisabled && onSubmitBlocked && (enterSubmits || modifiedScopedEnter)) {
+            event.preventDefault();
+            onSubmitBlocked();
+            return true;
+          }
           // When reverse delivery is enabled, let the main path handle modified shortcuts (Ctrl+Enter = reverse delivery, whose delivery meaning is more specific than a binding).
           if (!(modifiedScopedEnter && onModifiedSubmit)) {
             // Apply the same gates as bare Enter on the main path: unmodified Enter respects submitDisabled/mobile enterSubmits;
@@ -719,6 +736,14 @@ function KeyboardPlugin({
         // While a request is in progress, the user may keep editing the draft but cannot submit again.
         // Mapping this state directly to disabled also disabled typing and suggestions; removing disabled alone
         // would let Enter submit and clear the draft. When submitDisabled, return Enter to Lexical for newline handling.
+        // A caller that names the blocked state (for example an unresolved stored model) takes the Enter:
+        // the draft stays, no newline is inserted, and the caller shows the reason. Other blocked states keep
+        // returning Enter to Lexical, unchanged.
+        if (submitDisabled && enterSubmits && onSubmitBlocked) {
+          event.preventDefault();
+          onSubmitBlocked();
+          return true;
+        }
         if (submitDisabled || !enterSubmits) {
           return false;
         }
@@ -891,10 +916,20 @@ function KeyboardPlugin({
     enterSubmits,
     onModifiedSubmit,
     onSubmit,
+    onSubmitBlocked,
     submitDisabled,
   ]);
 
   return null;
+}
+
+/**
+ * True when an editor update came from the app rather than from typing: programmatic writes
+ * (clear, restore, replace) and prompt-history recall. The history tag is separate from the
+ * generic one for the slash panel, so it is folded in here; the slash filter keeps reading it as is.
+ */
+export function isProgrammaticEditorUpdate(tags: ReadonlySet<string>): boolean {
+  return tags.has(PROGRAMMATIC_UPDATE_TAG) || tags.has(HISTORY_NAVIGATION_UPDATE_TAG);
 }
 
 /**
@@ -909,7 +944,7 @@ function TextContentPlugin({
   onChange,
   taskId,
 }: {
-  onChange?: (text: string) => void;
+  onChange?: (text: string, meta: { programmatic: boolean }) => void;
   taskId?: string | null;
 }) {
   const [editor] = useLexicalComposerContext();
@@ -961,7 +996,9 @@ function TextContentPlugin({
           return;
         }
 
-        onChange(nextText);
+        // Consumers that must tell typing from the app's own writes (clears, restores, history recall)
+        // read this flag.
+        onChange(nextText, { programmatic: isProgrammaticEditorUpdate(tags) });
 
         const lagMs = performance.now() - startedAt;
         // Programmatic edits and IME composition do not count as typing lag (recordInputLag filters them centrally).
@@ -1453,7 +1490,9 @@ interface LexicalChatInputProps {
   enterSubmits?: boolean;
   onSubmit: (text: string) => LexicalSubmitResult;
   onModifiedSubmit?: (text: string) => LexicalSubmitResult;
-  onChange?: (text: string) => void;
+  /** Enter while submitDisabled, only when the caller names the blocked state (see KeyboardPlugin). */
+  onSubmitBlocked?: () => void;
+  onChange?: (text: string, meta: { programmatic: boolean }) => void;
   onFocus?: () => void;
   triggerPanelContainer?: HTMLElement | null;
   workspacePath: string;
@@ -1487,6 +1526,7 @@ export function LexicalChatInput({
   placeholder,
   disabled = false,
   submitDisabled = false,
+  onSubmitBlocked,
   allowSubmitWhenEmpty = false,
   enterSubmits = true,
   onSubmit,
@@ -1640,6 +1680,7 @@ export function LexicalChatInput({
           <KeyboardPlugin
             onSubmit={handleSubmit}
             onModifiedSubmit={onModifiedSubmit}
+            onSubmitBlocked={onSubmitBlocked}
             disabled={disabled}
             submitDisabled={submitDisabled}
             allowSubmitWhenEmpty={allowSubmitWhenEmpty}

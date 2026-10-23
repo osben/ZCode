@@ -664,13 +664,14 @@ describe("desktopRuntimeEnv buildHostProcessEnv", () => {
     expect(env.ZCODE_CUA_HELPER_ALLOW_UNSIGNED_LOCAL).toBeUndefined();
   });
 
-  // specs/acp-agent-runtime.md "Dev-only visibility": the host runtime env and the renderer's
-  // preload gate come from one signal, so dev-only surfaces never open on only one side.
+  // The host runtime env and the renderer's development flag come from one signal, so development-only
+  // surfaces (the stdio tap, for example) never open on only one side. ACP availability does not read it
+  // (specs/acp-agent-runtime.md "Availability (platform rule)").
   it.each([
     { isPackaged: true, runtimeEnv: "production", rendererGate: false },
     { isPackaged: false, runtimeEnv: "development", rendererGate: true },
   ])(
-    "host runtime env and renderer dev gate agree (packaged=$isPackaged)",
+    "host runtime env and renderer development flag agree (packaged=$isPackaged)",
     async ({ isPackaged, runtimeEnv, rendererGate }) => {
       appMock.isPackaged = isPackaged;
       Object.defineProperty(process, "resourcesPath", {

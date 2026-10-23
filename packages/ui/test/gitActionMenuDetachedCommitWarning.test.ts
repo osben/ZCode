@@ -21,6 +21,7 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
     intl: {
       formatMessage: ({ id }: { id: string }, values?: Record<string, string>) =>
         values && values.error !== undefined ? `${id} {${values.error}}` : id,
+      formatPlural: ({ id }: { id: string }) => id,
     },
   }),
 }));

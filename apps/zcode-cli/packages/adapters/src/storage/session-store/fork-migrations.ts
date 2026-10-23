@@ -45,6 +45,17 @@ const FORK_ACP_SESSION_BINDING_SQL = `
   );
 `;
 
+// Choices made before the first turn (specs/acp-agent-runtime.md "S6 readiness"). The binding row cannot hold
+// them: its ACP session id exists only after the first session/new. The binding write moves them over.
+const FORK_ACP_SESSION_CHOICE_SQL = `
+  create table if not exists fork_acp_session_choice (
+    session_id text primary key,
+    agent_id text not null,
+    config_choices text not null,
+    updated_at integer not null
+  );
+`;
+
 export const FORK_SESSION_MIGRATIONS: readonly SqliteMigration[] = [
   {
     appVersion: "0.16.9",
@@ -102,6 +113,16 @@ export const FORK_SESSION_MIGRATIONS: readonly SqliteMigration[] = [
       alter table fork_acp_session_binding
         add column config_choices text;
     `,
+  },
+  {
+    appVersion: "0.16.9",
+    id: "9005_fork_session_acp_pending_choice",
+    // Fork-owned (9005_fork_* id, fork_ table): the chosen config values of an ACP session whose first turn has
+    // not run yet. One row per ZCode session, moved into fork_acp_session_binding.config_choices when the binding
+    // is written for the same agent, and deleted there.
+    touchedTables: ["fork_acp_session_choice"],
+    apply: (db) => db.exec(FORK_ACP_SESSION_CHOICE_SQL),
+    sql: FORK_ACP_SESSION_CHOICE_SQL,
   },
 ];
 

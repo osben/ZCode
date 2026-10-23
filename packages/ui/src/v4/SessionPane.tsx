@@ -101,7 +101,14 @@ import type {
 } from "@zcode/services";
 import { useCodingPlanBillingDiscountFromService } from "@/CodingPlanBillingDiscount.js";
 import { toast } from "@/components/ui/toast.js";
-import { sendExternalAgentConfigOption } from "@/v4/composer/externalAgentConfig.js";
+import {
+  resolveExternalAgentId,
+  sendDraftExternalAgentChoices,
+  sendExternalAgentConfigOption,
+  setDraftExternalAgentChoice,
+  takeDraftExternalAgentChoices,
+  type DraftExternalAgentChoices,
+} from "@/v4/composer/externalAgentConfig.js";
 import { cn } from "@/components/lib/utils.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
@@ -1895,6 +1902,7 @@ export function SessionPane({
   ]);
   const modelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
+  const providerStartupSettled = useZCodeSessionStore((state) => state.providerStartupSettled);
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
   useEffect(() => {
     if (sessionId !== null) {
@@ -3550,6 +3558,25 @@ export function SessionPane({
   const ensureDraftPrewarmConfigBeforeSendRef = useRef<(targetSessionId: string) => Promise<void>>(
     async () => undefined,
   );
+  // S6 readiness: pre-submission choices of every draft, keyed by the draft session that the first submission uses.
+  // The pane is reused across task bindings, so a choice is read and sent only for the draft it was made in.
+  const [draftExternalAgentChoices, setDraftExternalAgentChoices] =
+    useState<DraftExternalAgentChoices>({});
+  // The draft's identity for its choices: the composer scope. The prewarm session is rebuilt during a draft, so it
+  // cannot be the key. The choices are reset when the pane leaves a bound task (the effect below).
+  const draftChoiceKey = composerScopeKey(newTaskComposerScope);
+  const previousBoundSessionRef = useRef(sessionId);
+  useEffect(() => {
+    const previous = previousBoundSessionRef.current;
+    previousBoundSessionRef.current = sessionId;
+    if (previous !== null && previous !== sessionId) setDraftExternalAgentChoices({});
+  }, [sessionId]);
+  const draftExternalAgentChoicesRef = useRef(draftExternalAgentChoices);
+  draftExternalAgentChoicesRef.current = draftExternalAgentChoices;
+  const applyDraftExternalAgentChoicesRef = useRef<
+    (draftSessionId: string, targetSessionId: string) => Promise<void>
+  >(async () => undefined);
+
   const effectiveSessionId = sessionId ?? recoveringDraft?.sessionId ?? prewarmSessionId;
   useEffect(() => {
     if (!recoveringDraft?.commandId || !remoteAvailable) return;
@@ -4093,6 +4120,9 @@ export function SessionPane({
         // 就绪，命令可能当时没有目标。首发绑定确定的预热 session 前再同步一次
         // 草稿权威配置，禁止 UI 新值与 runtime 旧值分叉。
         await ensureDraftPrewarmConfigBeforeSendRef.current(prewarmTargetBeforeSend);
+        if (!createRoute) {
+          await applyDraftExternalAgentChoicesRef.current(draftChoiceKey, prewarmTargetBeforeSend);
+        }
       }
       // slash 命令优先：已有 session 直接消费；draft 首发 /goal 先建空会话再发命令。
       // 携带附件或网页元素上下文时不消费为 v4 原生命令（compact/goal 等无附件语义），随 sendText 直发。
@@ -4224,6 +4254,7 @@ export function SessionPane({
           prepareHighspeedTurn,
           submission.modelSelection,
         );
+        await applyDraftExternalAgentChoicesRef.current(draftChoiceKey, createdSessionId);
         const sendAck = await dispatchSubmissionCommand(
           "sendText",
           {
@@ -4275,6 +4306,7 @@ export function SessionPane({
       const draftBinding = sessionId === null ? await waitForDraftSession() : null;
       if (draftBinding) {
         await ensureDraftPrewarmConfigBeforeSendRef.current(draftBinding.sessionId);
+        await applyDraftExternalAgentChoicesRef.current(draftChoiceKey, draftBinding.sessionId);
         if (!draftBinding.beginPromotion()) throw new Error("草稿会话已切换，请重新发送");
       }
       const targetSessionId = sessionId ?? draftBinding!.sessionId;
@@ -4303,6 +4335,7 @@ export function SessionPane({
       // admission 写出后的失败或 transport error 不能证明 CLI 没有执行；保留原 binding
       // 的 pending 生命周期，交给 Composer 保留输入，禁止自动换会话/command 重发。
       // 附件 ref 已在 composer 预传状态机中收口。
+      await applyDraftExternalAgentChoicesRef.current(draftChoiceKey, targetSessionId);
       const highspeed = await prepareHighspeedSendContext(
         targetSessionId,
         prepareHighspeedTurn,
@@ -5001,6 +5034,39 @@ export function SessionPane({
   );
   ensureDraftPrewarmConfigBeforeSendRef.current = ensureDraftPrewarmConfigBeforeSend;
 
+  // Sends the draft's choices of the draft's ACP agent to the session that will receive the first submission. A
+  // refusal throws before sendText; after every choice is accepted the draft state is cleared, because the session
+  // holds the choices now and its projection shows them.
+  const applyDraftExternalAgentChoices = useCallback(
+    async (draftSessionId: string, targetSessionId: string) => {
+      const agentId = resolveExternalAgentId(draftConfigRef.current.modelSelection?.providerId);
+      if (!agentId) return;
+      const outcome = await sendDraftExternalAgentChoices({
+        state: draftExternalAgentChoicesRef.current,
+        draftSessionId,
+        agentId,
+        targetSessionId,
+        send: (target, configId, value) =>
+          sendExternalAgentConfigOption(dispatchCommand, target, configId, value, (detail) => {
+            logger.warn("[v4-pane] draft setExternalAgentConfigOption refused", {
+              configId,
+              ...detail,
+            });
+          }),
+      });
+      if (outcome.refusedMessageId) {
+        throw new Error(intl.formatMessage({ id: outcome.refusedMessageId }));
+      }
+      if (outcome.sent) {
+        setDraftExternalAgentChoices((previous) =>
+          takeDraftExternalAgentChoices(previous, draftSessionId),
+        );
+      }
+    },
+    [dispatchCommand, intl],
+  );
+  applyDraftExternalAgentChoicesRef.current = applyDraftExternalAgentChoices;
+
   const followupModeSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const targetSessionId = sessionId ?? prewarmSessionId;
@@ -5052,9 +5118,18 @@ export function SessionPane({
         model,
         branch: "composer-submission-intent",
       });
+      // ISSUE-035: a manual pick in an existing session announces its switch right away. The source is
+      // the model the composer showed before this pick; the helper ignores new-task drafts and no-op picks.
+      showModelChangeNotice(
+        sourceModel ?? {
+          provider: draftConfigRef.current.provider ?? "",
+          model: draftConfigRef.current.model ?? "",
+        },
+        { provider: resolvedProvider, model },
+      );
       handleDraftSelectModel(resolvedProvider, model, reasoningLevel);
     },
-    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl],
+    [activeHighspeedCard, draftConfigRef, handleDraftSelectModel, intl, showModelChangeNotice],
   );
 
   const handleSelectThought = useCallback(
@@ -5170,6 +5245,7 @@ export function SessionPane({
   // result, so the pane keeps no optimistic value; a refusal is reported with a toast.
   const handleSetExternalAgentConfigOption = useCallback(
     (configId: string, value: string) => {
+      // A session exists: the choice is a command. Before the first submission the composer uses the draft instead.
       if (!sessionId) return;
       void sendExternalAgentConfigOption(dispatchCommand, sessionId, configId, value, (detail) => {
         logger.warn("[v4-pane] setExternalAgentConfigOption refused", { configId, ...detail });
@@ -5178,6 +5254,17 @@ export function SessionPane({
       });
     },
     [dispatchCommand, intl, sessionId],
+  );
+
+  // S6 readiness: a draft's selects are UI-local until the first submission. They are sent once, after the draft
+  // session exists and before sendText; a refusal throws there, so the prompt is never sent with another mode.
+  const handleSetDraftExternalAgentChoice = useCallback(
+    (draftSessionId: string, agentId: string, configId: string, value: string) => {
+      setDraftExternalAgentChoices((previous) =>
+        setDraftExternalAgentChoice(previous, draftSessionId, agentId, configId, value),
+      );
+    },
+    [],
   );
 
   // context usage 面板的压缩入口（命令文本 = "/compact"，复用 slash 解析路径）。
@@ -6294,6 +6381,7 @@ export function SessionPane({
         modelSelectionView ??
         (modelSelectionRead.state.status === "loading" ? modelSelectionRead.state.catalog : null)
       }
+      modelSelectionSettled={providerStartupSettled}
       modelSelectionState={modelSelectionRead.state}
       modelSelectionReload={modelSelectionRead.reload}
       modelSelectionRefresh={modelSelectionRead.refresh}
@@ -6324,6 +6412,9 @@ export function SessionPane({
       onSelectThought={handleSelectThought}
       onSwitchMode={handleSwitchMode}
       onSetExternalAgentConfigOption={handleSetExternalAgentConfigOption}
+      draftExternalAgentChoices={draftExternalAgentChoices}
+      draftExternalAgentKey={sessionId === null ? draftChoiceKey : null}
+      onSetDraftExternalAgentChoice={handleSetDraftExternalAgentChoice}
       onOpenRunningBackgroundWorks={
         sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
       }

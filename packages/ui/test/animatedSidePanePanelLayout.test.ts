@@ -151,14 +151,21 @@ describe("AnimatedSidePanePanel layout", () => {
     ).toEqual(["files", "browser", "terminal", "review"]);
   });
 
-  it("offers the model trajectory launcher only with an active task", () => {
+  it("offers the v2 trajectory launcher directly after v1 and only with an active task", () => {
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
         hasActiveTask: true,
         hasReviewTab: false,
       }),
-    ).toEqual(["files", "browser", "terminal", "review", "model-trajectory"]);
+    ).toEqual([
+      "files",
+      "browser",
+      "terminal",
+      "review",
+      "model-trajectory",
+      "model-trajectory-v2",
+    ]);
     expect(
       resolveOpenTabLauncherItemIds({
         developerToolsEnabled: false,
@@ -173,7 +180,7 @@ describe("AnimatedSidePanePanel layout", () => {
         hasReviewTab: true,
         supportsEmbeddedBrowser: false,
       }),
-    ).toEqual(["files", "terminal", "model-trajectory", "developer-tools"]);
+    ).toEqual(["files", "terminal", "model-trajectory", "model-trajectory-v2", "developer-tools"]);
   });
 
   it("hides the side conversation entry without an active task and on mobile", () => {

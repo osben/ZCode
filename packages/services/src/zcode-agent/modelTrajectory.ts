@@ -8,6 +8,12 @@ import type {
   ZCodeModelTrajectoryRecord,
   ZCodeModelTrajectoryUsage,
 } from "#src/session/zcodeTaskService.js";
+
+export type {
+  ZCodeModelTrajectoryRecord,
+  ZCodeModelTrajectoryTruncation,
+  ZCodeModelTrajectoryUsage,
+} from "#src/session/zcodeTaskService.js";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   boundPayload,
@@ -37,6 +43,32 @@ export async function readModelTrajectory(
   taskId: string,
   limit = DEFAULT_TRAJECTORY_LIMIT,
 ): Promise<ZCodeModelTrajectory> {
+  const window = await readModelIORawWindow(taskId, limit);
+  // Input deltas are decided on the projected window only, so the first main record in the window is always full.
+  const trimmedRecords = projectModelTrajectoryInputDeltas(
+    window.records.map((record) => mapModelTrajectoryRecord(record)),
+  );
+
+  return {
+    taskId,
+    available: true,
+    records: trimmedRecords,
+    sourceFiles: window.sourceFiles,
+    truncated: window.truncated,
+  };
+}
+
+/** Kept raw model-io records after writer-delta expansion, oldest first. */
+export interface ModelIORawWindow {
+  records: Record<string, unknown>[];
+  sourceFiles: string[];
+  truncated: boolean;
+}
+
+export async function readModelIORawWindow(
+  taskId: string,
+  limit = DEFAULT_TRAJECTORY_LIMIT,
+): Promise<ModelIORawWindow> {
   const safeLimit =
     Number.isFinite(limit) && limit > 0 ? Math.trunc(limit) : DEFAULT_TRAJECTORY_LIMIT;
   const sanitized = sanitizeSessionSegment(taskId);
@@ -113,16 +145,7 @@ export async function readModelTrajectory(
   const expanded = expandModelIODeltaRecords(rawRecords);
   const truncated = inputTruncated || expanded.length > safeLimit;
   const kept = truncated ? expanded.slice(expanded.length - safeLimit) : expanded;
-  // Input deltas are decided on the projected window only, so the first main record in the window is always full.
-  const trimmedRecords = projectInputDeltas(kept.map((record) => mapRecord(record)));
-
-  return {
-    taskId,
-    available: true,
-    records: trimmedRecords,
-    sourceFiles,
-    truncated,
-  };
+  return { records: kept, sourceFiles, truncated };
 }
 
 interface InputDeltaBase {
@@ -136,7 +159,9 @@ interface InputDeltaBase {
  * that whole input is an exact prefix (message by message, role and parts, serialized after bounding).
  * Sidecar, compact and subagent records are always full and never serve as a base; the first main record has no base.
  */
-function projectInputDeltas(records: ZCodeModelTrajectoryRecord[]): ZCodeModelTrajectoryRecord[] {
+export function projectModelTrajectoryInputDeltas(
+  records: ZCodeModelTrajectoryRecord[],
+): ZCodeModelTrajectoryRecord[] {
   let base: InputDeltaBase | undefined;
   return records.map((record) => {
     if (record.callSource?.kind !== "main") {
@@ -174,7 +199,9 @@ function toTime(value?: string): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-function mapRecord(record: Record<string, unknown>): ZCodeModelTrajectoryRecord {
+export function mapModelTrajectoryRecord(
+  record: Record<string, unknown>,
+): ZCodeModelTrajectoryRecord {
   const request = asObject(record.request);
   const response = asObject(record.response);
   const model = asObject(record.model);

@@ -7,7 +7,11 @@ import {
   readPromptHistoryEntries,
 } from "@/lib/promptHistoryStorage.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
-import { TEST_LOCALE } from "./helpers/uiCopy.js";
+import { TEST_LOCALE, expectedCopy } from "./helpers/uiCopy.js";
+import { findReactPropsByTestId } from "./v4ConversationComposerLateAckHarness.js";
+import { toast } from "@/components/ui/toast.js";
+import type { ModelSelectionView } from "@zcode/services";
+import type { EffectiveModelSelectionResult } from "@zcode/shared/model-selection";
 import {
   ConversationComposer,
   type ConversationComposerSendResult,
@@ -302,6 +306,13 @@ function flushAsyncWork() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+// A settled Host view whose stored selection cannot be resolved (no providers to choose from).
+function modelSelectionViewWith(
+  selectionIssue: NonNullable<EffectiveModelSelectionResult["selectionIssue"]>,
+): ModelSelectionView {
+  return { revision: 1, providers: [], selectionIssue } as unknown as ModelSelectionView;
+}
+
 function renderComposerElement(
   onSendText: (text: string, options?: unknown) => Promise<ConversationComposerSendResult | void>,
   sessionId: string | null,
@@ -317,6 +328,10 @@ function renderComposerElement(
     content: Pick<V4ComposerDraft, "text" | "editorStateJson" | "mention">,
   ) => void,
   submissionReady = true,
+  modelOptions: {
+    modelSelectionView?: ModelSelectionView | null;
+    modelSelectionSettled?: boolean;
+  } = {},
 ) {
   const scopeId = sessionId ?? V4_DRAFT_SCOPE_ROOT;
   let ownedDraft = composerDraft ??
@@ -340,6 +355,8 @@ function renderComposerElement(
       onSendText,
       createSubmissionFromComposer,
       submissionReady,
+      modelSelectionView: modelOptions.modelSelectionView ?? null,
+      modelSelectionSettled: modelOptions.modelSelectionSettled ?? false,
       composerDraft: ownedDraft,
       updateComposerContent: persistOwnedContent,
       replaceComposerDraft: (next) => {
@@ -564,6 +581,106 @@ describe("ConversationComposer prompt history", () => {
 
     expect(onSendText).not.toHaveBeenCalled();
     expect(inputClear).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("an unresolved stored model names the reason under the draft, and Enter keeps the text without a newline (ISSUE-026)", async () => {
+    const onSendText = vi.fn(async () => {});
+    const container = installMinimalDom();
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        renderComposerElement(
+          onSendText,
+          "session-a",
+          undefined,
+          null,
+          () => null,
+          { text: "", updatedAt: 0, mode: "build" },
+          undefined,
+          false,
+          {
+            modelSelectionView: modelSelectionViewWith("model-not-found"),
+            modelSelectionSettled: true,
+          },
+        ),
+      ),
+    );
+    act(() => (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("send me"));
+
+    expect(findReactPropsByTestId(container, "composer-send-blocked-reason")?.children).toBe(
+      expectedCopy("composer.sendBlocked.modelUnavailable"),
+    );
+    const onSubmitBlocked = chatPromptEditorProps.at(-1)?.onSubmitBlocked as
+      | (() => void)
+      | undefined;
+    expect(typeof onSubmitBlocked).toBe("function");
+    act(() => onSubmitBlocked!());
+
+    expect(toast).toHaveBeenCalledWith(
+      expectedCopy("composer.sendBlocked.modelUnavailable"),
+      expect.objectContaining({ dedupeKey: "composer.sendBlocked.modelUnavailable" }),
+    );
+    expect(onSendText).not.toHaveBeenCalled();
+    expect(inputClear).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("an account connection problem names the sign-in copy instead of the model copy", async () => {
+    const container = installMinimalDom();
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        renderComposerElement(
+          vi.fn(async () => {}),
+          "session-a",
+          undefined,
+          null,
+          () => null,
+          { text: "", updatedAt: 0, mode: "build" },
+          undefined,
+          false,
+          {
+            modelSelectionView: modelSelectionViewWith("account-connection-unavailable"),
+            modelSelectionSettled: true,
+          },
+        ),
+      ),
+    );
+    act(() => (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("send me"));
+
+    expect(findReactPropsByTestId(container, "composer-send-blocked-reason")?.children).toBe(
+      expectedCopy("composer.sendBlocked.modelAccountUnavailable"),
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("before startup has settled the verdict is not shown; the generic not-ready reason stays (ISSUE-026 cold start)", async () => {
+    const container = installMinimalDom();
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        renderComposerElement(
+          vi.fn(async () => {}),
+          "session-a",
+          undefined,
+          null,
+          () => null,
+          { text: "", updatedAt: 0, mode: "build" },
+          undefined,
+          false,
+          {
+            modelSelectionView: modelSelectionViewWith("provider-not-found"),
+            modelSelectionSettled: false,
+          },
+        ),
+      ),
+    );
+    act(() => (chatPromptEditorProps.at(-1)!.onChange as (value: string) => void)("send me"));
+
+    // The generic reason keeps its existing behavior: no inline notice and no model-specific Enter path.
+    expect(findReactPropsByTestId(container, "composer-send-blocked-reason")).toBeNull();
+    expect(chatPromptEditorProps.at(-1)?.onSubmitBlocked).toBeUndefined();
     await act(async () => root.unmount());
   });
 

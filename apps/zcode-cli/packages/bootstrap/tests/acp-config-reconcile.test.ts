@@ -37,7 +37,7 @@ function memoryConfig(initial: {
       store.offeredWrites.push(options);
       offered = options;
     }),
-    writeChoice: vi.fn(async (_sessionId, configId, value) => {
+    writeChoice: vi.fn(async (_sessionId, _agentId, configId, value) => {
       choices[configId] = value;
     }),
   };
@@ -62,6 +62,9 @@ function fakeRuntime(options: { mode: string; failSet?: Error; onPrompt?: () => 
     },
     get configOptions() {
       return configOptions;
+    },
+    get handshakeConfigOptions() {
+      return [modeOption(options.mode)];
     },
     setConfigOption: vi.fn(async (configId: string, value: string) => {
       calls.push(`set:${configId}=${value}`);
@@ -103,7 +106,12 @@ function fakeRuntime(options: { mode: string; failSet?: Error; onPrompt?: () => 
   return runtime;
 }
 
-function hostWith(runtime: AcpPoolRuntime, config: AcpSessionConfigStore, logger?: { debug: ReturnType<typeof vi.fn> }) {
+function hostWith(
+  runtime: AcpPoolRuntime,
+  config: AcpSessionConfigStore,
+  logger?: { debug: ReturnType<typeof vi.fn> },
+  catalog?: { write: (agentId: string, options: readonly ExternalAgentConfigOption[]) => Promise<unknown> },
+) {
   const pool = new AcpSessionPool({ createRuntime: async () => runtime });
   return createAcpExternalAgentHost({
     records: {
@@ -113,6 +121,7 @@ function hostWith(runtime: AcpPoolRuntime, config: AcpSessionConfigStore, logger
     },
     pool,
     config,
+    ...(catalog === undefined ? {} : { catalog }),
     ...(logger === undefined
       ? {}
       : { logger: { debug: logger.debug, info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never }),
@@ -193,7 +202,7 @@ describe("ACP config reconcile", () => {
     const runtime = fakeRuntime({
       mode: "build",
       onPrompt: async () => {
-        await config?.writeChoice("zcode-1", "mode", "plan");
+        await config?.writeChoice("zcode-1", "opencode", "mode", "plan");
       },
     });
     config = memoryConfig({ offered: OFFERED_BUILD });
@@ -257,5 +266,55 @@ describe("ACP config reconcile", () => {
     // The display copy follows the agent; the user's choice is not rewritten by the driver.
     expect(config.offeredWrites).toEqual([planCopy]);
     expect(config.writeChoice).not.toHaveBeenCalled();
+  });
+
+  // S6 readiness: a choice made before the first turn is pending in the config store, and the first prompt
+  // is the first thing the agent sees after it.
+  it("applies a choice made before the first turn before the first prompt", async () => {
+    const runtime = fakeRuntime({ mode: "build" });
+    const config = memoryConfig({ choices: { mode: "plan" } });
+
+    await hostWith(runtime, config).driverFor("opencode").runTurn(turnRequest([]));
+
+    expect(runtime.calls).toEqual(["set:mode=plan", "prompt"]);
+  });
+
+  it("stores the offered snapshot in the agent catalog before the prompt", async () => {
+    const runtime = fakeRuntime({ mode: "build" });
+    const catalog = { write: vi.fn(async () => true) };
+
+    await hostWith(runtime, memoryConfig({}), undefined, catalog)
+      .driverFor("opencode")
+      .runTurn(turnRequest([]));
+
+    expect(catalog.write).toHaveBeenCalledWith("opencode", OFFERED_BUILD);
+    expect(catalog.write.mock.invocationCallOrder[0]).toBeLessThan(
+      runtime.prompt.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  // The catalog is what the agent offers. A choice applied before the prompt belongs to the session, so it must not
+  // become the default that the next new draft shows.
+  it("writes the catalog from the handshake's values, not from a choice applied before the prompt", async () => {
+    const runtime = fakeRuntime({ mode: "build" });
+    const config = memoryConfig({ offered: OFFERED_BUILD, choices: { mode: "plan" } });
+    const catalog = { write: vi.fn(async () => true) };
+
+    await hostWith(runtime, config, undefined, catalog).driverFor("opencode").runTurn(turnRequest([]));
+
+    expect(runtime.calls).toEqual(["set:mode=plan", "prompt"]);
+    expect(catalog.write).toHaveBeenCalledWith("opencode", OFFERED_BUILD);
+    expect(catalog.write.mock.calls[0]?.[1]?.[0]?.currentValue).toBe("build");
+  });
+
+  it("a failed catalog write never fails the turn", async () => {
+    const runtime = fakeRuntime({ mode: "build" });
+    const catalog = { write: vi.fn(async () => Promise.reject(new Error("disk full"))) };
+
+    const result = await hostWith(runtime, memoryConfig({}), undefined, catalog)
+      .driverFor("opencode")
+      .runTurn(turnRequest([]));
+
+    expect(result.stopReason).toBe("end_turn");
   });
 });

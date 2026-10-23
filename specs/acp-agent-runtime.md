@@ -12,13 +12,15 @@ the mock-agent tests encode the contract below.
 ## Product rules
 
 - Agents are user-installed CLIs; ZCode never installs, updates or logs them in silently. Detection
-  probes fixed binaries on the login-shell PATH (`opencode`, `cursor-agent` — never bare `agent`,
+  probes fixed binaries on the login-shell PATH (the binaries in "Agent registry"; never bare `agent`,
   which collides with unrelated CLIs) with fixed version-probe arguments only.
 - An enabled agent becomes the personal provider `acp:<agentId>` with one synthetic model
   (`modelId = agentId`); ids are stable and validated (not taken, no whitespace). Until phase 4 the
   model stays out of the chat registry (`executable = false`). The provider is derived from the
   fork-owned sidecar store, never written to `provider_config.json` (see "Storage and upstream
   compatibility").
+- Platform: macOS only until Windows and Linux are verified (the login helper is macOS-only and the E2E
+  specs skip win32). Other platforms report detection `supported: false` and offer nothing.
 - Permissions are answered by `kind` (`allow_once` / `allow_always` / `reject_once` /
   `reject_always`); an unavailable kind resolves to `cancelled`. Agents never see host-specific
   option ids.
@@ -54,6 +56,35 @@ the mock-agent tests encode the contract below.
 - One active prompt per session. `cancel` sends a bounded `session/cancel` and escalates to a
   process-tree kill; `stop` is idempotent and safe to call at any time.
 
+## Agent registry
+
+`ACP_AGENT_DEFINITIONS` (`packages/acp-agent-runtime/src/registry.ts`) is the one list of supported agents.
+The settings catalog `ACP_AGENT_CATALOG` (`packages/ui/src/settings/model-provider-section/acpAgentConfig.ts`)
+must list the same agent ids, in the same order, with the same binary; `acpAgentCatalog.test.ts` checks it.
+Every agent is probed with `--version` only (5 s timeout, fixed arguments). Login and status helpers are
+declared only where the agent binary has a real subcommand; otherwise they are empty and the UI shows none.
+ZCode never runs an install command. The catalog shows the vendor's command as selectable text.
+
+| Agent id   | Binary             | Spawn args           | Login / status helper                  | Install (documented)                                   | Verification                                                                                                                       |
+| ---------- | ------------------ | -------------------- | -------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `opencode` | `opencode`         | `acp`                | `auth login` / `auth list`             | vendor curl script (catalog)                           | Live: opencode v2.0.31 spike traces                                                                                                |
+| `cursor`   | `cursor-agent`     | `acp`                | `login` / `status`                     | vendor curl script (catalog)                           | Live: cursor-agent 2026.10.18 spike traces                                                                                         |
+| `qwen`     | `qwen`             | `--acp`              | none (`qwen auth` is removed upstream) | `npm install -g @qwen-code/qwen-code`                  | Live probe: v0.19.10, ACP `initialize` protocolVersion 1, `loadSession: true`, authMethods `openai`                                |
+| `codex`    | `codex-acp`        | none                 | none                                   | `npm install -g @agentclientprotocol/codex-acp`        | Live probe: adapter v2.2.2 (wraps the user's Codex login), `initialize` ok, `loadSession: true`, authMethods `api-key`, `chat-gpt` |
+| `claude`   | `claude-agent-acp` | none                 | none (uses the Claude Code login)      | `npm install -g @agentclientprotocol/claude-agent-acp` | Live probe: adapter v0.94.0, `initialize` ok, `loadSession: true`, authMethods `[]`                                                |
+| `gemini`   | `gemini`           | `--experimental-acp` | none                                   | `npm install -g @google/gemini-cli`                    | **Not live-verified**: the flag is from the Gemini CLI reference; `gemini` is not installed here                                   |
+
+- The `@zed-industries/*` adapter packages are deprecated and not referenced.
+- GitHub Copilot CLI is not listed: no ACP support is confirmed.
+- Version probes ran with `HOME`, `CODEX_HOME` and `CLAUDE_CONFIG_DIR` pointed at a scratch directory.
+
+Brand marks (`packages/ui/src/settings/model-provider-section/AcpAgentMark.tsx`, `acpAgentLogo.ts`): every
+agent row in Settings (navigation, detail header and catalog rows) shows its mark, with a light and a dark
+variant that follows the app theme. Opencode uses its official mark and Codex the OpenAI mark. Cursor, Qwen,
+Gemini and Claude Code use the Simple Icons (CC0) marks, recorded with their source in
+`model-provider-logo-sources.json`. The letter mark is the fallback for any unknown agent. The
+composer model picker keeps no agent logo: derived `acp:` providers carry no `logo`.
+
 ## State owner and lifecycle
 
 Owner: one `AcpSessionRuntime` per agent process.
@@ -83,55 +114,67 @@ Owner: one `AcpSessionRuntime` per agent process.
 - Frame observer (`onFrame`): raw NDJSON lines per direction in wire order; lines over 16 KiB are
   truncated with a marker; observer exceptions are swallowed.
 
-## Dev-only visibility (stabilization gate)
+## Availability (platform rule)
 
-Until the feature is stabilized, ACP agents are visible only in local development runtimes:
-`platform.isLocalDevelopmentRuntime === true` (desktop dev; packaged apps are excluded) or
-`import.meta.env.DEV === true` (web dev server). The gate hides the whole surface, not just the
-entry point:
+ACP agents are available when the host platform is supported, and for no other reason. One predicate
+decides it: `acpAgentPlatformSupported(platform)` in `@zcode/acp-agent-runtime` (macOS only today). No
+runtime-env, build-mode, `NODE_ENV` or `import.meta.env.DEV` condition exists. A packaged app, a production
+web build and a development run on macOS expose ACP the same way; Windows and Linux hide it everywhere.
 
-- Settings → Model Providers does not render the ACP agents panel (detection, enable, edit, login,
-  test).
-- `acp:<agentId>` personal providers are filtered out of the view `useModelProviders` derives from
-  the provider settings service, so an agent enabled in development does not leak into provider
-  navigation, detail pages, or settings lists in packaged and production builds.
-- The provider host applies the same gate (`isEffectiveDevelopmentNodeEnv`, the signal that sets
-  `acpExecutable`): in a packaged host the sidecar is not derived into providers, no ACP writer is wired,
-  and `saveAcpAgent` / `setAcpAgentEnabled` fail with "not supported in this environment". The inline
-  migration also does not run there.
-- Existing sidecar and inline files stay on disk untouched. The gate never migrates, rewrites or
-  deletes them; a development host keeps resolving them as before.
+Each composition root evaluates the predicate once with its own platform value and feeds that one value to
+everything it builds:
 
-The host enforces the same gate: the settings bridge (detect / test / status / login) is wired
-into the provider runtime only when the host runs as a development runtime
-(`ZCODE_RUNTIME_ENV=development`, which desktop main injects for unpackaged builds). Elsewhere the
-provider settings service answers `supported: false` / an error without spawning anything, so a
-packaged host never spawns caller-supplied commands even if a client calls the RPC directly. A web
-dev server started without `ZCODE_RUNTIME_ENV=development` therefore shows the panel as
-unsupported.
+- Host (`packages/services/src/node.ts`): `acpAgentsAvailable` is computed once. It creates the settings
+  bridge only when the value is true (`createHostAcpAgentsBridge`, which returns `undefined` otherwise) and
+  passes the same value as `acpExecutable` to the provider runtime.
+- Provider runtime (`packages/services/src/model-provider/providerRuntime.ts`): when `acpExecutable` is true
+  it derives `acp:<agentId>` providers from the sidecar, wires the ACP writer (`saveAcpAgent`,
+  `setAcpAgentEnabled`) and runs the inline migration. When false, none of the three happens.
+- Resolver (`packages/provider/src/resolver.ts`): `acpExecutable` false keeps `acp:` models non-executable,
+  so they never reach the composer.
+- Worker (`apps/zcode-cli/packages/bootstrap/src/app/process-provider-registry-runtime.ts`): the same
+  predicate decides sidecar derivation and `acpExecutable` for the CLI worker Registry.
+- Settings bridge (`detect`, `catalog`, `test`, `status`, `login`): answers `supported: false` and spawns
+  nothing on an unsupported host. The renderer has no predicate of its own. It reads `supported` from the
+  host's detection, so a web client sees the state of the host it is connected to, not of the browser.
 
-Gate source (one signal for renderer and host): Electron main computes `isLocalDevelopmentRuntime =
-!app.isPackaged` once (`desktopRuntimeEnv.ts`). Main passes it to every app renderer window as the
-preload argument `--zcode-local-development-runtime`; preload exposes it before the renderer boots,
-and the desktop platform reports it as `platform.isLocalDevelopmentRuntime`. The same value selects
-`ZCODE_RUNTIME_ENV=development` for the host. A packaged app therefore keeps both the renderer
-surface and the host bridge closed, and an unpackaged build — including a production-mode Vite
-build such as the desktop E2E app — opens both. The renderer never derives this gate from a
-compile-time `define`: Vite only applies `globalThis.<define>` under `vite dev`. The user-action
-trace `deploymentEnvironment` keeps its own compile-time input and is not part of this gate.
+Surface behavior (all layers derive from the same value):
 
-E2E detection seam: `ZCODE_E2E_ACP_AGENT_PATH` replaces only the PATH that default detection
-probes (every other detection input, and the env/args of spawned agents, are unchanged). The host
-honors it only when the bridge is open (unpackaged, development runtime) and `ZCODE_ENV=test`;
-anywhere else it is ignored. The desktop E2E points it at a run-scoped directory so detection
-never sees a real `opencode` / `cursor-agent` installed on the machine.
+- Settings → Model Providers: the ACP group is built only while detection reports `supported`. Until the
+  first detection settles it shows the loading row, so an unsupported host shows that row briefly and then
+  no group.
+- Providers: `acp:<agentId>` providers exist only when the host is supported. ACP-managed providers
+  (`acp-agent` access) are never listed under the custom group, whatever the platform, so a legacy inline
+  `acp-agent` rule on an unsupported host is listed nowhere. The file is left untouched.
+- Composer: ACP models are offered only when `acpExecutable` is true.
+- Writes: on an unsupported host `saveAcpAgent` and `setAcpAgentEnabled` fail with "not supported in this
+  environment" before any write.
+- Inline migration: runs on every supported host at provider runtime start. It rewrites
+  `provider_config.json` (strip `acp:` rules whose sidecar record now exists), so on a packaged macOS build it
+  writes the shared file. The write is the same one-shot, idempotent migration described under "Storage and
+  upstream compatibility".
 
-The bridge still accepts `command` / `args` / `env` overrides (custom executables and the saved
-provider's command), validated with the shared launch rules before anything is spawned or a login
-script is written; resolving the command only from detection or the saved provider is a follow-up.
+Kill switch: a future kill switch changes `acpAgentPlatformSupported` (or the one caller that wraps it) and
+nothing else. Widening to Windows or Linux is the same edit, after the platform is verified.
 
-Remove this section together with the gate (`isLocalDevelopmentRuntime` in
-`packages/ui/src/lib/devRuntime.ts` and the `useModelProviders` filter) when ACP ships publicly.
+E2E seam: `ZCODE_E2E_ACP_AGENT_PATH` replaces only the PATH that default detection probes. It is honoured
+only when the host is an unpackaged development runtime AND `ZCODE_ENV=test`. That condition is a test
+seam, not an availability gate: a packaged or production host ignores the variable even when a shell sets
+it. The desktop E2E points it at a run-scoped directory so detection never sees a real agent installed on
+the machine.
+
+Existing sidecar and inline files are never deleted or rewritten by the availability rule itself. Only the
+supported-host migration writes, as described above.
+
+Acceptance (availability; tests in `packages/services/test/acpAgents.test.ts`, `acpAgentSidecarIntegration.test.ts`, `apps/zcode-cli/packages/bootstrap/tests/acp-worker-registry-derivation.test.ts` and `packages/ui/test/acpNavigation.test.ts`):
+
+- For runtime env in {development, production, unset} and platform in {darwin, win32}, the bridge exists
+  exactly on darwin, and the runtime env changes nothing.
+- A packaged darwin configuration exposes ACP at every layer: bridge present, writer present, sidecar
+  provider listed with an executable model, worker derivation on, settings group built after detection.
+- The same packaged configuration on win32 hides everything: no bridge, no derived provider, writer refused,
+  resolver not executable, no settings group.
+- The E2E seam is ignored by a production host and by a development host without `ZCODE_ENV=test`.
 
 ## Settings UI placement
 
@@ -140,7 +183,7 @@ ACP agents live inside the Model Providers master/detail layout, not as a separa
 - Navigation: a dedicated group `id: "acp"` ("ACP agents") rendered directly after the `custom`
   group. Each installed agent, and each uninstalled agent that still has an ACP-managed provider, is
   one nav item (`type: "acpAgent"`, key `acp-agent:<agentId>`) with the agent initial, its name,
-  and the status dot defined below. The group obeys the dev-only gate above.
+  and the status dot defined below. The group is built only while the host reports `supported` (see "Availability (platform rule)").
 - `acp:<agentId>` personal providers are listed only in the `acp` group, never also under
   `custom`.
 - Detection has one owner: a single hook called once by `ModelProviderSection`; navigation and
@@ -235,8 +278,8 @@ Design (fix):
   is not rewritten. Migration failure is logged and never blocks startup.
 - Provisioning stays main-file only: ACP launch config is per host (command paths are host-local)
   and is not synced to remote environments.
-- Wiring: the desktop/web host provider runtime. Process registries in CLI workers do not see ACP
-  providers yet; phase 4 (chat delegation) must wire the same decorator there.
+- Wiring: the desktop/web host provider runtime. The CLI worker Registry derives the same sidecar
+  decorator under the same predicate (bootstrap `process-provider-registry-runtime.ts`).
 - `chatgpt-account` / `chatgpt-family` are not affected: they only appear in derived builtin
   entries and account snapshots, never in `provider_config.json`.
 
@@ -348,8 +391,8 @@ configuration options) are specified here.
 - Cancel: stop → existing `stopActiveForegroundExecution` → turn abort → driver `cancel()` →
   `runtime.cancel()` (bounded `session/cancel`). The turn completes as cancelled. An escalation kill
   marks the runtime `failed`, and the next turn restarts it through the runtime's own restart path.
-- Dev-only gate: the S1 registry gate and the composer gate are the same dev-runtime signal as the
-  host bridge (`isEffectiveDevelopmentNodeEnv`). Packaged builds never execute an `acp:` model.
+- Availability: the registry (`acpExecutable`) and the composer follow the one platform predicate (see
+  "Availability (platform rule)"). A host on an unsupported platform never executes an `acp:` model.
 
 ### Product defaults (v1)
 
@@ -420,12 +463,12 @@ agent ─▶ session/request_permission ─▶ runtime isLive check (prompting, 
 
 ### Implementation notes (S2 as shipped)
 
-- Registry admission: an executable ACP provider enters the execution Registry only behind the
-  development gate (`acpExecutable`). Its registry config is validated by the ACP schema (not the
+- Registry admission: an executable ACP provider enters the execution Registry only when the host
+  platform is supported (`acpExecutable`). Its registry config is validated by the ACP schema (not the
   API-key union). The model-selection projection drops `env` (it may carry credentials).
 - Composer: an agent provider has no `api` section, so the composer's registry grouping
-  (`buildRegistryModelSelectGroups`) admits `access.type = "acp-agent"` explicitly. The development
-  gate in the Registry still decides whether the group exists at all.
+  (`buildRegistryModelSelectGroups`) admits `access.type = "acp-agent"` explicitly. The registry's
+  `acpExecutable` (availability) still decides whether the group exists at all.
 - Dependency: `@agentclientprotocol/sdk` resolves its `zod` peer from `acp-agent-runtime`, which pins
   `zod` 4.6.5 like `services`; without the pin the desktop build's zod dedupe check fails.
 - Side callers: title, memory recall/extraction and the MCP-prefetch are skipped for external turns.
@@ -617,11 +660,16 @@ Sources of the options:
 Chosen values are cleared with the binding: an agent switch, a cwd change or a launch-config change
 clears them, because the values belong to one agent process configuration.
 
-Decision: the controls are disabled with "available after the first message" until the session has an
-offered snapshot. The alternative (the worker spawns the agent when the agent is selected) was rejected:
-a composer selection would start an agent process outside CommandInbox admission and outside the owner
-and lease of a turn, and a draft may have no session yet. After the first turn, the snapshot is
-persisted and projected, so the controls are available again after an app relaunch without a spawn.
+Decision (readiness revision, see "S6 readiness" below): the selects are offered before the first turn
+from a per-agent catalog, the last offered snapshot of that agent. The placeholder "available after the first
+message" is shown only when no catalog exists for the agent (it has never been run or tested). The alternative
+(the worker spawns the agent when the agent is selected) stays rejected: a composer selection would start an
+agent process outside CommandInbox admission and outside the owner and lease of a turn.
+
+Reason for the revision: with the real `opencode` CLI the default model (`opencode/flint-40b-free`) was down
+upstream. `opencode acp` has no flag for the model, so the only fix is `session/set_config_option`, which the
+reconcile already applies before every prompt. But the selects were locked until a runtime had started, so the
+first turn retried for about two minutes and failed before the user could pick a working model.
 
 Runtime (`packages/acp-agent-runtime`):
 
@@ -679,8 +727,10 @@ and is then resolved cancelled, because the client may already show the dialog.
 
 Command `setExternalAgentConfigOption { sessionId, configId, value }` (worker, owner: session):
 
-- Refused with `config.notAvailable` when the session has no `config_options` snapshot ("available
-  after the first message"), and with `config.invalid` when the id or value is not offered.
+- A session with no `config_options` snapshot (no first turn yet, typically the draft's prewarm session) is
+  accepted when the agent's catalog offers the option and value; the choice is then stored as a pending
+  choice (see "S6 readiness"). Refused with `config.notAvailable` only when the agent has no catalog and no
+  snapshot, and with `config.invalid` when the id or value is not offered.
 - A same value that is already the chosen value and the shown value is a no-op (`config.unchanged`).
   Choosing the shown value when it is not the stored choice (an agent-initiated value) stores it, so
   the next reconcile does not revert it.
@@ -723,10 +773,10 @@ UI (as shipped, `packages/ui`):
 - Controls: Mode (`category: "mode"` or id `mode`), Model (`category: "model"` or id `model`) and Effort
   (`category: "thought_level"` or id `effort`, only when offered). Other options are not shown. Labels,
   value names and descriptions come from the agent and are not translated.
-- Enabled only when the session exists, the projection is present, its `agentId` equals the draft's
-  agent, and the session's own model (`config.modelSelection.providerId`) is that `acp:` id. Otherwise
-  Mode and Model render disabled (`aria-disabled`, the menu still opens) with
-  `chat.toolbar.externalAgent.availableAfterFirstMessage` ("Available after the first message").
+- Selects follow "S6 readiness" (Composer): the live projection when it belongs to the draft's agent, else the
+  catalog with the draft's choices. Enabled before a session exists (draft choices are local) and, once a session
+  exists, only while its own model (`config.modelSelection.providerId`) is that `acp:` id. The placeholder
+  `chat.toolbar.externalAgent.availableAfterFirstMessage` renders only when neither a projection nor a catalog exists.
 - Every agent menu shows the hint `chat.toolbar.externalAgent.hint` (the agent applies its own edits;
   shell commands outside its allowlist ask for permission).
 - Search: a select with more than 8 values gets a filter input
@@ -767,6 +817,100 @@ Acceptance (S6):
   turn, send, and the mock records `session/set_config_option` (mode=plan) before `session/prompt`; the
   value survives an app restart.
 
+### S6 readiness: catalog, pre-turn choices and platform scope
+
+Reason: with the real `opencode` CLI the default model (`opencode/flint-40b-free`) was down upstream. `opencode acp`
+has no flag for the model, so the only fix is `session/set_config_option`. The selects were locked until a runtime
+had started, so the first turn retried for about two minutes before the user could pick a working model.
+
+Owners (one per fact):
+
+| Fact                                                      | Owner                                                                          | Stored in                                                                    | Read by                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Last offered options per agent (catalog)                  | `NodeForkAcpAgentCatalogStore` (host and worker share the file under its lock) | `fork_acp_agent_catalog.json`                                                | composer, via `getAcpAgentCatalog` (host RPC); worker validation of a choice |
+| Choice before the first turn                              | composer draft (renderer, uncommitted)                                         | nowhere durable                                                              | sent once by the first submission                                            |
+| Choice before the first turn, after it reaches the worker | worker pending row                                                             | `fork_acp_session_choice` (migration `9005_fork_session_acp_pending_choice`) | binding write, then reconcile                                                |
+| Offered snapshot and chosen values of a bound session     | `AcpSessionRuntime` snapshot and the worker binding                            | `fork_acp_session_binding` (`config_options`, `config_choices`)              | projection seed on subscribe                                                 |
+| Projected selects of a session                            | session projection (`config.externalAgentConfig`)                              | `external_agent_config_updated` event                                        | composer, once a session exists (wins over catalog and draft)                |
+
+Why `fork_acp_session_choice` is kept: the first submission dispatches `setExternalAgentConfigOption` after the
+session exists and before `sendText`, so the worker must hold the choice before any binding exists. The binding
+row cannot hold it: `acp_session_id` is NOT NULL and only exists after the first `session/new`. A sentinel value
+would make the resume path call `session/load`. The pending row has one writer (the command handler) and is
+moved into `config_choices` by the binding write in one transaction; `clear()` drops it too.
+
+Catalog (`fork_acp_agent_catalog.json`, next to `provider_config.json`):
+
+- A separate file, not a field of the agent record. The record schema is `.strict()` in fork builds, so an extra
+  field would make an older fork build reject the whole agents file. The catalog is read only by fork builds and
+  its reads are tolerant anyway. Shape: `{ schemaVersion: 1, agents: [{ agentId, capturedAt, options }] }`. An
+  invalid file reads as empty (reported once); an invalid entry is dropped alone.
+- Writers: the worker turn reconcile (before each prompt) and the Settings Test roundtrip (after `session/new`). Both
+  take the file lock; a write whose options equal the stored ones is skipped. Only the offered snapshot is stored.
+- The catalog file is code in `packages/provider/src/acp-agent-derivation.ts` and
+  `packages/provider-node/src/fork-acp-agent-store.ts`, existing unmanaged exceptions in
+  `architecture-policy.yaml`. The composer hook `packages/ui/src/hooks/useAcpAgentCatalog.ts` is added to the ACP composer
+  exception (`acp-agent-config-composer-unmanaged-files`), the same unmanaged `packages/ui` tree as its neighbours.
+
+Platform scope: ACP is macOS only until Windows and Linux are verified. `acpAgentPlatformSupported(platform)` in
+`@zcode/acp-agent-runtime` is the one predicate. The settings bridge is wired only on macOS;
+its `detect` and `catalog` report `supported: false` otherwise, and the worker and host ACP gates use the same
+predicate, so no `acp:` provider is derived and nothing is offered in the composer.
+
+Composer (`V4ComposerModeArea`):
+
+- Catalog read: `useAcpAgentCatalog(agentId)` (`packages/ui/src/hooks/`) calls `providerSettingsService.getAcpAgentCatalog`.
+  The host reads the catalog file; the session projection is not involved.
+- Before a session exists (draft): the selects show the catalog options, overlaid with the draft's choices. A
+  selection updates the draft state only. Nothing is dispatched. Enabled when the catalog has options. The draft
+  state of an agent is cleared once every choice has been accepted by the session: the session holds the choices
+  then, and its projection shows them.
+- Once a session exists: the live projection (`config.externalAgentConfig`) wins when it belongs to this agent. Otherwise the
+  catalog shows. Enabled only when the session's model is this agent. A selection dispatches
+  `setExternalAgentConfigOption`.
+- The placeholder "Available after the first message" renders only when neither a projection nor a catalog exists for the agent.
+
+Event order of a first submission with draft choices (the draft's prewarm session is the target):
+
+```text
+composer (renderer, owns the draft choices)
+  │ select "plan" while draft ──▶ draft state { mode: plan }   (no command)
+  │ send
+  ▼
+SessionPane.ensureDraftPrewarmConfigBeforeSend(prewarm)  ─ model/mode CAS as before, all accepted
+  ▼
+dispatch setExternalAgentConfigOption { configId: mode, value: plan } for each draft choice
+  │   CommandInbox admits serially; handler: session model is this agent ─▶ catalog offers it ─▶
+  │   writes fork_acp_session_choice, appends external_agent_config_updated (projection shows plan)
+  │   any refusal or failed ACK ─▶ error toast, the draft is kept, sendText is NOT sent
+  ▼
+dispatch sendText (first submission reuses the prewarm session)
+  ▼
+worker turn: pool.acquire ─▶ session/new ─▶ binding write (moves the pending choice into config_choices)
+  ▼
+reconcile: set_config_option mode=plan ─▶ session/prompt
+```
+
+- A failed choice dispatch throws before `sendText`, so the prompt is never sent with the wrong mode. The
+  composer keeps the draft text and shows the failure through the existing send-error path.
+- `setExternalAgentConfigOption` is refused with `config.notAvailable` only when the agent has neither a catalog
+  nor an offered snapshot, and with `config.invalid` for an option or value the catalog or snapshot does not offer.
+
+Acceptance (S6 readiness):
+
+- Catalog: a handshake writes the catalog; an equal snapshot is not rewritten; a missing, invalid file and an invalid
+  entry read tolerantly (empty, empty, that entry dropped).
+- Pending choice: stored when no binding exists; moved into `config_choices` by the binding write in one
+  transaction; dropped for another agent; read by `readConfig`. Tested against the real SQLite binding store.
+- Worker: a pending choice is applied before the first `session/prompt` (real binding store, fake runtime).
+- Command: accepted with a catalog and no snapshot; `config.notAvailable` without either; `config.invalid` for
+  an unoffered value.
+- Host: `getAcpAgentCatalog` returns the stored options on macOS and `supported: false` elsewhere.
+- UI: the draft shows the catalog and a choice updates draft state only; a session shows the projection when it
+  exists; the placeholder only when neither exists.
+- E2E (`conversation-session-acp-agent-preturn.test.ts`): a seeded catalog, choose mode "plan" before the first
+  message, send. The mock records `session/set_config_option mode=plan` before its first `session/prompt`.
+
 ### Reservation ordering (first message)
 
 The composer binds the pane to the reserved session id before the host acknowledges the `createSession`
@@ -802,3 +946,58 @@ which the renderer treats as terminal. The rule is not ACP-specific and applies 
 - Desktop E2E (`conversation-session/conversation-session-acp-agent-text.test.ts`): enable the mock
   agent, select it, send and see "pong" stream to completion; stop during a hang ends as cancelled;
   a second turn reuses the process.
+
+## Upstream compatibility of persisted chat events
+
+Scope: every ACP chat shape the fork writes into the databases the upstream build also opens
+(`~/.zcode/cli/db/db.sqlite` sessions and `~/.zcode/v2/tasks-index.sqlite`). The pin is
+`fork-upstream-base.json` (3.16.1, `0a1fc56d`). `file:line` references are at that pin unless marked
+"fork". Upstream's `SessionEventStorePort` is in memory (`server.ts:289`, `create-app.ts:841`), so an
+upstream build reads only durable rows: `session`, `message`, `part`, `session_entry`, the usage tables,
+`todo`, and the tasks index. Events reach upstream only when a hydration pass rebuilds them from those rows.
+
+Evidence: `apps/zcode-cli/packages/bootstrap/tests/acp-upstream-compat.test.ts` runs a scripted ACP turn on a
+real SQLite store and decodes the rows with verbatim upstream copies in `tests/fixtures/upstream-0a1fc56d/`
+(`decodeStoredMessage`, `decodeStoredPart`, `decodeStoredSessionModelSelection`, `decodeSessionTitleSource`,
+`decodeSessionTaskType`, `shouldHideInvalidToolCallFromProduct`, and `modelSelectionSchema`). The other
+verdicts are from code reading and are marked as such.
+
+### Verdicts
+
+- **SAFE**: upstream never reads the shape, or reads it without any check that the fork value can fail.
+- **DEGRADED**: upstream opens and shows the session, but a label or a capability is missing.
+- **BREAKS**: none found.
+
+| Shape                                                                                 | Where the fork writes it                                                                                                                                          | Upstream read at the pin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Verdict                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ExternalAgentConfigUpdated`, `ExternalAgentStatus`                                   | Nowhere durable. Appended to the in-memory store only (fork `external-agent-session-events.ts`). `events.ts` `persistDurableSessionEvent` has no branch for them. | Never read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | SAFE                                                                                                                                                                                                                |
+| `SystemMessage` `external_agent_context_reset`                                        | Memory only (fork `external-agent-turn.ts:273-284`).                                                                                                              | Never read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | SAFE                                                                                                                                                                                                                |
+| `ToolCallScheduled.title`                                                             | Memory event. The tool part keeps `state.title`, as every tool does.                                                                                              | `ToolState.title` already exists upstream (`zcode-protocol/message-mapper.ts:228`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | SAFE                                                                                                                                                                                                                |
+| usage `source: "external-agent"`                                                      | Not in `turn_usage` or `model_usage`, which have no source column. `TurnComplete` only sets `lastOutcome` (fork `events.ts:271-284`).                             | Never read.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | SAFE                                                                                                                                                                                                                |
+| `metadata.externalAgent` on tool parts                                                | `part.data`                                                                                                                                                       | `decodeStoredPart` passes it through (`codecs.ts:126-150`). `parseCompletedToolPartMetadata` returns `undefined` without `schemaVersion` (`contracts/src/tools/tool-result-metadata.ts:349, 357`), which drops nothing because ACP writes no `display`. The v3 mapper passes `metadata` through (`zcode-protocol/message-mapper.ts:90-96, 282-290`).                                                                                                                                                                                                                                                                                                                                                                                    | SAFE                                                                                                                                                                                                                |
+| Tool name `acp:<kind>`                                                                | `part.tool`, `tool_usage.tool_name` (fork `external-agent-tool-rows.ts`)                                                                                          | Not filtered: `shouldHideInvalidToolCallFromProduct` hides only empty names (`tool-call-product-visibility.ts:8-13`). Cold synthesis passes the name on (`transcript-hydration.ts:770-782`). `onToolCallScheduled` builds a generic row without a name filter (`product-projection.ts:3119, 3161-3168`). Usage groups by name as text (`usage.ts:461`). Transcript and search pass it through (`session-transcript.ts:177`, `core/session-context/parts.ts:24, 91-103`). The renderer matches names by prefix only (`packages/ui/src/v4/conversationCuaGroups.ts:38`, `ToolCallBlocks/renderers/mcp.tsx:85`). `toolCallRowSchema` takes `toolName: z.string()` and is not strict (`packages/shared/src/zcode-protocol-v4/rows.ts:205`). | DEGRADED. The upstream row shows the raw name `acp:read` and the input JSON, not the agent's title. The title reaches cold replay only as `state.title`, which the row does not use. No crash, no schema rejection. |
+| `modelSelection {providerId: "acp:<id>"}` on user rows, and the legacy `model` object | `message.data` (`adapters/.../repositories/messages.ts:45-60`)                                                                                                    | `decodeStoredMessage` keeps a valid selection. `modelSelectionSchema` accepts any non-empty `providerId` (`packages/shared/src/model-selection.ts:3-15`). Tested.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | SAFE for decoding. See the resumed-send row for sending.                                                                                                                                                            |
+| `runtime/model_selection` session entry                                               | `session_entry.data`                                                                                                                                              | `decodeStoredSessionModelSelection` keeps it (`codecs.ts:177-182`). Tested.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | SAFE for decoding                                                                                                                                                                                                   |
+| Assistant `providerId: "acp:<id>"`, `modelId`                                         | `message.data` (`message-persistence.ts:276-330`)                                                                                                                 | Cold hydration synthesises a `ModelSelected` from it (`transcript-hydration.ts:1127-1138, 1684-1693`). `onModelSelected` copies the selection into the projection (`product-projection.ts:4730`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | DEGRADED. The picker may show an unknown model. No crash.                                                                                                                                                           |
+| Sending in a resumed ACP session                                                      | n/a                                                                                                                                                               | Opening is safe. On resume upstream derives no registry selection and does not throw (`app/runtime-config.ts:223, 233`). Upstream's own UI already treats an unknown provider in a stored selection as an empty picker that falls back to the default (`packages/ui/src/lib/composerRecent.ts:96-101`, the highspeed case). An execution entry refuses a selection with an issue (`core/runtime/helpers/subagent-selection.ts:29-30`). A chat turn has no such check, so its model factory throws `provider-not-found` (`app/provider-registry-model-runtime.ts:46`, `app/provider-registry-selection.ts:119-125`). Code reading, not executed.                                                                                         | DEGRADED. The session opens and shows history. The picker may show no model, and the next send fails with a provider-not-found error until the user picks one.                                                      |
+| `title` set by the agent, `title_source = "generated"`                                | `session` row (`session-title.ts`, `updateSession`)                                                                                                               | `decodeSessionRow` (`codecs.ts:51-82`) and `decodeSessionTitleSource` (`codecs.ts:45-49`) accept `generated` (`session-store.port.ts:45`). Tested.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | SAFE                                                                                                                                                                                                                |
+| `task_type = "interactive"`                                                           | `session` row                                                                                                                                                     | In `SESSION_TASK_TYPES` (`session-store.port.ts:34-42`). Tested.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | SAFE                                                                                                                                                                                                                |
+| `fork_acp_session_binding`, migrations 9003 and 9004                                  | Fork table with no foreign key (`fork-migrations.ts:38-45`).                                                                                                      | The upstream runner reads the ledger only by its own ids (`packages/shared/src/sqlite-migrations/runner.ts:66-70`), so unknown rows are ignored. Upstream never queries the table. With `foreign_keys = on` (`migration-runner.ts:89`) a session delete still succeeds. Tested.                                                                                                                                                                                                                                                                                                                                                                                                                                                         | SAFE                                                                                                                                                                                                                |
+| `TodoWrite` plan rows (ACP `plan`)                                                    | `todo` rows and a `TodoWrite` tool part with `metadata.externalAgent` (fork `external-agent-tool-rows.ts:268-278`)                                                | Status and priority are coerced to the upstream `TodoItem` enums (`contracts/src/tools/todo.ts:4-20`). `isMainAgentToolProjectionSource` accepts the metadata, since it has no parent-tool fields (`packages/shared/src/tool-plan-adapter.ts:124`), so the todo summary still shows. `decodeTodoRow` (`codecs.ts:184-190`) reads the values as they are.                                                                                                                                                                                                                                                                                                                                                                                | SAFE                                                                                                                                                                                                                |
+| Tool state shape (`pending`, `running`, `completed`, `error`)                         | `part.state`                                                                                                                                                      | Field check against upstream `zcodeToolStateSchema`, which is `.strict()` (`packages/shared/src/zcode-protocol-legacy-types.ts:264-302`). `completed` carries `input` (record), `output` (string), `title` (non-empty), `metadata` (required record), and times. `error` carries `error` (non-empty string). `running` carries an optional `title`. `pending` carries `raw`. The fork writes exactly these keys, and the v3 mapper rebuilds the state from them. Code reading, not run as a schema test.                                                                                                                                                                                                                                | SAFE                                                                                                                                                                                                                |
+| Session event-store contents, and the events-only `external_agent_*` names            | No durable table                                                                                                                                                  | Tested: the strings appear in no row.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | SAFE                                                                                                                                                                                                                |
+
+No shape BREAKS. The two DEGRADED rows need no fork change to stay compatible. Remedies are product
+decisions, so they are not implemented here: a friendly tool label stored in a fork column, and a
+fork-side selection fallback for a resumed send.
+
+This section was added even though two rows are DEGRADED, because neither can break a list or open.
+
+The provider and agent configuration (`provider_config.json`, and the fork sidecar `fork_acp_agents.json`)
+is covered by `packages/provider-node/test/acp-upstream-compat.test.ts` and by "Storage and upstream
+compatibility" above.
+
+### Refreshing the fixture
+
+When `fork-upstream-base.json` moves, re-copy the bodies named in `tests/fixtures/upstream-0a1fc56d/` from the
+new pin, update the commit in the directory name and the header comments, and rerun the test.

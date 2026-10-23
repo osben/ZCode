@@ -58,13 +58,14 @@ function buildFileChange(
 
 function shouldIncludeUntrackedChange(
   entry: GitStatusEntry,
-  stat: { added: number; removed: number },
+  stat: { added: number; removed: number; isEmptyFile?: boolean },
 ): boolean {
-  // Build directories commonly contain many untracked empty files, broken links, or unreadable artifacts.
-  // These entries have no reviewable text changes and used to appear as +0/-0 in the Review panel, cluttering the list and slowing it down.
-  // When detailed status exceeds the limit, however, Git represents an entire untracked directory with a trailing `/`; the directory itself is unreadable,
-  // so its line count is always zero, but it must remain as a fallback entry that can be staged/discarded.
-  return entry.path.endsWith("/") || stat.added > 0 || stat.removed > 0;
+  // Untracked binary files, broken links and unreadable build artifacts have no reviewable text; showing them as +0/-0 cluttered the panel.
+  // A zero-byte regular file is a real added file listed by `git status`, so it stays (ISSUE-042).
+  // A trailing `/` entry is a collapsed untracked directory (status over the limit); it must remain as a stage/discard fallback.
+  return (
+    entry.path.endsWith("/") || stat.isEmptyFile === true || stat.added > 0 || stat.removed > 0
+  );
 }
 
 function toChangeForSource(

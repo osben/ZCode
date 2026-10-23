@@ -83,7 +83,7 @@ export function ArchiveGroupCard({
             </CollapsibleTrigger>
           </h3>
           <span className="shrink-0 text-ui-sm text-foreground-subtle">
-            {intl.formatMessage({ id: "archives.count" }, { count: group.tasks.length })}
+            {intl.formatPlural({ id: "archives.count" }, group.tasks.length)}
           </span>
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>

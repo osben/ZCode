@@ -41,7 +41,10 @@ export const appSettingsOccupationEnum = appSettingsOccupationSchema;
 const nonEmptyStringSchema = z.string().trim().min(1);
 
 export const localeSchema = z.enum(["zh-CN", "en-US", "uk-UA"]);
-const localePreferenceSchema = z.enum(["system", "zh-CN", "en-US", "uk-UA"]);
+// The persisted shared keys hold only what the upstream app can read; uk-UA lives in the fork
+// sidecar (specs/fork-locale-storage.md). Full localeSchema stays for release notes and migration.
+export const sharedLocaleSchema = z.enum(["zh-CN", "en-US"]);
+export const sharedLocalePreferenceSchema = z.enum(["system", "zh-CN", "en-US"]);
 const zcodeInteractionBehaviorSchema = z.enum(["queue", "guide"]);
 // launch.md "The user's choice": when reading files, an unknown value (written by a newer version and read after a downgrade) is treated as "follow,"
 // so one preference field cannot corrupt the entire settings read.
@@ -504,10 +507,10 @@ const appSettingsObjectSchema = z.object({
   recentProjects: z.array(z.string()).default([]),
   // An unknown locale (such as a new language written by a newer version and then read by an older version) falls back only to the default:
   // A strict enum failure would invalidate all of setting.json; settingService would fall back to defaultSettings() and erase all settings on the next write.
-  locale: localeSchema.default("zh-CN").catch("zh-CN"),
+  locale: sharedLocaleSchema.default("zh-CN").catch("zh-CN"),
   // User shortcut overrides (semantic validation is tolerant in the effective map in ui/src/shortcuts; the schema validates shape only).
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
-  localePreference: localePreferenceSchema.default("system").catch("system"),
+  localePreference: sharedLocalePreferenceSchema.default("system").catch("system"),
   terminalInheritSystemProfile: z.boolean().default(true),
   terminalFontFamily: nonEmptyStringSchema.optional(),
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),
@@ -608,9 +611,9 @@ export const appSettingsSchema = z.preprocess(
 
 export const appSettingsPatchSchema = z.object({
   recentProjects: z.array(z.string()).optional(),
-  locale: localeSchema.optional(),
+  locale: sharedLocaleSchema.optional(),
   shortcutBindings: z.record(z.string(), z.array(z.string())).optional(),
-  localePreference: localePreferenceSchema.optional(),
+  localePreference: sharedLocalePreferenceSchema.optional(),
   terminalInheritSystemProfile: z.boolean().optional(),
   terminalFontFamily: nonEmptyStringSchema.optional(),
   integratedTerminalShell: integratedTerminalShellSelectionSchema.optional(),

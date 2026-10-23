@@ -201,6 +201,9 @@ html[data-document-hidden] *::after {
   --color-trajectory-reasoning: #7c3aed;
   --color-trajectory-tool-call: #d97706;
   --color-trajectory-tool-result: #0284c7;
+  --color-trajectory-skill: #4f46e5;
+  --color-trajectory-memory: #db2777;
+  --color-trajectory-mcp: #b45309;
   /* 工作流因果图仪表化渲染（docs/dynamic-workflow/presentation.md）：
    * rule 比 --color-border 更弱——刻度与空闲轨道每图重复约 40 次，10% 会积成灰雾。 */
   --color-workflow-rule: color-mix(in oklab, var(--color-neutral-950) 5.5%, transparent);
@@ -385,6 +388,9 @@ html[data-document-hidden] *::after {
   --color-trajectory-reasoning: #a78bfa;
   --color-trajectory-tool-call: #f59e0b;
   --color-trajectory-tool-result: #38bdf8;
+  --color-trajectory-skill: #818cf8;
+  --color-trajectory-memory: #f472b6;
+  --color-trajectory-mcp: #fbbf24;
   --color-workflow-rule: color-mix(in oklab, var(--color-white) 6.5%, transparent);
   --color-workflow-trace: color-mix(in oklab, var(--color-white) 35%, transparent);
   --color-workflow-trace-strong: color-mix(in oklab, var(--color-white) 60%, transparent);
@@ -560,6 +566,9 @@ html[data-document-hidden] *::after {
   --color-trajectory-reasoning: #7c3aed;
   --color-trajectory-tool-call: #d97706;
   --color-trajectory-tool-result: #0284c7;
+  --color-trajectory-skill: #4f46e5;
+  --color-trajectory-memory: #db2777;
+  --color-trajectory-mcp: #b45309;
   --color-workflow-rule: rgba(13, 13, 13, 0.055);
   --color-workflow-trace: rgba(13, 13, 13, 0.3);
   --color-workflow-trace-strong: rgba(13, 13, 13, 0.55);
@@ -727,6 +736,9 @@ html[data-document-hidden] *::after {
   --color-trajectory-reasoning: #a78bfa;
   --color-trajectory-tool-call: #f59e0b;
   --color-trajectory-tool-result: #38bdf8;
+  --color-trajectory-skill: #818cf8;
+  --color-trajectory-memory: #f472b6;
+  --color-trajectory-mcp: #fbbf24;
   --color-workflow-rule: rgba(255, 255, 255, 0.065);
   --color-workflow-trace: rgba(255, 255, 255, 0.35);
   --color-workflow-trace-strong: rgba(255, 255, 255, 0.6);

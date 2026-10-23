@@ -119,6 +119,43 @@ export function isCertificateBrowserLoadErrorCode(code: number | null | undefine
   return code >= CERTIFICATE_LOAD_ERROR_CODE_MIN && code <= CERTIFICATE_LOAD_ERROR_CODE_MAX;
 }
 
+const CHROMIUM_NET_ERROR_TOKEN_RE = /^ERR_[A-Z0-9_]+$/;
+const CHROMIUM_NET_ERROR_IN_TEXT_RE = /\bERR_[A-Z0-9_]+\b/;
+// Electron wraps main-process failures in the IPC call name, e.g. "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ".
+const ELECTRON_IPC_ERROR_PREFIX_RE = /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/;
+
+export interface BrowserLoadFailureInput {
+  errorCode?: number | null;
+  /** Chromium errorDescription from the main-frame did-fail-load event, e.g. "ERR_UNSAFE_PORT". */
+  errorDescription?: string | null;
+  /** The value rejected by webview.loadURL; Electron IPC wraps the main-process error. */
+  rawError?: unknown;
+}
+
+/**
+ * Single owner of the load-failure text shown in the browser error view.
+ *
+ * did-fail-load and the loadURL rejection both report the same navigation, and their arrival order is not fixed.
+ * Reducing either input to the Chromium net error token makes both writers produce the same string, so the view
+ * does not flip between the IPC text and the Chromium text. The URL is intentionally omitted: the address bar shows it.
+ */
+export function describeBrowserLoadFailure(input: BrowserLoadFailureInput): string {
+  const description = input.errorDescription?.trim() ?? "";
+  if (CHROMIUM_NET_ERROR_TOKEN_RE.test(description)) return description;
+
+  const rawText = (
+    input.rawError instanceof Error ? input.rawError.message : String(input.rawError ?? "")
+  ).trim();
+  const token = CHROMIUM_NET_ERROR_IN_TEXT_RE.exec(rawText)?.[0];
+  if (token !== undefined) return token;
+
+  const cleaned = rawText.replace(ELECTRON_IPC_ERROR_PREFIX_RE, "").trim();
+  if (cleaned !== "") return cleaned;
+
+  if (typeof input.errorCode === "number") return `net error ${input.errorCode}`;
+  return "unknown error";
+}
+
 export function isAllowedBrowserUrl(url: string): boolean {
   try {
     return ALLOWED_BROWSER_PROTOCOLS.has(new URL(url).protocol);

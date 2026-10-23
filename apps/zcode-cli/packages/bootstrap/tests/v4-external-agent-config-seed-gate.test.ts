@@ -38,7 +38,7 @@ describe("external agent config seed gate", () => {
     const getSeed = vi.fn(async () => seed);
     const publisher = publisherFor("acp:opencode");
     await gatewayWith(getSeed).seedPublisherExternalAgentConfig("zc-acp", publisher);
-    expect(getSeed).toHaveBeenCalledWith("zc-acp");
+    expect(getSeed).toHaveBeenCalledWith("zc-acp", "acp:opencode");
     expect(publisher.seedExternalAgentConfig).toHaveBeenCalledWith(seed);
   });
 });

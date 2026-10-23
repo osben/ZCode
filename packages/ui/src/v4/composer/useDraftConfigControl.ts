@@ -51,6 +51,34 @@ function isSameModelSelection(left: ModelSelection, right: ModelSelection): bool
   );
 }
 
+/**
+ * Provider and model only (ISSUE-035). The reasoning level is deliberately not compared: a Snapshot may omit
+ * it, another window may change it, and a reasoning-level change is not a model pick.
+ */
+function isSameModel(selection: ModelSelection, base: ModelSelection): boolean {
+  return selection.providerId === base.providerId && selection.modelId === base.modelId;
+}
+
+/** Once the picked model is accepted it is the Session's selection, so it is no longer a pending pick (ISSUE-035). */
+function withoutModelSelectionPick(draft: V4ComposerDraft): V4ComposerDraft {
+  if (draft.modelSelectionPicked === undefined && draft.modelSelectionPickedFrom === undefined)
+    return draft;
+  const { modelSelectionPicked: _accepted, modelSelectionPickedFrom: _base, ...rest } = draft;
+  return rest;
+}
+
+/** Marks an explicit pick in an existing Session; `base` is the Session model the pick was made against. */
+function withModelSelectionPick(
+  draft: V4ComposerDraft,
+  base: ModelSelection | undefined,
+): V4ComposerDraft {
+  return {
+    ...withoutModelSelectionPick(draft),
+    modelSelectionPicked: true,
+    ...(base ? { modelSelectionPickedFrom: base } : {}),
+  };
+}
+
 export function applyDraftModelSelection(
   current: Partial<SessionConfigState>,
   model: ModelSelection,
@@ -276,6 +304,36 @@ export function useDraftConfigControl(params: {
       currentState = { ...currentState, observedConfig };
     }
   }
+  // ISSUE-035: a pick is stale once the Session model moves away from the model it was made against
+  // (another window, a Host fallback, the CLI). Drop the marker and adopt the Session model, so a stale pick
+  // cannot silently switch the next send back. The text is kept.
+  // A pick made before any Snapshot arrived (or a record written before the base existed) takes the
+  // first Snapshot as its base, so it can expire like any other pick. If that Snapshot already has the
+  // picked model, the pick is a no-op and must not keep a marker.
+  if (
+    sessionId !== null &&
+    draft.modelSelectionPicked &&
+    !draft.modelSelectionPickedFrom &&
+    sessionConfig?.modelSelection
+  ) {
+    const base = sessionConfig.modelSelection;
+    draft =
+      draft.modelSelection && isSameModel(draft.modelSelection, base)
+        ? withoutModelSelectionPick(draft)
+        : { ...draft, modelSelectionPickedFrom: base };
+  }
+  // The drop applies only to a resolvable stale pick. An unresolvable pick is stored intent (ISSUE-026):
+  // it stays, and the composer keeps naming the model reason.
+  if (
+    sessionId !== null &&
+    draft.modelSelectionPicked &&
+    draft.modelSelectionPickedFrom &&
+    sessionConfig?.modelSelection &&
+    modelSelectionView?.effectiveSelection &&
+    !isSameModel(sessionConfig.modelSelection, draft.modelSelectionPickedFrom)
+  ) {
+    draft = { ...withoutModelSelectionPick(draft), modelSelection: sessionConfig.modelSelection };
+  }
   // A fork child can first hydrate with mode only, then receive its inherited model selection
   // in a later snapshot. Fill only the missing selection so the user can send immediately, while
   // preserving any model choice already made in this session-scoped draft.
@@ -313,6 +371,9 @@ export function useDraftConfigControl(params: {
   );
   const draftConfigRef = useRef(draftConfig);
   draftConfigRef.current = draftConfig;
+  // Read by the pick handler at call time, so a new Snapshot does not recreate the handler.
+  const sessionConfigRef = useRef(sessionConfig);
+  sessionConfigRef.current = sessionConfig;
   const persistDraft = useCallback(
     (value: V4ComposerDraft) => {
       const workspace = useZCodeSessionStore
@@ -400,18 +461,28 @@ export function useDraftConfigControl(params: {
     [isCurrentScope, persistDraft],
   );
   const updateDraftConfig = useCallback(
-    (update: (current: Partial<SessionConfigState>) => Partial<SessionConfigState>) => {
+    (
+      update: (current: Partial<SessionConfigState>) => Partial<SessionConfigState>,
+      // ISSUE-035: an explicit model pick in an existing session is kept even without text.
+      options?: { pick?: { base: ModelSelection | undefined } | "cleared" },
+    ) => {
       const next = update(draftConfigRef.current);
       const mode = submissionModeSchema.safeParse(next.mode);
-      updateComposerDraft((current) => ({
-        ...current,
-        mode: mode.success ? mode.data : current.mode,
-        modelSelection: next.modelSelection,
-        // 导入等待目录期间的显式选择也是有效选择，不能再被默认初始化覆盖。
-        ...(current.mode ? {} : { mode: mode.success ? mode.data : "build" }),
-      }));
+      updateComposerDraft((current) => {
+        const draft: V4ComposerDraft = {
+          ...current,
+          mode: mode.success ? mode.data : current.mode,
+          modelSelection: next.modelSelection,
+          // 导入等待目录期间的显式选择也是有效选择，不能再被默认初始化覆盖。
+          ...(current.mode ? {} : { mode: mode.success ? mode.data : "build" }),
+        };
+        if (options?.pick === "cleared") return withoutModelSelectionPick(draft);
+        if (options?.pick && sessionId !== null)
+          return withModelSelectionPick(draft, options.pick.base);
+        return draft;
+      });
     },
-    [updateComposerDraft],
+    [sessionId, updateComposerDraft],
   );
   const captureAcceptedModelSelection = useCallback(
     (selection: ModelSelection, expectedSelection: ModelSelection = selection): (() => void) => {
@@ -431,7 +502,9 @@ export function useDraftConfigControl(params: {
           stateRef.current.draft.modelSelection !== original
         )
           return;
-        updateComposerDraft((current) => ({ ...current, modelSelection: selection }));
+        updateComposerDraft((current) =>
+          withoutModelSelectionPick({ ...current, modelSelection: selection }),
+        );
       };
     },
     [scopeKey, updateComposerDraft],
@@ -596,11 +669,18 @@ export function useDraftConfigControl(params: {
         workspacePath,
         workspaceIdentity: workspaceIdentity ?? null,
       });
-      updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection));
+      // ISSUE-035: an explicit pick in an existing Session is kept without text. Picking the Session's own
+      // model is a no-op, so it stores no marker and clears an earlier pick. Root drafts never store one.
+      const base = sessionId !== null ? sessionConfigRef.current?.modelSelection : undefined;
+      const isNoOp = base !== undefined && isSameModel(modelSelection, base);
+      updateDraftConfig((current) => applyDraftModelSelection(current, modelSelection), {
+        pick: sessionId === null ? undefined : isNoOp ? "cleared" : { base },
+      });
     },
     [
       modelSelectionView,
       modelSelectionRead.state,
+      sessionId,
       updateDraftConfig,
       workspaceIdentity,
       workspacePath,

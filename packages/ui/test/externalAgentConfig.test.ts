@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CommandAck, ExternalAgentConfigOption } from "@zcode/shared/zcode-protocol-v4";
 import {
+  draftExternalAgentChoicesOf,
+  sendDraftExternalAgentChoices,
+  setDraftExternalAgentChoice,
+  takeDraftExternalAgentChoices,
   filterExternalAgentConfigValues,
   nextExternalAgentConfigValue,
   resolveExternalAgentComposerState,
@@ -51,7 +55,7 @@ describe("externalAgentConfig helpers", () => {
     expect(selected.effort?.id).toBe("effort");
   });
 
-  it("enables the options only for the session's own agent with a projection", () => {
+  it("shows the projection for the draft's agent and enables it only for the session's own agent", () => {
     const projection = { agentId: "mock", options: [option("mode", "mode", ["a"])] };
     const base = {
       draftProviderId: "acp:mock",
@@ -60,15 +64,32 @@ describe("externalAgentConfig helpers", () => {
       projection,
     };
     expect(resolveExternalAgentComposerState({ ...base, draftProviderId: "glm" })).toBeNull();
+    expect(resolveExternalAgentComposerState(base)).toMatchObject({ enabled: true });
     expect(resolveExternalAgentComposerState(base)?.options?.mode?.id).toBe("mode");
+    // No projection at all (no catalog and no snapshot): the placeholder state.
     expect(resolveExternalAgentComposerState({ ...base, projection: undefined })).toEqual({
       agentId: "mock",
       options: null,
+      draft: false,
+      enabled: true,
     });
-    expect(resolveExternalAgentComposerState({ ...base, sessionId: null })?.options).toBeNull();
-    expect(
-      resolveExternalAgentComposerState({ ...base, sessionProviderId: "glm" })?.options,
-    ).toBeNull();
+    // A draft shows the live projection or the catalog, and its choices are local (enabled while options exist).
+    const beforeMessage = resolveExternalAgentComposerState({ ...base, sessionId: null });
+    expect(beforeMessage?.options?.mode?.id).toBe("mode");
+    expect(beforeMessage).toMatchObject({ draft: true, enabled: true });
+    const fromCatalog = resolveExternalAgentComposerState({
+      ...base,
+      sessionId: null,
+      projection: undefined,
+      catalog: projection.options,
+      draftChoices: { mode: "a" },
+    });
+    expect(fromCatalog?.options?.mode?.currentValue).toBe("a");
+    expect(fromCatalog).toMatchObject({ draft: true, enabled: true });
+    const otherModel = resolveExternalAgentComposerState({ ...base, sessionProviderId: "glm" });
+    expect(otherModel?.options?.mode?.id).toBe("mode");
+    expect(otherModel?.enabled).toBe(false);
+    // A projection of another agent is not shown for this draft.
     expect(
       resolveExternalAgentComposerState({ ...base, draftProviderId: "acp:other" })?.options,
     ).toBeNull();
@@ -126,5 +147,81 @@ describe("sendExternalAgentConfigOption", () => {
     await expect(sendExternalAgentConfigOption(dispatch, "s1", "mode", "plan")).resolves.toBe(
       "chat.toolbar.externalAgent.error.failed",
     );
+  });
+
+  // Draft choices belong to the draft session that the first submission uses. Switching the task (another draft) must
+  // not send an abandoned draft's choices, and the draft's own choices are removed once they are sent.
+  it("keeps draft choices per draft: a switched task sends none of another draft's choices", () => {
+    const state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "plan");
+
+    expect(draftExternalAgentChoicesOf(state, "draft-B", "mock")).toBeUndefined();
+    expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({ mode: "plan" });
+  });
+
+  it("applies the same draft's choices and removes them once they are sent", () => {
+    let state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "plan");
+    state = setDraftExternalAgentChoice(state, "draft-A", "mock", "model", "fast");
+    state = setDraftExternalAgentChoice(state, "draft-A", "other", "mode", "ask");
+
+    expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({
+      mode: "plan",
+      model: "fast",
+    });
+
+    const sent = takeDraftExternalAgentChoices(state, "draft-A");
+    expect(draftExternalAgentChoicesOf(sent, "draft-A", "mock")).toBeUndefined();
+    expect(draftExternalAgentChoicesOf(sent, "draft-A", "other")).toBeUndefined();
+    // The state is immutable: the earlier value still holds the choices.
+    expect(draftExternalAgentChoicesOf(state, "draft-A", "mock")).toEqual({
+      mode: "plan",
+      model: "fast",
+    });
+  });
+
+  // Worktree drafts create a separate prepared session. The choices are read from the draft they were made in and sent to
+  // the session that receives the first submission, never to the draft.
+  it("worktree draft: reads the draft's choices and sends them to the created session", async () => {
+    const state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "plan");
+    const send = vi.fn(async () => null);
+
+    const outcome = await sendDraftExternalAgentChoices({
+      state,
+      draftSessionId: "draft-A",
+      agentId: "mock",
+      targetSessionId: "worktree-session-1",
+      send,
+    });
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("worktree-session-1", "mode", "plan");
+    expect(outcome).toEqual({ sent: true, refusedMessageId: null });
+  });
+
+  it("sends nothing when the draft made no choices, and reports a refusal without clearing", async () => {
+    const send = vi.fn(async () => "chat.toolbar.externalAgent.error.invalid");
+    const state = setDraftExternalAgentChoice({}, "draft-A", "mock", "mode", "yolo");
+
+    expect(
+      await sendDraftExternalAgentChoices({
+        state,
+        draftSessionId: "draft-B",
+        agentId: "mock",
+        targetSessionId: "session-B",
+        send,
+      }),
+    ).toEqual({ sent: false, refusedMessageId: null });
+    expect(send).not.toHaveBeenCalled();
+
+    const refused = await sendDraftExternalAgentChoices({
+      state,
+      draftSessionId: "draft-A",
+      agentId: "mock",
+      targetSessionId: "session-A",
+      send,
+    });
+    expect(refused).toEqual({
+      sent: false,
+      refusedMessageId: "chat.toolbar.externalAgent.error.invalid",
+    });
   });
 });

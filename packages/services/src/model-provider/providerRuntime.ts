@@ -63,7 +63,7 @@ export interface ProviderRuntimeDependencies {
    * migrated out of `provider_config.json` at start, and Settings can save agents.
    */
   readonly acpAgentStore?: ForkAcpAgentStore & { dispose?(): void };
-  /** Development-only gate: ACP models are executable only when true (specs/acp-agent-runtime.md). */
+  /** Availability (specs/acp-agent-runtime.md "Availability (platform rule)"): ACP is on only when true. */
   readonly acpExecutable?: boolean;
   readonly modelSelectionConfiguredDefaultSource?: ModelSelectionConfiguredDefaultSource;
   readonly disposeModelSelectionConfiguredDefaultSource?: () => void;
@@ -115,8 +115,8 @@ export class ProviderRuntime {
       dependencies.disposeModelSelectionConfiguredDefaultSource;
     this.configService = this.#configRuntime.configService;
     this.#acpAgentStore = dependencies.acpAgentStore;
-    // Dev-only stabilization gate (specs/acp-agent-runtime.md "Dev-only visibility"): the sidecar is
-    // derived into providers and written to only when the host is a development runtime. A packaged
+    // Availability gate (specs/acp-agent-runtime.md "Availability (platform rule)"): the sidecar is
+    // derived into providers and written to only when the host platform supports ACP. An unsupported
     // host keeps the sidecar file on disk untouched and reads no `acp:` provider from it.
     this.#gatedAcpAgentStore =
       dependencies.acpExecutable === true ? dependencies.acpAgentStore : undefined;

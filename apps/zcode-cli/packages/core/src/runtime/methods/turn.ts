@@ -40,6 +40,7 @@ import {
   createTurnAbortScope,
   throwIfTurnAborted,
   createTurnFailureError,
+  hasPreserveQueueAutoDrainCancelIntent,
   isTurnCancellationError,
   appendTurnOutcomeEvent,
   buildDateChangeReminderBody,
@@ -1085,9 +1086,12 @@ export async function executeTurnCommand(
           turnAbortSignal,
           fallbackMessage,
         );
+        // Two carriers of the steer intent: the runtime foreground token (stopActiveForegroundExecution), and the
+        // abort reason of a caller controller that had no runtime token yet (ISSUE-039). A plain Stop carries neither.
         const preserveQueueAutoDrainOnCancel =
           coreError.type === CoreErrorType.TurnCancelled &&
-          this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true;
+          (this.activeForegroundExecution?.preserveQueueAutoDrainOnCancel === true ||
+            hasPreserveQueueAutoDrainCancelIntent(turnAbortSignal.reason));
         const finishedTarget = await this.finishTargetTurnAccounting({
           endedAtMs: Date.now(),
           inputID: targetRunInputID,

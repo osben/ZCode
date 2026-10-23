@@ -5,7 +5,7 @@ import type { IServiceAccessor } from "@zcode/services";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ServiceProvider } from "@/hooks/useServices.js";
 import { useWorkspaceTaskNavigation } from "@/app-shell/useWorkspaceTaskNavigation.js";
-import { createTaskNavigationHistory } from "@/lib/taskNavigationHistory.js";
+import { createTaskNavigationHistory, taskRefKey } from "@/lib/taskNavigationHistory.js";
 import { buildTaskEntityKey } from "@/lib/taskQueryCache.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
@@ -29,6 +29,24 @@ const tabStore = vi.hoisted(() => {
       state = next;
     },
   };
+});
+
+// The project directory owner is the only source of deletion facts; tests drive it through its accessor.
+const projectDirectory = vi.hoisted(() => ({
+  deleted: [] as Array<{ taskId: string; workspacePath: string; workspaceIdentity?: string }>,
+}));
+
+vi.mock("@/project-sidebar/ProjectDirectoryProvider.js", async (importOriginal) => {
+  const original =
+    await importOriginal<typeof import("@/project-sidebar/ProjectDirectoryProvider.js")>();
+  const owner = {
+    isTaskKnownDeleted: (task: {
+      taskId: string;
+      workspacePath: string;
+      workspaceIdentity?: string;
+    }) => projectDirectory.deleted.some((ref) => taskRefKey(ref) === taskRefKey(task)),
+  };
+  return { ...original, useOptionalProjectDirectory: () => owner };
 });
 
 vi.mock("@/store/TabStoreProvider.js", () => ({
@@ -59,10 +77,7 @@ function servicesWithSetTaskUnread(setTaskUnread: ReturnType<typeof vi.fn>): ISe
 
 function renderNavigation(params: {
   ambientServices: IServiceAccessor;
-  activateTabByPath: (
-    workspacePath: string,
-    options?: { workspaceIdentity?: string },
-  ) => boolean;
+  activateTabByPath: (workspacePath: string, options?: { workspaceIdentity?: string }) => boolean;
   workspacePath?: string;
   workspaceIdentity?: string;
   onNavigateToAutomations?: ReturnType<typeof vi.fn>;
@@ -74,8 +89,7 @@ function renderNavigation(params: {
       useWorkspaceTaskNavigation({
         intl: { formatMessage: ({ id }) => id },
         workspaceAbsPath: params.workspacePath ?? "/home/dev",
-        workspaceIdentity:
-          params.workspaceIdentity ?? "remote:ssh:dev:22:user:/home/dev",
+        workspaceIdentity: params.workspaceIdentity ?? "remote:ssh:dev:22:user:/home/dev",
         activateTabByPath: params.activateTabByPath,
         onNavigateToAutomations: params.onNavigateToAutomations,
       }),
@@ -95,6 +109,7 @@ describe("useWorkspaceTaskNavigation", () => {
       sessionIdByWorkspaceIdentity: {},
     });
     useZCodeSessionStore.setState({ taskNavHistory: createTaskNavigationHistory() });
+    projectDirectory.deleted = [];
   });
 
   it("把 Idle-time intent 写入 Automations 导航目标和历史", () => {
@@ -250,12 +265,7 @@ describe("useWorkspaceTaskNavigation", () => {
     });
 
     await act(async () => {
-      hook.result.current.handleSelectTask(
-        localWorkspacePath,
-        taskId,
-        undefined,
-        321,
-      );
+      hook.result.current.handleSelectTask(localWorkspacePath, taskId, undefined, 321);
       await Promise.resolve();
     });
 
@@ -286,11 +296,12 @@ describe("useWorkspaceTaskNavigation", () => {
         "remote-b": { sessionId: "remote-b", services: targetServices },
       },
     });
-    useTaskQueryCacheStore
-      .getState()
-      .upsertTaskMeta(
-        taskMeta({ workspacePath: targetWorkspacePath, workspaceIdentity: targetWorkspaceIdentity }),
-      );
+    useTaskQueryCacheStore.getState().upsertTaskMeta(
+      taskMeta({
+        workspacePath: targetWorkspacePath,
+        workspaceIdentity: targetWorkspaceIdentity,
+      }),
+    );
     tabStore.setState({
       activeTabId: "remote-a",
       tabs: [
@@ -328,11 +339,7 @@ describe("useWorkspaceTaskNavigation", () => {
     });
 
     await act(async () => {
-      hook.result.current.handleSelectTask(
-        targetWorkspacePath,
-        taskId,
-        targetWorkspaceIdentity,
-      );
+      hook.result.current.handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
       await Promise.resolve();
     });
 
@@ -386,18 +393,151 @@ describe("useWorkspaceTaskNavigation", () => {
     });
 
     act(() => {
-      hook.result.current.handleSelectTask(
-        targetWorkspacePath,
-        taskId,
-        targetWorkspaceIdentity,
-      );
+      hook.result.current.handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
     });
 
     expect(baseSetTaskUnread).not.toHaveBeenCalled();
     expect(staleRemoteSetTaskUnread).not.toHaveBeenCalled();
     expect(
-      useTaskQueryCacheStore.getState().taskMetaByEntityKey[buildTaskEntityKey(remoteTask)]?.unreadAt,
+      useTaskQueryCacheStore.getState().taskMetaByEntityKey[buildTaskEntityKey(remoteTask)]
+        ?.unreadAt,
     ).toBe(2);
+    hook.unmount();
+  });
+
+  it("ISSUE-033: 前进遇到项目树确认删除的 task 时清除它，并按访问顺序到达下一条有效条目", () => {
+    projectDirectory.deleted = [{ taskId: "task-missing", workspacePath: localWorkspacePath }];
+    useZCodeSessionStore.setState({
+      taskNavHistory: {
+        entries: [
+          { kind: "plugin-store", workspacePath: "/home/dev" },
+          { kind: "task", workspacePath: localWorkspacePath, taskId: "task-missing" },
+          { kind: "task", workspacePath: localWorkspacePath, taskId: "task-b" },
+          { kind: "task", workspacePath: localWorkspacePath, taskId: "task-c" },
+        ],
+        cursor: 0,
+      },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+
+    act(() => {
+      hook.result.current.handleTaskNavForward();
+    });
+
+    const history = useZCodeSessionStore.getState().taskNavHistory;
+    expect(
+      history.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
+    ).toEqual(["plugin-store", "task-b", "task-c"]);
+    expect(history.entries[history.cursor]).toMatchObject({ kind: "task", taskId: "task-b" });
+    hook.unmount();
+  });
+
+  // Reproduces the live trace: projects-view tasks are live in the sidebar tree but absent from
+  // visibleTasks and taskMetaByEntityKey. Back must still visit each entry in order.
+  it("ISSUE-033: 项目视图中存活但不在缓存里的 task 后退时按顺序回放且不被清除", () => {
+    const pluginStore = { kind: "plugin-store" as const, workspacePath: "/home/dev" };
+    const taskA = { kind: "task" as const, workspacePath: "/draft/aa49", taskId: "task-A" };
+    const taskB = { kind: "task" as const, workspacePath: "/work/qa-sandbox", taskId: "task-B" };
+    const taskC = { kind: "task" as const, workspacePath: "/draft/aa49", taskId: "task-C" };
+    useZCodeSessionStore.setState({
+      taskNavHistory: { entries: [pluginStore, taskA, taskB, taskC], cursor: 3 },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+    const cursors: number[] = [];
+    for (let step = 0; step < 3; step++) {
+      act(() => {
+        hook.result.current.handleTaskNavBack();
+      });
+      cursors.push(useZCodeSessionStore.getState().taskNavHistory.cursor);
+    }
+
+    const history = useZCodeSessionStore.getState().taskNavHistory;
+    expect(cursors).toEqual([2, 1, 0]);
+    expect(history.entries).toHaveLength(4);
+    expect(history.entries[history.cursor]).toMatchObject(pluginStore);
+    hook.unmount();
+  });
+
+  it("ISSUE-033: 项目树确认删除的 task 在后退时只清除该条目，其余按顺序回放", () => {
+    projectDirectory.deleted = [{ taskId: "task-A", workspacePath: "/draft/aa49" }];
+    useZCodeSessionStore.setState({
+      taskNavHistory: {
+        entries: [
+          { kind: "plugin-store", workspacePath: "/home/dev" },
+          { kind: "task", workspacePath: "/draft/aa49", taskId: "task-A" },
+          { kind: "task", workspacePath: "/work/qa-sandbox", taskId: "task-B" },
+          { kind: "task", workspacePath: "/draft/aa49", taskId: "task-C" },
+        ],
+        cursor: 3,
+      },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+
+    act(() => {
+      hook.result.current.handleTaskNavBack();
+    });
+    const afterFirst = useZCodeSessionStore.getState().taskNavHistory;
+    expect(afterFirst.entries[afterFirst.cursor]).toMatchObject({ taskId: "task-B" });
+
+    act(() => {
+      hook.result.current.handleTaskNavBack();
+    });
+    const afterSecond = useZCodeSessionStore.getState().taskNavHistory;
+    expect(
+      afterSecond.entries.map((entry) => (entry.kind === "task" ? entry.taskId : entry.kind)),
+    ).toEqual(["plugin-store", "task-B", "task-C"]);
+    expect(afterSecond.entries[afterSecond.cursor]).toMatchObject({ kind: "plugin-store" });
+    hook.unmount();
+  });
+  it("ISSUE-033: 同一 taskId 位于不同 workspace 时，回放只清除已删除 workspace 的条目", () => {
+    projectDirectory.deleted = [
+      { taskId: "task-x", workspacePath: "/work/one", workspaceIdentity: "remote:x" },
+    ];
+    useZCodeSessionStore.setState({
+      taskNavHistory: {
+        entries: [
+          { kind: "plugin-store", workspacePath: "/home/dev" },
+          { kind: "task", workspacePath: "/work/one", taskId: "task-x" },
+          {
+            kind: "task",
+            workspacePath: "/work/one",
+            workspaceIdentity: "remote:x",
+            taskId: "task-x",
+          },
+          { kind: "task", workspacePath: "/work/one", taskId: "task-y" },
+        ],
+        cursor: 3,
+      },
+    });
+    const hook = renderNavigation({
+      ambientServices: servicesWithSetTaskUnread(vi.fn()),
+      activateTabByPath: vi.fn(() => true),
+    });
+
+    act(() => {
+      hook.result.current.handleTaskNavBack();
+    });
+
+    const history = useZCodeSessionStore.getState().taskNavHistory;
+    expect(history.entries).toEqual([
+      { kind: "plugin-store", workspacePath: "/home/dev" },
+      { kind: "task", workspacePath: "/work/one", taskId: "task-x" },
+      { kind: "task", workspacePath: "/work/one", taskId: "task-y" },
+    ]);
+    expect(history.entries[history.cursor]).toEqual({
+      kind: "task",
+      workspacePath: "/work/one",
+      taskId: "task-x",
+    });
     hook.unmount();
   });
 });

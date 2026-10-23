@@ -24,5 +24,6 @@
 - 重命名会持久化到 `tasks-index.sqlite` 并同步更新运行中 task 的内存 meta；恢复和快照回写必须遵守 [Task Title Authority](./task-title-authority.md)，避免 raw session snapshot 把手动标题还原成自动标题
 - pin / unread / archive 也会同步更新运行中 task 的内存 meta，避免后续 session 持久化把旧状态写回来
 - `Copy path` 指向 task 的持久化快照文件路径
+- `Copy task path`（侧栏任务菜单、分组任务菜单、Header more 菜单共用）只在 Host 报告快照文件 `exists` 时显示；加载中或文件不存在时整项隐藏。这是相对上游 `0a1fc56d` 的 fork 分歧，上游始终显示该项
 - `Copy log path` 指向 task 对应的原生日志路径；ZCode Agent 使用按日期滚动的结构化 JSONL 日志
 - `Go to config` 会复用当前持久化的编辑器偏好；如果无法直接用编辑器打开，则回退到文件管理器

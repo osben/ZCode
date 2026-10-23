@@ -392,6 +392,13 @@ function GitCommitDialog({
           }
         }}
       >
+        {/* Radix requires a title and description for every open state, including the loading spinner. */}
+        <DialogTitle className="sr-only">
+          {intl.formatMessage({ id: "git.actionMenu.commitDialog.title" })}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          {intl.formatMessage({ id: "git.actionMenu.commitDialog.description" })}
+        </DialogDescription>
         {loading ? (
           <div className="flex h-56 items-center justify-center px-5 py-5 text-foreground-subtle">
             <LoaderIcon className="size-5 animate-spin" />
@@ -517,13 +524,10 @@ function GitCommitDialog({
                   })}
                 </span>
                 <span className="shrink-0 text-ui-base font-normal text-foreground-subtle">
-                  {intl.formatMessage(
-                    {
-                      id: "git.actionMenu.commitDialog.changesValue",
-                    },
-                    {
-                      count: numberFormatter.format(fileCount),
-                    },
+                  {intl.formatPlural(
+                    { id: "git.actionMenu.commitDialog.changesValue" },
+                    fileCount,
+                    { count: numberFormatter.format(fileCount) },
                   )}
                 </span>
               </button>

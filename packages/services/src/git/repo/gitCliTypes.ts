@@ -24,6 +24,8 @@ export interface GitLineStat {
   removed: number;
   kind?: GitChangeKind;
   originalPath?: string | null;
+  /** Untracked zero-byte regular file: reviewable as an added file although both counts are zero. */
+  isEmptyFile?: boolean;
 }
 
 export interface GitStatusEntry {
