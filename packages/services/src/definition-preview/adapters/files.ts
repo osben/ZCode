@@ -1,4 +1,4 @@
-import { constants, type Stats } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { MAX_SKILL_SCAN_DEPTH, shouldWalkSkillDirectoryEntry } from "@zcode/shared";
@@ -30,13 +30,17 @@ function isMissing(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
-async function lstatOrNull(path: string): Promise<Stats | null> {
+async function lstatOrNull(path: string): Promise<BigIntStats | null> {
   try {
-    return await lstat(path);
+    return await lstat(path, { bigint: true });
   } catch (error) {
     if (isMissing(error)) return null;
     throw error;
   }
+}
+
+function sameIdentity(left: BigIntStats, right: BigIntStats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function isInside(root: string, target: string): boolean {
@@ -52,16 +56,22 @@ export function createDefinitionFilesAdapter(
   const maxDepth = options.maxDepth ?? MAX_SKILL_SCAN_DEPTH;
 
   /**
-   * Opens without following links and checks the opened file is the one lstat saw, so a path
-   * swapped for a symlink between lstat and open is rejected rather than read.
+   * Opens without following the last component, then proves the opened file is still at an
+   * allowed location: Node has no openat(), so intermediate directories cannot be pinned by
+   * descriptor. After open, the file's current canonical path must be allowed and its lstat
+   * identity must equal the opened handle's. A file reached through a directory swapped for a
+   * symlink at any point therefore fails the check, because the handle's inode is not the inode
+   * living at an allowed path. Identities are compared as BigInt (64-bit inode numbers on NTFS
+   * and some Linux filesystems exceed Number precision).
    */
   async function readVerified(
     path: string,
-    before: Stats,
+    before: BigIntStats,
     relativePath: string,
+    isAllowedLocation: (canonicalPath: string) => boolean,
   ): Promise<DefinitionPreviewReadResult> {
-    if (before.size > maxTextBytes) {
-      return { status: "too_large", relativePath, size: before.size, limit: maxTextBytes };
+    if (before.size > BigInt(maxTextBytes)) {
+      return { status: "too_large", relativePath, size: Number(before.size), limit: maxTextBytes };
     }
     let handle;
     try {
@@ -72,10 +82,18 @@ export function createDefinitionFilesAdapter(
       throw error;
     }
     try {
-      const opened = await handle.stat();
-      if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
-        return REJECTED;
+      const opened = await handle.stat({ bigint: true });
+      if (!opened.isFile() || !sameIdentity(opened, before)) return REJECTED;
+      let canonical: string;
+      try {
+        canonical = await realpath(path);
+      } catch (error) {
+        if (isMissing(error)) return NOT_FOUND;
+        throw error;
       }
+      if (!isAllowedLocation(canonical)) return REJECTED;
+      const after = await lstatOrNull(canonical);
+      if (!after || !sameIdentity(after, opened)) return REJECTED;
       const bytes = Buffer.alloc(maxTextBytes + 1);
       let used = 0;
       while (used < bytes.length) {
@@ -84,7 +102,12 @@ export function createDefinitionFilesAdapter(
         used += bytesRead;
       }
       if (used > maxTextBytes) {
-        return { status: "too_large", relativePath, size: opened.size, limit: maxTextBytes };
+        return {
+          status: "too_large",
+          relativePath,
+          size: Number(opened.size),
+          limit: maxTextBytes,
+        };
       }
       const content = bytes.subarray(0, used);
       if (content.includes(0)) return { status: "binary", relativePath, size: used };
@@ -101,7 +124,7 @@ export function createDefinitionFilesAdapter(
 
   async function canonicalRegularFile(
     filePath: string,
-  ): Promise<{ path: string; stats: Stats } | null> {
+  ): Promise<{ path: string; stats: BigIntStats } | null> {
     let canonical: string;
     try {
       canonical = await realpath(filePath);
@@ -156,7 +179,11 @@ export function createDefinitionFilesAdapter(
             if (depth < maxDepth) await walk(absolute, relativePath, depth + 1);
           } else if (entry.isFile()) {
             const stats = await lstatOrNull(absolute);
-            tree.push({ relativePath, kind: "file", ...(stats ? { size: stats.size } : {}) });
+            tree.push({
+              relativePath,
+              kind: "file",
+              ...(stats ? { size: Number(stats.size) } : {}),
+            });
           }
           if (truncated) return;
         }
@@ -184,7 +211,7 @@ export function createDefinitionFilesAdapter(
         throw error;
       }
       let current = canonicalRoot;
-      let stats: Stats | null = null;
+      let stats: BigIntStats | null = null;
       for (const [index, segment] of segments.entries()) {
         current = join(current, segment);
         stats = await lstatOrNull(current);
@@ -193,9 +220,9 @@ export function createDefinitionFilesAdapter(
         if (index < segments.length - 1 && !stats.isDirectory()) return NOT_FOUND;
       }
       if (!stats?.isFile()) return NOT_FOUND;
-      // Defense in depth: string checks and per-segment lstat already keep `current` inside.
-      if (!isInside(canonicalRoot, await realpath(current))) return REJECTED;
-      return readVerified(current, stats, segments.join("/"));
+      return readVerified(current, stats, segments.join("/"), (canonical) =>
+        isInside(canonicalRoot, canonical),
+      );
     },
 
     async readSingleFile(filePath: string): Promise<DefinitionPreviewReadResult> {
@@ -203,7 +230,12 @@ export function createDefinitionFilesAdapter(
       // once; the canonical target must be a regular file and is then read without following.
       const target = await canonicalRegularFile(filePath);
       if (!target) return NOT_FOUND;
-      return readVerified(target.path, target.stats, basename(filePath));
+      return readVerified(
+        target.path,
+        target.stats,
+        basename(filePath),
+        (canonical) => canonical === target.path,
+      );
     },
 
     async isRegularFile(filePath: string): Promise<boolean> {

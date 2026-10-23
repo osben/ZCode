@@ -11,7 +11,9 @@ a root the Host did not just discover.
 Confinement follows `readGenUiDocument`: the relative path is validated as a string (no empty,
 `.`/`..`, NUL, absolute, drive-letter, UNC or colon segments), the root is realpath'd once, every
 segment below it is `lstat`ed and any symlink is rejected, the file is opened `O_NOFOLLOW` and its
-`dev`/`ino` must match the pre-open `lstat`. Symlinks are listed in the tree as `link` entries and
+`dev`/`ino` (BigInt) must match the walk's `lstat`. Node has no `openat()`, so the check repeats
+after open: the file's current realpath must be inside the root and the identity there must equal
+the opened handle's, which defeats a directory swapped for a symlink mid-read. Symlinks are listed in the tree as `link` entries and
 never followed. Text is capped at 256 KiB; binary content (fatal UTF-8 decode) and oversized files
 return a notice instead of content. Rejections are logged at `warn` without paths.
 

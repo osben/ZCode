@@ -182,13 +182,25 @@ content on the right).
     and in slice 4 `listPlugins`). `createLocalServices` builds the port from closures over the
     existing service instances, and the module never imports a concrete service.
   - `resolve(ref)` returns either `{ status: "not_found" }` or
-    `{ status: "found", definition, tree, shadowed, movedFrom? }`. `definition` holds the display
-    fields, the root display path and capability flags (`canOpenInEditor`, `canReveal`). `tree` is
-    an array of relative entries.
-  - `readFile({ ref, relativePath, offset?, length? })` returns a `FileTextSlice`, or a
-    binary/oversized notice.
+    `{ status: "found", definition, tree, truncated, shadowed, movedFrom? }`.
+    - `definition` holds the display fields (kind, name, scope, enabled, entry path, plugin name,
+      description), `rootPath`, `entryRelativePath`, `singleFile` and `userOwned`.
+    - `userOwned` is true for workspace- and user-scoped, writable definitions. The UI combines it
+      with its own local/remote knowledge to decide whether to show the editor and file-manager
+      actions.
+    - `tree` is an array of `{ relativePath, kind: "file" | "directory" | "link", size? }`.
+      `truncated` is true when the entry cap was hit.
+  - `readFile({ ref, relativePath })` returns one of:
+    - `text` with the content;
+    - `binary` or `too_large`, with the size (and the limit, for `too_large`);
+    - `not_found`;
+    - `rejected`, when the path is invalid or fails confinement.
+
+    The whole file is read up to the cap; there are no offset or length parameters.
+
   - Both validate their input at runtime with the zod schemas from
     `@zcode/shared/definition-preview`.
+
 - **Registration.** Register the service wherever `ISkillsService` and `IGenUiService` are wired
   today. Keep each edit to an upstream file small:
   - `createLocalServices` (`packages/services/src/node.ts`), which covers both the local host and
@@ -253,8 +265,20 @@ content on the right).
   - `realpath` the root once.
   - Below the root, every symlink is listed in the tree as a link and is never read or descended
     into, wherever it points.
-  - Read by walking the segments with `lstat`, opening with `O_NOFOLLOW` (where it exists) and
-    comparing the opened file's `dev`/`ino` with the pre-open `lstat`.
+  - Read by walking the segments with `lstat`, then opening with `O_NOFOLLOW` (where it exists).
+    The opened handle's `dev`/`ino` must equal the walk's `lstat`.
+  - Node has no `openat()`, so intermediate directories cannot be pinned by descriptor. To cover
+    that, the check is repeated after open: the file's current `realpath` must be inside the
+    root, and the `lstat` identity at that path must equal the opened handle's. A file reached
+    through a directory swapped for a symlink at any moment fails this check.
+  - Identities are compared as BigInt (`{ bigint: true }` stats), because 64-bit inode numbers on
+    NTFS and some Linux filesystems exceed Number precision.
+  - Threat model: a race requires local write access to the definition folder, which already
+    implies read access as the user. These checks keep remote and mobile clients from turning
+    such a race, or a planted symlink, into reads outside the root.
+  - The readable set follows the same rules as the tree (hidden directories, depth limit). The
+    entry cap limits only what is listed: a file past the cap stays readable, so a relative link
+    from a previewed file still opens it.
   - On Windows, junctions must report as links (`isSymbolicLink()`). Node's `lstat` reports
     junctions as symbolic links, but this is not yet verified on a Windows machine; the adapter
     tests run on macOS and Linux only.

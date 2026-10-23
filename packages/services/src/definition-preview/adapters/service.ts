@@ -17,6 +17,6 @@ export function createDefinitionPreviewService(
     catalog: options.catalog,
     files: createDefinitionFilesAdapter(options.files),
     // Paths stay out of logs: they may name the user's home directory and private projects.
-    onRejected: (reason) => logger.warn(`Rejected definition preview read: ${reason}`),
+    onRejected: (reason) => logger.warn(undefined, "Rejected definition preview read", { reason }),
   });
 }
