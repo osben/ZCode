@@ -190,6 +190,25 @@ describe("QuickPromptsSettingsSection", () => {
     expect(quickPromptService.read).toHaveBeenCalledWith({ project: ALPHA });
   });
 
+  it("each scope list element contains that scope's rows", async () => {
+    fake.draftProjectIds = { "/work/alpha": "p-alpha" };
+    const { quickPromptService, broadcastService } = makeServices();
+    fake.services = { quickPromptService, broadcastService };
+    render(createElement(QuickPromptsSettingsSection, { workspacePath: "/work/alpha" }));
+    await settle();
+
+    const namesIn = (scope: string) =>
+      Array.from(
+        document.querySelectorAll<HTMLElement>(
+          `[data-testid="quick-prompts-settings-list"][data-scope="${scope}"] [data-testid="quick-prompts-settings-row"]`,
+        ),
+      ).map((row) => row.dataset.promptName);
+    expect(namesIn("project")).toContain("Run e2e");
+    expect(namesIn("project")).not.toContain("Review the diff");
+    expect(namesIn("global")).toContain("Review the diff");
+    expect(namesIn("global")).not.toContain("Run e2e");
+  });
+
   it("without a project shows only the global list and no Shown-in switch", async () => {
     const { quickPromptService, broadcastService } = makeServices();
     fake.services = { quickPromptService, broadcastService };

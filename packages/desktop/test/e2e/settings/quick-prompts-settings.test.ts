@@ -11,6 +11,7 @@ import {
 import {
   clearAppData,
   clickTestIdByDom,
+  clickTestIdByWebDriver,
   setInputValueByTestIdDom,
 } from "../helpers/desktop-app.js";
 import { sel } from "../helpers/selectors.js";
@@ -79,7 +80,7 @@ describe("Settings quick prompts", () => {
 
   it("deletes a quick prompt from the row menu after confirmation", async () => {
     await openRowMenu(BETA);
-    await clickTestIdByDom("quick-prompts-settings-menu-delete", { timeout: 10000 });
+    await clickTestIdByWebDriver("quick-prompts-settings-menu-delete", { timeout: 10000 });
     await clickTestIdByDom(TID_CONFIRM_DIALOG_CONFIRM, { timeout: 10000 });
     await browser.waitUntil(async () => !(await rowNames("global")).includes(BETA), {
       timeout: 10000,
@@ -165,23 +166,20 @@ async function toggleSwitch(name: string, switchTestId: string) {
   );
 }
 
-/** Opens a row's "..." menu. Radix DropdownMenu opens on pointerdown, so a plain click is not enough. */
+/**
+ * Opens a row's "..." menu through the real WebDriver pointer chain. Radix DropdownMenu opens on pointerdown;
+ * an item clicked right after a synthetic pointerdown open did not fire onSelect, so the item is clicked
+ * through WebDriver too, once it is clickable.
+ */
 async function openRowMenu(name: string) {
-  await browser.execute((rowName: string) => {
-    const row = Array.from(
-      document.querySelectorAll<HTMLElement>('[data-testid="quick-prompts-settings-row"]'),
-    ).find((candidate) => candidate.dataset.promptName === rowName);
-    const trigger = row?.querySelector<HTMLElement>('[data-testid="quick-prompts-settings-menu"]');
-    if (!trigger) throw new Error(`menu trigger missing in row ${rowName}`);
-    trigger.dispatchEvent(
-      new PointerEvent("pointerdown", {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        pointerType: "mouse",
-      }),
-    );
-  }, name);
+  const trigger = $(
+    `[data-testid="quick-prompts-settings-row"][data-prompt-name="${name}"] [data-testid="quick-prompts-settings-menu"]`,
+  );
+  await trigger.waitForClickable({
+    timeout: 10000,
+    timeoutMsg: `menu trigger missing in row ${name}`,
+  });
+  await trigger.click();
 }
 
 /**

@@ -3897,4 +3897,5 @@ Scenario 3's send half (empty draft plus Cmd-click submits) is pending in
 `conversation-session/manual-review/pending/quick-prompts-composer-send.test.ts`, because it needs a recorded provider
 fixture. Settings → Quick prompts (rule 20: create, Pinned, Shown in project, drag reorder, delete) is in
 `packages/desktop/test/e2e/settings/quick-prompts-settings.test.ts`. Scenario 10 (mobile remote) is not covered.
-Not run: these were written without a built desktop app in the authoring environment.
+2026-10-22: both specs pass locally on macOS (`pnpm exec wdio run wdio.conf.ts --spec ...` from `packages/desktop`).
+The send-half pending case was not run: it needs a live or recorded provider.

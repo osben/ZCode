@@ -97,52 +97,54 @@ export function QuickPromptSettingsList(props: QuickPromptSettingsListProps) {
   ));
 
   return (
-    <SettingsGroupCard>
-      <div
-        className="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
-        data-testid="quick-prompts-settings-list"
-        data-scope={props.scope}
-      >
-        <div className="min-w-0">
-          <div className="text-ui-base font-medium text-foreground">{props.title}</div>
-          {props.hint ? (
-            <div className="text-ui-caption text-foreground-subtle">{props.hint}</div>
-          ) : null}
+    <div data-testid="quick-prompts-settings-list" data-scope={props.scope}>
+      <SettingsGroupCard>
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-ui-base font-medium text-foreground">{props.title}</div>
+            {props.hint ? (
+              <div className="text-ui-caption text-foreground-subtle">{props.hint}</div>
+            ) : null}
+          </div>
+          {props.readOnly ? null : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="quick-prompts-settings-new"
+              data-scope={props.scope}
+              disabled={props.createDisabled}
+              onClick={props.onCreate}
+            >
+              <PlusIcon aria-hidden="true" />
+              {intl.formatMessage({ id: "quickPrompts.settings.new" })}
+            </Button>
+          )}
         </div>
-        {props.readOnly ? null : (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="quick-prompts-settings-new"
-            data-scope={props.scope}
-            disabled={props.createDisabled}
-            onClick={props.onCreate}
+        {props.createBlockedMessage && !props.readOnly ? (
+          <p role="status" className="px-4 pb-3 text-ui-caption text-foreground-subtle">
+            {props.createBlockedMessage}
+          </p>
+        ) : null}
+        {props.items.length === 0 ? (
+          <p className="border-t border-border px-4 py-3 text-ui-base text-foreground-subtle">
+            {props.emptyMessage}
+          </p>
+        ) : sortable ? (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
           >
-            <PlusIcon aria-hidden="true" />
-            {intl.formatMessage({ id: "quickPrompts.settings.new" })}
-          </Button>
+            <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+              {rows}
+            </SortableContext>
+          </DndContext>
+        ) : (
+          rows
         )}
-      </div>
-      {props.createBlockedMessage && !props.readOnly ? (
-        <p role="status" className="px-4 pb-3 text-ui-caption text-foreground-subtle">
-          {props.createBlockedMessage}
-        </p>
-      ) : null}
-      {props.items.length === 0 ? (
-        <p className="border-t border-border px-4 py-3 text-ui-base text-foreground-subtle">
-          {props.emptyMessage}
-        </p>
-      ) : sortable ? (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-            {rows}
-          </SortableContext>
-        </DndContext>
-      ) : (
-        rows
-      )}
-    </SettingsGroupCard>
+      </SettingsGroupCard>
+    </div>
   );
 }
 

@@ -154,7 +154,15 @@ describe("composer quick prompts", () => {
         ),
       { timeout: 10000 },
     );
-    await clickTestIdByDom("quick-prompt-editor-cancel");
+    // The editor has no Cancel button; Escape closes the Radix dialog without saving.
+    await browser.keys(["Escape"]);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () => !document.querySelector('[data-testid="quick-prompt-banner-global"]'),
+        ),
+      { timeout: 10000, timeoutMsg: "Escape did not close the quick prompt editor" },
+    );
   });
 });
 
