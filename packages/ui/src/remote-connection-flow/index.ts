@@ -1970,6 +1970,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       backToDevicesLabel: addingDevice
         ? intl.formatMessage({ id: "settings.source.newConnection" })
         : undefined,
+      // A chosen project folder means this connection also opens it, so the progress shows the folder step.
+      workspacePath: directoryPath.trim() || undefined,
       onClose: () => {
         void handleCloseRequest();
       },

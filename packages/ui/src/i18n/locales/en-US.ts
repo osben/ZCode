@@ -213,6 +213,7 @@ const enUS: Record<string, string> = {
   "remote.action.details": "View details",
   "remote.action.retry": "Retry",
   "remote.action.none": "",
+  "remote.error.authenticationUnsupported": "Server requires additional verification",
   "remote.error.authentication": "SSH authentication failed",
   "remote.error.details": "Details",
   "remote.error.hostUnreachable.reason":
@@ -286,6 +287,12 @@ const enUS: Record<string, string> = {
     "View details, follow the instructions, and retry.",
   "remote.error.bindCanceled.reason": "View details, follow the instructions, and retry.",
   "remote.error.bindSessionMissing.reason": "View details, follow the instructions, and retry.",
+  "remote.error.authenticationUnsupported.reason":
+    "After the password, this server asks for more verification (for example a one-time code). Only password, private key, and SSH agent sign-in are supported. Use a private key instead.",
+  "remote.error.platformUnsupported.reason":
+    "Remote connections support Linux and macOS on x64 and arm64. On Windows, connect through WSL or use a Linux device.",
+  "remote.error.workspaceDirectoryUnresponsive.reason":
+    "If the remote device is a Mac, check the Mac for a folder access prompt. If the folder is on a network or external drive, make sure the drive is available. Then retry.",
   "remote.error.workspaceDirectoryUnavailable.reason":
     "View details, follow the instructions, and retry.",
   "remote.error.recoveryBudgetExhausted.reason":
@@ -2224,6 +2231,8 @@ const enUS: Record<string, string> = {
   "remote.error.bindCanceled": "The remote workspace attachment was canceled.",
   "remote.error.bindSessionMissing":
     "The remote workspace session is no longer available. Reconnect and try again.",
+  "remote.error.workspaceDirectoryUnresponsive":
+    "The remote device did not respond for 30 seconds while reading the project folder",
   "remote.error.workspaceDirectoryUnavailable":
     "The remote project directory is missing, is not a folder, or cannot be accessed. Check the directory and permissions, then try again.",
   "remote.error.recoveryBudgetExhausted":
@@ -2241,6 +2250,7 @@ const enUS: Record<string, string> = {
   "remote.error.preflightFailed": "Remote environment check failed",
   "remote.error.installFailed": "Remote installation failed",
   "remote.error.spaceInsufficient": "Not enough space on remote device",
+  "remote.error.platformUnsupported": "This device's system is not supported",
   "remote.error.permissionDenied": "Remote write permission denied",
   "remote.error.connectionCanceled": "Connection canceled",
   "remote.error.unknown": "Connection failed",
@@ -2364,12 +2374,14 @@ const enUS: Record<string, string> = {
   "remote.phaseSub.verifyingArchive": "Verifying the archive",
   "remote.phaseSub.verifyingFiles": "Verifying server files",
   "remote.phaseSub.restarting": "Restarting the remote server",
+  "remote.phaseSub.workspaceReading": "Reading {path}",
   "remote.connectingSubtitleFailed":
     "Connection failed · retry, or adjust the configuration and try again",
   "remote.phase.channel": "Connect to device",
   "remote.phase.identify": "Identify device",
   "remote.phase.deploy": "Install ZCode Server",
   "remote.phase.handshake": "Start and check compatibility",
+  "remote.phase.workspace": "Open project folder",
   "remote.progress.step": "Step {current}/{total}",
   "remote.progress.elapsedSeconds": "{seconds}s elapsed",
   "remote.progress.elapsedMinutesSeconds": "{minutes}m {seconds}s elapsed",

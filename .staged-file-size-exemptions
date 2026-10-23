@@ -287,3 +287,6 @@ docs/testing/unit-test-review/ui-tail.jsonl
 packages/ui/src/project-sidebar/TaskGroupedView.tsx
 packages/ui/src/root/useRemoteWorkspaceHistory.ts
 packages/ui/src/side-pane-full-view/ConversationHost.tsx
+
+# Existing remote connection flow owner, already above the staged cap on integration (3.16.3 workspace step adds two lines).
+packages/ui/src/remote-connection-flow/index.ts
