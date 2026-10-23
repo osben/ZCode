@@ -166,6 +166,19 @@ Repro (from a fresh app start):
 5. Must see: the preparing session opens, then shows the setup error with Retry/Cancel/Discard inside its timeline; navigating away and back keeps the same failed state; Discard (or Retry after `chmod 755`) completes the spec'd flow; the frozen text is restorable into an empty editor. Must not see: a silent stranded user row with no error and no recovery action.
    History: 2026-10-22 open (CP-06, forced via read-only parent).
 
+Final status (2026-10-22 round-2 wrap-up). Nothing was merged by this run; "merged" means the user merged it.
+
+- osben/ZCode#298 — ISSUE-049 (S2, flat-list hover card dead since #292) — open, CI green (typecheck/lint/arch + unit), fresh-context reviewer verdict SHIP (nits fixed in-branch), live-verified on the restarted dev app.
+- claude/qa-fix-051-worktree-recovery — ISSUE-051 (S2, worktree preparation failure strands the first prompt) — fix 4636c845, reviewer pass + live verification recorded in the issue History; PR opened by the orchestrator.
+- New S3s filed, no fix requested this round: ISSUE-050 (stale renderer instance warn), ISSUE-052 (file tree refresh misses nested dirs).
+- New S2 filed: ISSUE-053 (find-in-conversation returns 0/0 for existing terms).
+
+  Round-1 fixes re-verified live this round: ISSUE-025, 027 (all four trigger kinds incl. the ACP external-agent control), 029, 031, 032, 033, 035, 036, 037, 039 (Steer drains; user Stop always holds, incl. right after a Steer; Continue resumes), 040, 041, 042, 043, 044, 045 (both directions, shared file intact at 53 keys, upstream log clean), 046, 047 (1 сеанс singular + 2 files plural; branch-dialog variant unit-covered), 048. ISSUE-026: live re-check env-blocked (no touchable unavailable-provider session); round-1 evidence stands; the "unresolvable stored pick is kept" decision confirmed by code (typed selectionIssue values; pick kept as intent).
+
+  New since round 1, exercised live: #295 (spawn preflight resolves this checkout's CLI), #283 (v1 tool-call inputs pair with results), #286 trajectory v2 (summary/strip/ledger/inspector 5 tabs/context chart/time-by-tool/skills chips; opens 86-207 ms; strip drag/zoom + MCP/memory chips E2E-only; old-records "—" unit-covered), #287 ACP on macOS (group + 4 detected agents with brand marks; codex/claude hidden — adapters not installed, spec behavior; Test roundtrips OK for opencode/Cursor, auth surfaced for Qwen/Gemini; pre-turn options catalog; draft-choice isolation and mode/model interplay — the two #287 review findings NOT reproducible; one live opencode free-model turn), #296 quick prompts (settings CRUD, scope, pinned/shown switches, composer row insert, "/" section with token replace).
+
+  Blocked/manual-only this round: tool-dependent chat flows (CH-06/07/09 full paths, CH-05 cards, CH-14 background bash) — OpenRouter tool-format drift made cheap models emit raw `<tool_call>` text from ~22:00 (worked at 20:12); no merge this round touches those areas. Drag re-runs (SB-03/SB-09/SB-12): synthetic drag did not engage dnd-kit; round-1 passes + rAF healthy all session. CH-11 load-older sub-case: even 199 rows fit one window (needs a bigger fixture). CH-17 "show next": collapse is per-input-card (catalog corrected). CP-14 held-unlock: code path documented, not forced live. SB-03 real "Delete project" confirm on a throwaway: needs one native-picker step (user).
+
 ### ISSUE-050 · S3 · main · open
 
 Scenario: MI-07 (idle hygiene) · Found: 2026-10-22 21:29 · Build: 288d26e8
