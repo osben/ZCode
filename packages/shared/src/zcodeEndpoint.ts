@@ -265,6 +265,13 @@ export function normalizeConfiguredWebRemoteControlRelayWsUrl(
   return url.toString();
 }
 
+/** Relay HTTP origin for a relay WS URL: wss to https, ws to http; the path is always the relay API root. */
+export function resolveWebRemoteControlRelayHttpOrigin(relayWsUrl: string): string {
+  const url = new URL(relayWsUrl);
+  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  return url.origin;
+}
+
 export function resolveWebRemoteControlRelayWsUrl(options?: {
   endpointOrigin?: string | null | undefined;
   overrideUrl?: string | null | undefined;
