@@ -175,17 +175,33 @@ describe("KeyboardPlugin Enter while submit is blocked by a named reason (ISSUE-
     expect(handled).toBe(false);
   });
 
-  it("an IME commit reported as keyCode 229 with isComposing false is not taken by the blocked-send path", () => {
+  it("an IME commit reported as keyCode 229 with isComposing false is consumed silently on the blocked path", () => {
     const onSubmitBlocked = vi.fn();
     const onSubmit = vi.fn();
     const editor = mountKeyboard({ submitDisabled: true, onSubmit, onSubmitBlocked });
 
-    // Safari sends Enter for the IME commit with keyCode 229 and isComposing false.
-    const { handled } = pressKey(editor, { key: "Enter", code: "Enter" }, 229);
+    // Safari sends Enter for the IME commit with keyCode 229 and isComposing false. The keystroke
+    // belongs to the IME: no submit, no blocked notice, no newline.
+    const { handled, event } = pressKey(editor, { key: "Enter", code: "Enter" }, 229);
 
     expect(onSubmitBlocked).not.toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(handled).toBe(false);
+    expect(handled).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("an IME commit reported as keyCode 229 with isComposing false is consumed silently on the unblocked path", () => {
+    const onSubmitBlocked = vi.fn();
+    const onSubmit = vi.fn(() => false);
+    const editor = mountKeyboard({ submitDisabled: false, onSubmit, onSubmitBlocked });
+
+    // Same IME-commit Enter, with submit enabled: it must not submit and must not insert a newline.
+    const { handled, event } = pressKey(editor, { key: "Enter", code: "Enter" }, 229);
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onSubmitBlocked).not.toHaveBeenCalled();
+    expect(handled).toBe(true);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("an unblocked default Enter still submits", () => {

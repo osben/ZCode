@@ -622,11 +622,16 @@ export function KeyboardPlugin({
           return true;
         }
 
-        // Do not intercept while an IME is composing (for example, a Chinese IME). Safari reports the IME
-        // commit Enter as keyCode 229 with isComposing false, which the shared noise predicate covers.
-        // Key repeat keeps its existing behavior, so only the IME part of the predicate applies to it.
-        if (event.isComposing || (event.repeat !== true && isShortcutEventNoise(event))) {
+        // Do not intercept while an IME is composing (for example, a Chinese IME).
+        if (event.isComposing) {
           return false;
+        }
+        // Safari fires compositionend before the IME-commit Enter (keyCode 229 / "Process"), so that
+        // keystroke reaches here with isComposing false. It belongs to the IME: consume it silently on
+        // every path (no submit, no blocked notice, no newline). Key repeat keeps its existing behavior.
+        if (event.repeat !== true && isShortcutEventNoise(event)) {
+          event.preventDefault();
+          return true;
         }
 
         const text = getEditorMarkdown(editor.getEditorState());
