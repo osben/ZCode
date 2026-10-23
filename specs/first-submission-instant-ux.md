@@ -350,8 +350,9 @@ existing send path; the pane never calls into the composer.
   reconcile the original command id, never resend under a new one); the status line
   reports it and the card offers only Remove.
 - **Guards.** Retry and the ordinary submit share one predicate (`getSubmitBlockReason`).
-  When it blocks (runtime not ready, remote unavailable, another send in progress,
-  attachments not ready) Retry is disabled and the concrete reason is shown under it,
+  When it blocks (runtime not ready, remote unavailable, stored model unavailable
+  (`specs/composer-unresolved-model-selection.md`), another send in progress, attachments not
+  ready) Retry is disabled and the concrete reason is shown under it,
   tied to the button with `aria-describedby`; the check runs before the restore, so a
   blocked Retry never moves the text into the editor. Retry is also disabled while the
   editor holds another draft (the card says so) or while frozen attachments are

@@ -89,6 +89,9 @@ const ukUA: Record<string, string> = {
   "composer.sendBlocked.remoteUnavailable":
     "Віддалений хост недоступний. Спробуйте знову після відновлення з'єднання.",
   "composer.sendBlocked.sessionNotReady": "Сесія ще не готова. Спробуйте трохи згодом.",
+  "composer.sendBlocked.modelUnavailable": "Вибрана модель недоступна — оберіть модель.",
+  "composer.sendBlocked.modelAccountUnavailable":
+    "Обліковий запис вибраної моделі не підключено — увійдіть або оберіть модель.",
   "composer.sendBlocked.sendInProgress": "Інше повідомлення ще надсилається.",
   "composer.sendBlocked.firstSubmissionDelivering":
     "Перше повідомлення ще доставляється. Ви зможете надіслати це, щойно його буде доставлено.",

@@ -219,6 +219,12 @@ export interface ZCodeSessionStoreState {
   /** 按 workspace 维护聊天相关 UI 状态 */
   workspaces: Record<string, WorkspaceZCodeUIState>;
   getWorkspaceState: (workspacePath: string, workspaceIdentity?: string) => WorkspaceZCodeUIState;
+  /**
+   * Provider startup has settled (registry hydrated and account overlay check finished). Root is the
+   * only writer; composer model verdicts wait for it (specs/composer-unresolved-model-selection.md).
+   */
+  providerStartupSettled: boolean;
+  setProviderStartupSettled: (settled: boolean) => void;
 
   setActiveTaskId: (
     workspacePath: string,

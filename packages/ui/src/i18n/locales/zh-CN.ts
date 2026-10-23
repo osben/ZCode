@@ -7440,6 +7440,8 @@ const zhCN: Record<string, string> = {
   "firstSubmission.remove": "移除",
   "composer.sendBlocked.remoteUnavailable": "远程主机不可用，请在重新连接后重试。",
   "composer.sendBlocked.sessionNotReady": "会话尚未就绪，请稍后重试。",
+  "composer.sendBlocked.modelUnavailable": "所选模型不可用，请选择一个模型。",
+  "composer.sendBlocked.modelAccountUnavailable": "所选模型的账号未连接，请登录或选择其他模型。",
   "composer.sendBlocked.sendInProgress": "另一条消息仍在发送中。",
   "composer.sendBlocked.firstSubmissionDelivering":
     "第一条消息仍在投递中，送达后即可发送这条消息。",

@@ -52,6 +52,7 @@ export function ChatPromptEditor({
   disabledReason,
   submitting = false,
   submitDisabled = false,
+  onSubmitBlocked,
   allowSubmitWhenEmpty = false,
   enterSubmits = true,
   submitLabel,
@@ -105,6 +106,8 @@ export function ChatPromptEditor({
   disabledReason?: string;
   submitting?: boolean;
   submitDisabled?: boolean;
+  /** Enter while submitDisabled is taken by the composer (keeps the draft, no newline) when provided. */
+  onSubmitBlocked?: () => void;
   allowSubmitWhenEmpty?: boolean;
   enterSubmits?: boolean;
   submitLabel: string;
@@ -347,6 +350,7 @@ export function ChatPromptEditor({
       placeholder={placeholder}
       disabled={disabled}
       submitDisabled={submitDisabled}
+      onSubmitBlocked={onSubmitBlocked}
       allowSubmitWhenEmpty={allowSubmitWhenEmpty}
       enterSubmits={enterSubmits}
       onSubmit={handleEditorSubmit}
