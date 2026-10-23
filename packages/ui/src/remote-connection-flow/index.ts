@@ -168,9 +168,9 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [focusCredentials, setFocusCredentials] = useState(false);
   const [directoryPath, setDirectoryPath] = useState("");
-  // Device-management flows never open a project folder, so the folder step is not shown for them.
-  const connectingWorkspacePath =
-    completion === "device-management" ? undefined : directoryPath.trim() || undefined;
+  // The folder a connect attempt will open. directoryPath only belongs to the directory step and is cleared before
+  // connecting, so the connecting progress reads this snapshot of the attempt's preferred directory instead.
+  const [connectingWorkspacePath, setConnectingWorkspacePath] = useState<string>();
   const consumedKindPreferenceRef = useRef<string | null>(null);
   const [step, setCurrentStep] = useState<RemoteWizardStep>("device");
   // Root 常驻挂载，设置入口的首帧也直接展示分类表单，不等待 effect 隐藏旧选择屏。
@@ -218,6 +218,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
   const consumedPreferredProfileIdRef = useRef<string | null>(null);
   const consumedPreferredTargetRef = useRef<RemoteTarget | null>(null);
   const pendingCompletionIntentRef = useRef<RemoteConnectionCompletionIntent>({});
+  // Device management and an onConnectionReady owner never open the folder from this flow, so no folder step.
+  const resolveConnectingWorkspacePath = (path?: string) =>
+    completion !== "device-management" && !onConnectionReady && path?.trim()
+      ? path.trim()
+      : undefined;
   const [selectingDirectory, setSelectingDirectory] = useState(false);
   const selectingDirectoryRef = useRef(false);
   const { connectionLogs, resetConnectionLogs } = useRemoteConnectionLogs(connectingRequestId);
@@ -526,6 +531,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setRecognizedSourceServerId(undefined);
       setActiveProfileName(undefined);
       pendingCompletionIntentRef.current = {};
+      setConnectingWorkspacePath(undefined);
       updateConnectingRequestId(null);
       if (!options?.keepOpen) applyOpenState(false);
     },
@@ -672,6 +678,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       preferredDirectoryPath,
       options,
     };
+    setConnectingWorkspacePath(resolveConnectingWorkspacePath(preferredDirectoryPath));
 
     updatePendingRemoteTarget(nextTarget);
     setLoading(true);
@@ -1299,6 +1306,11 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       setServerToken(target.token ?? "");
     }
     setCurrentStep("connecting");
+    setConnectingWorkspacePath(
+      resolveConnectingWorkspacePath(
+        pendingCompletionIntentRef.current.preferredDirectoryPath ?? preferredDirectoryPath,
+      ),
+    );
     setErrorCode(initialFailure.code);
     setRawError(initialFailure.message);
     setError(
@@ -1337,6 +1349,7 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
     setUpgradeProfileId(null);
     // 凭据缺失时也保留目录意图，不能等真正拨号才记录。
     pendingCompletionIntentRef.current = { preferredDirectoryPath, options: selectOptions };
+    setConnectingWorkspacePath(resolveConnectingWorkspacePath(preferredDirectoryPath));
     setDirectoryPath("");
     setActiveProfileName(profile.displayName);
     setRecognizedSourceServerId(profile.sourceServerId);
@@ -2049,7 +2062,8 @@ export function useRemoteConnectionFlow(options: RemoteConnectionFlowOptions) {
       onUpgrade: () => {
         void handleUpgradeRequiredServer();
       },
-      connectionReady: Boolean(connectedSessionId) && !error,
+      // The folder step is still pending after the connection, so the step is not complete yet.
+      connectionReady: Boolean(connectedSessionId) && !error && !connectingWorkspacePath,
       onContinueToDirectory: () => setCurrentStep("directory"),
       target: pendingRemoteTarget,
       recognizedDeviceName: recognizedDeviceName,

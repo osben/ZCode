@@ -192,7 +192,10 @@ Bundle paths below are relative to the extracted `asar/out` directory:
     `settings.plugins.store.back` ("Back"), with a leading back icon.
   - Manage view header: an icon-only ghost button `data-testid="plugin-store-manage-back"`,
     `aria-label` `project.back`, then the `manageInstalled` heading. The
-    `plugin-store-browse-all` button is gone.
+    `plugin-store-browse-all` button is gone. The pending manual-review suites under
+    `packages/desktop/test/e2e/plugins/manual-review/pending` (`plugin-management-ui-market`,
+    `plugin-management-recoverable-failures`, `plugin-management-discovery-presentation`) use
+    `plugin-store-manage-back`; none references `plugin-store-browse-all`.
 
 ### Rules
 
@@ -260,5 +263,3 @@ When the upstream 3.16.3 source lands:
   `project.service-unavailable` guard beyond the existing `projectService` check: these change
   renderer control flow and are not needed for `reuseExistingRoot`.
 - The captcha features, remote error and phase keys listed above: separate features.
-- The `plugin-store-browse-all` test ids used by `packages/desktop/test/e2e/plugins/manual-review/pending`
-  suites are not updated here (pending manual-review suites are not run in CI).
