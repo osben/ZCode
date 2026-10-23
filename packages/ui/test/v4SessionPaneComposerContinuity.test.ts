@@ -7,7 +7,7 @@ import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useComposerWorktreePipelineStore } from "@/store/composerWorktreePipelineStore.js";
 import { pendingCommandRegistry, type PendingCommandEntry } from "@/v4/pendingCommandRegistry.js";
-import { SessionPane } from "@/v4/SessionPane.js";
+import { SessionPane, type SessionPaneProps } from "@/v4/SessionPane.js";
 import { ConversationWorktreeSetupSteps } from "@/v4/ConversationWorktreeSetupSteps.js";
 import { useModelSelectionServiceView } from "@/hooks/useModelSelectionView.js";
 import {
@@ -687,7 +687,7 @@ function installMinimalDom() {
 function renderPane(
   root: Root,
   sessionId: string | null,
-  extraProps?: { onSessionCreated?: (sessionId: string) => void },
+  props: Partial<SessionPaneProps> = {},
 ): void {
   act(() => {
     root.render(
@@ -698,9 +698,7 @@ function renderPane(
           paneId: "workspace-main",
           sessionId,
           workspacePath: "/workspace",
-          ...(extraProps?.onSessionCreated
-            ? { onSessionCreated: extraProps.onSessionCreated }
-            : {}),
+          ...props,
         }),
       ),
     );
@@ -712,6 +710,7 @@ beforeEach(() => {
   projectDirectoryMock.current = null;
   conversationMock.layer.queryCommands.mockReset();
   conversationMock.layer.queryCommands.mockImplementation(async () => ({ results: [] }));
+  servicesMock.projectService.resolveSessionDirectories.mockClear();
   sessionCreateCapture.report.mockClear();
   recoveryCapture.entries = [];
   recoveryCapture.onResend = null;
@@ -765,6 +764,35 @@ afterEach(async () => {
 });
 
 describe("SessionPane composer continuity", () => {
+  it.each([
+    ["selection_side_chat", true, "parent"],
+    ["interactive", false, "session-1"],
+    ["fork", false, "session-1"],
+  ] as const)("%s 发送按自身语义解析 Recent 归属", async (_kind, selectionSideChat, ownerId) => {
+    const root = createRoot(installMinimalDom());
+    mountedRoots.push(root);
+    projectionState.current = {
+      ...projectionState.current,
+      snapshot: { ...makeDraftSnapshot(), sessionId: "session-1" },
+    };
+    servicesMock.projectService.resolveSessionDirectories.mockImplementationOnce(async (task) => {
+      if (selectionSideChat && task.taskId === "session-1")
+        throw new Error("project.remote-project-required");
+      return { ...task, projectId: null, additionalDirectories: [] };
+    });
+    renderPane(root, "session-1", { selectionSideChat, rootSessionId: "parent" });
+    await act(async () => {
+      await scrollFocus.composerProps?.onSendText("follow up");
+    });
+    expect(servicesMock.projectService.resolveSessionDirectories).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: ownerId }),
+      expect.any(String),
+    );
+    expect(conversationMock.sendCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "sendText", sessionId: "session-1" }),
+    );
+  });
+
   it.each(["group", "project", "session"] as const)(
     "%s first send reports only after accepted; opening and follow-up sends do not report",
     async (source) => {

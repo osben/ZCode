@@ -51,6 +51,23 @@ export const TID_LOGOUT_BUTTON = "logout-button";
 /** Terminal visibility toggle button. */
 export const TID_TERMINAL_TOGGLE = "terminal-toggle";
 export const TID_SIDE_PANE_TOGGLE = "side-pane-toggle";
+/** Side Pane full view: enter/exit button, conversation tab, conversation host, and floating-window parts. */
+export const TID_SIDE_PANE_FULL_VIEW_TOGGLE = "side-pane-full-view-toggle";
+export const TID_SIDE_PANE_FULL_VIEW_CONVERSATION_TAB = "side-pane-full-view-conversation-tab";
+export const TID_SIDE_PANE_FULL_VIEW_HOST = "side-pane-full-view-host";
+export const TID_SIDE_PANE_FULL_VIEW_HEADER = "side-pane-full-view-floating-header";
+export const TID_SIDE_PANE_FULL_VIEW_DRAWER = "side-pane-full-view-floating-drawer";
+export const TID_SIDE_PANE_FULL_VIEW_EXPAND = "side-pane-full-view-floating-expand";
+export const TID_SIDE_PANE_FULL_VIEW_RUNNING = "side-pane-full-view-floating-running";
+export const TID_SIDE_PANE_FULL_VIEW_MINIMIZE = "side-pane-full-view-floating-minimize";
+export const TID_SIDE_PANE_FULL_VIEW_HANDLE = "side-pane-full-view-floating-handle";
+export const TID_SIDE_PANE_FULL_VIEW_BUBBLE = "side-pane-full-view-floating-bubble";
+export const TID_SIDE_PANE_FULL_VIEW_ANSWER_BUBBLE = "side-pane-full-view-answer-bubble";
+export const TID_SIDE_PANE_FULL_VIEW_ANSWER_BUBBLE_CLOSE =
+  "side-pane-full-view-answer-bubble-close";
+export const TID_SIDE_PANE_FULL_VIEW_MENU_OPEN_CONVERSATION =
+  "side-pane-full-view-menu-open-conversation";
+export const TID_SIDE_PANE_FULL_VIEW_MENU_MINIMIZE = "side-pane-full-view-menu-minimize";
 /** Terminal panel close button. */
 export const TID_TERMINAL_CLOSE_BUTTON = "terminal-close-button";
 /** Browser visibility toggle button. */
@@ -768,8 +785,6 @@ export const TID_V4_SPLIT_CLOSE = "v4-split-close";
 export const TID_V4_SPLIT_DIVIDER = "v4-split-divider";
 /** Workspace badge in a v4 pane header (shows ownership for panes across workspaces). */
 export const TID_V4_PANE_WORKSPACE_BADGE = "v4-pane-workspace-badge";
-/** "Open in split view" in a sidebar session context menu (Desktop shell only, cleanup). */
-export const TID_V4_TASK_OPEN_IN_SPLIT = "v4-task-open-in-split";
 /** View model trajectory in a task context menu. */
 export const TID_TASK_VIEW_MODEL_TRAJECTORY = "task-view-model-trajectory";
 /** Refresh button in the model trajectory pane. */

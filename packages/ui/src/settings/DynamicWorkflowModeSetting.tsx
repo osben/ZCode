@@ -1,8 +1,8 @@
 import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import {
   DYNAMIC_WORKFLOW_MODES,
-  isDynamicWorkflowOffered,
   normalizeDynamicWorkflowMode,
+  readDynamicWorkflowOfferedMode,
   TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_ITEM,
   TID_SETTINGS_DYNAMIC_WORKFLOW_MODE_TRIGGER,
   type AppSettings,
@@ -36,17 +36,18 @@ const MODE_ICONS: Record<DynamicWorkflowMode, ComponentType<SVGProps<SVGSVGEleme
 };
 
 /**
- * What the settings row should display (docs/dynamic-workflow/launch.md "The user's choice"). Returns null
- * while the snapshot is loading, on read failure, or when the server does not offer the feature: the row
- * is not rendered and the staged rollout stays invisible to the user. Both the value and the "default"
- * come from the Host-computed result; the renderer does not apply the user's choice itself.
+ * What the settings row should display (docs/dynamic-workflow/launch.md "The user's choice"). Once the snapshot is ready,
+ * the row always appears: the server only decides the default, and when disabled the "default" falls on "off" while the user can still turn it on.
+ * Returns null only while the snapshot is loading, on read failure, or for an older Host that does not understand the user's choice (no offeredMode).
+ * Both the value and the "default" come from the Host-computed result; the renderer does not apply the user's choice itself.
  */
 export function resolveDynamicWorkflowModeSettingView(
   snapshot: DynamicWorkflowAvailabilitySnapshot,
 ): { value: DynamicWorkflowMode; offeredMode: DynamicWorkflowMode } | null {
   const config = snapshot.config;
-  if (snapshot.status !== "ready" || !config || !isDynamicWorkflowOffered(config)) return null;
-  return { value: config.mode, offeredMode: config.offeredMode };
+  if (snapshot.status !== "ready" || !config) return null;
+  const offeredMode = readDynamicWorkflowOfferedMode(config);
+  return offeredMode ? { value: config.mode, offeredMode } : null;
 }
 
 /** Selecting the server-provided mode equals deleting the choice (empty-string sentinel, normalized to deletion by the service layer); installs keep following server flips. */

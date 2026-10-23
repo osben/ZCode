@@ -80,6 +80,7 @@ export function ChatPromptEditor({
   shellClassName,
   avoidIosInputFocusZoom = false,
   compactPlaceholder = false,
+  layout = "stacked",
   onChange,
   onSubmit,
   onModifiedSubmit,
@@ -144,6 +145,12 @@ export function ChatPromptEditor({
   shellClassName?: string;
   avoidIosInputFocusZoom?: boolean;
   compactPlaceholder?: boolean;
+  /**
+   * stacked: input area above, toolbar below; inline: [+] input area [controls][send] in one row, with icon-only controls
+   * (side pane full-view floating composer, docs/ui/side-pane-full-view.md). Both layouts share one DOM tree,
+   * so the editor is not remounted when switching.
+   */
+  layout?: "stacked" | "inline";
   /** `programmatic` is true for the editor's own clears and restores, false for typing. */
   onChange?: (value: string, meta: { programmatic: boolean }) => void;
   // 适配：返回 false 表示业务层拒绝/延迟本次提交，Lexical 不自行 reset（草稿保留）。
@@ -165,7 +172,8 @@ export function ChatPromptEditor({
   quickPrompts?: readonly QuickPromptSlashItem[];
 }) {
   const { intl } = useZCodeIntl();
-  const toolbarRef = useComposerToolbarFit();
+  const isInline = layout === "inline";
+  const toolbarRef = useComposerToolbarFit({ iconOnly: isInline });
   const internalInputApiRef = useRef<LexicalChatInputHandle | null>(null);
   const resolvedInputApiRef = inputApiRef ?? internalInputApiRef;
   const [internalTriggerPanelContainer, setInternalTriggerPanelContainer] =
@@ -348,36 +356,56 @@ export function ChatPromptEditor({
       : undefined;
 
   const editorNode = (
-    <LexicalChatInput
-      voicePreview={voicePreview}
-      placeholder={placeholder}
-      disabled={disabled}
-      submitDisabled={submitDisabled}
-      onSubmitBlocked={onSubmitBlocked}
-      allowSubmitWhenEmpty={allowSubmitWhenEmpty}
-      enterSubmits={enterSubmits}
-      onSubmit={handleEditorSubmit}
-      onModifiedSubmit={onModifiedSubmit}
-      onChange={handleTextChange}
-      onFocus={onFocus}
-      triggerPanelContainer={resolvedTriggerPanelContainer}
-      workspacePath={workspacePath}
-      workspaceIdentity={workspaceIdentity}
-      taskId={taskId}
-      skillCatalogSessionId={skillCatalogSessionId}
-      inputTestId={inputTestId}
-      editorApiRef={resolvedInputApiRef}
-      promptHistory={promptHistory}
-      avoidIosInputFocusZoom={avoidIosInputFocusZoom}
-      compactPlaceholder={compactPlaceholder}
-      onWhiteboardMentionSelected={onWhiteboardMentionSelected}
-      onPaste={onPaste}
-      excludedSlashCommandNames={excludedSlashCommandNames}
-      appSlashCommands={appSlashCommands}
-      enableMentionPanel={enableMentionPanel}
-      quickPrompts={quickPrompts}
-    />
+    // With a single line, the input area takes at least half the width; vertical padding aligns it with the h-7 controls. In the two-line layout, contents leaves the original layout unchanged.
+    <div className={isInline ? "min-w-1/2 flex-1 py-1 [&_[contenteditable]]:min-h-5" : "contents"}>
+      <LexicalChatInput
+        voicePreview={voicePreview}
+        placeholder={placeholder}
+        disabled={disabled}
+        submitDisabled={submitDisabled}
+        onSubmitBlocked={onSubmitBlocked}
+        allowSubmitWhenEmpty={allowSubmitWhenEmpty}
+        enterSubmits={enterSubmits}
+        onSubmit={handleEditorSubmit}
+        onModifiedSubmit={onModifiedSubmit}
+        onChange={handleTextChange}
+        onFocus={onFocus}
+        triggerPanelContainer={resolvedTriggerPanelContainer}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        taskId={taskId}
+        skillCatalogSessionId={skillCatalogSessionId}
+        inputTestId={inputTestId}
+        editorApiRef={resolvedInputApiRef}
+        promptHistory={promptHistory}
+        avoidIosInputFocusZoom={avoidIosInputFocusZoom}
+        compactPlaceholder={compactPlaceholder}
+        onWhiteboardMentionSelected={onWhiteboardMentionSelected}
+        onPaste={onPaste}
+        excludedSlashCommandNames={excludedSlashCommandNames}
+        appSlashCommands={appSlashCommands}
+        enableMentionPanel={enableMentionPanel}
+        quickPrompts={quickPrompts}
+      />
+    </div>
   );
+  const actionMenuNode = hasActionMenu ? (
+    <span data-composer-action-menu className="flex shrink-0 items-center">
+      <ChatPromptActionMenu
+        actionMenuTitle={actionMenuTitle}
+        excludedSlashCommandNames={excludedSlashCommandNames}
+        attachmentAction={attachmentAction}
+        disabled={disabled}
+        disabledReason={disabledReason}
+        inputApiRef={resolvedInputApiRef}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        sessionId={taskId}
+        container={resolvedTriggerPanelContainer}
+        showPlugins={enableMentionPanel !== false}
+      />
+    </span>
+  ) : null;
 
   return (
     <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className={cn("relative", className)}>
@@ -388,11 +416,13 @@ export function ChatPromptEditor({
         />
       )}
       <div
+        data-composer-layout={layout}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={cn(
           "relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-input-border bg-input p-3 transition-colors hover:border-input-border-hover focus-within:!border-input-border-focused focus-within:bg-input-focused",
+          isInline && "flex-row flex-wrap items-end gap-2 p-2",
           (isWorkspaceFileDropActive || isExternalFileDropActive) &&
             "border-brand bg-input-focused ring-1 ring-brand/30",
           shellClassName,
@@ -407,33 +437,27 @@ export function ChatPromptEditor({
           </div>
         ) : null}
 
-        {topContent}
+        {topContent ? (
+          // 单行布局下附件等内容单独占输入行上方一整行。
+          <div className={isInline ? "basis-full" : "contents"}>{topContent}</div>
+        ) : null}
+        {/* 单行布局把「+」放到输入区左侧；只有菜单按钮换位置重新挂载，编辑器位置不变。 */}
+        {isInline ? actionMenuNode : null}
         {inputLeadingContent ? (
-          <div className="flex min-w-0 items-start gap-2">
+          <div className={cn("flex min-w-0 items-start gap-2", isInline && "flex-1")}>
             <div className="shrink-0">{inputLeadingContent}</div>
             <div className="min-w-0 flex-1">{editorNode}</div>
           </div>
         ) : (
           editorNode
         )}
-        <div ref={toolbarRef} className="group/toolbar flex items-end gap-3">
+        <div
+          ref={toolbarRef}
+          className={cn("group/toolbar flex items-end gap-3", isInline && "shrink-0 gap-1.5")}
+        >
           <div className="flex min-w-0 flex-1 items-center" data-composer-leading-actions>
             <div className="flex shrink-0 items-center gap-1" data-composer-leading-content>
-              {hasActionMenu ? (
-                <ChatPromptActionMenu
-                  actionMenuTitle={actionMenuTitle}
-                  excludedSlashCommandNames={excludedSlashCommandNames}
-                  attachmentAction={attachmentAction}
-                  disabled={disabled}
-                  disabledReason={disabledReason}
-                  inputApiRef={resolvedInputApiRef}
-                  workspacePath={workspacePath}
-                  workspaceIdentity={workspaceIdentity}
-                  sessionId={taskId}
-                  container={resolvedTriggerPanelContainer}
-                  showPlugins={enableMentionPanel !== false}
-                />
-              ) : null}
+              {isInline ? null : actionMenuNode}
               {/* Bugfix：权限/模式选择曾作为 leadingActions 先于动作菜单渲染，导致常驻顺序与产品规范相反。 */}
               {leadingActions}
               {onModeSwitchContainerChange ? (

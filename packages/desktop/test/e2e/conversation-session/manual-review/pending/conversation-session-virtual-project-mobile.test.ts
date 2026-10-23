@@ -831,24 +831,21 @@ describe("虚拟项目手机 shared-host 导航", () => {
       await page.getByRole("menuitem", { name: /^(Pin task)$/ }).click();
       await page.getByTestId(`task-files-${createdTaskId}`).waitFor();
       await page.getByTestId(`task-files-${createdTaskId}`).click();
-      await page
-        .locator('[data-project-sidebar-panel="files"][aria-hidden="false"]')
-        .getByText("E2E_VP13_FILES.txt", { exact: true })
-        .waitFor({ timeout: 30_000 });
+      // Files moved to the right-side Files tab; the old sidebar selector would still time out after the file is already shown.
+      const filesTab = page.locator(
+        '[data-side-pane-tab-id^="file-manager:"][data-state="active"]',
+      );
+      await filesTab.waitFor();
+      await page.getByText("E2E_VP13_FILES.txt", { exact: true }).waitFor({ timeout: 30_000 });
       const filesDraft = await readDraft();
       expect(filesDraft.path).toBe(cwd);
       expect(filesDraft.activeTaskId).toBe(projectTaskState.activeTaskId);
       await page.screenshot({
         path: join(process.env.ZCODE_E2E_ARTIFACT_DIR!, "VP13-file-only-mobile.png"),
       });
-      await page
-        .locator('[data-project-sidebar-panel="files"][aria-hidden="false"]')
-        .getByRole("button", { name: /Back to tasks/ })
-        .click();
-      await page.waitForFunction(
-        () =>
-          document.querySelector('[data-project-sidebar-panel="files"]')?.childElementCount === 0,
-      );
+      await filesTab.getByRole("button").click();
+      await filesTab.waitFor({ state: "detached" });
+      await page.getByRole("button", { name: /Back to task home/ }).click();
       enterStage("reopen task");
       await page.getByTestId("sidebar-view-menu").tap();
       await page.getByTestId("sidebar-view-timeline").tap();

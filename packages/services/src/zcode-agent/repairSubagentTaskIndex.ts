@@ -1,4 +1,4 @@
-import { resolveWorkspaceKey, ZCODE_AGENT_PROVIDER } from "@zcode/shared";
+import { isAuxiliarySessionKind, resolveWorkspaceKey, ZCODE_AGENT_PROVIDER } from "@zcode/shared";
 import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import type { IZCodeAgentService, ZCodeAgentWorkspaceTarget } from "#src/zcode-agent/zcodeAgent.js";
 
@@ -30,7 +30,7 @@ export async function repairSubagentTaskIndex(params: {
     for (const session of sessions) {
       if (!isCurrent()) return;
       if (
-        session.sessionKind !== "subagent_child" ||
+        !isAuxiliarySessionKind(session.sessionKind) ||
         !batch.includes(session.sessionId) ||
         resolveWorkspaceKey(session.workspace) !== resolveWorkspaceKey(target)
       )

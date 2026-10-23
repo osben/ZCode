@@ -25,6 +25,15 @@ type ZCodeProtocolMessageHandler = (
 ) => Promise<ZCodeProtocolOutgoingMessage | undefined>;
 
 const PROTOCOL_EOF_DRAIN_MS = 100;
+// Plugin read requests are handled as soon as they arrive instead of queuing behind install/update. The describe branch that
+// writes the manifest holds its own storage lock; list/overview are synchronous handlers that do not yield the event loop
+// while running, and seed writes to disk only when content changes, so reads cannot interleave with an install's
+// read-modify-write across awaits.
+const PLUGIN_READ_IMMEDIATE_METHODS = new Set<string>([
+  zcodeProtocolMethods.pluginsDescribe,
+  zcodeProtocolMethods.pluginsList,
+  zcodeProtocolMethods.pluginsOverview,
+]);
 // MCP App requests are isolated by instance credentials and callId; if they waited for completion
 // alongside ordinary commands, uiCallTool would block its own cancel/close and deadlock the real stdio link.
 const MCP_APP_CONCURRENT_METHODS = new Set<string>([
@@ -213,6 +222,19 @@ export class ZCodeProtocolNdjsonConnection {
       // If the response waits for "the last queued request to start," later ordinary requests move
       // the wait point behind the current long request, creating a deadlock: the current request
       // waits for the response, while the response waits for a later request.
+      void this.handleMessage(message).catch((error: unknown) => {
+        this.fail(error instanceof Error ? error : new Error(String(error)));
+      });
+      return;
+    }
+    if (
+      "id" in message &&
+      "method" in message &&
+      PLUGIN_READ_IMMEDIATE_METHODS.has(message.method)
+    ) {
+      // Bugfix: plugin details and the list used to queue behind the serial queue, so while install A was downloading, opening details stuck in the component loading state,
+      // and a newly created right-side tab (the new store's first list/overview load) stuck on the skeleton. Read requests do not depend on the results of preceding requests,
+      // so they do not wait for lastQueuedMessageStarted either: otherwise, when B is queued behind A, it would still wait until A completes.
       void this.handleMessage(message).catch((error: unknown) => {
         this.fail(error instanceof Error ? error : new Error(String(error)));
       });

@@ -1,3 +1,4 @@
+import { isAuxiliarySessionKind } from "@zcode/shared";
 import { createBotTopicAdmission } from "#src/zcode-agent/botTopicAdmission.js";
 import {
   readBotGroupRuntimeSnapshot,
@@ -1153,7 +1154,7 @@ export function createZCodeTaskServiceAdapter(
         return null;
       }
       return {
-        olderThanDays: settings.taskAutoArchiveOlderThanDays ?? 7,
+        olderThanDays: settings.taskAutoArchiveOlderThanDays ?? 30,
       };
     } catch (error) {
       logger.warn(undefined, "读取 task 自动归档设置失败，跳过本轮自动归档", error);
@@ -1544,9 +1545,9 @@ export function createZCodeTaskServiceAdapter(
     snapshot: ZCodeSessionStateSnapshot,
   ): Promise<ZCodeTaskMeta> {
     const meta = snapshotToMeta(snapshot);
-    // Explicit recovery from an old contaminated tab must not write a read-only child back into the
-    // main task index.
-    if (snapshot.session.sessionKind === "subagent_child") return meta;
+    // Explicit recovery from an old contaminated tab, and any auxiliary session (subagent/workflow child, selection side chat),
+    // must not write a read-only child back into the main task index.
+    if (isAuxiliarySessionKind(snapshot.session.sessionKind)) return meta;
     return syncTaskIndexMeta(meta);
   }
 

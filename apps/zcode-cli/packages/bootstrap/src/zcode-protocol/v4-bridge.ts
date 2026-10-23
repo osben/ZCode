@@ -23,6 +23,7 @@ import { readBackgroundBashOutputFromOwner } from "./background-work-owner.js";
 import {
   incognitoProfilesEqual,
   isConversationRealUserTurnStarter,
+  isReadonlyAgentSessionKind,
   parseRemoteWorkspaceIdentity,
   type ZCodeSessionContextUsage,
   type ZCodeWorkspaceRef,
@@ -2518,7 +2519,7 @@ export function createConversationV4Gateway(
         const taskType =
           context.sessions.get(envelope.sessionId)?.taskType ??
           (await context.deps.sessionStore?.getSession(envelope.sessionId as SessionId))?.taskType;
-        if (taskType === "subagent_child") {
+        if (isReadonlyAgentSessionKind(taskType)) {
           throw Object.assign(new Error("Subagent sessions are read-only"), {
             reasonCode: "guard.subagentReadOnly",
           });

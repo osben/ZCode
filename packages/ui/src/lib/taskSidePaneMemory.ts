@@ -1,4 +1,5 @@
 import type { GitChangeSourceId } from "@zcode/shared";
+import type { SidePaneFullViewState } from "@/side-pane-full-view/contract.js";
 import {
   normalizeWorkspaceSidePaneState,
   type WorkspaceSidePaneState,
@@ -9,6 +10,8 @@ export interface TaskSidePaneMemoryState {
   isSidePaneCollapsed: boolean;
   /** Conversation-level expand/collapse preference; tabs themselves are still reused per workspace. */
   sidePaneCollapsedByOwner: Record<string, boolean>;
+  /** Conversation-level full-view state (docs/ui/side-pane-full-view.md); absent means the normal view. */
+  sidePaneFullViewByOwner: Record<string, SidePaneFullViewState>;
   /** Records consumed automatic tool-call opens; retained when message rows unmount. */
   pluginUiAutoOpenKeys: ReadonlySet<string>;
   activeGitSourceId: GitChangeSourceId;
@@ -21,6 +24,7 @@ const DEFAULT_TASK_SIDE_PANE_MEMORY_STATE: TaskSidePaneMemoryState = {
   sidePaneState: null,
   isSidePaneCollapsed: true,
   sidePaneCollapsedByOwner: {},
+  sidePaneFullViewByOwner: {},
   pluginUiAutoOpenKeys: new Set(),
   activeGitSourceId: "unstaged",
   browserUrls: {},
@@ -89,6 +93,7 @@ export function readTaskSidePaneMemoryState(key: string | null): TaskSidePaneMem
       ...DEFAULT_TASK_SIDE_PANE_MEMORY_STATE.sidePaneCollapsedByOwner,
       ...state.sidePaneCollapsedByOwner,
     },
+    sidePaneFullViewByOwner: { ...state.sidePaneFullViewByOwner },
   };
   return touchTaskSidePaneMemoryEntry(key, normalizedState);
 }
@@ -113,6 +118,9 @@ export function saveTaskSidePaneMemoryState(
       ...taskSidePaneMemory.get(key)?.sidePaneCollapsedByOwner,
       ...patch.sidePaneCollapsedByOwner,
     },
+    // 完整视图记录由专用写入口整体替换，普通 patch 只保留已有记录，避免旧快照覆盖新状态。
+    sidePaneFullViewByOwner:
+      patch.sidePaneFullViewByOwner ?? taskSidePaneMemory.get(key)?.sidePaneFullViewByOwner ?? {},
   };
   nextState.sidePaneState = normalizeWorkspaceSidePaneState(nextState.sidePaneState);
   touchTaskSidePaneMemoryEntry(key, nextState);
@@ -142,6 +150,35 @@ export function saveTaskSidePaneCollapsedPreference(
       [ownerKey]: isSidePaneCollapsed,
     },
   });
+}
+
+/** 渲染期读取：不触碰 LRU 顺序，保证 render 无副作用。 */
+export function peekTaskSidePaneFullView(
+  key: string | null,
+  ownerTaskId: string | null | undefined,
+): SidePaneFullViewState | null {
+  if (!key) return null;
+  return (
+    taskSidePaneMemory.get(key)?.sidePaneFullViewByOwner[
+      ownerTaskId ?? DRAFT_SIDE_PANE_OWNER_KEY
+    ] ?? null
+  );
+}
+
+export function saveTaskSidePaneFullView(
+  key: string | null,
+  ownerTaskId: string | null | undefined,
+  value: SidePaneFullViewState | null,
+): void {
+  if (!key) return;
+  const ownerKey = ownerTaskId ?? DRAFT_SIDE_PANE_OWNER_KEY;
+  const next = { ...taskSidePaneMemory.get(key)?.sidePaneFullViewByOwner };
+  if (value) {
+    next[ownerKey] = value;
+  } else {
+    delete next[ownerKey];
+  }
+  saveTaskSidePaneMemoryState(key, { sidePaneFullViewByOwner: next });
 }
 
 export function clearTaskSidePaneMemoryStateForTest(): void {

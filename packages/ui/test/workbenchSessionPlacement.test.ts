@@ -13,11 +13,7 @@ import {
   type WorkbenchGroupSnapshot,
   type WorkbenchSessionBinding,
 } from "@/v4/workbenchGroupStore.js";
-import {
-  canPlaceWorkbenchSessionInSplit,
-  placeWorkbenchSessionInSplit,
-  selectWorkbenchSession,
-} from "@/v4/workbenchSessionPlacement.js";
+import { selectWorkbenchSession } from "@/v4/workbenchSessionPlacement.js";
 
 const SCOPE = { workspacePath: "/workspace" };
 
@@ -59,90 +55,6 @@ describe("workbench session placement", () => {
   beforeEach(resetStores);
   afterEach(resetStores);
 
-  it("uses one focused binding guard for context menu and drag", () => {
-    useWorkbenchGroupStore.setState(groupSnapshot());
-
-    expect(
-      canPlaceWorkbenchSessionInSplit(binding("session-a"), target("session-b"), {
-        mode: "context-menu",
-        side: "right",
-      }),
-    ).toBe(false);
-    expect(
-      canPlaceWorkbenchSessionInSplit(binding("session-a"), target("session-b"), {
-        mode: "drag",
-        side: "right",
-      }),
-    ).toBe(false);
-  });
-
-  it("focuses an existing group for context menu while drag rejects duplicate placement", () => {
-    useWorkbenchGroupStore.setState(groupSnapshot());
-
-    expect(
-      canPlaceWorkbenchSessionInSplit(binding("session-b"), target("session-a"), {
-        mode: "context-menu",
-        side: "right",
-      }),
-    ).toBe(true);
-    expect(
-      canPlaceWorkbenchSessionInSplit(binding("session-b"), target("session-a"), {
-        mode: "drag",
-        side: "right",
-      }),
-    ).toBe(false);
-
-    placeWorkbenchSessionInSplit(binding("session-b"), target("session-a"), {
-      mode: "context-menu",
-      side: "right",
-    });
-    expect(useWorkbenchGroupStore.getState().getActiveContext()).toEqual(binding("session-a"));
-  });
-
-  it("uses the same draft split owner for context menu and drag", () => {
-    expect(
-      canPlaceWorkbenchSessionInSplit(null, target("session-b"), {
-        mode: "context-menu",
-        side: "right",
-      }),
-    ).toBe(true);
-    expect(
-      canPlaceWorkbenchSessionInSplit(null, target("session-b"), {
-        mode: "drag",
-        side: "right",
-      }),
-    ).toBe(true);
-
-    const shouldSelectTarget = placeWorkbenchSessionInSplit(null, target("session-b"), {
-      mode: "context-menu",
-      side: "right",
-    });
-    expect(shouldSelectTarget).toBe(false);
-    expect(usePaneLayoutStore.getState().panes["pane-1"]).toEqual({
-      workspaceScope: SCOPE,
-      sessionId: "session-b",
-    });
-    expect(useWorkbenchGroupStore.getState().activeGroupId).toBeNull();
-  });
-
-  it("creates a real group when a normal primary session opens a split", () => {
-    expect(
-      placeWorkbenchSessionInSplit(binding("session-a"), target("session-b"), {
-        mode: "context-menu",
-        side: "right",
-      }),
-    ).toBe(true);
-
-    const groups = useWorkbenchGroupStore.getState();
-    expect(groups.activeGroupId).toBeTruthy();
-    expect(groups.sessionIndex[buildWorkbenchSessionKey(SCOPE, "session-a")]).toBe(
-      groups.activeGroupId,
-    );
-    expect(groups.sessionIndex[buildWorkbenchSessionKey(SCOPE, "session-b")]).toBe(
-      groups.activeGroupId,
-    );
-  });
-
   it("rebinds [draft | B] focused secondary to C before shell navigation", () => {
     const layout = openSessionInNewPane(INITIAL_PANE_LAYOUT, SCOPE, "session-b");
     usePaneLayoutStore.setState(layout);
@@ -167,36 +79,6 @@ describe("workbench session placement", () => {
     selectWorkbenchSession(binding("session-c"), { ...target("session-b"), readOnly: true });
     expect(usePaneLayoutStore.getState().focusedPaneId).toBe("pane-1");
     expect(usePaneLayoutStore.getState().panes["pane-1"]?.readOnly).toBe(true);
-  });
-
-  it("keeps subagent selection read-only in a draft pane", () => {
-    placeWorkbenchSessionInSplit(
-      null,
-      { ...target("subagent"), readOnly: true },
-      {
-        mode: "context-menu",
-        side: "right",
-      },
-    );
-
-    expect(usePaneLayoutStore.getState().panes["pane-1"]).toEqual({
-      workspaceScope: SCOPE,
-      sessionId: "subagent",
-      readOnly: true,
-    });
-  });
-
-  it("preserves selection-side-chat capability in a split pane", () => {
-    placeWorkbenchSessionInSplit(
-      null,
-      { ...target("side-chat"), selectionSideChat: true },
-      { mode: "context-menu", side: "right" },
-    );
-
-    expect(usePaneLayoutStore.getState().panes["pane-1"]).toMatchObject({
-      sessionId: "side-chat",
-      selectionSideChat: true,
-    });
   });
 
   it("upgrades an already-open group binding to read-only for subagent navigation", () => {

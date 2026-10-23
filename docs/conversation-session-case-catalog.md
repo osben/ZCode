@@ -1158,6 +1158,11 @@ replayable 不创建、恢复、持久化或消费 group。
 
 ## SAT. Subagent Session Side Tabs / 子会话右侧标签
 
+2026-10-19 类型回归：SAT30 覆盖 subagent_child、workflow_child、selection_side_chat 与历史 nested_workflow_child；
+项目父链继承与只读准入分开。SAT28 只拒绝三类 agent child，辅助对话继续发送；SAT29 清理四类隐藏索引，保留 fork 与未确认身份。
+远端 UI 候选已通过 macOS 客户端 → SSH → Linux arm64 Server 发布包回归（`r3-server-workflow-hotfix-2f5c48dd`）：工作流 actor 正文可读且只读、显式 GLM-5.3 路由、辅助对话首发与续发、主列表不泄漏；模型回复使用回放。辅助对话 Recent 查所属主会话项目，命令仍发给 child。
+Server 启动时须设置开发态 `ZCODE_DYNAMIC_WORKFLOW_MODE=alwaysOn`，WDIO 为该独立文件设置相同前置；常驻 Server 不继承客户端环境。保持 manual-review pending，不据此声明手机 UI 或 Linux x64 实测；桌面 continuous / 手机 replayable 的身份和准入由协议回归覆盖。
+
 SAT30（远端项目归属回归）：远端子会话运行中及完成后可查看，重订阅复用 Agent 持久化父链解析主任务项目；
 child 不进入主任务索引。desktop-continuous 与 web-remote-replayable 共用服务入口；普通无项目远端任务、
 缺失/成环/跨 workspace 父链仍拒绝。服务回归在 `zcodeAgentService.v4.test.ts`；
@@ -3889,6 +3894,8 @@ VP22（accepted/pending，2026-09-11）：编辑器零 root 空态与有 root �
 
 VP28（accepted/pending，2026-09-11）：首次升级前在隔离 HOME 写入旧 settings 项目顺序与无 migration ledger 的历史 tasks。真实启动升级后，侧栏项目集合必须与 lastWorkspaceSession 中保留的本地项目相同且顺序一致，历史额外目录不创建项目；历史任务保留原 cwd 与归档/删除状态，未归档未删除任务进入任务区；刷新保留。新增 pending conversation-session-project-upgrade-order.test.ts，不请求模型；重复目录、conversation 排除、Group 不转项目、settings 缺失/空列表及升级后项目和手动排序不被 settings 覆盖由 storage 单测补充。
 
+VP28 混排补充（2026-10-19，accepted/pending）：3.15 首次升级夹具中 remote 位于第 2 项，真实迁移、离线首屏和刷新均保留本地/remote 混排位置。仅本轮首次转换的入口记录初始位置；已有项目迁移 ledger 不回填。连接解析、Host 身份绑定后原位替换旧排序键，手动拖动和重启不被初始位置覆盖，由存储及 React 回归补充；共享手机目录复用同一字段，不新增连接行为。无模型请求。
+
 VP28 旧后端补充（2026-10-15，accepted/pending）：升级 fixture 含旧后端置顶行及当前 CLI 的新导入会话；升级/刷新后只显示后者，允许取消置顶与归档，旧行在库内原样保留。project-storage 单测覆盖首次/已有 ledger、普通/置顶/归档、本地/远端 owner。VP13 手机 shared-host 增补已迁移旧行隐藏和正常会话操作。
 
 VP29（accepted/pending，2026-09-11）：项目折叠的真实高度/透明度动画、快速反向切换及展开不导航；任务行（项目/置顶/未归类）hover 无文件树按钮，项目行三个入口保留。更新 project-behavior 的 VP24/VP25 与新增动效断言，替代 VP25 旧任务文件树要求；保留归档/置顶与明暗/390px 回归。最终 `desktop-e2e-20260911063454327-p73583-868e8aab51e45e6a` 4/4 通过，逐帧轨迹验证稳定收起 188→0px、展开 0→188px 与两向渐变透明度，快速反向后仍为展开；项目/置顶行无文件树按钮且项目入口可用。该运行报告动效 ID 原为 VP28，整理时更名 VP29 以避免与升级顺序用例重号。相关单测 28 文件 / 101 项通过。保持 pending，不计真实手机链路覆盖。
@@ -3903,7 +3910,7 @@ ARM01–ARM05（accepted/pending，2026-09-11）：设置/数据与统计新增�
 
 ARM06（accepted/pending，2026-09-15）：归档分组名称右侧显示折叠箭头，默认全部收起、不挂载聊天内容；鼠标/键盘独立展开与收起，收起立即卸载行；数量、搜索和折叠组批量动作仍按全部匹配项处理。复用同一 spec 和 pending E2E，覆盖中英文/明暗/窄屏的收起与展开布局；本页状态不持久化。
 
-ARM07（accepted/pending，2026-09-15）：自动归档开关和保留时长从常规页移到归档管理顶部；开关/时长真实落盘并在刷新后恢复，关闭时长禁用但保留值。复用 archive-management pending E2E 与 ARM05 中英文/明暗/390px 截图；AMT02 同步改用归档管理入口。设置 owner 和 Host 扫描不变，手机不新增设置入口。
+ARM07（accepted/pending，2026-09-15）：自动归档开关和保留时长从常规页移到归档管理顶部；开关/时长真实落盘并在刷新后恢复。2026-10-19 起默认关闭/30 天，关闭时也可切换并保存时长，开启后使用已保存的值；已有天数与已归档会话保持原样。复用 archive-management pending E2E 与 ARM05 中英文/明暗/390px 截图；AMT02 同步改用归档管理入口。设置 owner 和 Host 扫描不变，手机不新增设置入口。
 
 ARM08（accepted/pending，2026-09-15）：归档管理公共页头位于自动归档设置之前；页内固定文案统一会话/session，用户内容保持原样；覆盖搜索、数量、空态与删除确认，复用 ARM05 中英文/明暗/1200/390px 布局验证。
 
@@ -4550,3 +4557,7 @@ Ordinary/incognito/worktree paths are representatives; combine incognito + workt
 for the frozen-profile/cwd boundary. Theme, language and platform are shared UI
 equivalences, not a full Cartesian expansion. Real remote transport and restart
 must be reported separately from mounted component tests.
+
+## R3A-BLD-07: User-service probe is skipped (2026-10-19)
+
+Reuses the accepted / pending scenario in `conversation-session-r3-daemon-detached.test.ts`: a standalone Linux SSH target connects for the first time in detached mode, and disconnecting the desktop does not kill the daemon. After terminating the daemon, set `SYSTEMD_OFFLINE=1` in that target's non-interactive shell, confirm that the real `systemctl --user show --property=Version` exits 0 but returns no property response, then reconnect through the desktop device. It must reach ready with `serviceRegistered=false`, both Supervisor and Core must move to a new generation, and the original task must be resumable; finally restore the shell configuration. Replacing systemctl, or setting ZCode's skip-registration switch directly, must not stand in for this scenario.

@@ -30,12 +30,14 @@ describe("side pane toggle empty state", () => {
     expect(source).toContain('id: "review"');
     expect(source).toContain('id: "selection-side-conversation"');
     expect(source).toContain('id: "sidePane.openTab"');
-    expect(source).toContain("hasRenderedSidePane && sidePaneState ? (");
+    expect(source).toContain("hasRenderedSidePane && (sidePaneState || fullView) ? (");
     expect(source).toContain('tab.type === "new-tab" ? (');
     expect(source).toContain("openTabLauncher");
     expect(source).toContain("side-pane-open-tab-shell @container/launcher");
     expect(source).toContain("@min-[36rem]/launcher:grid-cols-2");
-    expect(source).toContain('!hasVisibleTabs && !screenshotSurfaceRequest && "hidden"');
+    expect(source).toContain(
+      '!hasVisibleTabs && !screenshotSurfaceRequest && !fullView && "hidden"',
+    );
     expect(source).toContain("<SidePaneLauncherRow");
     expect(source).not.toContain(
       '<div className="flex h-12 shrink-0 items-center justify-end border-b border-border px-3">',

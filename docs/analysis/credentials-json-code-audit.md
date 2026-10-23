@@ -56,7 +56,7 @@ Server remote
 
 Browser own OAuth
     `-- BrowserOAuthCredentialRepo --------------------------> localStorage
-        pending nonce --------------------------------------> sessionStorage
+        pending login (nonce/provider/callback URL) ---------> localStorage
 ```
 
 - `ICredentialService` exposes `load/save/delete`; UI uses `useCredentials()` and other hooks. The generic storage layer does not understand OAuth providers, accounts, or workspaces, only accepting key/value. [Interface](../../packages/services/src/credential/credential.ts#L11), [hook](../../packages/ui/src/hooks/useCredentials.ts#L8).
@@ -309,7 +309,7 @@ References: [oauth.ts:164](../../packages/shared/src/oauth.ts#L164); [oauthServi
 
 References: [oauthService.ts:913](../../packages/services/src/oauth/oauthService.ts#L913); [providerAdapter.ts:31](../../packages/services/src/oauth/providers/providerAdapter.ts#L31); [zaiBusinessTokenResolver.ts:4](../../packages/services/src/providers/zaiBusinessTokenResolver.ts#L4), `:44`, `:99`.
 
-**401.** The audit baseline's Node API client identifies expiration based on whether the outgoing `Authorization` precisely equals the **current local** `Bearer zcodejwttoken` at that time. The 2026-09-08 minimal fix在此基础上 adds current active platform userinfo/customerInfo's business `access_token` (raw token or Bearer), and limits the current environment's origin/path; payment, API key management, and other business paths are not included in the new judgment. After matching, the Host still deduplicates and executes `oauthService.logout()`, clears derived providers, and broadcasts `auth:zcode-jwt-invalid`. This mechanism does not refresh tokens, does not handle HTTP 200 business errors, and does not automatically override WebView or Agent transport. Detailed scope is in [401 auto-logout spec](../oauth/jwt-401-auto-logout.md); implementation in [oauthUnauthorizedRequest.ts](../../packages/services/src/oauth/oauthUnauthorizedRequest.ts).
+**401.** The audit baseline's Node API client identifies expiration based on whether the outgoing `Authorization` precisely equals the **current local** `Bearer zcodejwttoken` at that time. The 2026-09-08 minimal fixbuilds on this and adds current active platform userinfo/customerInfo's business `access_token` (raw token or Bearer), and limits the current environment's origin/path; payment, API key management, and other business paths are not included in the new judgment. After matching, the Host still deduplicates and executes `oauthService.logout()`, clears derived providers, and broadcasts `auth:zcode-jwt-invalid`. This mechanism does not refresh tokens, does not handle HTTP 200 business errors, and does not automatically override WebView or Agent transport. Detailed scope is in [401 auto-logout spec](../oauth/jwt-401-auto-logout.md); implementation in [oauthUnauthorizedRequest.ts](../../packages/services/src/oauth/oauthUnauthorizedRequest.ts).
 
 `restoreSession` is another active network verification path: calls provider userinfo; when error text matches 401/403/unauthorized/forbidden, logs out; other errors continue to throw.
 
@@ -340,7 +340,7 @@ References: [oauthService.ts:367](../../packages/services/src/oauth/oauthService
 
 ### Web Browser Same-Named Fields Independent Boundary
 
-Web `BrowserOAuthCredentialRepo` places same-named ZAI fields in **localStorage**, not disk credentials.json; `oauth_pending_nonce` goes to sessionStorage. The current browser implementation only supports ZAI active provider. Browser token exchange directly saves backend `data.zai.access_token`, without going through Desktop `ZaiBusinessTokenResolver`'s business conversion, so same-named `oauth:zai:access_token` has different source semantics in the two storage systems and cannot be directly mixed.
+Web `BrowserOAuthCredentialRepo` places same-named ZAI fields in **localStorage**, not disk credentials.json; the in-progress login record `oauth_pending_logins` also goes to localStorage, keyed by nonce. The current browser implementation only supports ZAI active provider. Browser token exchange directly saves backend `data.zai.access_token`, without going through Desktop `ZaiBusinessTokenResolver`'s business conversion, so same-named `oauth:zai:access_token` has different source semantics in the two storage systems and cannot be directly mixed.
 
 Browser cached restore requires active is zai, JWT/access/user_info all present; any incomplete state, user JSON illegality triggers clearAll; explicit JWT expiry returns reauthentication-required. Browser logout only clears its own localStorage; it is not Desktop credentialService's OAuth logout. Remote control attachment/Host authority and credential forwarding limits are explained in the remote control chapter.
 

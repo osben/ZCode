@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { BashFileOutput } from "./bash-file-output.js";
 import { readCapturedCwd } from "./cwd-capture.js";
 import { defaultCwdDialect } from "./execution-command.js";
@@ -10,10 +12,12 @@ import {
   abortSignalReason,
   isBashMergedOutputRequest,
   isExpectedChildStdinClosureError,
+  resolveDefaultOutputRootDir,
 } from "./execution-utils.js";
 import type {
   ExitState,
   InternalExecutionRunOptions,
+  PreparedBashOutput,
   StopReason,
 } from "./execution-adapter-types.js";
 import type {
@@ -23,7 +27,107 @@ import type {
   ExecutionShellDialect,
 } from "@zcode/contracts";
 
+const BASH_TEMP_DIRECTORY_PREFIX = "zcode-bash-";
+const BASH_TEMP_UNAVAILABLE_CODES = new Set([
+  "EACCES",
+  "EPERM",
+  "EROFS",
+  "ENOENT",
+  "ENOTDIR",
+  "ENOSPC",
+  "EDQUOT",
+]);
+
 export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
+  private bashTempRoot?: Promise<string>;
+
+  protected usesBashTempOutput(request: ExecutionRequest): boolean {
+    return this.options.bashOutputTempDir !== undefined && isBashMergedOutputRequest(request);
+  }
+
+  private getBashTempRoot(): Promise<string> {
+    if (!this.bashTempRoot) {
+      const pending = mkdtemp(join(this.options.bashOutputTempDir!, BASH_TEMP_DIRECTORY_PREFIX));
+      this.bashTempRoot = pending;
+      void pending.catch(() => {
+        if (this.bashTempRoot === pending) this.bashTempRoot = undefined;
+      });
+    }
+    return this.bashTempRoot;
+  }
+
+  protected async prepareBashOutput(
+    request: ExecutionRequest,
+    options: ExecutionRunOptions,
+  ): Promise<{ prepared: PreparedBashOutput } | { result: ExecutionResult }> {
+    const startedAt = new Date();
+    let stopped = false;
+    const executionId = this.registerActiveExecution(() => {
+      stopped = true;
+    });
+    const releasePreparation = () => this.completeActiveExecution(executionId);
+    const isStopped = () => stopped || this.closePromise !== undefined || options.signal?.aborted;
+    let file: BashFileOutput | undefined;
+    const cancelled = async () => {
+      await file?.discard();
+      releasePreparation();
+      return {
+        result: this.createStoppedResult(
+          startedAt,
+          "cancelled",
+          "Execution cancelled before spawn",
+        ),
+      };
+    };
+    try {
+      if (isStopped()) return await cancelled();
+      const legacyOutputEncoding = resolveLegacyExecutionOutputEncoding({
+        platform: this.platform,
+        processEnv: this.processEnv,
+      });
+      const knownPath = this.outputPathForRequest(request, "stdout")!;
+      // The request may be reused; the cache stores the actual path, and the fallback root must always come from the original configuration.
+      const fallbackPath = join(
+        this.options.outputRootDir ?? resolveDefaultOutputRootDir(this.options.processEnv),
+        basename(dirname(knownPath)),
+        basename(knownPath),
+      );
+      try {
+        const root = await this.getBashTempRoot();
+        if (isStopped()) return await cancelled();
+        const path = join(root, basename(dirname(fallbackPath)), basename(fallbackPath));
+        file = new BashFileOutput(path, this.platform, legacyOutputEncoding);
+        await file.prepare();
+      } catch (error) {
+        if (isStopped()) return await cancelled();
+        if (!BASH_TEMP_UNAVAILABLE_CODES.has((error as NodeJS.ErrnoException).code ?? ""))
+          throw error;
+        await file?.discard();
+        // Searching the data directory would read back output that is still being written; isolate to tmp first and, on failure, fully reuse the old file implementation.
+        file = new BashFileOutput(fallbackPath, this.platform, legacyOutputEncoding);
+        await file.prepare();
+      }
+      if (isStopped()) return await cancelled();
+      // The path must be determined before the background record and file entry are published; it must not be downgraded or reopened after spawn.
+      this.outputPathsByRequest.set(request, {
+        outputPath: file.path,
+        stdoutPersistedOutputPath: file.path,
+      });
+      return { prepared: { file, legacyOutputEncoding, releasePreparation } };
+    } catch (error) {
+      await file?.discard();
+      releasePreparation();
+      if (isStopped()) return await cancelled();
+      return {
+        result: this.createStoppedResult(
+          startedAt,
+          "spawn_error",
+          this.toFailure("spawn_error", error).message,
+        ),
+      };
+    }
+  }
+
   async run(
     request: ExecutionRequest,
     options: ExecutionRunOptions = {},
@@ -33,6 +137,15 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
     let requestStop: (reason: StopReason) => void = () => undefined;
     let outputLimitExceeded = false;
     const internalOptions = options as InternalExecutionRunOptions;
+    let preparedOutput = internalOptions.preparedBashOutput;
+    if (!preparedOutput && this.usesBashTempOutput(request)) {
+      const preparation = await this.prepareBashOutput(request, options);
+      if ("result" in preparation) {
+        this.emitResult(options, preparation.result);
+        return preparation.result;
+      }
+      preparedOutput = preparation.prepared;
+    }
     const aggregatePersistedBudget = internalOptions.sharePersistedOutputLimitAcrossStreams
       ? {
           bytes: 0,
@@ -41,10 +154,14 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
       : undefined;
 
     if (this.closePromise) {
+      await preparedOutput?.file.discard();
+      preparedOutput?.releasePreparation();
       return this.createStoppedResult(startedAt, "cancelled", "Execution adapter is shutting down");
     }
 
     if (options.signal?.aborted) {
+      await preparedOutput?.file.discard();
+      preparedOutput?.releasePreparation();
       return this.createStoppedResult(startedAt, "cancelled", "Execution cancelled before spawn");
     }
 
@@ -65,19 +182,23 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
             }
           }
         : undefined;
-    const legacyOutputEncoding = resolveLegacyExecutionOutputEncoding({
-      platform: this.platform,
-      processEnv: this.processEnv,
-    });
+    const legacyOutputEncoding = preparedOutput
+      ? preparedOutput.legacyOutputEncoding
+      : resolveLegacyExecutionOutputEncoding({
+          platform: this.platform,
+          processEnv: this.processEnv,
+        });
     // Parsing task records separately would run Windows chcp synchronously again; reuse the encoding value from execution.
     internalOptions.onOutputEncodingResolved?.(legacyOutputEncoding);
-    const file = useBashMergedOutput
-      ? new BashFileOutput(
-          this.outputPathForRequest(request, "stdout")!,
-          this.platform,
-          legacyOutputEncoding,
-        )
-      : undefined;
+    const file =
+      preparedOutput?.file ??
+      (useBashMergedOutput
+        ? new BashFileOutput(
+            this.outputPathForRequest(request, "stdout")!,
+            this.platform,
+            legacyOutputEncoding,
+          )
+        : undefined);
     const stdout = file
       ? undefined
       : this.createOutputCollector(
@@ -169,6 +290,7 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
     };
 
     const executionId = this.registerActiveExecution(requestStop);
+    preparedOutput?.releasePreparation();
     const abortHandler = () => {
       const reason = abortSignalReason(options.signal);
       requestStop(reason === "output_limit" ? "output_limit" : "cancelled");
@@ -186,11 +308,12 @@ export class NodeExecutionAdapterRun extends NodeExecutionAdapterProcess {
 
       const stoppedAfterCommandPreparation = stoppedBeforeSpawn();
       if (stoppedAfterCommandPreparation) {
+        if (preparedOutput) await file?.discard();
         return stoppedAfterCommandPreparation;
       }
 
       if (file) {
-        await file.prepare();
+        if (!preparedOutput) await file.prepare();
         const stoppedAfterOutputPreparation = stoppedBeforeSpawn();
         if (stoppedAfterOutputPreparation) {
           await file.discard();

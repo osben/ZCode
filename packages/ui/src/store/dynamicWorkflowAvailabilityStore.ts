@@ -24,9 +24,8 @@ export interface DynamicWorkflowAvailabilitySnapshot {
   /** Always false while loading: when availability is unknown, do not expose it; let the entry point appear slightly later rather than flash and disappear. */
   readonly enabled: boolean;
   /**
-   * Null until ready or if fetching fails; `source` is only for observability, distinguishing
-   * “disabled by server” from “locally overridden.” `offeredMode` is the mode offered by the server
-   * (whether the settings row appears and which option is labeled “Default”); `mode` is the effective mode.
+   * 未就绪或取数失败时为 null；`source` 只用于观测，区分「服务端关」与「本地覆盖」。
+   * `offeredMode` 是服务端提供的默认模式（哪个选项标「默认」），`mode` 是生效模式。
    */
   readonly config: DynamicWorkflowClientConfig | null;
 }
