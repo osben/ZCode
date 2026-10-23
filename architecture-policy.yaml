@@ -1057,6 +1057,11 @@ exceptions:
       - packages/ui/src/settings/model-provider-section/AcpAgentMark.tsx
       - packages/ui/src/settings/model-provider-section/acpAgentLogo.ts
     reason: The ACP agent brand mark (specs/acp-agent-runtime.md "Agent registry") sits next to its neighbours in the unmanaged packages/ui settings model-provider-section tree (AcpAgentCard, AcpAgentsPanel). Keeping it there avoids a boundary refactor of the settings tree; adopting packages/ui/src/settings needs a separate module boundary refactor.
+  - id: legacy-snapshot-async-read-unmanaged-files
+    rule: unmanaged-new-file
+    paths:
+      - packages/services/src/session/readFirstJsonFile.ts
+    reason: The helper (specs/legacy-snapshot-async-read.md) is shared by the zcode-agent task adapter and the claude-native imported-history repair, both inside the unmanaged services/session tree. A 28-line pure fs helper next to its session neighbours avoids duplicating it or inverting the session to zcode-agent dependency; adopting packages/services/src/session needs a separate module boundary refactor.
   - id: worktree-setup-card-slot-unmanaged-files
     rule: unmanaged-new-file
     paths:

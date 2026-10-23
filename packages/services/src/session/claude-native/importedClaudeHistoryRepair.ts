@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import type {
   ZCodeAgentMcpServer,
   ZCodeSessionImportHistory,
@@ -13,6 +12,7 @@ import { buildImportedClaudeTaskId } from "#src/session/claude-native/buildImpor
 import { claudeNativeSessionImportRepo } from "#src/session/claude-native/claudeNativeSessionImportRepo.js";
 import { parseClaudeNativeSessionFile } from "#src/session/claude-native/claudeNativeSessionImportParser.js";
 import { safeParseLegacyTaskSessionFile } from "#src/session/legacyTaskSessionFile.js";
+import { readFirstJsonFile } from "#src/session/readFirstJsonFile.js";
 
 export interface ImportedClaudeHistoryRepairTarget {
   workspacePath: string;
@@ -88,24 +88,22 @@ export function shouldRepairImportedClaudeSnapshot(
   return hasLegacyFixedMessageIds;
 }
 
-function readLegacyImportedClaudeHistory(
+async function readLegacyImportedClaudeHistory(
   target: ImportedClaudeHistoryRepairTarget,
-): ImportedClaudeHistoryRepairResult | null {
-  const snapshotPath = [
+): Promise<ImportedClaudeHistoryRepairResult | null> {
+  const rawSnapshot = await readFirstJsonFile([
     getLegacyTaskSessionSnapshotPath(target.workspacePath, target.taskId, target.workspaceIdentity),
     getLegacyDeletedTaskSessionSnapshotPath(
       target.workspacePath,
       target.taskId,
       target.workspaceIdentity,
     ),
-  ].find((path) => existsSync(path));
-  if (!snapshotPath) {
+  ]);
+  if (rawSnapshot === null) {
     return null;
   }
 
-  const parsed = safeParseLegacyTaskSessionFile(
-    JSON.parse(readFileSync(snapshotPath, "utf-8")) as unknown,
-  );
+  const parsed = safeParseLegacyTaskSessionFile(rawSnapshot);
   if (!parsed.success || parsed.data.meta.migrationSource !== "claudeCode") {
     return null;
   }
@@ -157,7 +155,7 @@ async function readNativeImportedClaudeHistory(
 export async function resolveImportedClaudeHistoryForRepair(
   target: ImportedClaudeHistoryRepairTarget,
 ): Promise<ImportedClaudeHistoryRepairResult | null> {
-  const legacyHistory = readLegacyImportedClaudeHistory(target);
+  const legacyHistory = await readLegacyImportedClaudeHistory(target);
   if (legacyHistory && countAssistantMessages(legacyHistory.messages) > 0) {
     return legacyHistory;
   }

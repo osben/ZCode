@@ -8,7 +8,7 @@ import { uploadBotGroupAttachments } from "./groupAttachmentUpload.js";
 /* oxlint-disable eslint(max-lines) -- During migration, one facade must centrally maintain protocol adaptation from the old task projection to ZCode sessions. */
 import { createHash, randomUUID } from "node:crypto";
 import { createZCodeAgentConnectionScope } from "#src/zcode-agent/zcodeAgentConnectionScope.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -144,6 +144,7 @@ import type {
   SessionMessageDeliveryResult,
   SessionMessageSendRequested,
 } from "#src/session/sessionMailbox.js";
+import { readFirstJsonFile } from "#src/session/readFirstJsonFile.js";
 import { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { createTaskEraseOperations } from "./zcodeTaskErase.js";
 import type {
@@ -1324,13 +1325,12 @@ export function createZCodeTaskServiceAdapter(
         params.workspaceIdentity,
       ),
     ];
-    const snapshotPath = paths.find((path) => existsSync(path));
-    if (!snapshotPath) {
-      return null;
-    }
 
     try {
-      const rawSnapshot = JSON.parse(readFileSync(snapshotPath, "utf-8")) as unknown;
+      const rawSnapshot = await readFirstJsonFile(paths);
+      if (rawSnapshot === null) {
+        return null;
+      }
       const parsed = safeParseLegacyTaskSessionFile(rawSnapshot);
       if (!parsed.success) {
         logger.warn(
