@@ -13,7 +13,7 @@ import {
 import { createToolRegistry } from "../src/tool/registry.js";
 import { bashToolEntry } from "../src/tool/handlers/bash.js";
 import { readToolEntry } from "../src/tool/handlers/read.js";
-import { isToolCallEligibleDuringStream } from "../src/runtime/methods/streaming-tool-eligibility.js";
+import { isToolCallEligibleDuringStream } from "../src/runtime/methods/streaming-tool-coordinator.js";
 import type { AgentRuntimeInternal } from "../src/runtime/internal.js";
 import { createTestAgentRuntime } from "./test-agent-runtime.js";
 import { createTestSessionEventStore } from "./test-event-store.js";

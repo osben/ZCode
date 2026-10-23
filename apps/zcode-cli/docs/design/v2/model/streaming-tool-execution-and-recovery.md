@@ -269,8 +269,8 @@ Scheduling rules:
 ### Early Execution Eligibility
 
 The streaming tool coordinator (`runtime/methods/streaming-tool-coordinator.ts`)
-owns the early-execution decision; the predicate lives in
-`streaming-tool-eligibility.ts`. A call is decided once, when its normalized
+owns the early-execution decision and the eligibility predicate
+(`isToolCallEligibleDuringStream`). A call is decided once, when its normalized
 `tool_call` (complete id, name, and parsed input) reaches `accept()`.
 `tool_input_delta` bytes never trigger execution. The adapter cannot retry past
 a closed `tool_call`, because `stream-retry-boundary.ts` buffers only prelude
