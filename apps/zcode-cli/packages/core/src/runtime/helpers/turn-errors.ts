@@ -23,6 +23,39 @@ interface TurnAbortScope {
 }
 
 const EXTERNAL_TURN_FAULT_MARKER = "zcode.externalTurnFault";
+const PRESERVE_QUEUE_AUTO_DRAIN_CANCEL_MARKER = "zcode.preserveQueueAutoDrainOnCancel";
+
+/**
+ * Abort reason for a caller-controller cancel. preserveQueueAutoDrainOnCancel=true (Steer) attaches the no-hold
+ * intent as a non-enumerable marker, so it stays out of JSON and cause logs. A Stop never attaches it.
+ */
+export function createTurnCancelReason(
+  message: string,
+  options: { preserveQueueAutoDrainOnCancel: boolean },
+): Error {
+  const error = new Error(message);
+  if (options.preserveQueueAutoDrainOnCancel) {
+    Object.defineProperty(error, "zcodeCancelIntent", {
+      value: PRESERVE_QUEUE_AUTO_DRAIN_CANCEL_MARKER,
+      enumerable: false,
+    });
+  }
+  return error;
+}
+
+/** Walks the cause chain like findExternalTurnFault; true when the abort reason carries the steer intent. */
+export function hasPreserveQueueAutoDrainCancelIntent(reason: unknown): boolean {
+  let current = reason;
+  const seen = new WeakSet<object>();
+  for (let depth = 0; depth <= 6; depth += 1) {
+    if (!current || typeof current !== "object" || seen.has(current)) return false;
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (record.zcodeCancelIntent === PRESERVE_QUEUE_AUTO_DRAIN_CANCEL_MARKER) return true;
+    current = record.cause;
+  }
+  return false;
+}
 
 interface ExternalTurnFaultError extends Error {
   code: string;

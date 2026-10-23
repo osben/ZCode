@@ -18,13 +18,13 @@ running 时，普通 `sendText` 与 `sendGoalCommand` 都由 CLI admission 决�
 
 ## 操作
 
-| 用户动作 | V4 command         | 权威结果                         |
-| -------- | ------------------ | -------------------------------- |
-| 删除     | `deleteQueueItem`  | projection 移除 queue item       |
-| 撤回编辑 | `deleteQueueItem`  | projection 移除后，仅发起端恢复 composer 草稿 |
-| 立即发送 | `sendQueuedNow`    | CLI 按 stop barrier/优先规则消费 |
-| 排序     | `reorderQueueItem` | projection 返回新顺序            |
-| 自动续跑 | `setAutoDrain`     | snapshot 更新 auto-drain 状态    |
+| 用户动作 | V4 command         | 权威结果                                                                                                    |
+| -------- | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| 删除     | `deleteQueueItem`  | projection 移除 queue item                                                                                  |
+| 撤回编辑 | `deleteQueueItem`  | projection 移除后，仅发起端恢复 composer 草稿                                                               |
+| 立即发送 | `sendQueuedNow`    | CLI 抢占当前 turn（`preserveQueueAutoDrainOnCancel`，不写 queue hold），被发送项先执行，剩余 queue 按序续跑 |
+| 排序     | `reorderQueueItem` | projection 返回新顺序                                                                                       |
+| 自动续跑 | `setAutoDrain`     | snapshot 更新 auto-drain 状态                                                                               |
 
 UI 可对点击做短暂 pending/disabled 反馈，但不能只改本地数组。刷新、切 pane、桌面与手机同时在线时，均以 snapshot/delta 为准。
 
@@ -59,6 +59,16 @@ restore request 必须幂等。目标已被消费或被另一端删除时，`del
 或手机端只消费权威 queue removal。底层 `editQueueItem` 继续作为 V4 兼容能力保留，但第一方 UI 不再调用。
 
 `compact` 队列项只显示 `/compact` 命令文本，不在文本前增加维护命令图标。它继续通过“立即执行”按钮和不可编辑行为与普通消息区分。
+
+“立即发送”（Steer）与用户“停止”（Stop）是两种不同的中断语义（ISSUE-039，见 `specs/stop-queue-hold.md`）：
+
+- Stop 是用户主动停止：先写 `autoDrain=false`（held，`pauseReason=stopped`）再 abort，剩余 queue 保持暂停，需显式继续。
+- Steer 只抢占当前 turn 以执行被选中的队列项：不写 hold，`TurnComplete(cancelled)` 携带 `preserveQueueAutoDrainOnCancel`，投影保持 `autoDrain=true`；被发送项执行后，剩余 queue 由自动续跑按 FIFO 继续。
+- Steer 之后的用户 Stop 仍写 hold，与单独 Stop 相同。
+- 用户 Stop 始终 hold：目标已被中断（Steer、goal pause 等）但 turn 尚未收口时到达的 Stop 保留自己的 hold，剩余 queue 保持暂停；UI 显示通用暂停文案（`specs/stop-queue-hold.md` rule 14）。
+- Steer 的保留意图有两个载体：runtime 前台 token 存在时写在执行上；runtime 尚无 token 时写在调用方 controller 的 abort reason 上（ISSUE-039 修复）。用户 Stop 两种情况都不带该意图。
+- 编辑与重试（`editUserQuery` / `retryTurn`）同样会打断运行中的 turn，但不携带保留意图，因此会 hold 队列，与用户 Stop 一致；这是当前行为，文档记录，未改动。
+- 桌面 continuous 链路与 web/mobile remote replayable 链路共用同一 CLI 路径；hold 与续跑都是 projection 事实，断线重连后的快照必须与实时一致。
 
 `guide` 是对 active turn 的引导语义，不作为普通 queue item 提供编辑、删除或立即发送。Stop 只停止当前执行；queue 是否 held/续跑由 CLI projection 明确表达。Goal 暂停、恢复和 queue drain 也由 CLI reducer/handler 统一裁决。
 
