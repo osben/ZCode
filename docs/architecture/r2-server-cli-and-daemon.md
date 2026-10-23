@@ -330,6 +330,12 @@ and is triggered by `pnpm --filter @zcode/server-cli stage --target <os>-<arch>`
   `ZCODE_SERVER_RUNTIME_ROOT`; `runtime/packages` contains the seven packages that need to be seeded by the current official plugin definitions
   plugin(browser-use, document-skills, skill-creator, zcode-guide, android-emulator,
   ios-simulator, restore-legacy-sessions).
+- Bundled skills package invariant: `stageRelease` publishes `runtime/packages/bundled-skills` from a separate `bundledSkillsDir` parameter
+  (the production entry passes `apps/zcode-cli/packages/bundled-skills`), copying only `README.md` and `skills/` and excluding other top-level files.
+  The Agent reads it in place next to `zcode.cjs`, using the same candidate directories as official plugins; the `dynamic-workflows` skill that `/workflow` depends on
+  lives only here. It belongs only to the `agent-runtime` component and participates in that component's content hash and archive; it is not written to the manifest's `plugins`.
+  The official plugin directory neither provides nor overrides the skills package, and publishing does not depend on whether a same-named directory exists in the plugin cache.
+  `stageRelease` validates against the Agent's required-file list and fails closed: staging fails if any file is missing.
 - Official plugin MCP runtime invariant: any file that `plugin.json`'s `mcpServers` references through `${ZCODE_PLUGIN_ROOT}/...` (currently the `dist/mcp/server.js` files of android-emulator, ios-simulator, and browser-use) must be published in the same archive. These dist outputs are not committed; they are built by the MCP runtime manifest in `scripts/build-desktop-agent-cli.mjs` before staging. `stageRelease` treats the `plugin.json` declarations as the source of truth and fails closed: if the manifest is missing or an entry file does not exist, staging fails, so an incomplete plugin with skills but no MCP entry is never produced.
 
 Agent wiring convention: Core in the distribution package is outside the monorepo and has no Electron runtime. Every time Supervisor starts Core,
@@ -430,6 +436,13 @@ has a canonical `--server-root` matching the current root; do not accidentally r
 endpoint, status, release, service descriptor, and uninstall all resolve the same layout from this parameter. Core/Agent
 also receive the corresponding `ZCODE_DATA_BASE_DIR`. A daemon with a custom data root must therefore not create a second
 status, lock, Core, or SQLite under the default root.
+
+The POSIX stable entry point `bin/zcode` reads `current.json.releaseDir` and runs only releases under `<root>/releases/`;
+if the path is out of bounds it prints `Invalid current ZCode Server release` and exits with 1. This boundary must compare the same kind of path as the writer:
+lifecycle commands have already normalized the server root to a canonical (`realpath`) path before writing `current.json`, so the launcher must also
+compute the root from the physical path (`cd -P` + `pwd -P`). The remote host invokes the entry point as `"$HOME/.zcode/server/bin/zcode"`,
+and `$HOME` may pass through a symlink (for example a NAS's `/var/services/homes -> /volume1/homes` or `/home -> /var/home`);
+such an alias must not cause a valid release to be judged out of bounds.
 
 Incremental component assembly first copies from the old release, then deletes old paths declared by changed or removed components, then extracts the new components and
 validates the new manifest. This prevents files from removed plugins/tools and other components from carrying over to the new release.

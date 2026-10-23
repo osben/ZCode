@@ -1,5 +1,13 @@
 # Tool Change Chain Spec
 
+## Bash 临时输出路径隔离
+
+主应用及 workflow 子运行时装配 tmp 父目录 → execution adapter 实际准备具名输出文件 →
+不可用时复用原 storageRoot 文件准备 → 确定唯一输出路径 → 现有前后台执行、进度、结果与文件入口。
+模型 schema 和 App 协议不变，stdout/stderr 仍直接写 fd。覆盖降级、取消/关闭与准备竞争、
+前后台路径一致性、Windows 原生搜索自引用及崩溃后的具名文件保留；不迁移历史输出。
+存储统计仍限现有数据根，完整合同见 `04-bash.md` 和根目录 `docs/tmpdir-storage-paths-spec.md`。
+
 ## Edit 拒绝 notebook 的文案不再指向 NotebookEdit（2026-10-17）
 
 仓库内不存在 NotebookEdit 工具，旧文案让模型调用一个不可用的工具。Edit 对 `.ipynb` 仍以错误码 `5`

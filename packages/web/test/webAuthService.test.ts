@@ -41,27 +41,39 @@ function createProductionWebZaiOAuthConfig() {
   });
 }
 
+const PENDING_LOGINS_KEY = "oauth_pending_logins";
+
+function seedPendingLogin(
+  localStorage: Storage,
+  login: { nonce: string; provider: "zai" | "bigmodel"; redirectUri: string },
+): void {
+  localStorage.setItem(PENDING_LOGINS_KEY, JSON.stringify([login]));
+}
+
 function createService(options?: {
   currentHref?: string;
   currentOrigin?: string;
   allowDevReturnToRedirect?: boolean;
 }) {
   const localStorage = new MemoryStorage();
-  const sessionStorage = new MemoryStorage();
   const assigned: string[] = [];
   const replaced: string[] = [];
+  let nonceCount = 0;
   const config = {
     ...createProductionWebZaiOAuthConfig(),
     allowDevReturnToRedirect: options?.allowDevReturnToRedirect ?? false,
   };
-  const reloadService = () =>
-    new WebAuthService({
+  // Each call simulates a new page instance: a reload of the same tab, or another tab in the same browser.
+  // Each instance has its own sessionStorage and shares only the same-origin localStorage; login must not depend on per-tab storage.
+  const openPage = () => {
+    const storage = { localStorage, sessionStorage: new MemoryStorage() };
+    return new WebAuthService({
       config,
       provider: new ZaiWebOAuthProvider(config, () => 1_000),
-      repo: new BrowserOAuthCredentialRepo({ localStorage, sessionStorage }),
+      repo: new BrowserOAuthCredentialRepo(storage),
       runtime: {
         assign: (url) => assigned.push(url),
-        createNonce: () => "nonce-1",
+        createNonce: () => `nonce-${++nonceCount}`,
         getCurrentHref: () =>
           options?.currentHref ??
           "http://192.168.1.8:5173/remote/v4?app_version=3.13.0&sid=device-1&mid=mid-1&name=Desktop",
@@ -69,15 +81,31 @@ function createService(options?: {
         replace: (url) => replaced.push(url),
       },
     });
+  };
 
   return {
     assigned,
     localStorage,
     replaced,
-    service: reloadService(),
-    sessionStorage,
-    reloadService,
+    service: openPage(),
+    openPage,
   };
+}
+
+function mockTokenExchange(provider: "zai" | "bigmodel") {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({
+      code: 0,
+      data: {
+        token: "jwt",
+        [provider]: { access_token: "access" },
+        user: { user_id: "u_1", name: "Ada" },
+      },
+    }),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("WebAuthService", () => {
@@ -86,7 +114,7 @@ describe("WebAuthService", () => {
     vi.unstubAllGlobals();
   });
 
-  it("the device page account row reads the current platform and display name; falls back to the username when the display name is missing", () => {
+  it("device page account row reads the current platform and display name; falls back to username when display name is missing", () => {
     const { service, localStorage } = createService();
     expect(service.getActiveAccount()).toBeNull();
     localStorage.setItem("oauth:active_provider", "zai");
@@ -108,12 +136,11 @@ describe("WebAuthService", () => {
       VITE_ZAI_OAUTH_ORIGIN: "https://chat.z.ai/",
     });
     const localStorage = new MemoryStorage();
-    const sessionStorage = new MemoryStorage();
     const assigned: string[] = [];
     const service = new WebAuthService({
       config: testConfig,
       provider: new ZaiWebOAuthProvider(testConfig, () => 1_000),
-      repo: new BrowserOAuthCredentialRepo({ localStorage, sessionStorage }),
+      repo: new BrowserOAuthCredentialRepo({ localStorage }),
       runtime: {
         assign: (url) => assigned.push(url),
         createNonce: () => "nonce-1",
@@ -134,7 +161,7 @@ describe("WebAuthService", () => {
   });
 
   it("starts ZAI login with nonce, dev return_to, and original app_return_to", () => {
-    const { assigned, service, sessionStorage } = createService();
+    const { assigned, localStorage, service } = createService();
 
     service.startLogin({
       devReturnTo: "http://192.168.1.8:5173/remote/v4",
@@ -142,7 +169,14 @@ describe("WebAuthService", () => {
 
     const authorizeUrl = new URL(assigned[0]!);
     const state = parseOAuthState(authorizeUrl.searchParams.get("state")!);
-    expect(sessionStorage.getItem("oauth_pending_nonce")).toBe("nonce-1");
+    expect(JSON.parse(localStorage.getItem(PENDING_LOGINS_KEY)!)).toEqual([
+      {
+        nonce: "nonce-1",
+        provider: "zai",
+        redirectUri:
+          "https://zcode.z.ai/remote/v4?app_version=3.13.0&sid=device-1&mid=mid-1&name=Desktop",
+      },
+    ]);
     expect(authorizeUrl.origin + authorizeUrl.pathname).toBe(
       "https://chat.z.ai/api/oauth/authorize",
     );
@@ -179,7 +213,9 @@ describe("WebAuthService", () => {
       })),
     ),
   )(
-    "$provider $path preserves QR parameters through authorization, page reload, token exchange and app return",
+    // Regression: on some mobile browsers the callback page is not the tab that started the login (or the tab was rebuilt after being reclaimed),
+    // and the login record used to live only in the initiating page's sessionStorage, so the callback page could not read it and reported "OAuth CSRF check failed".
+    "$provider $path completes login when the callback opens in another tab of the same browser, preserving QR parameters",
     async ({ provider, path }) => {
       const origin = "https://zcode.z.ai";
       const query = "app_version=3.14.0&sid=device-1&mid=&name=%E6%88%91%E7%9A%84+Mac%2B%26%3F";
@@ -208,8 +244,8 @@ describe("WebAuthService", () => {
         }),
       }));
       vi.stubGlobal("fetch", fetchMock);
-      // Must read the pending address across instances; it must not rely on the in-memory address kept by the login-initiating page.
-      const result = await h.reloadService().handleCallback(callback.toString());
+      // The pending redirect URI must be read across instances, not kept in memory by the page that started the login.
+      const result = await h.openPage().handleCallback(callback.toString());
       expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
         provider,
         code: "code-1",
@@ -218,7 +254,7 @@ describe("WebAuthService", () => {
       });
       expect(result?.appReturnTo).toBe(`${path}?${query}`);
       expect(h.localStorage.getItem("oauth:active_provider")).toBe(provider);
-      expect(h.sessionStorage.getItem("oauth_pending_redirect_uri")).toBeNull();
+      expect(h.localStorage.getItem(PENDING_LOGINS_KEY)).toBeNull();
     },
   );
 
@@ -258,52 +294,58 @@ describe("WebAuthService", () => {
     expect(forwarded.searchParams.get("sid")).toBe("device-1");
     expect(forwarded.searchParams.get("mid")).toBe("mid-1");
     expect(forwarded.searchParams.get("name")).toBe("Desktop");
-    await h.reloadService().handleCallback(forwarded.toString());
+    await h.openPage().handleCallback(forwarded.toString());
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).redirect_uri).toBe(
       `https://zcode.z.ai/remote/v4?${query}`,
     );
   });
 
-  it("does not exchange or consume the pending redirect before nonce validation", async () => {
+  it("rejects an unknown nonce without exchanging token or consuming pending logins", async () => {
     const h = createService();
     h.service.startLogin({ provider: "bigmodel" });
-    const pendingRedirect = h.sessionStorage.getItem("oauth_pending_redirect_uri");
-    expect(pendingRedirect).toContain("app_version=3.13.0");
+    const pendingLogins = h.localStorage.getItem(PENDING_LOGINS_KEY);
+    expect(pendingLogins).toContain("app_version=3.13.0");
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const state = buildOAuthState({ nonce: "wrong-nonce" });
     await expect(
-      h.reloadService().handleCallback(`https://zcode.z.ai/remote/v4?authCode=code&state=${state}`),
+      h.openPage().handleCallback(`https://zcode.z.ai/remote/v4?authCode=code&state=${state}`),
     ).rejects.toThrow(/CSRF/);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(h.sessionStorage.getItem("oauth_pending_redirect_uri")).toBe(pendingRedirect);
+    expect(h.localStorage.getItem(PENDING_LOGINS_KEY)).toBe(pendingLogins);
   });
 
-  it("ignores an abandoned new redirect when an older page starts another login", async () => {
+  it("keeps parallel logins from two tabs independent", async () => {
     const h = createService();
-    h.service.startLogin();
-    // The legacy page only covers nonce/provider and does not know about the newly added pending address key.
-    h.sessionStorage.setItem("oauth_pending_nonce", "legacy-nonce");
-    const state = buildOAuthState({ nonce: "legacy-nonce" });
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        code: 0,
-        data: {
-          token: "jwt",
-          zai: { access_token: "access" },
-          user: { user_id: "u_1", name: "Ada" },
-        },
-      }),
-    }));
-    vi.stubGlobal("fetch", fetchMock);
+    const tabA = h.service;
+    const tabB = h.openPage();
+    tabA.startLogin({ provider: "zai" });
+    tabB.startLogin({ provider: "bigmodel" });
+    const [authorizeA, authorizeB] = h.assigned.map((url) => new URL(url));
+
+    const fetchMock = mockTokenExchange("zai");
     await h
-      .reloadService()
-      .handleCallback(`https://zcode.z.ai/remote/v4?code=code-1&state=${state}`);
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).redirect_uri).toBe(
-      "https://zcode.z.ai/remote/v4",
-    );
-    expect(h.sessionStorage.getItem("oauth_pending_redirect_uri")).toBeNull();
+      .openPage()
+      .handleCallback(
+        `https://zcode.z.ai/remote/v4?code=code-a&state=${authorizeA!.searchParams.get("state")}`,
+      );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      provider: "zai",
+      code: "code-a",
+    });
+
+    const bigmodelFetch = mockTokenExchange("bigmodel");
+    await h
+      .openPage()
+      .handleCallback(
+        `https://zcode.z.ai/remote/v4?authCode=code-b&state=${authorizeB!.searchParams.get("state")}`,
+      );
+    expect(JSON.parse(String(bigmodelFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      provider: "bigmodel",
+      code: "code-b",
+    });
+    expect(h.localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
+    expect(h.localStorage.getItem(PENDING_LOGINS_KEY)).toBeNull();
   });
 
   it("preserves the canonical share page as the whole-Web OAuth return target", () => {
@@ -344,8 +386,12 @@ describe("WebAuthService", () => {
   });
 
   it("exchanges token, persists complete session, and returns sanitized app_return_to", async () => {
-    const { localStorage, service, sessionStorage } = createService();
-    sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
+    const { localStorage, service } = createService();
+    seedPendingLogin(localStorage, {
+      nonce: "nonce-1",
+      provider: "zai",
+      redirectUri: "https://zcode.z.ai/remote/v4",
+    });
     const state = buildOAuthState({
       nonce: "nonce-1",
       app_return_to: "http://192.168.1.8:5173/remote/v4?sid=device-1&ignored=1",
@@ -381,15 +427,19 @@ describe("WebAuthService", () => {
     expect(localStorage.getItem("zcodejwttoken")).toBe("jwt-token");
     expect(localStorage.getItem("oauth:zai:access_token")).toBe("zai-token");
     expect(localStorage.getItem("oauth:active_provider")).toBe("zai");
-    expect(sessionStorage.getItem("oauth_pending_nonce")).toBeNull();
+    expect(localStorage.getItem(PENDING_LOGINS_KEY)).toBeNull();
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0]?.[1]?.body)).redirect_uri).toBe(
       "https://zcode.z.ai/remote/v4",
     );
   });
 
   it("does not persist a half-login state when token response is incomplete", async () => {
-    const { localStorage, service, sessionStorage } = createService();
-    sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
+    const { localStorage, service } = createService();
+    seedPendingLogin(localStorage, {
+      nonce: "nonce-1",
+      provider: "zai",
+      redirectUri: "https://zcode.z.ai/remote/v4",
+    });
     const state = buildOAuthState({ nonce: "nonce-1" });
     vi.stubGlobal(
       "fetch",
@@ -419,17 +469,17 @@ describe("WebAuthService", () => {
 /**
  * BigModel login.
  *
- * Cause: the owner check for private shares uses the provider's own user id (BigModel uses a
- * CustomerNumber numeric string, Z.ai uses a sub UUID), so a private share published by the desktop with BigModel
- * can never match the owner on a share page that only allows z.ai login, and the server hides it by existence, returning 404/3211.
+ * Cause: the private-share owner check uses the provider's own user id (BigModel is a
+ * CustomerNumber numeric string, Z.ai is a sub UUID), so a private share published from the desktop app with BigModel
+ * never matches its owner on a share page that only accepts z.ai login, and the server hides existence by returning 404/3211.
  */
 describe("WebAuthService BigModel provider", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("the authorization URL uses BigModel's parameter names (redirect/appId), not the ZAI set", () => {
-    const { assigned, service, sessionStorage } = createService();
+  it("authorization URL uses BigModel's parameter names (redirect/appId), not the ZAI set", () => {
+    const { assigned, localStorage, service } = createService();
 
     service.startLogin({
       provider: "bigmodel",
@@ -440,18 +490,23 @@ describe("WebAuthService BigModel provider", () => {
     expect(url.pathname).toBe("/login");
     expect(url.searchParams.get("redirect")).toBe("https://zcode.z.ai/cn/share/callback");
     expect(url.searchParams.get("appId")).toBe("zcode");
-    // ZAI-specific parameters must not appear, otherwise the BigModel side ignores redirect and returns to the default address directly
+    // ZAI-only parameters must not appear, otherwise the BigModel side ignores redirect and returns to the default address
     expect(url.searchParams.get("redirect_uri")).toBeNull();
     expect(url.searchParams.get("client_id")).toBeNull();
     expect(url.searchParams.get("response_type")).toBeNull();
-    // The callback page relies on this to know which provider to use to exchange the token
-    expect(sessionStorage.getItem("oauth_pending_provider")).toBe("bigmodel");
+    // the callback page uses it to know which provider to exchange the token with
+    expect(JSON.parse(localStorage.getItem(PENDING_LOGINS_KEY)!)).toMatchObject([
+      { provider: "bigmodel" },
+    ]);
   });
 
-  it("when exchanging the token, carries the provider and reads the value from data.bigmodel.access_token", async () => {
-    const { localStorage, service, sessionStorage } = createService();
-    sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
-    sessionStorage.setItem("oauth_pending_provider", "bigmodel");
+  it("sends the provider when exchanging the token and reads the value from data.bigmodel.access_token", async () => {
+    const { localStorage, service } = createService();
+    seedPendingLogin(localStorage, {
+      nonce: "nonce-1",
+      provider: "bigmodel",
+      redirectUri: "https://zcode.z.ai/cn/share/callback",
+    });
     const state = buildOAuthState({ nonce: "nonce-1" });
     const fetchMock = vi.fn(async () => ({
       ok: true,
@@ -475,37 +530,17 @@ describe("WebAuthService BigModel provider", () => {
     expect(localStorage.getItem("oauth:active_provider")).toBe("bigmodel");
     expect(localStorage.getItem("oauth:bigmodel:access_token")).toBe("bigmodel-token");
     expect(localStorage.getItem("zcodejwttoken")).toBe("jwt-token");
-    // The pending provider is cleared right after use, to avoid polluting the next login
-    expect(sessionStorage.getItem("oauth_pending_provider")).toBeNull();
+    // Login records are cleared as soon as they are used, so they do not pollute the next login
+    expect(localStorage.getItem(PENDING_LOGINS_KEY)).toBeNull();
   });
 
-  it("falls back to zai when the pending provider is missing, keeping old callback links usable", async () => {
-    const { localStorage, service, sessionStorage } = createService();
-    sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
-    const state = buildOAuthState({ nonce: "nonce-1" });
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        code: 0,
-        data: {
-          token: "jwt-token",
-          zai: { access_token: "zai-token" },
-          user: { user_id: "u_1", name: "Ada" },
-        },
-      }),
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await service.handleCallback(`https://zcode.z.ai/cn/share/callback?code=code-1&state=${state}`);
-
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).provider).toBe("zai");
-    expect(localStorage.getItem("oauth:active_provider")).toBe("zai");
-  });
-
-  it("does not leave a half-finished login state when the BigModel response lacks access_token", async () => {
-    const { localStorage, service, sessionStorage } = createService();
-    sessionStorage.setItem("oauth_pending_nonce", "nonce-1");
-    sessionStorage.setItem("oauth_pending_provider", "bigmodel");
+  it("does not persist a half-finished login state when the BigModel response lacks access_token", async () => {
+    const { localStorage, service } = createService();
+    seedPendingLogin(localStorage, {
+      nonce: "nonce-1",
+      provider: "bigmodel",
+      redirectUri: "https://zcode.z.ai/cn/share/callback",
+    });
     const state = buildOAuthState({ nonce: "nonce-1" });
     vi.stubGlobal(
       "fetch",

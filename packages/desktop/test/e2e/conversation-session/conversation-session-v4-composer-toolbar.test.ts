@@ -317,6 +317,31 @@ describe("v4 M5 门禁：composer 工具条与 slash 候选面板", () => {
     const cfg = await getV4ModelConfig();
     expect(cfg.provider).toBe(UPSTREAM_PROVIDER_ID);
 
+    // Keep the merged menu open after choosing a model so settings can be tuned further; choosing the current model again also keeps it open.
+    for (const selected of [false, true]) {
+      await openComposerPicker("model");
+      const option = $(
+        `[data-testid^="chat-model-select-item-"]${selected ? '[data-checked="true"]' : ':not([data-checked="true"])'}:not([data-model-option-locked])`,
+      );
+      await option.waitForClickable({ timeout: 15000 });
+      const value = (await option.getAttribute("data-testid"))!.slice(
+        "chat-model-select-item-".length,
+      );
+      await option.click();
+      await waitForOnlyComposerPickerOpen(
+        "model",
+        selected ? "reselect current model" : "select another model",
+      );
+      await browser.waitUntil(
+        async () =>
+          (await $(`[data-testid="${TID_CHAT_MODEL_SELECT_TRIGGER}"]`).getAttribute(
+            "data-model-current-value",
+          )) === value,
+        { timeout: 15000 },
+      );
+      await closeComposerPicker();
+    }
+
     // Mode selection: build -> plan (observing the Composer's current state only)
     await switchV4Mode("plan");
     let latestMode: string | null = null;

@@ -2,7 +2,6 @@ import {
   TID_TASK_DELETE,
   TID_TASK_VIEW_MODEL_TRAJECTORY,
   TID_TASK_VIEW_MODEL_TRAJECTORY_V2,
-  TID_V4_TASK_OPEN_IN_SPLIT,
 } from "@zcode/shared/test-ids";
 
 interface TaskActionMenuItemProps {
@@ -38,8 +37,6 @@ export function TaskActionMenuContent({
   onStartRenameTask,
   onArchiveTask,
   onMarkTaskAsUnread,
-  onOpenInSplitPane,
-  openInSplitPaneDisabled = false,
   onOpenTaskFeedback,
   onOpenTaskPathInFileManager,
   onCopyWorkspacePath,
@@ -77,10 +74,6 @@ export function TaskActionMenuContent({
   onStartRenameTask: () => void;
   onArchiveTask: () => void;
   onMarkTaskAsUnread: () => void;
-  /** 「在分屏打开」（仅桌面 shell 传入；手机远控不显示该入口）。 */
-  onOpenInSplitPane?: () => void;
-  /** 当前 session 或 pane 数达上限且目标无已有归属时禁用（保留布局与层级）。 */
-  openInSplitPaneDisabled?: boolean;
   onOpenTaskFeedback?: () => void;
   onOpenTaskPathInFileManager: () => void;
   onCopyWorkspacePath: () => void;
@@ -155,15 +148,6 @@ export function TaskActionMenuContent({
       >
         {intl.formatMessage({ id: "taskList.markAsUnread" })}
       </Item>
-      {onOpenInSplitPane ? (
-        <Item
-          data-testid={TID_V4_TASK_OPEN_IN_SPLIT}
-          disabled={taskTargetActionsDisabled || openInSplitPaneDisabled}
-          onSelect={onOpenInSplitPane}
-        >
-          {intl.formatMessage({ id: "taskList.openInSplitPane" })}
-        </Item>
-      ) : null}
       <Separator />
       {!hideMobileUnsupportedActions ? (
         <Item

@@ -387,6 +387,21 @@ describe("SavedWorkflowsSection (global + multi-project page)", () => {
     expect(tabStoreState.openSettingsTab).toHaveBeenCalledTimes(1);
   });
 
+  it("server default is disabled and the user chose always on: the hub and the Workflow settings link both appear", async () => {
+    useDynamicWorkflowAvailabilityStore.setState({
+      status: "ready",
+      enabled: true,
+      config: applyDynamicWorkflowUserMode(
+        createDynamicWorkflowClientConfig("disabled", "default"),
+        "alwaysOn",
+      ),
+    });
+    groupReadiness.global = { loaded: true, empty: true, count: 0 };
+    mount();
+    const button = await screen.findByTestId(TID_WORKFLOWS_OPEN_SETTINGS);
+    expect(button.textContent).toContain("Always on");
+  });
+
   it("a legacy Host snapshot without offeredMode: no Workflow settings link (the settings row it opens does not exist)", async () => {
     useDynamicWorkflowAvailabilityStore.setState({
       status: "ready",

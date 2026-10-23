@@ -62,6 +62,8 @@ export function ShortcutSettingsSection({ isDesktop = false }: { isDesktop?: boo
     return SHORTCUT_COMMANDS.filter((entry) => {
       // Keep these shortcuts registered and included in conflict detection, but do not show them in the user-visible list.
       if (entry.id === "openOnboarding" || entry.id === "toggleInterfaceMode") return false;
+      // 完整视图只在桌面端提供，Web 没有处理器，不展示无效的改键入口。
+      if (entry.id === "toggleSidePaneFullView" && !isDesktop) return false;
       const matchesText =
         !keyword ||
         entry.id.toLowerCase().includes(keyword) ||
@@ -73,7 +75,7 @@ export function ShortcutSettingsSection({ isDesktop = false }: { isDesktop?: boo
         (effective[entry.id] ?? []).some((binding) => isSamePhysicalBinding(binding, keyBinding));
       return matchesText && matchesKey;
     });
-  }, [commandLabel, effective, keySearch.binding, query]);
+  }, [commandLabel, effective, isDesktop, keySearch.binding, query]);
 
   const persistBindings = useCallback(
     async (next: Record<string, string[]>) => {

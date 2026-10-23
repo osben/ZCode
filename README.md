@@ -26,6 +26,7 @@ This is a personal fork of [zai-org/ZCode](https://github.com/zai-org/ZCode). I 
 
 ## Updates
 
+- 2026-10-23: Updated to ZCode v3.16.2.
 - 2026-10-16: Updated to ZCode v3.16.1.
 - 2026-10-13: Ported the upstream v3.15.2 auth fix and the v3.15.3 auto-update improvements.
 - 2026-10-10: Updated to ZCode v3.15.1.

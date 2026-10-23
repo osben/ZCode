@@ -26,6 +26,7 @@ const BROADCAST_FIELDS = new Set<string>([
   "interfaceMode",
   "uiFontFamily",
   "monoFontFamily",
+  "notificationEnabled",
 ]);
 
 type BroadcastField =
@@ -35,7 +36,8 @@ type BroadcastField =
   | "uiFontSizePx"
   | "interfaceMode"
   | "uiFontFamily"
-  | "monoFontFamily";
+  | "monoFontFamily"
+  | "notificationEnabled";
 
 /** Subscribe to state changes and broadcast only the fields that actually need cross-window sync; this is clearer and avoids overload conflicts. */
 export function wireStateBroadcast(
@@ -96,6 +98,8 @@ export function wireStateBroadcast(
         state.setInterfaceMode(normalizeInterfaceMode(msg.payload));
       } else if (field === "uiFontSizePx" && typeof msg.payload === "number") {
         state.setUiFontSizePx(msg.payload);
+      } else if (field === "notificationEnabled" && typeof msg.payload === "boolean") {
+        state.setNotificationEnabled(msg.payload);
       } else if (applyFontPreferencesBroadcast(state, msg, field)) {
         // Handled by the font-preferences slice.
       }

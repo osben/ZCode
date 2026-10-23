@@ -279,3 +279,11 @@ packages/services/src/conversation-share/conversationSharePublicProjection.ts
 
 # ISSUE-042: pre-existing 23 KB upstream file; the empty-untracked fix touches it and a new sibling file is blocked by unmanaged-new-file.
 packages/services/src/git/repo/gitCliHelpers.ts
+
+# upstream 3.16.2 sync (specs/upstream-sync-3.16.2.md): upstream-owned files above the cap.
+# Kept as upstream ships them so the next sync stays a clean three-way merge.
+apps/zcode-cli/packages/bootstrap/src/app/workflow-concurrency-governor.ts
+docs/testing/unit-test-review/ui-tail.jsonl
+packages/ui/src/project-sidebar/TaskGroupedView.tsx
+packages/ui/src/root/useRemoteWorkspaceHistory.ts
+packages/ui/src/side-pane-full-view/ConversationHost.tsx

@@ -3,8 +3,8 @@ import {
   applyDynamicWorkflowUserMode,
   createDynamicWorkflowClientConfig,
   DEFAULT_DYNAMIC_WORKFLOW_MODE,
-  isDynamicWorkflowOffered,
   normalizeDynamicWorkflowMode,
+  readDynamicWorkflowOfferedMode,
   resolveDynamicWorkflowClientConfig,
   ZCODE_DYNAMIC_WORKFLOW_MODE_ENV,
 } from "../src/dynamic-workflow-feature.js";
@@ -105,7 +105,7 @@ describe("normalizeDynamicWorkflowMode / isDynamicWorkflowModeEnabled", () => {
   });
 });
 
-// DWG-18 (launch.md "The user's choice"): the server supplies availability and the default; the user can only pick within the offered range.
+// DWG-18 (launch.md "The user's choice"): the server only supplies the default; the user's explicit choice always takes effect.
 describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
   const offer = (mode: "disabled" | "onDemand" | "alwaysOn") =>
     createDynamicWorkflowClientConfig(mode, "remote");
@@ -127,13 +127,20 @@ describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
     });
   });
 
-  it("提供的是 disabled 时用户选择不生效，也不记 userMode", () => {
+  it("提供的是 disabled 时用户选择照样生效：disabled 只是默认值", () => {
     expect(applyDynamicWorkflowUserMode(offer("disabled"), "alwaysOn")).toEqual({
-      mode: "disabled",
-      enabled: false,
+      mode: "alwaysOn",
+      enabled: true,
       source: "remote",
       offeredMode: "disabled",
+      userMode: "alwaysOn",
     });
+    expect(
+      applyDynamicWorkflowUserMode(
+        createDynamicWorkflowClientConfig("disabled", "default"),
+        "onDemand",
+      ),
+    ).toMatchObject({ mode: "onDemand", enabled: true, source: "default", userMode: "onDemand" });
   });
 
   it.each([[undefined], [null], [""], ["bogus"], [1]])(
@@ -165,25 +172,25 @@ describe("applyDynamicWorkflowUserMode（DWG-18）", () => {
     });
   });
 
-  it("isDynamicWorkflowOffered 只看提供的模式，不看用户选择", () => {
+  it("readDynamicWorkflowOfferedMode 读提供的默认值（disabled 也算），不看用户选择", () => {
     expect(
-      isDynamicWorkflowOffered(applyDynamicWorkflowUserMode(offer("alwaysOn"), "disabled")),
-    ).toBe(true);
-    expect(isDynamicWorkflowOffered(offer("disabled"))).toBe(false);
+      readDynamicWorkflowOfferedMode(applyDynamicWorkflowUserMode(offer("alwaysOn"), "disabled")),
+    ).toBe("alwaysOn");
+    expect(readDynamicWorkflowOfferedMode(offer("disabled"))).toBe("disabled");
   });
 
-  it("isDynamicWorkflowOffered：没有 offeredMode 的快照（旧 Host）或读不懂的值按未提供", () => {
-    // When a new UI (e.g. the mobile remote-control bundle) connects to an old Host, the snapshot only has the effective mode / enabled, no offeredMode;
-    // the old Host does not honor user choice, so the settings row must not be shown.
+  it("readDynamicWorkflowOfferedMode：没有 offeredMode 的快照（旧 Host）或读不懂的值返回 undefined", () => {
+    // A new UI (e.g. the mobile remote-control bundle) connected to an old Host gets a snapshot with only the effective mode / enabled, and no offeredMode;
+    // the old Host does not honor user choices, so the settings row must not be shown.
     const legacy = { mode: "alwaysOn", enabled: true, source: "remote" } as unknown as Parameters<
-      typeof isDynamicWorkflowOffered
+      typeof readDynamicWorkflowOfferedMode
     >[0];
-    expect(isDynamicWorkflowOffered(legacy)).toBe(false);
+    expect(readDynamicWorkflowOfferedMode(legacy)).toBeUndefined();
     expect(
-      isDynamicWorkflowOffered({
+      readDynamicWorkflowOfferedMode({
         ...offer("alwaysOn"),
         offeredMode: "sometimes",
-      } as unknown as Parameters<typeof isDynamicWorkflowOffered>[0]),
-    ).toBe(false);
+      } as unknown as Parameters<typeof readDynamicWorkflowOfferedMode>[0]),
+    ).toBeUndefined();
   });
 });

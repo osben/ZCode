@@ -72,7 +72,7 @@ Notes:
   - `uk-UA` locale is kept. The shared `Locale` stays three-valued, and UI service boundaries map uk-UA to en-US through `toServiceLocale()`.
   - `autoUpdater.ts` keeps the fork "3.15.3 parity" quit-and-install state machine. Upstream's `quitAndInstallState` and `isUpdateTargetLocked()` are not adopted (`specs/desktop-upstream-sync.md`).
   - Relay placeholders are resolved: `WebRemoteControlStatus.mobileTaskView` is nullable and `WebRemoteControlTaskTarget.hostId` is a live optional member. Their TEMPORARY markers were removed in the relay-v1 cleanup.
-- Next upstream target: `3c5b2276` (upstream `main` moved there during the sync). It is the next sync, not part of 3.16.1.
+- Next upstream target: `3c5b2276` (upstream `main` moved there during the sync). It is the next sync, not part of 3.16.1. Synced in `specs/upstream-sync-3.16.2.md`.
 
 ## 4. Known gaps and follow-ups
 
@@ -117,7 +117,7 @@ Notes:
     - `third-party/npm-overrides.json` (generated-style license table; remove once split)
 - Pre-push unit step skips the root suite. CI is the gate for the root suite until the pre-push step is fixed.
 - Shared database safety: `~/.zcode/v2/tasks-index.sqlite` and `~/.zcode/cli/db/db.sqlite` are shared between the upstream build and this fork. Back up `~/.zcode` before running a new build against real data. Fork-owned tables and migrations use the `fork_` and `9001_fork_*` / `9002_fork_*` prefixes.
-- Next upstream target: `3c5b2276`.
+- Next upstream target: `3c5b2276`, synced in `specs/upstream-sync-3.16.2.md`. After that, 3.16.3 (source not yet published).
 
 ## 5. Owner tasks
 

@@ -15,11 +15,11 @@ const ZAI_ACCESS_TOKEN_KEY = "oauth:zai:access_token";
 const ZAI_USER_INFO_KEY = "oauth:zai:user_info";
 const BIGMODEL_ACCESS_TOKEN_KEY = "oauth:bigmodel:access_token";
 const BIGMODEL_USER_INFO_KEY = "oauth:bigmodel:user_info";
-const OAUTH_PENDING_NONCE_KEY = "oauth_pending_nonce";
-const OAUTH_PENDING_PROVIDER_KEY = "oauth_pending_provider";
-const OAUTH_PENDING_REDIRECT_URI_KEY = "oauth_pending_redirect_uri";
+const OAUTH_PENDING_LOGINS_KEY = "oauth_pending_logins";
+// Multiple tabs in the same browser can start logins at the same time; keep only the most recent few so abandoned logins do not pile up.
+const MAX_PENDING_LOGINS = 5;
 
-/** Login providers supported by this repository. Private share owner identity is provider-specific, so both providers must be supported. */
+/** Login providers supported by this repository. Private share owner identity is provider-specific, so both providers must be able to sign in. */
 export type WebOAuthProviderId = typeof ZAI_PROVIDER_ID | typeof BIGMODEL_PROVIDER_ID;
 
 export function isWebOAuthProviderId(value: unknown): value is WebOAuthProviderId {
@@ -27,10 +27,10 @@ export function isWebOAuthProviderId(value: unknown): value is WebOAuthProviderI
 }
 
 /**
- * Use a separate key segment for each provider.
+ * Each provider uses its own key segment.
  *
- * Do not reuse one "neutral" key set: zai's two keys already hold /remote login state in production, and changing
- * them would sign out every logged-in user on release day. Adding a bigmodel prefix is risk-free and costs only one mapping.
+ * Do not reuse one "neutral" key set: zai's two keys already carry the /remote login state in production, and changing them would
+ * sign out every logged-in user on release day. Adding a bigmodel prefix is risk-free and costs only one extra mapping.
  */
 function providerKeys(provider: WebOAuthProviderId): { accessToken: string; userInfo: string } {
   return provider === BIGMODEL_PROVIDER_ID
@@ -40,7 +40,25 @@ function providerKeys(provider: WebOAuthProviderId): { accessToken: string; user
 
 interface BrowserOAuthCredentialRepoStorage {
   localStorage: Storage;
-  sessionStorage: Storage;
+}
+
+/** One login redirect that left the app: the callback page uses it to validate state and exchange the token with the same provider and redirect URI. */
+export interface PendingOAuthLogin {
+  nonce: string;
+  provider: WebOAuthProviderId;
+  redirectUri: string;
+}
+
+function isPendingOAuthLogin(value: unknown): value is PendingOAuthLogin {
+  if (!value || typeof value !== "object") return false;
+  const login = value as Partial<Record<keyof PendingOAuthLogin, unknown>>;
+  return (
+    typeof login.nonce === "string" &&
+    hasText(login.nonce) &&
+    isWebOAuthProviderId(login.provider) &&
+    typeof login.redirectUri === "string" &&
+    hasText(login.redirectUri)
+  );
 }
 
 interface BrowserOAuthCredentialRepoOptions {
@@ -54,20 +72,16 @@ interface WebZaiTokenSet {
 }
 
 function getBrowserStorage(): BrowserOAuthCredentialRepoStorage {
-  return {
-    localStorage: window.localStorage,
-    sessionStorage: window.sessionStorage,
-  };
+  return { localStorage: window.localStorage };
 }
 
 function hasText(value: string | null): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-/** Browser OAuth credential repository: centralizes localStorage/sessionStorage access so auth-state checks do not spread across business logic. */
+/** Browser OAuth credential repository: centralizes localStorage reads and writes so auth-state checks do not spread across business logic. */
 export class BrowserOAuthCredentialRepo {
   private readonly localStorage: Storage;
-  private readonly sessionStorage: Storage;
   private readonly now: () => number;
 
   constructor(
@@ -75,7 +89,6 @@ export class BrowserOAuthCredentialRepo {
     options: BrowserOAuthCredentialRepoOptions = {},
   ) {
     this.localStorage = storage.localStorage;
-    this.sessionStorage = storage.sessionStorage;
     this.now = options.now ?? Date.now;
   }
 
@@ -116,9 +129,8 @@ export class BrowserOAuthCredentialRepo {
   }
 
   /**
-   * Read-only account display data for the device page account row. This is not a login gate: it does not
-   * validate the JWT or clear partial credentials, so rendering the list cannot sign the user out early.
-   * Login state is still decided by loadCachedSessionState and the JWT.
+   * Read-only account display data (account row on the device page). This is not a login gate: it does not validate the JWT or clear partial credentials,
+   * otherwise rendering the list could sign the user out early. Login state is still decided by loadCachedSessionState and the JWT.
    */
   loadActiveAccount(): { provider: WebOAuthProviderId; userInfo: UserInfo } | null {
     try {
@@ -136,7 +148,7 @@ export class BrowserOAuthCredentialRepo {
   loadCachedSessionState(): OAuthCachedSessionRestoreResult {
     const activeProvider = this.localStorage.getItem(ACTIVE_PROVIDER_KEY);
     const zcodeJwtToken = this.localStorage.getItem(ZCODE_JWT_TOKEN_KEY);
-    // There is only one activeProvider at a time (switching providers means logging in again and replacing it), so use it to select the key segment.
+    // Only one activeProvider exists at a time (switching providers means logging in again and overwriting it), so use it to select the key segment.
     const keys = isWebOAuthProviderId(activeProvider) ? providerKeys(activeProvider) : null;
     const accessToken = keys ? this.localStorage.getItem(keys.accessToken) : null;
     const rawUserInfo = keys ? this.localStorage.getItem(keys.userInfo) : null;
@@ -149,7 +161,7 @@ export class BrowserOAuthCredentialRepo {
     }
 
     if (resolveJwtExpiration(zcodeJwtToken, this.now()).kind === "expired") {
-      // Web localStorage previously checked only whether a JWT existed, restoring a false logged-in state after expiration.
+      // Web localStorage previously checked only whether the JWT existed, which restored a fake logged-in state after expiry.
       this.clearAll();
       return { status: "reauthentication-required", reason: "jwt-expired" };
     }
@@ -160,8 +172,8 @@ export class BrowserOAuthCredentialRepo {
         return { status: "authenticated", userInfo };
       }
     } catch {
-      // localStorage may contain corrupt JSON from an older version or manual edits.
-      // Treat it as signed out and clear the partial state so the Web remote-control entry does not mistake it for a valid login and connect.
+      // localStorage may contain corrupt JSON left by an older version or by manual edits.
+      // Treat it as signed out and clear the partial state, so the Web remote-control entry does not mistake it for a logged-in session and connect.
     }
 
     this.clearAll();
@@ -188,77 +200,53 @@ export class BrowserOAuthCredentialRepo {
   clearAll(): void {
     this.localStorage.removeItem(ACTIVE_PROVIDER_KEY);
     this.localStorage.removeItem(ZCODE_JWT_TOKEN_KEY);
-    // Clear both providers' key segments together. Switching providers must not leave remnants of the previous identity,
-    // or loadCachedSessionState could read a partial credential set.
+    // Clear both providers' key segments together: switching providers must not leave fragments of the previous identity,
+    // otherwise loadCachedSessionState could read a half-complete credential set.
     this.localStorage.removeItem(ZAI_ACCESS_TOKEN_KEY);
     this.localStorage.removeItem(ZAI_USER_INFO_KEY);
     this.localStorage.removeItem(BIGMODEL_ACCESS_TOKEN_KEY);
     this.localStorage.removeItem(BIGMODEL_USER_INFO_KEY);
   }
 
-  savePendingNonce(nonce: string): void {
-    this.sessionStorage.setItem(OAUTH_PENDING_NONCE_KEY, nonce);
-  }
-
-  loadPendingNonce(): string | null {
-    return this.sessionStorage.getItem(OAUTH_PENDING_NONCE_KEY);
-  }
-
-  clearPendingNonce(): void {
-    this.sessionStorage.removeItem(OAUTH_PENDING_NONCE_KEY);
-  }
-
   /**
-   * Remember which provider was used for this login redirect.
+   * Remember this login redirect, keyed by nonce.
    *
-   * The callback page needs the provider to exchange the token (authorize parameter names and the location of
-   * access_token in the token response differ). Store it with the nonce in sessionStorage because both must be validated and cleared together.
+   * Fix: the nonce, provider and redirect URI used to live in the initiating page's sessionStorage. On some mobile browsers the OAuth
+   * callback does not open in the tab that started the login, or that tab is rebuilt after the OS reclaims it. The callback page cannot read the nonce and fails with
+   * "OAuth CSRF check failed" before the token exchange, and re-login fails the same way. Storing them in same-origin localStorage lets any tab in the same browser
+   * complete the callback. The nonce is still random and single-use, so CSRF strength is unchanged.
    */
-  savePendingProvider(provider: WebOAuthProviderId): void {
-    this.sessionStorage.setItem(OAUTH_PENDING_PROVIDER_KEY, provider);
+  savePendingLogin(login: PendingOAuthLogin): void {
+    const logins = this.readPendingLogins().filter((pending) => pending.nonce !== login.nonce);
+    this.writePendingLogins([...logins, login].slice(-MAX_PENDING_LOGINS));
   }
 
-  loadPendingProvider(): WebOAuthProviderId | null {
-    const stored = this.sessionStorage.getItem(OAUTH_PENDING_PROVIDER_KEY);
-    return isWebOAuthProviderId(stored) ? stored : null;
+  /** Take and delete the login record for this nonce; if none matches, leave other tabs' records untouched. */
+  takePendingLogin(nonce: string): PendingOAuthLogin | null {
+    const logins = this.readPendingLogins();
+    const login = logins.find((pending) => pending.nonce === nonce);
+    if (!login) return null;
+    this.writePendingLogins(logins.filter((pending) => pending !== login));
+    return login;
   }
 
-  clearPendingProvider(): void {
-    this.sessionStorage.removeItem(OAUTH_PENDING_PROVIDER_KEY);
-  }
-
-  /** Stored with the nonce and provider for this login; the token exchange on the callback page must use the full redirect URI from authorization. */
-  savePendingRedirectUri(nonce: string, redirectUri: string): void {
-    this.sessionStorage.setItem(
-      OAUTH_PENDING_REDIRECT_URI_KEY,
-      JSON.stringify({ nonce, redirectUri }),
-    );
-  }
-
-  loadPendingRedirectUri(nonce: string): string | null {
-    const raw = this.sessionStorage.getItem(OAUTH_PENDING_REDIRECT_URI_KEY);
-    if (!raw) return null;
+  private readPendingLogins(): PendingOAuthLogin[] {
+    const raw = this.localStorage.getItem(OAUTH_PENDING_LOGINS_KEY);
+    if (!raw) return [];
     try {
-      const pending: unknown = JSON.parse(raw);
-      // Pages from older versions update only nonce and provider; a legacy redirect URI must match this nonce and must not be reused across logins.
-      if (
-        pending &&
-        typeof pending === "object" &&
-        "nonce" in pending &&
-        pending.nonce === nonce &&
-        "redirectUri" in pending &&
-        typeof pending.redirectUri === "string" &&
-        pending.redirectUri.trim()
-      ) {
-        return pending.redirectUri;
-      }
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(isPendingOAuthLogin) : [];
     } catch {
-      // Corrupt optional metadata must never be treated as the redirect URI for this authorization.
+      // A corrupt record must not be treated as this login; the next login attempt overwrites the whole value.
+      return [];
     }
-    return null;
   }
 
-  clearPendingRedirectUri(): void {
-    this.sessionStorage.removeItem(OAUTH_PENDING_REDIRECT_URI_KEY);
+  private writePendingLogins(logins: PendingOAuthLogin[]): void {
+    if (logins.length > 0) {
+      this.localStorage.setItem(OAUTH_PENDING_LOGINS_KEY, JSON.stringify(logins));
+    } else {
+      this.localStorage.removeItem(OAUTH_PENDING_LOGINS_KEY);
+    }
   }
 }

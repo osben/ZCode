@@ -106,6 +106,34 @@ function controlledTransport() {
 }
 
 describe("terminal and V2 fake relay wire-level contract", () => {
+  it("still fetches the token only once and actually pairs and passes bootstrap through when AbortSignal static APIs are missing", async () => {
+    const h = await fixture();
+    const descriptors = Object.getOwnPropertyDescriptors(AbortSignal);
+    cleanup.push(() => {
+      Object.defineProperties(AbortSignal, descriptors);
+    });
+    for (const name of ["any", "timeout"])
+      Object.defineProperty(AbortSignal, name, { configurable: true, value: undefined });
+    h.terminal.start();
+    await vi.waitFor(() => expect(h.states.at(-1)).toBe("paired"));
+    expect(h.states).not.toContain("reconnecting");
+    expect(
+      h.relay.httpCalls.filter((call) => (call.body as { role?: string }).role === "terminal"),
+    ).toHaveLength(1);
+    expect(
+      h.terminal.sendPayload({ zcode_type: "bootstrap-request", requestId: "compat-bootstrap" }),
+    ).toBe(true);
+    await vi.waitFor(() =>
+      expect(h.received).toContainEqual(
+        expect.objectContaining({
+          type: "data",
+          payload: { zcode_type: "bootstrap-request", requestId: "compat-bootstrap" },
+        }),
+      ),
+    );
+    expect(h.failures).toEqual([]);
+  });
+
   it("after the first token body is cut off midway, retries with backoff, obtains a new token, and actually pairs", async () => {
     let partialResponse: ServerResponse | undefined;
     const server = createServer((_request, response) => {

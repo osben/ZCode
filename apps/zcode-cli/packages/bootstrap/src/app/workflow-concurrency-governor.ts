@@ -12,11 +12,14 @@
 // This is the governor's **only** code that touches clocks and timers: the controller receives `now`; cooldown expiry must wake waiters,
 // so use setTimeout (injectable and unref'd).
 
-import type {
-  ModelNetworkStatusEvent,
-  ModelRequestAdmission,
-  ModelRequestAdmissionTicket,
-  ModelRequestTarget,
+import { resolveWorkflowModelFailurePolicy } from "@zcode/adapters/model";
+import {
+  ModelErrorCode,
+  type ModelNetworkStatusEvent,
+  type ModelRequestAdmission,
+  type ModelRequestAdmissionTicket,
+  type ModelRequestFailedStatusEvent,
+  type ModelRequestTarget,
 } from "@zcode/contracts";
 import {
   ConcurrencyController,
@@ -269,9 +272,19 @@ export function createWorkflowConcurrencyGovernor(
           case "model_request_failed":
             // A retryable:true failure is followed by retry_scheduled; that event carries the signal.
             if (event.retryable) return;
+            // Stop-set failures (quota, auth, ...) are not concurrency signals; they only end the attempt. Quota 429s used to fall
+            // through to the rate-limit branch below: 1308's Retry-After points to the end of the quota window (possibly hours away),
+            // so the cooldown froze the whole bucket and outlived the stopped run. After the user restored quota with a reset card and
+            // resumed, sub-agents sat at the gate sending no requests, while the main agent (the observer, which ignores cooldown)
+            // kept working; only switching models (switching buckets) moved things along. When to retry is the user's decision, and
+            // the driver reads the same policy table.
+            if (isWorkflowStopFailure(event)) {
+              settle((at) => bucket.controller.ended(at));
+              return;
+            }
             // Non-retryable throttling:
-            // a main conversation / tool-side request can hit a terminal 429 such as 3008, which is still a literal concurrency signal.
-            // Treating it only as "chain ended" would mean the cap was never reduced. Quota codes also use this path: halving one extra time is harmless because the run stops immediately.
+            // a 429 that the classifier marks as terminal on the main conversation / tool side, such as 3008, is still a literal
+            // concurrency signal; treating it only as "chain ended" would mean the cap never dropped because of it.
             if (event.reason === "rate_limited") {
               settle((at) =>
                 bucket.controller.throttled(at, epoch, "rate_limited", event.retryAfterMs),
@@ -415,6 +428,24 @@ export function createWorkflowConcurrencyGovernor(
       return buckets.get(key)?.controller.snapshot();
     },
   };
+}
+
+/**
+ * Whether a non-retryable failure falls in the Stop set of the workflow policy table (docs/dynamic-workflow/concurrency.md
+ * "Retry budget and the model-error policy"). The runner and the driver read the same function, so the three layers cannot
+ * diverge on the Stop set; when `errorCode` is missing, the failure is read as a generic request failure, and quota decisions look only at the business code.
+ */
+function isWorkflowStopFailure(event: ModelRequestFailedStatusEvent): boolean {
+  return (
+    resolveWorkflowModelFailurePolicy(
+      {
+        code: event.errorCode ?? ModelErrorCode.ModelRequestFailed,
+        reason: event.reason,
+        retryable: event.retryable,
+      },
+      event.providerErrorCode,
+    ).decision === "stop"
+  );
 }
 
 function abortedError(signal: AbortSignal): Error {

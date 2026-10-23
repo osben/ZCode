@@ -22,18 +22,14 @@ export interface PaneWorkspaceBadge {
 export interface ConversationHeaderProps {
   /** meta.title; used only for tests/observable projection, with no placeholder header rendered. */
   title: string;
-  /** Split a new draft pane to the right (the host omits this at the leaf limit). */
-  onSplitRight?: () => void;
-  /** Split a new draft pane below. */
-  onSplitDown?: () => void;
-  /** Close this pane (sent only for non-primary panes; closing a pane does not stop the session). */
+  /** 关闭本窗格（仅非 primary pane 下发；关 pane ≠ 停 session）。 */
   onClosePane?: () => void;
   /** Ownership badge for a pane in another workspace (sent when the pane workspace differs from the shell's current workspace). */
   workspaceBadge?: PaneWorkspaceBadge;
 }
 
 /**
- * Pane chrome does not take layout height; split/close actions float in the upper-right corner.
+ * Pane chrome does not take layout height; only the workspace badge and close action float in the upper-right corner (split entry points are retired).
  * Keep the title data node for E2E projection reads without restoring the old toolbar.
  */
 function ConversationHeaderImpl({ title, onClosePane, workspaceBadge }: ConversationHeaderProps) {
@@ -61,35 +57,6 @@ function ConversationHeaderImpl({ title, onClosePane, workspaceBadge }: Conversa
               ) : null}
             </span>
           ) : null}
-          {/* 2026-07-13: the product temporarily hides pane chrome split actions; keep the callback interface and underlying capability for future restoration. */}
-          {/* {onSplitRight ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-md"
-              data-testid={TID_V4_SPLIT_OPEN}
-              onClick={onSplitRight}
-              title={intl.formatMessage({ id: "v4Pane.splitRightTitle" })}
-              aria-label={intl.formatMessage({ id: "v4Pane.splitRight" })}
-              className="pointer-events-auto bg-[var(--color-popover)] shadow-md"
-            >
-              <SquareSplitHorizontalIcon className="size-4" />
-            </Button>
-          ) : null} */}
-          {/* {onSplitDown ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="icon-md"
-              data-testid={TID_V4_SPLIT_DOWN}
-              onClick={onSplitDown}
-              title={intl.formatMessage({ id: "v4Pane.splitDownTitle" })}
-              aria-label={intl.formatMessage({ id: "v4Pane.splitDown" })}
-              className="pointer-events-auto bg-[var(--color-popover)] shadow-md"
-            >
-              <SquareSplitVerticalIcon className="size-4" />
-            </Button>
-          ) : null} */}
           {onClosePane ? (
             <Button
               type="button"

@@ -37,6 +37,7 @@ import {
   type PluginStoreActions,
 } from "@/settings/PluginStoreCard.js";
 import {
+  isItemBusy,
   isTrustedImageUrl,
   isUiPluginItem,
   KNOWN_CATEGORY_LABEL_IDS,
@@ -272,7 +273,7 @@ export function PluginStoreDetailView({
         <Button
           variant="outline"
           data-testid="plugin-store-reset-config"
-          disabled={actions.activeOperations.length > 0 || actions.togglingPluginId === item.id}
+          disabled={isItemBusy(item, actions)}
           onClick={() => actions.onResetConfig?.(item.id)}
         >
           <RotateCcw className="size-3.5" aria-hidden="true" />

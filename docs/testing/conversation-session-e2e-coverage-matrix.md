@@ -3073,7 +3073,7 @@ WFA01：pending，`manual-review/pending/workflow-face-motion.test.mjs`。独立
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
 | DWG-08-A（disabled）       | `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-dynamic-workflow-gray-disabled.test.ts`              | 服务端不下发 key 时 `/` 面板无 `workflow`、`+` 菜单无「工作流」、自动化页无标题标签；`goal` 在场作正向对照；provider 无请求                                                                                                                                                                                                                                                                                                                                                               | pending，未 promotion |
 | DWG-08-B（alwaysOn）       | `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-dynamic-workflow-gray-always-on.test.ts`             | 服务端下发 `alwaysOn` 时三个入口都在场，且 `workflow` / 「工作流」紧随 `goal` / 「目标」；provider 无请求                                                                                                                                                                                                                                                                                                                                                                                 | pending，未 promotion |
-| DWG-23（用户选择）         | `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-dynamic-workflow-gray-always-on-user-choice.test.ts` | 服务端 `alwaysOn` 时设置 › 常规的模式行显示「始终开启」且「默认」只在它上面；选「关闭」写进设置、自动化页无「工作流」、新草稿 `+` 菜单无「工作流」；选回默认删除选择、「工作流」回来；disabled 档（DWG-08-A 第 4 步）无模式行；provider 无请求                                                                                                                                                                                                                                            | pending，未 promotion |
+| DWG-23（用户选择）         | `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-dynamic-workflow-gray-always-on-user-choice.test.ts` | 服务端 `alwaysOn` 时设置 › 常规的模式行显示「始终开启」且「默认」只在它上面；选「关闭」写进设置、自动化页无「工作流」、新草稿 `+` 菜单无「工作流」；选回默认删除选择、「工作流」回来；disabled 档（DWG-08-A 文件里的 DWG-23 用例）模式行照样出现、显示「关闭」且「默认」在它上面，选「始终开启」写进设置、自动化页「工作流」与新草稿 `+` 菜单「工作流」都回来；provider 无请求                                                                                                            | pending，未 promotion |
 | DWS-01（保存确认窗长内容） | `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-dynamic-workflow-gray-always-on-save-window.test.ts` | 合成回放让模型以超长说明、40 个实参、长脚本调用 `SaveWorkflow`：确认窗不超过 min(72% 视口, 42rem) 且整窗在视口内、确认按钮点得到；窗内纵向可滚的只有选项以上那一个滚动区（展开全部实参与脚本后仍是）；说明/whenToUse 各有「展开」、实参只显示前 8 行；第一个选项上 Shift+Tab 回到滚动区的脚本开关、再到「显示全部」，回车展开（键盘可达）；滚轮只动滚动区、到底不链到时间线；实参表头贴住滚动区上沿；内容区降到 36rem 以下时整窗退回唯一的滚动区、滚到底确认可点；拒绝后不写盘、turn 收口 | pending，未 promotion |
 
 灰度档位由 case-local 配置网关 `packages/desktop/test/e2e/helpers/dynamic-workflow-config-mock-server.ts` 提供：
@@ -3218,6 +3218,10 @@ VP22（accepted/pending，2026-09-11）：编辑器零 root 空态与有 root �
 
 VP28（accepted/pending）：conversation-session/manual-review/pending/conversation-session-project-upgrade-order.test.ts，冷启动前预置旧 settings/未升级 tasks-index，断言真实迁移后仅保留 settings 项目及原顺序，历史额外目录不建项目，历史任务及归档/删除状态保留，刷新稳定。Host 隔离、Group 不转项目、settings 缺失/空列表与不覆盖升级后项目及手动排序由 project-storage contract 覆盖；不计为跨 Host 混排或手机配对验证。
 
+VP28 混排补充（2026-10-19，accepted/pending）：remote 第 2 项的 3.15 首次升级、离线首屏及刷新由真实 Electron/SQLite 验证；连接后的排序身份替换、手动排序、跨 Host 同路径和已有 ledger 不回填由存储/React 回归验证。实际远端连接与手机配对证据另列，不由离线夹具推定。
+
+验证：`desktop-e2e-20261019052603635-p90733-49f318d88a398947` 桌面升级 2/2、既有手机 shared-host 回归 1/1 通过，桌面升级和刷新截图已核对。隔离 Personal 夹具刷新后复用现有 API Key 进入步骤；VP13 文件入口断言同步为当前右侧 Files 标签。受影响单测 355 文件 / 4625 项通过（1 项既有跳过），typecheck、E2E typecheck、lint、架构、schema 兼容及代码格式检查通过。手机为 390px 浏览器连接真实 Main/Host，外部账号/relay/provider 使用隔离 fixture；不代表物理手机、真实 SSH/WSL 连接升级或 Windows/Linux GUI 实测。保持 pending。
+
 VP28 旧后端补充（2026-10-15，accepted/pending）：升级 fixture 含旧后端置顶行及当前 CLI 的新导入会话；升级/刷新后只显示后者，允许取消置顶与归档，旧行在库内原样保留。project-storage 单测覆盖首次/已有 ledger、普通/置顶/归档、本地/远端 owner。VP13 手机 shared-host 增补已迁移旧行隐藏和正常会话操作。
 
 验证：桌面升级 `desktop-e2e-20261015050956912-p71132-c54a18f1bcfc6d52` 2/2、手机 shared-host `desktop-e2e-20261015051352075-p73274-e69ead6215d1a3c3` 1/1 通过。前者校验升级/刷新、真实取消置顶/归档及 SQLite 旧行不变；后者校验已迁移旧行隐藏、正常导入会话操作和既有导航链路。手机为 390px 浏览器连接真实 Main/Host，外部账号/relay/provider 使用隔离 fixture；不代表物理手机或真实 SSH/WSL、Windows/Linux GUI 验证。保持 pending。
@@ -3244,7 +3248,7 @@ ARM01–ARM05（accepted/pending，2026-09-11）：设置/数据与统计新增�
 
 ARM06（accepted/pending，2026-09-15）：归档分组名称右侧显示折叠箭头，默认全部收起、不挂载聊天内容；鼠标/键盘独立展开与收起，收起立即卸载行；数量、搜索和折叠组批量动作仍按全部匹配项处理。复用同一 spec 和 pending E2E，覆盖中英文/明暗/窄屏的收起与展开布局；本页状态不持久化。
 
-ARM07（accepted/pending，2026-09-15）：自动归档开关和保留时长从常规页移到归档管理顶部；开关/时长真实落盘并在刷新后恢复，关闭时长禁用但保留值。复用 archive-management pending E2E 与 ARM05 中英文/明暗/390px 截图；AMT02 同步改用归档管理入口。设置 owner 和 Host 扫描不变，手机不新增设置入口。
+ARM07（accepted/pending，2026-09-15）：自动归档开关和保留时长从常规页移到归档管理顶部；开关/时长真实落盘并在刷新后恢复。2026-10-19 起默认关闭/30 天，关闭时也可切换并保存时长，开启后使用已保存的值；已有天数与已归档会话保持原样。复用 archive-management pending E2E 与 ARM05 中英文/明暗/390px 截图；AMT02 同步改用归档管理入口。设置 owner 和 Host 扫描不变，手机不新增设置入口。
 
 ARM08（accepted/pending，2026-09-15）：归档管理公共页头位于自动归档设置之前；页内固定文案统一会话/session，用户内容保持原样；覆盖搜索、数量、空态与删除确认，复用 ARM05 中英文/明暗/1200/390px 布局验证。
 
@@ -3475,6 +3479,11 @@ RPN-16 回归（2026-09-16）：`remoteWorkspacePreparation.test.ts` 覆盖真�
 本地 E2E：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-rpn-project-navigation.test.ts`；run `desktop-e2e-20260916060143354-p74119-7eab82eb8a75775c` 通过。未执行人工转正或 Docker 准入；本地 fixture 不等于真实远端验证。
 
 ## SAT27–SAT29：子代理冷恢复与主列表隔离（3.12.2）
+
+2026-10-19 类型回归：SAT30 覆盖 subagent_child、workflow_child、selection_side_chat 与历史 nested_workflow_child；
+项目父链继承与只读准入分开。SAT28 只拒绝三类 agent child，辅助对话继续发送；SAT29 清理四类隐藏索引，保留 fork 与未确认身份。
+远端 UI 候选已通过 macOS 客户端 → SSH → Linux arm64 Server 发布包回归（`r3-server-workflow-hotfix-2f5c48dd`）：工作流 actor 正文可读且只读、显式 GLM-5.3 路由、辅助对话首发与续发、主列表不泄漏；模型回复使用回放。辅助对话 Recent 查所属主会话项目，命令仍发给 child。
+Server 启动时须设置开发态 `ZCODE_DYNAMIC_WORKFLOW_MODE=alwaysOn`，WDIO 为该独立文件设置相同前置；常驻 Server 不继承客户端环境。保持 manual-review pending，不据此声明手机 UI 或 Linux x64 实测；桌面 continuous / 手机 replayable 的身份和准入由协议回归覆盖。
 
 SAT30（远端子会话项目目录）：`zcodeAgentService.v4.test.ts` 覆盖运行中/已完成、两种 clientMode、
 Agent 重启后的重订阅、旧 child 索引、无项目主任务及缺失/成环/跨 workspace 父链；
@@ -3899,3 +3908,11 @@ fixture. Settings → Quick prompts (rule 20: create, Pinned, Shown in project, 
 `packages/desktop/test/e2e/settings/quick-prompts-settings.test.ts`. Scenario 10 (mobile remote) is not covered.
 2026-10-22: both specs pass locally on macOS (`pnpm exec wdio run wdio.conf.ts --spec ...` from `packages/desktop`).
 The send-half pending case was not run: it needs a live or recorded provider.
+
+## R3A-BLD-07: User-service probe is skipped (2026-10-19)
+
+- Spec: `manual-review/pending/conversation-session-r3-daemon-detached.test.ts`; stays pending and is not promoted automatically.
+- Setup: a standalone Linux SSH target with no user manager; after the first normal detached connection, terminate the daemon, then inject `SYSTEMD_OFFLINE=1` into the SSH non-interactive shell.
+- Action: confirm that the real systemctl probe exits 0 with an empty property response, then reconnect through the desktop device row and resume the task.
+- Assertions: the new Supervisor/Core reach ready, `serviceRegistered=false`, the Host count is unchanged, and the task still belongs to the original workspace; restore the remote shell configuration.
+- Verification (2026-10-19): macOS Desktop → Linux ARM64 SSH targeted replay 1/1 PASS, run `r3-server-zct-probe-fix2`; real systemd normal registration, non-interactive environment restoration, and offline/chroot capability detection all passed. Affected unit tests 6 files / 62 tests, typecheck, E2E typecheck, lint, architecture, and changed-code format checks passed. The candidate stays pending; the user's original device was not reproduced, and no Windows/Linux Desktop or physical-phone regression was run.

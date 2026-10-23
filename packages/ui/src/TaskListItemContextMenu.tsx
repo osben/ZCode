@@ -24,8 +24,6 @@ export function TaskListItemContextMenu({
   onDeleteTask,
   deleteDisabledReason,
   onMarkTaskAsUnread,
-  onOpenInSplitPane,
-  openInSplitPaneDisabled,
   onOpenTaskFeedback,
   onOpenTaskPathInFileManager,
   onCopyWorkspacePath,
@@ -61,10 +59,6 @@ export function TaskListItemContextMenu({
   onDeleteTask?: () => void;
   deleteDisabledReason?: string;
   onMarkTaskAsUnread: () => void;
-  /** “Open in split pane” (provided only by the desktop shell). */
-  onOpenInSplitPane?: () => void;
-  /** Disabled when the leaf limit is reached and the session is not already in any pane. */
-  openInSplitPaneDisabled?: boolean;
   onOpenTaskFeedback: () => void;
   onOpenTaskPathInFileManager: () => void;
   onCopyWorkspacePath: () => void;
@@ -98,8 +92,6 @@ export function TaskListItemContextMenu({
         onDeleteTask={onDeleteTask}
         deleteDisabledReason={deleteDisabledReason}
         onMarkTaskAsUnread={onMarkTaskAsUnread}
-        onOpenInSplitPane={onOpenInSplitPane}
-        openInSplitPaneDisabled={openInSplitPaneDisabled}
         onOpenTaskFeedback={onOpenTaskFeedback}
         onOpenTaskPathInFileManager={onOpenTaskPathInFileManager}
         onCopyWorkspacePath={onCopyWorkspacePath}

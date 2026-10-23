@@ -1,3 +1,4 @@
+import { isAuxiliarySessionKind } from "@zcode/shared";
 /* eslint-disable max-lines -- V4 frame ingestion, snapshot upserts, and workspace broadcasts for the task index must share one closure state. */
 import { repairSubagentTaskIndex } from "#src/zcode-agent/repairSubagentTaskIndex.js";
 import {
@@ -1784,8 +1785,9 @@ export function createZCodeTaskIndexSyncer(
     },
   ): Promise<ZCodeTaskMeta> {
     const meta = buildMetaFromSnapshot(snapshot, options);
-    // Explicit resume from a legacy child tab still syncs the snapshot; read-only details must not be rewritten as the main task.
-    if (snapshot.session.sessionKind === "subagent_child") return meta;
+    // Auxiliary sessions (subagent/workflow children, selection side chats) are never indexed as main tasks.
+    // An explicit resume from a legacy child tab still syncs the snapshot; read-only details must not be rewritten as the main task.
+    if (isAuxiliarySessionKind(snapshot.session.sessionKind)) return meta;
     // Also index visible chat content from snapshot.messages so body searches in TaskSearchDialog can match it;
     // old SQLite rows are naturally backfilled the next time they reach this code.
     const searchableText = buildSearchableTextFromSnapshot(snapshot);

@@ -253,7 +253,7 @@ describe("V4WorkspaceChatArea pane active sync", () => {
     );
   });
 
-  it("keeps a standalone read-only subagent primary pane read-only when focused and split", () => {
+  it("keeps a standalone read-only subagent primary pane read-only when focused", () => {
     const { onPaneActiveSessionChange } = renderWorkspace({
       sessionId: "child-session",
       readOnlySessionId: "child-session",
@@ -265,23 +265,5 @@ describe("V4WorkspaceChatArea pane active sync", () => {
       primaryPane!.onFocusRequest(V4_PRIMARY_PANE_ID);
     });
     expect(onPaneActiveSessionChange).not.toHaveBeenCalled();
-
-    act(() => {
-      primaryPane!.onDropSession?.(V4_PRIMARY_PANE_ID, "right", {
-        kind: "zcode/session",
-        workspacePath: "/workspace",
-        sessionId: "another-session",
-      });
-    });
-
-    const groupId = useWorkbenchGroupStore.getState().activeGroupId;
-    const group = groupId ? useWorkbenchGroupStore.getState().groups[groupId] : null;
-    expect(group?.primaryBinding).toEqual({
-      workspaceScope: { workspacePath: "/workspace" },
-      sessionId: "child-session",
-      readOnly: true,
-    });
-    expect(group?.panes["pane-1"]?.sessionId).toBe("another-session");
-    expect(group?.panes["pane-1"]?.readOnly).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { isAuxiliarySessionKind } from "@zcode/shared";
 import {
   pluginUiToolResultNotificationSchema,
   type PluginUiToolResultNotification,
@@ -170,6 +171,8 @@ import {
   type DynamicWorkflowClientConfig,
   type DynamicWorkflowMode,
   applyDynamicWorkflowUserMode,
+  createDynamicWorkflowClientConfig,
+  DEFAULT_DYNAMIC_WORKFLOW_MODE,
   isDynamicWorkflowModeEnabled,
   normalizeDynamicWorkflowMode,
   type AgentLaneResourceSample,
@@ -3794,13 +3797,18 @@ export function createZCodeAgentService(
   }
 
   /**
-   * Effective mode = the latched server-provided value + the user’s current choice. Policy sync and all three creation paths use the same source, so there is no
-   * gap where policy says enabled while create says disabled. The choice is not latched; a settings change is reflected in the next session creation.
-   * Pass `onDemand` to the CLI unchanged: it determines whether the ten tools register on the first request or wait for the first `/workflow`.
+   * Effective mode = the latched server-provided offer + the user's current choice. Policy sync and all three creation paths share this source, so policy and
+   * create cannot disagree. The choice is not latched; a settings change applies to the next session creation.
+   * `onDemand` is passed to the CLI unchanged: it decides whether the ten tools register on the first request or wait for the first `/workflow`.
+   *
+   * An unreadable offer (failed remote read or no value) falls back to the default `disabled`; the user's choice then has no effect, because a choice
+   * cannot enable a feature the offer disables (see applyDynamicWorkflowUserMode). A Host without a wired resolver does not take part in the feature.
    */
   async function resolveDynamicWorkflowGate(): Promise<DynamicWorkflowMode> {
-    const offer = await resolveDynamicWorkflowOffer();
-    if (!offer) return "disabled";
+    if (!options?.resolveDynamicWorkflowClientConfig) return "disabled";
+    const offer =
+      (await resolveDynamicWorkflowOffer()) ??
+      createDynamicWorkflowClientConfig(DEFAULT_DYNAMIC_WORKFLOW_MODE, "default");
     return applyDynamicWorkflowUserMode(offer, await resolveDynamicWorkflowUserMode()).mode;
   }
 
@@ -6285,7 +6293,7 @@ export function createZCodeAgentService(
             session.workspace.workspacePath !== params.workspacePath
           )
             throw new Error("project.session-lineage-invalid");
-          if (session.sessionKind !== "subagent_child") break;
+          if (!isAuxiliarySessionKind(session.sessionKind)) break;
           if (!session.parentSessionId) throw new Error("project.session-lineage-invalid");
           directorySessionId = session.parentSessionId;
         }
