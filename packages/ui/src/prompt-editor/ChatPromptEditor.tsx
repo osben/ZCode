@@ -21,7 +21,7 @@ import {
   type LexicalChatInputHandle,
 } from "@/LexicalChatInput.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
-import type { AppSlashCommand } from "@/slashCommandHelpers.js";
+import type { AppSlashCommand, QuickPromptSlashItem } from "@/slashCommandHelpers.js";
 import {
   hasWorkspaceFileDragPayload,
   readWorkspaceFileDragPayload,
@@ -92,6 +92,7 @@ export function ChatPromptEditor({
   excludedSlashCommandNames,
   appSlashCommands,
   enableMentionPanel,
+  quickPrompts,
 }: {
   workspacePath: string;
   workspaceIdentity?: string;
@@ -156,6 +157,8 @@ export function ChatPromptEditor({
   appSlashCommands?: readonly AppSlashCommand[];
   /** mention 面板开关（透传 LexicalChatInput）。 */
   enableMentionPanel?: boolean;
+  /** Quick prompts for the "/" panel; the quick prompt editor omits it so its own body cannot insert quick prompts. */
+  quickPrompts?: readonly QuickPromptSlashItem[];
 }) {
   const { intl } = useZCodeIntl();
   const toolbarRef = useComposerToolbarFit();
@@ -366,6 +369,7 @@ export function ChatPromptEditor({
       excludedSlashCommandNames={excludedSlashCommandNames}
       appSlashCommands={appSlashCommands}
       enableMentionPanel={enableMentionPanel}
+      quickPrompts={quickPrompts}
     />
   );
 

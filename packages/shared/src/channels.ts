@@ -119,6 +119,8 @@ export const ServiceChannels = {
   ZCodeSession: "zcode-session",
   Project: "project",
   TaskGroups: "task-groups",
+  /** Fork: composer quick prompts (specs/composer-quick-prompts.md). */
+  QuickPrompts: "quick-prompts",
   RemoteProjects: "remote-projects",
   /** 手机远端 attachment 的窗口目录；原 project 继续属于工作区。 */
   WindowProject: "window-project",

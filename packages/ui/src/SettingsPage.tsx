@@ -97,6 +97,7 @@ import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSectio
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { WorktreesSection } from "@/settings/WorktreesSection.js";
 import { IncognitoSettingsSection } from "@/settings/IncognitoSettingsSection.js";
+import { QuickPromptsSettingsSection } from "@/quick-prompts/index.js";
 import { UserInstructionsSettingsSection } from "@/settings/UserInstructionsSettingsSection.js";
 import { OutputStylesSection } from "@/settings/OutputStylesSection.js";
 import { SystemPromptSection } from "@/settings/SystemPromptSection.js";
@@ -2449,6 +2450,12 @@ export function SettingsPage({
                             <IncognitoSettingsSection
                               settings={sharedSettings}
                               onUpdate={updateSharedSettings}
+                            />
+                          ) : activeSection === "quickPrompts" ? (
+                            <QuickPromptsSettingsSection
+                              workspacePath={activeWorkspacePath ?? undefined}
+                              workspaceIdentity={activeWorkspaceIdentity ?? undefined}
+                              readOnly={isWebRemoteControl}
                             />
                           ) : activeSection === "worktrees" ? (
                             <WorktreesSection

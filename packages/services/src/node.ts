@@ -389,6 +389,11 @@ import { IRemoteProjectService } from "./remote-projects/contract.js";
 import { createProjectService } from "./project/index.js";
 import { createTaskGroupService, groupTaskKey } from "#src/task-groups/index.js";
 import { ITaskGroupService } from "./task-groups/contract.js";
+import {
+  createQuickPromptService,
+  IQuickPromptService,
+  QUICK_PROMPTS_CHANGED_CHANNEL,
+} from "#src/quick-prompts/index.js";
 import type { BotProjectConnection } from "./bot-project-runtime/contract.js";
 import { createRemoteProjectService } from "#src/remote-projects/index.js";
 import { createGitService } from "./git/gitService.js";
@@ -2682,6 +2687,13 @@ export function createLocalServices(options: {
     },
     afterChange: () => broadcastService.send({ channel: "state:task-groups", payload: {} }),
   });
+  // Composer quick prompts (specs/composer-quick-prompts.md). Shares the tasks-index connection, so it adds
+  // no sqliteReposToClose entry; the fork migration is ensured on that handle by the service itself.
+  const quickPromptService = createQuickPromptService({
+    database: () => taskIndexRepo.getOrganizationDatabase(),
+    afterChange: () =>
+      broadcastService.send({ channel: QUICK_PROMPTS_CHANGED_CHANNEL, payload: {} }),
+  });
   // One-time import of fork sidebar pins into upstream project pins (specs/ui-pins-upstream-migration.md).
   // Startup must not wait on or fail because of it: a failed run is retried on the next start.
   const forkPinLog = createServiceLogger("project-pins-migration");
@@ -2728,6 +2740,7 @@ export function createLocalServices(options: {
     .register(IZCodeSessionService, zcodeSessionService)
     .register(IProjectService, projectService)
     .register(ITaskGroupService, taskGroupService)
+    .register(IQuickPromptService, quickPromptService)
     .register(IRemoteProjectService, remoteProjectService)
     .register(ICuaPermissionService, cuaPermissionService)
     .register(ICuaPipSessionService, cuaPipSessionService)

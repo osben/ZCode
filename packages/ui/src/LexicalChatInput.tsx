@@ -48,7 +48,15 @@ import {
   type PointType,
 } from "lexical";
 import { SlashCommandPlugin } from "./SlashCommandPlugin.js";
-import type { AppSlashCommand } from "./slashCommandHelpers.js";
+import type { AppSlashCommand, QuickPromptSlashItem } from "./slashCommandHelpers.js";
+import {
+  $loadSerializedPromptBody,
+  $insertSerializedPromptBody,
+  $readSerializedPromptBody,
+  $selectionForSerializedInsert,
+  parseSerializedPromptBodyNodes,
+  type SerializedPromptBody,
+} from "@/prompt-body/index.js";
 import { MentionPlugin } from "./mentions/MentionPlugin.js";
 import { useChatViewActiveTaskProvider } from "@/v4/activeTaskProvider.js";
 import {
@@ -97,6 +105,18 @@ export interface LexicalChatInputHandle {
   setEditorStateJson: (editorStateJson: string) => void;
   setSkillMention: (skillName: string, markdown?: string, trailingText?: string) => void;
   setSlashCommandMention: (commandName: string, markdown?: string, trailingText?: string) => void;
+  /** Canonical markdown plus serialized body nodes of the whole document (quick prompts store both). */
+  getSerializedBody: () => SerializedPromptBody;
+  /**
+   * Inserts stored body nodes at the caret. Synchronous: the document already contains the body when this returns,
+   * so a caller can read getMarkdown() right after (the ⌘-click send path relies on this).
+   */
+  insertSerializedBody: (nodesJson: string) => void;
+  /**
+   * Replaces the whole document with stored body nodes; used by the quick prompt editor dialog. Throws when the nodes
+   * cannot be rebuilt, and then the document is unchanged and does not hold the stored body.
+   */
+  loadSerializedBody: (nodesJson: string) => void;
 }
 
 interface LexicalEnterSubmitOptions {
@@ -1332,6 +1352,42 @@ export function insertEditorMention(
   );
 }
 
+/**
+ * Inserts a stored quick prompt body at the caret. The update commits synchronously (discrete) so the caller can
+ * read the resulting markdown immediately; the caret is never moved by a chip click (the chip prevents mousedown).
+ */
+export function insertEditorSerializedBody(editor: LexicalEditor, nodesJson: string) {
+  const paragraphs = parseSerializedPromptBodyNodes(nodesJson);
+  editor.update(
+    () => {
+      $insertSerializedPromptBody($selectionForSerializedInsert(), paragraphs);
+    },
+    { tag: PROGRAMMATIC_UPDATE_TAG, discrete: true },
+  );
+}
+
+/**
+ * Throws when the stored nodes cannot be rebuilt (malformed JSON or an unknown node type). The document keeps its
+ * previous content in that case, and the caller must treat the editor as NOT holding the stored body.
+ */
+export function loadEditorSerializedBody(editor: LexicalEditor, nodesJson: string) {
+  const paragraphs = parseSerializedPromptBodyNodes(nodesJson);
+  // Lexical may report an update error through onError instead of rethrowing it, so the failure is captured inside.
+  const outcome: { failed: boolean; cause?: unknown } = { failed: false };
+  editor.update(
+    () => {
+      try {
+        $loadSerializedPromptBody(paragraphs);
+      } catch (cause) {
+        outcome.failed = true;
+        outcome.cause = cause;
+      }
+    },
+    { tag: PROGRAMMATIC_UPDATE_TAG, discrete: true },
+  );
+  if (outcome.failed) throw outcome.cause;
+}
+
 function EditorApiPlugin({
   editorApiRef,
 }: {
@@ -1376,6 +1432,9 @@ function EditorApiPlugin({
         markdown = `/${commandName}`,
         trailingText = " ",
       ) => replaceEditorWithSlashCommandMention(editor, commandName, markdown, trailingText),
+      getSerializedBody: () => editor.getEditorState().read(() => $readSerializedPromptBody()),
+      insertSerializedBody: (nodesJson: string) => insertEditorSerializedBody(editor, nodesJson),
+      loadSerializedBody: (nodesJson: string) => loadEditorSerializedBody(editor, nodesJson),
     };
 
     return () => {
@@ -1416,6 +1475,8 @@ interface LexicalChatInputProps {
   enableMentionPanel?: boolean;
   /** Streaming voice preview drawn as ghost text at the caret; never part of the editor document. */
   voicePreview?: VoiceTranscriptionPreview | null;
+  /** Quick prompts offered in the "/" panel; omitted where they must not be offered (the quick prompt body). */
+  quickPrompts?: readonly QuickPromptSlashItem[];
 }
 
 const EDITOR_THEME = {
@@ -1448,6 +1509,7 @@ export function LexicalChatInput({
   appSlashCommands,
   enableMentionPanel = true,
   voicePreview,
+  quickPrompts,
 }: LexicalChatInputProps) {
   const inputMountedAtRef = useRef(Date.now());
   const lastReadyLogKeyRef = useRef<string | null>(null);
@@ -1599,6 +1661,7 @@ export function LexicalChatInput({
           disabled={disabled}
           excludedCommandNames={excludedSlashCommandNames}
           appCommands={appSlashCommands}
+          quickPrompts={quickPrompts}
         />
         {enableMentionPanel ? (
           <MentionPlugin

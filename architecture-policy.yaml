@@ -745,6 +745,51 @@ modules:
     layers:
       app: .
     owner: remote
+  # quick-prompts：由 architecture:adopt 登记
+  - id: quick-prompts
+    roots:
+      - packages/services/src/quick-prompts
+    managed: true
+    requires:
+      - services
+      - shared
+    publicEntrypoints:
+      - packages/services/src/quick-prompts/index.ts
+      - packages/services/src/quick-prompts/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
+  # quick-prompts-ui：由 architecture:adopt 登记
+  - id: quick-prompts-ui
+    roots:
+      - packages/ui/src/quick-prompts
+    managed: true
+    requires:
+      - services
+      - ui
+      - project-sidebar
+      - prompt-body
+      - mobile-ui
+    publicEntrypoints:
+      - packages/ui/src/quick-prompts/index.ts
+      - packages/ui/src/quick-prompts/contract.ts
+    layers:
+      contract: contract.ts
+      ui: .
+    owner: conversation
+  # prompt-body：由 architecture:adopt 登记
+  - id: prompt-body
+    roots:
+      - packages/ui/src/prompt-body
+    managed: true
+    requires:
+      - ui
+    publicEntrypoints:
+      - packages/ui/src/prompt-body/index.ts
+      - packages/ui/src/prompt-body/contract.ts
+    layers:
+      adapters: .
+    owner: conversation
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
   # 基于领先 staging 很多的分支开工时，merge-base 之前的"新增"文件不应被追溯。

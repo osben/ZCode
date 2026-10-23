@@ -25,6 +25,21 @@ export interface SlashCommandPluginProps {
    * 追加"选中即执行 UI 行为"的命令，不参与发送，也不写回 CLI 命令列表。
    */
   appCommands?: readonly AppSlashCommand[];
+  /**
+   * Composer quick prompts available in this session (specs/composer-quick-prompts.md, rule 4).
+   * Omit it where quick prompts must not be offered (the quick prompt editor's own body).
+   */
+  quickPrompts?: readonly QuickPromptSlashItem[];
+}
+
+/** A quick prompt as the "/" panel needs it; the module maps its snapshot into this plain shape. */
+export interface QuickPromptSlashItem {
+  promptId: string;
+  name: string;
+  /** Canonical markdown; used for preview and matching. */
+  text: string;
+  /** Serialized body nodes (mention chips) inserted when selected. */
+  nodes: string;
 }
 
 /** App 层斜杠命令：选中即执行 UI 行为（不插入 mention、不发送）。 */
@@ -42,6 +57,30 @@ export interface AppSlashCommand {
 }
 
 const APP_SLASH_SUGGESTION_ID_PREFIX = "app-slash:";
+export const QUICK_PROMPT_SUGGESTION_ID_PREFIX = "quick-prompt:";
+
+const QUICK_PROMPT_PREVIEW_MAX_LENGTH = 120;
+const QUICK_PROMPT_KEYWORD_MAX_LENGTH = 400;
+
+export function buildQuickPromptSuggestions(
+  items: readonly QuickPromptSlashItem[],
+): PromptInputSuggestionItem[] {
+  return items.map((item) => {
+    const text = item.text.replace(/\s+/g, " ").trim();
+    return {
+      id: `${QUICK_PROMPT_SUGGESTION_ID_PREFIX}${item.promptId}`,
+      trigger: "/",
+      value: item.name,
+      label: item.name,
+      description: text.slice(0, QUICK_PROMPT_PREVIEW_MAX_LENGTH),
+      keywords: [text.slice(0, QUICK_PROMPT_KEYWORD_MAX_LENGTH)],
+    };
+  });
+}
+
+export function isQuickPromptSuggestion(suggestion: PromptInputSuggestionItem): boolean {
+  return suggestion.id.startsWith(QUICK_PROMPT_SUGGESTION_ID_PREFIX);
+}
 
 export function buildAppSlashCommandSuggestions(
   commands: readonly AppSlashCommand[],

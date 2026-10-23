@@ -27,6 +27,7 @@ import {
   GitBranchPlus,
   Mic,
   VenetianMask,
+  MessageSquarePlus,
 } from "lucide-react";
 import { isSettingsSectionEnabled, type SettingsSectionId } from "@/lib/settingsNavigation.js";
 import type { Theme } from "@/useTheme.js";
@@ -110,6 +111,13 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "incognito",
     icon: VenetianMask,
     titleId: "settings.incognito",
+    groupId: "agentCapabilities",
+  },
+  // Composer quick prompts (specs/composer-quick-prompts.md rule 20): next to Incognito, the other composer-level setting.
+  {
+    id: "quickPrompts",
+    icon: MessageSquarePlus,
+    titleId: "settings.quickPrompts.title",
     groupId: "agentCapabilities",
   },
   {

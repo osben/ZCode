@@ -37,6 +37,8 @@ import {
   IProviderProvisioningTargetService,
   IZCodeTaskService,
   IWindowControllerService,
+  IQuickPromptService,
+  createReadOnlyQuickPromptService,
 } from "@zcode/services";
 import {
   botProviders,
@@ -143,6 +145,17 @@ function setupChannelServer(
         throw new Error("Provider Provisioning 仅支持受信 Desktop Host");
       },
     });
+  }
+  // Mobile (web-remote-replayable) reads the controller's quick prompts only; mutations reject with a stable code
+  // (spec rule 21, same wrapper as the desktop Host attachment policy).
+  if (clientMode === "web-remote-replayable") {
+    const quickPromptSource = services.getOptional(IQuickPromptService);
+    if (quickPromptSource) {
+      overrides.set(
+        IQuickPromptService.channelName,
+        createReadOnlyQuickPromptService(quickPromptSource),
+      );
+    }
   }
   services.exposeOnChannelServer(server, overrides);
   const taskService = services.getOptional(IZCodeTaskService);

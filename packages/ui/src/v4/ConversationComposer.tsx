@@ -139,7 +139,11 @@ import {
 } from "@/lib/workspaceFileDrag.js";
 import { appendWorkspaceFileMentionToComposer } from "@/lib/workspaceFileComposer.js";
 import { resolveProviderBaseURL } from "@/lib/registryProviderView.js";
-import type { ModelSelectionView, VoiceTranscriptionPreview } from "@zcode/services";
+import type {
+  ModelSelectionView,
+  QuickPromptProjectRef,
+  VoiceTranscriptionPreview,
+} from "@zcode/services";
 import type {
   ModelSelectionState,
   ModelSelectionRefreshResult,
@@ -219,6 +223,11 @@ import {
 } from "@/v4/composer/followupModeSettings.js";
 import { isAppleKeyboardPlatform } from "@/lib/keyboardShortcuts.js";
 import { usePrimaryFollowupModifier } from "@/v4/composer/usePrimaryFollowupModifier.js";
+import {
+  QuickPromptBar,
+  composeQuickPromptSlashItems,
+  useQuickPrompts,
+} from "@/quick-prompts/index.js";
 import {
   consumeV4ComposerDraftAttachments,
   registerV4ComposerDraftReader,
@@ -553,6 +562,8 @@ export interface ConversationComposerProps {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
+  /** Project identity of the session or draft for the quick prompt row (null = pinned globals only). */
+  quickPromptProject?: QuickPromptProjectRef | null;
   /** SessionPane 从目标 Host 原子读取的选择事实；Composer 不自行解析 Host。 */
   modelSelectionView?: ModelSelectionView | null;
   modelSelectionState?: ModelSelectionState;
@@ -701,6 +712,7 @@ function ConversationComposerImpl({
   workspacePath,
   workspaceIdentity,
   remoteSessionId,
+  quickPromptProject = null,
   modelSelectionView = null,
   modelSelectionState = MODEL_SELECTION_LOADING_STATE,
   modelSelectionReload,
@@ -951,6 +963,12 @@ function ConversationComposerImpl({
     pendingShareContext?.contextId ??
     null;
   const inputApiRef = useRef<LexicalChatInputHandle | null>(null);
+  // Single quick prompt read for this composer: the row and the "/" panel both derive from it.
+  const quickPrompts = useQuickPrompts(quickPromptProject);
+  const quickPromptSlashItems = useMemo(
+    () => composeQuickPromptSlashItems(quickPrompts.snapshot),
+    [quickPrompts.snapshot],
+  );
   const voiceScopeRef = useRef<HTMLDivElement | null>(null);
   // Streaming ghost preview (specs/voice-dictation.md, "Ghost preview"): display state only; it is
   // drawn by the editor and never enters the draft text, submission, or undo history.
@@ -3513,6 +3531,14 @@ function ConversationComposerImpl({
 
   // 发送键是 type="submit"，与 Enter 共用 handleEditorSubmit；DOM 事件顺序保证 click 早于
   // submit，故这里只置标记，由 submit() 读取并复位。
+  // Quick prompt ⌘/Ctrl-click send (rule 8): the same submit path as Enter and the Send button.
+  const handleQuickPromptSend = useCallback(
+    (markdown: string) => {
+      handleEditorSubmit(markdown);
+    },
+    [handleEditorSubmit],
+  );
+
   const handleSendButtonClick = useCallback(
     (event: ReactMouseEvent<HTMLButtonElement>) => {
       sendTriggerRef.current = "button";
@@ -4313,6 +4339,19 @@ function ConversationComposerImpl({
           ) : null}
         </div>
       ) : null}
+      {quickPrompts.service ? (
+        <QuickPromptBar
+          snapshot={quickPrompts.snapshot}
+          project={quickPromptProject}
+          service={quickPrompts.service}
+          refresh={quickPrompts.refresh}
+          inputApiRef={inputApiRef}
+          draftHasContent={hasDraftToSubmit}
+          onSendMarkdown={handleQuickPromptSend}
+          workspacePath={workspacePath}
+          workspaceIdentity={workspaceIdentity}
+        />
+      ) : null}
       <div
         data-highspeed-composer={highspeedCard ? "true" : undefined}
         data-highspeed-entrance={highspeedCard ? highspeedEntrance : undefined}
@@ -4404,6 +4443,7 @@ function ConversationComposerImpl({
           // secondary pane 按产品能力隐藏 goal，不再追加任何内建命令或别名。
           excludedSlashCommandNames={suppressGoalCommands ? ["goal"] : undefined}
           appSlashCommands={runtimeBlocked ? [] : appSlashCommands}
+          quickPrompts={runtimeBlocked ? undefined : quickPromptSlashItems}
           enableMentionPanel
           leadingActions={leadingActionsNode}
           submitControl={submitControlNode}
