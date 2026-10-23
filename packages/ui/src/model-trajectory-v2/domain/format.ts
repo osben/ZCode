@@ -33,11 +33,15 @@ export function formatBytes(bytes: number | undefined): string {
 
 export function formatMs(ms: number | undefined): string {
   if (ms === undefined || !Number.isFinite(ms)) return "—";
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 2 : 1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  return `${minutes}m ${seconds}s`;
+  // Round at each unit's precision before choosing the unit, so 59_960 never prints as "60.0s".
+  const whole = Math.round(ms);
+  if (whole < 1000) return `${whole} ms`;
+  const hundredths = Math.round(ms / 10);
+  if (hundredths < 1000) return `${(hundredths / 100).toFixed(2)}s`;
+  const tenths = Math.round(ms / 100);
+  if (tenths < 600) return `${(tenths / 10).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 export function formatRatio(ratio: number | undefined): string {

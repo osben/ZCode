@@ -306,6 +306,20 @@ describe("模型调用轨迹 v2 查看器 E2E", () => {
       timeoutMsg: "清除范围后 ledger 行数没有恢复",
     });
 
+    // TRV03: Ctrl+wheel is default-prevented (non-passive listener) and zooms the axis; plain wheel is left alone.
+    const ticksBefore = await v2StripTicks();
+    expect(await wheelOnStrip({ ctrlKey: true, deltaY: -100 })).toBe(true);
+    await browser.waitUntil(async () => (await v2StripTicks()) !== ticksBefore, {
+      timeout: 10_000,
+      timeoutMsg: "Ctrl+滚轮没有缩放 strip 时间轴",
+    });
+    expect(await wheelOnStrip({ ctrlKey: false, deltaY: -100 })).toBe(false);
+    expect(await wheelOnStrip({ ctrlKey: true, deltaY: 100 })).toBe(true);
+    await browser.waitUntil(async () => (await v2StripTicks()) === ticksBefore, {
+      timeout: 10_000,
+      timeoutMsg: "Ctrl+滚轮反向没有恢复 strip 时间轴",
+    });
+
     // TRV04: 150+ calls stay virtualized while scrolling, and arrow keys move the selection.
     await browser.waitUntil(async () => (await v2LedgerSnapshot()).mountedRows < 80, {
       timeout: 10_000,
@@ -1077,6 +1091,38 @@ async function dragOnStrip(fromRatio: number, toRatio: number) {
 }
 
 /** Click (press + release under the 3px drag threshold) the span of a row key prefix. */
+/** Joined tick times of the visible strip; changes when the axis zooms or pans. */
+async function v2StripTicks() {
+  return browser.execute(() => {
+    const strips = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-strip]")];
+    const strip = strips.find((element) => element.offsetParent !== null) ?? strips[0];
+    return [...(strip?.querySelectorAll("[data-trajectory-v2-tick]") ?? [])]
+      .map((tick) => tick.getAttribute("data-trajectory-v2-tick"))
+      .join(",");
+  });
+}
+
+/** Dispatches a cancelable wheel event at the strip center; returns whether the strip prevented its default. */
+async function wheelOnStrip(init: { ctrlKey: boolean; deltaY: number }) {
+  return browser.execute((options) => {
+    const strips = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-strip]")];
+    const strip = strips.find((element) => element.offsetParent !== null) ?? strips[0];
+    const svg = strip?.querySelector<SVGSVGElement>("[data-trajectory-v2-strip-svg]");
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      ctrlKey: options.ctrlKey,
+      deltaY: options.deltaY,
+    });
+    svg.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, init);
+}
+
 async function clickStripSpan(keyPrefix: string) {
   const center = await browser.execute((prefix) => {
     const strips = [...document.querySelectorAll<HTMLElement>("[data-trajectory-v2-strip]")];

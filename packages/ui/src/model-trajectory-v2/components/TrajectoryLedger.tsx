@@ -55,7 +55,7 @@ export function TrajectoryLedger({
       role="listbox"
       tabIndex={0}
       aria-label={tr(intl, "modelTrajectoryV2.ledger.label")}
-      aria-activedescendant={model.selectedKey ? `trajectory-v2-row-${selectedIndex}` : undefined}
+      aria-activedescendant={selectedIndex >= 0 ? `trajectory-v2-row-${selectedIndex}` : undefined}
       data-trajectory-v2-ledger=""
       data-trajectory-v2-row-count={rows.length}
       onKeyDown={onKeyDown}

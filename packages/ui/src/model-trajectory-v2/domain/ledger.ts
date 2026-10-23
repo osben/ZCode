@@ -284,9 +284,10 @@ export function buildLedgerRows(
       });
     }
 
-    for (const part of response?.toolCalls ?? []) {
+    for (const [partIndex, part] of (response?.toolCalls ?? []).entries()) {
       if (part.kind !== "tool-call") continue;
-      const toolCallId = part.toolCallId ?? `${id}:${part.toolName}`;
+      // The part index keeps id-less calls to the same tool on distinct row keys.
+      const toolCallId = part.toolCallId ?? `${id}:${partIndex}:${part.toolName}`;
       const timing = part.toolCallId ? timings.get(part.toolCallId) : undefined;
       const start = timing?.execStartedAt ?? timing?.scheduledAt ?? t1;
       const stored = part.toolCallId ? results.get(part.toolCallId) : undefined;

@@ -1,11 +1,11 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
   type PointerEvent,
-  type WheelEvent,
 } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -139,7 +139,7 @@ export function TrajectoryOverviewStrip({
       normalizeRange(xToTime(drag.startX, domain, width), xToTime(endX, domain, width), bounds),
     );
   };
-  const onWheel = (event: WheelEvent<SVGSVGElement>) => {
+  const onWheel = (event: WheelEvent) => {
     if (!domain || !bounds || (!event.ctrlKey && !event.metaKey && !event.shiftKey)) return;
     event.preventDefault();
     if (event.shiftKey) {
@@ -151,6 +151,18 @@ export function TrajectoryOverviewStrip({
       setView(zoomDomain(domain, anchor, event.deltaY > 0 ? 1.25 : 0.8, bounds));
     }
   };
+
+  // React registers wheel listeners as passive, so preventDefault there cannot stop page zoom or
+  // ancestor scroll. A native non-passive listener calls the latest handler.
+  const handleWheel = useEffectEvent(onWheel);
+  const hasSvg = Boolean(domain && bounds);
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const listener = (event: WheelEvent) => handleWheel(event);
+    svg.addEventListener("wheel", listener, { passive: false });
+    return () => svg.removeEventListener("wheel", listener);
+  }, [hasSvg]);
 
   if (!domain || !bounds) return null;
   const modelHeight = laneHeight(lanes.model.rows);
@@ -275,7 +287,6 @@ export function TrajectoryOverviewStrip({
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={() => setDrag(null)}
-          onWheel={onWheel}
         >
           <rect x={0} y={0} width={width} height={modelHeight} className="fill-surface/40" />
           <rect
@@ -302,7 +313,7 @@ export function TrajectoryOverviewStrip({
           {tickTimes.map((time) => {
             const x = timeToX(time, domain, width);
             return (
-              <g key={time}>
+              <g key={time} data-trajectory-v2-tick={time}>
                 <line
                   x1={x}
                   x2={x}

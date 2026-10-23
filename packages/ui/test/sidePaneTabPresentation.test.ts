@@ -72,7 +72,6 @@ const modelTrajectoryV2Tab: Extract<WorkspaceSidePaneTab, { type: "model-traject
   id: "model-trajectory-v2:task-1",
   type: "model-trajectory-v2",
   workspaceKey: "/workspace",
-  workspacePath: "/workspace",
   taskId: "task-1",
   title: "Debug hang",
 };

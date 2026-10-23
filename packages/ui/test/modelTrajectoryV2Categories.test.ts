@@ -196,6 +196,37 @@ describe("event categories", () => {
     expect(classifyToolCall({ toolName: "Bash", args: {}, memoryRoots: roots })).toBeUndefined();
   });
 
+  it("matches Windows memory paths and roots", () => {
+    const winRoot = "C:\\Users\\u\\.zcode\\cli\\memories\\projects\\app-1a2b\\memory";
+    expect(
+      classifyToolCall({
+        toolName: "Read",
+        args: { file_path: `${winRoot}\\a.md` },
+        memoryRoots: [],
+      })?.memory,
+    ).toMatchObject({ op: "read", fileName: "a.md" });
+    expect(
+      classifyToolCall({
+        toolName: "Write",
+        args: { file_path: "D:\\notes\\memory\\b.md" },
+        memoryRoots: ["D:\\notes\\memory"],
+      })?.memory?.op,
+    ).toBe("write");
+    const header = `Contents of ${winRoot}\\MEMORY.md (user's auto-memory, persists across conversations):`;
+    const records = [
+      record("w1", 0, {
+        request: {
+          ...record("w1", 0).request,
+          messages: [{ role: "user", parts: [{ kind: "text", text: header }] }],
+        },
+      }),
+    ];
+    expect(collectMemoryRoots(records)).toEqual([winRoot]);
+    expect(findContextInjections(records[0]!.request.messages)[0]?.files).toEqual([
+      `${winRoot}\\MEMORY.md`,
+    ]);
+  });
+
   it("learns memory roots from the index header and finds index and recall injections", () => {
     const data = fixture();
     expect(collectMemoryRoots(data.records)).toEqual([ROOT]);

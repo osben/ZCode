@@ -65,7 +65,7 @@ The Host owns facts only and keeps no cache. The UI owns presentation: rows, fil
 
 Response shape (summary; the module contract is authoritative):
 
-- `records`: v1 records extended with `request.params`, `request.toolCatalogId`, `request.systemPromptId`, `request.cacheBreakpoints`, `request.cacheBreakpointsComplete`, `request.bodyBytes`, `response.usage.cacheWriteTokens`, and `timing`.
+- `records`: v1 records extended with `request.params`, `request.toolCatalogId`, `request.systemPromptId`, `request.cacheBreakpoints`, `request.cacheBreakpointsComplete`, `response.usage.cacheWriteTokens`, and `timing`.
 - `toolDefs`, `toolCatalogs`, `systemBlocks`, `systemPrompts`: interned maps referenced by id from records. Ids are stable only within one response.
 - `contextWindows`: `{ providerId, modelId, tokens? }` per distinct model in the window.
 - `toolTiming`: `{ source: "session-db", entries }` or `{ source: "unavailable", reason, entries: [] }`.
@@ -117,7 +117,7 @@ Response shape (summary; the module contract is authoritative):
 
 23. The x axis is wall-clock time over the window. Overlapping spans are packed into sub-rows of their lane.
 24. A model span with known TTFT draws the TTFT part lighter and decoding solid. Without TTFT it is drawn solid.
-25. Dragging selects a range in epoch milliseconds. The ledger shows every row whose interval intersects the range, inclusive. Clear-range and Escape reset it. A click without drag selects the row under the pointer. Ctrl or Cmd plus wheel zooms around the pointer; Shift plus wheel pans.
+25. Dragging selects a range in epoch milliseconds. The ledger shows every row whose interval intersects the range, inclusive. Clear-range and Escape reset it. A click without drag selects the row under the pointer. Ctrl or Cmd plus wheel zooms around the pointer; Shift plus wheel pans. The strip handles these wheel events with a non-passive listener and prevents their default, so the page neither zooms nor scrolls.
 
 ### Inspector (block D)
 
@@ -143,7 +143,7 @@ Agreed on a mockup with the user (2026-10-22). Classification is a pure UI funct
 34. Categories: `skill`, `memory` (operation `read` or `write`), `mcp`; everything else stays uncategorized.
 35. Skill: a tool call named `Skill`. The skill name is `input.skill`, arguments `input.args`. Slash commands also go through this tool (the Skill tool description instructs it; no other injection path exists in the runtime). Loaded size is the result's `truncated.originalBytes` when bounded, otherwise its serialized length.
 36. MCP: a tool call whose name starts with `mcp__`. Strip the prefix and split at the first `__`: the left part is the server, the rest the tool (`mcp__plugin_image-search_image_search__search_image` → server `plugin_image-search_image_search`, tool `search_image`).
-37. Memory roots are learned from the input: `Contents of <root>/MEMORY.md (user's auto-memory, …)` gives a root, and each `Memory: <path>:` line of a recall attachment gives a file. A path also counts as memory when it matches `/memories/projects/<project>/memory/` (the runtime's `resolveProjectMemoryRoot`).
+37. Memory roots are learned from the input: `Contents of <root>/MEMORY.md (user's auto-memory, …)` gives a root, and each `Memory: <path>:` line of a recall attachment gives a file. A path also counts as memory when it matches `/memories/projects/<project>/memory/` (the runtime's `resolveProjectMemoryRoot`). Paths and roots are compared with `\` normalized to `/`, so Windows paths match.
 38. Memory read: a `Read` of a memory path; an index injection (`Contents of …/MEMORY.md`); a recall attachment (`Retrieved for possible relevance …` with its `Memory: <path>:` lines). Memory write: `Write`, `Edit` or `MultiEdit` of a memory path.
 39. Injections are found only in a main call's new input (its delta, or the messages after the last assistant message of a full record), so a full history is never counted twice. The index shows again after compaction or a context reset; that is a real reload.
 40. Injections become ledger rows of kind `context` (`data-trajectory-v2-row-kind="context"`) with source `memory-index` or `memory-recall` and the file list. Their inspector shows Summary and Payload (the injected text).
@@ -168,7 +168,7 @@ Unit tests:
 - Host: `packages/services/test/modelTrajectoryV2{RequestFacts,Dedupe,ToolTiming,Read}.test.ts` and the module `contract.test.ts`;
 - UI: `packages/ui/test/modelTrajectoryV2{Ledger,RequestDiff,Metrics,TimeScale,ViewState}.test.ts`, render tests, and the updated side-pane tests.
 
-E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts`, cases TRV01–TRV07 in `docs/testing/model-trajectory-e2e-coverage-matrix.md`.
+E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts`, cases TRV01–TRV08 in `docs/testing/model-trajectory-e2e-coverage-matrix.md`.
 
 1. A live main turn with a Bash tool call: v2 opens from the task menu next to v1; the ledger shows user, request, assistant and `Bash {command…} → preview`; the tool Timing tab shows scheduled and execution times from `tool_usage`; the request Timing tab shows TTFT.
 2. Two catalogs differing by one tool, cached system blocks, effort and `max_tokens` changes, usage with cache write and reasoning, a compact call, and a legacy record: separator chips show the deltas; Payload shows tool count, KB and breakpoints; Schema shows the call-time definition; the legacy record shows "—"; context % is shown for a known model and hidden for an unknown one.

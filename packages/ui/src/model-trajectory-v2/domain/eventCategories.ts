@@ -33,7 +33,7 @@ const SKILL_TOOL = "Skill";
 const MCP_PREFIX = "mcp__";
 const MEMORY_READ_TOOLS = new Set(["Read"]);
 const MEMORY_WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit"]);
-const MEMORY_INDEX_PATTERN = /Contents of (.+?)\/MEMORY\.md \(user's auto-memory/g;
+const MEMORY_INDEX_PATTERN = /Contents of (.+?)([\\/])MEMORY\.md \(user's auto-memory/g;
 const RECALL_MARKER = "Retrieved for possible relevance";
 const RECALL_FILE_PATTERN = /^Memory: (.+):\s*$/gm;
 const PROJECT_MEMORY_PATH = /\/memories\/projects\/[^/]+\/memory\//;
@@ -68,8 +68,17 @@ export function collectMemoryRoots(records: readonly ZCodeTrajectoryV2Record[]):
   return [...roots];
 }
 
+/** Windows tool inputs and memory headers use `\\`; compare with one separator. */
+function toSlashes(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 export function isMemoryPath(path: string, roots: readonly string[]): boolean {
-  return PROJECT_MEMORY_PATH.test(path) || roots.some((root) => path.startsWith(`${root}/`));
+  const normalized = toSlashes(path);
+  return (
+    PROJECT_MEMORY_PATH.test(normalized) ||
+    roots.some((root) => normalized.startsWith(`${toSlashes(root)}/`))
+  );
 }
 
 function inputPath(input: unknown): string | undefined {
@@ -128,7 +137,9 @@ export function findContextInjections(
   for (const message of messages) {
     if (message.role !== "user" && message.role !== "system") continue;
     const text = textOf(message.parts);
-    const roots = [...text.matchAll(MEMORY_INDEX_PATTERN)].map((match) => `${match[1]}/MEMORY.md`);
+    const roots = [...text.matchAll(MEMORY_INDEX_PATTERN)].map(
+      (match) => `${match[1]}${match[2]}MEMORY.md`,
+    );
     if (roots.length > 0) injections.push({ source: "memory-index", files: roots, text });
     if (text.includes(RECALL_MARKER)) {
       const files = [...text.matchAll(RECALL_FILE_PATTERN)].map((match) => match[1] ?? "");

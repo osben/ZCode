@@ -67,6 +67,14 @@ describe("formatMs", () => {
     expect(formatMs(60_000)).toBe("1m 0s");
     expect(formatMs(90_000)).toBe("1m 30s");
   });
+
+  it("carries rounding into the next unit instead of showing 60s", () => {
+    expect(formatMs(999.6)).toBe("1.00s");
+    expect(formatMs(9_996)).toBe("10.0s");
+    expect(formatMs(59_960)).toBe("1m 0s");
+    expect(formatMs(119_500)).toBe("2m 0s");
+    expect(formatMs(125_400)).toBe("2m 5s");
+  });
 });
 
 describe("formatRatio", () => {

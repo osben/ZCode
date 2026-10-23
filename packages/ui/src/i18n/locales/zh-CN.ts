@@ -1500,7 +1500,7 @@ const zhCN: Record<string, string> = {
   "modelTrajectoryV2.timing.decoding": "生成",
   "modelTrajectoryV2.timing.firstText": "首段文本时间",
   "modelTrajectoryV2.timing.stream": "流式",
-  "modelTrajectoryV2.timing.scheduled": "排队时间",
+  "modelTrajectoryV2.timing.scheduled": "计划执行时间",
   "modelTrajectoryV2.timing.wait": "运行前等待",
   "modelTrajectoryV2.timing.execStart": "开始执行",
   "modelTrajectoryV2.timing.execEnd": "执行结束",

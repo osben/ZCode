@@ -341,6 +341,27 @@ describe("buildLedgerRows", () => {
     expect(keys(after).slice(0, before.length)).toEqual(keys(before));
   });
 
+  it("gives id-less calls to the same tool distinct row keys", () => {
+    const rows = buildLedgerRows({
+      records: [
+        record("r1", {
+          response: {
+            toolCalls: [
+              { kind: "tool-call", toolName: "Read", input: { file_path: "a.ts" } },
+              { kind: "tool-call", toolName: "Read", input: { file_path: "b.ts" } },
+            ],
+          },
+        }),
+      ],
+      truncated: false,
+      toolTiming: unavailableTiming,
+    });
+
+    const toolKeys = rows.filter((row) => row.kind === "tool").map((row) => row.key);
+    expect(toolKeys).toHaveLength(2);
+    expect(new Set(toolKeys).size).toBe(2);
+  });
+
   it("emits an assistant row with the error for a failed record without a response", () => {
     const failed = record("r1", {
       request: { ...record("r1").request, messages: [user("U1")] },
