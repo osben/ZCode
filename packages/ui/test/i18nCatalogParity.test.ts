@@ -8,6 +8,7 @@ import zhCN from "../src/i18n/locales/zh-CN.js";
 // English needs a singular form for these plural families while Chinese uses only `.other`.
 const EN_ONLY_KEYS = [
   "branchSwitchGuard.taskCount.one",
+  "git.actionMenu.commitDialog.changesValue.one",
   "git.branchSwitcher.currentDirty.one",
   "settings.memory.viewer.disabled",
   "taskList.childSideChatsCount.one",

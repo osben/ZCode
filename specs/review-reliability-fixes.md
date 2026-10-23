@@ -71,3 +71,8 @@ attempts, rejected marker sync, identical paths on different remote Hosts, disco
 logout during refresh/Link/probe, forced refresh coalescing, stale Dream takeover, ACP descendants
 and Settings Back/Open/Archived. Both continuous Desktop and replayable remote recovery keep the
 same Host owner. Platform process tests cover macOS/Linux and Windows.
+
+ISSUE-042 (Review file list): the Review pane matches `git status`. An untracked zero-byte regular
+file is listed as an added file (+0 -0) in Unstaged, as are staged and branch-scope empty files; only
+untracked binary, oversized and unreadable files (no reviewable text) stay hidden. The git service
+(`shouldIncludeUntrackedChange`, fed by `buildUntrackedStats`) is the single owner of this rule.
