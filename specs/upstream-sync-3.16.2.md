@@ -69,9 +69,24 @@ Root and docs:
 - Docs: the fork's English versions plus upstream's new content in English.
 - `.staged-file-size-exemptions`: five upstream-owned files above the size cap are listed instead of being split, which keeps sync parity.
 
-## 3.16.3 ledger (binary only, not ported)
+## 3.16.3 ledger (binary only, pre-ported)
 
-Upstream released 3.16.3 (build commit `a82dd43e`, 2026-10-23) before publishing its source. The deltas below were inferred from the minified app bundle by comparing string literals against `3c5b2276`. They are not ported, so that no guessed code conflicts with the real source. Port them in the next sync, once upstream publishes 3.16.3.
+Upstream released 3.16.3 (build commit `a82dd43e`, 2026-10-23) before publishing its source. The deltas below were inferred from the minified app bundle by comparing string literals against `3c5b2276`.
+
+Update (user decision, 2026-10-23): the reconstructible items were pre-ported from the bundle. Each port uses upstream's identifiers, and each spec carries a "Reconciling with the real 3.16.3 source" section. When upstream publishes 3.16.3, take upstream and delete the port.
+
+| Area                        | Status                    | Spec                                     |
+| --------------------------- | ------------------------- | ---------------------------------------- |
+| Remote SSH hardening        | ported                    | `specs/port-3.16.3-remote-ssh.md`        |
+| `LocalToolSearch`           | ported                    | `specs/port-3.16.3-local-tool-search.md` |
+| Copy login link             | ported                    | `specs/port-3.16.3-ui-small.md`          |
+| Copy device MID             | ported                    | `specs/port-3.16.3-ui-small.md`          |
+| `reuseExistingRoot`         | ported                    | `specs/port-3.16.3-ui-small.md`          |
+| Onboarding eligibility      | ported                    | `specs/port-3.16.3-ui-small.md`          |
+| Plugin scope labels removal | ported                    | `specs/port-3.16.3-ui-small.md`          |
+| Window-scoped terminals     | analysis only, not ported | `specs/port-3.16.3-terminal-owner.md`    |
+
+Window-scoped terminals are not ported because the phone client produces the terminal owner id, and its 3.16.3 source is not available.
 
 - No new migrations, no DDL, and no changed migration SQL. 3.16.3 shares `~/.zcode` with this fork safely.
 - Electron (41.0.3) and dependency versions are unchanged.

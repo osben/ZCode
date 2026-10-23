@@ -10,6 +10,7 @@ import { type OAuthProviderMeta, BIGMODEL_PROVIDER_ID, ZAI_PROVIDER_ID } from "@
 import {
   TID_LOGIN_USE_API_KEY_BUTTON,
   TID_OAUTH_CANCEL,
+  TID_OAUTH_COPY_LOGIN_LINK,
   TID_OAUTH_ERROR,
   TID_OAUTH_LOGIN_BUTTON,
   testId,
@@ -17,6 +18,7 @@ import {
 import { Alert, AlertDescription } from "./components/ui/alert.js";
 import { Button } from "./components/ui/button.js";
 import { ZCodeAboutLogo } from "@/components/ui/ZCodeAboutLogo.js";
+import { toast } from "@/components/ui/toast.js";
 import { useOAuth } from "./hooks/useOAuth.js";
 import { useZCodeIntl } from "./i18n/IntlProvider.js";
 import { LoginApiKeyForm } from "./login/LoginApiKeyForm.js";
@@ -69,6 +71,17 @@ export function shouldCompleteLoginFromExistingUser(params: {
   return params.hasUser && !params.attempt;
 }
 
+/** Writes the authorization URL to the clipboard; resolves false when the clipboard is unavailable or rejects. */
+async function copyOAuthLoginLink(url: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function LoginPanel({ active, onComplete }: LoginPanelProps) {
   const { intl } = useZCodeIntl();
   const {
@@ -81,6 +94,7 @@ export function LoginPanel({ active, onComplete }: LoginPanelProps) {
     loadingProviders,
     pendingProvider,
     refreshProviders,
+    authorizeUrl,
   } = useOAuth();
   const user = useZCodeStore((s) => s.user);
   const oauthError = useZCodeStore((s) => s.oauthError);
@@ -392,6 +406,28 @@ export function LoginPanel({ active, onComplete }: LoginPanelProps) {
             >
               {intl.formatMessage({ id: "login.oauth.cancel" })}
             </Button>
+            {authorizeUrl ? (
+              <div className="flex items-center justify-center gap-1 text-center text-ui-sm text-foreground-subtle">
+                <span>{intl.formatMessage({ id: "login.oauth.browserNotOpened" })}</span>
+                <button
+                  type="button"
+                  className="font-medium text-brand underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  data-testid={TID_OAUTH_COPY_LOGIN_LINK}
+                  onClick={() => {
+                    // The opened URL carries OAuth state: it goes only to the clipboard and is never logged.
+                    void copyOAuthLoginLink(authorizeUrl).then((copied) => {
+                      toast(
+                        intl.formatMessage({
+                          id: copied ? "login.oauth.copyLinkSuccess" : "login.oauth.copyLinkFailed",
+                        }),
+                      );
+                    });
+                  }}
+                >
+                  {intl.formatMessage({ id: "login.oauth.copyLoginLink" })}
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
 

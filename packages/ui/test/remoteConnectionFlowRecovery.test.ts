@@ -2510,3 +2510,78 @@ it("An explicit background continue restores the original draft submission gate 
   expect(submissionPending).toBe(true);
   await act(async () => eligibility.resolve());
 });
+
+function prepareFolderProfile() {
+  ports.snapshot.profiles = [
+    { profileId: "a", transport: "docker", displayName: "A", target: targetA, createdAt: 1 },
+  ];
+}
+
+it.each([
+  { name: "a project profile", extra: {}, expected: "/repo-b" },
+  {
+    name: "device management",
+    extra: { completion: "device-management" as const },
+    expected: undefined,
+  },
+  {
+    name: "a connection-ready owner",
+    extra: { onConnectionReady: vi.fn(async () => undefined) },
+    expected: undefined,
+  },
+])(
+  "The connecting step keeps the preferred folder for $name before the directory step",
+  async ({ extra, expected }) => {
+    prepareFolderProfile();
+    const connection = Promise.withResolvers<string>();
+    const onConnect = vi.fn<RemoteConnectionFlowOptions["onConnect"]>(() => connection.promise);
+    const props = defaults({
+      onConnect,
+      preferredProfileId: "a",
+      preferredDirectoryPath: "  /repo-b  ",
+      ...extra,
+    });
+    const { result } = renderHook(() => useRemoteConnectionFlow(props));
+    await waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+    expect(result.current.currentStep).toBe("connecting");
+    expect(result.current.connectingStep.workspacePath).toBe(expected);
+  },
+);
+
+it("A direct connection opened for a folder shows the folder step while connecting", async () => {
+  const connection = Promise.withResolvers<string>();
+  const onConnect = vi.fn<RemoteConnectionFlowOptions["onConnect"]>(() => connection.promise);
+  const props = defaults({
+    onConnect,
+    preferredTarget: targetA,
+    preferredDirectoryPath: "/repo-a",
+  });
+  const { result } = renderHook(() => useRemoteConnectionFlow(props));
+  await waitFor(() => expect(result.current.currentStep).toBe("settings"));
+  act(() => result.current.settingsStep.onConnect());
+  await waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+  expect(result.current.connectingStep.workspacePath).toBe("/repo-a");
+});
+
+it("A connection waiting to open its folder is not reported as ready", async () => {
+  prepareFolderProfile();
+  const connection = Promise.withResolvers<string>();
+  const onConnect = vi.fn<RemoteConnectionFlowOptions["onConnect"]>(() => connection.promise);
+  const props = defaults({
+    onConnect,
+    preferredProfileId: "a",
+    preferredDirectoryPath: "/repo-b",
+  });
+  const { result, rerender } = renderHook((input) => useRemoteConnectionFlow(input), {
+    initialProps: props,
+  });
+  await waitFor(() => expect(onConnect).toHaveBeenCalledOnce());
+  act(() => result.current.connectingStep.onMinimize());
+  rerender({ ...props, open: false });
+  await act(async () => connection.resolve("session-a"));
+  await waitFor(() => expect(result.current.minimizedProgress?.ready).toBe(true));
+  expect(result.current.minimizedProgress?.workspacePath).toBe("/repo-b");
+  expect(result.current.connectingStep.workspacePath).toBe("/repo-b");
+  expect(result.current.connectingStep.connectionReady).toBe(false);
+  expect(props.onSelectProject).not.toHaveBeenCalled();
+});

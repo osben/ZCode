@@ -14,6 +14,8 @@ import {
   sourceServerManagementSnapshotSchema,
   sourceServerManagementSnapshotRequestSchema,
   SOURCE_SERVER_UPDATE_RUNNING_TASKS_ERROR_CODE,
+  PUBLIC_ZCODE_ERROR_CODES,
+  REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE,
   isPublicZCodeErrorCode,
   sourceServerConnectionStateSnapshotSchema,
   sourceServerOperationLogSchema,
@@ -127,6 +129,28 @@ describe("R3 Source Server contracts", () => {
       ].every(isPublicZCodeErrorCode),
     ).toBe(true);
     expect(isPublicZCodeErrorCode("internal-stack-trace")).toBe(false);
+  });
+
+  it("registers the 3.16.3 remote connection hardening codes publicly", () => {
+    expect(
+      [
+        "remote-authentication-unsupported",
+        "remote-platform-unsupported",
+        "remote-workspace-directory-unresponsive",
+      ].every(isPublicZCodeErrorCode),
+    ).toBe(true);
+    expect(REMOTE_WORKSPACE_DIRECTORY_UNRESPONSIVE_ERROR_CODE).toBe(
+      "remote-workspace-directory-unresponsive",
+    );
+    expect(PUBLIC_ZCODE_ERROR_CODES.indexOf("remote-authentication-unsupported")).toBe(
+      PUBLIC_ZCODE_ERROR_CODES.indexOf("remote-authentication-failed") + 1,
+    );
+    expect(PUBLIC_ZCODE_ERROR_CODES.indexOf("remote-platform-unsupported")).toBe(
+      PUBLIC_ZCODE_ERROR_CODES.indexOf("remote-permission-denied") + 1,
+    );
+    expect(PUBLIC_ZCODE_ERROR_CODES.indexOf("remote-workspace-directory-unresponsive")).toBe(
+      PUBLIC_ZCODE_ERROR_CODES.indexOf("remote-workspace-directory-unavailable") + 1,
+    );
   });
 
   it("rejects unregistered error codes in Source management state", () => {

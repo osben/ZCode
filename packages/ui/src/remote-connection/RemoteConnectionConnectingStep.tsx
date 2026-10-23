@@ -49,7 +49,21 @@ const REMOTE_CONNECTION_PHASES = [
   ["handshake", "remote.phase.handshake"],
 ] as const;
 
+/** Shown only when the connection opens a project folder; its logs are tagged `[source-server:workspace]`. */
+const REMOTE_CONNECTION_WORKSPACE_PHASE = ["workspace", "remote.phase.workspace"] as const;
+
+const REMOTE_CONNECTION_ALL_PHASES = [
+  ...REMOTE_CONNECTION_PHASES,
+  REMOTE_CONNECTION_WORKSPACE_PHASE,
+] as const;
+
 export type RemoteConnectionPhaseStatus = "pending" | "active" | "complete" | "failed";
+
+function listRemoteConnectionPhases(
+  includeWorkspace: boolean,
+): ReadonlyArray<readonly [string, string]> {
+  return includeWorkspace ? REMOTE_CONNECTION_ALL_PHASES : REMOTE_CONNECTION_PHASES;
+}
 
 function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
   if (rawPhase === "probe") return "channel";
@@ -69,21 +83,24 @@ function normalizeRemoteConnectionPhase(rawPhase: string): string | null {
     return "deploy";
   }
   if (rawPhase === "channel") return "channel";
-  return REMOTE_CONNECTION_PHASES.some(([key]) => key === rawPhase) ? rawPhase : null;
+  return REMOTE_CONNECTION_ALL_PHASES.some(([key]) => key === rawPhase) ? rawPhase : null;
 }
 
 export function resolveRemoteConnectionPhases(
   logs: ReadonlyArray<Pick<RemoteConnectionLogEntry, "message" | "level">>,
-  options: { connectionReady?: boolean } = {},
+  options: { connectionReady?: boolean; includeWorkspace?: boolean } = {},
 ) {
+  const includeWorkspace = options.includeWorkspace === true;
+  const phases = listRemoteConnectionPhases(includeWorkspace);
   let activeIndex = -1;
   let failedIndex = -1;
   for (const log of logs) {
     const match = /^\[source-server:([^\]]+)\]/u.exec(log.message);
     if (!match) continue;
-    const phaseIndex = REMOTE_CONNECTION_PHASES.findIndex(
-      ([key]) => key === normalizeRemoteConnectionPhase(match[1]!),
-    );
+    const normalized = normalizeRemoteConnectionPhase(match[1]!);
+    // Without a folder step, workspace preparation still belongs to the handshake the user sees.
+    const key = normalized === "workspace" && !includeWorkspace ? "handshake" : normalized;
+    const phaseIndex = phases.findIndex(([phaseKey]) => phaseKey === key);
     if (phaseIndex < 0) continue;
     activeIndex = Math.max(activeIndex, phaseIndex);
     if (log.level === "error") failedIndex = phaseIndex;
@@ -91,11 +108,13 @@ export function resolveRemoteConnectionPhases(
   // 修复原因：成功连接后 publish-online 不是 Renderer 日志流的可靠终结事件，
   // 仅按日志推断会出现顶部已连接但阶段轨永久停在握手中的状态。连接 session ready
   // 是同一条连接流程的权威终态；没有错误阶段时用它完成最终阶段，不改变连接中的日志进度。
+  // With a folder step, publish-online is not the end: the folder must still be read before the connection is usable.
   const connectionReady =
     (options.connectionReady === true ||
-      logs.some((log) => log.message.startsWith("[source-server:publish-online]"))) &&
+      (!includeWorkspace &&
+        logs.some((log) => log.message.startsWith("[source-server:publish-online]")))) &&
     failedIndex < 0;
-  return REMOTE_CONNECTION_PHASES.map(([key, titleId], index) => ({
+  return phases.map(([key, titleId], index) => ({
     key,
     titleId,
     status: (failedIndex === index
@@ -161,6 +180,7 @@ export function resolveRemoteConnectionPhaseSub(
     installConfirmationPending?: boolean;
     deployErrorReason?: string;
     rawPhase?: string;
+    workspacePath?: string;
   },
 ): { id: string; values?: Record<string, string> } | null {
   switch (phase.key) {
@@ -209,6 +229,13 @@ export function resolveRemoteConnectionPhaseSub(
       return phase.status === "active" && context.rawPhase === "restart"
         ? { id: "remote.phaseSub.restarting" }
         : null;
+    case "workspace":
+      return phase.status === "active" && context.workspacePath
+        ? {
+            id: "remote.phaseSub.workspaceReading",
+            values: { path: context.workspacePath },
+          }
+        : null;
     case "ready":
       return phase.status === "complete" || phase.status === "active"
         ? { id: "remote.phaseSub.readyOnline" }
@@ -237,6 +264,7 @@ export function RemoteConnectionConnectingStep({
   upgradeLoading = false,
   onUpgrade,
   connectionReady = false,
+  workspacePath,
   cancelled = false,
   onCancelConnection,
   credentials,
@@ -282,6 +310,8 @@ export function RemoteConnectionConnectingStep({
   upgradeLoading?: boolean;
   onUpgrade?: () => void;
   connectionReady?: boolean;
+  /** The project folder being opened; when set, the connecting progress shows the "Open project folder" step. */
+  workspacePath?: string;
   cancelled?: boolean;
   onCancelConnection?: () => void;
   onContinueToDirectory?: () => void;
@@ -306,22 +336,24 @@ export function RemoteConnectionConnectingStep({
     : installConfirmation || forceUpdate
       ? "deploy"
       : undefined;
-  const phases = resolveRemoteConnectionPhases(logs, { connectionReady }).map(
-    (phase, index, all) => {
-      const waitingIndex = all.findIndex((item) => item.key === waitingPhase);
-      if (waitingIndex >= 0)
-        return {
-          ...phase,
-          status: (index < waitingIndex
-            ? "complete"
-            : index === waitingIndex
-              ? "active"
-              : "pending") as RemoteConnectionPhaseStatus,
-        };
-      if (loading && !logs.length && index === 0) return { ...phase, status: "active" as const };
-      return phase;
-    },
-  );
+  const projectFolder = workspacePath?.trim() || undefined;
+  const phases = resolveRemoteConnectionPhases(logs, {
+    connectionReady,
+    includeWorkspace: projectFolder !== undefined,
+  }).map((phase, index, all) => {
+    const waitingIndex = all.findIndex((item) => item.key === waitingPhase);
+    if (waitingIndex >= 0)
+      return {
+        ...phase,
+        status: (index < waitingIndex
+          ? "complete"
+          : index === waitingIndex
+            ? "active"
+            : "pending") as RemoteConnectionPhaseStatus,
+      };
+    if (loading && !logs.length && index === 0) return { ...phase, status: "active" as const };
+    return phase;
+  });
   const logTime = (timestamp: string) => {
     const parts = String(timestamp).match(/(\d{1,2}):(\d{2}):(\d{2})/u);
     if (!parts) return mountedAt;
@@ -667,6 +699,7 @@ export function RemoteConnectionConnectingStep({
             const phaseSub = resolveRemoteConnectionPhaseSub(phase, {
               kind,
               rawPhase,
+              workspacePath: projectFolder,
               recognizedDeviceName,
               installConfirmationPending: Boolean(installConfirmation),
               deployErrorReason: deploymentFailedLog?.message.replace(

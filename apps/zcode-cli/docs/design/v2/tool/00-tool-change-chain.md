@@ -14,6 +14,28 @@
 拒绝，只改模型可见文案：说明没有 notebook 编辑工具，必要时读取后用 Write 重写 notebook JSON。
 schema、权限、执行与 UI/V4 投影不变；回归见 `packages/core/tests/edit-tool-contract.test.ts`。
 
+## 只读 Bash 参与 streaming 提前执行（2026-10-17）
+
+streaming 期间的提前执行改为按 input 判定：closed `tool_call` 进入 coordinator 时，
+用与 `scheduleTools`、权限检查相同的 `resolveRuntimePermissionCapability` /
+`resolveToolSchedulingFlags` 解析 capability。要求 readOnly、concurrentSafe、非 destructive、
+`needsApproval: false`、`sideEffectScope: "none"`，并且没有 requiresUserInteraction、alwaysAsk
+或 Guarded `userApprovalRule`。Bash 另需非 `run_in_background`。因此不含 `cd`/`pushd`/`popd`
+的只读 Bash 可以在模型仍在输出时启动；变更型 Bash、目录切换和 Guarded 危险命令仍在
+stream 结束后执行。新增前缀屏障：同一 stream attempt 中一旦出现不可提前的调用，其后的调用
+（包括 Read）都不再提前，提前执行集合始终是 `scheduleTools` 的第一个 parallel group，
+避免读到前一个调用执行之前的状态。每个提前调用是独立 executor batch，而 `maxConcurrency` 只在
+batch 内生效，因此 coordinator 自行把每个 stream attempt 的提前调用数限制在
+`toolConcurrency.maxConcurrency`（默认 10）以内，超出部分随 stream 结束后的调度执行。capability context 统一由 `resolveRuntimeToolCapabilityContext`
+构造（含 mode、bashShellSelection），调度、提前执行与 ledger 共用；ledger 中的 flags 仅供观测。
+提前执行只是时机门槛，不是权限授权：hook、权限决策、hook 改写后的复检仍由 executor 负责，
+匹配的项目 ask 规则仍可能在 stream 期间经 broker 串行弹出（与既有 Read 相同）。
+stream 可重试失败时，已接受的调用被 abort 并恰好提交一次结果（真实、取消或 synthetic），
+重试请求从这些结果继续，不会重跑。Bash prompt 增加提示：彼此独立的只读命令可在同一条消息中
+并行发起多个 Bash call，依赖步骤、`cd` 和写操作串行执行。详见
+`docs/design/v2/model/streaming-tool-execution-and-recovery.md`「Early Execution Eligibility」，
+测试见 `packages/core/tests/runtime-streaming-bash-early-execution.test.ts`。
+
 ## 只读 Bash 按输入并发调度（2026-10-17）
 
 `scheduleTools` 不再只读静态 metadata：每个 tool call 的 `readOnly`、`destructive`、`concurrentSafe`、
@@ -28,7 +50,7 @@ Bash 的 runtime capability 在命令通过 readonly validation 且不含 `cd`/`
 因此 Bash cwd 写回是 compare-and-set：只有 session cwd 仍等于本命令启动时的 cwd 才写回。若同组的
 另一命令（例如被 hook 改写成 `cd` 的调用）已先改变 session cwd，本命令不写回；若本命令自己也切换了
 目录，则在 stderr 追加未持久化提示。串行执行时启动与完成之间无人改 cwd，行为不变。
-streaming 期间的提前执行仍只看静态 metadata，Bash 不参与（后续单独设计）。
+streaming 期间的提前执行见上一条（2026-10-17）。
 工具 schema、权限决策、执行、结果格式与 UI/V4 投影不变；`tool_call_scheduled` 的
 `canRunParallel` / `parallelGroupIndex` 如实反映新的分组。cwd 捕获文件按调用随机命名，后台任务
 按 taskId 登记，均无会话级单槽状态。测试见 `packages/core/tests/bash-permission.test.ts` 与

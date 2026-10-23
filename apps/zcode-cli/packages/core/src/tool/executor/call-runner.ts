@@ -9,6 +9,7 @@ import {
   traceContextToLogContext,
   type ToolExecutionSpanWriter,
   type SessionEvent,
+  toolSearchNameForMode,
 } from "@zcode/contracts";
 import {
   OFFICIAL_CUA_FRAME_MODEL_CONTENT_PROTECTION,
@@ -266,7 +267,7 @@ async function executeToolCallImpl(
         result.modelContent =
           (result.modelContent ?? initialInputValidation.message) +
           UNDISCOVERED_TOOL_SCHEMA_EXPLANATION +
-          `Load the tool first: call ToolSearch with query "select:${canonicalToolCall.name}", then retry this call. ` +
+          `Load the tool first: call ${toolSearchNameForMode(search.mode)} with query "select:${canonicalToolCall.name}", then retry this call. ` +
           `For reference, this tool's input schema is: ${JSON.stringify(entry.inputSchema)}` +
           (search.mode === "local"
             ? `\nCall DeferredToolCall with {name: "${canonicalToolCall.name}", input: {...}}.`

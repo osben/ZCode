@@ -19,14 +19,25 @@ import { logger } from "@/logger.js";
  * 返回 [needsOnboarding, markOnboarded]：markOnboarded 在引导保存成功后把判定置 false
  * （记录已落盘，本次会话不再触发）。
  */
+/**
+ * Why the first-run onboarding was shown automatically: a fresh install (no record file yet) or an identity
+ * change on an existing record file. null when onboarding is not shown.
+ */
+export type OnboardingTriggerSource = "auto_first_open" | "auto_identity_change";
+
+/**
+ * Returns [needsOnboarding, markOnboarded, source]. The trigger uses getOnboardingEligibility, so source is
+ * derived from recordFileExisted on the same decision as needsOnboarding.
+ */
 export function useOnboardingTrigger(options: {
   onboardingRecord: ReturnType<typeof useOnboardingRecordService>;
   userId: string | null;
   loadDeviceMid: () => string;
   update: (patch: Partial<AppSettings>) => Promise<void>;
-}): [boolean | null, () => void] {
+}): [boolean | null, () => void, OnboardingTriggerSource | null] {
   const { onboardingRecord, userId, loadDeviceMid, update } = options;
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null);
+  const [source, setSource] = useState<OnboardingTriggerSource | null>(null);
   // 记录上一次判定时的 userId，回填只在身份实际变化后发生（见下方回填条件）。
   const lastSyncedUserIdRef = useRef<string | null | undefined>(undefined);
   // 状态镜像：超时回调读"是否已产生判定结果"，避免闭包捕获陈旧 state。
@@ -71,12 +82,20 @@ export function useOnboardingTrigger(options: {
       .catch((cause: unknown) => {
         logger.warn("[occupation-onboarding] 认领匿名引导记录失败", { error: String(cause) });
       })
-      .then(() => onboardingRecord.shouldOnboard(loadDeviceMid()))
+      .then(() => onboardingRecord.getOnboardingEligibility(loadDeviceMid()))
       .then(
-        (result) => {
+        (eligibility) => {
+          const result = eligibility.shouldOnboard;
           if (!cancelled) {
             releaseDeadlineRef.current = null;
             setNeedsOnboarding(result);
+            setSource(
+              result
+                ? eligibility.recordFileExisted
+                  ? "auto_identity_change"
+                  : "auto_first_open"
+                : null,
+            );
           }
           // 换账号恢复该用户偏好：settings 不分用户，A 答完后 B 触发引导会把 settings 顶成
           // B 的答案；再切回 A 时按 record 最近作答回填。同步失败只留日志。
@@ -109,6 +128,7 @@ export function useOnboardingTrigger(options: {
           if (!cancelled) {
             releaseDeadlineRef.current = null;
             setNeedsOnboarding(false);
+            setSource(null);
           }
         },
       )
@@ -129,6 +149,8 @@ export function useOnboardingTrigger(options: {
       // 用户完成引导保存成功即产生判定结果，结束放行预算，防止残留轮次的兜底翻转。
       releaseDeadlineRef.current = null;
       setNeedsOnboarding(false);
+      setSource(null);
     },
+    source,
   ];
 }

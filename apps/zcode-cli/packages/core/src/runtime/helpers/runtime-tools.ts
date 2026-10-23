@@ -26,7 +26,11 @@ import { resolveEnabledProjectMemoryRoot } from "./project-memory.js";
 import { sessionHasLoadedSkill } from "../../agent/loaded-skills.js";
 import { createRuntimeNestedInstructionContext } from "./nested-instructions-context.js";
 import { getMissingExecutionWorktreeToolError } from "./execution-worktree-guard.js";
-import type { ToolMetadata, ToolRuntimeScope } from "../../tool/types.js";
+import type {
+  ToolMetadata,
+  ToolRuntimePermissionCapabilityContext,
+  ToolRuntimeScope,
+} from "../../tool/types.js";
 
 const DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS = 3_600_000;
 const EMPTY_RUNTIME_HOOK_CONFIG = {
@@ -266,6 +270,23 @@ function createRuntimeToolExecutor(
 
 export function resolveRuntimeToolScope(runtime: AgentRuntimeInternal): ToolRuntimeScope {
   return runtime.config.taskType === "subagent_child" ? "subagent" : "main";
+}
+
+/**
+ * Single construction point for input-aware capability resolution outside the executor
+ * (scheduling, streaming early execution, ledger). Guarded only reports a dangerous Bash
+ * match when both `mode` and the shell dialect are present.
+ */
+export function resolveRuntimeToolCapabilityContext(
+  runtime: AgentRuntimeInternal,
+): ToolRuntimePermissionCapabilityContext {
+  return {
+    bashShellSelection: getSessionShellSelectionFromConfig(runtime.config),
+    mode: runtime.config.mode ?? "build",
+    runtimeScope: resolveRuntimeToolScope(runtime),
+    workingDirectory: runtime.workingDirectory,
+    workspaceRoot: runtime.workspaceRoot,
+  };
 }
 
 function resolveRuntimeBrowserUseEnabled(

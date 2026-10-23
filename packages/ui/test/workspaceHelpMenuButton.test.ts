@@ -34,6 +34,7 @@ const captured = vi.hoisted(() => ({
     labelValues: undefined,
   },
   executeDesktopCommand: vi.fn(async () => undefined),
+  getDeviceId: vi.fn(() => "device-mid-123"),
 }));
 
 vi.mock("@/components/ui/dropdown-menu.js", () => ({
@@ -96,6 +97,7 @@ vi.mock("@/hooks/usePlatform.js", () => ({
     captureWindowScreenshot: vi.fn(async () => null),
     executeDesktopCommand: captured.executeDesktopCommand,
     exportLogs: captured.exportLogs,
+    getDeviceId: captured.getDeviceId,
     openCommunity: vi.fn(async () => undefined),
     openExternal: captured.openExternal,
   }),
@@ -247,6 +249,60 @@ describe("WorkspaceHelpMenuButton", () => {
     expect(captured.dismissToast).toHaveBeenCalledWith(7);
   });
 
+  it("desktop copy device MID writes the platform device id to the clipboard and shows the success toast", async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      await render(true);
+      const item = captured.menuItems.find(
+        (entry) => entry.label === "workspaceHeader.help.copyDeviceMid",
+      );
+      expect(item).toBeDefined();
+      await item!.onSelect?.();
+      expect(writeText).toHaveBeenCalledExactlyOnceWith("device-mid-123");
+      expect(captured.toast).toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopied");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("copy device MID shows the failure toast when the clipboard rejects or is unavailable", async () => {
+    const writeText = vi.fn(async () => {
+      throw new Error("denied");
+    });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    try {
+      await render(true);
+      const item = captured.menuItems.find(
+        (entry) => entry.label === "workspaceHeader.help.copyDeviceMid",
+      );
+      await item!.onSelect?.();
+      expect(captured.toast).toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopyFailed");
+      expect(captured.toast).not.toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopied");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    vi.stubGlobal("navigator", {});
+    try {
+      captured.toast.mockClear();
+      await render(true);
+      const item = captured.menuItems.find(
+        (entry) => entry.label === "workspaceHeader.help.copyDeviceMid",
+      );
+      await item!.onSelect?.();
+      expect(captured.getDeviceId).toHaveBeenCalled();
+      expect(captured.toast).toHaveBeenCalledWith("workspaceHeader.help.deviceMidCopyFailed");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("Web hides copy device MID", async () => {
+    for (const isDesktop of [undefined, false]) {
+      expect(await render(isDesktop)).not.toContain("workspaceHeader.help.copyDeviceMid");
+    }
+  });
+
   it("Web and mobile remote control hide the local export-logs entry", async () => {
     for (const isDesktop of [undefined, false]) {
       expect(await render(isDesktop)).not.toContain("titleBar.menu.help.exportLogs");
@@ -265,6 +321,7 @@ describe("WorkspaceHelpMenuButton", () => {
         ...(desktop
           ? [
               "titleBar.menu.help.exportLogs",
+              "workspaceHeader.help.copyDeviceMid",
               "titleBar.menu.help.resourceManager",
               "titleBar.menu.help.checkForUpdates",
               "titleBar.menu.help.about",

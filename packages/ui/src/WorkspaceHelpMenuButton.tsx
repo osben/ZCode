@@ -8,6 +8,7 @@ import {
   ActivityIcon,
   BookOpenIcon,
   CircleHelpIcon,
+  CopyIcon,
   DownloadIcon,
   LightbulbIcon,
   InfoIcon,
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { cn } from "@/components/lib/utils.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
+import { toast } from "@/components/ui/toast.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import { useDesktopUpdateMenu } from "@/hooks/useDesktopUpdateMenu.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
@@ -68,6 +70,20 @@ export function WorkspaceHelpMenuButton({
 
   const handleShowAbout = () => {
     void platform.executeDesktopCommand(DesktopCommandIds.ShowAbout);
+  };
+
+  // Copies the device MID for support requests. The value goes only to the clipboard; it is never logged.
+  const handleCopyDeviceMid = async () => {
+    try {
+      const deviceMid = platform.getDeviceId();
+      if (!deviceMid || typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(deviceMid);
+      toast(intl.formatMessage({ id: "workspaceHeader.help.deviceMidCopied" }));
+    } catch {
+      toast(intl.formatMessage({ id: "workspaceHeader.help.deviceMidCopyFailed" }));
+    }
   };
 
   return (
@@ -134,6 +150,10 @@ export function WorkspaceHelpMenuButton({
             <DropdownMenuItem onSelect={helpMenuActions.exportLogs}>
               <DownloadIcon className="size-4" />
               {intl.formatMessage({ id: "titleBar.menu.help.exportLogs" })}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={handleCopyDeviceMid}>
+              <CopyIcon className="size-4" />
+              {intl.formatMessage({ id: "workspaceHeader.help.copyDeviceMid" })}
             </DropdownMenuItem>
             <DropdownMenuItem
               data-testid={TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER}

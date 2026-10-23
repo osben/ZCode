@@ -58,6 +58,10 @@ function createOnboardingRecordStub(): IOnboardingRecordService {
     dismissOnboarding: vi.fn(async () => {}),
     claimAnonymousRecord: vi.fn(async () => {}),
     shouldOnboard: vi.fn(async () => false),
+    getOnboardingEligibility: vi.fn(async () => ({
+      shouldOnboard: false,
+      recordFileExisted: false,
+    })),
     getLatestEntry: vi.fn(async () => null),
     syncSettingsFromRecord: vi.fn(async () => null),
     updateRecordPreferences: vi.fn(async () => {}),

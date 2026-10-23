@@ -187,6 +187,19 @@ export class ProjectRepository implements ProjectRepositoryContract {
       if (input.hostId && input.hostId !== hostId) throw new Error("project.host-immutable");
       const roots = [...new Set(input.roots ?? old?.roots.map((root) => root.rootPath) ?? [])];
       assertRemoteProjectRoots(this.ownerHostId, roots, old);
+      if (input.reuseExistingRoot) {
+        // Open-directory intent is only defined for a single local root that does not target an existing project.
+        if (hostId !== "local" || old || roots.length !== 1)
+          throw new Error("project.invalid-directory-open");
+        const existing = this.db
+          .prepare(
+            `SELECT p.project_id FROM projects p JOIN project_roots r ON r.project_id=p.project_id
+          WHERE p.host_id=? AND p.deleted=0 AND r.root_path=?
+          ORDER BY r.is_primary DESC,p.position,p.project_id LIMIT 1`,
+          )
+          .get(hostId, roots[0]!) as { project_id: string } | undefined;
+        if (existing) return requireProject(this.db, String(existing.project_id));
+      }
       if (
         input.restoreProjectId &&
         (!old?.deleted ||

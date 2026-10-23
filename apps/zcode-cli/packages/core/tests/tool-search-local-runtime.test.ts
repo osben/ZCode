@@ -51,9 +51,13 @@ it.each(["off", "on"] as const)(
       if (JSON.stringify(request.messages).includes("create a detailed summary"))
         return { text: "<summary>Continue the task.</summary>", finishReason: "stop", usage: {} };
       step++;
+      // The model calls the search name it was offered: LocalToolSearch in local mode, ToolSearch otherwise.
+      const searchName = request.tools?.some((tool) => tool.name === "LocalToolSearch")
+        ? "LocalToolSearch"
+        : "ToolSearch";
       const call =
         step === 1
-          ? { id: "search", name: "ToolSearch", input: { query: "select:Lookup" } }
+          ? { id: "search", name: searchName, input: { query: "select:Lookup" } }
           : step === 2
             ? {
                 id: "invoke",
@@ -85,6 +89,8 @@ it.each(["off", "on"] as const)(
       const registry = createToolRegistry();
       registry.register({
         ...toolSearchToolEntry,
+        // The search entry's LocalToolSearch alias must not follow the spread onto the fake tool.
+        aliases: undefined,
         metadata: {
           ...toolSearchToolEntry.metadata,
           name: "Lookup",
@@ -220,6 +226,19 @@ it.each(["off", "on"] as const)(
         input: { value: 7 },
         modelCallWrapper: "DeferredToolCall",
       });
+      // Pending and running parts keep the name the model emitted; the completed part carries the canonical name.
+      // Replay accepts both names (see tool-search-local-name.test.ts), so either form stays valid in history.
+      const searchParts = savedParts.filter(
+        (part) => part.type === "tool" && part.callID === "search",
+      );
+      expect(searchParts.length).toBeGreaterThan(0);
+      expect(
+        searchParts.map((part) => (part.type === "tool" ? [part.state.status, part.tool] : [])),
+      ).toEqual([
+        ["pending", "LocalToolSearch"],
+        ["running", "LocalToolSearch"],
+        ["completed", "ToolSearch"],
+      ]);
       const invocationParts = savedParts.filter(
         (part) => part.type === "tool" && part.callID === "invoke",
       );
@@ -263,7 +282,8 @@ it.each(["off", "on"] as const)(
           input: { name: "Lookup", input: { value: 7 } },
         });
         const result = request.messages.find(
-          (m) => m.role === "tool" && m.toolName === "ToolSearch",
+          (m) =>
+            m.role === "tool" && (m.toolName === "ToolSearch" || m.toolName === "LocalToolSearch"),
         );
         expect(JSON.stringify(result)).toContain(
           mode === "local"

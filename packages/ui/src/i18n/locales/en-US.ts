@@ -213,6 +213,7 @@ const enUS: Record<string, string> = {
   "remote.action.details": "View details",
   "remote.action.retry": "Retry",
   "remote.action.none": "",
+  "remote.error.authenticationUnsupported": "Server requires additional verification",
   "remote.error.authentication": "SSH authentication failed",
   "remote.error.details": "Details",
   "remote.error.hostUnreachable.reason":
@@ -286,6 +287,12 @@ const enUS: Record<string, string> = {
     "View details, follow the instructions, and retry.",
   "remote.error.bindCanceled.reason": "View details, follow the instructions, and retry.",
   "remote.error.bindSessionMissing.reason": "View details, follow the instructions, and retry.",
+  "remote.error.authenticationUnsupported.reason":
+    "After the password, this server asks for more verification (for example a one-time code). Only password, private key, and SSH agent sign-in are supported. Use a private key instead.",
+  "remote.error.platformUnsupported.reason":
+    "Remote connections support Linux and macOS on x64 and arm64. On Windows, connect through WSL or use a Linux device.",
+  "remote.error.workspaceDirectoryUnresponsive.reason":
+    "If the remote device is a Mac, check the Mac for a folder access prompt. If the folder is on a network or external drive, make sure the drive is available. Then retry.",
   "remote.error.workspaceDirectoryUnavailable.reason":
     "View details, follow the instructions, and retry.",
   "remote.error.recoveryBudgetExhausted.reason":
@@ -1218,6 +1225,10 @@ const enUS: Record<string, string> = {
   "login.oauth.regionTag.zai": "Global",
   "login.oauth.regionTag.bigmodel": "CN",
   "login.oauth.waiting": "Waiting for {provider} authentication...",
+  "login.oauth.browserNotOpened": "Browser didn't open?",
+  "login.oauth.copyLoginLink": "Copy login link",
+  "login.oauth.copyLinkSuccess": "Copied. Paste and open it in your browser.",
+  "login.oauth.copyLinkFailed": "Could not copy the login link. Please try again.",
   "login.oauth.loginFailure": "Login failed, please try again",
   "login.oauth.cancel": "Cancel",
   "login.oauth.retry": "Retry login",
@@ -2066,6 +2077,10 @@ const enUS: Record<string, string> = {
   "workspaceHeader.help.productRequest": "Request a feature",
   "workspaceHeader.help.community": "User community",
   "workspaceHeader.help.docs": "Product docs",
+  "workspaceHeader.help.copyDeviceMid": "Copy device MID",
+  "workspaceHeader.help.deviceMidCopied": "Device MID copied",
+  "workspaceHeader.help.deviceMidCopyFailed":
+    "Could not copy device MID. Check clipboard access and try again.",
   "titleBar.menu.file": "File",
   "titleBar.menu.view": "View",
   "titleBar.menu.help": "Help",
@@ -2224,6 +2239,8 @@ const enUS: Record<string, string> = {
   "remote.error.bindCanceled": "The remote workspace attachment was canceled.",
   "remote.error.bindSessionMissing":
     "The remote workspace session is no longer available. Reconnect and try again.",
+  "remote.error.workspaceDirectoryUnresponsive":
+    "The remote device did not respond for 30 seconds while reading the project folder",
   "remote.error.workspaceDirectoryUnavailable":
     "The remote project directory is missing, is not a folder, or cannot be accessed. Check the directory and permissions, then try again.",
   "remote.error.recoveryBudgetExhausted":
@@ -2241,6 +2258,7 @@ const enUS: Record<string, string> = {
   "remote.error.preflightFailed": "Remote environment check failed",
   "remote.error.installFailed": "Remote installation failed",
   "remote.error.spaceInsufficient": "Not enough space on remote device",
+  "remote.error.platformUnsupported": "This device's system is not supported",
   "remote.error.permissionDenied": "Remote write permission denied",
   "remote.error.connectionCanceled": "Connection canceled",
   "remote.error.unknown": "Connection failed",
@@ -2364,12 +2382,14 @@ const enUS: Record<string, string> = {
   "remote.phaseSub.verifyingArchive": "Verifying the archive",
   "remote.phaseSub.verifyingFiles": "Verifying server files",
   "remote.phaseSub.restarting": "Restarting the remote server",
+  "remote.phaseSub.workspaceReading": "Reading {path}",
   "remote.connectingSubtitleFailed":
     "Connection failed · retry, or adjust the configuration and try again",
   "remote.phase.channel": "Connect to device",
   "remote.phase.identify": "Identify device",
   "remote.phase.deploy": "Install ZCode Server",
   "remote.phase.handshake": "Start and check compatibility",
+  "remote.phase.workspace": "Open project folder",
   "remote.progress.step": "Step {current}/{total}",
   "remote.progress.elapsedSeconds": "{seconds}s elapsed",
   "remote.progress.elapsedMinutesSeconds": "{minutes}m {seconds}s elapsed",
@@ -3654,9 +3674,6 @@ const enUS: Record<string, string> = {
   "settings.scope.user": "User",
   "settings.scope.workspace": "Workspace",
   "settings.scope.default": "Default",
-  "settings.plugins.scope.inheritedUser": "Inherits User default",
-  "settings.plugins.scope.userDefault": "User default",
-  "settings.plugins.scope.workspaceOverride": "Workspace override",
   "settings.plugins.scope.restoreUserDefault": "Restore User default",
   "settings.plugins.scope.restored": "Restored {plugin} to User default",
   "settings.plugins.scope.workspaceHint":
@@ -4930,7 +4947,6 @@ const enUS: Record<string, string> = {
   "settings.plugin.plugins.emptyInstalledTitle": "No plugins installed",
   "settings.plugin.plugins.emptyInstalledDescription":
     "Discover and install plugins to add MCPs, skills, and more.",
-  "settings.plugin.plugins.browse": "Browse plugins",
   "settings.plugin.mcp.emptyInstalledTitle": "No MCP servers installed",
   "settings.plugin.mcp.emptyInstalledDescription":
     "Add a server manually or import an existing configuration.",
@@ -4978,7 +4994,6 @@ const enUS: Record<string, string> = {
   "settings.plugins.store.ui.capability":
     "Provides interactive interfaces that open in the side pane.",
   "settings.plugins.store.ui.title": "App plugins",
-  "settings.plugins.store.browseAll": "Browse all plugins",
   "settings.plugins.store.segment.public": "Public",
   "settings.plugins.store.segment.personal": "Personal",
   "settings.plugins.store.featured": "Featured",

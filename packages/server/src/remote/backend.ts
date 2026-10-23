@@ -42,6 +42,11 @@ export interface IRemoteBackend extends IDisposable {
   upload(localPath: string, remotePath: string, options?: RemoteUploadOptions): Promise<void>;
   /** Execute a command on the remote machine, returning stdio streams */
   exec(command: string): Promise<StdioStream>;
+  /**
+   * Re-check the backend's own availability after a failed command, so a daemon-level cause (for example Docker not running)
+   * throws its diagnosis instead of the caller's generic exit status. Backends without such a check leave it unset.
+   */
+  diagnoseExecFailure?(): Promise<void>;
   /** Check if a remote file exists */
   exists(remotePath: string): Promise<boolean>;
   /** Read a small remote file (e.g. version string) */
