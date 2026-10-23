@@ -191,7 +191,10 @@ Invalid task ID "<id>". This lookup failure does not mean the task has completed
 ## 闲时后台执行（实施中）
 
 按根目录 `docs/off-peak-task/background-lifecycle-plan.md` 实施：Agent 显式、profile 默认及超时转后台，
-SendMessage 运行中投递/终态恢复，以及 Bash 显式/超时后台复用普通工具链。
+SendMessage 运行中投递/终态恢复，以及普通轮 Bash 显式/超时后台复用普通工具链。
+闲时轮（`offPeakTurn === true`）的 Bash 是 fork 保留分歧（`specs/upstream-sync-cli-divergences.md`）：
+显式 `run_in_background` 在开启命令遥测前以可恢复的 ToolExecutionFailed 拒绝，超时不自动转后台，前台行为不变；
+上游同步时不得恢复为复用普通后台生命周期。
 票据生命周期独立于工具执行：3102 使后续模型请求等待新票，本地 Bash 继续保存输出；
 换票只重试尚未提交结果的模型请求，不重放工具或原始 prompt。主轮结束后继续接收既有通知。
 真实用户输入接管后，新后台轮读取 Session Selection；已运行子轮保留本轮模型。
@@ -343,7 +346,10 @@ Invalid task ID "<id>". This lookup failure does not mean the task has completed
 ## 闲时后台执行（实施中）
 
 按根目录 `docs/off-peak-task/background-lifecycle-plan.md` 实施：Agent 显式、profile 默认及超时转后台，
-SendMessage 运行中投递/终态恢复，以及 Bash 显式/超时后台复用普通工具链。
+SendMessage 运行中投递/终态恢复，以及普通轮 Bash 显式/超时后台复用普通工具链。
+闲时轮（`offPeakTurn === true`）的 Bash 是 fork 保留分歧（`specs/upstream-sync-cli-divergences.md`）：
+显式 `run_in_background` 在开启命令遥测前以可恢复的 ToolExecutionFailed 拒绝，超时不自动转后台，前台行为不变；
+上游同步时不得恢复为复用普通后台生命周期。
 票据生命周期独立于工具执行：3102 使后续模型请求等待新票，本地 Bash 继续保存输出；
 换票只重试尚未提交结果的模型请求，不重放工具或原始 prompt。主轮结束后继续接收既有通知。
 真实用户输入接管后，新后台轮读取 Session Selection；已运行子轮保留本轮模型。
