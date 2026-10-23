@@ -15,13 +15,13 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 - Test ids come from `packages/shared/src/test-ids.ts` (`testId(a, b)` renders `a-b`). `docs/conversation-session-ui-testid-contract.md` is **stale**: it lists ids that nothing renders (`chat-view`, `chat-messages`, `v4-retry`, `v4-timeline-load-older`, `chat-queue-*`, …). Never use it.
 - Composer: several composers can be mounted (split panes, side chats). Scope every composer selector to the visible `[data-testid="v4-composer"]`. While a permission/question card is open the composer stays mounted with `display:none`.
 - Composer state without opening menus: hidden span `[data-testid="v4-model-config"]` with `data-provider`, `data-model`, `data-thought`, `data-mode`, `data-plan-enabled`, `data-usage-used`, `data-usage-max`. Routing: `[data-testid="v4-composer"]` `data-input-routing` = `startNow|enqueue|guide|choice|reject`.
-- Typing: `agent-browser keyboard type` / `press` (real key events) or the Lexical bridge `document.querySelector('[data-testid="v4-composer-input"]').__zcodeLexicalInputE2E.setText("…")` (attached in dev builds). Never set `textContent`/`innerHTML`.
+- Typing: `agent-browser keyboard type` / `press` (real key events) or the Lexical bridge on the visible composer `[...document.querySelectorAll('[data-testid="v4-composer"]')].find((e) => e.offsetParent)?.querySelector('[data-testid="v4-composer-input"]').__zcodeLexicalInputE2E.setText("…")` (attached in dev builds; `document.querySelector` would take the first, possibly hidden, composer). Never set `textContent`/`innerHTML`.
 - Timeline rows: `[data-row-id][data-testid^="v4-row-"]` (plain `^="v4-row-"` also matches `v4-row-attachments-*`). User rows have `v4-edit-<row>`, assistant rows have `v4-fork-<row>`.
 - Timeline state: `[data-testid="v4-timeline"]` `data-row-count`, `data-total-row-count`, `data-following`, `data-loading-older`.
 - Grouped and long lists are virtualized: scroll the row into view before querying it.
 - Permission prompt: clicking an unselected option only selects it; click it again or press the `aria-label="Confirm"` button.
 - Context-menu content mounts lazily: open the menu, then snapshot.
-- Freeze measurement: before a case, `agent-browser eval` a `PerformanceObserver({type:"longtask", buffered:true})` that pushes `{start,duration}` into `window.__qaLongTasks`; read and clear it after the case. Record the worst block for perf cases.
+- Freeze measurement: before a case, `agent-browser eval` a `PerformanceObserver({type:"longtask", buffered:true})` that pushes `{t,d}` (t = startTime ms, d = duration ms) into `window.__qaLongTasks`; read and clear it after the case. Record the worst block for perf cases.
 
 ## Fixtures the cases assume
 
@@ -30,6 +30,22 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 - Chat prompts are short and deterministic ("Reply with exactly the word pong."). Use the cheapest model in the picker unless the case says otherwise.
 
 ---
+
+## Catalog corrections (run 2026-10-22)
+
+- Project row ids have no `<id>` suffix: `virtual-project-edit`, `virtual-project-pin`, `virtual-project-delete`, `virtual-project-manage-sessions`, `virtual-project-create-task`.
+- `Ctrl+Shift+M` cycles permission modes (it does not open the menu). A mouse click on a permission option answers immediately.
+- "Show less" exists only for the pinned block; project lists only grow with "Show more".
+- The mention panel is virtualized: scroll it before counting rows (ISSUE-038).
+- `destination-worktree-status` does not exist.
+- There is no font-family control in Appearance; interface zoom lives in the profile menu (`sidebar-interface-zoom-trigger`).
+- Harness: never send `Meta+<key>` over CDP except renderer-handled shortcuts (⌘K, ⌘B, ⌘F, ⌘[ ⌘], ⌘,) — others trigger the native menu's About (ISSUE-030). Select-all = `document.execCommand("selectAll")`.
+- Harness: run the dev app with the local `ZCODE_QA_NO_OCCLUSION=1` switch (never committed) or keep the window unoccluded; check a rAF probe before UI cases (ISSUE-034).
+- Harness: attach with `agent-browser --session qa --cdp 9229 --pin-tab`; without `--pin-tab` opening the in-app browser moves the session to the webview target. After `close`, `connect 9229` launches a new Chrome; use `--cdp` instead.
+- Harness: `agent-browser mouse wheel` does not scroll the chat timeline; send a raw CDP `Input.dispatchMouseEvent` `mouseWheel`.
+- Harness: Radix menus/popovers need real pointer events (move/down/up at the element centre); HTML5 drag needs synthetic DragEvents sharing one DataTransfer.
+- Harness: a Vite hot update of a context provider can crash the sidebar with `project.directory-provider-required` ("Could not Fast Refresh"); reload the renderer or restart before judging.
+- Watch the installed upstream app's log (`~/.zcode/v2/logs/<date>.log`) for `failed schema validation|writing settings to` during any settings case.
 
 ## P0-A Sidebar
 
@@ -127,7 +143,7 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 **CP-02 · Send basics** (regression first-submission)
 
 - Steps: empty input → `v4-composer-send` disabled; type; Shift+Enter inserts a newline; Enter sends; on a fresh draft double-click Send quickly.
-- Expected: one user row, one turn, one CLI command (check `[rpc:call]` lines: exactly one send); optimistic user bubble appears instantly; sidebar row ≤ 300 ms; reply ≤ ~5 s on the cheap model.
+- Expected: one user row, one turn, one CLI command (check `[rpc:call]` lines: exactly one send); optimistic user bubble appears instantly; sidebar row ≤ 300 ms; reply ≤ 15 s on the cheap model (provider latency varies; > 30 s is a failure).
 - Spec: `specs/first-submission-instant-ux.md`, `specs/first-submission-lifecycle.md`, `specs/ui-draft-send-path.md`.
 
 **CP-03 · Model and effort picker**
@@ -244,8 +260,8 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 **CH-05 · Tool-call cards** (sandbox, mode "Full access" or approve prompts)
 
 - Steps: ask: "In this repo run `ls`, read src/math.js, then add a function `square` to it." Then expand each card.
-- Expected: `chat-tool-call-block-<id>` per call with `data-status`; `tool-summary-trigger-<id>` expands; bash shows `execute-command` and output (`bash-result-output`); read and search cards render; edit shows an inline diff; per-turn `chat-change-summary-toggle-files-button-<msgId>` undoes/reapplies the change and "Review" opens the diff.
-- Spec: `docs/agent-tool-call-renderer.md`, `docs/ui/tool-inline-diff.md`, `docs/chat/execute-tool-call-grouping.md`, `specs/message-change-summary-tree-view.md`.
+- Expected: `chat-tool-call-block-<id>` per call with `data-status`; `tool-summary-trigger-<id>` expands; bash shows `execute-command` and output (`bash-result-output`); read and search cards render; edit shows an inline diff; per-turn `chat-change-summary-toggle-files-button-<msgId>` undoes the change (undo only: the panel then shows "Undone" with Undo disabled; there is no Reapply — ISSUE-041 decision, matches upstream V4) and "Review" opens the diff.
+- Spec: `docs/agent-tool-call-renderer.md`, `docs/ui/tool-inline-diff.md`, `docs/chat/execute-tool-call-grouping.md`, `specs/message-change-summary-tree-view.md`, `docs/rewind-button-any-message.md`.
 
 **CH-06 · Permission prompt**
 
@@ -332,7 +348,7 @@ Tiers: **P0** = sidebar, composer, chat core (run all, first). **P1** = side pan
 
 **SP-06 · Browser pane**: `browser-address-input` → a public page → back/forward/refresh → an unreachable URL → `browser-load-error`.
 
-**ST-01 · Settings sweep**: back up `~/.zcode/v2/setting.json` first. The file is shared with the installed app: theme, locale and font changes show up live there too, so revert each change right after checking it. Open every settings section; switch theme, font family, interface zoom, locale (uk-UA and back), ask-user-question auto-resolution switch (`settings-ask-user-question-auto-resolution-switch`); revert each. Expected: every section renders with no console error; uk-UA has no untranslated keys on the pages visited; after the reverts, `diff` against the backup shows only keys the installed app changed meanwhile.
+**ST-01 · Settings sweep**: back up `~/.zcode/v2/setting.json` first. The file is shared with the installed app: theme, locale and font changes show up live there too, so revert each change right after checking it. Open every settings section; switch theme, font family, interface zoom, locale (uk-UA and back — **skip while an upstream build shares `setting.json` unless ISSUE-045 is fixed**: upstream rejects `uk-UA` and rewrites the whole file with defaults; also tail the installed app's log for `failed schema validation|writing settings to` during this case), ask-user-question auto-resolution switch (`settings-ask-user-question-auto-resolution-switch`); revert each. Expected: every section renders with no console error; uk-UA has no untranslated keys on the pages visited; after the reverts, `diff` against the backup shows only keys the installed app changed meanwhile.
 
 **ST-02 · Model providers**: Settings › Model provider: provider status, Coding Plan quota (regression ISSUE-004), model list refresh. Do not change credentials.
 
