@@ -113,7 +113,7 @@ function buildAgentProviderDescription(
     ...(options.dynamicWorkflowEnabled === false
       ? []
       : [
-          '- If the user explicitly asks for a workflow ("use a workflow", "使用 workflow", "用工作流", or any phrasing naming workflow/工作流 as the means), the CreateWorkflow tool is mandatory: do not use this tool instead, however small the task.',
+          '- If the user explicitly asks for a workflow ("use a workflow", "with a workflow", or the same request in any language that names a workflow as the means), the CreateWorkflow tool is mandatory: do not use this tool instead, however small the task.',
         ]),
   ].join("\n");
 }

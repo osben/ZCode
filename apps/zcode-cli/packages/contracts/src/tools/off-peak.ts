@@ -15,7 +15,7 @@ const nonEmptyString = z.string().trim().min(1);
 export const OffPeakCreateInputSchema = z
   .object({
     title: nonEmptyString.describe(
-      "Concise idle-time task title describing the deferred work, for example '重构 utils 目录' or 'Fix flaky auth tests'. Keep it short and do not include file paths.",
+      "Concise idle-time task title describing the deferred work, for example 'Refactor the utils directory' or 'Fix flaky auth tests'. Keep it short and do not include file paths.",
     ),
     prompt: nonEmptyString.describe(
       "Instructions for the deferred run, which later continues THIS conversation unattended with the full history available, so it may refer to context already established here. State the expected deliverable explicitly (nobody will answer questions during the run); never ask the run to create, schedule, or configure another idle-time task or automation.",
