@@ -77,6 +77,8 @@ MTC-THEME: protocol covers the seven variants, defaults, lengths, legacy-field d
 
 Follow-up fixes (2026-09-12, see [E2E implementation record](testing/marketing-touch-e2e-implementation.md)): `providerSettingsService.refresh("marketing-plan-claim")` is wired with best-effort entitlement refresh; `providerId` navigation matching and the Root error-state icon import are fixed, restoring typecheck. The interaction-bundle popup initially focuses the parent-layer close button so the iframe cannot swallow the first Esc; the user can still enter the hero. On Host exit, cloud resource services exposing only `disposeAllAndWait` are recognized, waiting for lease and this Host's cache directory; the synchronous exit path only starts best-effort cleanup and does not treat it as awaited. The new regressions remain pending; full coverage and platform gaps follow the implementation record — no 95% coverage claim.
 
+<a id="任务完成后刷新2026-09-18"></a>
+
 ### Refresh after task completion
 
 When a mounted workspace observes a session moving from non-complete into `completedSuccess`, refetch `GET /api/v1/marketing/touch` once, updating both banner and popup candidates. It does not depend on the system notification toggle. The first history snapshot, the baseline after workspace switch/reconnect, repeated completed states, failures, and manual interruptions do not trigger. Multiple completions in one batch trigger once; in-flight requests are still merged by the window's single poller into one follow-up query. Hidden pages send nothing and reuse the existing refresh on becoming visible. Popup display stays under the existing occlusion and dedup gates.

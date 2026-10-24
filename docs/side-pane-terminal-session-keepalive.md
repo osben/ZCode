@@ -1,6 +1,6 @@
 # Side Pane Terminal cross-workspace session keepalive
 
-> Increment to [`docs/ui/side-pane-terminal-tabs.md`](../ui/side-pane-terminal-tabs.md). The original design covered keeping terminals mounted when switching side pane tabs or collapsing the pane; this spec extends the keepalive contract to cross-workspace switching.
+> Increment to [`docs/ui/side-pane-terminal-tabs.md`](ui/side-pane-terminal-tabs.md). The original design covered keeping terminals mounted when switching side pane tabs or collapsing the pane; this spec extends the keepalive contract to cross-workspace switching.
 
 ## 0. Relation to the existing design (inviolable)
 

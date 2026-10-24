@@ -49,6 +49,8 @@ output viewport -> scroll up -> paused -> floating down arrow
 
 - Desktop continuous and mobile replayable stay decided by attachment; queries create no topic/replay events. The shared Side Pane uses the existing overlay on mobile. TUI unchanged; the generic file service is not extended.
 
+<a id="验收"></a>
+
 ## Acceptance
 
 | ID    | Scenario                                                | Assertions                                                                                                                         |
@@ -77,6 +79,8 @@ child query -> live child adapter -> unavailable -> existing ancestor adapter ->
 ```
 
 - The cold-resume owner regression is covered by adapter/runtime/bootstrap unit tests and gateway lifecycle tests; a real Node adapter probe returns output/running for the original workId before and after a new child adapter joins. `background-bash-cold-resume.json` (same artifact directory) records child/parent sessions, the original workId, request counts, and two new output segments; the case also asserts the producer stays alive until exit, queries add no model requests, and the final output is kept.
+
+<a id="本轮验证2026-09-09"></a>
 
 ## Verification state and open boundaries
 

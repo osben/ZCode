@@ -34,6 +34,8 @@ The skill is organized as scaffold → optional components → validate → inst
 
 It generates the ZCode `.zcode-plugin/plugin.json`; the marketplace listing carries display names and i18n. 2026-09-17 convergence: the default deliverable is source code, a test-marketplace manifest, and manual add/install/update/try instructions; the user performs the marketplace and install actions in the UI. Ordinary desktop users do not need the CLI or Node; with an existing dev runtime the helper scripts may be used, and without a runtime the skill uses file tools to prepare source and JSON. It checks structure, resource paths, and placeholders; `zcode plugins validate` runs only when a usable dev CLI already exists — without running it, the skill must not claim protocol validation passed.
 
+<a id="本地-dev-市场闭环"></a>
+
 ## Local dev marketplace loop
 
 The current deliverable is: source implementation → runnable checks and capability smoke → dev manifest → the user manually adds the marketplace, installs/updates, and tries the result in a new task. Sending only the skill reference still requires stating the purpose first; when the user explicitly wants only source, no marketplace is generated. The skill never registers, installs, updates, or enables plugins itself, never requires the user to run CLI commands, and adds no new internal tools or runtime entry points.
