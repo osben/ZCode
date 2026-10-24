@@ -422,7 +422,10 @@ function GroupedTaskInteractiveRow({
       title,
       openSubagentSession: presentation.onOpenSubagentSession,
       selectInMainPane: () =>
-        onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, options),
+        onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
+          ...options,
+          parentTaskId: task.taskId,
+        }),
     });
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",

@@ -11,6 +11,8 @@ beforeEach(() => {
   focus.activeTaskId = "original";
   focus.draftFocusVersion = 0;
 });
+const attach = vi.hoisted(() => vi.fn(async () => "remote-session"));
+vi.mock("@/project-sidebar/remote-navigation.js", () => ({ attachRemoteProjectWorkspace: attach }));
 vi.mock("@/store/TabStoreProvider.js", () => ({
   useTabStore: (select: (state: unknown) => unknown) => select({ activeWorkspaceIdentity: null }),
 }));
@@ -51,6 +53,45 @@ it("forwards a child session's capability so a sidebar subagent opens read-only"
     readOnly: true,
     selectionSideChat: false,
   });
+});
+
+it("attaches a remote child session through its owning parent task", async () => {
+  const select = vi.fn();
+  const parent = {
+    taskId: "remote-parent",
+    workspacePath: "/same",
+    workspaceIdentity: "remote:server:s:/same",
+    hostId: "remote:server:s",
+  };
+  const { result } = renderHook(() =>
+    useProjectTaskNavigation(
+      { workspacePath: "/current", onSelectTask: select } as unknown as ProjectSidebarProps,
+      { projects: [], tasks: [parent] } as never,
+      { readDirectory: async () => ({ hosts: [{ id: parent.hostId }] }) } as never,
+    ),
+  );
+  const options = { readOnly: false, selectionSideChat: true, parentTaskId: parent.taskId };
+  await act(async () => {
+    result.current(
+      parent.workspacePath,
+      "child",
+      parent.workspaceIdentity,
+      undefined,
+      undefined,
+      options,
+    );
+  });
+  expect(attach).toHaveBeenCalledWith(
+    expect.objectContaining({ hostId: parent.hostId, workspaceIdentity: parent.workspaceIdentity }),
+  );
+  expect(select).toHaveBeenCalledWith(
+    parent.workspacePath,
+    "child",
+    parent.workspaceIdentity,
+    "remote-session",
+    undefined,
+    options,
+  );
 });
 
 it.each(["task", "draft"])(

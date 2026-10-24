@@ -104,7 +104,7 @@ describe("grouped child-session navigation", () => {
       "/tmp/grouped-parent",
       "grouped-child",
       "remote:server:a:/tmp/grouped-parent",
-      { readOnly: true, selectionSideChat: false },
+      { readOnly: true, selectionSideChat: false, parentTaskId: parent.taskId },
     );
   });
 
@@ -144,5 +144,7 @@ describe("grouped child-session navigation", () => {
       "utf8",
     );
     expect(source).toMatch(/task\?\.unreadAt,\s*options,\s*\);/);
+    // A child is not a grouped row: its remote session id comes from the owning parent.
+    expect(source).toMatch(/taskId: options\?\.parentTaskId \?\? id,/);
   });
 });

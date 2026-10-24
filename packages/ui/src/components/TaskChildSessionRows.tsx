@@ -28,6 +28,11 @@ import {
 export interface ChildSessionSelectOptions {
   readOnly?: boolean;
   selectionSideChat?: boolean;
+  /**
+   * Owning parent task, set by the row owner: children are absent from the top-level tree, so
+   * remote workspace attachment and stale-navigation checks resolve against the parent.
+   */
+  parentTaskId?: string;
 }
 
 /** Opens a session in the parent task's workspace; the row owner binds workspace identity. */

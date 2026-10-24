@@ -54,7 +54,7 @@ export const ProjectTaskRow = memo(function Row({
             task.workspaceIdentity,
             remoteSessionId ?? undefined,
             undefined,
-            options,
+            { ...options, parentTaskId: task.taskId },
           ),
       }),
     [onSelect, task, remoteSessionId, presentation.onOpenSubagentSession],
