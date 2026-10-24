@@ -1,20 +1,21 @@
-# V4 会话架构：当前状态与文档导航
+# V4 Conversation Architecture: Current State and Document Navigation
 
-更新日期：2026-07-15
+Updated: 2026-07-15
 
-V4 conversation 主链路已经落地：CLI 维护 canonical facts、command inbox 和 product projection；
-Host/relay 转发连接与 topic；renderer/web 订阅 projection、发送 command，并只保留局部 UI 状态。
+The V4 conversation main path has landed: the CLI maintains canonical facts, the command inbox and the product
+projection; Host/relay forward connections and topics; renderer/web subscribe to the projection, send
+commands, and keep only local UI state.
 
-本目录混合了两类文档：
+This directory mixes two kinds of documents:
 
-- 当前规格：schema、恢复、fault、sessions-index 等仍约束现行代码；
-- 实施轨迹：phasing、review、deletion/parity 记录迁移依据，正文中的 legacy 路径、行数和“待实现”
-  只代表当时状态。
+- Current specs: schema, recovery, fault, sessions-index and so on still constrain the live code.
+- Implementation trail: phasing, review and deletion/parity records document the migration rationale; legacy
+  paths, line counts and "to be implemented" in their text describe the state at that time only.
 
-产品语义优先读 [Conversation Product Protocol](../conversation-product-protocol.md)，系统总览优先读
-[ZCode Protocol](../zcode-protocol.md) 与 [Message Flow](../architecture/message-flow.md)。
+For product semantics read [Conversation Product Protocol](../conversation-product-protocol.md) first; for the
+system overview read [ZCode Protocol](../zcode-protocol.md) and [Message Flow](../architecture/message-flow.md).
 
-## 当前拓扑
+## Current topology
 
 ```text
 Electron / Web / mobile remote
@@ -40,54 +41,59 @@ ZCode CLI
   `-- runtime config, queue, interaction and active/background work
 ```
 
-手机 `/remote` 通过 shared-host attachment 连接桌面已存在、承载目标 workspace scope 的 Local/Remote Host。relay 和
-desktop main 只做鉴权、配对、心跳与 frame/app payload 透传，不拥有 session、queue、snapshot 或
-projection。
+Mobile `/remote` connects through a shared-host attachment to the existing Local/Remote Host on the desktop
+that carries the target workspace scope. The relay and desktop main only do authentication, pairing,
+heartbeat and frame/app payload passthrough; they own no session, queue, snapshot or projection.
 
-## 当前不变量
+## Current invariants
 
-- conversation UI 按 projection rows 渲染，不从 flat message 数组重新推导 turn、timeline、endedness
-  或 action availability。
-- command 使用 `commandId` 幂等身份和可选 `baseRevision`；ACK 与后续 projection 分工明确。
-- 每个 attachment/subscription 有独立 ownership、generation、seq 和 recovery；下行帧只投递 owner port。
-- desktop 是 continuous online delivery；mobile remote 是 replayable recovery。两端共享 CLI 事实，
-  但 recovery frame 不能扩散到桌面 online 主链路。
-- snapshot 原子替换；delta 必须连续；gap/epoch 变化触发 resync，恢复在途时不能让迟到 online 帧覆盖。
-- session queue 和 interaction pending state 位于 CLI；Host、relay、renderer 不建立第二份 accepted queue。
-- identity/cache/topic 隔离使用 `workspaceIdentity?.trim() || workspacePath`；路径执行仍使用
-  `workspacePath`，远程链路还要携带 `remoteSessionId`。
-- `tasks-index` 拥有持久 task 行集合以及 pin/archive/group/unread 等组织态；`sessions-index` 只拥有
-  列表活性与实时详情摘要，客户端以 task row 为左表做字段级 join。
+- The conversation UI renders by projection rows and does not re-derive turn, timeline, endedness or action
+  availability from a flat message array.
+- A command uses the `commandId` idempotency identity and an optional `baseRevision`; ACK and the following
+  projection have distinct roles.
+- Each attachment/subscription has its own ownership, generation, seq and recovery; downstream frames go only
+  to the owner port.
+- desktop is continuous online delivery; mobile remote is replayable recovery. Both share CLI facts, but a
+  recovery frame must not spread into the desktop online main path.
+- A snapshot replaces atomically; deltas must be contiguous; a gap/epoch change triggers resync, and a late
+  online frame must not overwrite while recovery is in flight.
+- The session queue and interaction pending state live in the CLI; Host, relay and renderer build no second
+  accepted queue.
+- Identity/cache/topic isolation uses `workspaceIdentity?.trim() || workspacePath`; path execution still uses
+  `workspacePath`, and remote links also carry `remoteSessionId`.
+- `tasks-index` owns the persistent task row set and organizational state such as pin/archive/group/unread;
+  `sessions-index` owns only list liveness and real-time detail summaries; the client does a field-level join
+  with the task row as the left table.
 
-## 当前代码入口
+## Current code entry points
 
-| 层 | 入口 |
-| --- | --- |
-| V4 schema | `packages/shared/src/zcode-protocol-v4/` |
-| UI transport/store | `packages/ui/src/v4/agentConversationTransport.ts`、`conversationProjectionStore.ts`、`sessionDataLayer.ts` |
-| UI pane/commands | `packages/ui/src/v4/SessionPane.tsx`、`ConversationComposer.tsx` |
-| Host/service route | `packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts`、`zcodeAgentService.ts` |
-| CLI gateway | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts` |
-| CLI projection | `product-projection.ts`、`sessions-index-projection.ts` |
-| CLI commands | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/` |
+| Layer               | Entry                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| V4 schema           | `packages/shared/src/zcode-protocol-v4/`                                                                           |
+| UI transport/store  | `packages/ui/src/v4/agentConversationTransport.ts`, `conversationProjectionStore.ts`, `sessionDataLayer.ts`       |
+| UI pane/commands    | `packages/ui/src/v4/SessionPane.tsx`, `ConversationComposer.tsx`                                                   |
+| Host/service route  | `packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts`, `zcodeAgentService.ts`                           |
+| CLI gateway         | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts`                                            |
+| CLI projection      | `product-projection.ts`, `sessions-index-projection.ts`                                                            |
+| CLI commands        | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/`                                                |
 
-## 文档索引
+## Document index
 
-| 文档 | 当前角色 |
-| --- | --- |
-| [01-topology.md](./01-topology.md) | 拓扑和职责设计；结合当前总览读取 |
-| [02-projection.md](./02-projection.md) | projection 设计与裁决依据 |
-| [03-commands.md](./03-commands.md) | command/ACK/inbox 规格与未完成项 |
-| [04-sync-and-recovery.md](./04-sync-and-recovery.md) | topic 订阅、seq、snapshot、recovery 约束 |
-| [05-transport-and-backpressure.md](./05-transport-and-backpressure.md) | transport/wire/backpressure 规格 |
-| [06-ui.md](./06-ui.md) | V4 UI 设计和实施轨迹 |
-| [07-persistence.md](./07-persistence.md) | canonical facts、投影重建和迁移 |
-| [08-phasing.md](./08-phasing.md) | 历史分期与清理轨迹，不是当前进度表 |
-| [09-protocol-schema.md](./09-protocol-schema.md) | 早期 schema 设计；字段冲突时让位于代码与 10 |
-| [10-protocol-spec.md](./10-protocol-spec.md) | V4 字段级主规格 |
-| [11-deletion-plan.md](./11-deletion-plan.md) | 历史删除执行清单 |
-| [12-fault-catalog.md](./12-fault-catalog.md) | fault/reason code 词表 |
-| [13-golden-test-mapping.md](./13-golden-test-mapping.md) | case 到 reducer/protocol/WDIO 证据映射 |
-| [14-sessions-index.md](./14-sessions-index.md) | sessions-index 当前规格和实现入口 |
-| [design-review.md](./design-review.md) | 迁移前代码审计与风险轨迹 |
-| [review-meeting-brief.md](./review-meeting-brief.md) | 评审历史输入，不是现状摘要 |
+| Document                                                         | Current role                                                                |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| [01-topology.md](./01-topology.md)                               | Topology and responsibility design; read with the current overview          |
+| [02-projection.md](./02-projection.md)                           | Projection design and ruling basis                                          |
+| [03-commands.md](./03-commands.md)                               | command/ACK/inbox spec and unfinished items                                 |
+| [04-sync-and-recovery.md](./04-sync-and-recovery.md)             | Topic subscription, seq, snapshot, recovery constraints                     |
+| [05-transport-and-backpressure.md](./05-transport-and-backpressure.md) | transport/wire/backpressure spec                                      |
+| [06-ui.md](./06-ui.md)                                           | V4 UI design and implementation trail                                       |
+| [07-persistence.md](./07-persistence.md)                         | canonical facts, projection rebuild and migration                           |
+| [08-phasing.md](./08-phasing.md)                                 | Historical phasing and cleanup trail, not the current progress table        |
+| [09-protocol-schema.md](./09-protocol-schema.md)                 | Early schema design; yields to code and 10 on field conflicts               |
+| [10-protocol-spec.md](./10-protocol-spec.md)                     | V4 field-level main spec                                                    |
+| [11-deletion-plan.md](./11-deletion-plan.md)                     | Historical deletion execution list                                          |
+| [12-fault-catalog.md](./12-fault-catalog.md)                     | fault/reason code vocabulary                                                |
+| [13-golden-test-mapping.md](./13-golden-test-mapping.md)         | Case to reducer/protocol/WDIO evidence mapping                              |
+| [14-sessions-index.md](./14-sessions-index.md)                   | sessions-index current spec and implementation entry                        |
+| [design-review.md](./design-review.md)                           | Pre-migration code audit and risk trail                                     |
+| [review-meeting-brief.md](./review-meeting-brief.md)             | Review-history input, not a current-state summary                           |

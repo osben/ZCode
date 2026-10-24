@@ -1,195 +1,169 @@
-# V4 重构评审稿：Conversation 状态同步与多端协议收敛
+# V4 Refactor Review Brief: Conversation State Sync and Multi-Client Protocol Convergence
 
-- 会议目标：评审 v4 重构方向是否能系统性解决 conversation 状态不同步、弱网恢复和远控/本地协议分叉问题。
-- 讨论范围：conversation 产品投影、command 模型、订阅恢复、传输背压、desktop continuous 与 web remote replayable 的统一协议边界。
-- 不讨论范围：具体 UI 视觉改版、单个字段的最终 TypeScript 命名、relay 业务化改造。
+- Meeting goal: review whether the v4 direction systematically fixes conversation state desync, weak-network
+  recovery and the local/remote-control protocol fork.
+- In scope: conversation product projection, command model, subscription recovery, transport backpressure, and
+  the unified protocol boundary of desktop continuous vs web remote replayable.
+- Out of scope: concrete UI visual redesign, final TypeScript naming of single fields, making the relay business-aware.
 
-## 背景
+Full history: `git show b8876e8b:docs/v4-refactor/review-meeting-brief.md`
 
-过去 conversation 的大量 bug 看起来分散：消息重复、timeline 错位、刷新后半截消息丢失、stop 状态不一致、手机远控重连后权限弹窗消失、queued prompt 丢失或重复发送。但它们背后是同一个结构性问题：**conversation 的产品事实没有唯一权威源**。
+## Background
 
-现在 renderer、service、host、desktop main、mobile replay mirror 都在不同层级维护一部分运行态。stream 和 snapshot 又分别写入 UI 内存，UI 需要事后合并、补偿和猜测。这个模型在本地短链路下还能靠补丁维持，但到了 web、手机远控、远程 workspace、秒级 RTT、刷新/断线频繁的网络环境里，会把时序差异放大成产品 bug。
+Many past conversation bugs looked scattered (duplicate messages, timeline misplacement, half messages lost
+after refresh, inconsistent stop state, permission dialogs vanishing after a mobile reconnect, queued prompts
+lost or sent twice) but share one structural problem: **conversation product facts had no single authoritative
+source.** The renderer, service, host, desktop main and mobile replay mirror each kept part of the runtime
+state, and stream and snapshot wrote separately into UI memory, so the UI had to merge, compensate and guess.
+That survives on a short local link but amplifies timing differences into product bugs on web, mobile remote,
+remote workspaces, second-level RTT and frequent refresh/disconnect.
 
-v4 的目标不是给每类 bug 加新的兜底，而是把 conversation 改成：
-
-```text
-CLI / agent runtime 是唯一事实源
-  -> 生成 Conversation Product Projection
-  -> host 只做转发、缓冲、背压和恢复调度
-  -> desktop / web / mobile 都只渲染投影并提交 command intent
-```
-
-核心变化一句话：**客户端从“状态 reducer”降级为“投影渲染器 + command 提议者”。**
-
-## 之前的问题与对应改进
-
-| 之前的问题 | 造成的现象 | v4 对应改进 | 评审验收点 |
-| --- | --- | --- | --- |
-| renderer 内存是 conversation 真相之一，stream 和 snapshot 双写同一份消息数组 | 刷新后漏消息、重复消息、timeline 错位、turn 分组需要补丁修补 | CLI 侧生成 `ConversationProductProjection`，rows、turn、actionAvailability、sessionControl 都是权威投影；客户端收到 snapshot 整体替换，收到 delta 只做连续 apply | UI 不再从 flat messages 自行推导 turn 和按钮状态；同一事件 replay 后 rows 稳定 |
-| action guard 散落在 UI 和 operation 里 | `canStop`、`canFork`、queue 路由、多端按钮状态不一致 | 所有会改变 conversation 的动作统一为 command intent；CLI 按 projection revision 和规则模块裁决，返回 ACK | 任意客户端看到相同 actionAvailability；重复 stop/权限响应幂等收口 |
-| 断线恢复有多条路径，且 base 水位和 UI 状态不同生共死 | 手机 replay gap 后把旧 snapshot 和新 stream 拼成不存在的状态 | 统一 `subscribe(topic, base?)`：base 有效就续传，base 失效就 snapshot；`logEpoch + seq + subscriptionId` 明确代际 | 旧订阅迟到帧静默丢弃；断档只触发 single-flight resubscribe |
-| 高频 delta 直接穿过 relay 和 IPC，客户端侧才合批 | 弱网下帧数暴涨、RTT 放大、手机耗电和掉帧 | 合批前移到 host 通道层，topic 声明 coalesce/resync；帧级只负责 ACK、心跳、重连重放和拥塞信号 | 一轮输出从“每 delta 一帧”收敛为按窗口投递；溢出时走 snapshot 而不是随机丢帧 |
-| desktop continuous 与 mobile replayable 是两条代码路径 | 本地和远控行为不一致，修一端容易破另一端 | 用同一套 topic / snapshot / delta / command 协议，差异只保留为 delivery profile 参数 | 客户端 apply 逻辑不分 profile；desktop 默认 continuous，mobile 默认 replayable，但终态一致 |
-| remote controller 依赖额外 bridge/mirror 语义 | 手机端像一个“旁路客户端”，容易绕过本地 host/runtime 边界 | 远控保持 shared-host attachment：relay 和 desktop main 只透传 `rpc-frame`，手机 attach 到桌面已有 local/remote host | relay/main 不下沉 task、stream、queue、snapshot 业务状态 |
-| queued prompt 和 optimistic UI 由本地内存维持 | 刷新丢队列，ACK 丢了 pending 不收口，重复提交靠启发式去重 | command 带 `commandId`，权威 row/queue item 带 `sourceCommandId`；overlay 只按 commandId 展示，永不进入真实数据 | 发起端也必须从订阅流读到自己的权威结果，overlay 由投影收口 |
-| workspacePath 被用于身份隔离语义 | SSH/WSL/Docker 等远程 workspace 同路径时互相串状态 | 所有身份/隔离 key 使用 `workspaceIdentity?.trim() || workspacePath`，路径执行仍只用 `workspacePath` | 远程 workspace bridge、snapshot、queue、owner command 都带 workspace identity |
-| 当前 bug 缺少可复现的协议级证据 | 修复依赖手工复现和 UI 猜测，回归容易漏 | 建黄金测试和网络混沌装置：snapshot 原子性、profile 终态一致、重复/迟到帧处理、guard 与 projection 同源 | 每类历史 bug 对应一个协议不变量或 reducer case |
-
-## 状态所有权
-
-v4 先把“谁拥有状态”讲清楚。状态不同步的根源不是缺少同步代码，而是多个层都觉得自己可以写 conversation 事实。
+v4 does not add a new fallback per bug class; it turns conversation into:
 
 ```text
-CLI / agent runtime                              # conversation 的唯一事实源，负责把原始事件裁成产品可见状态
-|-- canonical transcript                         # 权威对话记录，包含用户输入、assistant 输出、tool 结果等可持久恢复内容
-|-- runtime facts                                # 当前运行态事实，例如 active work、pending permission、token usage、后台任务
-|-- event log / logEpoch / seq                   # 增量恢复水位，用来判断客户端能否续接 delta，还是必须重新拉 snapshot
-|-- command guard and idempotency                # command 的串行裁决、幂等去重和 guard 判断，避免多端各自决定能不能执行
-`-- Conversation Product Projection              # 面向 UI 的权威产品投影，把 transcript/runtime facts 归一成可渲染视图
-    |-- rows                                     # timeline 行列表，解决 turn 分组、消息归属、虚拟滚动 key 的权威来源
-    |-- actionAvailability                       # 当前可用动作集合，例如 canStop/canFork/canRetry，避免 UI 自己扫状态猜按钮
-    |-- inputRouting                             # 输入路由裁决，决定新输入是立即执行、进入 queue，还是被 guard 拒绝
-    |-- sessionControl                           # session 顶层控制态，例如 phase、sessionEnded、stopState、lastError
-    |-- queue / pendingInteractions / backgroundWorks # 队列、待用户响应项和后台工作列表，刷新/多端都从同一投影恢复
-
-Host / service                                   # app 侧连接和服务层，负责传输、订阅、缓冲，不新增 conversation 产品语义
-|-- topic subscription registry                  # 记录每个连接订阅了哪些 topic，以及对应 subscriptionId/visibility/profile
-|-- per (connection, topic) flush buffer         # 每个连接每个 topic 的短暂发送缓冲，用于合批、限流和断开即丢的软状态
-|-- coalesce / conflation / backpressure         # 按 topic 规则合并 delta、保留最新态，并根据传输拥塞调整发送节奏
-`-- no new conversation product decision         # 明确禁止 host/service 再判断 turn 归属、按钮可用性或 session 产品状态
-
-Renderer / Web / Mobile                         # 客户端只负责展示和提交意图，不能成为 conversation 事实源
-|-- render projection                            # 渲染 CLI 下发的 rows/sessionControl/actionAvailability 等权威投影
-|-- send command intent                          # 把用户动作提交成 command，让权威侧裁决，而不是本地直接改事实状态
-|-- optimistic overlay by commandId              # 用 commandId 做本地即时反馈，等权威 row/queue item 回来后收口
-`-- local-only UI state                          # 只保留不影响 conversation 事实的本地交互态
-    |-- draft                                    # 输入框草稿，属于当前客户端本地体验，不参与多端事实同步
-    |-- scroll anchor                            # 滚动锚点和可视范围，用 rowId 恢复阅读位置，不改变会话内容
-    |-- hover / focus                            # 鼠标悬停、焦点、选中等瞬时交互状态，只影响当前界面
-    |-- pane layout                              # 分屏、面板展开收起等布局偏好，属于客户端本地显示状态
+CLI / agent runtime is the single source of facts
+  -> produces the Conversation Product Projection
+  -> host only forwards, buffers, applies backpressure and schedules recovery
+  -> desktop / web / mobile only render the projection and submit command intents
 ```
 
-这条边界的收益是：conversation 的产品语义只需要在 CLI reducer 和协议测试里证明一次。desktop、web、mobile 不再各自写一套“如何把 stream 拼成对话”的逻辑。
+In one line: **the client is demoted from "state reducer" to "projection renderer + command proposer".**
 
-## 订阅、恢复与弱网
+## Problems and the matching v4 improvements
 
-这一节要解决的问题：**客户端断过、刷新过、或者是新设备第一次打开时，怎么重新跟 CLI 的权威状态对齐。**
+- **Renderer memory is one of the truths; stream and snapshot double-write one message array.** Symptoms:
+  missing/duplicate messages after refresh, timeline misplacement, patched turn grouping. v4: the CLI
+  generates `ConversationProductProjection`; rows, turn, actionAvailability, sessionControl are authoritative;
+  a snapshot replaces wholesale and a delta is applied only contiguously. Check: the UI no longer derives turn
+  and button state from flat messages; replaying the same events yields stable rows.
+- **Action guards scattered across UI and operations.** Symptoms: inconsistent `canStop`, `canFork`, queue
+  routing and multi-client button state. v4: every state-changing action is a command intent; the CLI decides
+  by projection revision and a rules module and returns an ACK. Check: any client sees the same
+  actionAvailability; repeated stop/permission responses close idempotently.
+- **Several recovery paths whose base watermark lives and dies with UI state.** Symptom: after a mobile replay
+  gap an old snapshot and new stream are stitched into a nonexistent state. v4: unified
+  `subscribe(topic, base?)`: a valid base resumes, an invalid base gets a snapshot; `logEpoch + seq +
+  subscriptionId` define generations. Check: late old-subscription frames are silently dropped; a gap triggers
+  only a single-flight resubscribe.
+- **High-frequency deltas pass through relay and IPC and are batched only on the client.** Symptoms: frame
+  count explodes on weak networks, RTT amplification, mobile battery drain and dropped frames. v4: batching
+  moves forward to the host channel layer, topics declare coalesce/resync; the frame level only does ACK,
+  heartbeat, reconnect replay and congestion signals. Check: one round of output goes from "a frame per delta"
+  to windowed delivery; overflow resyncs via snapshot instead of random frame loss.
+- **desktop continuous and mobile replayable are two code paths.** Symptom: local and remote behaviors differ;
+  fixing one end breaks the other. v4: one topic / snapshot / delta / command protocol, differences kept only
+  as delivery profile parameters. Check: client apply logic has no profile branch; desktop defaults to
+  continuous, mobile to replayable, terminal states agree.
+- **Remote controller relies on extra bridge/mirror semantics.** Symptom: the phone is a "side-channel client"
+  that can bypass the local host/runtime boundary. v4: remote control stays a shared-host attachment: relay
+  and desktop main pass `rpc-frame` through, the phone attaches to the desktop's existing local/remote host.
+  Check: relay/main do not hold task, stream, queue or snapshot business state.
+- **Queued prompts and optimistic UI held in local memory.** Symptoms: queue lost on refresh, pending not
+  closing when an ACK is lost, duplicates dedup'd by heuristics. v4: a command carries `commandId`, the
+  authoritative row/queue item carries `sourceCommandId`; the overlay shows by commandId only and never enters
+  real data. Check: the originating client also reads its own authoritative result from the subscription
+  stream; the overlay closes on the projection.
+- **workspacePath used as the identity isolation key.** Symptom: SSH/WSL/Docker remote workspaces with the
+  same path cross-talk. v4: all identity/isolation keys use `workspaceIdentity?.trim() || workspacePath`;
+  path execution still uses only `workspacePath`. Check: remote workspace bridge, snapshot, queue and owner
+  command all carry the workspace identity.
+- **No reproducible protocol-level evidence for current bugs.** Symptom: fixes rely on manual reproduction and
+  UI guessing; regressions slip. v4: golden tests and a network chaos rig: snapshot atomicity, profile
+  terminal-state agreement, duplicate/late frame handling, guard and projection from the same source. Check:
+  each historical bug class maps to a protocol invariant or reducer case.
 
-v4 不再为“刷新”“断线重连”“手机新扫码”分别写三套恢复逻辑。所有客户端都只做同一个动作：订阅当前 conversation topic。区别只在于客户端手里有没有一份可信的旧状态。
+## State ownership
+
+The root of desync is not missing sync code but multiple layers believing they can write conversation facts.
 
 ```text
-客户端本地状态                         订阅请求                         CLI 裁决
-------------                         --------                         --------
-没有旧状态
-  例如刷新、新设备打开         ->      subscribe(topic)            ->    发完整 snapshot
+CLI / agent runtime                    # single source of conversation facts
+|-- canonical transcript               # authoritative record: user input, assistant output, tool results
+|-- runtime facts                      # active work, pending permission, token usage, background tasks
+|-- event log / logEpoch / seq         # incremental recovery watermark: resume deltas or re-pull a snapshot
+|-- command guard and idempotency      # serialized command decisions, dedup and guard checks
+`-- Conversation Product Projection    # UI-facing authoritative view
+    |-- rows                           # timeline rows: turn grouping, message ownership, virtual-scroll key
+    |-- actionAvailability             # canStop/canFork/canRetry, so the UI does not guess buttons
+    |-- inputRouting                   # new input executes now, queues, or is rejected by a guard
+    |-- sessionControl                 # phase, sessionEnded, stopState, lastError
+    |-- queue / pendingInteractions / backgroundWorks
 
-有旧状态，且记得水位 W
-  例如短暂断网后回来           ->      subscribe(topic, base=W)     ->    如果 W 还有效，只补 W 之后的 deltas
+Host / service                         # transport, subscription, buffering; no new conversation semantics
+|-- topic subscription registry        # per-connection topics with subscriptionId/visibility/profile
+|-- per (connection, topic) flush buffer # short send buffer for batching and throttling; soft state dropped on disconnect
+|-- coalesce / conflation / backpressure
+`-- no new conversation product decision # host/service must not decide turn ownership, button availability or session state
 
-有旧状态，但水位太旧或代际变了
-  例如断了很久、CLI 重启       ->      subscribe(topic, base=W)     ->    放弃旧状态，重新发完整 snapshot
+Renderer / Web / Mobile                # display and intent only, never a fact source
+|-- render projection
+|-- send command intent
+|-- optimistic overlay by commandId    # closed when the authoritative row/queue item arrives
+`-- local-only UI state                # draft, scroll anchor (by rowId), hover/focus, pane layout
 ```
 
-这里的几个词可以先按口语理解：
+The benefit: conversation product semantics need to be proven once, in the CLI reducer and protocol tests;
+desktop, web and mobile no longer each write "how to stitch a stream into a conversation".
+
+## Subscription, recovery and weak networks
+
+A client that was disconnected, refreshed, or is a new device re-aligns with CLI authority by one action for
+all cases: subscribing to the conversation topic. They differ only in whether the client holds a trusted old state.
+
+- No old state (refresh, new device): `subscribe(topic)` -> full snapshot.
+- Old state with remembered watermark W (short network loss): `subscribe(topic, base=W)` -> if W is still
+  valid, only deltas after W.
+- Old state but the watermark is too old or the generation changed (long outage, CLI restart):
+  `subscribe(topic, base=W)` -> the old state is dropped and a full snapshot is sent.
+
+Terms: topic = which conversation (`conversation/<sessionId>`); snapshot = the full current view computed by
+the CLI at a moment; delta = incremental change after the last watermark; seq = watermark in the CLI event
+stream; logEpoch = generation of the CLI process/event log (a changed generation means the old seq cannot
+resume); base = the client's claim "I hold a consistent view at logEpoch=X, seq=W".
+
+Key invariant: **`base=W` may be used to resume deltas only when the client really holds the consistent view
+at seq=W.**
+
+On receiving a frame the client does not guess or patch holes; five rules:
+
+1. `subscriptionId` mismatch -> a late frame of an old subscription, drop.
+2. payload is a snapshot -> replace the current projection wholesale, no merge with the old array.
+3. `toSeq <= local seq` -> duplicate or late frame, drop.
+4. `fromSeq != local seq` -> a hole in between, resubscribe to get a snapshot.
+5. `fromSeq == local seq` -> contiguous watermark, safe to apply deltas.
+
+Weak-network recovery is two-layered: jitter of hundreds of ms to seconds is handled by `@zcode/rpc`
+(ACK / heartbeat / reconnect replay; the conversation topic does not notice and seq is unbroken); refresh,
+long outage, relay/mobile page rebuild and CLI generation changes are handled by the conversation topic with
+`subscribe(base)` (base usable -> deltas, otherwise snapshot). This avoids the failure where a phone holds an
+old view and keeps stitching new stream onto it, ending with conversation state the CLI never acknowledged.
+
+## Protocol merge: Replay and Continue
+
+v4 merges the protocol model, not the runtime semantics of every end.
+
+- Same protocol: topic = `conversation/<sessionId>`; snapshot = current full projection; delta = row/state
+  patch; command = user intent; ack = accepted / rejected / stale / duplicate / failed.
+- Different delivery profiles: **desktop continuous** (local MessagePort default; low latency, fine streaming
+  granularity; the direct continuous real-time link) and **web remote replayable** (relay / weak-network
+  default; larger flush window; machine output such as tool output streams less and closes at terminal state;
+  after a disconnect recovers via snapshot + replay).
 
 ```text
-topic     = 订阅哪条会话，例如 conversation/<sessionId>
-snapshot  = CLI 在某个时刻算出来的完整当前画面
-delta     = 从上次水位之后发生的增量变化
-seq       = CLI 事件流的水位，表示“我已经看到第几号事件”
-logEpoch  = CLI 进程/事件日志的代际，代际变了说明旧 seq 不能再续接
-base      = 客户端告诉 CLI：“我手里有 logEpoch=X、seq=W 时刻的一致画面”
+model event stream
+  -> CLI reducer produces authoritative projection delta
+  -> host channel layer coalesces by the subscriber's profile
+  -> @zcode/rpc does frame-level ACK / heartbeat / reconnect replay
+  -> client renders with the same apply algorithm
 ```
 
-真正关键的是这条不变量：**只有当客户端真的持有 seq=W 时刻的一致画面时，才允许拿 `base=W` 去续接增量。**
+Two constraints hold at once: desktop is not polluted by mobile replayable semantics and stays the continuous
+main path; mobile does not bypass the replayable recovery boundary, and after a large gap a snapshot must align it.
 
-所以恢复链路长这样：
+## Remote-control and local link boundary
 
-```text
-短断网:
-
-客户端仍保留画面(seq=120)
-  -> 网络恢复后带 base=120 订阅
-  -> CLI 判断 120 还在保留窗
-  -> 只下发 121..now 的 deltas
-  -> 客户端接上，画面不中断
-
-刷新 / 新设备 / 长断线:
-
-客户端没有可信画面，或 base 已失效
-  -> 不带 base，或者带了也被 CLI 判 stale
-  -> CLI 下发 snapshot(seq=now)
-  -> 客户端整体替换本地投影
-  -> 从新 snapshot 的 seq 后继续接 deltas
-```
-
-客户端收到帧以后也不猜、不补洞，只按这五条处理：
-
-```text
-1. subscriptionId 不匹配      -> 这是旧订阅的迟到帧，直接丢
-2. payload 是 snapshot        -> 整体替换当前投影，不和旧数组 merge
-3. toSeq <= local seq         -> 重复帧或迟到帧，直接丢
-4. fromSeq != local seq       -> 中间断了一段，重新订阅拿 snapshot
-5. fromSeq == local seq       -> 水位连续，安全 apply deltas
-```
-
-弱网下分两层恢复：
-
-```text
-几百毫秒到几秒的抖动
-  -> @zcode/rpc 用 ACK / 心跳 / 重连重放解决
-  -> conversation topic 不感知，seq 不断
-
-刷新、长断线、relay/手机页面重建、CLI 代际变化
-  -> conversation topic 用 subscribe(base) 解决
-  -> base 可用就补 delta，base 不可用就 snapshot
-```
-
-这能避免现在最容易出错的情况：手机端拿着一份旧画面，却继续拼接新 stream，最后 UI 显示出一段 CLI 从来没有承认过的 conversation 状态。
-
-## 协议合并：Replay 与 Continue
-
-v4 要合并的是协议模型，不是把所有端的运行语义抹平。
-
-```text
-同一套协议:
-  topic = conversation/<sessionId>
-  snapshot = 当前完整投影
-  delta = row/state patch
-  command = 用户意图
-  ack = accepted / rejected / stale / duplicate / failed
-
-不同 delivery profile:
-  desktop continuous
-    - 本地 MessagePort 默认
-    - 低延迟，高流式粒度
-    - 保持 direct continuous 实时链路
-
-  web remote replayable
-    - relay / 弱网默认
-    - 更大 flush window
-    - tool output 等机器产物少流式，多用终态收口
-    - 断线后走 snapshot + replay 恢复
-```
-
-也就是说，desktop 和 mobile 走同一个 `subscribe/apply/command` 语义，但 delivery profile 是一张参数表：
-
-```text
-模型事件流
-  -> CLI reducer 生成权威 projection delta
-  -> host 通道层按订阅者 profile coalesce
-  -> @zcode/rpc 负责帧级 ACK / 心跳 / 重连重放
-  -> 客户端用同一个 apply 算法渲染
-```
-
-这样可以同时满足两个约束：
-
-- 桌面端不被手机 replayable 语义污染，仍是 continuous 主链路。
-- 手机端不绕过 replayable 恢复边界，大 gap 后必须由 snapshot 对齐。
-
-## 远控与本地链路边界
-
-远控 v4 不应把 relay 或 desktop main 变成业务状态层。当前有效事实仍然是 shared-host attachment：
+Remote v4 must not turn the relay or desktop main into a business-state layer. The valid fact stays the
+shared-host attachment:
 
 ```text
 mobile /remote
@@ -200,16 +174,14 @@ mobile /remote
   -> CLI / agent runtime
 ```
 
-这意味着：
+- The relay passes only `rpc-frame` through and does not parse task, session, stream, queue or snapshot.
+- Desktop main only schedules attachments and holds no conversation business state.
+- The phone cannot start an independent Agent runtime for remote control, nor create an independent SSH/WSL/Docker session.
+- Bridge, snapshot, queue and owner command of a remote workspace must carry `workspaceIdentity` and `remoteSessionId` end to end.
 
-- relay 只透传 `rpc-frame`，不解析 task、session、stream、queue、snapshot。
-- desktop main 只做 attachment 调度，不持有 conversation 业务状态。
-- 手机不能为了远控另起独立 Agent runtime，也不能新建独立 SSH/WSL/Docker session。
-- remote workspace 的桥接、snapshot、queue、owner command 必须贯穿传递 `workspaceIdentity` 和 `remoteSessionId`。
+## Command and optimistic overlay
 
-## Command 与 optimistic overlay
-
-v4 的客户端不是写者，而是提议者：
+The client is a proposer, not a writer:
 
 ```text
 UI action
@@ -217,54 +189,56 @@ UI action
   -> CLI guard / dedupe / enqueue / execute
   <- ACK
   -> projection delta
-  -> UI 用 sourceCommandId 收口 overlay
+  -> UI closes the overlay by sourceCommandId
 ```
 
-设计重点：
+- `accepted` only means the authority accepted it; it does not let the UI write real messages locally.
+- The overlay is for immediate feedback only, mounted by commandId, and never merged into rows.
+- The authoritative userInput row, queue item and timeline marker all carry `sourceCommandId`.
+- After a disconnect, unclosed commands are reconciled with `commands/query`, not blindly resent.
+- Multi-client concurrency is serialized by the CLI; no OT/CRDT.
 
-- `accepted` 只代表权威侧已受理，不代表 UI 本地可以写真实消息。
-- overlay 只用于即时反馈，按 commandId 挂载，永不合并进 rows。
-- 权威 userInput row、queue item、timeline marker 都必须带 `sourceCommandId`。
-- 断线后未收口 command 用 `commands/query` 对账，不盲目重发。
-- 多端并发由 CLI 串行裁决，不做 OT/CRDT。
+This unifies the boundary of "continue sending" and "recovery replay": continue is a command, replay is
+subscription recovery; both close on the same projection, rather than a local queue plus a remote mirror stream.
 
-这个模型可以统一“继续发送”和“恢复 replay”的边界：continue 是 command，replay 是订阅恢复。两者都围绕同一份 projection 收口，不再是一条本地队列加一条远控镜像流。
+## Phases
 
-## 落地阶段
+- **Phase 0, protocol finalization:** fix state ownership, the five-piece topic, command ACK, delivery profile
+  and invariants. Output: field spec, case catalog, coverage matrix, golden test list.
+- **Phase 1, CLI projection:** move rows, actionAvailability, sessionControl, queue and other product facts
+  into the CLI reducer. Output: reducer, schema, snapshot atomicity tests, sourceCommandId anchor.
+- **Phase 2, subscription recovery and transport:** unified subscribe/apply, productionized ACK/reconnect/
+  backpressure, remote control stays shared-host. Output: topic runtime, coalesce, logEpoch, subscriptionId,
+  chaos test.
+- **Phase 3, UI convergence:** the UI deletes its local reducer and derivation, rendering projection + overlay
+  only. Output: v4 chat store, virtual-scroll rowId anchor, old-path deletion plan.
 
-建议评审按四段确认：
+## Review questions
 
-| 阶段 | 目标 | 主要产物 |
-| --- | --- | --- |
-| Phase 0：协议定稿 | 固定状态所有权、topic 五件套、command ACK、delivery profile 和不变量 | 更新字段规范、case catalog、coverage matrix、golden test list |
-| Phase 1：CLI projection | 把 rows、actionAvailability、sessionControl、queue 等产品事实移到 CLI reducer | reducer、schema、snapshot 原子性测试、sourceCommandId anchor |
-| Phase 2：订阅恢复与传输 | 统一 subscribe/apply，生产化 ACK/重连/背压，远控仍保持 shared-host | topic runtime、coalesce、logEpoch、subscriptionId、chaos test |
-| Phase 3：UI 收敛 | UI 删除本地 reducer 和推导逻辑，只渲染 projection + overlay | v4 chat store、虚拟滚动 rowId anchor、旧链路删除计划 |
+1. Is "the CLI projection is the single authority for conversation product facts" accepted?
+2. Is "protocol merge = one topic/command/apply, end differences expressed only by delivery profile" accepted?
+3. Is "no per-client offline queue; long disconnect/refresh recovers uniformly by snapshot" accepted?
+4. Is "relay and desktop main do not push task/session/stream business state down" accepted?
+5. Is the command inbox / queue lifecycle stance accepted: a renderer disconnect is recoverable, a host/CLI
+   process exit does not promise continued execution, and persisted effects close idempotently by `sourceCommandId`?
+6. Are the G-12 fault catalog and G-13 auth surface mandatory Phase 0 content?
 
-## 评审重点问题
+## Expected gains
 
-1. 是否认可“CLI projection 是 conversation 产品事实唯一权威源”？
-2. 是否认可“协议合并 = 同一套 topic/command/apply，端差异只用 delivery profile 表达”？
-3. 是否认可“不做 per-client 离线队列，长断/刷新统一 snapshot 恢复”？
-4. 是否认可“relay 和 desktop main 不下沉 task/session/stream 业务状态”？
-5. 是否认可 command inbox / queue 的生命周期口径：renderer 断线可恢复，host/CLI 进程退出不承诺继续执行，已落盘效果靠 `sourceCommandId` 幂等收口？
-6. G-12 fault catalog 和 G-13 鉴权面是否作为 Phase 0 必补内容？
+- Conversation bugs converge from "multi-client patches" to "protocol invariants + reducer tests".
+- Web and mobile weak networks no longer rely on UI-guessed recovery; refresh and disconnect are the ordinary subscription path.
+- Remote control and the local link share one protocol model while keeping the desktop continuous / mobile
+  replayable boundary.
+- Host/relay/main duties get lighter and state no longer spreads across the forwarding layers.
+- A new client form only needs a transport and capability, not a rewritten conversation reducer.
 
-## 预期收益
+## Related documents
 
-- conversation bug 从“多端补丁”收敛为“协议不变量 + reducer 测试”。
-- web 和手机弱网不再依赖 UI 猜测恢复，刷新和断线是常规订阅路径。
-- remote controller 和本地链路共享同一套协议模型，同时保留 desktop continuous 与 mobile replayable 的差异边界。
-- host/relay/main 的职责更轻，状态不再在转发层扩散。
-- 后续新增端形态时，只需要实现 transport 和 capability，不需要重写 conversation reducer。
-
-## 关联文档
-
-- [V4 重构 README](./README.md)
-- [ZCode Protocol v4 字段级规范](./10-protocol-spec.md)
-- [订阅与恢复](./04-sync-and-recovery.md)
-- [传输与背压](./05-transport-and-backpressure.md)
-- [V4 重构设计 Review](./design-review.md)
-- [Web 远程控制外部 Relay 架构](../web-remote-control/web-remote-control-architecture.md)
+- [V4 refactor README](./README.md)
+- [ZCode Protocol v4 field-level spec](./10-protocol-spec.md)
+- [Subscription and recovery](./04-sync-and-recovery.md)
+- [Transport and backpressure](./05-transport-and-backpressure.md)
+- [V4 refactor design review](./design-review.md)
+- [Web remote-control external relay architecture](../web-remote-control/web-remote-control-architecture.md)
 - [Task Realtime Sync](../web-remote-control/task-realtime-sync.md)
-- [手机远控任务命令队列](../web-remote-control-task-command-queue.md)
+- [Mobile remote task command queue](../web-remote-control-task-command-queue.md)
