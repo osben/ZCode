@@ -15,68 +15,68 @@ stage capture, final OTLP export, queries and E2E, and can be demoed and accepte
 ## Acceptance criteria
 
 - [x] Supported sample: desktop local, continuously foreground, idle send, no retry. Unsupported paths
-  (queued, immediate guide, failed/cancelled) have an explicit classification and bounded cleanup and are
-  never counted as plain successes; their full diagnostics belong to ticket 02.
+      (queued, immediate guide, failed/cancelled) have an explicit classification and bounded cleanup and are
+      never counted as plain successes; their full diagnostics belong to ticket 02.
 - [x] A real click or Enter submit that passes the gate creates a stable observation correlation spanning
-  Renderer, window Local Host, CLI and actual session-content return. The shared protocol uses strict types
-  and runtime validation and stays backward compatible; Host adds no second business queue and Main holds no
-  task business state.
+      Renderer, window Local Host, CLI and actual session-content return. The shared protocol uses strict types
+      and runtime validation and stays backward compatible; Host adds no second business queue and Main holds no
+      task business state.
 - [x] The correlation locates command/input/query, turn and model request; output before ACK is attributed
-  correctly; legal reordering and duplicates never create a second main TTFT or Metric. Independent sessions,
-  workspaces and process instances do not cross.
+      correctly; legal reordering and duplicates never create a second main TTFT or Metric. Independent sessions,
+      workspaces and process instances do not cross.
 - [x] Six main stages are recorded: Renderer send preparation, command delivery and CLI acceptance, waiting
-  for execution, execution and request preparation, model request, first-output return. The wait from CLI
-  receiving the command to obtaining the admission gate is not omitted; ACK round trip and execution may run
-  in parallel and are not double-counted.
+      for execution, execution and request preparation, model request, first-output return. The wait from CLI
+      receiving the command to obtaining the admission gate is not omitted; ACK round trip and execution may run
+      in parallel and are not double-counted.
 - [x] Request preparation is first recorded as one complete main stage (hooks, persistence, compaction, MCP
-  breakdown is ticket 02). Preparation time must not be missing, and an internal compaction model request is
-  never mistaken for the main response's first output.
+      breakdown is ticket 02). Preparation time must not be missing, and an internal compaction model request is
+      never mistaken for the main response's first output.
 - [x] First output comes from actual content receipt in the originating Renderer and accepts non-empty
-  displayable text, reasoning or a tool call, recording `first_output_kind`. Empty block/start, heartbeats,
-  status notices and side-channel telemetry do not trigger it. Old turns and subtask side-channel content do
-  not claim this input's first response.
+      displayable text, reasoning or a tool call, recording `first_output_kind`. Empty block/start, heartbeats,
+      status notices and side-channel telemetry do not trigger it. Old turns and subtask side-channel content do
+      not claim this input's first response.
 - [x] First output completes the main TTFT and goes to async export without waiting for the turn terminal;
-  first text is still observed lightly and reported separately if late; end-without-text has its own status;
-  later errors do not reverse an established first output.
+      first text is still observed lightly and reported separately if late; end-without-text has its own status;
+      later errors do not reverse an established first output.
 - [x] End to end uses the originating Renderer's clock; each process uses a monotonic clock internally. The
-  cross-process alignment error has a measured value and an executable threshold so tens-of-millisecond stages
-  stay distinguishable; invalid or unreliable intervals are never clamped to zero.
+      cross-process alignment error has a measured value and an executable threshold so tens-of-millisecond stages
+      stay distinguishable; invalid or unreliable intervals are never clamped to zero.
 - [x] Trace keeps real stage intervals and causality; main stages reconcile against the actual timeline,
-  overlaps are not added twice, missing and unattributed intervals are visible, un-run stages are not zero.
-  No unsupported split of model-service network, queueing or inference.
+      overlaps are not added twice, missing and unattributed intervals are visible, un-run stages are not zero.
+      No unsupported split of model-service network, queueing or inference.
 - [x] The same stage facts produce a dedicated OTel Metric and Trace through the existing OTLP export
-  facility. Main TTFT is counted once per send; repeated model attempts or stages do not inflate message
-  samples.
+      facility. Main TTFT is counted once per send; repeated model attempts or stages do not inflate message
+      samples.
 - [x] Dedicated millisecond Histogram buckets for short stages; queries show sample count and bucket
-  precision and give total TTFT and per-stage P50/P95. Quantiles are never added, and stage time is never
-  derived by subtracting model P95 from total P95.
+      precision and give total TTFT and per-stage P50/P95. Quantiles are never added, and stage time is never
+      derived by subtracting model P95 from total P95.
 - [x] Base ARMS queries and a dashboard config filter by stage, model/provider, app version and OS using
-  controlled combinations, and open the per-message waterfall via the correlation ID. High-cardinality message,
-  trace or workspace identifiers never enter Metric labels.
+      controlled combinations, and open the per-message waterfall via the correlation ID. High-cardinality message,
+      trace or workspace identifiers never enter Metric labels.
 - [x] The gray-release enablement decision is consistent across the chain; bounded TTFT detail for the
-  enabled population is not sampled and does not depend on the old CLI 10% Trace or independent Renderer
-  sampling. When off, no new collection starts; old Agent Trace parentage and sampling are unchanged.
+      enabled population is not sampled and does not depend on the old CLI 10% Trace or independent Renderer
+      sampling. When off, no new collection starts; old Agent Trace parentage and sampling are unchanged.
 - [x] Stage records, memory and the export queue are bounded; export timeout, rejection or a full queue never
-  blocks sending or output, and drops/truncation are observable. No per-token network reporting; no body, file
-  content, raw path, credential or request header/body is collected.
+      blocks sending or output, and drops/truncation are observable. No per-token network reporting; no body, file
+      content, raw path, credential or request header/body is collected.
 - [x] Desktop stays on desktop-continuous. Remote workspaces, mobile/Web, history hydration, replayable
-  recovery and automated tasks produce no local user TTFT; legacy business events, RUM TTFT and the send
-  funnel keep their definitions and counts.
+      recovery and automated tasks produce no local user TTFT; legacy business events, RUM TTFT and the send
+      funnel keep their definitions and counts.
 - [x] The E2E "real desktop Composer send → decoded result at the final OTLP receiver" was written before the
-  implementation, reusing the existing conversation replay and OTLP HTTP receiver, and checks final
-  Trace/Metric rather than internal calls.
+      implementation, reusing the existing conversation replay and OTLP HTTP receiver, and checks final
+      Trace/Metric rather than internal calls.
 - [x] E2E covers text/reasoning/tool first, empty start event, late first text, first output before ACK, and
-  attribution after injecting a known delay into a main stage; lower-level tests only cover clock,
-  deduplication and protocol boundaries.
+      attribution after injecting a known delay into a main stage; lower-level tests only cover clock,
+      deduplication and protocol boundaries.
 - [x] Controlled samples verify ARMS base quantiles and per-message correlation display, with real or test
-  export evidence; platform acceptance and local tests are recorded separately. Done 2026-09-15: the new
-  service is ingested, total P50 / stage P95 are queryable, `observation_id` with hyphens removed equals the
-  traceID, and a 62-span message's six-stage union reconciles with the root duration
-  ([platform-evidence](../../monitoring/local-ttft-platform-evidence.json)). Visual confirmation of the
-  waterfall in the console UI is still not done.
+      export evidence; platform acceptance and local tests are recorded separately. Done 2026-09-15: the new
+      service is ingested, total P50 / stage P95 are queryable, `observation_id` with hyphens removed equals the
+      traceID, and a 62-span message's six-stage union reconciles with the root duration
+      ([platform-evidence](../../monitoring/local-ttft-platform-evidence.json)). Visual confirmation of the
+      waterfall in the console UI is still not done.
 - [ ] Finish related E2E/unit tests, typecheck, lint and architecture gate, and leave notes on the stage
-  contract, clock error, buckets and data-volume limits. Any small pre-refactor happens before wiring and
-  keeps behavior; no broad refactor task.
+      contract, clock error, buckets and data-volume limits. Any small pre-refactor happens before wiring and
+      keeps behavior; no broad refactor task.
 
 ## Scope hand-off
 

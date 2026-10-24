@@ -47,14 +47,14 @@ Account switching explains why this card has no entitlements now; the provider-r
 
 Keep the `accountAvailability === "pending"` and `accountEntitled === true` branches unchanged; add back one tier for "authenticated but server explicitly has no subscription":
 
-| accountEntitled | availability | Reason | Card status | Label | Primary button |
-| --- | --- | --- | --- | --- | --- |
-| true | available | - | per snapshot | current value | current value |
-| false | pending | - | per snapshot (pending, may view) | current value | current value |
-| false | unavailable | Explicitly no entitlements | **notPurchased** | Not purchased, activated after purchase | **Subscribe** |
-| false | unavailable | Credentials expired | unavailable | Fetch failure | Re-login |
-| false | unavailable | Not logged in / Not connected | disconnected | Disconnected | Connect {provider} |
-| false | unknown / reason missing | - | disconnected (backward compatible) | Disconnected | Connect {provider} |
+| accountEntitled | availability             | Reason                        | Card status                        | Label                                   | Primary button     |
+| --------------- | ------------------------ | ----------------------------- | ---------------------------------- | --------------------------------------- | ------------------ |
+| true            | available                | -                             | per snapshot                       | current value                           | current value      |
+| false           | pending                  | -                             | per snapshot (pending, may view)   | current value                           | current value      |
+| false           | unavailable              | Explicitly no entitlements    | **notPurchased**                   | Not purchased, activated after purchase | **Subscribe**      |
+| false           | unavailable              | Credentials expired           | unavailable                        | Fetch failure                           | Re-login           |
+| false           | unavailable              | Not logged in / Not connected | disconnected                       | Disconnected                            | Connect {provider} |
+| false           | unknown / reason missing | -                             | disconnected (backward compatible) | Disconnected                            | Connect {provider} |
 
 Boundaries that stay unchanged:
 
@@ -92,11 +92,11 @@ Rejected candidate A (restore the old `no_plan` snapshot signal by relaxing the 
 
 Trigger: the logged-in account is in the zai family (`providerFamilyDomain` resolves to zai) and the account-level derived key is empty (no plan means no derived key, or derivation failed).
 
-| Account status | BigModel reason | Z.AI reason | Displayed |
-| --- | --- | --- | --- |
-| Not logged in | `not_connected` (resolver early-exit, `accountProviderConnectionResolver.ts:111-120`) | same early-exit | "Disconnected" on both, no divergence |
-| Logged in + derived key empty | `not_connected` (call-site constant) | `auth_failed` (`resolveMissingZaiApiKeyReason` checks user_info) | Disconnected vs **Fetch failure** (divergence) |
-| Logged in + has key + subscription list empty | `not_entitled` | `not_entitled` | "Not purchased" on both (the fix target) |
+| Account status                                | BigModel reason                                                                       | Z.AI reason                                                      | Displayed                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------- |
+| Not logged in                                 | `not_connected` (resolver early-exit, `accountProviderConnectionResolver.ts:111-120`) | same early-exit                                                  | "Disconnected" on both, no divergence          |
+| Logged in + derived key empty                 | `not_connected` (call-site constant)                                                  | `auth_failed` (`resolveMissingZaiApiKeyReason` checks user_info) | Disconnected vs **Fetch failure** (divergence) |
+| Logged in + has key + subscription list empty | `not_entitled`                                                                        | `not_entitled`                                                   | "Not purchased" on both (the fix target)       |
 
 Root cause: in `codingPlanProviderAvailability.ts:140-154` zai passes dynamic judgment, bigmodel a constant; `resolveMissingZaiApiKeyReason` (same file, :657-662) reports "no derived key" as `auth_failed`, reusing the "credentials rejected by server" semantics.
 

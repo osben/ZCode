@@ -21,11 +21,11 @@ macOS PiP behavior. The zcode-cua producer has zero changes, so no pin bump.
 `mcp__node_repl__js` `input.code` with a regex and compared them to the action vocabulary (the
 tracker's `CUA_SDK_ACTIONS`). After the node_repl refactor no real call shape matches:
 
-| Real model code (SKILL.md) | Regex result |
-| --- | --- |
-| `agent.computerUse.getApp("Notes")` | `getApp` (not in the action set; facade methods are camelCase) |
-| `app.click(42)` / `app.typeText(…)` / `app.pressKey(…)` | no match (variable is `app`) |
-| `agent.computerUse.computer.left_click({…})` | no match (`computer` is followed by `.`, not `(`) |
+| Real model code (SKILL.md)                              | Regex result                                                   |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| `agent.computerUse.getApp("Notes")`                     | `getApp` (not in the action set; facade methods are camelCase) |
+| `app.click(42)` / `app.typeText(…)` / `app.pressKey(…)` | no match (variable is `app`)                                   |
+| `agent.computerUse.computer.left_click({…})`            | no match (`computer` is followed by `.`, not `(`)              |
 
 The only matching shape, `agent.computerUse.left_click(…)`, exists in neither the SDK nor the docs; it
 exists only in the fixtures of `bootstrap/tests/computer-use-operation-event.test.ts`, so that test was
@@ -82,14 +82,14 @@ activate. The failure direction is "not lit", never "wrongly lit".
 
 One show entry, six hide paths; any one ends the display:
 
-| Trigger | Location |
-| --- | --- |
-| `turn-completed` / `turn-failed` | tracker `clearTurn` → reporter `active:false` |
-| `session-closed` | tracker `clearSession` |
-| New turn replaces the old turn | tracker `retireTurn` + `clearSession` |
-| Workspace closed / runtime unavailable | `clearWorkspaceKey` / `clearSource` |
-| App quit | `dispose()` destroys the window |
-| All of the above fail | `AUTO_HIDE_MS` fallback timer |
+| Trigger                                | Location                                      |
+| -------------------------------------- | --------------------------------------------- |
+| `turn-completed` / `turn-failed`       | tracker `clearTurn` → reporter `active:false` |
+| `session-closed`                       | tracker `clearSession`                        |
+| New turn replaces the old turn         | tracker `retireTurn` + `clearSession`         |
+| Workspace closed / runtime unavailable | `clearWorkspaceKey` / `clearSource`           |
+| App quit                               | `dispose()` destroys the window               |
+| All of the above fail                  | `AUTO_HIDE_MS` fallback timer                 |
 
 The fallback goes from `10_000` to `30_000`. The fact is now reported per cell and later cells in the
 same turn refresh the timer, but a single cell can run long and 10 seconds would extinguish the overlay
@@ -173,12 +173,12 @@ indicator never appearing in real-machine tests at the time.
 
 Measurements for a future restart (Windows 11 / Electron 41.0.3):
 
-| Check | Result |
-| --- | --- |
-| Helper ready / broker RPC / `stop()` exit in full Electron mode | integration test 2 passed, exit 0 |
-| `BrowserWindow` + `setAlwaysOnTop(_, "screen-saver")` + `screen` API | all available |
-| `helperReaper` `--socket <value>` match | exactly 1 process has that value in its command line; exact claiming unaffected |
-| Chromium children (gpu/utility/renderer) after hard-killing the Helper | all 3 exit with the parent, zero orphans |
+| Check                                                                  | Result                                                                          |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Helper ready / broker RPC / `stop()` exit in full Electron mode        | integration test 2 passed, exit 0                                               |
+| `BrowserWindow` + `setAlwaysOnTop(_, "screen-saver")` + `screen` API   | all available                                                                   |
+| `helperReaper` `--socket <value>` match                                | exactly 1 process has that value in its command line; exact claiming unaffected |
+| Chromium children (gpu/utility/renderer) after hard-killing the Helper | all 3 exit with the parent, zero orphans                                        |
 
 Do not use the negation of `isReadOnlyBrokerMethod` as a trigger. That set serves **soft-timeout**
 detection (any side effect counts as an action); its non-read-only side mixes lease arbitration, focus

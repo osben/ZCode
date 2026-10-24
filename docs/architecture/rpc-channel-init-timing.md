@@ -92,13 +92,13 @@ Files involved:
 
 After `Initialize`, a request for a channel that is not registered yet is held by `ChannelServer` in `pendingRequests` (owner: `ChannelServer`, keyed by channel name, records identified by request id). `registerChannel` flushes the bucket on the next tick.
 
-| Event | Promise request | EventListen request |
-| --- | --- | --- |
-| Channel registers before the timeout | Executed once | Subscribed once |
-| Timeout (`timeoutDelay`, default 1000 ms) | `PromiseError` sent, record **removed**; a later registration never executes it | `console.error` only; record **kept** so a later registration subscribes |
-| Client sends `PromiseCancel` while pending | Record removed; never executed | n/a |
-| Client sends `EventDispose` while pending | n/a | Record removed; never subscribed |
-| `ChannelServer.dispose()` | All pending timers cleared, map emptied | Same |
+| Event                                      | Promise request                                                                 | EventListen request                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Channel registers before the timeout       | Executed once                                                                   | Subscribed once                                                          |
+| Timeout (`timeoutDelay`, default 1000 ms)  | `PromiseError` sent, record **removed**; a later registration never executes it | `console.error` only; record **kept** so a later registration subscribes |
+| Client sends `PromiseCancel` while pending | Record removed; never executed                                                  | n/a                                                                      |
+| Client sends `EventDispose` while pending  | n/a                                                                             | Record removed; never subscribed                                         |
+| `ChannelServer.dispose()`                  | All pending timers cleared, map emptied                                         | Same                                                                     |
 
 Rationale:
 

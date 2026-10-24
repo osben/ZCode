@@ -77,7 +77,7 @@ parent turn ends                      |                             |           
   `runtime_scope`. The broker still validates the private socket token first; authoritative sessionId
   validation is `requireSession` of `BrowserControlPort`.
 - The ownership mode is declared in `tabOwner` of `BrowserControlPort.forChildSession({ childSessionId,
-  parentSessionId, tabOwner })`: `"parent"` for core Agent subagents, `"child"` (default) for dwf
+parentSessionId, tabOwner })`: `"parent"` for core Agent subagents, `"child"` (default) for dwf
   subagents. Whether a child session resolves depends only on whether the parent runtime called
   `forChildSession`; never guess the parent from the session id's shape.
 - In `tabOwner: "parent"` mode the broker records the connection under the parent session, so a browser

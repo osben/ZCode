@@ -21,23 +21,23 @@ Playwright is a unified `Tab.playwright` facade above the backends, not a backen
 
 ## 2. Confirmed boundary decisions
 
-| Decision | Conclusion | Reason |
-| --- | --- | --- |
-| backend enum | `iab \| extension \| cdp` | one observable contract for all three |
-| Playwright | a Tab API layer | do not build it as a fourth backend |
-| Chrome assets | ZCode clean-room | no third-party private plugin or binary |
-| IAB transport | keep the ZCode Protocol adapter | compatible with the local/remote shared-host architecture |
-| browser identity | the descriptor's runtime id, never the type | supports several Chrome profiles/windows/peers |
-| workspace identity | `workspaceIdentity?.trim() \|\| workspacePath` | isolation semantics |
-| client mode | carried on every request | keeps the desktop continuous / web replayable boundary |
-| API support | trimmed dynamically by capability/API manifest | no fake methods that always throw |
-| low-level result | protocol keeps a structured result | only the facade direct-returns/throws |
-| security | command/action-time policy independent of the js gate | one approval must not allow unlimited side effects |
-| page observation | ordinary navigation/reading/interaction defaults to visible semantic DOM | DOM is cheaper and gives stable locating evidence |
-| model screenshots | only when the user asks for visual results, layout/rendering judgment is needed, or DOM cannot represent the target | no "screenshot after opening" and no snapshot+screenshot double observation |
-| documentation loading | screenshot guidance is an on-demand lookup, not in the default full API | avoid reinforcing `emitImage(screenshot())` |
-| response meta | no automatic client preview screenshot; model screenshots are still explicit in the visual branch | product choice: avoid large screenshot metadata for ordinary navigation |
-| implementation source | clean-room, no third-party private source copied | compliance and maintainability |
+| Decision              | Conclusion                                                                                                          | Reason                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| backend enum          | `iab \| extension \| cdp`                                                                                           | one observable contract for all three                                       |
+| Playwright            | a Tab API layer                                                                                                     | do not build it as a fourth backend                                         |
+| Chrome assets         | ZCode clean-room                                                                                                    | no third-party private plugin or binary                                     |
+| IAB transport         | keep the ZCode Protocol adapter                                                                                     | compatible with the local/remote shared-host architecture                   |
+| browser identity      | the descriptor's runtime id, never the type                                                                         | supports several Chrome profiles/windows/peers                              |
+| workspace identity    | `workspaceIdentity?.trim() \|\| workspacePath`                                                                      | isolation semantics                                                         |
+| client mode           | carried on every request                                                                                            | keeps the desktop continuous / web replayable boundary                      |
+| API support           | trimmed dynamically by capability/API manifest                                                                      | no fake methods that always throw                                           |
+| low-level result      | protocol keeps a structured result                                                                                  | only the facade direct-returns/throws                                       |
+| security              | command/action-time policy independent of the js gate                                                               | one approval must not allow unlimited side effects                          |
+| page observation      | ordinary navigation/reading/interaction defaults to visible semantic DOM                                            | DOM is cheaper and gives stable locating evidence                           |
+| model screenshots     | only when the user asks for visual results, layout/rendering judgment is needed, or DOM cannot represent the target | no "screenshot after opening" and no snapshot+screenshot double observation |
+| documentation loading | screenshot guidance is an on-demand lookup, not in the default full API                                             | avoid reinforcing `emitImage(screenshot())`                                 |
+| response meta         | no automatic client preview screenshot; model screenshots are still explicit in the visual branch                   | product choice: avoid large screenshot metadata for ordinary navigation     |
+| implementation source | clean-room, no third-party private source copied                                                                    | compliance and maintainability                                              |
 
 ## 3. Target layering
 
@@ -564,8 +564,8 @@ IAB must support the following sequence:
 8. All browser commands carry session/turn/sessionContext and return redacted browser-use meta; ZCode attaches no automatic preview screenshot.
 9. The model-visible errors of stale/missing tab, locator strict violation and locator timeout must give executable, bounded recovery actions: first refresh the DOM or enumerate and re-obtain the tab, then rebuild the locator; never retry the same locator, mask ambiguity with `first/last/nth`, or guess a selector without snapshot evidence. The JS tool prints the error title and message once, and the stack only appends frames; the same error body must not be repeated twice.
 10. Every browser-use command that maps to a real tab sends an operation event with `workspaceKey + sessionId + browserId + browserGeneration + tabId` to the origin renderer. Within 5 seconds of the event the matching browser-use tab replaces its favicon with a mouse icon and runs a 900 ms opacity + scale breathing animation on the icon's outer container (a generic SVG `animate-pulse` alone gives a 14 px icon only a slow opacity change the user cannot perceive). Subsequent operations on the same tab refresh the 5-second deadline. After the deadline restore the cached real page favicon (globe icon as default fallback); the status hint must not overwrite or clear the favicon. The animation must respect `prefers-reduced-motion`, and events of a background workspace/session must not mislabel other tabs with the same path.
-10. If IAB is still visible on the second real user turn, the provider request must carry a bounded ambient context; the model should not treat the empty `tabs.list()` after finalize as a backend disconnect, and should not guess a detail-page ID without evidence.
-11. `goto()` with `ERR_ABORTED` whose final document committed to an equivalent redirect/SPA URL returns success; the same error that still stays on the old page returns failure.
+11. If IAB is still visible on the second real user turn, the provider request must carry a bounded ambient context; the model should not treat the empty `tabs.list()` after finalize as a backend disconnect, and should not guess a detail-page ID without evidence.
+12. `goto()` with `ERR_ABORTED` whose final document committed to an equivalent redirect/SPA URL returns success; the same error that still stays on the old page returns failure.
 
 Logging:
 

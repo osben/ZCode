@@ -285,12 +285,12 @@ auth_ack(matched) ─▶ bootstrap-request ─▶ version guard ─▶ workspace
 
 ### External dependencies (block production release, not development)
 
-| Item | Owner | Status | Acceptance |
-| ---- | ----- | ------ | ---------- |
-| Production zcode-server deploys V2 | server | `zcode.z.ai/api/v1/remote/token` returns 404 | the endpoint returns 401 without JWT |
-| Production gateway forwards `/api/v1/remote/ws2` exactly to the V2 relay, device and terminal landing on the same instance by `mid` | ESA/Alibaba Cloud gateway maintainers | currently falls to the V1 handler by the `/api/v1/remote/ws` prefix (returns 400) | 401 without token; stable pairing for the same `mid` |
-| Production gateway serves OSS `<version>/index.html` by `app_version` and `/remote/v4/<dir>/<path>` from the matching directory | ESA/Alibaba Cloud gateway maintainers | works in test; production returns the same index for all versions and `/remote/v4/3.13.0/release-manifest.json` returns index.html | the manifest returns JSON; different `app_version` returns its own version's assets |
-| OAuth allow-list registers `https://zcode.z.ai/remote/v4` (listed twice in the source for the two providers) | ZAI and BigModel OAuth providers | not started | one real login redirect in the test environment |
+| Item                                                                                                                                | Owner                                 | Status                                                                                                                             | Acceptance                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Production zcode-server deploys V2                                                                                                  | server                                | `zcode.z.ai/api/v1/remote/token` returns 404                                                                                       | the endpoint returns 401 without JWT                                                |
+| Production gateway forwards `/api/v1/remote/ws2` exactly to the V2 relay, device and terminal landing on the same instance by `mid` | ESA/Alibaba Cloud gateway maintainers | currently falls to the V1 handler by the `/api/v1/remote/ws` prefix (returns 400)                                                  | 401 without token; stable pairing for the same `mid`                                |
+| Production gateway serves OSS `<version>/index.html` by `app_version` and `/remote/v4/<dir>/<path>` from the matching directory     | ESA/Alibaba Cloud gateway maintainers | works in test; production returns the same index for all versions and `/remote/v4/3.13.0/release-manifest.json` returns index.html | the manifest returns JSON; different `app_version` returns its own version's assets |
+| OAuth allow-list registers `https://zcode.z.ai/remote/v4` (listed twice in the source for the two providers)                        | ZAI and BigModel OAuth providers      | not started                                                                                                                        | one real login redirect in the test environment                                     |
 
 The old infrastructure repo no longer carries zcode.z.ai backend or frontend configuration; this task changes
 nothing there.
@@ -319,30 +319,30 @@ gateway supports version directories.
 ## Acceptance criteria
 
 - [ ] Logged-out desktop opening the remote dialog shows login required, registers no device, connects no
-  relay, and the status has no QR code.
+      relay, and the status has no QR code.
 - [ ] First start while logged in registers and persists `{deviceSid, userId, endpointOrigin}`; the QR is
-  `/remote/v4?app_version&sid&mid&name` without `hash`/`t`; V1 leftover sid/passHash are cleared.
+      `/remote/v4?app_version&sid&mid&name` without `hash`/`t`; V1 leftover sid/passHash are cleared.
 - [ ] User/endpoint change or `AUTH_FAILED` at `auth_init`: re-register and best-effort delete the old record;
-  delete failure does not block start.
+      delete failure does not block start.
 - [ ] A new token is requested before every connection; `auth_init` has no `role`; `pair_status_query` has no
-  `device_sid`; `client_ts` is seconds; heartbeat 5 s ±1 s; reconnect after 15 s without ACK.
+      `device_sid`; `client_ts` is seconds; heartbeat 5 s ±1 s; reconnect after 15 s without ACK.
 - [ ] Token 401: status `error`/`auth-required`, reconnect stops, no logout, enabled record kept; auto-resume
-  after the login notification. Logout notification: runtime stops and goes to `auth-required`.
+      after the login notification. Logout notification: runtime stops and goes to `auth-required`.
 - [ ] `KICKED`: first one reconnects with a new token after 2-5 s; a second within 60 s stops and reports
-  `session-conflict`.
+      `session-conflict`.
 - [ ] Phone with `sid`, logged out: login page → OAuth back to `/remote/v4` callback mode → redirect to the
-  original URL → direct connect. Logged in with `sid`: direct connect.
+      original URL → direct connect. Logged in with `sid`: direct connect.
 - [ ] Phone without `sid`: recent device online connects directly, otherwise the list page; list online-first
-  by name, offline grey and unclickable, manual and foreground refresh; URL written back after selection and
-  restorable on refresh.
+      by name, offline grey and unclickable, manual and foreground refresh; URL written back after selection and
+      restorable on refresh.
 - [ ] Phone `AUTH_FAILED`: `device-not-owned` page with "switch account" and "select another device"; 401:
-  back to login and return to the original URL afterwards.
+      back to login and return to the original URL afterwards.
 - [ ] After entering chat, bootstrap, bridge, `rpc-frame`, replayable recovery and version guard behave as
-  before the upgrade.
+      before the upgrade.
 - [ ] The repo no longer contains the v2/v3/v4 Docker build chains or references to the migrated
-  infrastructure; `/remote/__test__` and the OSS pipeline work; V1 code on both ends and shared V1 types are
-  deleted.
+      infrastructure; `/remote/__test__` and the OSS pipeline work; V1 code on both ends and shared V1 types are
+      deleted.
 - [ ] The new doc and the three existing docs match the final behavior; the April login design doc is marked
-  superseded.
+      superseded.
 - [ ] typecheck, lint, architecture check, affected unit tests and the new E2E pass; test-environment
-  real-device steps are recorded.
+      real-device steps are recorded.

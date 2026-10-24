@@ -17,13 +17,13 @@ Workspace Hook keeps exactly one user authorization: persistent trust of one exa
 
 ### 2.1 Changed layers
 
-| Layer         | Change                                                                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| presentation  | Removed the standalone review panel and inline status badges; an untrusted row always shows a "Trust" button left of the effective-run toggle                                                          |
-| validation    | Still validates workspace identity, bundle digest, review flow generation, interaction and review item; also validates the same trusted managed policy provider before every Settings Trust mutation     |
-| commit-effect | The user can only submit a persistent Trust mutation for a single or explicitly selected item                                                                                                           |
-| persistence   | Still the user-owned Trust store keyed by `workspaceIdentity + hookDeclarationDigest`                                                                                                                   |
-| recovery      | continuous/replayable keep projecting pending admission; timeout, disconnect and page close never write Trust                                                                                           |
+| Layer         | Change                                                                                                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| presentation  | Removed the standalone review panel and inline status badges; an untrusted row always shows a "Trust" button left of the effective-run toggle                                                        |
+| validation    | Still validates workspace identity, bundle digest, review flow generation, interaction and review item; also validates the same trusted managed policy provider before every Settings Trust mutation |
+| commit-effect | The user can only submit a persistent Trust mutation for a single or explicitly selected item                                                                                                        |
+| persistence   | Still the user-owned Trust store keyed by `workspaceIdentity + hookDeclarationDigest`                                                                                                                |
+| recovery      | continuous/replayable keep projecting pending admission; timeout, disconnect and page close never write Trust                                                                                        |
 
 ### 2.2 UI Surface Matrix
 
@@ -57,12 +57,12 @@ Only two user-visible trust states exist:
 
 Config state is orthogonal to trust state:
 
-| configured | trusted | Inline action                                                                          | Runtime result                                  |
-| ---------- | ------- | -------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| off        | no      | "Trust" plus a locked-off effective-run toggle                                         | Does not run                                    |
-| on         | no      | "Trust" plus a locked-off effective-run toggle; the raw config is not rewritten        | Skipped and reported as pending                 |
-| off        | yes     | Only the off config toggle                                                             | Does not run                                    |
-| on         | yes     | Only the on config toggle                                                              | Runs after other policy / snapshot gates pass   |
+| configured | trusted | Inline action                                                                   | Runtime result                                |
+| ---------- | ------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
+| off        | no      | "Trust" plus a locked-off effective-run toggle                                  | Does not run                                  |
+| on         | no      | "Trust" plus a locked-off effective-run toggle; the raw config is not rewritten | Skipped and reported as pending               |
+| off        | yes     | Only the off config toggle                                                      | Does not run                                  |
+| on         | yes     | Only the on config toggle                                                       | Runs after other policy / snapshot gates pass |
 
 When untrusted, the toggle shows "can it run now", so it is uniformly off and inoperable; the raw `configuredEnabled` stays in the workspace config. If it was `on`, persistent trust plus a Settings refresh turns the toggle on again; if `off`, it stays off but becomes operable. Opening Settings, showing the locked toggle or starting Trust never silently rewrites workspace config for UI effect.
 

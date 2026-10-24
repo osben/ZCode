@@ -69,14 +69,14 @@ timeline scroll viewport
 
 ## Decisions and pruning
 
-| Candidate state | Decision | Reason |
-| --- | --- | --- |
-| running + primary/foreground subagent/goal continuation/turn steer | accepted (show immediately) | The current main turn is still advancing, so loading follows the running fact directly |
-| any projection revision arriving during running | accepted (keep current visibility) | A projection content update does not change the main turn running fact |
-| permission / AskUserQuestion / pendingApproval | pruned | The UI is waiting for user action and does not express "thinking" |
-| active work contains compact / goalVerifier | pruned | There is already dedicated maintenance/verification state feedback |
-| terminal turn or background-only work | pruned | The main turn has ended, and background facts cannot keep chat loading |
-| desktop continuous / web remote replayable | accepted (same UI rule) | Consume only the same V4 snapshot converged by each delivery chain, without changing the recovery protocol |
+| Candidate state                                                    | Decision                           | Reason                                                                                                     |
+| ------------------------------------------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| running + primary/foreground subagent/goal continuation/turn steer | accepted (show immediately)        | The current main turn is still advancing, so loading follows the running fact directly                     |
+| any projection revision arriving during running                    | accepted (keep current visibility) | A projection content update does not change the main turn running fact                                     |
+| permission / AskUserQuestion / pendingApproval                     | pruned                             | The UI is waiting for user action and does not express "thinking"                                          |
+| active work contains compact / goalVerifier                        | pruned                             | There is already dedicated maintenance/verification state feedback                                         |
+| terminal turn or background-only work                              | pruned                             | The main turn has ended, and background facts cannot keep chat loading                                     |
+| desktop continuous / web remote replayable                         | accepted (same UI rule)            | Consume only the same V4 snapshot converged by each delivery chain, without changing the recovery protocol |
 
 ## Multi-client boundary
 

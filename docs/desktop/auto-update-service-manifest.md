@@ -22,11 +22,11 @@ GET /api/v1/releases/electron/manifest
 
 Selection parameters are passed through both query and header:
 
-| query | header | Value |
-| --- | --- | --- |
-| `platform` | `X-Platform` | a release-service platform name such as `darwin-aarch64`; the server also accepts Node-style names like `win32-x64` |
-| `channel` | `X-Release-Channel` | standard channel `1`; early-access/preview channel `3` |
-| `device_mid` | `X-Device-Mid` | the uuidv4-style device ID reused by desktop telemetry |
+| query        | header              | Value                                                                                                               |
+| ------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `platform`   | `X-Platform`        | a release-service platform name such as `darwin-aarch64`; the server also accepts Node-style names like `win32-x64` |
+| `channel`    | `X-Release-Channel` | standard channel `1`; early-access/preview channel `3`                                                              |
+| `device_mid` | `X-Device-Mid`      | the uuidv4-style device ID reused by desktop telemetry                                                              |
 
 The response body keeps the electron-builder `latest*.yml` format, for example:
 

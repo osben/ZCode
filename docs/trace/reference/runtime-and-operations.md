@@ -210,12 +210,12 @@ rebuilt from compatibility fields (conversion may lose information).
 
 ### 6.1 Data classes
 
-| Class                   | Examples                                           | Policy                                      |
-| ----------------------- | -------------------------------------------------- | ------------------------------------------- |
-| Low-risk runtime facts  | Outcome, Token, HTTP Status, Provider Kind         | Recorded under type/cardinality limits      |
+| Class                    | Examples                                           | Policy                                           |
+| ------------------------ | -------------------------------------------------- | ------------------------------------------------ |
+| Low-risk runtime facts   | Outcome, Token, HTTP Status, Provider Kind         | Recorded under type/cardinality limits           |
 | Pseudonymous identifiers | Installation, User Subject, Session, Turn, Request | Trace only, bound by access and retention policy |
-| Controlled free text    | Model, Provider Error, Safe Name                   | Sanitize, truncate, test                    |
-| High-privacy content    | Prompt, body, file, command, Header, Body          | Collection forbidden                        |
+| Controlled free text     | Model, Provider Error, Safe Name                   | Sanitize, truncate, test                         |
+| High-privacy content     | Prompt, body, file, command, Header, Body          | Collection forbidden                             |
 
 The installation ID is a random persistent product pseudonym (not a MAC or disk serial). User Subject ID
 is currently not re-hashed in the CLI; the Host must supply only a stable subject ID allowed into
@@ -258,22 +258,22 @@ freely. OTLP Header/License Key must not enter screenshots, doc examples or Git.
 
 ### 7.1 Current defaults
 
-| Item                            | Current value/behavior                              |
-| ------------------------------- | --------------------------------------------------- |
-| Active Writer cap               | 5000 per process                                    |
-| Model Status active Call cap    | 1000                                                |
-| Model Status lazy reclaim       | 30 min idle; Sweep at most once per minute          |
-| BSP Queue                       | 2000 Spans                                          |
-| Export Batch                    | 100 Spans                                           |
-| Batch Delay                     | 5 s                                                 |
-| Export Timeout                  | 3 s                                                 |
-| Session Flush                   | default 1.5 s                                       |
-| Process Shutdown                | default 1.5 s                                       |
-| Metric Export Interval          | 5 min; best-effort flush still on process exit      |
-| Metric Series cap               | 250 per View                                        |
-| Trace Head Sampling             | Root 10%; child Spans inherit the parent decision   |
-| Histogram Min/Max               | Not recorded; Count, Sum and slim Buckets kept      |
-| OTLP compression                | Gzip                                                |
+| Item                         | Current value/behavior                            |
+| ---------------------------- | ------------------------------------------------- |
+| Active Writer cap            | 5000 per process                                  |
+| Model Status active Call cap | 1000                                              |
+| Model Status lazy reclaim    | 30 min idle; Sweep at most once per minute        |
+| BSP Queue                    | 2000 Spans                                        |
+| Export Batch                 | 100 Spans                                         |
+| Batch Delay                  | 5 s                                               |
+| Export Timeout               | 3 s                                               |
+| Session Flush                | default 1.5 s                                     |
+| Process Shutdown             | default 1.5 s                                     |
+| Metric Export Interval       | 5 min; best-effort flush still on process exit    |
+| Metric Series cap            | 250 per View                                      |
+| Trace Head Sampling          | Root 10%; child Spans inherit the parent decision |
+| Histogram Min/Max            | Not recorded; Count, Sum and slim Buckets kept    |
+| OTLP compression             | Gzip                                              |
 
 ### 7.2 Hot path
 

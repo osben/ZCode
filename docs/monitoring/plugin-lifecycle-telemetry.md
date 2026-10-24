@@ -2,13 +2,13 @@
 
 ## Event overview
 
-| Event                  | Trigger                                                                                         | Main dimensions                                                              |
-| ---------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `plugin_lifecycle`     | Final result of install, uninstall, update, restore, configure, enable/disable, source change and per-plugin remote sync | action, result, plugin_id/marketplace, entry, trigger, scope, duration_ms |
-| `plugin_discovery`     | Store or detail becomes visible, search submitted                                               | action, entry, plugin_id (detail), client_kind; no search term               |
-| `plugin_usage`         | Plugin UI open requested, initialization done, instance released, UI-initiated tool call        | action, plugin_id, plugin_component; tool calls carry result/duration_ms     |
-| `plugin_runtime_error` | Plugin UI initialization enters an error state                                                  | plugin_id, plugin_component, error_category; no raw error                    |
-| `agent_step` (existing) | Terminal state of a real model Skill/MCP call                                                  | Adds plugin_id, plugin_component; keeps old Skill fields and existing de-duplication |
+| Event                   | Trigger                                                                                                                  | Main dimensions                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `plugin_lifecycle`      | Final result of install, uninstall, update, restore, configure, enable/disable, source change and per-plugin remote sync | action, result, plugin_id/marketplace, entry, trigger, scope, duration_ms            |
+| `plugin_discovery`      | Store or detail becomes visible, search submitted                                                                        | action, entry, plugin_id (detail), client_kind; no search term                       |
+| `plugin_usage`          | Plugin UI open requested, initialization done, instance released, UI-initiated tool call                                 | action, plugin_id, plugin_component; tool calls carry result/duration_ms             |
+| `plugin_runtime_error`  | Plugin UI initialization enters an error state                                                                           | plugin_id, plugin_component, error_category; no raw error                            |
+| `agent_step` (existing) | Terminal state of a real model Skill/MCP call                                                                            | Adds plugin_id, plugin_component; keeps old Skill fields and existing de-duplication |
 
 ## Implementation definition
 

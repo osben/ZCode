@@ -15,29 +15,29 @@ refresh restores it. The failure page's "select another device" entry works.
 ## Acceptance criteria
 
 - [x] Docs first: `relay-v2-pairing.md` gains the landing rule without `sid` (recent device → list), list
-  sorting and refresh policy, and URL write-back rules, plus a text wireframe and copy table of the device list
-  page (header and switch-account entry, list item layout, online marker, offline grey, empty state, refresh
-  button position), **confirmed by the user before implementation**.
+      sorting and refresh policy, and URL write-back rules, plus a text wireframe and copy table of the device list
+      page (header and switch-account entry, list item layout, online marker, offline grey, empty state, refresh
+      button position), **confirmed by the user before implementation**.
 - [x] Without `sid`: read the recent device sid from localStorage and call the device list endpoint; if online
-  connect directly, otherwise (offline or no record) render the device list page.
+      connect directly, otherwise (offline or no record) render the device list page.
 - [x] Device list page: fetch once on entry, manual refresh, refetch on `visibilitychange` back to foreground,
-  no polling; online devices first sorted by `meta.name`, offline devices greyed, unclickable, showing the
-  first 8 characters of `device_mid`; clear message for an empty list. The page is a standalone full-screen
-  pre-connection page, same layout on narrow and wide screens, outside the `Root`/sidebar shell, reusing login
-  page styles and the `zai-dark` default theme, with zh-CN/en-US copy.
+      no polling; online devices first sorted by `meta.name`, offline devices greyed, unclickable, showing the
+      first 8 characters of `device_mid`; clear message for an empty list. The page is a standalone full-screen
+      pre-connection page, same layout on narrow and wide screens, outside the `Root`/sidebar shell, reusing login
+      page styles and the `zai-dark` default theme, with zh-CN/en-US copy.
 - [x] After selection `history.replaceState` writes `sid`, `mid` (the list's `device_mid`), `name`, keeping the
-  original `app_version`; the recent sid is written to localStorage; existing sid-keyed local state keeps
-  working; a refresh restores via ticket 05's with-sid path.
+      original `app_version`; the recent sid is written to localStorage; existing sid-keyed local state keeps
+      working; a refresh restores via ticket 05's with-sid path.
 - [x] The failure page's "select another device" action enters the list page; both actions of the
-  `device-not-owned` page work.
+      `device-not-owned` page work.
 - [x] Visual check: device list screenshot matrix (online/offline mix, empty list; narrow/wide x dark/light x
-  zh-CN/en-US), reusing 05's pending screenshot case.
+      zh-CN/en-US), reusing 05's pending screenshot case.
 - [x] Tests (pre-connection orchestration + fake device API): recent device online/offline split, sorting rule,
-  the three refresh triggers, URL write-back and localStorage write, empty list; list-page component render
-  tests cover online/offline/empty.
+      the three refresh triggers, URL write-back and localStorage write, empty list; list-page component render
+      tests cover online/offline/empty.
 - [ ] Test-environment real-device acceptance: open without a code and pick a device, refresh restore, account
-  mismatch and account switching when logging in with another account; recorded in the `relay-v2-pairing.md`
-  acceptance section.
+      mismatch and account switching when logging in with another account; recorded in the `relay-v2-pairing.md`
+      acceptance section.
 - [x] `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests pass.
 
 ## Comments

@@ -6,14 +6,14 @@ Review: Fable's read-only adversarial review passed; conclusion: "the direction 
 
 ## 1. Feature Summary / Impact Brief
 
-| Field | Value |
-| --- | --- |
+| Field            | Value                                                                                                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Developer intent | After the built-in Document Skills are uninstalled, the detail page still opens and shows the full component list; behavior matches non-built-in Marketplace plugins |
-| Capability | Plugin Marketplace detail, builtin uninstall/restore, official seed/cache |
-| Change layer | `option-source`, `commit-effect`, `persistence`, `validation` |
-| Operating mode | `planning` -> implementation |
-| Primary seeds | `bundled-plugins.ts`, `plugins.ts`, `marketplace.ts`, `official-marketplace.ts`, `pluginStoreListing.ts`, Plugin Store detail UI |
-| Out of scope | New protocol/schema, per-component enable/disable, Web/mobile remote, workspace-scope install, conversation E2E |
+| Capability       | Plugin Marketplace detail, builtin uninstall/restore, official seed/cache                                                                                            |
+| Change layer     | `option-source`, `commit-effect`, `persistence`, `validation`                                                                                                        |
+| Operating mode   | `planning` -> implementation                                                                                                                                         |
+| Primary seeds    | `bundled-plugins.ts`, `plugins.ts`, `marketplace.ts`, `official-marketplace.ts`, `pluginStoreListing.ts`, Plugin Store detail UI                                     |
+| Out of scope     | New protocol/schema, per-component enable/disable, Web/mobile remote, workspace-scope install, conversation E2E                                                      |
 
 ### 1.1 Facts
 
@@ -41,25 +41,25 @@ Review: Fable's read-only adversarial review passed; conclusion: "the direction 
 
 Before and after uninstall, a built-in plugin keeps the same product semantics as an ordinary Marketplace plugin:
 
-| State | `installed` | `runtimeLoaded` | Catalog/detail | Primary action |
-| --- | --- | --- | --- | --- |
-| Installed | true | true (if enabled) | Full components and metadata viewable | Manage / Uninstall |
-| Uninstalled built-in | false | false | Catalog, listing, component detail still readable | Install (internally restore) |
-| Ordinary uninstalled candidate | false | false | describe from Marketplace source | Install |
-| After restore | true | per enabled | Same as before install | Manage / Uninstall |
+| State                          | `installed` | `runtimeLoaded`   | Catalog/detail                                    | Primary action               |
+| ------------------------------ | ----------- | ----------------- | ------------------------------------------------- | ---------------------------- |
+| Installed                      | true        | true (if enabled) | Full components and metadata viewable             | Manage / Uninstall           |
+| Uninstalled built-in           | false       | false             | Catalog, listing, component detail still readable | Install (internally restore) |
+| Ordinary uninstalled candidate | false       | false             | describe from Marketplace source                  | Install                      |
+| After restore                  | true        | per enabled       | Same as before install                            | Manage / Uninstall           |
 
 Reading detail after uninstall must be read-only: it must not clear suppression, enable the plugin, create an installed record, or trigger a model session or MCP runtime.
 
 ### 2.2 State and ownership
 
-| State/fact | Authoritative owner | Mirror/cache | Read/write boundary |
-| --- | --- | --- | --- |
-| Official Catalog entry/listing | Merge layer of the bundled + CDN marketplace partitions | `marketplace.json` | Read-only detail/list; refresh updates only the CDN partition |
-| Built-in source materialized directory | seed boundary (filesystem/SEA -> official cache) | `cache/<official>/<name>/<version>` | Does not mean installed; readable by describe |
-| Built-in uninstalled state | user config `plugins.suppressedBuiltins` | overview `restorableBuiltins`, UI `restorable` | Sole Runtime suppression source of truth |
-| enabled/options | user plugin config | Agent/UI overview | Cleaned on uninstall; does not affect the Catalog |
-| plugin data | `data/<plugin-id>` | none | Deleted on uninstall |
-| Ordinary Marketplace install record | `installed_plugins.json` | UI installed summary | Belongs only to cache/Marketplace installs; built-in restore does not write it |
+| State/fact                             | Authoritative owner                                     | Mirror/cache                                   | Read/write boundary                                                            |
+| -------------------------------------- | ------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------ |
+| Official Catalog entry/listing         | Merge layer of the bundled + CDN marketplace partitions | `marketplace.json`                             | Read-only detail/list; refresh updates only the CDN partition                  |
+| Built-in source materialized directory | seed boundary (filesystem/SEA -> official cache)        | `cache/<official>/<name>/<version>`            | Does not mean installed; readable by describe                                  |
+| Built-in uninstalled state             | user config `plugins.suppressedBuiltins`                | overview `restorableBuiltins`, UI `restorable` | Sole Runtime suppression source of truth                                       |
+| enabled/options                        | user plugin config                                      | Agent/UI overview                              | Cleaned on uninstall; does not affect the Catalog                              |
+| plugin data                            | `data/<plugin-id>`                                      | none                                           | Deleted on uninstall                                                           |
+| Ordinary Marketplace install record    | `installed_plugins.json`                                | UI installed summary                           | Belongs only to cache/Marketplace installs; built-in restore does not write it |
 
 ## 3. Architecture Boundary
 
@@ -114,59 +114,59 @@ Reading detail after uninstall must be read-only: it must not clear suppression,
 
 ## 4. UI Surface Matrix
 
-| User scenario | UI entry | Shared implementation | Display/draft owner | Validation/gating | Commit action | Authority/persistence | Mode boundary | Must remain isolated from |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Browse public plugin | `PluginStorePage` list/card | `buildStoreItems`, `PluginStoreCard` | Plugin management store projection | Catalog entry exists; `restorable` controls the primary action | `onOpenDetail` / `onInstall` | Agent `plugins/overview`, Catalog partitions | Desktop local and the existing Web service abstraction; no new remote branch | Runtime enablement |
-| View uninstalled built-in detail | `PluginStoreDetailView` | same detail + `plugins/describe` cache | `describeCache` keyed by stable plugin ID | Catalog/cache readable; no runtime `info` required | read-only `plugins/describe` | Agent Catalog + immutable cache | No session/clientMode change | `suppressedBuiltins`, enable/options, data |
-| Uninstall built-in | detail/card/manage menu + confirm dialog | `usePluginUninstall`, management store | operation state in plugin management store | explicit confirmation; built-in is uninstallable | `plugins/uninstall` | user config + data cleanup; Catalog untouched | Desktop local lifecycle only | Marketplace source removal semantics |
-| Restore built-in | Install button on a restorable item | `handleInstall`, `restoreBuiltin` | operation state + refreshed overview | `item.restorable === true` | `plugins/restoreBuiltin` | suppression removed; seed self-heals missing cache | Desktop local lifecycle only | ordinary installed record |
-| View installed detail | detail/manage | `ZCodePluginInfo` runtime projection | `item.info` | runtime info available | no mutation for read | discovery outcome | unchanged | catalog-only detail fallback |
+| User scenario                    | UI entry                                 | Shared implementation                  | Display/draft owner                        | Validation/gating                                              | Commit action                | Authority/persistence                              | Mode boundary                                                                | Must remain isolated from                  |
+| -------------------------------- | ---------------------------------------- | -------------------------------------- | ------------------------------------------ | -------------------------------------------------------------- | ---------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------ |
+| Browse public plugin             | `PluginStorePage` list/card              | `buildStoreItems`, `PluginStoreCard`   | Plugin management store projection         | Catalog entry exists; `restorable` controls the primary action | `onOpenDetail` / `onInstall` | Agent `plugins/overview`, Catalog partitions       | Desktop local and the existing Web service abstraction; no new remote branch | Runtime enablement                         |
+| View uninstalled built-in detail | `PluginStoreDetailView`                  | same detail + `plugins/describe` cache | `describeCache` keyed by stable plugin ID  | Catalog/cache readable; no runtime `info` required             | read-only `plugins/describe` | Agent Catalog + immutable cache                    | No session/clientMode change                                                 | `suppressedBuiltins`, enable/options, data |
+| Uninstall built-in               | detail/card/manage menu + confirm dialog | `usePluginUninstall`, management store | operation state in plugin management store | explicit confirmation; built-in is uninstallable               | `plugins/uninstall`          | user config + data cleanup; Catalog untouched      | Desktop local lifecycle only                                                 | Marketplace source removal semantics       |
+| Restore built-in                 | Install button on a restorable item      | `handleInstall`, `restoreBuiltin`      | operation state + refreshed overview       | `item.restorable === true`                                     | `plugins/restoreBuiltin`     | suppression removed; seed self-heals missing cache | Desktop local lifecycle only                                                 | ordinary installed record                  |
+| View installed detail            | detail/manage                            | `ZCodePluginInfo` runtime projection   | `item.info`                                | runtime info available                                         | no mutation for read         | discovery outcome                                  | unchanged                                                                    | catalog-only detail fallback               |
 
 ## 5. Shared And Divergent Behavior
 
-| Concern | Shared across surfaces | Deliberately different | Why it matters |
-| --- | --- | --- | --- |
-| Catalog/detail | All Marketplace entries use listing + `plugins/describe` | Built-in source is local immutable cache; Git/URL source may clone/download | The user-visible detail contract stays identical without making the adapter SEA-aware |
-| Runtime | All effective capabilities come from filtered discovery | Built-in suppression uses config; ordinary plugin absence uses installed record/source state | Cache presence must never imply runtime presence |
-| Install | UI always shows Install for `installed=false` | Built-in Install routes to restore; an ordinary candidate routes to install | Prevents a built-in plugin being rewritten as marketplace-owned |
-| Uninstall | UI confirmation and cleanup semantics | Built-in clears suppression/config/data but preserves source Catalog/cache; an ordinary plugin removes its install cache/record | Aligns product behavior while respecting the immutable App-bundled source |
-| Failure | Describe failure is visible and retryable | Missing cache is a seed/storage fault, not a normal "uninstalled" state | Avoids deterministic Retry loops after a valid uninstall |
+| Concern        | Shared across surfaces                                   | Deliberately different                                                                                                          | Why it matters                                                                        |
+| -------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Catalog/detail | All Marketplace entries use listing + `plugins/describe` | Built-in source is local immutable cache; Git/URL source may clone/download                                                     | The user-visible detail contract stays identical without making the adapter SEA-aware |
+| Runtime        | All effective capabilities come from filtered discovery  | Built-in suppression uses config; ordinary plugin absence uses installed record/source state                                    | Cache presence must never imply runtime presence                                      |
+| Install        | UI always shows Install for `installed=false`            | Built-in Install routes to restore; an ordinary candidate routes to install                                                     | Prevents a built-in plugin being rewritten as marketplace-owned                       |
+| Uninstall      | UI confirmation and cleanup semantics                    | Built-in clears suppression/config/data but preserves source Catalog/cache; an ordinary plugin removes its install cache/record | Aligns product behavior while respecting the immutable App-bundled source             |
+| Failure        | Describe failure is visible and retryable                | Missing cache is a seed/storage fault, not a normal "uninstalled" state                                                         | Avoids deterministic Retry loops after a valid uninstall                              |
 
 ## 6. Impact Relationships
 
-| Rank | From | Semantic edge | To | Condition | Why inspect it | Evidence |
-| --- | --- | --- | --- | --- | --- | --- |
-| must-inspect | official seed | materializes | Catalog/cache | filesystem or SEA source | Fixing suppression must not break packaged assets | `bundled-plugins.ts`, `official-marketplace.ts` |
-| must-inspect | Catalog/cache | read-by | `plugins/describe` | detail has no runtime info | Direct root cause of the screenshot | `marketplace.ts:941-1025` |
-| must-inspect | suppression | filters | Runtime discovery | official stable ID | Preserve the no-runtime invariant | adapters `index.ts`, services scanners |
-| must-inspect | UI restorable projection | routes-to | restoreBuiltin | duplicate available/restorable ID | Prevent wrong installed-record ownership | `pluginStoreListing.ts`, `PluginStorePage.tsx` |
-| must-inspect | uninstall | persists-to | user config + data | built-in confirm path | Separate Catalog from user state | `plugins.ts`, config adapter |
-| should-inspect | Catalog merge | overrides | CDN same-name entry | official CDN source present | Preserve official identity/ownership | `official-marketplace.ts`, ADR-0001 |
-| invariant-only | plugin management | executes-through | Agent Host | local or remote workspace | No new process/remote runtime | lifecycle catalog scope |
-| evidence-only | lifecycle contract | covered-by | PLM cases/matrix | manual-review fixtures | Regression proof | `docs/plugin-management-lifecycle-case-catalog.md` |
+| Rank           | From                     | Semantic edge    | To                  | Condition                         | Why inspect it                                    | Evidence                                           |
+| -------------- | ------------------------ | ---------------- | ------------------- | --------------------------------- | ------------------------------------------------- | -------------------------------------------------- |
+| must-inspect   | official seed            | materializes     | Catalog/cache       | filesystem or SEA source          | Fixing suppression must not break packaged assets | `bundled-plugins.ts`, `official-marketplace.ts`    |
+| must-inspect   | Catalog/cache            | read-by          | `plugins/describe`  | detail has no runtime info        | Direct root cause of the screenshot               | `marketplace.ts:941-1025`                          |
+| must-inspect   | suppression              | filters          | Runtime discovery   | official stable ID                | Preserve the no-runtime invariant                 | adapters `index.ts`, services scanners             |
+| must-inspect   | UI restorable projection | routes-to        | restoreBuiltin      | duplicate available/restorable ID | Prevent wrong installed-record ownership          | `pluginStoreListing.ts`, `PluginStorePage.tsx`     |
+| must-inspect   | uninstall                | persists-to      | user config + data  | built-in confirm path             | Separate Catalog from user state                  | `plugins.ts`, config adapter                       |
+| should-inspect | Catalog merge            | overrides        | CDN same-name entry | official CDN source present       | Preserve official identity/ownership              | `official-marketplace.ts`, ADR-0001                |
+| invariant-only | plugin management        | executes-through | Agent Host          | local or remote workspace         | No new process/remote runtime                     | lifecycle catalog scope                            |
+| evidence-only  | lifecycle contract       | covered-by       | PLM cases/matrix    | manual-review fixtures            | Regression proof                                  | `docs/plugin-management-lifecycle-case-catalog.md` |
 
 ## 7. Must-Preserve Invariants
 
-| Invariant | Surfaces/modes | Proof needed |
-| --- | --- | --- |
-| A suppressed built-in plugin never contributes Skill/Command/MCP/Hook | Agent discovery, Desktop direct scanners, session facade | cache exists + suppressed; runtime lists omit the plugin |
-| The Catalog remains readable after uninstall | Public list, card, detail | describe returns components/metadata; no config diff |
-| Describe is read-only | detail/retry | suppression/config/data/cache unchanged before/after |
-| Built-in restore does not create an ordinary installed record | Install button and direct protocol install | `installed_plugins.json` unchanged; suppression removed; runtime returns |
-| CDN same-name ownership remains source-based | official merged Catalog | CDN source uses Marketplace install; bundled source uses restore |
-| Seed and uninstall do not oscillate the cache | startup/list/overview + uninstall | no delete/recreate loop; cache marker remains valid |
-| Desktop continuous and web-remote-replayable boundaries unchanged | all plugin settings surfaces | no session/task stream or remote delivery changes |
-| Workspace identity contract unchanged | local/remote service calls | existing `workspaceIdentity?.trim() || workspacePath` fallback remains |
+| Invariant                                                             | Surfaces/modes                                           | Proof needed                                                             |
+| --------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------ | --- | ------------------------------- |
+| A suppressed built-in plugin never contributes Skill/Command/MCP/Hook | Agent discovery, Desktop direct scanners, session facade | cache exists + suppressed; runtime lists omit the plugin                 |
+| The Catalog remains readable after uninstall                          | Public list, card, detail                                | describe returns components/metadata; no config diff                     |
+| Describe is read-only                                                 | detail/retry                                             | suppression/config/data/cache unchanged before/after                     |
+| Built-in restore does not create an ordinary installed record         | Install button and direct protocol install               | `installed_plugins.json` unchanged; suppression removed; runtime returns |
+| CDN same-name ownership remains source-based                          | official merged Catalog                                  | CDN source uses Marketplace install; bundled source uses restore         |
+| Seed and uninstall do not oscillate the cache                         | startup/list/overview + uninstall                        | no delete/recreate loop; cache marker remains valid                      |
+| Desktop continuous and web-remote-replayable boundaries unchanged     | all plugin settings surfaces                             | no session/task stream or remote delivery changes                        |
+| Workspace identity contract unchanged                                 | local/remote service calls                               | existing `workspaceIdentity?.trim()                                      |     | workspacePath` fallback remains |
 
 ## 8. Accepted Cases And Pruning
 
 ### 8.1 Accepted cases
 
-| Case ID | Setup | Action | Assertions | Evidence layers | Status |
-| --- | --- | --- | --- | --- | --- |
-| `PLM-LC-014 builtin-uninstall-detail-parity` | Isolated HOME; built-in seeded and enabled with config/data | Open detail; uninstall; remain on detail; retry; restart; restore | After uninstall: `installed=false`, suppression present, runtime absent, Catalog/cache and full components still visible, no error banner; retry is read-only; restart preserves detail; Install restores runtime and leaves no ordinary installed record | UI + protocol + config/data/cache + fresh discovery | accepted / focused unit coverage |
-| `PLM-LC-015 bundled-install-ownership` | Suppressed built-in and merged official entry; optional CDN same-name fixture | Invoke Install through UI and direct protocol paths | bundled source routes restore; CDN source routes Marketplace install; no stale suppression/duplicate ownership | protocol + installed record + runtime | accepted / focused unit coverage |
-| `PLM-LC-016 seed-cache-runtime-separation` | Suppressed built-in with cache present/missing; dev filesystem and SEA fixture | Resolve/list/describe/skills/commands; remove cache and resolve again | Suppression always filters runtime; missing cache self-heals from seed; describe works before/after; no Catalog filtering | bootstrap + adapter + services tests | accepted / focused unit coverage |
+| Case ID                                      | Setup                                                                          | Action                                                                | Assertions                                                                                                                                                                                                                                                | Evidence layers                                     | Status                           |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------- |
+| `PLM-LC-014 builtin-uninstall-detail-parity` | Isolated HOME; built-in seeded and enabled with config/data                    | Open detail; uninstall; remain on detail; retry; restart; restore     | After uninstall: `installed=false`, suppression present, runtime absent, Catalog/cache and full components still visible, no error banner; retry is read-only; restart preserves detail; Install restores runtime and leaves no ordinary installed record | UI + protocol + config/data/cache + fresh discovery | accepted / focused unit coverage |
+| `PLM-LC-015 bundled-install-ownership`       | Suppressed built-in and merged official entry; optional CDN same-name fixture  | Invoke Install through UI and direct protocol paths                   | bundled source routes restore; CDN source routes Marketplace install; no stale suppression/duplicate ownership                                                                                                                                            | protocol + installed record + runtime               | accepted / focused unit coverage |
+| `PLM-LC-016 seed-cache-runtime-separation`   | Suppressed built-in with cache present/missing; dev filesystem and SEA fixture | Resolve/list/describe/skills/commands; remove cache and resolve again | Suppression always filters runtime; missing cache self-heals from seed; describe works before/after; no Catalog filtering                                                                                                                                 | bootstrap + adapter + services tests                | accepted / focused unit coverage |
 
 ### 8.2 Reuse / update existing case
 
@@ -178,13 +178,13 @@ Reading detail after uninstall must be read-only: it must not clear suppression,
 
 ### 8.3 Pruned combinations
 
-| Dimension | Pruned values | Reason |
-| --- | --- | --- |
-| Client | Web standalone, mobile `/remote` | no new remote protocol or delivery behavior |
-| Scope | workspace-scope plugin install | current UI contract is user-scope only |
-| Component runtime | MCP + Skill closure; Command/Agent/Hook enumeration | existing lifecycle catalog covers representative runtime paths |
-| Source | public network SEA and real CDN in formal CI | use deterministic local filesystem/SEA/HTTP fixtures; real CDN remains a manual smoke |
-| Locale/theme/viewport | existing pairwise UI contract | not a new presentation change |
+| Dimension             | Pruned values                                       | Reason                                                                                |
+| --------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Client                | Web standalone, mobile `/remote`                    | no new remote protocol or delivery behavior                                           |
+| Scope                 | workspace-scope plugin install                      | current UI contract is user-scope only                                                |
+| Component runtime     | MCP + Skill closure; Command/Agent/Hook enumeration | existing lifecycle catalog covers representative runtime paths                        |
+| Source                | public network SEA and real CDN in formal CI        | use deterministic local filesystem/SEA/HTTP fixtures; real CDN remains a manual smoke |
+| Locale/theme/viewport | existing pairwise UI contract                       | not a new presentation change                                                         |
 
 ## 9. Implementation scope (summary)
 
@@ -237,14 +237,14 @@ PLM-014/015/016 evidence (`covered-by`, evidence-only).
 
 ## 12. Planning Handoff
 
-| Item | Destination | Status |
-| --- | --- | --- |
-| Feature spec / dossier | this file | complete before code |
-| Existing lifecycle case catalog | `docs/plugin-management-lifecycle-case-catalog.md` | update PLM-LC-006 + add PLM-LC-014/015/016 |
-| Coverage matrix | `docs/testing/plugin-management-lifecycle-e2e-coverage-matrix.md` | add/update rows |
-| Feature graph | `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml` | add confirmed capability and edges |
-| Formal proof | `packages/formal-proof` | not applicable; no conversation state-space change |
-| E2E handoff | plugin manual-review pending specs | planned after focused tests; no formal promotion in this task |
+| Item                            | Destination                                                                   | Status                                                        |
+| ------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Feature spec / dossier          | this file                                                                     | complete before code                                          |
+| Existing lifecycle case catalog | `docs/plugin-management-lifecycle-case-catalog.md`                            | update PLM-LC-006 + add PLM-LC-014/015/016                    |
+| Coverage matrix                 | `docs/testing/plugin-management-lifecycle-e2e-coverage-matrix.md`             | add/update rows                                               |
+| Feature graph                   | `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml` | add confirmed capability and edges                            |
+| Formal proof                    | `packages/formal-proof`                                                       | not applicable; no conversation state-space change            |
+| E2E handoff                     | plugin manual-review pending specs                                            | planned after focused tests; no formal promotion in this task |
 
 ## 13. Implementation and Verification
 

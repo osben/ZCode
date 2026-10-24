@@ -95,15 +95,15 @@ interface TimelineEntityBase {
 }
 ```
 
-| Entity | Description |
-| --- | --- |
-| `UserIntent` | real user input, user input after queue drain, model-only continuation, background notification wake |
-| `ProductTurn` | the user-visible or model-only logical turn container |
-| `AssistantSegment` | one assistant-role output; a product turn may have several |
-| `WorkActivity` | in-assistant-work activity such as tool, reasoning, subagent, compact |
-| `TimelineBoundary` | turn boundaries such as goalVerify, fork, modelChange |
-| `QueueItem` | a future user intent, not a transcript |
-| `BackgroundWork` | detached Bash/subagent runtime work, owned by the parent session, not a queue |
+| Entity             | Description                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `UserIntent`       | real user input, user input after queue drain, model-only continuation, background notification wake |
+| `ProductTurn`      | the user-visible or model-only logical turn container                                                |
+| `AssistantSegment` | one assistant-role output; a product turn may have several                                           |
+| `WorkActivity`     | in-assistant-work activity such as tool, reasoning, subagent, compact                                |
+| `TimelineBoundary` | turn boundaries such as goalVerify, fork, modelChange                                                |
+| `QueueItem`        | a future user intent, not a transcript                                                               |
+| `BackgroundWork`   | detached Bash/subagent runtime work, owned by the parent session, not a queue                        |
 
 ### Lane and placement
 
@@ -120,7 +120,7 @@ The resolver produces a deterministic `orderKey` `{ branchEpoch, productTurnOrdi
 - **Compact**: compact is assistant activity, neither a user bubble nor a forced turn boundary (assistant before compact, compact running, compact success, assistant after compact). The manual `/compact` command is a command entry and is not shown as an ordinary user query; with no following assistant, compact may show as an independent weak timeline but is still not an empty user turn.
 - **Goal verify**: a turn tail boundary. Identity is mainly `targetId + goalIteration`, `verificationId` only a per-attempt alias (T1 Q1/A1 final; goalVerify(target-1, iteration-1) running -> notSatisfied; T2 modelOnly goal continuation/A2 final; goalVerify(target-1, iteration-2) running -> pass). It must have an anchor: `anchor = anchorAssistantMessageId || anchorTurnId || explicit fallback placement`; if the anchor's turn is already mid-window and the current delta can only append, do not force-append at the tail but send a snapshot resync.
 - **Model change**: a light boundary, not assistant work. Only switching the draft model does not pollute the transcript; a boundary is produced only when the next accepted turn really uses the new model. The first turn using some model is not a model change. If the product rules that modelChange is not visible in the transcript, it should be `stateOnly` or a separate banner state and must not enter `rows.window`.
-- **Fork**: by graph cut, not DOM row or current latest assistant. The child copies the graph up to the fork point (A1 final), the session config and the eligible goal state / verifier entries; it does not copy queue, background work, continuation inbox or active-run fields. The parent appends `BM forkCreated(childSessionId, anchor=A1)`, the child appends `BM forkNotice(parentSessionId, anchor=A1-copy)`. Goal fork state must copy the target and verifier timeline before the fork point and rewrite a copied verifier's `anchorAssistantMessageId` to the child message id; it must not recreate an empty target via `setTarget` at the bootstrap/protocol layer. The core of fork is **copy by value + provenance**: each copied message has a *local identity* (new id / new sequence in the child, used for ordering, rendering, continuing the conversation and anchor resolution) and an *origin provenance* (parent session / message / sequence, used only for tracing, source display and debug, never for the child's UI placement). Example: parent S1 seq 1-4 U1,A1,U2,A2 (fork point A2); child S2 seq 1 `fork.created { originSessionId: S1, originMessageId: A2, originSequence: 4 }`, seq 2-5 U1',A1',U2',A2' each with `originMessageId`. Every copied local reference must be remapped to the child's local id (`S2.A2'.parentMessageId = S2.U2'`, `S2.A2'.originMessageId = S1.A2`; `S2.A2'.parentMessageId = S1.U2` is wrong); the same holds for `anchorMessageId`, `sourceCommandId`, goal verifier anchor and compact anchor; a reference whose object was not copied cannot stay a child local anchor and degrades to `originRef` or a diagnostics fallback.
+- **Fork**: by graph cut, not DOM row or current latest assistant. The child copies the graph up to the fork point (A1 final), the session config and the eligible goal state / verifier entries; it does not copy queue, background work, continuation inbox or active-run fields. The parent appends `BM forkCreated(childSessionId, anchor=A1)`, the child appends `BM forkNotice(parentSessionId, anchor=A1-copy)`. Goal fork state must copy the target and verifier timeline before the fork point and rewrite a copied verifier's `anchorAssistantMessageId` to the child message id; it must not recreate an empty target via `setTarget` at the bootstrap/protocol layer. The core of fork is **copy by value + provenance**: each copied message has a _local identity_ (new id / new sequence in the child, used for ordering, rendering, continuing the conversation and anchor resolution) and an _origin provenance_ (parent session / message / sequence, used only for tracing, source display and debug, never for the child's UI placement). Example: parent S1 seq 1-4 U1,A1,U2,A2 (fork point A2); child S2 seq 1 `fork.created { originSessionId: S1, originMessageId: A2, originSequence: 4 }`, seq 2-5 U1',A1',U2',A2' each with `originMessageId`. Every copied local reference must be remapped to the child's local id (`S2.A2'.parentMessageId = S2.U2'`, `S2.A2'.originMessageId = S1.A2`; `S2.A2'.parentMessageId = S1.U2` is wrong); the same holds for `anchorMessageId`, `sourceCommandId`, goal verifier anchor and compact anchor; a reference whose object was not copied cannot stay a child local anchor and degrades to `originRef` or a diagnostics fallback.
 - **Background Bash / Subagent**: detached runtime work, neither queue nor an ordinary user message (T1: Q1, assistantWork: Agent(run_in_background=true), tool result backgrounded, A1 final, completed; BG1 running; BG1 completed -> BackgroundWakeCommand; T2: trigger modelOnly backgroundNotification(BG1), no visible user bubble, assistantWork: A2 handles `<task-notification>`). User ruling: a background notification need not show as a user bubble; it is modeled as a `visibility=modelOnly` `UserIntent` that may create a product turn but generates no visible user row; whether to additionally show a light system boundary is out of this round's design and by default it does not enter transcript rows. Background completion is still consumed via the runtime command queue and adds no concurrent same-session `executeTurn`: if the active loop still has a legal roundtrip the notification may merge in; when idle it continues serially via a model-only wake.
 
 ## Snapshot contract
@@ -137,10 +137,7 @@ interface ResolvedTimelineSnapshot {
   controls: SessionActionAvailability;
 }
 
-type TimelineNode =
-  | ResolvedTurnNode
-  | ResolvedBoundaryNode
-  | ResolvedMaintenanceNode;
+type TimelineNode = ResolvedTurnNode | ResolvedBoundaryNode | ResolvedMaintenanceNode;
 
 interface ResolvedTurnNode {
   productTurnId: string;

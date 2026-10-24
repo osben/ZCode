@@ -17,14 +17,14 @@ Non-goals: changing the Electron auto-update protocol into a new client protocol
 
 Full JSON Schema: [`release-candidate.v1.schema.json`](./release-candidate.v1.schema.json). Key fields:
 
-| Field                     | Meaning                                                              |
-| ------------------------- | -------------------------------------------------------------------- |
-| `candidateId`             | Platform-generated immutable candidate identity, format `cand_...`   |
-| `source`                  | repository, full commit, SemVer version, optional ref                |
-| `state`                   | Current state of the platform state machine                          |
-| `platforms`               | Per OS/arch artifacts and base update metadata                       |
-| `provenance`              | builder, image, tool versions and signer                             |
-| `createdAt` / `expiresAt` | Candidate retention period                                           |
+| Field                     | Meaning                                                            |
+| ------------------------- | ------------------------------------------------------------------ |
+| `candidateId`             | Platform-generated immutable candidate identity, format `cand_...` |
+| `source`                  | repository, full commit, SemVer version, optional ref              |
+| `state`                   | Current state of the platform state machine                        |
+| `platforms`               | Per OS/arch artifacts and base update metadata                     |
+| `provenance`              | builder, image, tool versions and signer                           |
+| `createdAt` / `expiresAt` | Candidate retention period                                         |
 
 The source of truth for candidate artifacts is the object-storage `objectKey` and digest, not a runner path, a GitLab artifact URL or a shared workspace directory.
 
@@ -75,15 +75,15 @@ created -> building -> ready -> approval_pending -> approved -> publishing -> pu
         build_failed    cancelled      rejected   publish_failed_retryable
 ```
 
-| Current state              | Allowed transitions                       | Triggered by          |
-| -------------------------- | ----------------------------------------- | --------------------- |
-| `created`                  | `building`, `cancelled`                   | platform scheduler    |
-| `building`                 | `ready`, `build_failed`, `cancelled`      | build worker callback |
-| `ready`                    | `approval_pending`, `cancelled`           | platform              |
-| `approval_pending`         | `approved`, `rejected`                    | approval API          |
-| `approved`                 | `publishing`, `cancelled`                 | platform              |
-| `publishing`               | `published`, `publish_failed_retryable`   | publisher             |
-| `publish_failed_retryable` | `publishing`, `cancelled`                 | retry API             |
+| Current state              | Allowed transitions                     | Triggered by          |
+| -------------------------- | --------------------------------------- | --------------------- |
+| `created`                  | `building`, `cancelled`                 | platform scheduler    |
+| `building`                 | `ready`, `build_failed`, `cancelled`    | build worker callback |
+| `ready`                    | `approval_pending`, `cancelled`         | platform              |
+| `approval_pending`         | `approved`, `rejected`                  | approval API          |
+| `approved`                 | `publishing`, `cancelled`               | platform              |
+| `publishing`               | `published`, `publish_failed_retryable` | publisher             |
+| `publish_failed_retryable` | `publishing`, `cancelled`               | retry API             |
 
 A repeated request returns the current resource and never creates a duplicate candidate, publish task or object.
 

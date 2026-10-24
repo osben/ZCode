@@ -21,9 +21,9 @@
 
 ## Boundary with business monitoring
 
-| Belongs here                                           | Belongs to [business-monitoring.md](./business-monitoring.md)             |
-| ------------------------------------------------------ | ------------------------------------------------------------------------- |
-| Crash rate, ANR, Crash-Free, freeze, exit codes        | Product telemetry, Agent observability store, App Usage reliability panel |
+| Belongs here                                    | Belongs to [business-monitoring.md](./business-monitoring.md)             |
+| ----------------------------------------------- | ------------------------------------------------------------------------- |
+| Crash rate, ANR, Crash-Free, freeze, exit codes | Product telemetry, Agent observability store, App Usage reliability panel |
 
 ## P0 stability metrics
 
@@ -31,15 +31,15 @@
 
 All P0 custom events (`sendCustom`) carry:
 
-| Field                      | Description                                                                              |
-| -------------------------- | ---------------------------------------------------------------------------------------- |
-| `platform`                 | `macos` / `windows` / `linux`                                                            |
-| `app_version`              | `ZCODE_VERSION`                                                                          |
+| Field                      | Description                                                                                     |
+| -------------------------- | ----------------------------------------------------------------------------------------------- |
+| `platform`                 | `macos` / `windows` / `linux`                                                                   |
+| `app_version`              | `ZCODE_VERSION`                                                                                 |
 | `arms_env`                 | `prod` / `local` (`mapZCodeEnvToArmsRumEnv(runtimeEnv)`; local development is fixed to `local`) |
-| `device_mid`               | Desktop device identifier (hash of the `userData` path)                                  |
-| `telemetry_schema_version` | Version of the stability event definitions; fixed at `2` after this fix                  |
-| `scene_lifecycle`          | See below                                                                                |
-| `scene_window`             | See below                                                                                |
+| `device_mid`               | Desktop device identifier (hash of the `userData` path)                                         |
+| `telemetry_schema_version` | Version of the stability event definitions; fixed at `2` after this fix                         |
+| `scene_lifecycle`          | See below                                                                                       |
+| `scene_window`             | See below                                                                                       |
 
 **Scene lifecycle**
 
@@ -52,11 +52,11 @@ All P0 custom events (`sendCustom`) carry:
 
 **Scene window (first version)**
 
-| Value             | Meaning                                  |
-| ----------------- | ---------------------------------------- |
-| `main`            | Main business window                     |
-| `process_monitor` | Resource Manager singleton window        |
-| `other`           | Any other `BrowserWindow`                |
+| Value             | Meaning                           |
+| ----------------- | --------------------------------- |
+| `main`            | Main business window              |
+| `process_monitor` | Resource Manager singleton window |
+| `other`           | Any other `BrowserWindow`         |
 
 ### 1. Crash rate
 
@@ -94,15 +94,15 @@ Two per-source events ── union by device_mid ── Crash-Free
 `crash_scope` says which product process/page crashed, `crash_cause` says why. Do not mix them with `js` /
 `native` again.
 
-| Source                                                    | `crash_scope`               | `crash_cause`                                   | `crash_source`        |
-| --------------------------------------------------------- | --------------------------- | ----------------------------------------------- | --------------------- |
-| Main business window `render-process-gone`                | `main_window_renderer`      | `oom` / `process_crashed` / `abnormal_exit` / … | `electron_callback`   |
-| Auxiliary windows such as Resource Manager / update / About | `auxiliary_window_renderer` | same                                          | `electron_callback`   |
-| Built-in browser `<webview>` `render-process-gone`        | `embedded_webview`          | same                                            | `electron_callback`   |
-| ZCode Host `child-process-gone`                           | `host`                      | `process_crashed` / `abnormal_exit` / …         | `electron_callback`   |
-| ARMS crash dump explicitly marked as main process         | `app_native_process`        | `native_crash`                                  | `crash_reporter_dump` |
-| ARMS crash dump only confirmed to come from the product binary | `native_dump_unattributed` | `native_crash`                              | `crash_reporter_dump` |
-| `reason=killed` / `clean-exit`                            | —                           | not a crash, goes to `perf_process_exit`        | —                     |
+| Source                                                         | `crash_scope`               | `crash_cause`                                   | `crash_source`        |
+| -------------------------------------------------------------- | --------------------------- | ----------------------------------------------- | --------------------- |
+| Main business window `render-process-gone`                     | `main_window_renderer`      | `oom` / `process_crashed` / `abnormal_exit` / … | `electron_callback`   |
+| Auxiliary windows such as Resource Manager / update / About    | `auxiliary_window_renderer` | same                                            | `electron_callback`   |
+| Built-in browser `<webview>` `render-process-gone`             | `embedded_webview`          | same                                            | `electron_callback`   |
+| ZCode Host `child-process-gone`                                | `host`                      | `process_crashed` / `abnormal_exit` / …         | `electron_callback`   |
+| ARMS crash dump explicitly marked as main process              | `app_native_process`        | `native_crash`                                  | `crash_reporter_dump` |
+| ARMS crash dump only confirmed to come from the product binary | `native_dump_unattributed`  | `native_crash`                                  | `crash_reporter_dump` |
+| `reason=killed` / `clean-exit`                                 | —                           | not a crash, goes to `perf_process_exit`        | —                     |
 
 Electron `reason=memory-eviction` and `reason=oom` are both classified `crash_kind=oom`, `crash_cause=oom`; the
 former means Chromium evicted the process under memory pressure.
@@ -190,9 +190,9 @@ combined into an `app_crash_count`.
 
 ### 5. Exit-code distribution
 
-| Event               | Description                                                                   |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `perf_app_exit`     | App exit (`before-quit`, `exit_kind=normal`, `exit_code=0`)                   |
+| Event               | Description                                                                       |
+| ------------------- | --------------------------------------------------------------------------------- |
+| `perf_app_exit`     | App exit (`before-quit`, `exit_kind=normal`, `exit_code=0`)                       |
 | `perf_process_exit` | Abnormal child/renderer process exit (`exit_code`, `exit_reason`, `process_role`) |
 
 Dashboard: histogram by `exit_code` x `process_role`; `exit_kind=normal` in its own bucket.
@@ -214,16 +214,16 @@ properties.
 
 ### Data sources
 
-| Transport | Collection point                                                                                                                              | Interface dimension        |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| Transport | Collection point                                                                                                                             | Interface dimension        |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
 | HTTP      | ARMS `beforeReport` parses `api` events (`dns_duration` / `connect_duration` / `ssl_duration` / `first_byte_duration` / `download_duration`) | `host+path`                |
 | RPC       | Host `NetworkTelemetryChannelServer` wraps `ChannelServer`; batches return to main via `HostResponseTypes.NetworkTelemetryBatch`             | `channel.command`          |
-| WebSocket | `WebRemoteControlDeviceTransport` remote-control relay connect/disconnect/reconnect                                                           | `web_remote_control.relay` |
+| WebSocket | `WebRemoteControlDeviceTransport` remote-control relay connect/disconnect/reconnect                                                          | `web_remote_control.relay` |
 
 ### Event overview
 
-| Event                 | Metrics                                                                                                                                       | Dashboard dimensions              |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Event                 | Metrics                                                                                                                                                               | Dashboard dimensions                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
 | `perf_network_window` | `value` = duration mean; success/fail/retry counts, duration peak/p95; HTTP phases keep only the mean; errors keep only the window's primary error type and its count | platform x `transport` x `interface` |
 
 `primary_error_kind` is fixed to: `timeout`, `dns_failure`, `connection_reset`, `proxy_error`, `tls_error`,
@@ -247,21 +247,21 @@ Renderer (UI) telemetry goes through `reportArmsCustomEvent` → IPC → `armsRu
 
 ### Event overview
 
-| Event                             | `value`                          | Source                                                      | Key properties                                                                                                                                                                        |
-| --------------------------------- | -------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `perf_ui_launch_to_input`         | Total launch-to-input time, ms   | Process creation (`getCreationTime`) → startup gate cleared, input usable | `session_id`                                                                                                                                                              |
-| `perf_ui_launch_electron_init_ms` | Electron startup, ms             | Process creation → main JS                                  | `session_id`                                                                                                                                                                          |
-| `perf_ui_launch_app_ready_ms`     | main initialization, ms          | main JS → `app.whenReady`                                   | `session_id`                                                                                                                                                                          |
-| `perf_ui_launch_window_ms`        | Window orchestration, ms         | `whenReady` → `loadURL`                                     | `session_id`                                                                                                                                                                          |
-| `perf_ui_launch_renderer_load_ms` | renderer load, ms                | `loadURL` → bundle execution                                | `session_id`                                                                                                                                                                          |
-| `perf_ui_launch_react_commit_ms`  | React rendering, ms              | bundle → first React commit                                 | `session_id`                                                                                                                                                                          |
-| `perf_ui_launch_startup_gate_ms`  | Startup gate, ms                 | React commit → input usable (auth/provider/workspace recovery) | `session_id`                                                                                                                                                                       |
-| `perf_ui_session_open_start`      | Session-open start count         | Logical open start after Renderer pane acquire              | `session_open_id` / `session_id` / `open_kind` / `open_trigger` / `client_mode`                                                                                                       |
-| `perf_ui_session_open_result`     | First-screen-to-interactive total, ms | First snapshot paint with an interactive Composer; failure/timeout also reported | `status` / `session_open_id` / `session_id` / Host/CLI/Renderer stage durations                                                                                       |
-| `perf_ui_first_token`             | First-token latency, ms          | Mirrors `time_to_first_token` of `message_completion`       | `model` / `talk_id` / `message_id`                                                                                                                                                    |
-| `perf_ui_message_complete`        | End-to-end message duration, ms  | Mirrors `duration_ms` of `message_completion`               | `result` / `talk_id` / `message_id`                                                                                                                                                   |
-| `perf_ui_stream_stall`            | Real stall duration, ms          | Gap between adjacent streamed text chunks > 3000 ms         | `stall_ms` / `waiting_tool` / `talk_id` / `message_id`                                                                                                                                |
-| `perf_ui_tool_call_detail`        | Tool terminal duration, ms       | `raw.result.perf` of a `tool_call_update` terminal state    | `tool_name` / `status` / `talk_id` / `message_id` / `tool_call_id` / `parent_tool_call_id` / `child_tool_call_id` / `child_session_id` / `agent_id` / `agent_type` / tool-internal stage fields |
+| Event                             | `value`                               | Source                                                                           | Key properties                                                                                                                                                                                  |
+| --------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `perf_ui_launch_to_input`         | Total launch-to-input time, ms        | Process creation (`getCreationTime`) → startup gate cleared, input usable        | `session_id`                                                                                                                                                                                    |
+| `perf_ui_launch_electron_init_ms` | Electron startup, ms                  | Process creation → main JS                                                       | `session_id`                                                                                                                                                                                    |
+| `perf_ui_launch_app_ready_ms`     | main initialization, ms               | main JS → `app.whenReady`                                                        | `session_id`                                                                                                                                                                                    |
+| `perf_ui_launch_window_ms`        | Window orchestration, ms              | `whenReady` → `loadURL`                                                          | `session_id`                                                                                                                                                                                    |
+| `perf_ui_launch_renderer_load_ms` | renderer load, ms                     | `loadURL` → bundle execution                                                     | `session_id`                                                                                                                                                                                    |
+| `perf_ui_launch_react_commit_ms`  | React rendering, ms                   | bundle → first React commit                                                      | `session_id`                                                                                                                                                                                    |
+| `perf_ui_launch_startup_gate_ms`  | Startup gate, ms                      | React commit → input usable (auth/provider/workspace recovery)                   | `session_id`                                                                                                                                                                                    |
+| `perf_ui_session_open_start`      | Session-open start count              | Logical open start after Renderer pane acquire                                   | `session_open_id` / `session_id` / `open_kind` / `open_trigger` / `client_mode`                                                                                                                 |
+| `perf_ui_session_open_result`     | First-screen-to-interactive total, ms | First snapshot paint with an interactive Composer; failure/timeout also reported | `status` / `session_open_id` / `session_id` / Host/CLI/Renderer stage durations                                                                                                                 |
+| `perf_ui_first_token`             | First-token latency, ms               | Mirrors `time_to_first_token` of `message_completion`                            | `model` / `talk_id` / `message_id`                                                                                                                                                              |
+| `perf_ui_message_complete`        | End-to-end message duration, ms       | Mirrors `duration_ms` of `message_completion`                                    | `result` / `talk_id` / `message_id`                                                                                                                                                             |
+| `perf_ui_stream_stall`            | Real stall duration, ms               | Gap between adjacent streamed text chunks > 3000 ms                              | `stall_ms` / `waiting_tool` / `talk_id` / `message_id`                                                                                                                                          |
+| `perf_ui_tool_call_detail`        | Tool terminal duration, ms            | `raw.result.perf` of a `tool_call_update` terminal state                         | `tool_name` / `status` / `talk_id` / `message_id` / `tool_call_id` / `parent_tool_call_id` / `child_tool_call_id` / `child_session_id` / `agent_id` / `agent_type` / tool-internal stage fields |
 
 ### Notes and boundaries
 
@@ -318,20 +318,20 @@ Constant (code): `STREAM_STALL_REPORT_THRESHOLD_MS=3000` (`packages/ui/src/lib/u
 
 ## Implementation index
 
-| Module                      | Path                                                      |
-| --------------------------- | --------------------------------------------------------- |
-| P0 stability reporting      | `packages/desktop/src/main/desktopStabilityTelemetry.ts`  |
-| P0 resource reporting       | `packages/desktop/src/main/desktopResourceTelemetry.ts`   |
-| P0 network reporting        | `packages/desktop/src/main/desktopNetworkTelemetry.ts`    |
-| P0 client UI performance reporting | `packages/ui/src/lib/uiPerfArmsTelemetry.ts`       |
-| Network aggregation         | `packages/desktop/src/main/networkTelemetryAggregator.ts` |
-| RPC network middleware      | `packages/rpc/src/network-telemetry-middleware.ts`        |
-| Host network batches        | `packages/desktop/src/host/hostNetworkTelemetry.ts`       |
-| Aggregation tools           | `packages/desktop/src/main/resourceMetricsStats.ts`       |
-| ARMS initialization         | `packages/desktop/src/main/appARMSBootstrap.ts`           |
-| Crash archive               | `packages/desktop/src/main/desktopCrashCapture.ts`        |
-| Main-process wiring         | `packages/desktop/src/main/index.ts`                      |
-| Resource Manager window ID  | `packages/desktop/src/main/resourceManagerWindow.ts`      |
+| Module                             | Path                                                      |
+| ---------------------------------- | --------------------------------------------------------- |
+| P0 stability reporting             | `packages/desktop/src/main/desktopStabilityTelemetry.ts`  |
+| P0 resource reporting              | `packages/desktop/src/main/desktopResourceTelemetry.ts`   |
+| P0 network reporting               | `packages/desktop/src/main/desktopNetworkTelemetry.ts`    |
+| P0 client UI performance reporting | `packages/ui/src/lib/uiPerfArmsTelemetry.ts`              |
+| Network aggregation                | `packages/desktop/src/main/networkTelemetryAggregator.ts` |
+| RPC network middleware             | `packages/rpc/src/network-telemetry-middleware.ts`        |
+| Host network batches               | `packages/desktop/src/host/hostNetworkTelemetry.ts`       |
+| Aggregation tools                  | `packages/desktop/src/main/resourceMetricsStats.ts`       |
+| ARMS initialization                | `packages/desktop/src/main/appARMSBootstrap.ts`           |
+| Crash archive                      | `packages/desktop/src/main/desktopCrashCapture.ts`        |
+| Main-process wiring                | `packages/desktop/src/main/index.ts`                      |
+| Resource Manager window ID         | `packages/desktop/src/main/resourceManagerWindow.ts`      |
 
 ## Local verification checklist
 
@@ -343,8 +343,8 @@ Constant (code): `STREAM_STALL_REPORT_THRESHOLD_MS=3000` (`packages/ui/src/lib/u
 4. ARMS console: pick environment `local`, group by `app_version` x `platform` and check numerator/denominator.
 5. Regression: `/report` `app_launch` still reports independently; its count need not equal `perf_app_start`.
 6. Resources: log `[resource] sampling started`; after about 1 min (dev / E2E) `[resource] perf_process_window +
-   perf_system_window flushed` appears; `beforeReport` contains one `custom:perf_process_window` per role and one
+perf_system_window flushed` appears; `beforeReport` contains one `custom:perf_process_window` per role and one
    `custom:perf_system_window`.
 7. Network: log `[network] reporting started`; after triggering RPC or HTTP, about 1 min later `[network]
-   perf_network flushed` and `custom:perf_network_window` appear.
+perf_network flushed` and `custom:perf_network_window` appear.
 8. ARMS ingestion may lag by minutes; query by the `beforeReport` time anchor.

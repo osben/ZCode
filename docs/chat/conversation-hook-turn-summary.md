@@ -58,23 +58,23 @@ Projection placement (live / cold share one constraint)
 The source keeps three real semantics and does not disguise a plugin as User or Workspace:
 
 | `sourceKind` | zh-CN display | en-US display |
-| --- | --- | --- |
-| `user` | 用户 | User |
-| `project` | 工作区 | Workspace |
-| `plugin` | 插件 | Plugin |
+| ------------ | ------------- | ------------- |
+| `user`       | 用户          | User          |
+| `project`    | 工作区        | Workspace     |
+| `plugin`     | 插件          | Plugin        |
 
 `internal` is not displayed.
 
 ### Visible states
 
-| Runtime result | UI state |
-| --- | --- |
-| started and not terminal | running (运行中) |
-| success | completed (已完成) |
-| executed block | blocked (已阻止) |
-| failed | failed (失败) |
-| timed_out | timed out (已超时) |
-| cancelled | cancelled (已取消) |
+| Runtime result           | UI state           |
+| ------------------------ | ------------------ |
+| started and not terminal | running (运行中)   |
+| success                  | completed (已完成) |
+| executed block           | blocked (已阻止)   |
+| failed                   | failed (失败)      |
+| timed_out                | timed out (已超时) |
+| cancelled                | cancelled (已取消) |
 
 A Hook failure does not auto-expand the Popover, does not raise a global Toast and does not mark the task as failed directly.
 
@@ -231,17 +231,17 @@ A direct live stream   -X->  B bypassing replayable recovery
 
 ## Cases and pruning
 
-| Case | Setup | Action | Assertion |
-| --- | --- | --- | --- |
-| HK08 | A completed turn actually ran user/project/plugin Hooks | hover, then click the Anchor | hover shows only "钩子"; click lists event, source and terminal duration one by one in authoritative order, repeated Hooks not merged; no runtime, script file name, tool name or count; located before the turn boundary |
-| HK09 | One invocation contains an admission-only blocked, a terminal-only and an actually started execution | turn completes | the details count only the actually started execution; with all admission/terminal-only the icon is not shown |
-| HK10 | A completed history Hook carries a runtime turnId; the same runtime split into several product turns by queue drain; or a resume `SessionStart` with no product mapping | cold reopen; or open history and then send the next real prompt | the Hook is attributed by message boundary to the corresponding hydration/product footer, with no orphan runtime turn, `session-hooks:*` synthetic turn or empty container |
-| HK11 | An interrupted/error/no-assistant-text terminal turn actually ran a Hook | turn closes | the Hook action still shows; assistant-only copy/feedback/fork is not faked |
-| HK12 | desktop live and mobile replayable snapshot/gap | open the details of the same turn | the safe summary terminal states agree; the payload contains no command/path/stdin/stdout/stderr/tool input |
-| HK13 | An async Hook reaches terminal after the turn completes | an upsert arrives while the Popover is open or closed | the same execution updates in place; the turn does not become running again and component identity is not reset |
-| HK14 | A history branch with a Hook is truncated by edit/retry/rewind | apply `row.removed` | the Hook action and details disappear with the target turn, not appended to the end of history |
-| HK15 | The Hook footer with 15 actual executions near the sticky composer / viewport bottom | scroll the real Anchor into view and click via WebDriver, then scroll the inner list to the bottom | the Popover lies fully inside the available viewport; `ul.scrollHeight > clientHeight` and itself `overflow-y:auto`; after scrolling the last DOM item is visible and matches the last item in authoritative order |
-| HK17 | The first input is `/compact`, the workspace configures a client-visible SessionStart Hook; a real prompt follows | observe the compact marker turn and the next real turn | the compact maintenance turn renders no Hook Anchor; the SessionStart summary lands in the footer of the next real turn; with only `/compact` and no later input the summary stays pending with no orphan Hook row |
+| Case | Setup                                                                                                                                                                   | Action                                                                                             | Assertion                                                                                                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HK08 | A completed turn actually ran user/project/plugin Hooks                                                                                                                 | hover, then click the Anchor                                                                       | hover shows only "钩子"; click lists event, source and terminal duration one by one in authoritative order, repeated Hooks not merged; no runtime, script file name, tool name or count; located before the turn boundary |
+| HK09 | One invocation contains an admission-only blocked, a terminal-only and an actually started execution                                                                    | turn completes                                                                                     | the details count only the actually started execution; with all admission/terminal-only the icon is not shown                                                                                                             |
+| HK10 | A completed history Hook carries a runtime turnId; the same runtime split into several product turns by queue drain; or a resume `SessionStart` with no product mapping | cold reopen; or open history and then send the next real prompt                                    | the Hook is attributed by message boundary to the corresponding hydration/product footer, with no orphan runtime turn, `session-hooks:*` synthetic turn or empty container                                                |
+| HK11 | An interrupted/error/no-assistant-text terminal turn actually ran a Hook                                                                                                | turn closes                                                                                        | the Hook action still shows; assistant-only copy/feedback/fork is not faked                                                                                                                                               |
+| HK12 | desktop live and mobile replayable snapshot/gap                                                                                                                         | open the details of the same turn                                                                  | the safe summary terminal states agree; the payload contains no command/path/stdin/stdout/stderr/tool input                                                                                                               |
+| HK13 | An async Hook reaches terminal after the turn completes                                                                                                                 | an upsert arrives while the Popover is open or closed                                              | the same execution updates in place; the turn does not become running again and component identity is not reset                                                                                                           |
+| HK14 | A history branch with a Hook is truncated by edit/retry/rewind                                                                                                          | apply `row.removed`                                                                                | the Hook action and details disappear with the target turn, not appended to the end of history                                                                                                                            |
+| HK15 | The Hook footer with 15 actual executions near the sticky composer / viewport bottom                                                                                    | scroll the real Anchor into view and click via WebDriver, then scroll the inner list to the bottom | the Popover lies fully inside the available viewport; `ul.scrollHeight > clientHeight` and itself `overflow-y:auto`; after scrolling the last DOM item is visible and matches the last item in authoritative order        |
+| HK17 | The first input is `/compact`, the workspace configures a client-visible SessionStart Hook; a real prompt follows                                                       | observe the compact marker turn and the next real turn                                             | the compact maintenance turn renders no Hook Anchor; the SessionStart summary lands in the footer of the next real turn; with only `/compact` and no later input the summary stays pending with no orphan Hook row        |
 
 Explicit pruning:
 

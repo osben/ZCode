@@ -25,6 +25,7 @@ nearly free: reuse the service resolver/registry snapshot, do not rewrite.
 ## 1. Facts
 
 **CLI side (apply primitive + fallback)**
+
 - The v4 handler `commands/handlers/model-config.ts` only called `app.setModel(formatModelRef)`: it re-selects
   within the current registry and does not change the provider client.
 - The primitive that really changes the provider client (callable natively by v4): **`record.app.setModelCatalogOverlay(overlay)`**
@@ -42,6 +43,7 @@ nearly free: reuse the service resolver/registry snapshot, do not rewrite.
   bound as the v4 `ensureModelReady` hook**), `DEFAULT_MODEL` / `createModelConfigMissingError`.
 
 **App/service side (runtimeModel resolution + coding-plan + fallback)**
+
 - Two layers: toolbar (`modelChangeActions.ts` three handlers: push model-ref + decide restart + push
   registry) -> service (`zcodeAgentService.ts`: `runtimeModel = params.runtimeModel ?? await resolveRuntimeModelConfig(...)`,
   lazily resolved from `modelProviderService.getProviderRegistrySnapshot()` and sent with the RPC).
@@ -55,7 +57,7 @@ nearly free: reuse the service resolver/registry snapshot, do not rewrite.
   if the target model does not support it), the Team Plan removal guard (a filtered provider throws
   unavailable, never silently falls back to a personal key).
 - `runtimeModel` schema (`shared/zcode-protocol/index.ts` `zcodeModelRuntimeConfigSchema`): `{revision,
-  generatedAt, model{providerId,modelId,variant?}, provider(providerId,kind,apiFormat?,baseURL?,apiKey?(inline/credential/env),apiKeyRequired?,headers?,providerOptions?,models[]...), thoughtLevel?}`.
+generatedAt, model{providerId,modelId,variant?}, provider(providerId,kind,apiFormat?,baseURL?,apiKey?(inline/credential/env),apiKeyRequired?,headers?,providerOptions?,models[]...), thoughtLevel?}`.
 - Service contract: `IZCodeAgentService.setModel({..., model, runtimeModel?, modelProviderFamilySelectedKeys?})` /
   `updateRuntimeModelConfig({..., runtimeModel, applyModelSelection?})` / `updateProviderRegistry({..., registry})`.
 - App fallbacks to keep: `resolveRuntimeModelConfig` built-in fallbacks (history missing -> undefined so the
@@ -90,12 +92,14 @@ resolves runtimeModel + resend on `provider.notInRegistry`).
 ## 3. Implementation (1c)
 
 **Layer A: v4 protocol (additive)**, `packages/shared/src/zcode-protocol-v4/command.ts`
+
 - `switchModelConfig` gains optional `runtimeModel?`; the schema reuses `zcodeModelRuntimeConfigSchema` from
   `@zcode/shared/zcode-protocol` (a reference inside the shared package, not a CLI service bridge; a v4 mirror
   may be defined if the coupling is too heavy, see §5).
 - `createSession.config` may carry it too (first send uses the right provider); `applyRequestedSessionConfig` consumes it.
 
 **Layer B: CLI binder + handler**
+
 - `commands/types.ts` `V4CommandCoreHost` gains the capability
   `resolveAndApplyRuntimeModel(sessionId, { model, runtimeModel? }): Promise<{applied:boolean, reason?}>`
   (transitional hook, retires when the config surface is v4-ized, same tier as `ensureModelReady`).
@@ -109,6 +113,7 @@ resolves runtimeModel + resend on `provider.notInRegistry`).
   keeps setModel/setThoughtLevel/emitModelSelected. `applyRequestedSessionConfig` is wired the same way.
 
 **Layer C: renderer/service (app side)**
+
 - 1b normal: keep the registry fresh with the existing `updateProviderRegistry` push; **re-push on
   connection-mode change (P4b) / provider add** (aligned with the old `syncModelProviderRegistryBeforeCustomModelWrite`).
 - 1a fallback: expose the service resolver to v4: `IZCodeAgentService` gains

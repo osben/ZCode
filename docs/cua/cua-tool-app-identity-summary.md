@@ -190,7 +190,7 @@ turn / work segment / user boundary
   shows a localized window count when the completed result is parseable. No render path may leak a
   message id to the user.
 - The Group summary's app/CUA icon sits in a `shrink-0 size-4 flex items-center justify-center
-  [&_svg]:size-4` container: the CUA fallback SVG stays `size-4`; a real app icon is given `size-5`
+[&_svg]:size-4` container: the CUA fallback SVG stays `size-4`; a real app icon is given `size-5`
   explicitly by `CuaAppSummaryIcon` at Group projection time, not through a parent descendant selector
   overriding its default `size-4`. Neither takes part in text compression; icon container and rolling
   text use `gap-2`.

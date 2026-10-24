@@ -14,20 +14,20 @@ After the ZCode process fully quits, no Browser Tab is persisted or restored.**
 
 ## 1. Feature Summary
 
-| Field            | Value                                                                                                                  |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Developer intent | Keep the per-window 32 logical Tab hard limit and remove cross-app-restart recovery                                    |
-| Capability       | Desktop embedded Browser logical tab lifetime                                                                          |
-| Change layer     | persistence / recovery / commit-effect                                                                                 |
-| Primary seeds    | `BrowserGuestManager`, `useAppPanels`, `AnimatedSidePanePanel`, Desktop main wiring                                    |
+| Field            | Value                                                                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Developer intent | Keep the per-window 32 logical Tab hard limit and remove cross-app-restart recovery                                                          |
+| Capability       | Desktop embedded Browser logical tab lifetime                                                                                                |
+| Change layer     | persistence / recovery / commit-effect                                                                                                       |
+| Primary seeds    | `BrowserGuestManager`, `useAppPanels`, `AnimatedSidePanePanel`, Desktop main wiring                                                          |
 | Out of scope     | in-process multi-turn reuse, in-place recovery of guest renderer abnormal exit, Browser command, mobile replayable, remote workspace runtime |
 
 ### 1.1 Fixed product constants
 
-| Item                    | Value                       | Semantics                                                                                        |
-| ----------------------- | --------------------------- | ------------------------------------------------------------------------------------------------ |
-| Logical Browser tabs    | `32` per BrowserWindow      | normal Browser and Browser Use counted together; beyond the limit fully closed from UI and main registry |
-| Cross-restart Browser tabs | `0`                      | after a complete quit the new process starts from an empty Browser Tab set                       |
+| Item                       | Value                  | Semantics                                                                                                |
+| -------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| Logical Browser tabs       | `32` per BrowserWindow | normal Browser and Browser Use counted together; beyond the limit fully closed from UI and main registry |
+| Cross-restart Browser tabs | `0`                    | after a complete quit the new process starts from an empty Browser Tab set                               |
 
 The old Browser Tab page-state product capacity (100 pages, 64 MiB, 500 history) no longer exists; those
 values belonged to the retired recovery repository.
@@ -36,12 +36,12 @@ values belonged to the retired recovery repository.
 
 ### 2.1 Surfaces
 
-| Scenario | Shared implementation | Owner / commit | Persistence | Isolated from |
-| --- | --- | --- | --- | --- |
-| Open/switch normal Browser (Side Pane Browser tab) | `UnifiedBrowserView` | renderer side-pane registry; attach/report/close | current Electron process memory, not on disk | mobile replayable, other workspace/session |
-| Agent operates Browser Use (Browser Use side pane) | `BrowserUseSidePaneContent` + `UnifiedBrowserView` | renderer shell + main `BrowserGuestManager`; Browser command / attach / close | current Electron process memory, not on disk | relay, Host task snapshot, independent mobile runtime |
-| Create the 33rd Tab (tab strip) | residency coordinator | main logical catalog; `closeTabDurably()` | UI/main/guest deleted together; no cross-restart repository | protection leases for current operation, screenshot, download, media |
-| Complete quit then start (Desktop lifecycle) | `prepareAppQuit` + renderer bootstrap | new process empty registry; no Browser Tab restore executed | no Browser Tab recovery file authority; dev/packaged identical | conversation/task cold resume |
+| Scenario                                           | Shared implementation                              | Owner / commit                                                                | Persistence                                                    | Isolated from                                                        |
+| -------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Open/switch normal Browser (Side Pane Browser tab) | `UnifiedBrowserView`                               | renderer side-pane registry; attach/report/close                              | current Electron process memory, not on disk                   | mobile replayable, other workspace/session                           |
+| Agent operates Browser Use (Browser Use side pane) | `BrowserUseSidePaneContent` + `UnifiedBrowserView` | renderer shell + main `BrowserGuestManager`; Browser command / attach / close | current Electron process memory, not on disk                   | relay, Host task snapshot, independent mobile runtime                |
+| Create the 33rd Tab (tab strip)                    | residency coordinator                              | main logical catalog; `closeTabDurably()`                                     | UI/main/guest deleted together; no cross-restart repository    | protection leases for current operation, screenshot, download, media |
+| Complete quit then start (Desktop lifecycle)       | `prepareAppQuit` + renderer bootstrap              | new process empty registry; no Browser Tab restore executed                   | no Browser Tab recovery file authority; dev/packaged identical | conversation/task cold resume                                        |
 
 Shared vs different: the 32 cap is shared by Browser and Browser Use (protection signals are aggregated
 by each runtime state, and neither type may bypass the total). In-process, stable logical tabId and live
@@ -67,12 +67,12 @@ attachment, and desktop tab persistence semantics must not spread to the replaya
 
 ### 2.3 State owners and commit sinks
 
-| State/fact                  | Display owner                          | Authoritative owner                  | Commit                          | Persistence      |
-| --------------------------- | -------------------------------------- | ------------------------------------ | ------------------------------- | ---------------- |
-| current Tab strip           | renderer workspace side-pane registry  | renderer + main logical catalog      | open/close/limit close          | in-process only  |
-| live guest/CDP              | `UnifiedBrowserView`                   | `BrowserGuestManager`                | attach/detach/close             | not persisted    |
-| 32 cap and LRU              | no independent UI                      | `BrowserTabResidencyCoordinator`     | `closeTabForLimit`              | in-process only  |
-| Browser Tab restart state   | none                                   | none                                 | no restore command              | no recovery file |
+| State/fact                | Display owner                         | Authoritative owner              | Commit                 | Persistence      |
+| ------------------------- | ------------------------------------- | -------------------------------- | ---------------------- | ---------------- |
+| current Tab strip         | renderer workspace side-pane registry | renderer + main logical catalog  | open/close/limit close | in-process only  |
+| live guest/CDP            | `UnifiedBrowserView`                  | `BrowserGuestManager`            | attach/detach/close    | not persisted    |
+| 32 cap and LRU            | no independent UI                     | `BrowserTabResidencyCoordinator` | `closeTabForLimit`     | in-process only  |
+| Browser Tab restart state | none                                  | none                             | no restore command     | no recovery file |
 
 ### 2.4 Must-preserve invariants
 
@@ -202,12 +202,12 @@ complete quit
 
 Capabilities still in use:
 
-| Direction        | Capability                    | Purpose                                                  |
-| ---------------- | ----------------------------- | -------------------------------------------------------- |
-| renderer -> main | `browserViewCloseTab`         | explicit user close                                      |
-| main -> renderer | `onBrowserViewCloseTab`       | delete the tab shell after user/Agent/limit close        |
-| renderer -> main | `browserViewReportResidency`  | selected/visible/protection state with trusted sender window |
-| renderer -> main | `browserViewAttachGuest`      | live guest attach and late-event protection              |
+| Direction        | Capability                   | Purpose                                                      |
+| ---------------- | ---------------------------- | ------------------------------------------------------------ |
+| renderer -> main | `browserViewCloseTab`        | explicit user close                                          |
+| main -> renderer | `onBrowserViewCloseTab`      | delete the tab shell after user/Agent/limit close            |
+| renderer -> main | `browserViewReportResidency` | selected/visible/protection state with trusted sender window |
+| renderer -> main | `browserViewAttachGuest`     | live guest attach and late-event protection                  |
 
 `browserViewRestoreTabs`, `onBrowserViewSuspend`, `onBrowserViewRestore` and the recovery generation are
 legacy compatibility; Desktop bootstrap/main production wiring neither calls them nor injects a
@@ -217,26 +217,26 @@ persistent store. The Agent stdio BrowserCommand needs no change.
 
 ### 9.1 Boundary decisions
 
-| Boundary              | Decision                                 | Includes                              | Excludes / prunes                          | Source                           |
-| --------------------- | ---------------------------------------- | ------------------------------------- | ------------------------------------------ | -------------------------------- |
-| 33rd Tab              | fully close the oldest safe candidate    | Browser + Browser Use                 | suspend shell, 30-minute protection        | user ruling + runtime feedback   |
-| complete app restart  | all Browser Tabs disappear               | dev + packaged, local + remote tab UI | shell/pageState/history recovery           | user production measurement and explicit instruction |
-| in-process switching  | keep live tabs                           | task/workspace/session switch         | cross-process stable tabId                 | existing BTL01-03                |
-| guest crash           | replace in place                         | recoverable renderer exit             | replacement after app quit                 | BCP-207                          |
-| mobile remote         | no new state                             | shared-host attachment                | independent runtime, replayable Browser Tab snapshot | architecture constraints |
+| Boundary             | Decision                              | Includes                              | Excludes / prunes                                    | Source                                               |
+| -------------------- | ------------------------------------- | ------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- |
+| 33rd Tab             | fully close the oldest safe candidate | Browser + Browser Use                 | suspend shell, 30-minute protection                  | user ruling + runtime feedback                       |
+| complete app restart | all Browser Tabs disappear            | dev + packaged, local + remote tab UI | shell/pageState/history recovery                     | user production measurement and explicit instruction |
+| in-process switching | keep live tabs                        | task/workspace/session switch         | cross-process stable tabId                           | existing BTL01-03                                    |
+| guest crash          | replace in place                      | recoverable renderer exit             | replacement after app quit                           | BCP-207                                              |
+| mobile remote        | no new state                          | shared-host attachment                | independent runtime, replayable Browser Tab snapshot | architecture constraints                             |
 
 ### 9.2 Accepted cases
 
-| Case     | Setup / event                                                   | Assertions                                                                                  | Status   |
-| -------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------- |
-| BTL01-03 | multi-turn / two-session multi-tab without budget pressure      | in-process stable tab, guest and scope continuous                                           | accepted |
-| BTL04    | 32 logical tabs exist, create the 33rd                          | oldest safe candidate fully disappears from DOM, main registry and guest; total back to 32  | accepted |
-| BTL05    | all excess candidates have runtime protection                   | temporarily over the limit; after protection releases the oldest safe candidate auto-closes | accepted |
-| BTL10    | local/remote and different workspace identities share a window  | share the physical limit but scope/commands do not cross                                    | accepted |
-| BTL11    | user closes a live tab                                          | UI/main/guest fully closed; a late attach does not revive it                                | accepted |
-| BTL12    | several Browser / Browser Use tabs before a complete quit       | next process: Browser tab strip, main registry and webview all 0                            | accepted |
-| BTL19    | remote tab visibility/attach/list/claim                         | `remoteSessionId` not lost; cross-remote scope fails closed                                 | accepted |
-| BTL20    | current-process catalog has a logical tab temporarily without a live guest | still counts toward the 32 cap and can be fully closed as the oldest safe candidate | accepted |
+| Case     | Setup / event                                                              | Assertions                                                                                  | Status   |
+| -------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------- |
+| BTL01-03 | multi-turn / two-session multi-tab without budget pressure                 | in-process stable tab, guest and scope continuous                                           | accepted |
+| BTL04    | 32 logical tabs exist, create the 33rd                                     | oldest safe candidate fully disappears from DOM, main registry and guest; total back to 32  | accepted |
+| BTL05    | all excess candidates have runtime protection                              | temporarily over the limit; after protection releases the oldest safe candidate auto-closes | accepted |
+| BTL10    | local/remote and different workspace identities share a window             | share the physical limit but scope/commands do not cross                                    | accepted |
+| BTL11    | user closes a live tab                                                     | UI/main/guest fully closed; a late attach does not revive it                                | accepted |
+| BTL12    | several Browser / Browser Use tabs before a complete quit                  | next process: Browser tab strip, main registry and webview all 0                            | accepted |
+| BTL19    | remote tab visibility/attach/list/claim                                    | `remoteSessionId` not lost; cross-remote scope fails closed                                 | accepted |
+| BTL20    | current-process catalog has a logical tab temporarily without a live guest | still counts toward the 32 cap and can be fully closed as the oldest safe candidate         | accepted |
 
 ### 9.3 Retired / pruned cases
 

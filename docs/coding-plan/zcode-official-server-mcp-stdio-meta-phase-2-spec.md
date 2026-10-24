@@ -115,12 +115,12 @@ Known window: during a long-running call (for example a two-hour video transcrip
 
 Phase 1 §6.3.3 requires fail-closed for HTTP. For stdio, `{ok:false, reason}` is sent as is, because the risk surfaces differ: an allowed HTTP request means a real anonymous request reaches the official endpoint, so it must fail closed; a stdio Plugin that receives no headers will not call the official endpoint at all (it uses its own fallback or reports an error), so there is no anonymous request. Giving the Plugin the reason lets it explain "not signed in" versus "no Coding Plan plan" instead of failing inexplicably.
 
-| Case | Payload | Agent side |
-| --- | --- | --- |
-| host auth port unavailable (standalone CLI) | `{ok:false, reason:"official_auth_unavailable"}` | Connection stays healthy; only this key fails |
-| Not signed in / no selected connection | `{ok:false, reason:"official_auth_unavailable"}` | Same |
-| Start Plan or no Coding Plan key | `{ok:false, reason:"official_auth_plan_required"}` | Same |
-| Host-side second validation mismatch | `{ok:false, reason:"official_mcp_origin_untrusted"}` | Same; no credentials read |
+| Case                                        | Payload                                              | Agent side                                    |
+| ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------- |
+| host auth port unavailable (standalone CLI) | `{ok:false, reason:"official_auth_unavailable"}`     | Connection stays healthy; only this key fails |
+| Not signed in / no selected connection      | `{ok:false, reason:"official_auth_unavailable"}`     | Same                                          |
+| Start Plan or no Coding Plan key            | `{ok:false, reason:"official_auth_plan_required"}`   | Same                                          |
+| Host-side second validation mismatch        | `{ok:false, reason:"official_mcp_origin_untrusted"}` | Same; no credentials read                     |
 
 "The connection stays healthy" differs from the HTTP path, where the connection is marked failed. A stdio server usually hosts many tools unrelated to official MCP (`video-edit` has 30+); marking the whole server failed would harm them. Identity-header availability is a property of each tool call, not the connection.
 
@@ -134,14 +134,14 @@ Follow phase 1 §5.2 and `official-auth.ts:summarizeIdentityHeaders`: log only h
 
 ## 7. Implementation locations
 
-| Responsibility | File |
-| --- | --- |
-| stdio config type | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts` (`McpStdioServerConfig` adds `auth?` / `official?`) |
-| Plugin loader parsing | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts` (`officialAuth && type !== "http"` changes to reject only `sse`; stdio branch includes auth + provenance) |
-| Identity-header resolution and injection | `apps/zcode-cli/packages/adapters/src/mcp/index.ts` (`callTool` `_meta` injection point; extend `mcpRequestMeta` arguments) |
-| Credential resolution / header construction | Reuse `packages/services/src/official-mcp/officialMcpCredentials.ts`; unchanged |
-| Trust validation | Reuse `packages/shared/src/official-mcp-auth.ts`; unchanged |
-| Host-side second validation | Reuse `packages/services/src/zcode-agent/zcodeAgentService.ts`; unchanged |
+| Responsibility                              | File                                                                                                                                                            |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stdio config type                           | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts` (`McpStdioServerConfig` adds `auth?` / `official?`)                                              |
+| Plugin loader parsing                       | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts` (`officialAuth && type !== "http"` changes to reject only `sse`; stdio branch includes auth + provenance) |
+| Identity-header resolution and injection    | `apps/zcode-cli/packages/adapters/src/mcp/index.ts` (`callTool` `_meta` injection point; extend `mcpRequestMeta` arguments)                                     |
+| Credential resolution / header construction | Reuse `packages/services/src/official-mcp/officialMcpCredentials.ts`; unchanged                                                                                 |
+| Trust validation                            | Reuse `packages/shared/src/official-mcp-auth.ts`; unchanged                                                                                                     |
+| Host-side second validation                 | Reuse `packages/services/src/zcode-agent/zcodeAgentService.ts`; unchanged                                                                                       |
 
 `SANITIZED_RUNTIME_ENV_KEYS` needs no change: identity headers are not added to env, so no new subprocess exposure surface.
 

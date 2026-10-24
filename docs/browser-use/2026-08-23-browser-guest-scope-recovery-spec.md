@@ -97,15 +97,15 @@ guest that is not the current guest must be cleaned up to prevent orphan WebCont
 
 ## 4. Acceptance cases
 
-| Case    | Scenario                                    | Assertion                                                              |
-| ------- | ------------------------------------------- | ---------------------------------------------------------------------- |
-| BGR-001 | Tab belongs to W1/S1, UI switches to W2/S2  | attach still carries W1/S1, no scope drift                             |
-| BGR-002 | same webContentsId, only the scope changes  | attach fingerprint changes, re-report and main validates               |
-| BGR-003 | main returns workspace-mismatch             | renderer receives a typed rejection and does not wait for the generic 10-second timeout |
-| BGR-004 | several commands hit a missing guest at once | only one recovery flight is created, and all waiters converge after success |
-| BGR-005 | Guest A is replaced by B while a command waits | the old command returns `backend_unavailable` and does not dispatch to B |
-| BGR-006 | one rebind still fails                      | after a bounded retry returns `backend_unavailable`, no tab shell leak |
-| BGR-007 | local/remote with the same path             | workspaceIdentity/remoteSessionId do not mix, commands and tabs are mutually invisible |
+| Case    | Scenario                                       | Assertion                                                                               |
+| ------- | ---------------------------------------------- | --------------------------------------------------------------------------------------- |
+| BGR-001 | Tab belongs to W1/S1, UI switches to W2/S2     | attach still carries W1/S1, no scope drift                                              |
+| BGR-002 | same webContentsId, only the scope changes     | attach fingerprint changes, re-report and main validates                                |
+| BGR-003 | main returns workspace-mismatch                | renderer receives a typed rejection and does not wait for the generic 10-second timeout |
+| BGR-004 | several commands hit a missing guest at once   | only one recovery flight is created, and all waiters converge after success             |
+| BGR-005 | Guest A is replaced by B while a command waits | the old command returns `backend_unavailable` and does not dispatch to B                |
+| BGR-006 | one rebind still fails                         | after a bounded retry returns `backend_unavailable`, no tab shell leak                  |
+| BGR-007 | local/remote with the same path                | workspaceIdentity/remoteSessionId do not mix, commands and tabs are mutually invisible  |
 
 ## 5. Verification
 

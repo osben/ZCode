@@ -35,13 +35,13 @@ The official build's request security-check exemption also moved from an "endpoi
 
 Highspeed and Off-Peak are the **same class of problem**: single-turn, non-persistent, dynamic credentials, hidden Provider, shared `zcode.z.ai` gateway, exempt from the official build's request security check. Off-Peak is already migrated, so Highspeed reuses the same mechanism instead of building a parallel pipeline.
 
-| Concern                              | Old Highspeed                          | After migration (aligned with Off-Peak)       |
-| ------------------------------------ | -------------------------------------- | --------------------------------------------- |
-| Endpoint / API shape                 | `turnRuntimeModel.provider.baseURL`    | `api.baseUrl` of the Built-in Provider Config |
-| Model                                | `turnRuntimeModel.model`               | `modelSelection{providerId, modelId}`         |
-| Credentials                          | `provider.apiKey` + `provider.headers` | `modelExecution.requestAuth{apiKey, headers}` |
-| Non-persistent semantics             | install turn overlay, restore at end   | `modelExecution.selectionScope = "execution"` |
-| Security-check exemption (official)  | endpoint path allowlist                | judged by `access.mode`                       |
+| Concern                             | Old Highspeed                          | After migration (aligned with Off-Peak)       |
+| ----------------------------------- | -------------------------------------- | --------------------------------------------- |
+| Endpoint / API shape                | `turnRuntimeModel.provider.baseURL`    | `api.baseUrl` of the Built-in Provider Config |
+| Model                               | `turnRuntimeModel.model`               | `modelSelection{providerId, modelId}`         |
+| Credentials                         | `provider.apiKey` + `provider.headers` | `modelExecution.requestAuth{apiKey, headers}` |
+| Non-persistent semantics            | install turn overlay, restore at end   | `modelExecution.selectionScope = "execution"` |
+| Security-check exemption (official) | endpoint path allowlist                | judged by `access.mode`                       |
 
 `selectionScope: "execution"` is strictly stronger than the old overlay: it never writes the session's resident selection, so there is no install/restore pairing and no idempotent cleanup. The old `applyTurnRuntimeModelForPrompt` / `host.applyTurnRuntimeModel` / `host.clearTurnRuntimeModel` are retired.
 
@@ -76,9 +76,9 @@ Both are `visibility: "hidden"`, `api.type: "anthropic-messages"`, with `builtin
 
 **Site capability rules must be added in step.** `modelConfigRules.providerSiteRules` match by `baseUrl`; without a rule the new endpoint silently falls back to the conservative defaults of `modelRules`. The acceleration endpoint must align item by item with the Coding Plan sites (`api.z.ai` / `open.bigmodel.cn` / `zcode-plan`), so two rules are added:
 
-| Match                                               | Properties                                                               | Aligned with                                                                |
-| --------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| `https://zcode\.z\.ai/api/v1/highspeed/anthropic/?` | `inputFormat.supportsImage/supportsVideo = true`                         | same as `zcode-plan`                                                        |
+| Match                                               | Properties                                                               | Aligned with                                                                        |
+| --------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `https://zcode\.z\.ai/api/v1/highspeed/anthropic/?` | `inputFormat.supportsImage/supportsVideo = true`                         | same as `zcode-plan`                                                                |
 | same + `apiTypeMatch: anthropic-messages`           | `supportsMidConversationSystem = true`, `supportsNativeWebSearch = true` | same as `zcode-plan`, **unlike `off-peak`** (Todo140 only disables off-peak search) |
 
 Capability facts must stay stable within one conversation instead of jittering with whether this turn is accelerated:
@@ -91,9 +91,9 @@ Capability facts must stay stable within one conversation instead of jittering w
 
 **The test-environment release bundle must be derived in step.** The production file `config/provider/zcode-builtin.json` is the only edit source; `config/provider/zcode-builtin.test.json` is mechanically derived by `pnpm provider:config:sync-test` (`ZCODE_ENV` selects which loads). The script rewrites `zhipu-account` `baseUrl` by an endpoint allowlist and copies site rules, so the new acceleration endpoint must also register its test twin endpoint, otherwise `pnpm provider:config:check-test` throws `Unknown account Provider endpoint` and the card gets no Provider in the test environment:
 
-| Location                                                                        | Content                                                                                                                                                       |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accountEndpoints` in `scripts/sync-test-builtin-provider-config.mjs`           | `https://zcode.z.ai/api/v1/highspeed/anthropic` → `https://zcode.z.ai/api/v1/highspeed/anthropic`                                                             |
+| Location                                                                                  | Content                                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accountEndpoints` in `scripts/sync-test-builtin-provider-config.mjs`                     | `https://zcode.z.ai/api/v1/highspeed/anthropic` → `https://zcode.z.ai/api/v1/highspeed/anthropic`                                                                                                                                     |
 | `pairs` and count assertions in `scripts/test/sync-test-builtin-provider-config.test.mjs` | That test keeps its own endpoint table to verify the script allowlist was not changed wrongly; after adding built-in account Providers, update the `providerRules` count and derived site-rule copy count together (currently 10 / 9) |
 
 ### 3.3 Single-turn execution material
@@ -170,11 +170,11 @@ Boundaries to keep:
 
 `modelExecution` describes "how to call"; the Selection says "whom to call". With the two separated, the protocol layer must guarantee that no request carries credentials without a selection, otherwise execution would call the session default Provider with the acceleration card's credentials. In `packages/shared/src/zcode-protocol-v4/command.ts` each of three commands gets a superRefine:
 
-| Command         | Before    | After                                              |
-| --------------- | --------- | -------------------------------------------------- |
-| `sendText`      | existing  | kept                                               |
-| `editUserQuery` | none      | **new** `modelExecution requires modelSelection`   |
-| `sendQueuedNow` | none      | **new** same                                       |
+| Command         | Before   | After                                            |
+| --------------- | -------- | ------------------------------------------------ |
+| `sendText`      | existing | kept                                             |
+| `editUserQuery` | none     | **new** `modelExecution requires modelSelection` |
+| `sendQueuedNow` | none     | **new** same                                     |
 
 `editUserQuery` / `sendQueuedNow` are the only other entries from which Highspeed can restart an accelerated turn; before the migration they needed no validation because `turnRuntimeModel` carried its own model.
 

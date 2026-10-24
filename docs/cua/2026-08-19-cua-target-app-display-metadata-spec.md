@@ -89,7 +89,11 @@ The `zcode.cua/target-app-display-v1` described above was replaced by the produc
 type CuaAppAssociationsV1 = {
   schemaVersion: 1;
   /** Single-target action and observation (tools declared "primary" in APP_ASSOCIATION_MODE_BY_TOOL). */
-  primary?: { appKey: string; displayName?: string; icon?: { mimeType: "image/png"; data: string } };
+  primary?: {
+    appKey: string;
+    displayName?: string;
+    icon?: { mimeType: "image/png"; data: string };
+  };
   /** list_apps (declared "items"): associated by result index, up to 128 entries. */
   items?: Array<{ resultIndex: number; application: /* same as primary */ unknown }>;
 };

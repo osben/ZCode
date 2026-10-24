@@ -68,9 +68,7 @@ interface TopicFrame<S, D> {
   fromSeq: number;
   toSeq: number;
   sentAt: number;
-  payload:
-    | { kind: "snapshot"; snapshot: S }
-    | { kind: "deltas"; deltas: D[] };
+  payload: { kind: "snapshot"; snapshot: S } | { kind: "deltas"; deltas: D[] };
 }
 
 type TopicWireFrame<S, D> =
@@ -121,9 +119,7 @@ interface ConversationSnapshot {
   rows: RowsWindow;
 }
 
-type ActionAvailability =
-  | { allowed: true }
-  | { allowed: false; reasonCode: string };
+type ActionAvailability = { allowed: true } | { allowed: false; reasonCode: string };
 
 interface SessionActionAvailability {
   fork: ActionAvailability; // session/global operation lock; target eligibility still follows row.actions.canFork
@@ -148,11 +144,11 @@ The UI shows fork based on `availability.fork` and the target row's `actions.can
 
 ```ts
 interface ConversationInputIntent {
-  sourceCommandId: string;      // original submitted commandId, carried through all later facts
-  queueItemId: string;          // assigned at admission, unchanged by edit/reorder/reserve/drain
+  sourceCommandId: string; // original submitted commandId, carried through all later facts
+  queueItemId: string; // assigned at admission, unchanged by edit/reorder/reserve/drain
   clientId: string;
   kind: "sendText" | "sendGoalCommand";
-  text: string;                 // original text; never a parsed summary substitute
+  text: string; // original text; never a parsed summary substitute
   attachments: AttachmentRef[]; // [] when none, so undefined never drops a field along the way
   delivery: {
     requested: "auto" | "startNow" | "queue" | "guide";
@@ -160,7 +156,7 @@ interface ConversationInputIntent {
     fallbackReasonCode?: string;
   };
   order: {
-    admissionSeq: number;       // CLI serial admission order
+    admissionSeq: number; // CLI serial admission order
     queuePosition?: number;
   };
   steer: {

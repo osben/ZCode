@@ -20,16 +20,16 @@ Phase 1 lets ZCode load remote Streamable HTTP MCP servers from official Plugins
 
 ## 2. Code facts at design time
 
-| Fact | Location | Phase 1 conclusion |
-| --- | --- | --- |
-| MCP runtime config supports `stdio`, `http`, `sse`; HTTP supports only `headers` / `oauth` | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts` | Extend only the official-auth declaration in the HTTP config; no new transport |
-| The Plugin loader projects the `.mcp.json` key to `plugin:<pluginName>:<mcpKey>` but discards unknown `auth` fields | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts` | Strictly parse `zcode_official` at the Plugin parsing boundary and preserve host-generated provenance |
-| Streamable HTTP sends requests through `createMcpTransportFetch(...)`; static headers go into `requestInit` | `adapters/src/mcp/index.ts`, `network.ts` | Sensitive identity headers are injected by a dynamic fetch wrapper, never written back to config or kept in `requestInit` |
-| An `http`/`sse` MCP with no `oauth` and no static `authorization` header defaults to `{type:"authorization_code"}`, creating an OAuth session, a localhost callback server and an `authProvider` | `resolveAuthorizationCodeOAuthConfig` / `hasAuthorizationHeader` in `adapters/src/mcp/index.ts` | `zcode_official` must explicitly exit this default (§6.3). Static `authorization` is prohibited and `oauth` omitted, so without an explicit opt-out official MCP would fall into implicit OAuth |
-| With `authProvider` the SDK turns 401/403 into an OAuth reauthorization flow and writes the URL to MCP record status via `onAuthorizationRequired` | SDK `streamableHttp` 401/403 branch; `redirectToAuthorization` in `adapters/src/mcp/oauth.ts`; `createAuthorizationCodeOAuthOptions` | Conflicts with UI-less automatic auth. `zcode_official` needs its own 401/403 semantics (§6.3) and must not trigger an authorization URL or browser |
-| In the SDK's request assembly `requestInit.headers` takes precedence over `authProvider`'s `Authorization` and can override `mcp-session-id` / `mcp-protocol-version` | SDK `_commonHeaders()` | The reserved-header denylist includes protocol headers, and identity headers are injected as the final step in the fetch wrapper (§6.3) |
-| JWT, API key and Team organization/project of the selected Coding Plan already resolve into one credential snapshot | `packages/services/src/session/offPeakRuntimeModel.ts` | Logical reference only; do not reuse or modify (§6.1.1) |
-| The Bootstrap manifest manages built-in identity, version and bundle root of official Plugins | `apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts` | Does not participate in official MCP authorization (the mapping was removed in §5.1); a Plugin-declared URL stays untrusted but validation uses the runtime-resolved ZCode API origin |
+| Fact                                                                                                                                                                                             | Location                                                                                                                             | Phase 1 conclusion                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP runtime config supports `stdio`, `http`, `sse`; HTTP supports only `headers` / `oauth`                                                                                                       | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                                                                       | Extend only the official-auth declaration in the HTTP config; no new transport                                                                                                                  |
+| The Plugin loader projects the `.mcp.json` key to `plugin:<pluginName>:<mcpKey>` but discards unknown `auth` fields                                                                              | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts`                                                                                | Strictly parse `zcode_official` at the Plugin parsing boundary and preserve host-generated provenance                                                                                           |
+| Streamable HTTP sends requests through `createMcpTransportFetch(...)`; static headers go into `requestInit`                                                                                      | `adapters/src/mcp/index.ts`, `network.ts`                                                                                            | Sensitive identity headers are injected by a dynamic fetch wrapper, never written back to config or kept in `requestInit`                                                                       |
+| An `http`/`sse` MCP with no `oauth` and no static `authorization` header defaults to `{type:"authorization_code"}`, creating an OAuth session, a localhost callback server and an `authProvider` | `resolveAuthorizationCodeOAuthConfig` / `hasAuthorizationHeader` in `adapters/src/mcp/index.ts`                                      | `zcode_official` must explicitly exit this default (§6.3). Static `authorization` is prohibited and `oauth` omitted, so without an explicit opt-out official MCP would fall into implicit OAuth |
+| With `authProvider` the SDK turns 401/403 into an OAuth reauthorization flow and writes the URL to MCP record status via `onAuthorizationRequired`                                               | SDK `streamableHttp` 401/403 branch; `redirectToAuthorization` in `adapters/src/mcp/oauth.ts`; `createAuthorizationCodeOAuthOptions` | Conflicts with UI-less automatic auth. `zcode_official` needs its own 401/403 semantics (§6.3) and must not trigger an authorization URL or browser                                             |
+| In the SDK's request assembly `requestInit.headers` takes precedence over `authProvider`'s `Authorization` and can override `mcp-session-id` / `mcp-protocol-version`                            | SDK `_commonHeaders()`                                                                                                               | The reserved-header denylist includes protocol headers, and identity headers are injected as the final step in the fetch wrapper (§6.3)                                                         |
+| JWT, API key and Team organization/project of the selected Coding Plan already resolve into one credential snapshot                                                                              | `packages/services/src/session/offPeakRuntimeModel.ts`                                                                               | Logical reference only; do not reuse or modify (§6.1.1)                                                                                                                                         |
+| The Bootstrap manifest manages built-in identity, version and bundle root of official Plugins                                                                                                    | `apps/zcode-cli/packages/bootstrap/src/app/official-plugin-definitions.ts`                                                           | Does not participate in official MCP authorization (the mapping was removed in §5.1); a Plugin-declared URL stays untrusted but validation uses the runtime-resolved ZCode API origin           |
 
 ## 3. Scope and non-goals
 
@@ -71,14 +71,14 @@ Phase 1 lets ZCode load remote Streamable HTTP MCP servers from official Plugins
 }
 ```
 
-| Field | Semantics |
-| --- | --- |
-| `mcpServers.fake-official-search` | MCP key within the Plugin; used only to associate credential resolution and logs (not authorization, §5.1); no duplicate `serverId` |
-| `type: "http"` | Existing Streamable HTTP MCP client |
-| `url` | MCP endpoint; may use existing Plugin template resolution, but the resolved value must also pass Origin validation |
-| `auth.type` | Exact value `zcode_official` (case-sensitive); aliases and case variants such as `zcode-official_auth`, `zcode-official`, `zcode_official_auth` are rejected |
-| `auth.provider` | Only `jwt_token` in Phase 1; short-lived tokens later add a provider rather than changing this value |
-| `timeoutMs` | Reuses the existing MCP protocol request timeout |
+| Field                             | Semantics                                                                                                                                                    |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `mcpServers.fake-official-search` | MCP key within the Plugin; used only to associate credential resolution and logs (not authorization, §5.1); no duplicate `serverId`                          |
+| `type: "http"`                    | Existing Streamable HTTP MCP client                                                                                                                          |
+| `url`                             | MCP endpoint; may use existing Plugin template resolution, but the resolved value must also pass Origin validation                                           |
+| `auth.type`                       | Exact value `zcode_official` (case-sensitive); aliases and case variants such as `zcode-official_auth`, `zcode-official`, `zcode_official_auth` are rejected |
+| `auth.provider`                   | Only `jwt_token` in Phase 1; short-lived tokens later add a provider rather than changing this value                                                         |
+| `timeoutMs`                       | Reuses the existing MCP protocol request timeout                                                                                                             |
 
 `auth` goes on the individual MCP definition, not the top level of `plugin.json`: a Plugin may contain several MCPs with different URLs or auth methods, and a Plugin-level declaration would broaden credential injection.
 
@@ -125,8 +125,8 @@ Why trusting this Origin does not broaden the trust boundary: the same Origin al
 
 Why in shared rather than CLI bootstrap: two consumers in packages that cannot see each other need a single source: the MCP adapter (before sending) and host/services (second validation at the identity-authority boundary, depending only on `@zcode/shared`). The CLI-side file only forwards.
 
-| Control | Prevents |
-| --- | --- |
+| Control                                      | Prevents                                                                          |
+| -------------------------------------------- | --------------------------------------------------------------------------------- |
 | Origin matches (https, no username/password) | Credentials sent to an attacker-controlled server (the only load-bearing control) |
 
 Because only one control remains it must stay strict: HTTPS required, URLs containing credentials rejected, exact character-for-character match with the runtime-resolved value.
@@ -265,16 +265,16 @@ Identity headers are injected only in the `fetch` passed to the transport (the w
 
 If credentials are missing, do not fall back to OAuth or infer credentials from environment variables. This table applies to `type:"http"`; stdio failure semantics intentionally differ (send `{ok:false, reason}` instead of marking the connection failed; Phase 2 spec §6.3).
 
-| Case | Classification | Behavior |
-| --- | --- | --- |
-| Host auth port unavailable (for example standalone CLI) | `official_auth_unavailable` | Mark the connection failed; send no requests |
-| Not signed in, or no provider family / connection selected | `official_auth_unavailable` | Mark the connection failed; send no requests |
-| Signed in but Start Plan or API Key mode, or selected Coding Plan Provider removed from Registry | `official_auth_plan_required` | Connection/discovery sends only the ZCode JWT, no MaaS JWT or scope headers; the server still checks plan entitlement for tool calls |
-| Origin/provenance validation fails (adapter-side) | `official_mcp_origin_untrusted` | Mark failed; zero network requests |
-| Host-side second Origin validation mismatch | `official_mcp_origin_untrusted` | Host rejects before reading credentials; `resolveHeaders` never called; Agent marks failed |
-| Backend 401 | `official_auth_rejected` | Retry once per the rules below; still 401 -> failed |
-| Backend 403 | `official_auth_forbidden` | No retry; failed. The identity is valid but permission/plan is insufficient; the same credentials will not change the result |
-| Backend 3xx | `official_auth_redirect_blocked` | Do not follow; failed (§5.2 `redirect: "manual"`) |
+| Case                                                                                             | Classification                   | Behavior                                                                                                                             |
+| ------------------------------------------------------------------------------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Host auth port unavailable (for example standalone CLI)                                          | `official_auth_unavailable`      | Mark the connection failed; send no requests                                                                                         |
+| Not signed in, or no provider family / connection selected                                       | `official_auth_unavailable`      | Mark the connection failed; send no requests                                                                                         |
+| Signed in but Start Plan or API Key mode, or selected Coding Plan Provider removed from Registry | `official_auth_plan_required`    | Connection/discovery sends only the ZCode JWT, no MaaS JWT or scope headers; the server still checks plan entitlement for tool calls |
+| Origin/provenance validation fails (adapter-side)                                                | `official_mcp_origin_untrusted`  | Mark failed; zero network requests                                                                                                   |
+| Host-side second Origin validation mismatch                                                      | `official_mcp_origin_untrusted`  | Host rejects before reading credentials; `resolveHeaders` never called; Agent marks failed                                           |
+| Backend 401                                                                                      | `official_auth_rejected`         | Retry once per the rules below; still 401 -> failed                                                                                  |
+| Backend 403                                                                                      | `official_auth_forbidden`        | No retry; failed. The identity is valid but permission/plan is insufficient; the same credentials will not change the result         |
+| Backend 3xx                                                                                      | `official_auth_redirect_blocked` | Do not follow; failed (§5.2 `redirect: "manual"`)                                                                                    |
 
 `official_auth_plan_required` is a separate classification (not Off-Peak reasons such as `start_plan_not_supported`, not merged into `official_auth_unavailable`): unavailable means environment/sign-in state is missing, plan-required means the plan tier is insufficient, and follow-up actions differ (sign in again vs upgrade), so record status and logs must distinguish them. In Phase 1 users see only that the MCP is failed in either case.
 
@@ -445,35 +445,35 @@ Tests inject this root through `officialPluginRoots` and a loopback Origin throu
 
 ### 8.2 Test cases
 
-| ID | Setup | Action | Assertions | Layer |
-| --- | --- | --- | --- | --- |
-| OMCP-001 | Official fixture + valid auth | Parse Plugin | Runtime name is `plugin:<name>:fake-official-search`; auth/provenance preserved | Adapter unit |
-| OMCP-002 | Inline/third-party Plugin copies the same auth | Parse/connect | No identity headers requested; MCP fails closed | Adapter unit |
-| OMCP-003 | Official identity, URL Origin does not match | Connect | `official_mcp_origin_untrusted`; zero network requests | Adapter unit |
-| OMCP-004 | Official identity + exact loopback Origin | initialize/list/call | Fake server receives the ZCode JWT on all three; with valid plan credentials also the MaaS JWT and matching wire scope | Adapter HTTP integration |
-| OMCP-005 | Complete BigModel Team snapshot | Send MCP request | Organization/project sent as a pair | Services + integration |
-| OMCP-006 | Team snapshot missing either field | Send MCP request | Neither Team header sent | Services unit |
-| OMCP-007 | Static Plugin header overrides a reserved header | Parse | MCP disabled with a clear diagnostic | Plugin unit |
-| OMCP-008 | Backend returns 3xx | Request | Redirect not followed; Target Origin gets no credentials | Adapter HTTP integration |
-| OMCP-009 | JWT/plan credentials/host auth port missing | Connect | Identity-only scenario sends only the ZCode JWT; failed when host auth port unavailable; logs contain no secrets | Adapter/Bootstrap unit |
-| OMCP-010 | Two MCPs in one Plugin with different keys/Origins | Connect separately | Each authorized per its mapping; identity neither shared nor mixed | Bootstrap integration |
-| OMCP-011 | Desktop-attached remote identity (same `workspacePath` as local, different `workspaceIdentity`) | Request auth | Response returns only to the requesting Agent client and request ID; same-path local client makes zero calls; interleaved requests isolated | Services protocol unit |
-| OMCP-012 | MCP connection pool reused by multiple sessions | Concurrent requests | Each HTTP request uses the credential snapshot resolved at that time; first session's secret not frozen into config | Adapter pool unit |
-| OMCP-013 | Official fixture + `zcode_official`, no `oauth` or static `authorization` | Connect | `authProvider` is `undefined`; no OAuth session; no localhost callback port | Adapter unit |
-| OMCP-014 | Same; fake server returns 401 for every request | initialize | `official_auth_rejected`, status failed; zero `onAuthorizationRequired` / `openAuthorizationUrl` calls; no `authorization` in record status; no browser | Adapter HTTP integration |
-| OMCP-015 | Same; fake server returns 403 | initialize | `official_auth_forbidden`; exactly one request (no retry) | Adapter HTTP integration |
-| OMCP-016 | First request 401; second 200 after re-resolution | initialize | Exactly one retry then success; second request carries re-resolved credentials | Adapter HTTP integration |
-| OMCP-017 | Persistent 401 | initialize | Failed after exactly one retry; two requests then stop | Adapter HTTP integration |
-| OMCP-018 | `zcode_official` and `oauth` configured together | Parse Plugin | `plugin_mcp_server_disabled`; disabled without choosing a priority | Plugin unit |
-| OMCP-019 | Ordinary HTTP MCP (no `auth`, `oauth`, static `authorization`) | Connect | Existing `authorization_code` fallback still works | Adapter unit |
-| OMCP-020 | Static `headers` override `bigmodel-target-type` or `mcp-session-id` | Parse | MCP disabled with a clear diagnostic | Plugin unit |
-| OMCP-021 | Credential kinds Personal / BigModel Team / ZAI Team | Send MCP request | Wire scopes `PERSONAL` / `TEAM` / `null`; organization/project paired only for `TEAM` | Services unit |
-| OMCP-022 | `Authorization` already exists before injection | Send MCP request | Exactly one `Authorization` with the current JWT (overwritten) | Adapter unit |
-| OMCP-023 | Signed in, selected connection is Start Plan | Connect | Only the ZCode JWT, not the MaaS JWT; server login/plan error classification recorded | Services + Adapter unit |
-| OMCP-024 | `ZCODE_OFFPEAK_MOCK=1` | Send MCP request | Unaffected by the variable; no placeholder credentials | Services unit |
-| OMCP-025 | Before and after all official MCP cases | Run existing Off-Peak tests | Off-Peak behavior unchanged, all pass (verifies §6.1.1 isolation) | Services regression |
-| OMCP-026 | N concurrent MCP requests | Concurrent | Underlying credential resolution runs once; all N get the same headers | Services unit |
-| OMCP-027 | Request after the first resolution settled | Two sequential requests | Second performs a fresh full resolution (no time-based cache); after switching Coding Plan connection it gets new headers | Services unit |
+| ID       | Setup                                                                                           | Action                      | Assertions                                                                                                                                              | Layer                    |
+| -------- | ----------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| OMCP-001 | Official fixture + valid auth                                                                   | Parse Plugin                | Runtime name is `plugin:<name>:fake-official-search`; auth/provenance preserved                                                                         | Adapter unit             |
+| OMCP-002 | Inline/third-party Plugin copies the same auth                                                  | Parse/connect               | No identity headers requested; MCP fails closed                                                                                                         | Adapter unit             |
+| OMCP-003 | Official identity, URL Origin does not match                                                    | Connect                     | `official_mcp_origin_untrusted`; zero network requests                                                                                                  | Adapter unit             |
+| OMCP-004 | Official identity + exact loopback Origin                                                       | initialize/list/call        | Fake server receives the ZCode JWT on all three; with valid plan credentials also the MaaS JWT and matching wire scope                                  | Adapter HTTP integration |
+| OMCP-005 | Complete BigModel Team snapshot                                                                 | Send MCP request            | Organization/project sent as a pair                                                                                                                     | Services + integration   |
+| OMCP-006 | Team snapshot missing either field                                                              | Send MCP request            | Neither Team header sent                                                                                                                                | Services unit            |
+| OMCP-007 | Static Plugin header overrides a reserved header                                                | Parse                       | MCP disabled with a clear diagnostic                                                                                                                    | Plugin unit              |
+| OMCP-008 | Backend returns 3xx                                                                             | Request                     | Redirect not followed; Target Origin gets no credentials                                                                                                | Adapter HTTP integration |
+| OMCP-009 | JWT/plan credentials/host auth port missing                                                     | Connect                     | Identity-only scenario sends only the ZCode JWT; failed when host auth port unavailable; logs contain no secrets                                        | Adapter/Bootstrap unit   |
+| OMCP-010 | Two MCPs in one Plugin with different keys/Origins                                              | Connect separately          | Each authorized per its mapping; identity neither shared nor mixed                                                                                      | Bootstrap integration    |
+| OMCP-011 | Desktop-attached remote identity (same `workspacePath` as local, different `workspaceIdentity`) | Request auth                | Response returns only to the requesting Agent client and request ID; same-path local client makes zero calls; interleaved requests isolated             | Services protocol unit   |
+| OMCP-012 | MCP connection pool reused by multiple sessions                                                 | Concurrent requests         | Each HTTP request uses the credential snapshot resolved at that time; first session's secret not frozen into config                                     | Adapter pool unit        |
+| OMCP-013 | Official fixture + `zcode_official`, no `oauth` or static `authorization`                       | Connect                     | `authProvider` is `undefined`; no OAuth session; no localhost callback port                                                                             | Adapter unit             |
+| OMCP-014 | Same; fake server returns 401 for every request                                                 | initialize                  | `official_auth_rejected`, status failed; zero `onAuthorizationRequired` / `openAuthorizationUrl` calls; no `authorization` in record status; no browser | Adapter HTTP integration |
+| OMCP-015 | Same; fake server returns 403                                                                   | initialize                  | `official_auth_forbidden`; exactly one request (no retry)                                                                                               | Adapter HTTP integration |
+| OMCP-016 | First request 401; second 200 after re-resolution                                               | initialize                  | Exactly one retry then success; second request carries re-resolved credentials                                                                          | Adapter HTTP integration |
+| OMCP-017 | Persistent 401                                                                                  | initialize                  | Failed after exactly one retry; two requests then stop                                                                                                  | Adapter HTTP integration |
+| OMCP-018 | `zcode_official` and `oauth` configured together                                                | Parse Plugin                | `plugin_mcp_server_disabled`; disabled without choosing a priority                                                                                      | Plugin unit              |
+| OMCP-019 | Ordinary HTTP MCP (no `auth`, `oauth`, static `authorization`)                                  | Connect                     | Existing `authorization_code` fallback still works                                                                                                      | Adapter unit             |
+| OMCP-020 | Static `headers` override `bigmodel-target-type` or `mcp-session-id`                            | Parse                       | MCP disabled with a clear diagnostic                                                                                                                    | Plugin unit              |
+| OMCP-021 | Credential kinds Personal / BigModel Team / ZAI Team                                            | Send MCP request            | Wire scopes `PERSONAL` / `TEAM` / `null`; organization/project paired only for `TEAM`                                                                   | Services unit            |
+| OMCP-022 | `Authorization` already exists before injection                                                 | Send MCP request            | Exactly one `Authorization` with the current JWT (overwritten)                                                                                          | Adapter unit             |
+| OMCP-023 | Signed in, selected connection is Start Plan                                                    | Connect                     | Only the ZCode JWT, not the MaaS JWT; server login/plan error classification recorded                                                                   | Services + Adapter unit  |
+| OMCP-024 | `ZCODE_OFFPEAK_MOCK=1`                                                                          | Send MCP request            | Unaffected by the variable; no placeholder credentials                                                                                                  | Services unit            |
+| OMCP-025 | Before and after all official MCP cases                                                         | Run existing Off-Peak tests | Off-Peak behavior unchanged, all pass (verifies §6.1.1 isolation)                                                                                       | Services regression      |
+| OMCP-026 | N concurrent MCP requests                                                                       | Concurrent                  | Underlying credential resolution runs once; all N get the same headers                                                                                  | Services unit            |
+| OMCP-027 | Request after the first resolution settled                                                      | Two sequential requests     | Second performs a fresh full resolution (no time-based cache); after switching Coding Plan connection it gets new headers                               | Services unit            |
 
 This phase has no UI behavior, so it adds no WebdriverIO/UI E2E tests and does not modify the conversation session case catalog or coverage matrix.
 
@@ -481,16 +481,16 @@ This phase has no UI behavior, so it adds no WebdriverIO/UI E2E tests and does n
 
 ### 9.1 Must inspect
 
-| Relationship | Affected areas | Reason |
-| --- | --- | --- |
-| Configuration contract | `contracts/interfaces/mcp.port.ts`, Plugin MCP parser | `auth` flows from file configuration into runtime, HTTP only |
-| Request egress | `adapters/src/mcp/index.ts`, `network.ts` | Dynamic header injection and redirect validation at the single egress for all Streamable HTTP MCP requests |
-| OAuth isolation | `resolveAuthorizationCodeOAuthConfig`, `createAuthorizationCodeOAuthOptions` in `adapters/src/mcp/index.ts`; `adapters/src/mcp/oauth.ts` | `zcode_official` bypasses the implicit `authorization_code` fallback and handles 401/403 without affecting ordinary MCP |
-| Official identity | `bootstrap/official-plugin-definitions.ts`, Plugin discovery | Bundled official provenance (Origin mapping later removed) |
-| Identity authority | New official MCP credential resolver (`services/official-mcp/`) and service assembly | JWT, plan key and Team context from the same current snapshot; independent of Off-Peak (§6.1.1) |
-| Off-Peak isolation | `services/session/offPeakRuntimeModel.ts` and callers | Read-only reference: no change to exports, signatures or behavior; existing tests must pass |
-| Cross-process protocol | Shared ZCode protocol, Bootstrap protocol server, `zcodeAgentService` | The Agent is not the identity authority; no UI response dependency |
-| Pool isolation | MCP connection pool | A shared connection must not freeze or leak the first session/workspace's credentials |
+| Relationship           | Affected areas                                                                                                                           | Reason                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Configuration contract | `contracts/interfaces/mcp.port.ts`, Plugin MCP parser                                                                                    | `auth` flows from file configuration into runtime, HTTP only                                                            |
+| Request egress         | `adapters/src/mcp/index.ts`, `network.ts`                                                                                                | Dynamic header injection and redirect validation at the single egress for all Streamable HTTP MCP requests              |
+| OAuth isolation        | `resolveAuthorizationCodeOAuthConfig`, `createAuthorizationCodeOAuthOptions` in `adapters/src/mcp/index.ts`; `adapters/src/mcp/oauth.ts` | `zcode_official` bypasses the implicit `authorization_code` fallback and handles 401/403 without affecting ordinary MCP |
+| Official identity      | `bootstrap/official-plugin-definitions.ts`, Plugin discovery                                                                             | Bundled official provenance (Origin mapping later removed)                                                              |
+| Identity authority     | New official MCP credential resolver (`services/official-mcp/`) and service assembly                                                     | JWT, plan key and Team context from the same current snapshot; independent of Off-Peak (§6.1.1)                         |
+| Off-Peak isolation     | `services/session/offPeakRuntimeModel.ts` and callers                                                                                    | Read-only reference: no change to exports, signatures or behavior; existing tests must pass                             |
+| Cross-process protocol | Shared ZCode protocol, Bootstrap protocol server, `zcodeAgentService`                                                                    | The Agent is not the identity authority; no UI response dependency                                                      |
+| Pool isolation         | MCP connection pool                                                                                                                      | A shared connection must not freeze or leak the first session/workspace's credentials                                   |
 
 ### 9.2 Should inspect
 
@@ -542,25 +542,25 @@ Backend implementation is out of scope for this phase. This section records what
 
 For every HTTP request to a trusted official MCP:
 
-| Header | Value | Condition |
-| --- | --- | --- |
-| `Authorization` | `Bearer <zcode-jwt>` | Always |
+| Header                     | Value                                        | Condition                                                                                                                         |
+| -------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `Authorization`            | `Bearer <zcode-jwt>`                         | Always                                                                                                                            |
 | `X-Bigmodel-Authorization` | `Bearer <current family's MaaS sign-in JWT>` | Only when the Registry has a valid Coding Plan Provider and a MaaS JWT is available (replaced `X-Coding-Plan-Api-Key` in 2026-08) |
-| `Bigmodel-Target-Type` | `PERSONAL` or `TEAM` | Only when a corresponding wire scope exists |
-| `Bigmodel-Organization` | organizationId | `TEAM` only, paired with project |
-| `Bigmodel-Project` | projectId | `TEAM` only, paired with organization |
+| `Bigmodel-Target-Type`     | `PERSONAL` or `TEAM`                         | Only when a corresponding wire scope exists                                                                                       |
+| `Bigmodel-Organization`    | organizationId                               | `TEAM` only, paired with project                                                                                                  |
+| `Bigmodel-Project`         | projectId                                    | `TEAM` only, paired with organization                                                                                             |
 
 Existing shared source headers (`User-Agent`, `X-Platform`, ...) are also sent with the same semantics as other ZCode business APIs. Correlation ID exception: do not send `X-Request-Id` / `X-Trace-Id`; read them only from response headers (§5.2). Transport is Streamable HTTP MCP; the MCP SDK generates the body. The credential channel changed in 2026-08: when conditions are met the client sends only `X-Bigmodel-Authorization` (the MaaS sign-in JWT), no longer `X-Coding-Plan-Api-Key`; identity-only requests send only `Authorization` (§6.1). This resolves the Phase 1 open question on whether the backend required the MaaS JWT channel.
 
 ### 12.2 Client interpretation of responses (confirmed)
 
-| Response | Client behavior |
-| --- | --- |
-| 2xx | Process the MCP protocol response normally |
-| 401 | Credentials invalid/expired. Re-resolve and retry at most once (§6.3.3), then fail. Do not start OAuth authorization |
-| 403 | Identity valid but lacks permission/plan entitlement. No retry; fail immediately |
-| 3xx | Do not follow (`redirect: "manual"`); fail immediately. Production endpoints use a canonical URL, not trailing-slash or case-normalization redirects |
-| 405 (GET stream) | "Server-side streaming unsupported"; normal, not an error |
+| Response         | Client behavior                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2xx              | Process the MCP protocol response normally                                                                                                           |
+| 401              | Credentials invalid/expired. Re-resolve and retry at most once (§6.3.3), then fail. Do not start OAuth authorization                                 |
+| 403              | Identity valid but lacks permission/plan entitlement. No retry; fail immediately                                                                     |
+| 3xx              | Do not follow (`redirect: "manual"`); fail immediately. Production endpoints use a canonical URL, not trailing-slash or case-normalization redirects |
+| 405 (GET stream) | "Server-side streaming unsupported"; normal, not an error                                                                                            |
 
 The backend should not rely on `WWW-Authenticate` to trigger client OAuth discovery (disabled, §6.3.1); express auth failures with 401/403.
 
@@ -584,19 +584,19 @@ Still pending backend confirmation:
 
 ## 13. Implementation locations
 
-| Responsibility | File |
-| --- | --- |
-| Header set / reserved-header denylist (shared, §5.2); trusted Origin registry (§5.1) | `packages/shared/src/official-mcp-auth.ts` |
-| Agent protocol schema (§7.2) | `packages/shared/src/zcode-protocol/index.ts` |
-| Credential resolution + identity-header construction + in-flight deduplication (§6.1 / §6.2.1) | `packages/services/src/official-mcp/officialMcpCredentials.ts` |
-| Host-side handling of reverse requests (§7.2) | `packages/services/src/zcode-agent/zcodeAgentService.ts` |
-| Assembly (host is the sole identity authority) | `packages/services/src/node.ts` |
-| Configuration contract and port types (§4.2 / §7.1) | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts` |
-| Strict Plugin parsing + provenance (§4.2) | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts` |
-| Dynamic injection + Origin validation + failure classification (§6.3.2 / §6.3.3) | `apps/zcode-cli/packages/adapters/src/mcp/official-auth.ts` |
-| OAuth bypass (§6.3.1) | `resolveAuthorizationCodeOAuthConfig` / `createOfficialAuthFetch` in `apps/zcode-cli/packages/adapters/src/mcp/index.ts` |
-| Agent-side auth port (§7.1) | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/official-mcp-auth-port.ts` |
-| Runtime assembly | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts` |
+| Responsibility                                                                                 | File                                                                                                                     |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Header set / reserved-header denylist (shared, §5.2); trusted Origin registry (§5.1)           | `packages/shared/src/official-mcp-auth.ts`                                                                               |
+| Agent protocol schema (§7.2)                                                                   | `packages/shared/src/zcode-protocol/index.ts`                                                                            |
+| Credential resolution + identity-header construction + in-flight deduplication (§6.1 / §6.2.1) | `packages/services/src/official-mcp/officialMcpCredentials.ts`                                                           |
+| Host-side handling of reverse requests (§7.2)                                                  | `packages/services/src/zcode-agent/zcodeAgentService.ts`                                                                 |
+| Assembly (host is the sole identity authority)                                                 | `packages/services/src/node.ts`                                                                                          |
+| Configuration contract and port types (§4.2 / §7.1)                                            | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                                                           |
+| Strict Plugin parsing + provenance (§4.2)                                                      | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts`                                                                    |
+| Dynamic injection + Origin validation + failure classification (§6.3.2 / §6.3.3)               | `apps/zcode-cli/packages/adapters/src/mcp/official-auth.ts`                                                              |
+| OAuth bypass (§6.3.1)                                                                          | `resolveAuthorizationCodeOAuthConfig` / `createOfficialAuthFetch` in `apps/zcode-cli/packages/adapters/src/mcp/index.ts` |
+| Agent-side auth port (§7.1)                                                                    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/official-mcp-auth-port.ts`                                         |
+| Runtime assembly                                                                               | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`                                                     |
 
 Test files: `plugin-official-mcp-auth.test.ts` (parsing), `packages/shared/test/officialMcpTrust.test.ts` (trust), `mcp-official-auth.test.ts` (injection and classification), `mcp-official-auth-integration.test.ts` (fake end-to-end), `officialMcpCredentials.test.ts` (credentials), `officialMcpAuthProtocol.test.ts` (protocol schema), `officialMcpAuthRemoteRouting.test.ts` (desktop-attached remote routing), `official-mcp-auth-port.test.ts` (port-to-protocol parameter construction, including same-path identities). 87 cases cover OMCP-001 to OMCP-027 (OMCP-025 is the Off-Peak regression action; its command is in the header comment of `officialMcpCredentials.test.ts`).
 
@@ -627,11 +627,11 @@ Observed: "the Agent is connected but Settings still shows the old status until 
 
 `McpSettingsSection.tsx` has three refresh triggers:
 
-| Trigger | Condition | Effect on official MCP |
-| --- | --- | --- |
+| Trigger                         | Condition                                                                                                                                                                                                                         | Effect on official MCP                                                         |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Automatic refresh on key change | Only when `autoStatusListRefreshKey` changes (`previousKey !== nextKey` in `transitionMcpAutoStatusListRefreshKey`); key = workspaceIdentity + workspacePath + `serverStatusListKey`, which derives from the servers/plugins list | A connection-status change does not change the list, so the key stays the same |
-| 1-second polling | Requires a pending OAuth server (`pendingMcpOAuthAuthorizationRefreshKey` non-empty); capped at 5 minutes | Official auth has no `authorizationUrl` (§6.3.1) |
-| Window focus / visibilitychange | Also gated by `pendingMcpOAuthAuthorizationRefreshKey` | Same |
+| 1-second polling                | Requires a pending OAuth server (`pendingMcpOAuthAuthorizationRefreshKey` non-empty); capped at 5 minutes                                                                                                                         | Official auth has no `authorizationUrl` (§6.3.1)                               |
+| Window focus / visibilitychange | Also gated by `pendingMcpOAuthAuthorizationRefreshKey`                                                                                                                                                                            | Same                                                                           |
 
 There is no subscription for connection-status changes and no periodic refresh for non-OAuth servers. Verified (2026-08-16): after stopping the fake server, switching the Settings tab, switching workspaces or toggling the Plugin does not change the status to failed. Toggling the Plugin acquires and releases a `protocol-settings` lease (`sess=-`) but produces no dev-search probe event, so the displayed status stays the old snapshot. All MCP events after 13:55 had a `sessionId` and `mcpIsolation: session`; none came from a Settings `protocol-settings` lease (log: 13:50:27 `mcp.server.connected` sess_fb0c0db; 13:55:36 `mcp.server.failed` for sess_8517a98 / sess_95448b8 / sess_72bae46; 13:55:37-13:59 workspace/tab switches produced no new events).
 
@@ -645,13 +645,13 @@ Impact on regular MCP is limited (OAuth servers are polled; non-OAuth servers us
 
 `scripts/dev-official-mcp-server.mjs` accepts `--mode ok|401|403|redirect|tool-quota` and `--fail-on all|initialize|tools/call`.
 
-| Scenario | Command | Expected |
-| --- | --- | --- |
-| No entitlement during connection | `--mode 403 --fail-on initialize` | `officialAuthKind=official_auth_forbidden`; MCP fails; one injection log only (403 not retried) |
-| 403 during a call after connection | `--mode 403 --fail-on tools/call` | MCP stays connected and tools stay mounted; only that tool call fails |
-| Quota exhausted during tool call | `--mode tool-quota` | HTTP 200 + `isError: true` business error; MCP stays connected |
-| Credentials rejected | `--mode 401` | `official_auth_rejected`; exactly two injection logs (original + one retry); more indicates a retry loop |
-| Redirect hijack | `--mode redirect` | `official_auth_redirect_blocked`; Target Origin gets no requests |
+| Scenario                           | Command                           | Expected                                                                                                 |
+| ---------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| No entitlement during connection   | `--mode 403 --fail-on initialize` | `officialAuthKind=official_auth_forbidden`; MCP fails; one injection log only (403 not retried)          |
+| 403 during a call after connection | `--mode 403 --fail-on tools/call` | MCP stays connected and tools stay mounted; only that tool call fails                                    |
+| Quota exhausted during tool call   | `--mode tool-quota`               | HTTP 200 + `isError: true` business error; MCP stays connected                                           |
+| Credentials rejected               | `--mode 401`                      | `official_auth_rejected`; exactly two injection logs (original + one retry); more indicates a retry loop |
+| Redirect hijack                    | `--mode redirect`                 | `official_auth_redirect_blocked`; Target Origin gets no requests                                         |
 
 Neither `--fail-on tools/call` nor `tool-quota` produces `officialAuthKind`: the former is a single call after the connection is established, the latter is not an auth problem. MCP business errors use in-band `isError`, not an HTTP status, so quota exhaustion does not disconnect; this is by design.
 

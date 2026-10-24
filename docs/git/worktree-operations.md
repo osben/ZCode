@@ -104,17 +104,17 @@ Failures do not throw (except infrastructure errors such as timeout / output ove
 
 ### Error Classification
 
-| code                       | Trigger condition                                                                                                                                     |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `git-unavailable`          | No usable Git binary in the environment                                                                                                               |
-| `not-a-repository`         | Workspace is not inside a Git repository                                                                                                              |
-| `invalid-branch-name`      | Branch name empty or fails `git check-ref-format --branch` (reuses branch switching validation)                                                       |
-| `target-path-invalid`      | targetPath empty or not absolute                                                                                                                      |
-| `target-path-exists`       | targetPath already exists. Git allows creating a worktree in an existing empty directory; the deterministic refusal comes from the service pre-check  |
-| `branch-already-exists`    | stderr contains `a branch named ... already exists` (for example a concurrent creator of the same branch)                                             |
-| `branch-in-other-worktree` | stderr contains `is already used by worktree at` (reuses the existing classification wording; includes a branch occupied by the main worktree)        |
-| `target-branch-not-found`  | stderr contains `invalid reference:` (baseBranch does not exist)                                                                                      |
-| `unknown`                  | Any other Git failure                                                                                                                                 |
+| code                       | Trigger condition                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git-unavailable`          | No usable Git binary in the environment                                                                                                              |
+| `not-a-repository`         | Workspace is not inside a Git repository                                                                                                             |
+| `invalid-branch-name`      | Branch name empty or fails `git check-ref-format --branch` (reuses branch switching validation)                                                      |
+| `target-path-invalid`      | targetPath empty or not absolute                                                                                                                     |
+| `target-path-exists`       | targetPath already exists. Git allows creating a worktree in an existing empty directory; the deterministic refusal comes from the service pre-check |
+| `branch-already-exists`    | stderr contains `a branch named ... already exists` (for example a concurrent creator of the same branch)                                            |
+| `branch-in-other-worktree` | stderr contains `is already used by worktree at` (reuses the existing classification wording; includes a branch occupied by the main worktree)       |
+| `target-branch-not-found`  | stderr contains `invalid reference:` (baseBranch does not exist)                                                                                     |
+| `unknown`                  | Any other Git failure                                                                                                                                |
 
 `invalid-branch-name` / `branch-already-exists` / `target-branch-not-found` / `branch-in-other-worktree` / `unknown` share literals with `GitBranchMutationIssueCode`; worktree adds `target-path-*` / `not-a-repository` / `git-unavailable`.
 
@@ -166,7 +166,7 @@ Failures do not throw (except infrastructure errors); structured issues are retu
 | `worktree-not-found` | No linked entry with `entry.path === targetPath` in the pre-checked `listWorktrees` (porcelain); also covers the main worktree (identified by `isMain`, refused the same way) |
 | `worktree-dirty`     | stderr contains `contains modified or untracked files` (dirty refusal without force)                                                                                          |
 | `worktree-locked`    | stderr contains `is locked` (locked/prunable reasons are ignored by listing, but remove is still refused by Git)                                                              |
-| everything else      | Reuses the existing `GitWorktreeMutationIssueCode` (`git-unavailable` / `not-a-repository` / `target-path-invalid` / `unknown`)                                              |
+| everything else      | Reuses the existing `GitWorktreeMutationIssueCode` (`git-unavailable` / `not-a-repository` / `target-path-invalid` / `unknown`)                                               |
 
 ### Invariants
 

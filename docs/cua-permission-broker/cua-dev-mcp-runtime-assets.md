@@ -20,13 +20,13 @@ Without a broker/permissions the SDK returns an explicit unavailable; no indepen
 
 ## Asset and state boundaries
 
-| Fact | Authoritative owner | Artifact/verification |
-| --- | --- | --- |
-| CUA SDK | `@zcode/zcode-cua-plugin` | `scripts/computer-use-client.mjs` + `scripts/check-sdk.mjs` |
-| CUA documentation and Skills | producer plugin | `docs/computer-use.md`, `skills/computer-use/SKILL.md` |
-| node_repl MCP | `@zcode/browser-use-plugin` | `dist/mcp/server.js` + `scripts/computer-use-client.mjs` (shared host runtime) |
-| CUA runtime/session/frame | shared-host `CuaControlPort` | `createComputerUseRuntime()`; isolated by `workspaceKey`/`remoteSessionId`/`sessionId` |
-| native capability | CUA Helper + TCC | broker token, frame freshness, kill switch, input cleanup |
+| Fact                         | Authoritative owner          | Artifact/verification                                                                  |
+| ---------------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
+| CUA SDK                      | `@zcode/zcode-cua-plugin`    | `scripts/computer-use-client.mjs` + `scripts/check-sdk.mjs`                            |
+| CUA documentation and Skills | producer plugin              | `docs/computer-use.md`, `skills/computer-use/SKILL.md`                                 |
+| node_repl MCP                | `@zcode/browser-use-plugin`  | `dist/mcp/server.js` + `scripts/computer-use-client.mjs` (shared host runtime)         |
+| CUA runtime/session/frame    | shared-host `CuaControlPort` | `createComputerUseRuntime()`; isolated by `workspaceKey`/`remoteSessionId`/`sessionId` |
+| native capability            | CUA Helper + TCC             | broker token, frame freshness, kill switch, input cleanup                              |
 
 ## Constraints
 
@@ -37,14 +37,14 @@ Without a broker/permissions the SDK returns an explicit unavailable; no indepen
 
 ## Acceptance cases
 
-| Case | Verification |
-| --- | --- |
-| SDK 30-method contract | Producer manifest/schema and SDK method union correspond one to one |
-| Worker rebuild | Multiple `node_repl js` calls can re-bootstrap; CUA runtime/session state persists |
-| Image results | The SDK sends CUA image blocks through the generic `nodeRepl.emitImage`; base64 is not turned into text |
-| No broker/permissions | Returns unavailable/permission error; no independent MCP/Helper started |
-| Remote boundaries | Desktop continuous and web remote replayable share attachment; CUA state is not put into relay/snapshot |
-| History records | Old `mcp__computer-use__*` are viewable but cannot be re-executed or re-injected |
+| Case                   | Verification                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| SDK 30-method contract | Producer manifest/schema and SDK method union correspond one to one                                     |
+| Worker rebuild         | Multiple `node_repl js` calls can re-bootstrap; CUA runtime/session state persists                      |
+| Image results          | The SDK sends CUA image blocks through the generic `nodeRepl.emitImage`; base64 is not turned into text |
+| No broker/permissions  | Returns unavailable/permission error; no independent MCP/Helper started                                 |
+| Remote boundaries      | Desktop continuous and web remote replayable share attachment; CUA state is not put into relay/snapshot |
+| History records        | Old `mcp__computer-use__*` are viewable but cannot be re-executed or re-injected                        |
 
 ## Related implementations
 

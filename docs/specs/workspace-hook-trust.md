@@ -465,15 +465,15 @@ Settings' former `hooksConfig?.enabled ?? false` differs from Runtime's `enabled
 
 ### 10.2 State, Admission and Reason mapping
 
-| trustState           | admissionClass   | effectiveRunnable                 | reasonCode                           |
-| -------------------- | ---------------- | --------------------------------- | ------------------------------------ |
-| `not_applicable`     | `not_applicable` | false                             | `workspace_hooks_not_applicable`     |
-| `pending_trust`      | `pending`        | false                             | `workspace_hooks_pending_trust`      |
-| `trusted_persistent` | `admitted`       | per configured/policy/snapshot    | `workspace_hooks_trusted_persistent` |
-| `blocked_untrusted`  | `blocked`        | false                             | `workspace_hooks_blocked_untrusted`  |
-| `blocked_policy`     | `blocked`        | false                             | `workspace_hooks_blocked_by_policy`  |
-| `revoked`            | `pending`        | false                             | `workspace_hooks_revoked`            |
-| `stale_digest`       | `pending`        | false                             | `workspace_hook_declaration_changed` |
+| trustState           | admissionClass   | effectiveRunnable              | reasonCode                           |
+| -------------------- | ---------------- | ------------------------------ | ------------------------------------ |
+| `not_applicable`     | `not_applicable` | false                          | `workspace_hooks_not_applicable`     |
+| `pending_trust`      | `pending`        | false                          | `workspace_hooks_pending_trust`      |
+| `trusted_persistent` | `admitted`       | per configured/policy/snapshot | `workspace_hooks_trusted_persistent` |
+| `blocked_untrusted`  | `blocked`        | false                          | `workspace_hooks_blocked_untrusted`  |
+| `blocked_policy`     | `blocked`        | false                          | `workspace_hooks_blocked_by_policy`  |
+| `revoked`            | `pending`        | false                          | `workspace_hooks_revoked`            |
+| `stale_digest`       | `pending`        | false                          | `workspace_hook_declaration_changed` |
 
 `revoked` and `stale_digest` are user-readable diagnostic states, not a third executable authorization; the Coordinator normalizes them to not admitted, and a later explicit review can return to `pending_trust`. Transient renderer/mobile disconnect, closing settings, prompt dismiss and review timeout produce no new Trust state. `blocked_untrusted` is a fail-closed evaluation result such as an unavailable Runtime/Host capability, not a user choice; a review timeout only expires the immutable request and pending admission stays.
 
@@ -1105,10 +1105,10 @@ type WorkspaceHookPolicy =
 
 ### 19.1 Mode semantics
 
-| mode                 | Use existing persistent Trust | Create/update persistent Trust | On miss                                                         |
-| -------------------- | ----------------------------- | ------------------------------ | --------------------------------------------------------------- |
-| `deny`               | no                            | no                             | `blocked_policy`                                                |
-| `user_decides`       | yes                           | yes                            | interactive pending or headless blocked                         |
+| mode                 | Use existing persistent Trust | Create/update persistent Trust | On miss                                                                    |
+| -------------------- | ----------------------------- | ------------------------------ | -------------------------------------------------------------------------- |
+| `deny`               | no                            | no                             | `blocked_policy`                                                           |
+| `user_decides`       | yes                           | yes                            | interactive pending or headless blocked                                    |
 | `allow_trusted_only` | yes                           | no                             | `blocked_policy`, hint that an admin/pre-review CLI must create the record |
 
 `allow_trusted_only` is not automatic Trust and does not degrade to `user_decides`. Per-item decision: policy deny → blocked regardless of records; `allow_trusted_only` → matching persistent record only, no new grant; `user_decides` → matching persistent else pending/default deny.

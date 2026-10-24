@@ -21,19 +21,19 @@ value instead.
 
 ## Span naming
 
-| Span name shape                | What it is                                              | Represents duration     |
-| ------------------------------ | ------------------------------------------------------- | ----------------------- |
-| `local_ttft`                   | Root: total TTFT of one send, exactly one per message   | Yes                     |
-| `local_ttft.<main stage>`      | One of the six main stages                              | Yes                     |
-| `local_ttft.prepare.<sub-stage>` | A breakdown inside request preparation                | Yes                     |
-| `local_ttft.attempt`           | One physical model request                              | Yes                     |
-| `local_ttft.retry_wait`        | Wait between two attempts                               | Yes                     |
-| `local_ttft.user_confirmation` | User dwell time in the queue second-confirmation dialog | Yes (but not system time) |
-| `local_ttft.checkpoint`        | In-progress state snapshot; one message may have dozens | **No**                  |
-| `local_ttft.start`             | Start marker at submit time                             | **No**                  |
-| `<any>.started`                | Point record that the stage started but has not ended   | **No**                  |
-| `local_ttft.first_text`        | Independent observation of the first text               | Yes, but not the main TTFT |
-| `local_ttft.no_text`           | The whole turn ended without any text                   | No                      |
+| Span name shape                  | What it is                                              | Represents duration        |
+| -------------------------------- | ------------------------------------------------------- | -------------------------- |
+| `local_ttft`                     | Root: total TTFT of one send, exactly one per message   | Yes                        |
+| `local_ttft.<main stage>`        | One of the six main stages                              | Yes                        |
+| `local_ttft.prepare.<sub-stage>` | A breakdown inside request preparation                  | Yes                        |
+| `local_ttft.attempt`             | One physical model request                              | Yes                        |
+| `local_ttft.retry_wait`          | Wait between two attempts                               | Yes                        |
+| `local_ttft.user_confirmation`   | User dwell time in the queue second-confirmation dialog | Yes (but not system time)  |
+| `local_ttft.checkpoint`          | In-progress state snapshot; one message may have dozens | **No**                     |
+| `local_ttft.start`               | Start marker at submit time                             | **No**                     |
+| `<any>.started`                  | Point record that the stage started but has not ended   | **No**                     |
+| `local_ttft.first_text`          | Independent observation of the first text               | Yes, but not the main TTFT |
+| `local_ttft.no_text`             | The whole turn ended without any text                   | No                         |
 
 Before reading the waterfall, filter out `checkpoint`, `start` and `.started`; what remains are the duration
 intervals. A `.started` duration of 0 does not mean the stage took zero time; it means no end boundary arrived.
@@ -43,14 +43,14 @@ intervals. A `.started` duration of 0 does not mean the stage took zero time; it
 In real time order; boundary definitions are in the
 [parent contract's stage and time contract](ttft-stage-telemetry.md#stage-and-time-contract).
 
-| Stage               | What happens in this time                                                          | If large                                       |
-| ------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `renderer_prepare`  | UI receives click/Enter, passes the send gate and assembles the command            | Local processing delay before sending          |
+| Stage               | What happens in this time                                                              | If large                                    |
+| ------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `renderer_prepare`  | UI receives click/Enter, passes the send gate and assembles the command                | Local processing delay before sending       |
 | `command_admission` | Command reaches the CLI and is authoritatively accepted, including admission-gate wait | Communication delay or admission contention |
-| `execution_wait`    | Accepted, waiting for this input's turn to execute                                 | Other work is queued ahead                     |
-| `request_prepare`   | Execution starts: hooks, context loading, persistence, compaction, request assembly | Expand `prepare.*` to see which item           |
-| `model_request`     | Request sent until the CLI forms this input's first valid output                   | Count `attempt`s to tell slow from retried     |
-| `output_return`     | First output travels from the CLI via Host back to the originating UI              | Return-path bottleneck                         |
+| `execution_wait`    | Accepted, waiting for this input's turn to execute                                     | Other work is queued ahead                  |
+| `request_prepare`   | Execution starts: hooks, context loading, persistence, compaction, request assembly    | Expand `prepare.*` to see which item        |
+| `model_request`     | Request sent until the CLI forms this input's first valid output                       | Count `attempt`s to tell slow from retried  |
+| `output_return`     | First output travels from the CLI via Host back to the originating UI                  | Return-path bottleneck                      |
 
 ## Example: a real sample
 
@@ -91,16 +91,16 @@ them separately and never substitute one for the other.
 
 ## Root attributes checklist
 
-| Attribute           | Value in this sample  | How to use                                                                                             |
-| ------------------- | --------------------- | ------------------------------------------------------------------------------------------------------ |
+| Attribute           | Value in this sample  | How to use                                                                                                                                 |
+| ------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `quality`           | `complete`            | Only `complete` enters the complete stage distribution; `missing` is missing/expired calibration, `clock_invalid` a detected clock anomaly |
-| `visibility`        | `background_returned` | The default experience uses only `foreground`; this sample went to background mid-way and came back    |
-| `send_mode`         | `idle`                | Group `idle`/`queued`/`guided` separately, never mix them                                              |
-| `first_output_kind` | `reasoning`           | Whether the first output was text, reasoning or a tool call                                            |
-| `unattributed_ms`   | `0`                   | Unattributed time; reconciled against the **union** of reliable intervals, parallel time counts once   |
-| `clock_error_ms`    | `5.02`                | Cross-process alignment error, threshold 10 ms                                                         |
-| `truncated`         | `false`               | Whether truncated by a capacity limit                                                                  |
-| `missing_stages`    | empty                 | Which stages are missing; missing does not mean the stage took 0                                       |
+| `visibility`        | `background_returned` | The default experience uses only `foreground`; this sample went to background mid-way and came back                                        |
+| `send_mode`         | `idle`                | Group `idle`/`queued`/`guided` separately, never mix them                                                                                  |
+| `first_output_kind` | `reasoning`           | Whether the first output was text, reasoning or a tool call                                                                                |
+| `unattributed_ms`   | `0`                   | Unattributed time; reconciled against the **union** of reliable intervals, parallel time counts once                                       |
+| `clock_error_ms`    | `5.02`                | Cross-process alignment error, threshold 10 ms                                                                                             |
+| `truncated`         | `false`               | Whether truncated by a capacity limit                                                                                                      |
+| `missing_stages`    | empty                 | Which stages are missing; missing does not mean the stage took 0                                                                           |
 
 Correlation IDs (`command_id`/`input_id`/`query_id`, `turn_id`, `product_turn_id`, `logical_call_id`, `request_id`,
 `cli_instance_id`) only link Traces and never enter metric labels. `request_id` changes on retry and is not the

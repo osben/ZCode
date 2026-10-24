@@ -63,21 +63,21 @@ activation-only primitive.
 
 ## 3. Invariants that must not regress
 
-| Invariant                     | Constraint                                                                                                              |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Invariant                     | Constraint                                                                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | historyReadyBeforeRuntime     | A connection supporting historyFirst gets persisted history first; execution and runtime config/usage seed open only after runtime completes |
-| historicalConfigPreserved     | Historical model, thought, mode keep restoring from the session-local durable selection first                           |
-| restoreWarningPreserved       | An unavailable historical model still allows reading history, but later `sendText` is rejected by the same restore-warning gate |
-| workspaceIdentityPreserved    | Remote resume keeps using the persisted `workspaceID`; the identity key never degrades to `workspacePath`               |
-| eventWiringPreserved          | The event sink, persistence and MCP/runtime wiring built by `createRecord` are unchanged                                |
-| timestampsAndParentPreserved  | `createdAt`, `updatedAt`, `parentSessionId` keep backfilling from the persisted session                                 |
-| v4HistoryAuthorityUnchanged   | rows, reasoning, tool, plan, goal, queue and interaction are still restored by V4 durable materialization + memory tail |
-| deliveryBoundaryUnchanged     | desktop stays continuous; mobile/Web remote stays replayable gap/snapshot recovery                                      |
-| restartDiscardUnchanged       | Non-terminal input of the previous runtime is still discarded per the delivery ledger; never auto-replayed              |
-| legacyResumeResponseUnchanged | `session/resume` still returns a full, schema-equivalent legacy snapshot                                                |
-| v4ColdReadySingleOwner        | The V4 gateway owns history-ready and runtime-ready; one initialization per session is single-flight                    |
-| hydrationBoundaryUnchanged    | `hydratePublisher` only does projection hydration and does not take over each entry's existing runtime-activation preconditions |
-| registryIsNotV4Readiness      | `context.sessions` only registers a record; query/command must not be released on it before the V4 cold operation completes |
+| historicalConfigPreserved     | Historical model, thought, mode keep restoring from the session-local durable selection first                                                |
+| restoreWarningPreserved       | An unavailable historical model still allows reading history, but later `sendText` is rejected by the same restore-warning gate              |
+| workspaceIdentityPreserved    | Remote resume keeps using the persisted `workspaceID`; the identity key never degrades to `workspacePath`                                    |
+| eventWiringPreserved          | The event sink, persistence and MCP/runtime wiring built by `createRecord` are unchanged                                                     |
+| timestampsAndParentPreserved  | `createdAt`, `updatedAt`, `parentSessionId` keep backfilling from the persisted session                                                      |
+| v4HistoryAuthorityUnchanged   | rows, reasoning, tool, plan, goal, queue and interaction are still restored by V4 durable materialization + memory tail                      |
+| deliveryBoundaryUnchanged     | desktop stays continuous; mobile/Web remote stays replayable gap/snapshot recovery                                                           |
+| restartDiscardUnchanged       | Non-terminal input of the previous runtime is still discarded per the delivery ledger; never auto-replayed                                   |
+| legacyResumeResponseUnchanged | `session/resume` still returns a full, schema-equivalent legacy snapshot                                                                     |
+| v4ColdReadySingleOwner        | The V4 gateway owns history-ready and runtime-ready; one initialization per session is single-flight                                         |
+| hydrationBoundaryUnchanged    | `hydratePublisher` only does projection hydration and does not take over each entry's existing runtime-activation preconditions              |
+| registryIsNotV4Readiness      | `context.sessions` only registers a record; query/command must not be released on it before the V4 cold operation completes                  |
 
 Pending permission/elicitation and the current runtime queue are not durable facts an old process can
 unconditionally revive; this change does not add, remove or rewrite them. The new runtime's V4 memory event
@@ -167,18 +167,18 @@ subscribe → durable messages M0 → same V4 publisher → first frame enters t
 Not every client x every session state; activation happens before delivery-profile split, so
 representative samples per invariant:
 
-| Representative sample                    | Focus                                                                                              | Evidence layer                 |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------ |
-| completed local history + desktop continuous | history rows/tool/reasoning, resend, idempotency, no legacy snapshot materialization            | bootstrap integration          |
-| completed remote history                 | workspace identity, provider registry, resend                                                      | existing V4 cold-resume integration |
-| historical model/thought/mode            | session-local config and thought hint priority                                                     | existing I63 / bootstrap integration |
-| model unavailable                        | restoreWarning read/write boundary                                                                 | existing bootstrap integration |
-| completed child                          | child cold hydration, read-only navigation                                                         | SAT09 existing evidence        |
-| mobile replayable                        | equivalent first complete terminal state to desktop; gap/resync unchanged                          | PV4-06/25 existing protocol evidence |
-| legacy `session/resume`                  | full snapshot and context usage preserved                                                          | legacy protocol unit test      |
-| large session PERF03                     | activation builds no legacy snapshot; normal cold subscribe reads parent messages fully once; record trend | performance fixture      |
-| concurrent V4 subscribe/query/command    | history first frame before initialization completes; zero execution admission during init; paging readable | bootstrap unit/integration |
-| READY failure                            | history and structured error kept; half-initialized record cleaned; explicit retry single-flight   | gateway unit                   |
+| Representative sample                        | Focus                                                                                                      | Evidence layer                       |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| completed local history + desktop continuous | history rows/tool/reasoning, resend, idempotency, no legacy snapshot materialization                       | bootstrap integration                |
+| completed remote history                     | workspace identity, provider registry, resend                                                              | existing V4 cold-resume integration  |
+| historical model/thought/mode                | session-local config and thought hint priority                                                             | existing I63 / bootstrap integration |
+| model unavailable                            | restoreWarning read/write boundary                                                                         | existing bootstrap integration       |
+| completed child                              | child cold hydration, read-only navigation                                                                 | SAT09 existing evidence              |
+| mobile replayable                            | equivalent first complete terminal state to desktop; gap/resync unchanged                                  | PV4-06/25 existing protocol evidence |
+| legacy `session/resume`                      | full snapshot and context usage preserved                                                                  | legacy protocol unit test            |
+| large session PERF03                         | activation builds no legacy snapshot; normal cold subscribe reads parent messages fully once; record trend | performance fixture                  |
+| concurrent V4 subscribe/query/command        | history first frame before initialization completes; zero execution admission during init; paging readable | bootstrap unit/integration           |
+| READY failure                                | history and structured error kept; half-initialized record cleaned; explicit retry single-flight           | gateway unit                         |
 
 ## 6. Non-goals and follow-ups
 
@@ -198,10 +198,10 @@ Apple Silicon, local production `app-server`, fresh CLI process per sample, same
 in a detached worktree; three runs each after cache warm-up. Fixture `sess_perf_large_20260724034221_af2e36b8`:
 2,000 messages / 6,671 parts (about 1,000 turns); both groups produced the same 143,690-byte initial V4 frame.
 
-| Implementation                                                      | Median cold process -> initial frame |
-| ------------------------------------------------------------------- | -----------------------------------: |
-| before: V4 activation builds legacy snapshot, usage via `readSession` |                             3169.5 ms |
-| after: activation-only + narrow usage projection                    |                             2701.5 ms |
+| Implementation                                                        | Median cold process -> initial frame |
+| --------------------------------------------------------------------- | -----------------------------------: |
+| before: V4 activation builds legacy snapshot, usage via `readSession` |                            3169.5 ms |
+| after: activation-only + narrow usage projection                      |                            2701.5 ms |
 
 The median drops **468.0 ms (14.8%)**. From Agent ready, subscribe -> initial frame median is 1998.0 ms; the
 rest of the ~2.7 s is about 0.69 s of process start/ready, so the wait must not be attributed wholly to
@@ -258,9 +258,9 @@ resource directory (15 plugins discovered, 11 enabled). Timing starts at subscri
 `runtime/capabilities` response, with a real SessionStart hook fixed at 2 s. This is a controlled sample,
 not a natural cold-start percentage or a UI first-paint measurement.
 
-| Boundary                       | Before (ms)        | After (ms)         | Median before -> after |
-| ------------------------------ | ------------------ | ------------------ | ---------------------- |
-| subscribe -> CLI history frame | 3349 / 3094 / 2834 | 12 / 37 / 17       | 3094 -> 17             |
+| Boundary                         | Before (ms)        | After (ms)         | Median before -> after |
+| -------------------------------- | ------------------ | ------------------ | ---------------------- |
+| subscribe -> CLI history frame   | 3349 / 3094 / 2834 | 12 / 37 / 17       | 3094 -> 17             |
 | subscribe -> runtime ready frame | 3349 / 3094 / 2834 | 3541 / 3305 / 3583 | 3094 -> 3541           |
 
 The first frame no longer waits for the runtime; full initialization is not improved. Plugin discovery was

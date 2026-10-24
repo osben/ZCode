@@ -29,10 +29,10 @@ Batch `r3-server-20261012012923737-60d156` re-ran `desktopauthority` (205.4 s, s
 test-only `storage-worker-diagnostics.mjs` (E2E preload observer; does not replace the storage entry, control
 frames, exit code or recovery flow; stderr capped at 64 KiB in a 0600 artifact file):
 
-| Moment                       | Exit code | stderr                                                                   | Last control frame      |
-| ---------------------------- | --------- | ------------------------------------------------------------------------ | ----------------------- |
-| before changing data dir     | 0         | empty                                                                    | startup/storagePrepared |
-| after save and cold restart  | 1         | `--cwd path is not accessible: <new-data-root>/.zcode/workspace/default` | none                    |
+| Moment                      | Exit code | stderr                                                                   | Last control frame      |
+| --------------------------- | --------- | ------------------------------------------------------------------------ | ----------------------- |
+| before changing data dir    | 0         | empty                                                                    | startup/storagePrepared |
+| after save and cold restart | 1         | `--cwd path is not accessible: <new-data-root>/.zcode/workspace/default` | none                    |
 
 On the failure page the new data root and `.zcode` exist but `.zcode/workspace` and its `default` child do
 not: the startup working directory is missing (not DB corruption or hardware acceleration).
@@ -82,10 +82,10 @@ adds before/after existence evidence for the new root's default cwd.
 Batch `r3-server-20261012013853643-f32109` (rebuilt business package; source manifest SHA-256
 `8a674355697c004b22a12bbe6e973df9adf75501652f43fbd2d8f01f8810a94a`):
 
-| Scenario         | Result         | Confirmed behavior                                                                                                              |
-| ---------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| desktopauthority | PASS, 107.7 s  | full original settings combination and restart; new-root default cwd absent before, present after; settings kept, Source clean, canary copied |
-| coldreconnect    | PASS, 150.0 s  | active remote task cold-restores, other project opened on demand, both continue, auto-reconnect off and manual restore         |
+| Scenario         | Result        | Confirmed behavior                                                                                                                            |
+| ---------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| desktopauthority | PASS, 107.7 s | full original settings combination and restart; new-root default cwd absent before, present after; settings kept, Source clean, canary copied |
+| coldreconnect    | PASS, 150.0 s | active remote task cold-restores, other project opened on demand, both continue, auto-reconnect off and manual restore                        |
 
 The Worker observer recorded exit=0, empty stderr and last frame startup/storagePrepared both before and after
 restart, a same-scenario contrast with the pre-fix exit=1 / unreachable cwd / no frames. The E2E ran on a

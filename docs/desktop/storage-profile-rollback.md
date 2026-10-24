@@ -32,10 +32,10 @@ E2E helper's old export while keeping its callers makes repo typecheck fail.
 
 ## Acceptance
 
-| Case | Condition | Expectation |
-| --- | --- | --- |
-| STORAGE-ROLLBACK-001 | Host started in any Desktop run form | no storage profile, exact storage root or `ZCODE_HOME` injected |
-| STORAGE-ROLLBACK-002 | the user configures a custom App `dataBaseDir` | App data migrates by existing logic; CLI user resources are still read from `~/.zcode` |
-| STORAGE-ROLLBACK-003 | Stable/Preview/source-development access the same user resources | session, plugins, agents, commands, skills all keep using `~/.zcode` |
-| STORAGE-ROLLBACK-004 | open a workspace that contains `.zcode` config | project-level agents, commands, skills paths unchanged |
-| STORAGE-ROLLBACK-005 | build the bundled Agent CLI and run repo typecheck | adapters no longer reference the deleted storage-profile modules; the E2E helper resolves `.zcode` under the isolated HOME; both checks pass |
+| Case                 | Condition                                                        | Expectation                                                                                                                                  |
+| -------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| STORAGE-ROLLBACK-001 | Host started in any Desktop run form                             | no storage profile, exact storage root or `ZCODE_HOME` injected                                                                              |
+| STORAGE-ROLLBACK-002 | the user configures a custom App `dataBaseDir`                   | App data migrates by existing logic; CLI user resources are still read from `~/.zcode`                                                       |
+| STORAGE-ROLLBACK-003 | Stable/Preview/source-development access the same user resources | session, plugins, agents, commands, skills all keep using `~/.zcode`                                                                         |
+| STORAGE-ROLLBACK-004 | open a workspace that contains `.zcode` config                   | project-level agents, commands, skills paths unchanged                                                                                       |
+| STORAGE-ROLLBACK-005 | build the bundled Agent CLI and run repo typecheck               | adapters no longer reference the deleted storage-profile modules; the E2E helper resolves `.zcode` under the isolated HOME; both checks pass |

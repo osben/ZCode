@@ -40,12 +40,12 @@ Four kinds of real risk need priority handling:
 
 Evidence: `pnpm audit --prod --json` returned `critical=0`, `high=19`, `moderate=42`, `low=4`; 1246 production dependencies in total.
 
-| Module      | Version   | Path                                                                       | Risk summary                                                                                  | Suggested version        |
-| ----------- | --------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------ |
-| `axios`     | `1.13.6`  | `packages__desktop>@larksuiteoapi/node-sdk>axios`                          | Several prototype pollutions, proxy credential leak, request hijacking, ReDoS/DoS            | `>=1.16.0` or upstream upgrade |
-| `protobufjs` | `7.5.5`  | `packages__desktop>@larksuiteoapi/node-sdk>protobufjs`                     | Code-generation gadget after prototype pollution, recursive DoS, unsafe option path           | `>=7.5.8`                |
-| `basic-ftp` | `5.2.2`   | `apps__zcode-cli>proxy-agent>pac-proxy-agent>get-uri>basic-ftp`            | A malicious FTP server can trigger client memory/response-buffer DoS                          | `>=5.3.1`                |
-| `fast-uri`  | `3.1.0`   | `apps__zcode-cli__packages__adapters>@modelcontextprotocol/sdk>ajv>fast-uri` | percent-encoded authority/path confusion that may affect SSRF/path traversal decisions     | `>=3.1.2`                |
+| Module       | Version  | Path                                                                         | Risk summary                                                                           | Suggested version              |
+| ------------ | -------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------ |
+| `axios`      | `1.13.6` | `packages__desktop>@larksuiteoapi/node-sdk>axios`                            | Several prototype pollutions, proxy credential leak, request hijacking, ReDoS/DoS      | `>=1.16.0` or upstream upgrade |
+| `protobufjs` | `7.5.5`  | `packages__desktop>@larksuiteoapi/node-sdk>protobufjs`                       | Code-generation gadget after prototype pollution, recursive DoS, unsafe option path    | `>=7.5.8`                      |
+| `basic-ftp`  | `5.2.2`  | `apps__zcode-cli>proxy-agent>pac-proxy-agent>get-uri>basic-ftp`              | A malicious FTP server can trigger client memory/response-buffer DoS                   | `>=5.3.1`                      |
+| `fast-uri`   | `3.1.0`  | `apps__zcode-cli__packages__adapters>@modelcontextprotocol/sdk>ajv>fast-uri` | percent-encoded authority/path confusion that may affect SSRF/path traversal decisions | `>=3.1.2`                      |
 
 Other moderate/low highlights:
 

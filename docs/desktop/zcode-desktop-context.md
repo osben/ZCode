@@ -8,14 +8,14 @@
 
 ## Feature Summary
 
-| Field             | Conclusion                                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------------------- |
-| Change layer      | presentation, runtime config                                                                   |
-| User entry        | ZCode Desktop local workspace, Desktop-attached SSH/WSL/Docker workspace                       |
-| Evaluation entry  | `zcode --surface desktop --prompt <text>`                                                      |
-| Authoritative state | `presentationSurface`, derived by Services from trusted host facts and frozen at Agent start |
-| Default           | `terminal`                                                                                     |
-| Not involved      | UI directive parsing, protocol schema, telemetry, provider `sourceTitle`, V4 delivery/recovery |
+| Field               | Conclusion                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| Change layer        | presentation, runtime config                                                                   |
+| User entry          | ZCode Desktop local workspace, Desktop-attached SSH/WSL/Docker workspace                       |
+| Evaluation entry    | `zcode --surface desktop --prompt <text>`                                                      |
+| Authoritative state | `presentationSurface`, derived by Services from trusted host facts and frozen at Agent start   |
+| Default             | `terminal`                                                                                     |
+| Not involved        | UI directive parsing, protocol schema, telemetry, provider `sourceTitle`, V4 delivery/recovery |
 
 ## Context Section Contract
 
@@ -157,26 +157,26 @@ Network failure, a malformed response or a timeout never blocks client startup. 
 
 ## Acceptance Cases
 
-| Case    | Setup                                                    | Action                                  | Assertions                                                          |
-| ------- | -------------------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------- |
-| DCTX-01 | default/terminal ContextBuilder                          | build context                           | no `desktop_context`                                                |
-| DCTX-02 | `zcode_desktop` ContextBuilder                           | build context                           | section appears exactly once, metadata correct, before `dynamic_behavior` |
-| DCTX-03 | `zcode_desktop` + custom system prompt                   | build context                           | no `desktop_context`                                                |
-| DCTX-04 | subagent runtime                                         | build context                           | no `desktop_context`                                                |
-| DCTX-05 | `--surface desktop --prompt`                             | create App                              | runtime config is `zcode_desktop`, `sourceTitle` unchanged          |
-| DCTX-06 | `app-server --stdio --surface desktop`                   | start protocol runner                   | every session App gets `zcode_desktop`                              |
-| DCTX-07 | local Desktop runtime fact / attached remote authority   | create Services and resolve Agent command | arguments contain `--surface desktop`                             |
-| DCTX-08 | plain HTTP server / manual stdio, no Desktop host fact   | create Services and resolve Agent command | Desktop surface is not added automatically                        |
-| DCTX-09 | invalid value / unsupported command                      | CLI argument validation                 | clear error, App not started                                        |
-| DCTX-10 | `entry-stdio` receives `desktop-attached-remote`         | resolve Agent command through real Services assembly | authority, resolver surface and command arguments all stay Desktop |
+| Case    | Setup                                                  | Action                                               | Assertions                                                                |
+| ------- | ------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| DCTX-01 | default/terminal ContextBuilder                        | build context                                        | no `desktop_context`                                                      |
+| DCTX-02 | `zcode_desktop` ContextBuilder                         | build context                                        | section appears exactly once, metadata correct, before `dynamic_behavior` |
+| DCTX-03 | `zcode_desktop` + custom system prompt                 | build context                                        | no `desktop_context`                                                      |
+| DCTX-04 | subagent runtime                                       | build context                                        | no `desktop_context`                                                      |
+| DCTX-05 | `--surface desktop --prompt`                           | create App                                           | runtime config is `zcode_desktop`, `sourceTitle` unchanged                |
+| DCTX-06 | `app-server --stdio --surface desktop`                 | start protocol runner                                | every session App gets `zcode_desktop`                                    |
+| DCTX-07 | local Desktop runtime fact / attached remote authority | create Services and resolve Agent command            | arguments contain `--surface desktop`                                     |
+| DCTX-08 | plain HTTP server / manual stdio, no Desktop host fact | create Services and resolve Agent command            | Desktop surface is not added automatically                                |
+| DCTX-09 | invalid value / unsupported command                    | CLI argument validation                              | clear error, App not started                                              |
+| DCTX-10 | `entry-stdio` receives `desktop-attached-remote`       | resolve Agent command through real Services assembly | authority, resolver surface and command arguments all stay Desktop        |
 
 ## Impact Brief
 
-| Rank           | Relation                                       | Conclusion                                              |
-| -------------- | ---------------------------------------------- | ------------------------------------------------------- |
-| must-inspect   | CLI parser -> Runtime config -> ContextBuilder | the single injection chain for the Desktop section      |
-| must-inspect   | Host facts -> Services -> Agent process args   | reuses trusted host facts to derive the Desktop surface |
-| conditional    | mobile remote -> shared Host/CLI               | inherits the same prompt, replayable delivery unchanged |
-| invariant-only | `sourceTitle` / telemetry                      | does not change with CLI evaluation arguments           |
-| invariant-only | custom prompt / subagent                       | the default Desktop section is not injected             |
-| evidence-only  | Core/CLI/Bootstrap/Services/Server integration tests | cover local and remote host assembly, no UI E2E   |
+| Rank           | Relation                                             | Conclusion                                              |
+| -------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| must-inspect   | CLI parser -> Runtime config -> ContextBuilder       | the single injection chain for the Desktop section      |
+| must-inspect   | Host facts -> Services -> Agent process args         | reuses trusted host facts to derive the Desktop surface |
+| conditional    | mobile remote -> shared Host/CLI                     | inherits the same prompt, replayable delivery unchanged |
+| invariant-only | `sourceTitle` / telemetry                            | does not change with CLI evaluation arguments           |
+| invariant-only | custom prompt / subagent                             | the default Desktop section is not injected             |
+| evidence-only  | Core/CLI/Bootstrap/Services/Server integration tests | cover local and remote host assembly, no UI E2E         |

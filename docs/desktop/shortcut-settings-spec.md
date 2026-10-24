@@ -116,24 +116,24 @@ Rules:
 
 ## 4. Command table (single source of truth)
 
-| Command ID | Channel | Default binding |
-| --- | --- | --- |
-| openCommandCenter | window | `CmdOrCtrl+K`, `CmdOrCtrl+Shift+P` (two defaults, overridden as a group) |
-| openSettings | window | `CmdOrCtrl+,` (mac ⌘, / win·linux Ctrl+, system convention) |
-| findInTask | window | `CmdOrCtrl+F` |
-| toggleSidebar | window | `CmdOrCtrl+B` |
-| toggleTerminal | window | `CmdOrCtrl+J` |
-| toggleSidePane | window | `CmdOrCtrl+Alt+B` |
-| previousConversation | window | `CmdOrCtrl+Shift+[` |
-| nextConversation | window | `CmdOrCtrl+Shift+]` |
-| navigateBack | window | `CmdOrCtrl+[` |
-| navigateForward | window | `CmdOrCtrl+]` |
-| newTask | menu | `CmdOrCtrl+N` |
-| openWorkspace | menu | `CmdOrCtrl+O` |
-| closeActiveContext | menu | `CmdOrCtrl+W` |
-| zoomIn | menu | `CmdOrCtrl+=` (the menu keeps the dual-entry mode of a visible Plus item + a hidden `=` item) |
-| zoomOut | menu | `CmdOrCtrl+-` |
-| resetZoom | menu | `CmdOrCtrl+0` |
+| Command ID           | Channel | Default binding                                                                               |
+| -------------------- | ------- | --------------------------------------------------------------------------------------------- |
+| openCommandCenter    | window  | `CmdOrCtrl+K`, `CmdOrCtrl+Shift+P` (two defaults, overridden as a group)                      |
+| openSettings         | window  | `CmdOrCtrl+,` (mac ⌘, / win·linux Ctrl+, system convention)                                   |
+| findInTask           | window  | `CmdOrCtrl+F`                                                                                 |
+| toggleSidebar        | window  | `CmdOrCtrl+B`                                                                                 |
+| toggleTerminal       | window  | `CmdOrCtrl+J`                                                                                 |
+| toggleSidePane       | window  | `CmdOrCtrl+Alt+B`                                                                             |
+| previousConversation | window  | `CmdOrCtrl+Shift+[`                                                                           |
+| nextConversation     | window  | `CmdOrCtrl+Shift+]`                                                                           |
+| navigateBack         | window  | `CmdOrCtrl+[`                                                                                 |
+| navigateForward      | window  | `CmdOrCtrl+]`                                                                                 |
+| newTask              | menu    | `CmdOrCtrl+N`                                                                                 |
+| openWorkspace        | menu    | `CmdOrCtrl+O`                                                                                 |
+| closeActiveContext   | menu    | `CmdOrCtrl+W`                                                                                 |
+| zoomIn               | menu    | `CmdOrCtrl+=` (the menu keeps the dual-entry mode of a visible Plus item + a hidden `=` item) |
+| zoomOut              | menu    | `CmdOrCtrl+-`                                                                                 |
+| resetZoom            | menu    | `CmdOrCtrl+0`                                                                                 |
 
 - The `window` channel is dispatched by `useAppKeyboard` inside the renderer and works the same on all three
   ends.
@@ -461,10 +461,10 @@ problems (the only data source = the DOM event path).
 
 First composer-scope commands (result of auditing component-internal fixed keys, see table):
 
-| Command | Default binding | Description |
-| --- | --- | --- |
-| `composerSend` | `Enter` | send message |
-| `composerInsertNewline` | `Shift+Enter` | insert newline |
+| Command                 | Default binding | Description    |
+| ----------------------- | --------------- | -------------- |
+| `composerSend`          | `Enter`         | send message   |
+| `composerInsertNewline` | `Shift+Enter`   | insert newline |
 
 Scope candidates from the audit that are **not** in the table (noted for the record): TaskFindDialog's
 G/number/⏎ and GitActionMenu's ⏎ (dialog-internal navigation keys, a `taskFindDialog` scope could be added
@@ -540,11 +540,11 @@ The former fixed hotkeys Ctrl+M (open model menu) / Ctrl+Shift+M (switch session
 depth) were consumed fixedly by the window capture listener of `v4/composer/toolbarShortcuts.ts` without reading
 the effective table (CR-06 once blocked them via the reserved blacklist). They are now command-table commands:
 
-| Command | Default binding | Description |
-| --- | --- | --- |
-| `openModelMenu` | `Ctrl+m` | open model menu |
-| `cycleSessionMode` | `Ctrl+Shift+m` | switch session mode |
-| `cycleThoughtLevel` | `Ctrl+t` | switch thinking depth |
+| Command             | Default binding | Description           |
+| ------------------- | --------------- | --------------------- |
+| `openModelMenu`     | `Ctrl+m`        | open model menu       |
+| `cycleSessionMode`  | `Ctrl+Shift+m`  | switch session mode   |
+| `cycleThoughtLevel` | `Ctrl+t`        | switch thinking depth |
 
 - **Explicit Ctrl modifier** (not CmdOrCtrl): the semantics are Ctrl on all three ends (also Ctrl on mac),
   equivalent to the exact-modifier match of the old `matchesCtrlShortcut` family, with default behavior

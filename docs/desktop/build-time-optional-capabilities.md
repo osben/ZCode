@@ -4,11 +4,11 @@
 
 Three capabilities are enabled by build-time configuration and are off when unconfigured:
 
-| Capability | Config key | Behavior when off |
-| --- | --- | --- |
-| ARMS RUM reporting | `ZCODE_ARMS_RUM_ENDPOINT` | the ARMS SDK in the main and renderer processes initializes with `enable: false` and produces no reports |
-| Event reporting (data warehouse) | `ZCODE_TELEMETRY_REPORT_ENDPOINT` | telemetry events return directly before sending |
-| Auto update | `ZCODE_AUTO_UPDATE` (`1`, `true`, `yes` enable) | same as the Preview flavor: no update check or download |
+| Capability                       | Config key                                      | Behavior when off                                                                                        |
+| -------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| ARMS RUM reporting               | `ZCODE_ARMS_RUM_ENDPOINT`                       | the ARMS SDK in the main and renderer processes initializes with `enable: false` and produces no reports |
+| Event reporting (data warehouse) | `ZCODE_TELEMETRY_REPORT_ENDPOINT`               | telemetry events return directly before sending                                                          |
+| Auto update                      | `ZCODE_AUTO_UPDATE` (`1`, `true`, `yes` enable) | same as the Preview flavor: no update check or download                                                  |
 
 The same source can therefore produce a build that does not report or auto-update by default, or an official
 build with these capabilities enabled, without hard-coding reporting addresses in source.

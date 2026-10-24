@@ -23,7 +23,7 @@ Association must not be inferred from shortcut name, tool name or `include_scree
 
 ```ts
 type PipCaptureTarget = {
-  windowId: number;              // the surface actually focused/operated this time
+  windowId: number; // the surface actually focused/operated this time
   presentationWindowId?: number; // provable same-process logical root; equals windowId when absent
   pid: number;
   bundleId: string;

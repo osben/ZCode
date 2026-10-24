@@ -107,41 +107,41 @@ The existing three mappings (device aggregate status mapping, sidebar project co
 
 Inputs:
 
-| Input | Meaning |
-| --- | --- |
-| Device aggregate status | Device-level state from the Source authority projection |
-| Project attachment status | Whether the project mount is ready; device online does not mean project ready |
-| Install and identity | Not installed / installed / identity to confirm (connection target changed) |
-| Upgrade need | None / optional update / remote must update / local desktop must update |
-| Disconnect origin | User disconnect / abnormal disconnect / not yet connected at startup |
-| Auto recovery progress | Currently attempt n of 3 |
-| Latest error | Classified connection error code and phase |
-| Credential completeness | Whether a saved password or key passphrase is missing |
-| Connection method and address | SSH / WSL / Docker, plus address, distro or container name |
-| Device display name | A user-changed name wins; default is the SSH alias |
+| Input                         | Meaning                                                                       |
+| ----------------------------- | ----------------------------------------------------------------------------- |
+| Device aggregate status       | Device-level state from the Source authority projection                       |
+| Project attachment status     | Whether the project mount is ready; device online does not mean project ready |
+| Install and identity          | Not installed / installed / identity to confirm (connection target changed)   |
+| Upgrade need                  | None / optional update / remote must update / local desktop must update       |
+| Disconnect origin             | User disconnect / abnormal disconnect / not yet connected at startup          |
+| Auto recovery progress        | Currently attempt n of 3                                                      |
+| Latest error                  | Classified connection error code and phase                                    |
+| Credential completeness       | Whether a saved password or key passphrase is missing                         |
+| Connection method and address | SSH / WSL / Docker, plus address, distro or container name                    |
+| Device display name           | A user-changed name wins; default is the SSH alias                            |
 
 Outputs:
 
-| Output | Description |
-| --- | --- |
-| Visible state | One of 5 |
-| State copy and short state text | Short text replaces the device name in the project row |
-| Semantic color | success / in-progress (new) / neutral / warning / danger |
-| Icon | The project row has a single icon slot |
-| Primary action | Connect / Disconnect / Cancel connection / Update remote / Update desktop / Install and connect / Confirm new device / Supply password / Retry / none |
-| Reason and fix action | From error classification |
-| Recovery progress text | Such as "自动恢复 2/3" (auto recovery 2/3) |
-| Connection description | Such as `SSH · dev@localhost:2222`, generated per connection method |
+| Output                          | Description                                                                                                                                           |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Visible state                   | One of 5                                                                                                                                              |
+| State copy and short state text | Short text replaces the device name in the project row                                                                                                |
+| Semantic color                  | success / in-progress (new) / neutral / warning / danger                                                                                              |
+| Icon                            | The project row has a single icon slot                                                                                                                |
+| Primary action                  | Connect / Disconnect / Cancel connection / Update remote / Update desktop / Install and connect / Confirm new device / Supply password / Retry / none |
+| Reason and fix action           | From error classification                                                                                                                             |
+| Recovery progress text          | Such as "自动恢复 2/3" (auto recovery 2/3)                                                                                                            |
+| Connection description          | Such as `SSH · dev@localhost:2222`, generated per connection method                                                                                   |
 
 The 5 visible states:
 
-| Visible state | Trigger facts | Semantic color | Project row icon | Primary action |
-| --- | --- | --- | --- | --- |
-| Connected (已连接) | Device online and project attachment ready | success (shown only in detail card and settings) | neutral cloud, no mark | Disconnect |
-| Connecting (连接中) | Explicit connect, in-place reconnect or auto recovery in progress; or device online but attachment not ready | in-progress | single spinner | "Cancel connection" inside the wizard, none elsewhere |
-| Not connected (未连接) | User disconnect, not yet connected at startup, offline before auto recovery | neutral | crossed-out cloud | Connect |
-| Needs action (需要处理) | Install needed, remote must update, local must update, identity to confirm, credentials missing | warning | cloud + `!` | The action matching the reason |
-| Connection failed (连接失败) | Latest explicit connect failed or auto recovery exhausted, and the reason is not "needs action" | danger | cloud + `✕` | The fix action of the error classification, default "Retry" |
+| Visible state                | Trigger facts                                                                                                | Semantic color                                   | Project row icon       | Primary action                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ | ---------------------- | ----------------------------------------------------------- |
+| Connected (已连接)           | Device online and project attachment ready                                                                   | success (shown only in detail card and settings) | neutral cloud, no mark | Disconnect                                                  |
+| Connecting (连接中)          | Explicit connect, in-place reconnect or auto recovery in progress; or device online but attachment not ready | in-progress                                      | single spinner         | "Cancel connection" inside the wizard, none elsewhere       |
+| Not connected (未连接)       | User disconnect, not yet connected at startup, offline before auto recovery                                  | neutral                                          | crossed-out cloud      | Connect                                                     |
+| Needs action (需要处理)      | Install needed, remote must update, local must update, identity to confirm, credentials missing              | warning                                          | cloud + `!`            | The action matching the reason                              |
+| Connection failed (连接失败) | Latest explicit connect failed or auto recovery exhausted, and the reason is not "needs action"              | danger                                           | cloud + `✕`            | The fix action of the error classification, default "Retry" |
 
 Decision rules:
 
@@ -161,19 +161,19 @@ Decision rules:
   - Shared types and runtime schema extend together. When the UI meets an unknown error code it falls back to the generic "unknown" copy for backward compatibility.
 - **Classification and display:**
 
-| Class | Typical source | Title | Fix action |
-| --- | --- | --- | --- |
-| Authentication failed | Wrong password or key | SSH 认证失败 | Change password or key: re-enter the password or key passphrase in place on the connecting screen (same interaction as "password needed"); when the username or key file must change, return to the form, focus that field and mark the error |
-| Missing credentials | No saved password or passphrase | 需要密码 | Supply password (belongs to "needs action") |
-| Connection refused or unreachable | ECONNREFUSED, EHOSTUNREACH, ECONNRESET | 无法连接到主机 | Check address and port; retry |
-| Timeout | ETIMEDOUT | 连接超时 | Retry |
-| Host not found | ENOTFOUND | 找不到主机 | Edit the host |
-| Host key changed | host key mismatch | 主机身份已变化 | See the security note; no one-click ignore |
-| Download, upload, pre-check, install failure | Deploy phases; pre-check contains only remote environment check failures | Names the failed phase | Retry; "改用设备直接下载" (use direct download on the device) additionally only for SSH with local download |
-| Remote space or permission insufficient | Deploy or start phase | 远端空间不足 / 没有写入权限 | View details |
-| Version incompatible | Handshake phase | 需要更新 | Update remote or update desktop (belongs to "needs action") |
-| User cancelled | Cancel install or cancel connect | 已取消 | Reconnect; not shown in error style |
-| Unknown | Fallback | 连接失败 | Retry + details |
+| Class                                        | Typical source                                                           | Title                       | Fix action                                                                                                                                                                                                                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authentication failed                        | Wrong password or key                                                    | SSH 认证失败                | Change password or key: re-enter the password or key passphrase in place on the connecting screen (same interaction as "password needed"); when the username or key file must change, return to the form, focus that field and mark the error |
+| Missing credentials                          | No saved password or passphrase                                          | 需要密码                    | Supply password (belongs to "needs action")                                                                                                                                                                                                   |
+| Connection refused or unreachable            | ECONNREFUSED, EHOSTUNREACH, ECONNRESET                                   | 无法连接到主机              | Check address and port; retry                                                                                                                                                                                                                 |
+| Timeout                                      | ETIMEDOUT                                                                | 连接超时                    | Retry                                                                                                                                                                                                                                         |
+| Host not found                               | ENOTFOUND                                                                | 找不到主机                  | Edit the host                                                                                                                                                                                                                                 |
+| Host key changed                             | host key mismatch                                                        | 主机身份已变化              | See the security note; no one-click ignore                                                                                                                                                                                                    |
+| Download, upload, pre-check, install failure | Deploy phases; pre-check contains only remote environment check failures | Names the failed phase      | Retry; "改用设备直接下载" (use direct download on the device) additionally only for SSH with local download                                                                                                                                   |
+| Remote space or permission insufficient      | Deploy or start phase                                                    | 远端空间不足 / 没有写入权限 | View details                                                                                                                                                                                                                                  |
+| Version incompatible                         | Handshake phase                                                          | 需要更新                    | Update remote or update desktop (belongs to "needs action")                                                                                                                                                                                   |
+| User cancelled                               | Cancel install or cancel connect                                         | 已取消                      | Reconnect; not shown in error style                                                                                                                                                                                                           |
+| Unknown                                      | Fallback                                                                 | 连接失败                    | Retry + details                                                                                                                                                                                                                               |
 
 - **Raw error** is folded into "详细信息" (details) and can be copied.
 - **Copy** differs per connection method, with WSL and Docker variants. All copy exists in Chinese and English.
@@ -182,13 +182,13 @@ Decision rules:
 
 ### Terms and copy
 
-| Word the user sees | Meaning and usage |
-| --- | --- |
-| 远程设备 (remote device) | One remote machine; a WSL distro or a Docker container each counts as one device |
-| 连接 (connection) | One way to reach a device, shown by the connection description; with several it is called "其他连接" (other connections) |
-| 项目 / 任务 | Unchanged |
-| ZCode Server | Appears only in install and update scenarios |
-| 发行版 / 容器 | Replace distro, and command names like docker exec / docker cp |
+| Word the user sees       | Meaning and usage                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| 远程设备 (remote device) | One remote machine; a WSL distro or a Docker container each counts as one device                                         |
+| 连接 (connection)        | One way to reach a device, shown by the connection description; with several it is called "其他连接" (other connections) |
+| 项目 / 任务              | Unchanged                                                                                                                |
+| ZCode Server             | Appears only in install and update scenarios                                                                             |
+| 发行版 / 容器            | Replace distro, and command names like docker exec / docker cp                                                           |
 
 - **Words forbidden in the UI**: 链路, 线路, Source Server, 换代, 正史, canonical, direct-tcpip, 远端组件, short device ID. The device ID may only be copied from "更多 -> 设备信息" (More -> Device info).
 - **Identity generation change is rewritten in user language**, e.g. "连接目标的身份已变化" + "作为新设备使用".

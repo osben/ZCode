@@ -32,14 +32,14 @@ docs/cua/producer/ outward-valid CUA producer docs
 
 ## Not carried over
 
-| Content | Reason |
-| --- | --- |
-| `dist/` | now a build artifact |
-| Standalone-repo CI (`.gitlab-ci*`, lore trailer, merge gate, AI review, dist freshness, package smoke) | replaced by z-code CI and MR conventions |
-| Remote smoke (Linux/Windows remote act-verify, remote frame-pixel gate) | depends on private remote machines, not reproducible in-repo |
-| Large parity fixtures (11 sample sets >= 1MB and derivatives) | repo size; oracles trimmed in step, the remaining samples still cover all encoding paths |
-| Internal process docs (test evidence, plans, known issues, CI flow) | valid only for maintaining the old repo |
-| Original MIT LICENSE, standalone lockfile | license and dependency lock follow z-code |
+| Content                                                                                                | Reason                                                                                   |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `dist/`                                                                                                | now a build artifact                                                                     |
+| Standalone-repo CI (`.gitlab-ci*`, lore trailer, merge gate, AI review, dist freshness, package smoke) | replaced by z-code CI and MR conventions                                                 |
+| Remote smoke (Linux/Windows remote act-verify, remote frame-pixel gate)                                | depends on private remote machines, not reproducible in-repo                             |
+| Large parity fixtures (11 sample sets >= 1MB and derivatives)                                          | repo size; oracles trimmed in step, the remaining samples still cover all encoding paths |
+| Internal process docs (test evidence, plans, known issues, CI flow)                                    | valid only for maintaining the old repo                                                  |
+| Original MIT LICENSE, standalone lockfile                                                              | license and dependency lock follow z-code                                                |
 
 ## Version and pin
 
@@ -76,12 +76,12 @@ and does not inherit the root config's `max-lines`; root `pnpm lint` skips this 
 
 ## CI
 
-| job | Trigger | Content |
-| --- | --- | --- |
-| `cua:unit:macos` | MR touching `packages/zcode-cua/**` (released via `approve:merge-request`) or manual web/api pipeline | install (root prepare builds dist) -> typecheck + oxlint -> vitest cua project |
-| `cua:eval:macos` | same | zcode-gui-eval definition validation and node test, all python unittest |
-| `cua:real-e2e:macos` | manual under MR / web / api, failure does not block | start the product broker and run the CUA e2e gate on a real machine |
-| Helper build/packaging | existing rules | producer SHA from `CI_COMMIT_SHA`, version from the workspace package |
+| job                    | Trigger                                                                                               | Content                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `cua:unit:macos`       | MR touching `packages/zcode-cua/**` (released via `approve:merge-request`) or manual web/api pipeline | install (root prepare builds dist) -> typecheck + oxlint -> vitest cua project |
+| `cua:eval:macos`       | same                                                                                                  | zcode-gui-eval definition validation and node test, all python unittest        |
+| `cua:real-e2e:macos`   | manual under MR / web / api, failure does not block                                                   | start the product broker and run the CUA e2e gate on a real machine            |
+| Helper build/packaging | existing rules                                                                                        | producer SHA from `CI_COMMIT_SHA`, version from the workspace package          |
 
 Docker / Jenkins no longer rewrite git URLs or inject zcode-cua credentials (Jenkins `zcode-cua.gitlab-read`
 can be reclaimed):

@@ -9,12 +9,12 @@ hard version gates, RPC framework refactor, task/queue/recovery protocols, onlin
 
 ## UI surface matrix
 
-| Scenario / entry                    | Shared implementation and authoritative owner     | Validation and side effects                         | Mode / isolation                                   |
-| ----------------------------------- | ------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------- |
-| Desktop connects a standalone Server | connectServerRemote → Host connection handle     | server-info capability decides the side subscription | Connects without the capability; no change to workspace drafts or tasks |
-| Desktop local and SSH/WSL/Docker    | Host services → main telemetry exit               | Companion process keeps the subscription            | No change to the corresponding UI, runtime state or settings |
-| Same-Server Bash from several windows | CLI single-command owner → main                 | Completion-token validation, bounded de-dup, ARMS projection | Event count does not grow with connection count |
-| Mobile remote-control attachment    | Agent connection scope                            | Telemetry events stay empty                         | continuous/replayable recovery semantics unchanged |
+| Scenario / entry                      | Shared implementation and authoritative owner | Validation and side effects                                  | Mode / isolation                                                        |
+| ------------------------------------- | --------------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| Desktop connects a standalone Server  | connectServerRemote → Host connection handle  | server-info capability decides the side subscription         | Connects without the capability; no change to workspace drafts or tasks |
+| Desktop local and SSH/WSL/Docker      | Host services → main telemetry exit           | Companion process keeps the subscription                     | No change to the corresponding UI, runtime state or settings            |
+| Same-Server Bash from several windows | CLI single-command owner → main               | Completion-token validation, bounded de-dup, ARMS projection | Event count does not grow with connection count                         |
+| Mobile remote-control attachment      | Agent connection scope                        | Telemetry events stay empty                                  | continuous/replayable recovery semantics unchanged                      |
 
 UI, candidates, defaults and persistence are unchanged. Host forwarding and the main exit are shared; a Server is
 subscribed only when it explicitly supports the capability, and local and companion deployment paths keep their
@@ -23,15 +23,15 @@ missing new field stays compatible with old producers.
 
 ## Feature relationships / state owners and commit sinks
 
-| Level          | Chain / owner                                           | Reason and basis                                                          |
-| -------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
-| must-inspect   | shared server-info → both Server kinds → Host helper/index | Declaration, parsing and subscription gate of the new capability must agree |
-| must-inspect   | CLI Bash owner → shared protocol → services/Host → main | completionToken is generated before fan-out and de-duplicated at the single exit |
-| must-inspect   | Host environment identity → CLI/MCP source → window aggregator | Isolation key flows through; the allow-list projection leaks no identity |
-| must-inspect   | CLI source → external app totals                        | Arrival time belongs to the original reading; delivery must not extend validity |
-| should-inspect | Host self heap / renderer heap                          | Same-tick maximum and delivery-clearing rule agree                        |
-| invariant-only | terminal attachment / task realtime / CommandInbox      | No new session subscription, queue, snapshot or replay state              |
-| evidence-only  | telemetry tests / CI guard                              | Contracts verified with trigger-scenario assertions; passing tests do not extrapolate to real machines |
+| Level          | Chain / owner                                                  | Reason and basis                                                                                       |
+| -------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| must-inspect   | shared server-info → both Server kinds → Host helper/index     | Declaration, parsing and subscription gate of the new capability must agree                            |
+| must-inspect   | CLI Bash owner → shared protocol → services/Host → main        | completionToken is generated before fan-out and de-duplicated at the single exit                       |
+| must-inspect   | Host environment identity → CLI/MCP source → window aggregator | Isolation key flows through; the allow-list projection leaks no identity                               |
+| must-inspect   | CLI source → external app totals                               | Arrival time belongs to the original reading; delivery must not extend validity                        |
+| should-inspect | Host self heap / renderer heap                                 | Same-tick maximum and delivery-clearing rule agree                                                     |
+| invariant-only | terminal attachment / task realtime / CommandInbox             | No new session subscription, queue, snapshot or replay state                                           |
+| evidence-only  | telemetry tests / CI guard                                     | Contracts verified with trigger-scenario assertions; passing tests do not extrapolate to real machines |
 
 ## Must-preserve invariants
 
@@ -56,15 +56,15 @@ hint or requiring old Servers to upgrade is not a necessary fix.
 
 ## Accepted cases
 
-| Case    | Setup and action                                            | Assertions                                                             | Evidence / status                                                      |
-| ------- | ----------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| PRT-031 | Old/new server-info, establish the Host telemetry subscription | Missing capability: no subscription and the server stays alive; capability present: the four side channels work | schema / Host / localhost WS integration pass; old Core probe exit 0 |
-| PRT-032 | One completion token arrives repeatedly via different Hosts; same metrics with different tokens | The former reports once, the latter separately; the set is bounded and cleared on reset | protocol / CLI / main regressions pass; cap and reset verified |
-| PRT-033 | chat/aux out of phase, aux stops updating, periodic and exit flush | New readings delivered per group; old readings total two periods before exit | Controlled-clock regression passes, incl. same-group instance expiry and CLI/MCP budget |
-| PRT-034 | Same spec in different environments, and several instances in one environment, CLI and MCP | No cross-environment sum; same environment summed; final attributes carry no identity | Host / source / window / exit regressions pass |
-| PRT-035 | Two Hosts' heap high→low and low→high in the same tick     | Same maximum, not redelivered on the next tick                         | selfHeap / integration regressions pass                                |
-| PRT-036 | Actual source paths, forbidden calls and exemptions         | All protected; legitimate on-demand sampling exemptions still valid    | guard / repo hygiene pass, 73 files / 2 effective exemptions           |
-| PRT-037 | Backtick inside regex, character class, division, comments, templates | Real calls hit, real comments ignored, no state drift repo-wide | guard 31 regressions pass, incl. real stability source                 |
+| Case    | Setup and action                                                                                | Assertions                                                                                                      | Evidence / status                                                                       |
+| ------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| PRT-031 | Old/new server-info, establish the Host telemetry subscription                                  | Missing capability: no subscription and the server stays alive; capability present: the four side channels work | schema / Host / localhost WS integration pass; old Core probe exit 0                    |
+| PRT-032 | One completion token arrives repeatedly via different Hosts; same metrics with different tokens | The former reports once, the latter separately; the set is bounded and cleared on reset                         | protocol / CLI / main regressions pass; cap and reset verified                          |
+| PRT-033 | chat/aux out of phase, aux stops updating, periodic and exit flush                              | New readings delivered per group; old readings total two periods before exit                                    | Controlled-clock regression passes, incl. same-group instance expiry and CLI/MCP budget |
+| PRT-034 | Same spec in different environments, and several instances in one environment, CLI and MCP      | No cross-environment sum; same environment summed; final attributes carry no identity                           | Host / source / window / exit regressions pass                                          |
+| PRT-035 | Two Hosts' heap high→low and low→high in the same tick                                          | Same maximum, not redelivered on the next tick                                                                  | selfHeap / integration regressions pass                                                 |
+| PRT-036 | Actual source paths, forbidden calls and exemptions                                             | All protected; legitimate on-demand sampling exemptions still valid                                             | guard / repo hygiene pass, 73 files / 2 effective exemptions                            |
+| PRT-037 | Backtick inside regex, character class, division, comments, templates                           | Real calls hit, real comments ignored, no state drift repo-wide                                                 | guard 31 regressions pass, incl. real stability source                                  |
 
 High-risk combinations: Server capability x connection, instance x environment, reading phase x expiry, Bash
 completion x several Hosts. Theme/language/screen size are pruned (no UI change); task stream/snapshot are verified

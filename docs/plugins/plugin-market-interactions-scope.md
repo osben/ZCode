@@ -60,17 +60,17 @@ flowchart LR
 
 ## Marketplace changes and acceptance
 
-| Change                | Acceptance                                                                                                                                                          |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source and search     | Default public; public, community and personal always switchable; search is limited to the current source and keeps the existing Chinese pinyin matching.          |
-| Community entry       | Shows real community plugins by catalog ownership; with no entries shows "暂无社区插件" (no community plugins yet); a load failure is not disguised as the empty state. |
-| Plugin management     | One top-level "Plugin management" entry; keeps the global / project switch, per-project enable/disable and config override; can return to "Browse all plugins".    |
-| Management actions    | The more-menu has only pause/enable and uninstall; the existing upgrade stays a separate action; uninstall confirmation and failure feedback are kept.            |
-| Install               | Reuses existing user-level install, built-in restore and post-install skill refresh; no separate install state.                                                     |
-| UI plugin cards       | The whole row opens details; only the session right-side marketplace has an extra "打开" (Open); a paused plugin shows "启用" (Enable) and enables before opening; uninstalled ones can be installed directly. |
-| App plugin group      | Shares in-group expand/collapse with other categories, all expanded by default; above 6 it can collapse to the first 6, never into a separate list. Search and clearing search keep each source's manual selection. |
-| UI plugin details     | Reuses the ordinary detail layout, showing an enlargeable preview image, UI capabilities and info.                                                                  |
-| Marketplace reuse     | The main area and the Side Pane entry reuse one component, switching browse / details / management inside the marketplace; the entry can suppress the settings-page breadcrumb. |
+| Change             | Acceptance                                                                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source and search  | Default public; public, community and personal always switchable; search is limited to the current source and keeps the existing Chinese pinyin matching.                                                           |
+| Community entry    | Shows real community plugins by catalog ownership; with no entries shows "暂无社区插件" (no community plugins yet); a load failure is not disguised as the empty state.                                             |
+| Plugin management  | One top-level "Plugin management" entry; keeps the global / project switch, per-project enable/disable and config override; can return to "Browse all plugins".                                                     |
+| Management actions | The more-menu has only pause/enable and uninstall; the existing upgrade stays a separate action; uninstall confirmation and failure feedback are kept.                                                              |
+| Install            | Reuses existing user-level install, built-in restore and post-install skill refresh; no separate install state.                                                                                                     |
+| UI plugin cards    | The whole row opens details; only the session right-side marketplace has an extra "打开" (Open); a paused plugin shows "启用" (Enable) and enables before opening; uninstalled ones can be installed directly.      |
+| App plugin group   | Shares in-group expand/collapse with other categories, all expanded by default; above 6 it can collapse to the first 6, never into a separate list. Search and clearing search keep each source's manual selection. |
+| UI plugin details  | Reuses the ordinary detail layout, showing an enlargeable preview image, UI capabilities and info.                                                                                                                  |
+| Marketplace reuse  | The main area and the Side Pane entry reuse one component, switching browse / details / management inside the marketplace; the entry can suppress the settings-page breadcrumb.                                     |
 
 The file manager and generic tab multi-open/ordering/recently-closed are outside this marketplace work.
 
@@ -184,12 +184,12 @@ This work is a presentation, option-source, validation, commit-effect and catalo
 change. It does not change conversation recovery, queues or message delivery. The worktree has no code-graph
 index, so imports, callers and protocol fields were checked directly; no Codegraph deep scan is claimed.
 
-| Entry                                     | Shared implementation and display state                                              | Authority and commit path                                   | Isolation to preserve                                                          |
-| ----------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Workspace main marketplace, Side Pane marketplace | PluginStorePage / ListView / Card; each view has independent query, search and source | IPluginManagementService -> CLI install directory and config files | Workspace identity, host, project / global config; refresh projections after a successful write |
-| In-marketplace management, settings management | PluginsSection; global first, project selection and config restore reuse existing capability | setPluginEnabled / configurePlugin / resetPluginConfig | Project override never changes global; uninstall is explicitly a user-level global action |
-| UI cards, details, recommended entry      | Valid manifest capability; recommended list independent; open reuses the plugin sandbox | listUiSurfaces -> the existing session's UI runtime         | Open only on desktop local; late responses from an old session / uninstalled view never open a new target |
-| External intake, published catalog        | External directory and required purpose category; publishing generates ownership and capability | Plugin repository validate / sync_external_prs / build_dist | Ownership, purpose and UI capability separate; migration never changes install IDs or ZIP content |
+| Entry                                             | Shared implementation and display state                                                         | Authority and commit path                                          | Isolation to preserve                                                                                     |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Workspace main marketplace, Side Pane marketplace | PluginStorePage / ListView / Card; each view has independent query, search and source           | IPluginManagementService -> CLI install directory and config files | Workspace identity, host, project / global config; refresh projections after a successful write           |
+| In-marketplace management, settings management    | PluginsSection; global first, project selection and config restore reuse existing capability    | setPluginEnabled / configurePlugin / resetPluginConfig             | Project override never changes global; uninstall is explicitly a user-level global action                 |
+| UI cards, details, recommended entry              | Valid manifest capability; recommended list independent; open reuses the plugin sandbox         | listUiSurfaces -> the existing session's UI runtime                | Open only on desktop local; late responses from an old session / uninstalled view never open a new target |
+| External intake, published catalog                | External directory and required purpose category; publishing generates ownership and capability | Plugin repository validate / sync_external_prs / build_dist        | Ownership, purpose and UI capability separate; migration never changes install IDs or ZIP content         |
 
 Adjacent capabilities that must be checked: post-install skill refresh, ordinary plugin trial, built-in
 restore, orphaned-plugin update gate, deep-link jump, tab title / search. Session frozen capability, desktop

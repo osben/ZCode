@@ -20,17 +20,17 @@ read the same fact.
 
 ## 2. Confirmed boundaries
 
-| Dimension          | Conclusion                                                                                                                                                  |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Trigger source     | only a Browser API that succeeded inside Node REPL and whose response meta ties to a concrete tab                                                           |
-| Not a trigger      | `agent.browsers.list()`, documentation, capability queries, failed calls                                                                                    |
-| Existing explicit image | does not skip the auto screenshot; the explicit image stays in the original tool result and the turn tail still appends the current active tab's final state |
-| Tab selection      | at completion re-read browser tabs and screenshot only the tab with `active=true`; this `active` is main's effective active (including background fallback), not "currently visible in UI" |
-| Turn end state     | attempted only on normal completion; Stop, cancel and failure skip                                                                                          |
-| Placement          | end of the turn's content area: after the final assistant/Website preview cards and the file diff summary, before the message action bar; not attached back to existing tool cards |
-| Style              | reuse the Node REPL tool-result screenshot rendering, size, left alignment, rounded corners, image-hugging border and large-image viewer                    |
-| Failure policy     | browser closed, no live tab left in scope, screenshot failure, or still over budget after compression: skip silently and log with the service/runtime logger. When the scope still has a live tab this row is not reached, because effective active is non-empty |
-| Model context      | the auto screenshot does not enter message history/provider content and adds no model tool call                                                             |
+| Dimension               | Conclusion                                                                                                                                                                                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Trigger source          | only a Browser API that succeeded inside Node REPL and whose response meta ties to a concrete tab                                                                                                                                                                |
+| Not a trigger           | `agent.browsers.list()`, documentation, capability queries, failed calls                                                                                                                                                                                         |
+| Existing explicit image | does not skip the auto screenshot; the explicit image stays in the original tool result and the turn tail still appends the current active tab's final state                                                                                                     |
+| Tab selection           | at completion re-read browser tabs and screenshot only the tab with `active=true`; this `active` is main's effective active (including background fallback), not "currently visible in UI"                                                                       |
+| Turn end state          | attempted only on normal completion; Stop, cancel and failure skip                                                                                                                                                                                               |
+| Placement               | end of the turn's content area: after the final assistant/Website preview cards and the file diff summary, before the message action bar; not attached back to existing tool cards                                                                               |
+| Style                   | reuse the Node REPL tool-result screenshot rendering, size, left alignment, rounded corners, image-hugging border and large-image viewer                                                                                                                         |
+| Failure policy          | browser closed, no live tab left in scope, screenshot failure, or still over budget after compression: skip silently and log with the service/runtime logger. When the scope still has a live tab this row is not reached, because effective active is non-empty |
+| Model context           | the auto screenshot does not enter message history/provider content and adds no model tool call                                                                                                                                                                  |
 
 ## 3. State and order
 
@@ -122,12 +122,12 @@ PNG source
 
 Representative combinations are pruned by invariant, not permuted with tab, turn and client mode:
 
-| Case    | Setup                                             | Action            | Assertion                                                         | Evidence              |
-| ------- | ------------------------------------------------- | ----------------- | ----------------------------------------------------------------- | --------------------- |
-| BTA-C01 | PNG original already meets size and byte budget   | `prepareForModel` | bytes, MIME, size unchanged, strategy=`original`                  | adapter unit          |
-| BTA-C02 | PNG original over budget, original-size JPEG fits | `prepareForModel` | outputs `image/jpeg`, width/height unchanged, no shrunk PNG       | adapter unit          |
-| BTA-C03 | PNG original and original-size JPEG both over budget | `prepareForModel` | later candidates stay `image/jpeg`, shrunk by existing ratios until within budget | adapter unit |
-| BTA-C04 | JPEG, GIF, WebP input                             | `prepareForModel` | existing format entry and failure contract                        | existing adapter unit |
+| Case    | Setup                                                | Action            | Assertion                                                                         | Evidence              |
+| ------- | ---------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------- | --------------------- |
+| BTA-C01 | PNG original already meets size and byte budget      | `prepareForModel` | bytes, MIME, size unchanged, strategy=`original`                                  | adapter unit          |
+| BTA-C02 | PNG original over budget, original-size JPEG fits    | `prepareForModel` | outputs `image/jpeg`, width/height unchanged, no shrunk PNG                       | adapter unit          |
+| BTA-C03 | PNG original and original-size JPEG both over budget | `prepareForModel` | later candidates stay `image/jpeg`, shrunk by existing ratios until within budget | adapter unit          |
+| BTA-C04 | JPEG, GIF, WebP input                                | `prepareForModel` | existing format entry and failure contract                                        | existing adapter unit |
 
 ## 6. Acceptance
 

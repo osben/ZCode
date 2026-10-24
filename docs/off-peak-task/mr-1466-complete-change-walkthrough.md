@@ -18,14 +18,14 @@ Full history: `git show b8876e8b:docs/off-peak-task/mr-1466-complete-change-walk
 
 ### 1.1 Git boundary
 
-| Item        | Value                                                                                 |
-| ----------- | ------------------------------------------------------------------------------------- |
-| MR          | `!1466` - `Draft: feat(off-peak): 闲时任务 Off-Peak Task`                             |
-| Base SHA    | `14a62011d582ccbd20ef4c274892ae0dea076bd9`                                            |
-| MR Head SHA | `cc3980d2a1f1523f362cb1a6e80d5ba2482cc5b7`                                            |
-| Commits     | 60 (55 non-merge + 5 branch-sync merges)                                              |
-| Files       | 115, `+14,429 / -1,707`                                                               |
-| MR state    | Draft, Open, no conflicts; latest pipeline manual/blocked                             |
+| Item        | Value                                                     |
+| ----------- | --------------------------------------------------------- |
+| MR          | `!1466` - `Draft: feat(off-peak): 闲时任务 Off-Peak Task` |
+| Base SHA    | `14a62011d582ccbd20ef4c274892ae0dea076bd9`                |
+| MR Head SHA | `cc3980d2a1f1523f362cb1a6e80d5ba2482cc5b7`                |
+| Commits     | 60 (55 non-merge + 5 branch-sync merges)                  |
+| Files       | 115, `+14,429 / -1,707`                                   |
+| MR state    | Draft, Open, no conflicts; latest pipeline manual/blocked |
 
 The local branch additionally contained `5c6d0e9d7f chore: release v3.5.3-alpha.0`, which is not in
 the MR Head and not counted here.
@@ -71,13 +71,13 @@ data directory.
 
 ### 2.2 User-visible provider vs the provider actually used
 
-| Scenario                                            | Model bar / resident session model                              | Provider the current request really uses                                      |
-| --------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| First idle dispatch creates the session             | the user's workspace default model, full `providerId/modelId` kept | the automatic turn temporarily uses built-in `builtin:offpeak-idle-plan`    |
-| Later ticket-segment continuation                   | still the same session's resident user model                    | the continuation turn again temporarily uses `builtin:offpeak-idle-plan`       |
-| After the automatic turn ends                       | the resident user model is restored                             | later ordinary messages use the user provider                                  |
-| Permission approval during an unfinished automatic turn | model bar still shows the resident user model               | still inside the same idle-plan turn; **approval does not switch provider**    |
-| User sends a prompt while the automatic turn is busy | model bar still shows the resident user model                  | the message is queued; after the automatic turn clears the overlay and restores the model it drains, so it uses the user provider |
+| Scenario                                                | Model bar / resident session model                                 | Provider the current request really uses                                                                                          |
+| ------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| First idle dispatch creates the session                 | the user's workspace default model, full `providerId/modelId` kept | the automatic turn temporarily uses built-in `builtin:offpeak-idle-plan`                                                          |
+| Later ticket-segment continuation                       | still the same session's resident user model                       | the continuation turn again temporarily uses `builtin:offpeak-idle-plan`                                                          |
+| After the automatic turn ends                           | the resident user model is restored                                | later ordinary messages use the user provider                                                                                     |
+| Permission approval during an unfinished automatic turn | model bar still shows the resident user model                      | still inside the same idle-plan turn; **approval does not switch provider**                                                       |
+| User sends a prompt while the automatic turn is busy    | model bar still shows the resident user model                      | the message is queued; after the automatic turn clears the overlay and restores the model it drains, so it uses the user provider |
 
 The resident session model of a multi-provider user is not "the first provider". Before the first
 dispatch the host calls `workspace/readState(preferWorkspaceDefaults=true)` and picks a full model
@@ -103,11 +103,11 @@ state (later removed by D44).
 
 Three different queues must not be mixed into one global FIFO:
 
-| Layer                        | Stored in                                       | What is queued                                                         | Authority                                       |
-| ---------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------- |
-| Server ticket queue          | Off-Peak server                                 | tickets taken by users; returns `position` and turns `ready` off-peak  | authority for idle admission order              |
-| Scheduler dispatchable queue | local `off_peak_tasks` + claim fields           | local tasks synced to `schedulable=true`, claimed by `queued_at`       | dispatch order of this local host               |
-| Conversation message queue   | existing session/agent runtime                  | ordinary prompts the user sends while the agent is busy                | message order inside that session only          |
+| Layer                        | Stored in                             | What is queued                                                        | Authority                              |
+| ---------------------------- | ------------------------------------- | --------------------------------------------------------------------- | -------------------------------------- |
+| Server ticket queue          | Off-Peak server                       | tickets taken by users; returns `position` and turns `ready` off-peak | authority for idle admission order     |
+| Scheduler dispatchable queue | local `off_peak_tasks` + claim fields | local tasks synced to `schedulable=true`, claimed by `queued_at`      | dispatch order of this local host      |
+| Conversation message queue   | existing session/agent runtime        | ordinary prompts the user sends while the agent is busy               | message order inside that session only |
 
 `next_poll_at` is written into the task table, but the service uses one shared timer for polling the
 whole batch of non-terminal tickets, not an independent timer per task.
@@ -200,14 +200,14 @@ A query can also return not_found.
 
 ### 4.3 Axis mapping and deviations
 
-| Server state | Local sync action                                                   | Typical client state                        |
-| ------------ | ------------------------------------------------------------------- | ------------------------------------------- |
-| `queued`     | `schedulable=false`, write position                                 | `queued` or `paused`                        |
-| `ready`      | `schedulable=true`, wake the scheduler                              | `queued`, dispatchable next                 |
-| `active`     | keep the activated snapshot                                         | usually `running`                           |
-| `expired`    | queued task auto-retakes; running closes the loop via messages `3102` | back to `queued`                          |
-| `settled`    | clear the schedulable snapshot                                      | normally terminal; an unexpected initial state may linger |
-| `not_found`  | ignored by the current sync, no auto retake                         | may linger; the user's Continue can re-take |
+| Server state | Local sync action                                                     | Typical client state                                      |
+| ------------ | --------------------------------------------------------------------- | --------------------------------------------------------- |
+| `queued`     | `schedulable=false`, write position                                   | `queued` or `paused`                                      |
+| `ready`      | `schedulable=true`, wake the scheduler                                | `queued`, dispatchable next                               |
+| `active`     | keep the activated snapshot                                           | usually `running`                                         |
+| `expired`    | queued task auto-retakes; running closes the loop via messages `3102` | back to `queued`                                          |
+| `settled`    | clear the schedulable snapshot                                        | normally terminal; an unexpected initial state may linger |
+| `not_found`  | ignored by the current sync, no auto retake                           | may linger; the user's Continue can re-take               |
 
 Important deviation: local `running` is written after the `sendPrompt` ACK, while whether the gateway
 passes the messages fine valve happens later. During a `429/3105` wait the UI therefore shows
@@ -230,26 +230,26 @@ running, not a separate "server capacity queuing".
 
 Stored in the existing tasks-index SQLite with WAL, `synchronous=NORMAL`, `busy_timeout=5000`.
 
-| Column                                                                    | Meaning                                              |
-| ------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `off_peak_task_id`                                                        | stable task primary key / server task_id             |
-| `server_ticket_id`                                                        | current ticket id                                    |
-| `title`, `prompt`                                                         | user title, Instructions                             |
-| `conversation_id`, `session_id`                                           | ZCode task id, reusable Agent session id             |
-| `permission_mode`                                                         | existing task mode build/edit/plan/yolo              |
-| `model`, `thought_level`                                                  | idle plan automatic-turn model; reasoning level (added by incremental migration) |
-| `workspace_key`, `workspace_path`, `workspace_identity`                   | identity isolation key, real path, optional remote identity |
-| `status`                                                                  | client seven-state                                   |
-| `queued_at`                                                               | local FIFO order time                                |
-| `started_at` / `ended_at`                                                 | lifecycle times                                      |
-| `failure_reason`, `files_changed`                                         | failure reason, best-effort changed-file count       |
-| `settled_at`                                                              | server settle ACK time                               |
-| `history_deleted_at`                                                      | logical History deletion time (incremental migration) |
-| `registered_at`                                                           | take-number success time                             |
-| `schedulable`, `queue_position`, `next_poll_at`                           | local snapshot of server ready / position / suggested next poll |
-| `claim_running` / `claimed_at`                                            | scheduler claim lock and time                        |
-| `attempt_count` / `last_error`                                            | dispatch record / diagnostics                        |
-| `created_at` / `updated_at`                                               | local audit times                                    |
+| Column                                                  | Meaning                                                                          |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `off_peak_task_id`                                      | stable task primary key / server task_id                                         |
+| `server_ticket_id`                                      | current ticket id                                                                |
+| `title`, `prompt`                                       | user title, Instructions                                                         |
+| `conversation_id`, `session_id`                         | ZCode task id, reusable Agent session id                                         |
+| `permission_mode`                                       | existing task mode build/edit/plan/yolo                                          |
+| `model`, `thought_level`                                | idle plan automatic-turn model; reasoning level (added by incremental migration) |
+| `workspace_key`, `workspace_path`, `workspace_identity` | identity isolation key, real path, optional remote identity                      |
+| `status`                                                | client seven-state                                                               |
+| `queued_at`                                             | local FIFO order time                                                            |
+| `started_at` / `ended_at`                               | lifecycle times                                                                  |
+| `failure_reason`, `files_changed`                       | failure reason, best-effort changed-file count                                   |
+| `settled_at`                                            | server settle ACK time                                                           |
+| `history_deleted_at`                                    | logical History deletion time (incremental migration)                            |
+| `registered_at`                                         | take-number success time                                                         |
+| `schedulable`, `queue_position`, `next_poll_at`         | local snapshot of server ready / position / suggested next poll                  |
+| `claim_running` / `claimed_at`                          | scheduler claim lock and time                                                    |
+| `attempt_count` / `last_error`                          | dispatch record / diagnostics                                                    |
+| `created_at` / `updated_at`                             | local audit times                                                                |
 
 Indexes: `(status, queued_at)` for status filtering and FIFO claim; `(workspace_key, status)` for
 workspace-isolated queries.
@@ -432,13 +432,13 @@ desktop/scheduler restart
 
 ### 7.1 Five conceptual endpoints
 
-| Purpose                 | Method and path                                  | Caller                          |
-| ----------------------- | ------------------------------------------------ | ------------------------------- |
-| Create-eligibility snapshot | `GET /api/v1/off-peak/ticket/availability`   | host service                    |
-| Take number             | `POST /api/v1/off-peak/ticket`                   | host service                    |
-| Batch ticket status     | `POST /api/v1/off-peak/ticket/status`            | host service                    |
-| Settle                  | `POST /api/v1/off-peak/ticket/:id/settle`        | host service                    |
-| Model messages          | `POST /api/v1/off-peak/anthropic/v1/messages`    | temporary provider inside agent |
+| Purpose                     | Method and path                               | Caller                          |
+| --------------------------- | --------------------------------------------- | ------------------------------- |
+| Create-eligibility snapshot | `GET /api/v1/off-peak/ticket/availability`    | host service                    |
+| Take number                 | `POST /api/v1/off-peak/ticket`                | host service                    |
+| Batch ticket status         | `POST /api/v1/off-peak/ticket/status`         | host service                    |
+| Settle                      | `POST /api/v1/off-peak/ticket/:id/settle`     | host service                    |
+| Model messages              | `POST /api/v1/off-peak/anthropic/v1/messages` | temporary provider inside agent |
 
 Early docs' "four endpoints" counted only ticket-management endpoints; with availability it is four
 ticket JSON endpoints plus one model endpoint.
@@ -468,13 +468,13 @@ ticket JSON endpoints plus one model endpoint.
 
 ### 7.4 Business codes
 
-| HTTP/business code | Handling                                                                               |
-| ------------------ | -------------------------------------------------------------------------------------- |
-| `3101`             | not eligible, creation fails, UI shows the matching error                              |
-| `3103`             | cannot take number now / quota limit; refresh availability; no permanent local bool    |
-| `429` / `3105`     | messages capacity queue; wait per Retry-After, no ordinary retry budget consumed       |
-| `400` / `3102`     | ticket unavailable; produces the stable marker; re-take and continue                  |
-| legacy `3001`      | old-gateway compatibility only, same as 3102                                           |
+| HTTP/business code | Handling                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `3101`             | not eligible, creation fails, UI shows the matching error                           |
+| `3103`             | cannot take number now / quota limit; refresh availability; no permanent local bool |
+| `429` / `3105`     | messages capacity queue; wait per Retry-After, no ordinary retry budget consumed    |
+| `400` / `3102`     | ticket unavailable; produces the stable marker; re-take and continue                |
+| legacy `3001`      | old-gateway compatibility only, same as 3102                                        |
 
 ## 8. OffPeakTaskService: take number, sync and settle
 
@@ -672,18 +672,18 @@ automatic app/system idle sleep, not lid close or user-initiated sleep.
 
 ## 15. Test coverage and verification state
 
-| Layer                | Coverage                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| adapter retry        | 9 cases of 429/3105/3102, Retry-After, generate/stream boundary, ordinary provider isolation    |
-| Repo                 | 16 cases of table creation, state guards, claim, recovery, continuation, History, settle outbox  |
-| Service              | 10 cases of create, pause/continue, sync, re-ticket, cancel/settle, error routing                |
-| Server client/mock   | 7 cases of interface parsing, envelope, null position, availability, state advance, error codes  |
-| Runtime model        | 5 cases of dual credentials, provider construction, user model choice, multi-provider fallback   |
-| Client config/gray   | 5 cases of config switches, allowed models, availability fail-closed/refresh                     |
-| End-to-end service integration | 3 cases of mock take -> ready -> dispatch/continuation loop                            |
-| Scheduler settlement | 3 cases of success/permanent/transient and backoff                                               |
-| UI                   | project options, store concurrency, History mapping, toast, remote mobile hiding                 |
-| WDIO                 | two specs: create/manage flow, quota availability pre-gate                                       |
+| Layer                          | Coverage                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| adapter retry                  | 9 cases of 429/3105/3102, Retry-After, generate/stream boundary, ordinary provider isolation    |
+| Repo                           | 16 cases of table creation, state guards, claim, recovery, continuation, History, settle outbox |
+| Service                        | 10 cases of create, pause/continue, sync, re-ticket, cancel/settle, error routing               |
+| Server client/mock             | 7 cases of interface parsing, envelope, null position, availability, state advance, error codes |
+| Runtime model                  | 5 cases of dual credentials, provider construction, user model choice, multi-provider fallback  |
+| Client config/gray             | 5 cases of config switches, allowed models, availability fail-closed/refresh                    |
+| End-to-end service integration | 3 cases of mock take -> ready -> dispatch/continuation loop                                     |
+| Scheduler settlement           | 3 cases of success/permanent/transient and backoff                                              |
+| UI                             | project options, store concurrency, History mapping, toast, remote mobile hiding                |
+| WDIO                           | two specs: create/manage flow, quota availability pre-gate                                      |
 
 Conversation catalog: `docs/conversation-session-case-catalog.md` gained OP01-OP09; the coverage
 matrix registers the off-peak scenarios and boundaries; the GUI cases OPF/OPA/OPR/OPB stay planned;
@@ -720,16 +720,16 @@ described as full coverage.
 
 ## 17. Plans replaced or repeatedly revised inside the MR
 
-| Topic                     | Intermediate state                                                  | MR Head final state                                                      |
-| ------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Quota prejudgment         | D36 `limit.max_tasks/sliding_window` + local createdAt              | D39 server availability snapshot + POST final authority                  |
-| Keep Awake                | blocker only when switch on and active count > 0                    | blocker whenever the global switch is on                                 |
-| Session model             | first creation might land on the first provider in sort order       | workspace default -> lastUsed -> current, full provider/model kept       |
-| Temporary provider lifecycle | restore timing after a turn risked queued messages crossing providers | restore and clear the turn overlay before ready/queue drain            |
-| ticket expired code       | early 3001                                                          | 3102 formal, 3001 kept for compatibility                                 |
-| UI                        | several rounds of Figma alignment                                   | create composer, two-column cards, History, edge and locked states converged |
-| Interface-count wording   | four interfaces                                                     | four ticket JSON endpoints + one messages endpoint                       |
-| Run now                   | kept in the early plan                                              | v1 removed the run-now entry                                             |
+| Topic                        | Intermediate state                                                    | MR Head final state                                                          |
+| ---------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Quota prejudgment            | D36 `limit.max_tasks/sliding_window` + local createdAt                | D39 server availability snapshot + POST final authority                      |
+| Keep Awake                   | blocker only when switch on and active count > 0                      | blocker whenever the global switch is on                                     |
+| Session model                | first creation might land on the first provider in sort order         | workspace default -> lastUsed -> current, full provider/model kept           |
+| Temporary provider lifecycle | restore timing after a turn risked queued messages crossing providers | restore and clear the turn overlay before ready/queue drain                  |
+| ticket expired code          | early 3001                                                            | 3102 formal, 3001 kept for compatibility                                     |
+| UI                           | several rounds of Figma alignment                                     | create composer, two-column cards, History, edge and locked states converged |
+| Interface-count wording      | four interfaces                                                       | four ticket JSON endpoints + one messages endpoint                           |
+| Run now                      | kept in the early plan                                                | v1 removed the run-now entry                                                 |
 
 ## 18. Known gaps, risks and tech debt
 
@@ -775,18 +775,18 @@ described as full coverage.
 ## 19. Suggested merge acceptance checklist
 
 - [ ] Product confirms whether `awaiting_approval` must be completed in this MR or explicitly
-  downgraded to a later capability.
+      downgraded to a later capability.
 - [ ] If required, add the end-to-end state machine and quota hint for permission event -> awaiting
-  -> approve/reject -> provider switch.
+      -> approve/reject -> provider switch.
 - [x] Team Plan is in the support matrix and reuses the existing runtime-key helper; ZAI/BigModel
-  personal, Team and rejected states have matrix tests.
+      personal, Team and rejected states have matrix tests.
 - [ ] Run availability -> take -> messages -> settle once each with real ZAI and Team credentials in
-  a target environment.
+      a target environment.
 - [ ] Assess compensation for orphan tickets and Delete losing the outbox.
 - [ ] Define a unified retake/fail rule for `not_found` and unexpected initial take states.
 - [ ] Decide whether to accept duplicate sync from several hosts or add a single owner.
 - [x] Update stale doc headers and the interface/quota/3001-3102/approval-provider wording; the
-  shared code comment on the permission default is tracked as code debt.
+      shared code comment on the permission default is tracked as code debt.
 - [ ] Run the pending WDIO / real-service integration in a target environment to verify availability,
-  ready, 429, 3102, settle.
+      ready, 429, 3102, settle.
 - [ ] Confirm the CI API-source relaxation and the mise data-dir isolation really belong in this MR.

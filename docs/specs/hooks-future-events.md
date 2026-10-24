@@ -8,14 +8,14 @@ Compares the hooks of Claude Code, Codex and DeepSeek Harness (dsh) and records 
 
 ## Overview
 
-| Candidate event  | Claude Code | Codex | dsh CC bridge | Conclusion                 |
-| ---------------- | ----------- | ----- | ------------- | -------------------------- |
-| `SubagentStart`  | yes         | yes   | yes           | worth doing, medium effort |
-| `SubagentStop`   | yes         | yes   | yes           | same batch as SubagentStart |
-| `Notification`   | yes         | no    | no            | questionable value, defer  |
-| `Interrupt`      | no          | yes   | no            | Codex only, defer          |
+| Candidate event  | Claude Code | Codex | dsh CC bridge | Conclusion                           |
+| ---------------- | ----------- | ----- | ------------- | ------------------------------------ |
+| `SubagentStart`  | yes         | yes   | yes           | worth doing, medium effort           |
+| `SubagentStop`   | yes         | yes   | yes           | same batch as SubagentStart          |
+| `Notification`   | yes         | no    | no            | questionable value, defer            |
+| `Interrupt`      | no          | yes   | no            | Codex only, defer                    |
 | `WorktreeCreate` | yes         | no    | no            | architecture issue, separate project |
-| `WorktreeRemove` | yes         | no    | no            | same batch as WorktreeCreate |
+| `WorktreeRemove` | yes         | no    | no            | same batch as WorktreeCreate         |
 
 Claude Code has many more events with no ZCode counterpart (`TaskCreated` / `TaskCompleted` / `TeammateIdle` / `ConfigChange` / `FileChanged` / `Elicitation` etc.); they are not candidates until ZCode has the matching product concept.
 

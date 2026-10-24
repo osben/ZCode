@@ -23,12 +23,12 @@ Write/Edit ── Write/Edit ── Write/Edit ── visible non-file-write row
 
 ## Summary contract
 
-| Parent state | Expansion | Summary |
-| --- | --- | --- |
-| in progress | collapsed | `Changes · N files · Editing/Writing <file chip> <diff count>`; the latest snapshot scrolls vertically |
-| in progress | expanded | `Changes · N files` |
-| completed | expanded | `Changes · N files` |
-| completed | collapsed | multiple files: `Changes · N files · <file chips>`; single file: `Changes · <file chip>` |
+| Parent state | Expansion | Summary                                                                                                |
+| ------------ | --------- | ------------------------------------------------------------------------------------------------------ |
+| in progress  | collapsed | `Changes · N files · Editing/Writing <file chip> <diff count>`; the latest snapshot scrolls vertically |
+| in progress  | expanded  | `Changes · N files`                                                                                    |
+| completed    | expanded  | `Changes · N files`                                                                                    |
+| completed    | collapsed | multiple files: `Changes · N files · <file chips>`; single file: `Changes · <file chip>`               |
 
 When a running Write/Edit has entered the group but the streamed JSON does not yet provide a parsable file path, the parent summary shows `Changes · N tools`, where N is the current number of group children. At this stage it must not show a dangling separator or `0 files`; after expansion the original children are still kept, even if the path has not arrived and only `Writing`/`Editing` can be shown for now. Once the path arrives the parent summary switches to the normal file summary.
 

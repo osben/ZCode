@@ -33,13 +33,13 @@ Definitions:
 
 ## Relation to the V1 warehouse channel
 
-|                                   | V1 warehouse `/report`            | This document (ARMS)                              |
-| --------------------------------- | --------------------------------- | ------------------------------------------------- |
-| Explicit desktop connection terminal | `remote_workspace_connect_result` | `remote_connect_result` (same trigger, superset of fields) |
-| Disconnect event                  | none (pruned in V1)               | `remote_disconnect`                               |
-| Concurrency gauge                 | none (pruned in V1)               | `custom.value` of `remote_active_session_count`   |
-| Connection duration               | none (pruned in V1)               | `custom.value` of `remote_disconnect`             |
-| User identity                     | `user_id` (when logged in) / `device_mid` | `device_mid` only                         |
+|                                      | V1 warehouse `/report`                    | This document (ARMS)                                       |
+| ------------------------------------ | ----------------------------------------- | ---------------------------------------------------------- |
+| Explicit desktop connection terminal | `remote_workspace_connect_result`         | `remote_connect_result` (same trigger, superset of fields) |
+| Disconnect event                     | none (pruned in V1)                       | `remote_disconnect`                                        |
+| Concurrency gauge                    | none (pruned in V1)                       | `custom.value` of `remote_active_session_count`            |
+| Connection duration                  | none (pruned in V1)                       | `custom.value` of `remote_disconnect`                      |
+| User identity                        | `user_id` (when logged in) / `device_mid` | `device_mid` only                                          |
 
 The connection-result events of the two channels are **deliberately named differently** so that searching by event
 name (alert configuration, reconciliation, full-text search) does not confuse the two field sets. Precedent:
@@ -124,24 +124,24 @@ serve as the numeric measure of a concurrency distribution.
 Trigger: an explicit `ConnectRemote` IPC reaches a success or failure terminal state (same instrumentation point
 as the V1 warehouse event).
 
-| Field             | Value                               | Description                          |
-| ----------------- | ----------------------------------- | ------------------------------------ |
-| value             | `1`                                 | Count of explicit connection attempts |
-| `result`          | `success` / `failure`               | Connection result                    |
-| `remote_kind`     | `ssh` / `wsl` / `docker` / `server` | Remote kind                          |
-| `connect_trigger` | `new` / `reconnect` / `restore`     | Same definition as V1                |
+| Field             | Value                                | Description                            |
+| ----------------- | ------------------------------------ | -------------------------------------- |
+| value             | `1`                                  | Count of explicit connection attempts  |
+| `result`          | `success` / `failure`                | Connection result                      |
+| `remote_kind`     | `ssh` / `wsl` / `docker` / `server`  | Remote kind                            |
+| `connect_trigger` | `new` / `reconnect` / `restore`      | Same definition as V1                  |
 | `error_category`  | the V1 seven enums; empty on success | Produced by `classifyRemoteUsageError` |
 
 ### `remote_active_session_count`
 
 Trigger: after the active route set changes, and for a non-zero periodic sample every 5 minutes.
 
-| Field                 | Value                                                                                                    | Description                                                                              |
-| --------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| value                 | `active_session_count`                                                                                   | ARMS `custom.value` numeric measure; active logical session count after the change, may be 0 |
-| `sample_reason`       | `state-change` / `periodic`                                                                              | State change or low-frequency fill-in                                                    |
-| `transition`          | `connected` / `connection-closed` / `disposed` / `window-closed` / `host-exit` / `app-shutdown` / `none` | periodic uses `none`                                                                     |
-| `remote_kind`         | the four kinds / empty string                                                                            | Kind of the route behind the state change; empty for periodic                            |
+| Field                 | Value                                                                                                    | Description                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| value                 | `active_session_count`                                                                                   | ARMS `custom.value` numeric measure; active logical session count after the change, may be 0                           |
+| `sample_reason`       | `state-change` / `periodic`                                                                              | State change or low-frequency fill-in                                                                                  |
+| `transition`          | `connected` / `connection-closed` / `disposed` / `window-closed` / `host-exit` / `app-shutdown` / `none` | periodic uses `none`                                                                                                   |
+| `remote_kind`         | the four kinds / empty string                                                                            | Kind of the route behind the state change; empty for periodic                                                          |
 | `active_target_count` | numeric string                                                                                           | De-duplicated count of redacted remote target identities; a diagnostic dimension only, not the main concurrency metric |
 
 State-change samples use the route's `webContentsId` as `renderer_id`. The telemetry module keeps the latest valid
@@ -153,22 +153,22 @@ unreachable in the state machine, because every active route first produces a st
 Trigger: a route that had entered the active set leaves it. After-state stats must be read after the route is
 removed from the stats source / marked closed; the same route reports only once.
 
-| Field               | Value                                                                             | Description                                                                  |
-| ------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| value               | `duration_ms`                                                                     | Observable connection lifetime, monotonic-clock difference clamped >= 0      |
-| `remote_kind`       | same as above                                                                     |                                                                              |
-| `disconnect_reason` | `connection-closed` / `disposed` / `window-closed` / `host-exit` / `app-shutdown` | see below                                                                    |
-| `duration_ms`       | numeric string                                                                    | Same as value, for detail lookup; numeric aggregation uses `custom.value`    |
+| Field               | Value                                                                             | Description                                                               |
+| ------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| value               | `duration_ms`                                                                     | Observable connection lifetime, monotonic-clock difference clamped >= 0   |
+| `remote_kind`       | same as above                                                                     |                                                                           |
+| `disconnect_reason` | `connection-closed` / `disposed` / `window-closed` / `host-exit` / `app-shutdown` | see below                                                                 |
+| `duration_ms`       | numeric string                                                                    | Same as value, for detail lookup; numeric aggregation uses `custom.value` |
 
 `disconnect_reason` semantics:
 
-| Value               | Meaning                                                                               |
-| ------------------- | ------------------------------------------------------------------------------------- |
-| `connection-closed` | Transport-level abnormal disconnect (SSH keepalive half-open, network break, remote process exit) |
+| Value               | Meaning                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| `connection-closed` | Transport-level abnormal disconnect (SSH keepalive half-open, network break, remote process exit)       |
 | `disposed`          | User-initiated release (closing a tab, cancelling a connected dialog, Host-initiated defensive dispose) |
-| `window-closed`     | Closing a window takes all of its connections with it                                 |
-| `host-exit`         | Window Host UtilityProcess crash/exit fallback                                        |
-| `app-shutdown`      | Normal quit or update install entering the shutdown barrier                           |
+| `window-closed`     | Closing a window takes all of its connections with it                                                   |
+| `host-exit`         | Window Host UtilityProcess crash/exit fallback                                                          |
+| `app-shutdown`      | Normal quit or update install entering the shutdown barrier                                             |
 
 Duration definition: `connectedAtMonotonicMs` is recorded when Main receives `RemoteWorkspaceConnected`, using
 `performance.now()` by default; a bind context / renderer reload re-attach does not reset the timer. A normal app
@@ -254,34 +254,34 @@ numeric string.
 
 ## Metric computation examples
 
-| Metric                                     | Computation                                                                          |
-| ------------------------------------------ | ------------------------------------------------------------------------------------ |
-| Remote-workspace usage devices (day/week)  | `remote_active_session_count` with `custom.value > 0`, de-duplicated by `device_mid` |
-| Devices with a successful explicit connection | `remote_connect_result` with `result=success`, de-duplicated by `device_mid`      |
-| Usage devices per explicit connection kind | Same, grouped by `remote_kind`                                                       |
-| Per-device peak simultaneous connections   | `max(custom.value)` of `remote_active_session_count` aggregated by `device_mid` first |
-| Peak simultaneous connection distribution  | P50/P90/max over the device-level max of the previous step; never a histogram over all event rows |
-| Observable average connection duration     | `custom.value` of `remote_disconnect`; the dashboard notes it excludes right-censored samples of sudden main termination |
-| Transport abnormal-disconnect share        | `disconnect_reason=connection-closed` / all `remote_disconnect`                      |
+| Metric                                        | Computation                                                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Remote-workspace usage devices (day/week)     | `remote_active_session_count` with `custom.value > 0`, de-duplicated by `device_mid`                                     |
+| Devices with a successful explicit connection | `remote_connect_result` with `result=success`, de-duplicated by `device_mid`                                             |
+| Usage devices per explicit connection kind    | Same, grouped by `remote_kind`                                                                                           |
+| Per-device peak simultaneous connections      | `max(custom.value)` of `remote_active_session_count` aggregated by `device_mid` first                                    |
+| Peak simultaneous connection distribution     | P50/P90/max over the device-level max of the previous step; never a histogram over all event rows                        |
+| Observable average connection duration        | `custom.value` of `remote_disconnect`; the dashboard notes it excludes right-censored samples of sudden main termination |
+| Transport abnormal-disconnect share           | `disconnect_reason=connection-closed` / all `remote_disconnect`                                                          |
 
 ## Implementation notes
 
 ### State owners and files
 
-| State / fact                                     | Owner                                                     | File                                                                      |
-| ------------------------------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------- |
+| State / fact                                          | Owner                                                                 | File                                                                 |
+| ----------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | ARMS payload / configure / periodic gauge / reporting | New module (reuses the final dispatch of `desktopArmsCustomEvent.ts`) | (new) `packages/desktop/src/main/desktopRemoteUsageArmsTelemetry.ts` |
-| Explicit connection terminal                     | ConnectRemote IPC handler                                 | `packages/desktop/src/main/desktopMainIpcRemote.ts`                       |
-| route lifecycle / atomic retire / concurrency stats | RemoteWorkspaceSessionManager                          | `packages/desktop/src/main/desktopRemoteSessions.ts`                      |
-| Wiring and shutdown timer closure                | Main entry                                                | `packages/desktop/src/main/index.ts`                                      |
+| Explicit connection terminal                          | ConnectRemote IPC handler                                             | `packages/desktop/src/main/desktopMainIpcRemote.ts`                  |
+| route lifecycle / atomic retire / concurrency stats   | RemoteWorkspaceSessionManager                                         | `packages/desktop/src/main/desktopRemoteSessions.ts`                 |
+| Wiring and shutdown timer closure                     | Main entry                                                            | `packages/desktop/src/main/index.ts`                                 |
 
 1. `desktopRemoteUsageArmsTelemetry.ts`: constants `REMOTE_USAGE_ARMS_GROUP = "remote_usage"`, the three event
    names and `REMOTE_USAGE_GAUGE_INTERVAL_MS = 300_000`; types `RemoteDisconnectReason`,
    `RemoteGaugeTransition`, `RemoteConnectionStats { activeSessionCount; activeTargetCount }`; pure builders
    `buildRemoteConnectResultArmsPayload`, `buildRemoteActiveSessionCountArmsPayload` (`value =
-   stats.activeSessionCount`), `buildRemoteDisconnectArmsPayload` (`value = durationMs`);
+stats.activeSessionCount`), `buildRemoteDisconnectArmsPayload` (`value = durationMs`);
    `configureRemoteUsageArmsTelemetry({ armsCustomContext, getRemoteConnectionStats, sendCustom, e2eController?,
-   logger, setInterval?, clearInterval? })` is a module singleton that starts the 5-minute timer and sends a
+logger, setInterval?, clearInterval? })` is a module singleton that starts the 5-minute timer and sends a
    periodic gauge only when count > 0 and a latest rendererId exists; `reportRemoteConnectResultToArms` /
    `reportRemoteConnectionStateChangedToArms` / `reportRemoteDisconnectToArms` are no-ops before configure, never
    throw (internal try/catch) and all go through `dispatchFinalArmsCustomEvent`;
@@ -326,7 +326,7 @@ numeric string.
 
 - **A (new) `packages/desktop/test/desktopRemoteUsageArmsTelemetry.test.ts`:** field sets and `custom.value` of the
   three builders (connect=1, gauge=active sessions, disconnect=duration); failure defaults `errorCategory ->
-  unknown`; properties carry no target/path/session identity; before configure nothing is thrown or sent; after
+unknown`; properties carry no target/path/session identity; before configure nothing is thrown or sent; after
   configure the real `createFinalArmsCustomEventE2EController` asserts common dimensions and suppress; fake timer:
   count=0 sends no periodic, count>0 sends every 5 minutes with the latest rendererId, nothing after stop/reset;
   getStats / sendCustom errors are swallowed with `logger.warn`; every case resets for isolation.

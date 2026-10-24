@@ -49,14 +49,14 @@ Metric and ZCode's usage constraints: [OpenTelemetry concepts](./reference/otel-
 
 ## 2. Observability facilities and boundaries
 
-| Facility         | Purpose                                                   | Not for                 |
-| ---------------- | --------------------------------------------------------- | ----------------------- |
-| CLI OTel Trace   | Single Agent/Model/Tool/Command chain and fault drill-down | Page experience, funnels |
-| CLI OTel Metric  | Traffic, success rate, latency percentiles, Token, Telemetry health | Single-request bodies |
-| CLI SQLite Usage | Local Model/Turn/Tool detail, settings-page Usage, local reconciliation | ARMS remote chain |
-| App RUM          | Renderer pages, resources, API, frontend exceptions, interaction experience | CLI Agent internal tree |
-| `/event/report`  | Product behavior, purchase, feedback, business funnels    | Agent performance Trace |
-| Local logs       | Lifecycle, manual diagnosis, user-exportable troubleshooting | Automatically carrying Trace Payload |
+| Facility         | Purpose                                                                     | Not for                              |
+| ---------------- | --------------------------------------------------------------------------- | ------------------------------------ |
+| CLI OTel Trace   | Single Agent/Model/Tool/Command chain and fault drill-down                  | Page experience, funnels             |
+| CLI OTel Metric  | Traffic, success rate, latency percentiles, Token, Telemetry health         | Single-request bodies                |
+| CLI SQLite Usage | Local Model/Turn/Tool detail, settings-page Usage, local reconciliation     | ARMS remote chain                    |
+| App RUM          | Renderer pages, resources, API, frontend exceptions, interaction experience | CLI Agent internal tree              |
+| `/event/report`  | Product behavior, purchase, feedback, business funnels                      | Agent performance Trace              |
+| Local logs       | Lifecycle, manual diagnosis, user-exportable troubleshooting                | Automatically carrying Trace Payload |
 
 Trace is not written to local logs and not reported through RUM. Even if the data ends in the same
 Alibaba Cloud account or Workspace, the data models and query entries stay independent.
@@ -370,12 +370,12 @@ Maintenance rules:
 
 ## 10. Version axes
 
-| Meaning                      | Field                            | Current source                                    |
-| ---------------------------- | -------------------------------- | ------------------------------------------------- |
-| CLI Telemetry producer version | `service.version`              | Injected at build from `apps/zcode-cli/package.json` |
-| Desktop/product version      | `zcode.product.version`          | Product build metadata; no hardcoded version in docs/code |
-| Data contract version        | `zcode.telemetry.schema_version` | Contracts constant, currently 5                   |
-| Exact build identity         | `zcode.build.commit_id`          | Trusted CI/Git build metadata                     |
+| Meaning                        | Field                            | Current source                                            |
+| ------------------------------ | -------------------------------- | --------------------------------------------------------- |
+| CLI Telemetry producer version | `service.version`                | Injected at build from `apps/zcode-cli/package.json`      |
+| Desktop/product version        | `zcode.product.version`          | Product build metadata; no hardcoded version in docs/code |
+| Data contract version          | `zcode.telemetry.schema_version` | Contracts constant, currently 5                           |
+| Exact build identity           | `zcode.build.commit_id`          | Trusted CI/Git build metadata                             |
 
 Reports comparing release effects must keep Schema Version, CLI Version, Product Version and Build Commit
 together and never treat them as one version field.

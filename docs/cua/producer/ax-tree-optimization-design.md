@@ -11,13 +11,13 @@ incremental patches to cut model context cost.
 
 ## 1. Measured baseline
 
-| Scenario | Measured ZCode CUA |
-|---|---|
-| Calculator full | about 9,435 chars / 58 elements |
-| Calculator small change | 9,351-11,684 chars (still dumps the full tree) |
-| TextEdit full | 3,636 chars / 29 elements |
-| TextEdit no-change | still returns the full tree, about 3.6-4 KB |
-| Complex browser page | 5,015-8,757 chars (length alone does not show quality) |
+| Scenario                | Measured ZCode CUA                                     |
+| ----------------------- | ------------------------------------------------------ |
+| Calculator full         | about 9,435 chars / 58 elements                        |
+| Calculator small change | 9,351-11,684 chars (still dumps the full tree)         |
+| TextEdit full           | 3,636 chars / 29 elements                              |
+| TextEdit no-change      | still returns the full tree, about 3.6-4 KB            |
+| Complex browser page    | 5,015-8,757 chars (length alone does not show quality) |
 
 Eleven `state_id` results in one Calculator session total 112,279 chars, about 10,207 per result. Today
 `changes` is only an attached summary and does not replace the full `elements`.
@@ -58,9 +58,15 @@ the model and does not carry the cross-process structured contract.
   "focused_element": 18,
   "readable_text": ["Untitled"],
   "elements": [
-    {"index": 18, "kind": "textarea", "name": "First Text View", "editable": true, "focused": true}
+    {
+      "index": 18,
+      "kind": "textarea",
+      "name": "First Text View",
+      "editable": true,
+      "focused": true
+    }
   ],
-  "changes": {"added": [], "removed": []}
+  "changes": { "added": [], "removed": [] }
 }
 ```
 
@@ -165,7 +171,7 @@ identity. `index` stays a short alias within the current snapshot; actions still
   "state_id": "s-5",
   "base_state_id": "s-4",
   "mode": "delta",
-  "updated": [{"node_id": "calc:display", "index": 6, "changes": {"value": "7"}}],
+  "updated": [{ "node_id": "calc:display", "index": 6, "changes": { "value": "7" } }],
   "added": [],
   "removed_node_ids": [],
   "focus": null
@@ -192,14 +198,14 @@ pressable, selectable, selected/checked and error/status nodes; then text/link/b
 readable name/value; then fill the shortest parent chain for retained nodes. Pure layout containers fold
 into a section/container summary by default and stay only when they disambiguate.
 
-| Node type | Default | Exception |
-|---|---|---|
-| focused/editable/actionable | always keep | secure-field value must be masked |
-| selected/checked/error/status | always keep state | merge repeated status |
-| text/link/button | keep when name/value present | merge repeated links |
-| group/container | fold or omit | keep a summary as parent disambiguator |
-| offscreen/invisible | omit by default | keep scroll targets or menus on demand |
-| disabled | low priority | keep when the user is dealing with the disabled reason |
+| Node type                     | Default                      | Exception                                              |
+| ----------------------------- | ---------------------------- | ------------------------------------------------------ |
+| focused/editable/actionable   | always keep                  | secure-field value must be masked                      |
+| selected/checked/error/status | always keep state            | merge repeated status                                  |
+| text/link/button              | keep when name/value present | merge repeated links                                   |
+| group/container               | fold or omit                 | keep a summary as parent disambiguator                 |
+| offscreen/invisible           | omit by default              | keep scroll targets or menus on demand                 |
+| disabled                      | low priority                 | keep when the user is dealing with the disabled reason |
 
 The budget moves from a fixed node count to a char/token budget plus semantic quotas. The response
 includes `omitted_counts_by_kind`, `truncated_reason` and callable `get_element_subtree(node_id)` /
@@ -241,12 +247,12 @@ transaction/lock scope so token optimization does not reintroduce TOCTOU.
 
 ```json
 {
-  "action_outcome": {"status": "verified", "target_node_id": "calc:equals"},
+  "action_outcome": { "status": "verified", "target_node_id": "calc:equals" },
   "state": {
     "state_id": "s-6",
     "base_state_id": "s-5",
     "mode": "delta",
-    "updated": [{"node_id": "calc:display", "changes": {"value": "46"}}]
+    "updated": [{ "node_id": "calc:display", "changes": { "value": "46" } }]
   }
 }
 ```
@@ -288,14 +294,14 @@ Desktop continuous does not splice in the mobile-replayable-only recovery messag
 
 ## 13. Migration plan
 
-| Phase | Content | Compatibility |
-|---|---|---|
-| P0 Baseline | Lock chars, tokens, success rate, node retention and latency for Calculator, TextEdit, Settings, Chrome | no output change |
-| P1 Identity | Introduce `node_id`; split stable identity from material fingerprint; add updated diff | old `state_id`+`index` keeps working |
-| P2 Snapshot | Add `schema_version`, `base_state_id`, `mode` and full/delta/no_change | capability negotiation; old clients still get full |
-| P3 Pruning | Semantic budget, parent chain, container folding, Web de-noising, subtree/cursor | subtree/cursor keep a diagnostic entry |
-| P4 DSL | Model context switches to compact DSL; JSON for events, storage and debug | dual-serializer comparison period, behavior from one snapshot |
-| P5 Rollout | Gray-release delta; monitor action success, stale, reobserve, token and recovery errors | automatic fallback to full on base/diff anomalies |
+| Phase       | Content                                                                                                 | Compatibility                                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| P0 Baseline | Lock chars, tokens, success rate, node retention and latency for Calculator, TextEdit, Settings, Chrome | no output change                                              |
+| P1 Identity | Introduce `node_id`; split stable identity from material fingerprint; add updated diff                  | old `state_id`+`index` keeps working                          |
+| P2 Snapshot | Add `schema_version`, `base_state_id`, `mode` and full/delta/no_change                                  | capability negotiation; old clients still get full            |
+| P3 Pruning  | Semantic budget, parent chain, container folding, Web de-noising, subtree/cursor                        | subtree/cursor keep a diagnostic entry                        |
+| P4 DSL      | Model context switches to compact DSL; JSON for events, storage and debug                               | dual-serializer comparison period, behavior from one snapshot |
+| P5 Rollout  | Gray-release delta; monitor action success, stale, reobserve, token and recovery errors                 | automatic fallback to full on base/diff anomalies             |
 
 ## 14. Code impact
 
@@ -325,16 +331,16 @@ Desktop continuous does not splice in the mobile-replayable-only recovery messag
 
 ## 16. Metrics and targets
 
-| Metric | Suggested target | Note |
-|---|---|---|
-| Calculator warm full | not above 4-5 KB | now about 9.4 KB; at most half |
-| Native-app small-change delta | not above 20% of full | Calculator/TextEdit may reach 5-10% |
-| no-change | not above 300 chars | state chain and necessary diagnostics only |
-| Complex Web full | per model token budget | favor semantic nodes, not mere brevity |
-| retained semantic ratio | keeps rising | share of actionable/readable/stateful among retained nodes |
-| base/delta recovery errors | near 0 | errors auto-fallback to a full checkpoint |
-| action success / stale false positives | no worse than baseline | token savings must not cost action correctness |
-| repeat observations | markedly down | no-change and action outcome should stop observation loops |
+| Metric                                 | Suggested target       | Note                                                       |
+| -------------------------------------- | ---------------------- | ---------------------------------------------------------- |
+| Calculator warm full                   | not above 4-5 KB       | now about 9.4 KB; at most half                             |
+| Native-app small-change delta          | not above 20% of full  | Calculator/TextEdit may reach 5-10%                        |
+| no-change                              | not above 300 chars    | state chain and necessary diagnostics only                 |
+| Complex Web full                       | per model token budget | favor semantic nodes, not mere brevity                     |
+| retained semantic ratio                | keeps rising           | share of actionable/readable/stateful among retained nodes |
+| base/delta recovery errors             | near 0                 | errors auto-fallback to a full checkpoint                  |
+| action success / stale false positives | no worse than baseline | token savings must not cost action correctness             |
+| repeat observations                    | markedly down          | no-change and action outcome should stop observation loops |
 
 Runtime latency needs its own benchmark: startup/settle and serialization are not one metric. Split
 backend capture, normalize, prune, diff, serialize, image capture and transport duration, each with its own

@@ -27,12 +27,12 @@ The event is fixed to `element_name=session_create`, `event_region=app`, `event_
 equal to the `message_id` of that turn's message_completion. Common user/device/version/marketing fields follow
 TelemetryCore.
 
-| event_extra_detail field | Value |
-| --- | --- |
-| create_source | `group` / `project` / `session` / `automation_idle` / `automation_scheduled` |
-| client_kind | `desktop` / `mobile` / `web`; mobile means the Web remote-control entry, devices are not guessed from the UA |
-| workspace_kind | `local` / `remote` |
-| remote_kind | `ssh` / `wsl` / `docker` / `server` / empty string |
+| event_extra_detail field | Value                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| create_source            | `group` / `project` / `session` / `automation_idle` / `automation_scheduled`                                 |
+| client_kind              | `desktop` / `mobile` / `web`; mobile means the Web remote-control entry, devices are not guessed from the UA |
+| workspace_kind           | `local` / `remote`                                                                                           |
+| remote_kind              | `ssh` / `wsl` / `docker` / `server` / empty string                                                           |
 
 The workspace kind reuses conversation telemetry: a non-empty identity or remoteSessionId means remote;
 remote_kind is extracted by `parseRemoteWorkspaceIdentity`, and an unknown identity stays remote. Identity

@@ -16,13 +16,13 @@ When evaluating a vendor or model, record the following basis:
 
 Confirmed 2026-10-14: **for additions that fit the established scope, the existing protocols and the validation requirements, maintainers may research, add specs/tests, implement and submit an MR directly, without asking product approval one by one; to modify or delete existing configuration, first explain the plan to a person and discuss and confirm, then execute.** This authorization does not mean one may publish, make paid calls or change user configuration.
 
-| Action | Handling |
-| --- | --- |
-| Add a template, a new model member, and rules that act only on the newly added identities | Proceed when the material and protocol evidence is sufficient; with no real-key validation default to disabled with an explicit pending-validation mark, and do not stop all preparation that can be completed |
-| Adjust existing model capabilities, thinking values/Map, default enablement, ordering; change an existing URL, Access or template identity | First list the current state, the proposed values, the reason, the affected entries/users and the compatibility plan, then implement after discussion and confirmation |
-| Delete, downgrade, disable, or replace a model or template | Same as above; official retirement notices and missing catalog entries are discussion evidence and not automatic authorization |
-| Add a broad rule that would hit existing models or other entries | Treat as an existing change; "just appending JSON" must not bypass discussion; first compare the resolved results of the old members |
-| Bump the revision for the new item, derive the test configuration, update the inventory and maintenance docs | Necessary accompanying work of the addition, may be done directly; no other configuration change may be slipped in |
+| Action                                                                                                                                     | Handling                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Add a template, a new model member, and rules that act only on the newly added identities                                                  | Proceed when the material and protocol evidence is sufficient; with no real-key validation default to disabled with an explicit pending-validation mark, and do not stop all preparation that can be completed |
+| Adjust existing model capabilities, thinking values/Map, default enablement, ordering; change an existing URL, Access or template identity | First list the current state, the proposed values, the reason, the affected entries/users and the compatibility plan, then implement after discussion and confirmation                                         |
+| Delete, downgrade, disable, or replace a model or template                                                                                 | Same as above; official retirement notices and missing catalog entries are discussion evidence and not automatic authorization                                                                                 |
+| Add a broad rule that would hit existing models or other entries                                                                           | Treat as an existing change; "just appending JSON" must not bypass discussion; first compare the resolved results of the old members                                                                           |
+| Bump the revision for the new item, derive the test configuration, update the inventory and maintenance docs                               | Necessary accompanying work of the addition, may be done directly; no other configuration change may be slipped in                                                                                             |
 
 Discussion is per concrete before/after difference; when the authorization range is already clear do not ask repeatedly. Research and gap records can continue; unconfirmed existing changes are listed separately as to-discuss and do not block independent additions. The state of lacking a key and whether an addition has been approved are recorded separately.
 
@@ -36,10 +36,10 @@ The addition principle updates this directory in the same round the conclusion i
 
 ## Three lists
 
-| List | Meaning | How it enters configuration |
-| --- | --- | --- |
-| Maintained | Templates and model members in the current JSON | See [Current state](./current-state.md); does not mean everything was measured this round |
-| Under observation | New models of mainstream vendors, gaps in existing entries, potential new vendors | Collect evidence, validate, and submit a separate configuration MR |
+| List                       | Meaning                                                                                       | How it enters configuration                                                                                               |
+| -------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Maintained                 | Templates and model members in the current JSON                                               | See [Current state](./current-state.md); does not mean everything was measured this round                                 |
+| Under observation          | New models of mainstream vendors, gaps in existing entries, potential new vendors             | Collect evidence, validate, and submit a separate configuration MR                                                        |
 | Awaiting capability design | New protocols, cloud credentials, deployment identity and others beyond the existing contract | Postponed this round with the gap recorded; confirmed separately later, not bypassed with pseudo-compatible configuration |
 
 Existing coverage includes Z.AI, BigModel, Kimi, MiniMax, DeepSeek, Qwen, MiMo, OpenAI, Anthropic, xAI, and OpenRouter and OpenCode Go/Zen. Concrete entries and models follow the current state and the JSON.

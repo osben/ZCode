@@ -4,13 +4,13 @@ Status: implemented (2026-10-15). The layout was confirmed via a prototype (vari
 
 ## 1. Scope
 
-| Item           | Content                                                                                                                                       |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Components     | `ProjectEditor` (create / edit project form), the embedded `RemoteProjectList` page (add existing project)                                    |
-| Change layer   | Presentation only; connection flow, save chain, state machine, props contract, folder trust confirmation and folder browser are unchanged     |
-| Entries        | Sidebar project plus, chat "create project on this device"; Desktop, Web and mobile share one component, no separate mobile layout            |
-| State source   | The device status dot comes only from `resolveRemoteConnectionPresentation`; the component never picks colors itself                          |
-| Related specs  | [Confirm trusting folders before creating a project](project-creation-folder-confirmation.md), [remote device status display](../architecture/remote-device-connection-ux-spec.md) |
+| Item          | Content                                                                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Components    | `ProjectEditor` (create / edit project form), the embedded `RemoteProjectList` page (add existing project)                                                                         |
+| Change layer  | Presentation only; connection flow, save chain, state machine, props contract, folder trust confirmation and folder browser are unchanged                                          |
+| Entries       | Sidebar project plus, chat "create project on this device"; Desktop, Web and mobile share one component, no separate mobile layout                                                 |
+| State source  | The device status dot comes only from `resolveRemoteConnectionPresentation`; the component never picks colors itself                                                               |
+| Related specs | [Confirm trusting folders before creating a project](project-creation-folder-confirmation.md), [remote device status display](../architecture/remote-device-connection-ux-spec.md) |
 
 ## 2. Form Layout
 

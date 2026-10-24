@@ -67,33 +67,33 @@ heartbeat and frame/app payload passthrough; they own no session, queue, snapsho
 
 ## Current code entry points
 
-| Layer               | Entry                                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| V4 schema           | `packages/shared/src/zcode-protocol-v4/`                                                                           |
-| UI transport/store  | `packages/ui/src/v4/agentConversationTransport.ts`, `conversationProjectionStore.ts`, `sessionDataLayer.ts`       |
-| UI pane/commands    | `packages/ui/src/v4/SessionPane.tsx`, `ConversationComposer.tsx`                                                   |
-| Host/service route  | `packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts`, `zcodeAgentService.ts`                           |
-| CLI gateway         | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts`                                            |
-| CLI projection      | `product-projection.ts`, `sessions-index-projection.ts`                                                            |
-| CLI commands        | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/`                                                |
+| Layer              | Entry                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| V4 schema          | `packages/shared/src/zcode-protocol-v4/`                                                                    |
+| UI transport/store | `packages/ui/src/v4/agentConversationTransport.ts`, `conversationProjectionStore.ts`, `sessionDataLayer.ts` |
+| UI pane/commands   | `packages/ui/src/v4/SessionPane.tsx`, `ConversationComposer.tsx`                                            |
+| Host/service route | `packages/services/src/zcode-agent/zcodeAgentConnectionScope.ts`, `zcodeAgentService.ts`                    |
+| CLI gateway        | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts`                                     |
+| CLI projection     | `product-projection.ts`, `sessions-index-projection.ts`                                                     |
+| CLI commands       | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/`                                         |
 
 ## Document index
 
-| Document                                                         | Current role                                                                |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [01-topology.md](./01-topology.md)                               | Topology and responsibility design; read with the current overview          |
-| [02-projection.md](./02-projection.md)                           | Projection design and ruling basis                                          |
-| [03-commands.md](./03-commands.md)                               | command/ACK/inbox spec and unfinished items                                 |
-| [04-sync-and-recovery.md](./04-sync-and-recovery.md)             | Topic subscription, seq, snapshot, recovery constraints                     |
-| [05-transport-and-backpressure.md](./05-transport-and-backpressure.md) | transport/wire/backpressure spec                                      |
-| [06-ui.md](./06-ui.md)                                           | V4 UI design and implementation trail                                       |
-| [07-persistence.md](./07-persistence.md)                         | canonical facts, projection rebuild and migration                           |
-| [08-phasing.md](./08-phasing.md)                                 | Historical phasing and cleanup trail, not the current progress table        |
-| [09-protocol-schema.md](./09-protocol-schema.md)                 | Early schema design; yields to code and 10 on field conflicts               |
-| [10-protocol-spec.md](./10-protocol-spec.md)                     | V4 field-level main spec                                                    |
-| [11-deletion-plan.md](./11-deletion-plan.md)                     | Historical deletion execution list                                          |
-| [12-fault-catalog.md](./12-fault-catalog.md)                     | fault/reason code vocabulary                                                |
-| [13-golden-test-mapping.md](./13-golden-test-mapping.md)         | Case to reducer/protocol/WDIO evidence mapping                              |
-| [14-sessions-index.md](./14-sessions-index.md)                   | sessions-index current spec and implementation entry                        |
-| [design-review.md](./design-review.md)                           | Pre-migration code audit and risk trail                                     |
-| [review-meeting-brief.md](./review-meeting-brief.md)             | Review-history input, not a current-state summary                           |
+| Document                                                               | Current role                                                         |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [01-topology.md](./01-topology.md)                                     | Topology and responsibility design; read with the current overview   |
+| [02-projection.md](./02-projection.md)                                 | Projection design and ruling basis                                   |
+| [03-commands.md](./03-commands.md)                                     | command/ACK/inbox spec and unfinished items                          |
+| [04-sync-and-recovery.md](./04-sync-and-recovery.md)                   | Topic subscription, seq, snapshot, recovery constraints              |
+| [05-transport-and-backpressure.md](./05-transport-and-backpressure.md) | transport/wire/backpressure spec                                     |
+| [06-ui.md](./06-ui.md)                                                 | V4 UI design and implementation trail                                |
+| [07-persistence.md](./07-persistence.md)                               | canonical facts, projection rebuild and migration                    |
+| [08-phasing.md](./08-phasing.md)                                       | Historical phasing and cleanup trail, not the current progress table |
+| [09-protocol-schema.md](./09-protocol-schema.md)                       | Early schema design; yields to code and 10 on field conflicts        |
+| [10-protocol-spec.md](./10-protocol-spec.md)                           | V4 field-level main spec                                             |
+| [11-deletion-plan.md](./11-deletion-plan.md)                           | Historical deletion execution list                                   |
+| [12-fault-catalog.md](./12-fault-catalog.md)                           | fault/reason code vocabulary                                         |
+| [13-golden-test-mapping.md](./13-golden-test-mapping.md)               | Case to reducer/protocol/WDIO evidence mapping                       |
+| [14-sessions-index.md](./14-sessions-index.md)                         | sessions-index current spec and implementation entry                 |
+| [design-review.md](./design-review.md)                                 | Pre-migration code audit and risk trail                              |
+| [review-meeting-brief.md](./review-meeting-brief.md)                   | Review-history input, not a current-state summary                    |

@@ -20,15 +20,15 @@ Full history (verification diaries): `git show b8876e8b:docs/remote/project-firs
 
 ## 1. Confirmed product decisions
 
-| Decision                          | Contract                                                                                                                                                      |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1 Project display                | The "项目" tab drops the device layer. Local and remote projects are flat in one "项目" group. Remote projects keep light device identification, using the confirmed compact A device tag and status colors. |
-| Q2 Opening a project              | After a manual device connection without a project, choose a remote directory; clicking an existing project opens it directly; startup recovery and disconnect reconnect restore the original project without choosing a directory again. |
-| Q3 Disabling remote no-project UI | All creation and history-access entries are disabled, history data is kept and no longer auto-restored; nothing is migrated, and no remote task, index, chat file or backing workspace is deleted. |
+| Decision                          | Contract                                                                                                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Q1 Project display                | The "项目" tab drops the device layer. Local and remote projects are flat in one "项目" group. Remote projects keep light device identification, using the confirmed compact A device tag and status colors.                                     |
+| Q2 Opening a project              | After a manual device connection without a project, choose a remote directory; clicking an existing project opens it directly; startup recovery and disconnect reconnect restore the original project without choosing a directory again.        |
+| Q3 Disabling remote no-project UI | All creation and history-access entries are disabled, history data is kept and no longer auto-restored; nothing is migrated, and no remote task, index, chat file or backing workspace is deleted.                                               |
 | Q4 Entry points                   | The settings page and the remote connection dialog keep managing devices; the sidebar keeps a global "打开远程项目" (Open remote project) entry as the plus menu of the "项目" group title. Existing projects open/connect from the project row. |
-| Q5 Ordering                       | Local and remote projects share one global order, may be dragged across devices and the order is remembered; connection state changes do not change position; offline project rows stay visible. |
-| Q6 Cancel and collapse            | Cancelling directory selection returns to the original page, releases the temporary session not yet bound to a project, keeps the device online, adds no project or chat and does not affect other projects; collapse keeps progress. |
-| Q7 Remove-project actions         | The remote project composer hides the project tag's x and "不在项目中工作" (Work without a project), keeping the ability to switch projects; local behavior is unchanged. |
+| Q5 Ordering                       | Local and remote projects share one global order, may be dragged across devices and the order is remembered; connection state changes do not change position; offline project rows stay visible.                                                 |
+| Q6 Cancel and collapse            | Cancelling directory selection returns to the original page, releases the temporary session not yet bound to a project, keeps the device online, adds no project or chat and does not affect other projects; collapse keeps progress.            |
+| Q7 Remove-project actions         | The remote project composer hides the project tag's x and "不在项目中工作" (Work without a project), keeping the ability to switch projects; local behavior is unchanged.                                                                        |
 
 ```text
 Projects tab
@@ -221,13 +221,13 @@ checked at implementation; this spec authorizes no unrelated service deletion or
 
 ## 4. State ownership and multi-platform boundary
 
-| State                         | Authoritative owner / boundary                                                                                      |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Device, route and online/offline | Existing Source Directory / Host connection manager; removing the display layer is not deleting the device model. |
-| Project identity              | `workspaceIdentity?.trim() \|\| workspacePath`; the same path on different devices cannot merge; paths are for display and execution. |
-| Project list and order        | Existing workspace/open-set and ordering persistence path; no second accepted order per device is introduced.      |
-| Directory-selection draft     | The single remote connection dialog; cancel, collapse and confirm use the existing lifecycle paths.                |
-| Tasks and messages            | Original CLI/runtime owner; no state moves into sidebar, main or relay.                                            |
+| State                            | Authoritative owner / boundary                                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Device, route and online/offline | Existing Source Directory / Host connection manager; removing the display layer is not deleting the device model.                     |
+| Project identity                 | `workspaceIdentity?.trim() \|\| workspacePath`; the same path on different devices cannot merge; paths are for display and execution. |
+| Project list and order           | Existing workspace/open-set and ordering persistence path; no second accepted order per device is introduced.                         |
+| Directory-selection draft        | The single remote connection dialog; cancel, collapse and confirm use the existing lifecycle paths.                                   |
+| Tasks and messages               | Original CLI/runtime owner; no state moves into sidebar, main or relay.                                                               |
 
 ```text
 desktop-continuous   → existing direct realtime chain ──────────┐
@@ -253,25 +253,25 @@ not the current visual acceptance basis.
 The following is the acceptance list of the confirmed contract. Tests come before implementation; executed
 unit tests and local Electron E2E, and the real environments not yet verified, are in §9.
 
-| ID     | Scenario / action                                       | Assertion                                                                                         |
-| ------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| RPN-01 | Local and two remote devices all have open projects     | One "项目" group, no device layer, remote project identity independent.                            |
-| RPN-02 | Two devices have projects with the same name and path   | The owning device is identifiable; clicking enters each workspace.                                |
-| RPN-03 | Drag across devices and restart                         | Order kept; device online/offline does not reorder.                                               |
-| RPN-04 | Click the original project after going offline          | Row stays, the original directory opens after connecting, no remote no-project draft is created.  |
-| RPN-05 | Manual connect of each remote type without a directory  | Choose a directory after success; no project or remote chat is added before confirming.           |
-| RPN-06 | Original-project connection needs credentials/install/upgrade | Connection completion continues the original project, errors retryable, no silent dead end. |
-| RPN-07 | Cancel after a successful connection at directory selection | Original page kept, device online, other projects unaffected, project/chat counts unchanged.  |
-| RPN-08 | Restore after collapsing the directory step             | Progress and selection kept, the connection is not cancelled.                                     |
-| RPN-09 | Startup and disconnect recovery                         | Original project restored with no directory prompt; old remote conversations not restored.        |
-| RPN-10 | Historical remote no-project sessions in group/pin/archive indexes | All UI entries hidden, data kept; remote project tasks work normally.                  |
-| RPN-11 | Remote composer, global new and shortcuts               | x / "不在项目中工作" invisible; cannot enter remote no-project chat.                               |
-| RPN-12 | Local projects and no-project sessions                  | Existing new, unbind and history access do not regress.                                           |
-| RPN-13 | Desktop and mobile access the same remote project       | shared-host and identity isolation kept; continuous / replayable not mixed.                       |
-| RPN-14 | Dark/light themes, zh/en, narrow screen, keyboard       | Devices distinguishable, status not by color alone, menus not clipped, focus visible.             |
-| RPN-15 | Invalid directory or bind failure                       | Error stays in the selection flow, no project added, execution device not switched.               |
+| ID     | Scenario / action                                                                 | Assertion                                                                                                                                   |
+| ------ | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| RPN-01 | Local and two remote devices all have open projects                               | One "项目" group, no device layer, remote project identity independent.                                                                     |
+| RPN-02 | Two devices have projects with the same name and path                             | The owning device is identifiable; clicking enters each workspace.                                                                          |
+| RPN-03 | Drag across devices and restart                                                   | Order kept; device online/offline does not reorder.                                                                                         |
+| RPN-04 | Click the original project after going offline                                    | Row stays, the original directory opens after connecting, no remote no-project draft is created.                                            |
+| RPN-05 | Manual connect of each remote type without a directory                            | Choose a directory after success; no project or remote chat is added before confirming.                                                     |
+| RPN-06 | Original-project connection needs credentials/install/upgrade                     | Connection completion continues the original project, errors retryable, no silent dead end.                                                 |
+| RPN-07 | Cancel after a successful connection at directory selection                       | Original page kept, device online, other projects unaffected, project/chat counts unchanged.                                                |
+| RPN-08 | Restore after collapsing the directory step                                       | Progress and selection kept, the connection is not cancelled.                                                                               |
+| RPN-09 | Startup and disconnect recovery                                                   | Original project restored with no directory prompt; old remote conversations not restored.                                                  |
+| RPN-10 | Historical remote no-project sessions in group/pin/archive indexes                | All UI entries hidden, data kept; remote project tasks work normally.                                                                       |
+| RPN-11 | Remote composer, global new and shortcuts                                         | x / "不在项目中工作" invisible; cannot enter remote no-project chat.                                                                        |
+| RPN-12 | Local projects and no-project sessions                                            | Existing new, unbind and history access do not regress.                                                                                     |
+| RPN-13 | Desktop and mobile access the same remote project                                 | shared-host and identity isolation kept; continuous / replayable not mixed.                                                                 |
+| RPN-14 | Dark/light themes, zh/en, narrow screen, keyboard                                 | Devices distinguishable, status not by color alone, menus not clipped, focus visible.                                                       |
+| RPN-15 | Invalid directory or bind failure                                                 | Error stays in the selection flow, no project added, execution device not switched.                                                         |
 | RPN-16 | One of three remote projects has its directory deleted externally, then reconnect | Device online, remaining projects recover; the deleted one is kept but shows failure, directory not recreated; retry works after restoring. |
-| RPN-17 | Desktop remote project more menu / context menu         | Has "远程设备设置", opens settings and positions the owning device card; local projects and Web have none. |
+| RPN-17 | Desktop remote project more menu / context menu                                   | Has "远程设备设置", opens settings and positions the owning device card; local projects and Web have none.                                  |
 
 ## 7. Manual connection and automatic recovery
 

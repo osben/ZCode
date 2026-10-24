@@ -191,6 +191,7 @@ config, and the first send carries it in `createSession.config`.**
   on "create the session first, then switch config".
 
 Capability status (all done 2026-07-07 unless noted):
+
 - Draft model selection (shows workspace default, switchable): `resolveDraftEffectiveConfig`
   (composer/draftWorkspaceDefaults) composes a display-only config.
 - Draft mode selection: `resolveDraftModeCurrentValue` + `V4ComposerModeSwitch` draftMode branch.
@@ -204,6 +205,7 @@ Capability status (all done 2026-07-07 unless noted):
 ### 5.2 Empty-state shell
 
 All done 2026-07-07 except the last item.
+
 - Workspace switch menu (search / up to 5 items / open folder / SSH remote entry / disconnected-remote filter):
   `ChatEmptyWorkspacePreviewMenu` (ChatEmptyState.tsx) reused as is; the shell (WorkspaceShellLayout) builds
   `draftComposerHeader` and passes it V4WorkspaceChatArea/V4ChatPane -> SessionPane -> composer contextHeader.
@@ -353,6 +355,7 @@ Implementation (`useDraftSessionPrewarm` + SessionPane wiring):
    goal, failure, generation change and synchronous remount. Desktop continuous and mobile shared-host
    replayable both reuse the UI owner; Host/runtime, accepted input queue and stream recovery boundaries are
    unchanged.
+
 9. **Cleanup.** Leaving without a first send (selecting another task / switching workspace / closing split /
    unmount) -> `deleteSession` the prewarm session; effect cleanup first gives a same-owner synchronous remount
    a chance to take over, and cleans up only after a confirmed real leave. Only a prewarm session still in
@@ -363,7 +366,7 @@ Implementation (`useDraftSessionPrewarm` + SessionPane wiring):
    with the CLI exit (memory state); acceptable.
 10. **Workspace / transport ownership.** The prewarm resource is not a bare cross-workspace-reusable
     `sessionId` but a binding `{ workspaceKey, paneId, transportGeneration, sessionId, controller,
-    dispatchCommand }` owned by one owner. `workspaceKey` is `workspaceIdentity?.trim() || workspacePath`;
+dispatchCommand }` owned by one owner. `workspaceKey` is `workspaceIdentity?.trim() || workspacePath`;
     transport generation is distinguished by the `SessionDataLayer` identity held by the workspace connection
     registry; a new `sendCommand` function from a provider wrapper rebuild must not be mistaken for a new
     generation. Within a workspace a lease change only updates the binding's lease and does not rebuild
@@ -501,6 +504,7 @@ OAuth Coding Plan, Team Plan or Start Plan.
   parameter may be cleaned later.
 
 Implementation batches:
+
 1. **Phase 1 (usage data surface, pure three-layer pass-through)**:
    - `packages/shared/src/zcode-protocol-v4/snapshot.ts`: `sessionUsageStateSchema` additively gains
      `cache: { hitRate: number|null } | null` and `breakdown: ContextUsageBreakdownItem[] | null` (P-05

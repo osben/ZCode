@@ -47,12 +47,12 @@ Electron supports the taskbar badge on Windows through `BrowserWindow.setOverlay
 
 ## Platform Matrix
 
-| Platform                 | Mechanism                                                | Status                            |
-| ------------------------ | -------------------------------------------------------- | --------------------------------- |
-| macOS                    | `app.setBadgeCount` (Dock red number)                    | Shipped, unchanged                |
-| Linux (Unity/KDE, etc.)  | `app.setBadgeCount` (LauncherEntry D-Bus) + tray badge   | Shipped; tray badge added by this spec |
-| Linux (native GNOME)     | No system badge API                                      | Tray badge fallback (added by this spec) |
-| Windows                  | `BrowserWindow.setOverlayIcon` + tray badge              | Added by this spec                |
+| Platform                | Mechanism                                              | Status                                   |
+| ----------------------- | ------------------------------------------------------ | ---------------------------------------- |
+| macOS                   | `app.setBadgeCount` (Dock red number)                  | Shipped, unchanged                       |
+| Linux (Unity/KDE, etc.) | `app.setBadgeCount` (LauncherEntry D-Bus) + tray badge | Shipped; tray badge added by this spec   |
+| Linux (native GNOME)    | No system badge API                                    | Tray badge fallback (added by this spec) |
+| Windows                 | `BrowserWindow.setOverlayIcon` + tray badge            | Added by this spec                       |
 
 ## Tests and Verification
 

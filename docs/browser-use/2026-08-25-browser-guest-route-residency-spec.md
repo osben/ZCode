@@ -103,20 +103,20 @@ main window close / app quit
 
 ## 5. Impact brief
 
-| Item | Conclusion |
-| --- | --- |
-| Change level | `presentation` + Desktop Guest `recovery/lifecycle` |
-| User entries | automations main view "Run now", timer trigger, chat-page Browser Use |
-| Authoritative state | logical tab/Guest in Desktop main; the renderer only hosts and attaches `<webview>` |
+| Item                | Conclusion                                                                                         |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| Change level        | `presentation` + Desktop Guest `recovery/lifecycle`                                                |
+| User entries        | automations main view "Run now", timer trigger, chat-page Browser Use                              |
+| Authoritative state | logical tab/Guest in Desktop main; the renderer only hosts and attaches `<webview>`                |
 | Commit side effects | no new business commit; only the mount location and visibility gating of the Side Pane Host change |
-| Persistence | none added; a complete restart is still empty |
+| Persistence         | none added; a complete restart is still empty                                                      |
 
-| Scenario | UI entry | Visibility owner | Mode boundary | Must isolate |
-| --- | --- | --- | --- | --- |
-| chat-page Browser Use | `WorkspaceShellLayout` chat; shared `AnimatedSidePanePanel` / `UnifiedBrowserView` | `isSidePaneOpen` | Desktop local/remote shared host | session, workspaceKey, remoteSessionId |
-| automations "Run now" | `AutomationsSection`; same resident Side Pane Host | main view forced hidden | Desktop only | no focus steal, no session switch |
-| scheduled background run | session derived by Automation service; same resident Side Pane Host | main view forced hidden | Desktop continuous | not in the mobile replayable snapshot |
-| mobile `/remote` | Mobile shell; no Electron `<webview>` | existing mobile drawer | `web-remote-replayable` (shared-host attachment) | no new Browser runtime |
+| Scenario                 | UI entry                                                                           | Visibility owner        | Mode boundary                                    | Must isolate                           |
+| ------------------------ | ---------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------ | -------------------------------------- |
+| chat-page Browser Use    | `WorkspaceShellLayout` chat; shared `AnimatedSidePanePanel` / `UnifiedBrowserView` | `isSidePaneOpen`        | Desktop local/remote shared host                 | session, workspaceKey, remoteSessionId |
+| automations "Run now"    | `AutomationsSection`; same resident Side Pane Host                                 | main view forced hidden | Desktop only                                     | no focus steal, no session switch      |
+| scheduled background run | session derived by Automation service; same resident Side Pane Host                | main view forced hidden | Desktop continuous                               | not in the mobile replayable snapshot  |
+| mobile `/remote`         | Mobile shell; no Electron `<webview>`                                              | existing mobile drawer  | `web-remote-replayable` (shared-host attachment) | no new Browser runtime                 |
 
 Guest owner for all desktop rows: Desktop `BrowserGuestManager`.
 
@@ -150,12 +150,12 @@ Graph drift: the existing feature graph declares that a Browser tab stays mounte
 
 ## 7. Acceptance and pruning
 
-| Case | Setup | Action | Assertions | Status |
-| --- | --- | --- | --- | --- |
+| Case    | Setup                                                                    | Action                                             | Assertions                                                                                                          | Status   |
+| ------- | ------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------- |
 | BCP-227 | stay on the automations main view with a runnable Browser Use automation | click "Run now" without switching to the chat page | `BrowserViewReady -> attachGuest -> newTab ok`; the automations page stays visible and the Side Pane is not exposed | accepted |
-| BCP-228 | chat already has an attached Guest | chat -> automations -> chat | `<webview>` identity/guest generation/URL unchanged; no teardown/rebind | accepted |
-| BCP-229 | an attached Guest exists, main window minimized | background navigate/DOM/screenshot | not accepted in this iteration; deferred to the minimize work | deferred |
-| BCP-230 | no Guest, main window minimized first | first background `newTab` and screenshot | not accepted in this iteration; deferred to the minimize work | deferred |
+| BCP-228 | chat already has an attached Guest                                       | chat -> automations -> chat                        | `<webview>` identity/guest generation/URL unchanged; no teardown/rebind                                             | accepted |
+| BCP-229 | an attached Guest exists, main window minimized                          | background navigate/DOM/screenshot                 | not accepted in this iteration; deferred to the minimize work                                                       | deferred |
+| BCP-230 | no Guest, main window minimized first                                    | first background `newTab` and screenshot           | not accepted in this iteration; deferred to the minimize work                                                       | deferred |
 
 Pruning: theme, language and model/provider do not change Guest attach semantics and are covered by structure unit tests and one real Desktop representative; mobile `/remote` has no Electron `<webview>`, so only "does not add that path" is verified, not a Cartesian product with the four Desktop cases.
 

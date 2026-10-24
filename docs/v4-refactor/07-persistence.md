@@ -8,13 +8,13 @@ V4's persistence principle: transcript, timeline anchors, session metadata and t
 
 The CLI session store is at `~/.zcode/cli/db/db.sqlite`. The migration entry is `apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts`, currently migrated to `0018`:
 
-| Migration | Current role |
-| --- | --- |
-| `0014_message_part_sequence` | Establish a stable order for message/part |
-| `0015_message_part_sequence_backfill_and_guard` | Repair empty sequences and guarantee later writes with a trigger |
-| `0016_session_input_ledger` | Add the durable input lifecycle ledger |
-| `0017_session_input_start_now_delivery` | Bring `startNow` into the input admission ledger |
-| `0018_session_input_failed_status` | Distinguish the terminal state of a runtime start failure after acceptance |
+| Migration                                       | Current role                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------- |
+| `0014_message_part_sequence`                    | Establish a stable order for message/part                                  |
+| `0015_message_part_sequence_backfill_and_guard` | Repair empty sequences and guarantee later writes with a trigger           |
+| `0016_session_input_ledger`                     | Add the durable input lifecycle ledger                                     |
+| `0017_session_input_start_now_delivery`         | Bring `startNow` into the input admission ledger                           |
+| `0018_session_input_failed_status`              | Distinguish the terminal state of a runtime start failure after acceptance |
 
 message/part still evolve additively with index columns plus JSON data. A missing optional anchor is tolerated on the read side; only structures needing query, uniqueness or transaction constraints are added through append-only migrations.
 

@@ -1,6 +1,6 @@
 # Upstream sync record: v3.15.1 (`aac47556`) to v3.16.1 (`0a1fc56d`)
 
-Status: FINAL RECORD. The sync is merged into `integration` through PR #228 (merge commit `cccf1977`). Full history: `git show fcfed95d:docs/fork/upstream-sync-3.16.1-plan.md`.
+Status: FINAL RECORD. The sync is merged into `integration` through PR #228 (merge commit `cccf1977`). Full history: `git show 45f808f7:docs/fork/upstream-sync-3.16.1-plan.md`.
 
 Start point: fork `integration` before the sync, base `aac47556` (upstream v3.15.1). Target: upstream `0a1fc56d` (v3.16.1). Pin: `fork-upstream-base.json` = `0a1fc56d` / `3.16.1`. Root version `3.16.1-fork.1` (see `specs/fork-release-versioning.md`).
 

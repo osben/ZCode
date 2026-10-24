@@ -2,12 +2,12 @@
 
 Entry point of the v1 contract between z-code and the standalone packaging platform.
 
-| File                                                                                                           | Purpose                                                          |
-| -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [`release-candidate.v1.schema.json`](./release-candidate.v1.schema.json)                                       | Machine-validated schema for release candidates and platform artifacts |
-| [`release-platform.v1.openapi.yaml`](./release-platform.v1.openapi.yaml)                                       | OpenAPI 3.1 description of the control-plane REST API            |
-| [`release-platform-api-v1.md`](./release-platform-api-v1.md)                                                   | State machine, validation rules, errors, events, security and migration constraints |
-| [`docs/adr/0004-release-packaging-platform-contract.md`](../../adr/0004-release-packaging-platform-contract.md) | Why the platform hosts candidate state and official publishing   |
+| File                                                                                                            | Purpose                                                                             |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [`release-candidate.v1.schema.json`](./release-candidate.v1.schema.json)                                        | Machine-validated schema for release candidates and platform artifacts              |
+| [`release-platform.v1.openapi.yaml`](./release-platform.v1.openapi.yaml)                                        | OpenAPI 3.1 description of the control-plane REST API                               |
+| [`release-platform-api-v1.md`](./release-platform-api-v1.md)                                                    | State machine, validation rules, errors, events, security and migration constraints |
+| [`docs/adr/0004-release-packaging-platform-contract.md`](../../adr/0004-release-packaging-platform-contract.md) | Why the platform hosts candidate state and official publishing                      |
 
 ## Required Before v1 Implementation
 

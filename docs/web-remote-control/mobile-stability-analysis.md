@@ -113,6 +113,7 @@ Visibility API, MDN WebSocket close event, MDN Screen Wake Lock API / WakeLockSe
 ## Optimization proposals
 
 **P0: productize "the background will disconnect".** Do not let users think it is an unrecoverable crash.
+
 1. Save minimal recovery state when the page becomes hidden: `deviceSid`, `currentWorkspaceKey`,
    `currentTaskId`, `bridgeSessionId`, last successful pair time, last received desktop payload time.
 2. On visible / pageshow / online: check socket readyState; if unavailable create a new terminal socket; wait
@@ -123,6 +124,7 @@ Visibility API, MDN WebSocket close event, MDN Screen Wake Lock API / WakeLockSe
 Principle: promise no real-time online in the background, but make foreground recovery as automatic as possible.
 
 **P0: mobile transport close strategy.** Do not reload on close after pairing (states as listed above).
+
 - `KICKED` / `AUTH_FAILED` / `DEVICE_NOT_FOUND`: terminal failure.
 - `close` / `error` / `desktop-bootstrap-timeout`: enter `reconnecting` with exponential backoff.
 - `document.hidden`: enter `suspended`, stop high-frequency work, save recovery state.
@@ -175,6 +177,7 @@ background execution.
 ## Acceptance
 
 Manual scenarios:
+
 1. Enter remote control, switch to another app for 30 s and return: auto-restores the same workspace/task.
 2. Lock the screen for 1 minute and unlock: auto-recovers or shows an explicit retryable state.
 3. After a Wi-Fi/cellular switch: auto-reconnects, not an immediate permanent failure page.
@@ -198,6 +201,7 @@ and let the screen stay on."
 ## P0 implementation status
 
 Implemented:
+
 1. The mobile terminal transport has `reconnecting` / `suspended` states.
 2. A paired socket close no longer reloads the page; it reconnects in place and triggers bootstrap after re-pairing.
 3. `/remote` listens for `visibilitychange` / `pagehide` / `pageshow` / `online` / `freeze` / `resume`;

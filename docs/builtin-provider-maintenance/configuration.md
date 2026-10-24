@@ -4,16 +4,16 @@
 
 A template answers "which models are called through which product entry, protocol and access method"; a model rule answers "which capabilities these models have and how logical options are encoded as request parameters". The two paths meet in the Resolver; the settings page and the execution catalog use the same resolved result and must not each guess capabilities from model name or domain.
 
-| Concept | Meaning and maintenance boundary |
-| --- | --- |
-| Builtin Release | The complete configuration shipped in the package or downloaded dynamically; Provider templates/fixed Providers and model rules are versioned together |
-| Template | The connection and member baseline of an ordinary vendor; `templateId` is a stable template identity, not a user instance identity |
-| Provider instance | A set of concrete connection configuration identified by `providerId`; model identity is `providerId + modelId` |
-| Account | Projects dynamic configuration and entitlements only for known fixed-account Providers; never writes user credentials into ordinary templates |
-| Personal | The user's explicit overrides and personal model members; undeclared fields keep inheriting, and the whole resolved result is not stored |
-| Effective | The configuration produced by layering in order; it may still be incomplete and is not what should be written back to a user file |
-| Registry | The complete, executable Provider/Model set; the settings page also keeps incomplete candidates and issues for repair |
-| Execution Model | An immutable execution fact created from the Registry of the target execution environment; later refreshes affect only newly created Models |
+| Concept           | Meaning and maintenance boundary                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Builtin Release   | The complete configuration shipped in the package or downloaded dynamically; Provider templates/fixed Providers and model rules are versioned together |
+| Template          | The connection and member baseline of an ordinary vendor; `templateId` is a stable template identity, not a user instance identity                     |
+| Provider instance | A set of concrete connection configuration identified by `providerId`; model identity is `providerId + modelId`                                        |
+| Account           | Projects dynamic configuration and entitlements only for known fixed-account Providers; never writes user credentials into ordinary templates          |
+| Personal          | The user's explicit overrides and personal model members; undeclared fields keep inheriting, and the whole resolved result is not stored               |
+| Effective         | The configuration produced by layering in order; it may still be incomplete and is not what should be written back to a user file                      |
+| Registry          | The complete, executable Provider/Model set; the settings page also keeps incomplete candidates and issues for repair                                  |
+| Execution Model   | An immutable execution fact created from the Registry of the target execution environment; later refreshes affect only newly created Models            |
 
 ```mermaid
 flowchart TD
@@ -31,15 +31,15 @@ An ordinary template instance inherits the template and then layers Personal; a 
 
 ## Single source of files and types
 
-| File | Responsibility |
-| --- | --- |
-| [Production JSON](../../config/provider/zcode-builtin.json) | The only hand-edited source, with templates, fixed Providers and model rules |
-| [Test JSON](../../config/provider/zcode-builtin.test.json) | A complete Release generated from the production configuration; models are not edited independently |
-| [Generator script](../../scripts/sync-test-builtin-provider-config.mjs) | Test endpoint mapping and derivation of the corresponding Site rules |
-| [Rule schema](../../packages/provider/src/config/rule-data-schema.ts) | Fields of each layer, match formats and source write permissions |
-| [Provider schema](../../packages/provider/src/config/provider-data-schema.ts) | API, Access, template metadata |
-| [Model schema](../../packages/shared/src/model-config.ts) | Capabilities, options and completeness |
-| [Resolver](../../packages/provider/src/resolver.ts) | Template inheritance, members and the final executable configuration |
+| File                                                                          | Responsibility                                                                                      |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [Production JSON](../../config/provider/zcode-builtin.json)                   | The only hand-edited source, with templates, fixed Providers and model rules                        |
+| [Test JSON](../../config/provider/zcode-builtin.test.json)                    | A complete Release generated from the production configuration; models are not edited independently |
+| [Generator script](../../scripts/sync-test-builtin-provider-config.mjs)       | Test endpoint mapping and derivation of the corresponding Site rules                                |
+| [Rule schema](../../packages/provider/src/config/rule-data-schema.ts)         | Fields of each layer, match formats and source write permissions                                    |
+| [Provider schema](../../packages/provider/src/config/provider-data-schema.ts) | API, Access, template metadata                                                                      |
+| [Model schema](../../packages/shared/src/model-config.ts)                     | Capabilities, options and completeness                                                              |
+| [Resolver](../../packages/provider/src/resolver.ts)                           | Template inheritance, members and the final executable configuration                                |
 
 The file shell is `{schemaVersion: 1, revision, config}`. A content change uses a new revision to avoid the same number with different content; pure doc cleanup does not bump it. The revision differs from the product version number; delivery is in the [Delivery spec](./delivery.md). Do not hand-extend fields the schema does not accept.
 
@@ -78,13 +78,13 @@ Within a layer, array order applies and later entries override only declared fie
 
 Records in each array use the following match fields and `config`; the file does not repeat the in-memory layer's `type`, and uses no `providerMatch` or cross-layer conditions:
 
-| Array | Match fields |
-| --- | --- |
-| `modelRules` | `modelMatch` |
-| `modelApiRules` | `modelMatch + apiTypeMatch` |
-| `providerSiteRules` | `modelMatch + baseUrlMatch`, optional `apiTypeMatch` |
-| `templateModelRules` | `templateId + modelId` |
-| `builtinProviderModelRules` | `providerId + modelId` |
+| Array                       | Match fields                                         |
+| --------------------------- | ---------------------------------------------------- |
+| `modelRules`                | `modelMatch`                                         |
+| `modelApiRules`             | `modelMatch + apiTypeMatch`                          |
+| `providerSiteRules`         | `modelMatch + baseUrlMatch`, optional `apiTypeMatch` |
+| `templateModelRules`        | `templateId + modelId`                               |
+| `builtinProviderModelRules` | `providerId + modelId`                               |
 
 Personal allows only smart exact overrides or manual configuration for a concrete Provider/Model; one identity cannot be in both sets, and there is no personal global regex layer. Manual mode fixes the product-opened editable fields and the system fields still come from rules; maintaining Builtin must not rewrite these user intents in passing. Field ownership of the smart/manual switch can be verified in the [manual configuration implementation](../../packages/provider/src/config/manual-model-config.ts).
 
@@ -106,13 +106,13 @@ Properties include context capacity, input/output forms, tool calling, structure
 
 A complete execution configuration needs `enabled`, complete properties, a non-empty ordered `reasoningLevel.values/map` and `maxOutputTokens.max/map`. A model with no reasoning also needs a valid option contract; do not guess defaults by model name.
 
-| Field group | Leaves that must be verified |
-| --- | --- |
-| `properties` | `contextWindow`, `requiresMfjsToolSchema`, `supportsToolCall`, `supportsJsonSchemaOutput`, `supportsNativeWebSearch`, `supportsMidConversationSystem` |
-| `properties.inputFormat` | `supportsText`, `supportsImage`, `supportsVideo`, `supportsAudio`, `supportsPdf` |
-| `properties.outputFormat` | currently only `supportsText`; must not be used to declare image or audio generation support |
-| `optionSpecs.reasoningLevel` | ordered `values` and `map`; no separate `type`, and existing off levels are not renamed automatically |
-| `optionSpecs.maxOutputTokens` | capability cap `max` and `map`; no separate request default budget |
+| Field group                   | Leaves that must be verified                                                                                                                          |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `properties`                  | `contextWindow`, `requiresMfjsToolSchema`, `supportsToolCall`, `supportsJsonSchemaOutput`, `supportsNativeWebSearch`, `supportsMidConversationSystem` |
+| `properties.inputFormat`      | `supportsText`, `supportsImage`, `supportsVideo`, `supportsAudio`, `supportsPdf`                                                                      |
+| `properties.outputFormat`     | currently only `supportsText`; must not be used to declare image or audio generation support                                                          |
+| `optionSpecs.reasoningLevel`  | ordered `values` and `map`; no separate `type`, and existing off levels are not renamed automatically                                                 |
+| `optionSpecs.maxOutputTokens` | capability cap `max` and `map`; no separate request default budget                                                                                    |
 
 Sparse rules write only differences, and completeness is proven by the resolved configuration. A new model should verify all capabilities; even when a family rule is borrowed in the end, leave the basis on which the inherited value applies. MFJS is a tool parameter Schema requirement and MCS allows mid-conversation System messages; neither can be derived from "supports tool calling".
 
@@ -147,13 +147,13 @@ If a new ordinary template really needs a different test endpoint, first confirm
 
 ### Current account endpoint mapping
 
-| Production Base URL | Test Base URL |
-| --- | --- |
-| `https://api.z.ai/api/anthropic` | `https://api.z.ai/api/anthropic` |
-| `https://open.bigmodel.cn/api/anthropic` | `https://open.bigmodel.cn/api/anthropic` |
+| Production Base URL                              | Test Base URL                                    |
+| ------------------------------------------------ | ------------------------------------------------ |
+| `https://api.z.ai/api/anthropic`                 | `https://api.z.ai/api/anthropic`                 |
+| `https://open.bigmodel.cn/api/anthropic`         | `https://open.bigmodel.cn/api/anthropic`         |
 | `https://zcode.z.ai/api/v1/zcode-plan/anthropic` | `https://zcode.z.ai/api/v1/zcode-plan/anthropic` |
-| `https://zcode.z.ai/api/v1/off-peak/anthropic` | `https://zcode.z.ai/api/v1/off-peak/anthropic` |
-| `https://zcode.z.ai/api/v1/highspeed/anthropic` | `https://zcode.z.ai/api/v1/highspeed/anthropic` |
+| `https://zcode.z.ai/api/v1/off-peak/anthropic`   | `https://zcode.z.ai/api/v1/off-peak/anthropic`   |
+| `https://zcode.z.ai/api/v1/highspeed/anthropic`  | `https://zcode.z.ai/api/v1/highspeed/anthropic`  |
 
 This table drives only the fixed-account Provider address conversion and the derivation of the corresponding Site rules, and does not change ordinary templates with the same URL. A new test address also needs a check of the existing Adapter's admission for the official-version request safety validation; the product environment switch itself does not grant access to a new domain.
 
@@ -169,13 +169,13 @@ ZCODE_ENV and env files → select complete JSON → reuse the Release Decoder t
                    package resource or embedded constant → Builtin Source → Registry
 ```
 
-| Consumer form | Configuration landing point and verification requirement |
-| --- | --- |
-| Desktop installer | `resources/config/provider/zcode-builtin.json` |
-| Ordinary CLI | `dist/provider/zcode-builtin.json`, the build refreshes the adjacent resource |
-| SEA single executable | resource key `zcode-provider/zcode-builtin.json` |
-| HTTP / Remote / Server CLI | the full JSON is compiled into a constant; check the final JS/package artifact |
-| Desktop development | locate the repo source file by the same compile environment; the priority of an explicit configuration path injection is unchanged |
+| Consumer form              | Configuration landing point and verification requirement                                                                           |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop installer          | `resources/config/provider/zcode-builtin.json`                                                                                     |
+| Ordinary CLI               | `dist/provider/zcode-builtin.json`, the build refreshes the adjacent resource                                                      |
+| SEA single executable      | resource key `zcode-provider/zcode-builtin.json`                                                                                   |
+| HTTP / Remote / Server CLI | the full JSON is compiled into a constant; check the final JS/package artifact                                                     |
+| Desktop development        | locate the repo source file by the same compile environment; the priority of an explicit configuration path injection is unchanged |
 
 A read, JSON parse or Schema validation failure terminates the build directly, with no cross-environment fallback. The build only reads the selected local file; it does not download online configuration, run sync implicitly or overwrite source files. On Windows the file path is converted to a `file:` URL before loading the decoder so that the drive letter is not taken as a protocol.
 

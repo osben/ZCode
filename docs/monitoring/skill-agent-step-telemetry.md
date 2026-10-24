@@ -12,12 +12,12 @@ high-frequency `agent_step` event.
 
 Added on demand only in `agent_step.event_extra_detail` of existing `tool_name=Skill` steps:
 
-| Field                  | Description                                                           | Source                                                                                |
-| ---------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `skill_name`           | Skill name of all Skill steps, regardless of plugin source            | Only the resolved `SkillContent.metadata.name`; `unknown` when unresolved or failing validation |
-| `skill_qualified_name` | Normalized skill name, e.g. `document-skills:pptx`                    | `SkillContent.metadata.qualifiedName`                                                 |
-| `skill_plugin_id`      | Full plugin id, e.g. `document-skills@zcode-plugins-official`         | `LoadedPlugin.id`                                                                     |
-| `skill_source`         | Existing `SkillSource` enum value                                     | `SkillContent.metadata.source`                                                        |
+| Field                  | Description                                                   | Source                                                                                          |
+| ---------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `skill_name`           | Skill name of all Skill steps, regardless of plugin source    | Only the resolved `SkillContent.metadata.name`; `unknown` when unresolved or failing validation |
+| `skill_qualified_name` | Normalized skill name, e.g. `document-skills:pptx`            | `SkillContent.metadata.qualifiedName`                                                           |
+| `skill_plugin_id`      | Full plugin id, e.g. `document-skills@zcode-plugins-official` | `LoadedPlugin.id`                                                                               |
+| `skill_source`         | Existing `SkillSource` enum value                             | `SkillContent.metadata.source`                                                                  |
 
 `skill_name` is always filled in a `tool_name=Skill` step but accepts only the name of resolved metadata. The
 `input.skill/name` of the scheduling or compatibility stream is not read; failure before loading, denial, stop and

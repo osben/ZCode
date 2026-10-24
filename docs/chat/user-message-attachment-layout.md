@@ -13,12 +13,12 @@ User message row (right-aligned)
 └─ Message actions
 ```
 
-| Attachments/context references | Visible prompt text | Result |
-| --- | --- | --- |
-| Present | Present | All attachments/references share one row; the bubble appears below |
-| Present | Absent | Show only the attachment area; no empty bubble |
-| Absent | Present | Show only the bubble |
-| Absent | Absent | No bubble |
+| Attachments/context references | Visible prompt text | Result                                                             |
+| ------------------------------ | ------------------- | ------------------------------------------------------------------ |
+| Present                        | Present             | All attachments/references share one row; the bubble appears below |
+| Present                        | Absent              | Show only the attachment area; no empty bubble                     |
+| Absent                         | Present             | Show only the bubble                                               |
+| Absent                         | Absent              | No bubble                                                          |
 
 Layout rules:
 

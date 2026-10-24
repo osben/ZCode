@@ -69,14 +69,14 @@ Explorer, ARMS/Grafana dashboards and alerts, local Usage SQLite reconciliation,
 
 ### 3.3 State owners
 
-| State             | Before                              | V4                       |
-| ----------------- | ----------------------------------- | ------------------------ |
-| Provider/Exporter | `OtlpTelemetryRecordExporter`       | Process-level Owner      |
-| Active Agent Span | `activeScopeStorage`                | OTel `context.active()`  |
-| Correlation       | several execution contexts          | OTel Context private key |
-| Active Model call | `ModelApiTelemetryStatusSink.calls` | Live Call/Attempt Writer |
-| Record Queue      | `QueuedTelemetryRuntime.queue`      | Removed                  |
-| SDK Queue         | `BatchSpanProcessor`                | The only Trace Queue     |
+| State             | Before                              | V4                          |
+| ----------------- | ----------------------------------- | --------------------------- |
+| Provider/Exporter | `OtlpTelemetryRecordExporter`       | Process-level Owner         |
+| Active Agent Span | `activeScopeStorage`                | OTel `context.active()`     |
+| Correlation       | several execution contexts          | OTel Context private key    |
+| Active Model call | `ModelApiTelemetryStatusSink.calls` | Live Call/Attempt Writer    |
+| Record Queue      | `QueuedTelemetryRuntime.queue`      | Removed                     |
+| SDK Queue         | `BatchSpanProcessor`                | The only Trace Queue        |
 | Local Usage       | SQLite                              | Stays an independent source |
 
 ### 3.4 Invariants
@@ -333,17 +333,17 @@ end and sample independently, using Root + Link.
 
 ## 8. Events
 
-| Span          | Event                   | Attributes            |
-| ------------- | ----------------------- | --------------------- |
-| Model Attempt | `first_provider_event`  | none                  |
-| Model Attempt | `first_content`         | none                  |
-| Model Attempt | `first_text`            | no body               |
-| Model Attempt | `stream_stalled`        | bounded idle bucket   |
+| Span          | Event                   | Attributes             |
+| ------------- | ----------------------- | ---------------------- |
+| Model Attempt | `first_provider_event`  | none                   |
+| Model Attempt | `first_content`         | none                   |
+| Model Attempt | `first_text`            | no body                |
+| Model Attempt | `stream_stalled`        | bounded idle bucket    |
 | Model Call    | `fallback_selected`     | transport, reason code |
-| Tool          | `permission_requested`  | none                  |
-| Tool          | `permission_decided`    | result category       |
-| Command       | `termination_requested` | reason                |
-| Compaction    | `fallback_selected`     | strategy, reason      |
+| Tool          | `permission_requested`  | none                   |
+| Tool          | `permission_decided`    | result category        |
+| Command       | `termination_requested` | reason                 |
+| Compaction    | `fallback_selected`     | strategy, reason       |
 
 `permission_requested/permission_decided` appear as a pair only when actually waiting on the user;
 `not_required` is a final Attribute only. Not recommended: `request_sent`/`completed` (duplicate Span
@@ -368,13 +368,13 @@ dashboards are accepted against it.
 
 ## 10. Privacy
 
-| Class           | Examples                            | Policy                                 |
-| --------------- | ----------------------------------- | -------------------------------------- |
-| Secret/Content  | Key, Header, Prompt, file, tool I/O | Drop                                   |
-| Person identity | Email, phone, OAuth UID             | Host-generated opaque subject / omit   |
-| Execution ID    | Session, Turn, Request, Tool Call   | As-is, controlled retention            |
-| Category        | Model, Provider, operation, outcome | As-is                                  |
-| Unbounded text  | URL, error, command, path           | Structure / sanitize / truncate        |
+| Class           | Examples                            | Policy                               |
+| --------------- | ----------------------------------- | ------------------------------------ |
+| Secret/Content  | Key, Header, Prompt, file, tool I/O | Drop                                 |
+| Person identity | Email, phone, OAuth UID             | Host-generated opaque subject / omit |
+| Execution ID    | Session, Turn, Request, Tool Call   | As-is, controlled retention          |
+| Category        | Model, Provider, operation, outcome | As-is                                |
+| Unbounded text  | URL, error, command, path           | Structure / sanitize / truncate      |
 
 URL: keep scheme/host/port/sanitized route; drop query, fragment, userinfo; replace email, UUID, long
 numbers, hash/token-like, tenant/account segments; cache the sanitized result per Base URL.
@@ -506,23 +506,23 @@ CPU, heap, event-loop delay, queue bytes, drop, shutdown and business latency.
 
 ### 14.1 Unit matrix
 
-| Dimension | Cases                                                                                  |
-| --------- | -------------------------------------------------------------------------------------- |
+| Dimension | Cases                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------- |
 | Scope     | sync, async, throw, reject, cancel, double terminal, Context activation failure, No-op exactly-once |
-| Context   | nested, parallel, timer, emitter, missing parent                                       |
-| Link      | same process, remote, tracestate, invalid carrier, Turn Root+Link                      |
-| Turn      | success, failed, cancelled, abandoned                                                  |
-| Tool      | success, denied, failed, cancelled                                                     |
-| Command   | exit 0/nonzero, signal, timeout, missing exit                                          |
-| Model     | success, retry recovery/exhausted, cancel, abandoned                                   |
-| Stream    | SSE, HTTP, first content, stall, recovery                                              |
-| Cache     | hit, write, none, unknown                                                              |
-| Reasoning | unsupported, disabled, level, budget, adaptive, unknown                                |
-| Privacy   | URL, email, token, path, command, provider error, malicious Getter, circular object    |
-| Capacity  | span/detail/event/queue limits, long Span, shutdown/capacity race                      |
-| Identity  | login, logout, switch, resolver error, old Span not rewritten                          |
-| Metric    | type, unit, bucket, label, multi-process reset                                         |
-| Version   | CLI project package, product root, Desktop build metadata, bundle, Resource            |
+| Context   | nested, parallel, timer, emitter, missing parent                                                    |
+| Link      | same process, remote, tracestate, invalid carrier, Turn Root+Link                                   |
+| Turn      | success, failed, cancelled, abandoned                                                               |
+| Tool      | success, denied, failed, cancelled                                                                  |
+| Command   | exit 0/nonzero, signal, timeout, missing exit                                                       |
+| Model     | success, retry recovery/exhausted, cancel, abandoned                                                |
+| Stream    | SSE, HTTP, first content, stall, recovery                                                           |
+| Cache     | hit, write, none, unknown                                                                           |
+| Reasoning | unsupported, disabled, level, budget, adaptive, unknown                                             |
+| Privacy   | URL, email, token, path, command, provider error, malicious Getter, circular object                 |
+| Capacity  | span/detail/event/queue limits, long Span, shutdown/capacity race                                   |
+| Identity  | login, logout, switch, resolver error, old Span not rewritten                                       |
+| Metric    | type, unit, bucket, label, multi-process reset                                                      |
+| Version   | CLI project package, product root, Desktop build metadata, bundle, Resource                         |
 
 ### 14.2 Integration
 
@@ -550,13 +550,13 @@ differences, but health counters must explain them.
 
 ## 15. Versions and release
 
-| Field                            | Source                    | Example           | Changes when     |
-| -------------------------------- | ------------------------- | ----------------- | ---------------- |
-| `service.version`                | Actual CLI bundle         | `0.16.1`          | CLI release      |
-| `zcode.product.version`          | Outer product build meta  | `3.6.1`           | Product release  |
-| `zcode.build.commit_id`          | Build metadata            | commit SHA        | Every build      |
-| `zcode.telemetry.schema_version` | Contract                  | `5`               | Data contract    |
-| `service.name`                   | Telemetry fixed constant  | `zcode-cli-agent` | Never            |
+| Field                            | Source                   | Example           | Changes when    |
+| -------------------------------- | ------------------------ | ----------------- | --------------- |
+| `service.version`                | Actual CLI bundle        | `0.16.1`          | CLI release     |
+| `zcode.product.version`          | Outer product build meta | `3.6.1`           | Product release |
+| `zcode.build.commit_id`          | Build metadata           | commit SHA        | Every build     |
+| `zcode.telemetry.schema_version` | Contract                 | `5`               | Data contract   |
+| `service.name`                   | Telemetry fixed constant | `zcode-cli-agent` | Never           |
 
 Packaging gate: run `zcode.cjs --version`; read the CLI project package, repo-root product package and
 Desktop build metadata; start the packaged Agent and send a Trace; decode the OTLP Resource; assert

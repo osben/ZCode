@@ -6,11 +6,11 @@ fields, and runtime and operations detail.
 
 ## Document structure
 
-| Tier      | Document                                                                         | Content                                                                    |
-| --------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Core spec | [CLI Agent Telemetry design and development spec](./cli-agent-telemetry.md)      | Data model, topology, principles, integration, privacy constraints, queries |
-| Reference | [OpenTelemetry concepts and ZCode choices](./reference/otel-concepts.md)         | Resource, Context, SpanContext, Parent, Link, Event, ...                   |
-| Reference | [Span, Attribute, Event and Metric dictionary](./reference/schema-reference.md)  | Full fields, enums, missing semantics, compatibility projection, events, metrics |
+| Tier      | Document                                                                                  | Content                                                                          |
+| --------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Core spec | [CLI Agent Telemetry design and development spec](./cli-agent-telemetry.md)               | Data model, topology, principles, integration, privacy constraints, queries      |
+| Reference | [OpenTelemetry concepts and ZCode choices](./reference/otel-concepts.md)                  | Resource, Context, SpanContext, Parent, Link, Event, ...                         |
+| Reference | [Span, Attribute, Event and Metric dictionary](./reference/schema-reference.md)           | Full fields, enums, missing semantics, compatibility projection, events, metrics |
 | Reference | [Runtime, privacy, performance and ARMS reference](./reference/runtime-and-operations.md) | Runtime lifecycle, propagation, sanitizing, capacity, tests, queries, Dashboards |
 
 The core spec and references together describe the current implementation: design principles and

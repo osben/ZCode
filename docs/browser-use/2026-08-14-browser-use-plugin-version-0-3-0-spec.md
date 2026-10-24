@@ -58,12 +58,12 @@ not exist".
 
 ## 4. Cases
 
-| Case ID | Setup | Action | Assertions | Evidence |
-| --- | --- | --- | --- | --- |
-| BUV-030 | five version sources | run the version alignment test | all exactly `0.3.0` | Bootstrap, SEA, MCP unit |
-| BUV-031 | `0.2.1` and `0.3.0` caches coexist | discover plugins | only `0.3.0` loaded, no duplicate diagnostic | Adapter unit |
-| BUV-032 | Browser Use source lacks `docs/recording.md` | filesystem/SEA seed | the completeness check rejects the incomplete asset | Bootstrap, SEA unit |
-| BUV-033 | Desktop/remote runtime asset scripts | check the required-path contract | `docs/recording.md` exists on both local and remote chains | Desktop, Server unit |
+| Case ID | Setup                                        | Action                           | Assertions                                                 | Evidence                 |
+| ------- | -------------------------------------------- | -------------------------------- | ---------------------------------------------------------- | ------------------------ |
+| BUV-030 | five version sources                         | run the version alignment test   | all exactly `0.3.0`                                        | Bootstrap, SEA, MCP unit |
+| BUV-031 | `0.2.1` and `0.3.0` caches coexist           | discover plugins                 | only `0.3.0` loaded, no duplicate diagnostic               | Adapter unit             |
+| BUV-032 | Browser Use source lacks `docs/recording.md` | filesystem/SEA seed              | the completeness check rejects the incomplete asset        | Bootstrap, SEA unit      |
+| BUV-033 | Desktop/remote runtime asset scripts         | check the required-path contract | `docs/recording.md` exists on both local and remote chains | Desktop, Server unit     |
 
 ## 5. Done criteria
 

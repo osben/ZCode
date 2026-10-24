@@ -88,23 +88,23 @@ migration is needed; the server provides a Nacos example and an object-order pas
 
 Change layers: option-source, presentation. Mode: planning -> implementation-handoff.
 
-| UI scenario                       | Entry / shared implementation                                | Display owner / default source        | Validation and commit    | Authority / persistence         | Mode and isolation                        |
-| --------------------------------- | ------------------------------------------------------------ | ------------------------------------- | ------------------------ | ------------------------------- | ----------------------------------------- |
-| Public category browse / expand   | PluginStorePage -> PluginStoreListView -> groupItemsByCategory | hook config projection / old ordering | service schema; read-only | Nacos / Host memory cache       | desktop/web/mobile shared, no plugin-state change |
-| Interface-mode menu               | Existing interfaceMode setting                               | Zustand / normalizeInterfaceMode      | existing setInterfaceMode | local preference and window broadcast | coding/general map to code/work      |
-| Featured / personal / search / installed | Each selector of the same ListView                    | Existing catalog / install state      | no new action            | Existing sources                | Ordering fully isolated                   |
+| UI scenario                              | Entry / shared implementation                                  | Display owner / default source        | Validation and commit     | Authority / persistence               | Mode and isolation                                |
+| ---------------------------------------- | -------------------------------------------------------------- | ------------------------------------- | ------------------------- | ------------------------------------- | ------------------------------------------------- |
+| Public category browse / expand          | PluginStorePage -> PluginStoreListView -> groupItemsByCategory | hook config projection / old ordering | service schema; read-only | Nacos / Host memory cache             | desktop/web/mobile shared, no plugin-state change |
+| Interface-mode menu                      | Existing interfaceMode setting                                 | Zustand / normalizeInterfaceMode      | existing setInterfaceMode | local preference and window broadcast | coding/general map to code/work                   |
+| Featured / personal / search / installed | Each selector of the same ListView                             | Existing catalog / install state      | no new action             | Existing sources                      | Ordering fully isolated                           |
 
 Shared: the list component, config source and catalog; each entry keeps its original filter, sort and
 install semantics.
 
-| Level          | Relation                              | Evidence / checkpoint                                                |
-| -------------- | ------------------------------------- | -------------------------------------------------------------------- |
-| must-inspect   | service config -> hook -> category order | ClientConfigService.getSnapshot, PluginStorePage, groupItemsByCategory |
-| must-inspect   | interfaceMode -> ordering-rule choice | useIsGeneralMode, StoreProvider                                      |
-| should-inspect | ordering -> first 6 collapsed and the rest | PluginStoreListView                                             |
-| invariant-only | search/featured/personal/installed selectors | pluginStoreListing, PluginStoreListView                       |
-| invariant-only | install/runtime/workspace isolation   | no change to the management service or Agent protocol               |
-| evidence-only  | schema, service, ordering and browser tests | coverage table below                                          |
+| Level          | Relation                                     | Evidence / checkpoint                                                  |
+| -------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
+| must-inspect   | service config -> hook -> category order     | ClientConfigService.getSnapshot, PluginStorePage, groupItemsByCategory |
+| must-inspect   | interfaceMode -> ordering-rule choice        | useIsGeneralMode, StoreProvider                                        |
+| should-inspect | ordering -> first 6 collapsed and the rest   | PluginStoreListView                                                    |
+| invariant-only | search/featured/personal/installed selectors | pluginStoreListing, PluginStoreListView                                |
+| invariant-only | install/runtime/workspace isolation          | no change to the management service or Agent protocol                  |
+| evidence-only  | schema, service, ordering and browser tests  | coverage table below                                                   |
 
 Neither workspace has `.codegraph/`, so the index was skipped by convention and `rg` located the real
 callers. Static tracing depth 2: Page -> ListView -> groupItemsByCategory; service -> provider ->
@@ -119,17 +119,17 @@ explicitly. No open product question. Main dimensions: code/work x valid/missing
 first/switch/refresh x expanded/collapsed. Platform/theme/language use representative combinations only; the
 session delivery and plugin lifecycle are unchanged, so their Cartesian product is pruned.
 
-| ID     | Setup -> action -> assertion                                                                           | Evidence                |
-| ------ | ------------------------------------------------------------------------------------------------------ | ----------------------- |
-| PSO-01 | Same catalog and dual-mode config -> switch existing mode state -> categories and plugins reorder separately, request count unchanged | ordering unit test + browser |
-| PSO-02 | No config / empty config / corrupt mode field -> browse -> default order, the other mode still valid   | schema + ordering unit test |
-| PSO-03 | Duplicate / unknown IDs, explicit `other` -> sort -> first valid wins, no add/remove or cross-category move | unit test           |
-| PSO-04 | Config not returned / network failure -> browse -> catalog visible; refresh failure keeps old projection | hook + service tests  |
-| PSO-05 | Two services or an older request arrives late -> switch service/refresh -> does not overwrite the new result | hook test         |
-| PSO-06 | More than 6 items -> expand/collapse -> all items in one order and expand state kept                    | browser                 |
-| PSO-07 | Featured/personal/search/installed on the same page -> switch mode -> existing ordering unchanged       | browser / existing unit tests |
-| PSO-08 | Nacos dual-mode nested arrays -> parse/override/JSON serialize -> both array levels keep order           | Go test                 |
-| PSO-09 | Official restored plugin installed and featured -> browse and search in both modes -> hidden from all marketplace entries, same-named personal plugin kept | browser + real dev |
+| ID     | Setup -> action -> assertion                                                                                                                               | Evidence                      |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| PSO-01 | Same catalog and dual-mode config -> switch existing mode state -> categories and plugins reorder separately, request count unchanged                      | ordering unit test + browser  |
+| PSO-02 | No config / empty config / corrupt mode field -> browse -> default order, the other mode still valid                                                       | schema + ordering unit test   |
+| PSO-03 | Duplicate / unknown IDs, explicit `other` -> sort -> first valid wins, no add/remove or cross-category move                                                | unit test                     |
+| PSO-04 | Config not returned / network failure -> browse -> catalog visible; refresh failure keeps old projection                                                   | hook + service tests          |
+| PSO-05 | Two services or an older request arrives late -> switch service/refresh -> does not overwrite the new result                                               | hook test                     |
+| PSO-06 | More than 6 items -> expand/collapse -> all items in one order and expand state kept                                                                       | browser                       |
+| PSO-07 | Featured/personal/search/installed on the same page -> switch mode -> existing ordering unchanged                                                          | browser / existing unit tests |
+| PSO-08 | Nacos dual-mode nested arrays -> parse/override/JSON serialize -> both array levels keep order                                                             | Go test                       |
+| PSO-09 | Official restored plugin installed and featured -> browse and search in both modes -> hidden from all marketplace entries, same-named personal plugin kept | browser + real dev            |
 
 Browser cases live in `packages/ui/test/browser/manual-review/pending/plugin-store-mode-order.*`, using the
 real ListView, hook and interface-mode Zustand with finite injected service responses; no model or live
@@ -158,13 +158,13 @@ target Host listing -- category (display-only) -----------+- shared sort - searc
 window ClientConfigService -- Code/Work config -----------+
 ```
 
-| ID     | Scenario and assertion                                                                  | Verification              |
-| ------ | --------------------------------------------------------------------------------------- | ------------------------- |
+| ID     | Scenario and assertion                                                                                              | Verification                       |
+| ------ | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | PSO-10 | Same catalog: marketplace and the Picker's official subset have the same Code/Work order; personal items keep order | pure function / Provider unit test |
-| PSO-11 | Config pending / failed / late after close / revoked never blocks; mode switch sends no request | Hook + browser         |
-| PSO-12 | Session identity frozen, category updatable; old method returns no new field, new method adds category | protocol test         |
-| PSO-13 | New method -32601 falls back to the old method; other errors do not fall back            | service test              |
-| PSO-14 | @ and + real entries have the same order; search relevance first, conflicts not selectable, disabled hidden | browser           |
+| PSO-11 | Config pending / failed / late after close / revoked never blocks; mode switch sends no request                     | Hook + browser                     |
+| PSO-12 | Session identity frozen, category updatable; old method returns no new field, new method adds category              | protocol test                      |
+| PSO-13 | New method -32601 falls back to the old method; other errors do not fall back                                       | service test                       |
+| PSO-14 | @ and + real entries have the same order; search relevance first, conflicts not selectable, disabled hidden         | browser                            |
 
 Verification notes: browser cases pass for 1200px/en-US/light and 390px/zh-CN/dark; the real @ / + components
 run with non-plugin data sources (files/skills/sessions) replaced while the real plugin provider, reference

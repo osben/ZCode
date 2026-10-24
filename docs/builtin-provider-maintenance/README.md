@@ -8,16 +8,16 @@ This directory provides on its own the background, concepts, rules, rationale an
 
 ## Start from a task
 
-| What to do | Entry |
-| --- | --- |
-| Decide which vendors and models to maintain, how to extend and retire | [Scope and principles](./scope.md) |
-| Understand templates, members, rules, parameter maps and production/test configuration | [Configuration spec](./configuration.md) |
-| See current templates, the full model list, default enablement and known gaps | [Current state](./current-state.md) |
-| See the latest expansion advice, rule differences and batch plan | [2026-10-14 expansion plan](./expansion-plan.md) |
-| Keep tracking news, official catalogs and retirement notices | [Research tracking and findings](./research.md) |
-| Move from a candidate to a configuration MR, assign manual collaboration | [Maintenance workflow](./workflow.md) |
-| Obtain API keys, run real validation, leave reviewable evidence | [Validation spec](./validation.md) |
-| Merge MRs, ship with a version, go live dynamically and roll back if needed | [Delivery spec](./delivery.md) |
+| What to do                                                                             | Entry                                            |
+| -------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Decide which vendors and models to maintain, how to extend and retire                  | [Scope and principles](./scope.md)               |
+| Understand templates, members, rules, parameter maps and production/test configuration | [Configuration spec](./configuration.md)         |
+| See current templates, the full model list, default enablement and known gaps          | [Current state](./current-state.md)              |
+| See the latest expansion advice, rule differences and batch plan                       | [2026-10-14 expansion plan](./expansion-plan.md) |
+| Keep tracking news, official catalogs and retirement notices                           | [Research tracking and findings](./research.md)  |
+| Move from a candidate to a configuration MR, assign manual collaboration               | [Maintenance workflow](./workflow.md)            |
+| Obtain API keys, run real validation, leave reviewable evidence                        | [Validation spec](./validation.md)               |
+| Merge MRs, ship with a version, go live dynamically and roll back if needed            | [Delivery spec](./delivery.md)                   |
 
 ## Fact boundaries
 

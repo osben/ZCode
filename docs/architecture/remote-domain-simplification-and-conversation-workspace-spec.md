@@ -1,6 +1,6 @@
 # Remote workspace projection and persistence compatibility
 
-Current spec. The remote no-project chat UI is disabled; project entry, directory selection, disconnect and navigation recovery are defined by the [project navigation spec](../remote/project-first-remote-navigation-spec.md). This document keeps the compatibility-read and persistence constraints and no longer contains connect-and-chat design or finished implementation phases. The original plan, RCONV scenarios and review basis: `git show a17a875588b8d66c2bee49236292e174df651363:docs/architecture/remote-domain-simplification-and-conversation-workspace-spec.md`.
+Current spec. The remote no-project chat UI is disabled; project entry, directory selection, disconnect and navigation recovery are defined by the [project navigation spec](../remote/project-first-remote-navigation-spec.md). This document keeps the compatibility-read and persistence constraints and no longer contains connect-and-chat design or finished implementation phases. The original plan, RCONV scenarios and review basis: `git show 45f808f7:docs/architecture/remote-domain-simplification-and-conversation-workspace-spec.md`.
 
 ## Domain and state ownership
 

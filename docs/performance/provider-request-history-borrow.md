@@ -20,11 +20,11 @@ entry/message/content is forbidden.
 
 History offers three reads with different lifetimes:
 
-| Read                                  | Cost            | Scope                                           | Contract                                                                                   |
-| ------------------------------------- | --------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `borrowReadOnlyRuntimeEntries()`      | O(1)            | synchronous, immediate read-only                | returns the current authoritative entries directly; callers must not write or hold across an async boundary |
-| `[...borrowReadOnlyRuntimeEntries()]` | O(n) pointer copy | async tasks or compact boundaries needing a fixed member set | fixes the array members at that time; entries still share immutable references |
-| `toRuntimeEntries()`                  | O(n) content clone | a mutable independent copy or external defensive snapshot | callers may modify the result without polluting history                          |
+| Read                                  | Cost               | Scope                                                        | Contract                                                                                                    |
+| ------------------------------------- | ------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `borrowReadOnlyRuntimeEntries()`      | O(1)               | synchronous, immediate read-only                             | returns the current authoritative entries directly; callers must not write or hold across an async boundary |
+| `[...borrowReadOnlyRuntimeEntries()]` | O(n) pointer copy  | async tasks or compact boundaries needing a fixed member set | fixes the array members at that time; entries still share immutable references                              |
+| `toRuntimeEntries()`                  | O(n) content clone | a mutable independent copy or external defensive snapshot    | callers may modify the result without polluting history                                                     |
 
 No revision, version cache or invalidation protocol is introduced. The Runtime calls borrow again at each
 immediate read point to get the authoritative array of that moment. Only code that explicitly crosses an

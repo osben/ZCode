@@ -2,14 +2,14 @@
 
 ## Validation layers
 
-| Layer | What it can prove | What it cannot prove |
-| --- | --- | --- |
-| Official material | Declared models, protocols, parameters and lifecycle | That a given account/region/plan can actually use it |
-| Decoder/Schema | File structure, fields and value ranges are legal | That every model is finally complete, or that the remote supports these parameters |
-| Resolver/Map tests | Override order, complete execution configuration, parameter mapping | That the vendor actually accepts the request |
-| Local HTTP/replay | Request encoding, stream consumption, tool loop and configuration wiring | The current public endpoint, key permissions and real model behavior |
-| Real API | The measured result for this entry, model, protocol and account | Other plans, regions, protocols, or being always available in the future |
-| Product E2E / package validation | UI configuration to the target execution chain and actual resources | That all vendors and platforms pass |
+| Layer                            | What it can prove                                                        | What it cannot prove                                                               |
+| -------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Official material                | Declared models, protocols, parameters and lifecycle                     | That a given account/region/plan can actually use it                               |
+| Decoder/Schema                   | File structure, fields and value ranges are legal                        | That every model is finally complete, or that the remote supports these parameters |
+| Resolver/Map tests               | Override order, complete execution configuration, parameter mapping      | That the vendor actually accepts the request                                       |
+| Local HTTP/replay                | Request encoding, stream consumption, tool loop and configuration wiring | The current public endpoint, key permissions and real model behavior               |
+| Real API                         | The measured result for this entry, model, protocol and account          | Other plans, regions, protocols, or being always available in the future           |
+| Product E2E / package validation | UI configuration to the target execution chain and actual resources      | That all vendors and platforms pass                                                |
 
 Every layer records its scope and date. A successful `GET /models`, an SDK that can be created, or one successful connection test must not be written as full Agent support.
 
@@ -27,16 +27,16 @@ This documentation cleanup requested or obtained none of these keys; each new ob
 
 Trim by change scope. For added/changed members, confirm each ID is callable; cover parameter and protocol differences one by one, and one flagship model cannot represent a whole brand.
 
-| Scenario | What to verify |
-| --- | --- |
-| Connection and basic stream | Actual URL/protocol/Header, model identity; the stream ends normally, usage and finish reason; a mid-stream error cannot count as success |
-| Tool loop | Declare tool → streamed argument assembly → return tool result → continue answering; tool IDs/message order correct |
-| Thinking levels | The final Body of the Map for each public value, especially off/lowest/highest levels and models that cannot be turned off |
-| Output limit | Cap and explicit budget verified separately; illegal values fail explicitly; no silent truncation or secretly retrying with an added budget |
-| Media and structured | Verify separately the image, video, audio, PDF and JSON Schema declared/adjusted this time; mark untested items |
-| System and history | For MCS, reasoning history, encrypted content or new protocols, check multi-turn replay, post-tool turns and system message handling |
-| Adjacent variants | Base model/Flash/FlashX/vision/aggregator prefix and suffix; confirm rules do not cross-apply |
-| User configuration | Inherited value refresh, explicit personal override retained, default enablement, existing instance address/name and saved selection |
+| Scenario                    | What to verify                                                                                                                              |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection and basic stream | Actual URL/protocol/Header, model identity; the stream ends normally, usage and finish reason; a mid-stream error cannot count as success   |
+| Tool loop                   | Declare tool → streamed argument assembly → return tool result → continue answering; tool IDs/message order correct                         |
+| Thinking levels             | The final Body of the Map for each public value, especially off/lowest/highest levels and models that cannot be turned off                  |
+| Output limit                | Cap and explicit budget verified separately; illegal values fail explicitly; no silent truncation or secretly retrying with an added budget |
+| Media and structured        | Verify separately the image, video, audio, PDF and JSON Schema declared/adjusted this time; mark untested items                             |
+| System and history          | For MCS, reasoning history, encrypted content or new protocols, check multi-turn replay, post-tool turns and system message handling        |
+| Adjacent variants           | Base model/Flash/FlashX/vision/aggregator prefix and suffix; confirm rules do not cross-apply                                               |
+| User configuration          | Inherited value refresh, explicit personal override retained, default enablement, existing instance address/name and saved selection        |
 
 Use minimal prompts and test attachments without personal information. A million-context or max-output stress test needs its own budget, and a configuration value must not be validated by default with a full-capacity request. A normal smoke does not claim to cover the capacity upper bound. Real-time latency and rate-limit fluctuation are recorded as observations, avoiding arbitrary sleeps that hide configuration problems.
 

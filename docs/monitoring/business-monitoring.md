@@ -13,9 +13,9 @@
 
 ## Boundary with non-business monitoring
 
-| Belongs to this document                                     | Does not belong (see [performance-monitoring.md](./performance-monitoring.md)) |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| Product behavior, session/task quality, telemetry events     | Page performance, JS errors, crashes, RUM, development profiling               |
+| Belongs to this document                                 | Does not belong (see [performance-monitoring.md](./performance-monitoring.md)) |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Product behavior, session/task quality, telemetry events | Page performance, JS errors, crashes, RUM, development profiling               |
 
 ## Metrics and event list
 
@@ -163,12 +163,12 @@ Only positioning reference before requirements finalized, code prevails:
 
 Spec: `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` "Token telemetry for subagents". Field scope increments:
 
-| Field                                                                       | Change                                                                                                                                                                         |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `agent_step.agent_role`                                                     | New value `workflow subagent` (existing `foreground subagent` / `background subagent` unchanged)                                                                               |
-| `agent_step.agent_id`                                                       | Workflow sub-agent is `siteId@ordinal`                                                                                                                                         |
-| `agent_step.workflow_run_id` / `child_session_id` / `workflow_tool_call_id` | New, only present on workflow sub-agent steps                                                                                                                                  |
-| `agent_step.tool_call_id`                                                   | Workflow sub-agent: tool step `tool_workflow_<agentId>_<childToolCallId>`, summary step `tool_workflow_<agentId>_<runId>`                                                      |
+| Field                                                                       | Change                                                                                                                                                                                                                 |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent_step.agent_role`                                                     | New value `workflow subagent` (existing `foreground subagent` / `background subagent` unchanged)                                                                                                                       |
+| `agent_step.agent_id`                                                       | Workflow sub-agent is `siteId@ordinal`                                                                                                                                                                                 |
+| `agent_step.workflow_run_id` / `child_session_id` / `workflow_tool_call_id` | New, only present on workflow sub-agent steps                                                                                                                                                                          |
+| `agent_step.tool_call_id`                                                   | Workflow sub-agent: tool step `tool_workflow_<agentId>_<childToolCallId>`, summary step `tool_workflow_<agentId>_<runId>`                                                                                              |
 | `agent_step.message_id`                                                     | Workflow sub-agent steps hang under the inputId of the round that initiated the run; a run started directly from the middle center uses a run-dedicated synthetic UUID v7 and that message has no `message_completion` |
-| `message_completion.agent_composition`                                      | Adds `main_plus_wf` / `main_plus_fg_wf` / `main_plus_bg_wf` / `main_plus_fg_bg_wf`: run notification consumed by main conversation some round sets position                    |
-| `message_completion.message_source`                                         | Independent round woken by workflow notification records `background_workflow`                                                                                                 |
+| `message_completion.agent_composition`                                      | Adds `main_plus_wf` / `main_plus_fg_wf` / `main_plus_bg_wf` / `main_plus_fg_bg_wf`: run notification consumed by main conversation some round sets position                                                            |
+| `message_completion.message_source`                                         | Independent round woken by workflow notification records `background_workflow`                                                                                                                                         |

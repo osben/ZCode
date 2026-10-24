@@ -15,26 +15,26 @@ heartbeat, error codes and HTTP failures without live environments.
 ## Acceptance criteria
 
 - [x] Docs first: create the `docs/web-remote-control/relay-v2-pairing.md` skeleton with the V2 WebSocket
-  message contract (`auth_init` without `role`, `pair_status_query` without `device_sid`, `client_ts` in Unix
-  seconds), the HTTP contract (device register/list/delete, `role=device|terminal` one-time token) and the
-  fake relay's capability boundary.
+      message contract (`auth_init` without `role`, `pair_status_query` without `device_sid`, `client_ts` in Unix
+      seconds), the HTTP contract (device register/list/delete, `role=device|terminal` one-time token) and the
+      fake relay's capability boundary.
 - [x] shared adds V2 inbound/outbound relay message types, HTTP request/response types and runtime parsers
-  that reject illegal fields. V1 types and parsing stay untouched and existing shared tests pass.
+      that reject illegal fields. V1 types and parsing stay untouched and existing shared tests pass.
 - [x] The QR URL builder supports the V2 shape without `passHash`/`timestamp`; the parser accepts URLs with
-  `sid`, `mid`, `name`, `app_version` all optional and no `hash`. V1 parsing with `hash` is unchanged.
+      `sid`, `mid`, `name`, `app_version` all optional and no `hash`. V1 parsing with `hash` is unchanged.
 - [x] Heartbeat constants gain a V2 group: base 5 s, jitter ±1 s, ACK deadline 15 s; V1 constants stay.
 - [x] Fake relay V2 fixture: in-process HTTP handlers for device register/list/delete and token issuing plus
-  a `/api/v1/remote/ws2?token=` WebSocket server. Tokens are one-time and bound to role and user; `auth_init`
-  checks device ownership and answers `AUTH_FAILED` for another user's device; a new connection of the same
-  role replaces the old one and sends it `KICKED`; `data` passes through between the paired sides with
-  `client_ts` replaced by `server_ts`.
+      a `/api/v1/remote/ws2?token=` WebSocket server. Tokens are one-time and bound to role and user; `auth_init`
+      checks device ownership and answers `AUTH_FAILED` for another user's device; a new connection of the same
+      role replaces the old one and sends it `KICKED`; `data` passes through between the paired sides with
+      `client_ts` replaced by `server_ts`.
 - [x] The fake relay can script `pair_status` of `auth_ack`/`pair_status_ack`, any error code
-  (`AUTH_FAILED`/`WRONG_PARAM`/`KICKED`/`INTERNAL`/`DEVICE_OFFLINE`), server-initiated disconnects, and HTTP
-  401/5xx/network errors; it records every received message and HTTP call for assertions. It serves both Node
-  `ws` clients and browser-WebSocket-compatible clients.
+      (`AUTH_FAILED`/`WRONG_PARAM`/`KICKED`/`INTERNAL`/`DEVICE_OFFLINE`), server-initiated disconnects, and HTTP
+      401/5xx/network errors; it records every received message and HTTP call for assertions. It serves both Node
+      `ws` clients and browser-WebSocket-compatible clients.
 - [x] The fake relay has its own tests proving the above matches the V2 doc. The fixture lives where desktop
-  and phone tests can both import it; the location is decided at implementation and written into
-  `relay-v2-pairing.md`.
+      and phone tests can both import it; the location is decided at implementation and written into
+      `relay-v2-pairing.md`.
 - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests pass.
 
 ## Comments

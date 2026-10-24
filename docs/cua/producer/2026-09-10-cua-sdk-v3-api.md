@@ -28,25 +28,25 @@ The model sees a camelCase `cua` global (no browser half). Signatures, option na
 are in §2:
 
 ```js
-const state = await cua.getState();            // show app list
-const app   = await cua.getApp("Notes");       // bind + show initial full AX tree
+const state = await cua.getState(); // show app list
+const app = await cua.getApp("Notes"); // bind + show initial full AX tree
 await app.click(42);
 await app.typeText("hello");
 await app.pressKey("Return");
-await app.getAXState();                         // shown automatically; returns string
+await app.getAXState(); // shown automatically; returns string
 ```
 
 The model-visible surface is two safety methods plus four optional option bags, with no extra members.
 
 ### 0.2 Counts
 
-| Dimension | Before | v3.1 |
-|---|---|---|
-| Model-visible tools / methods | 30 MCP tools | 19 SDK members (17 interaction-surface members + `requestAccess` + `stop`) |
-| Underlying tool surface (`cua.computer`) | 30 | **14** (16 deleted, §3.2-3.5) |
-| Broker protocol methods | 63 | **49** (15 deleted + `paste` added; 6 more test probes removable -> 43, §3.6) |
-| Extra model-surface members | n/a | **0** |
-| Extra model-surface options | n/a | 4 option bags, 5 keys (`modifiers` / `strategy` / `holdSeconds`) |
+| Dimension                                | Before       | v3.1                                                                          |
+| ---------------------------------------- | ------------ | ----------------------------------------------------------------------------- |
+| Model-visible tools / methods            | 30 MCP tools | 19 SDK members (17 interaction-surface members + `requestAccess` + `stop`)    |
+| Underlying tool surface (`cua.computer`) | 30           | **14** (16 deleted, §3.2-3.5)                                                 |
+| Broker protocol methods                  | 63           | **49** (15 deleted + `paste` added; 6 more test probes removable -> 43, §3.6) |
+| Extra model-surface members              | n/a          | **0**                                                                         |
+| Extra model-surface options              | n/a          | 4 option bags, 5 keys (`modifiers` / `strategy` / `holdSeconds`)              |
 
 ### 0.3 Two special semantics (must be stated in the model docs)
 
@@ -61,7 +61,8 @@ The model-visible surface is two safety methods plus four optional option bags, 
 ## 1. Model-surface minimization principles
 
 > **R1 | Model-visible members are fixed.** The existing 17 interaction-surface members + `requestAccess`
-> + `stop`. No "better names", no extra positional parameters, no return-type changes.
+>
+> - `stop`. No "better names", no extra positional parameters, no return-type changes.
 >
 > **R2 | For a new capability, first ask whether it can be deleted.** The test is not "is it useful" but
 > **"can two lines of JS, one composed call, or an SDK-internal mechanism replace it"**. If yes, delete
@@ -99,12 +100,12 @@ interface ObservationOptions {
 }
 interface StateOptions extends ObservationOptions {
   disableDiffing?: boolean;
-}                                                   // ← detail removed (§3.3)
+} // ← detail removed (§3.3)
 interface ClickOptions {
   mouseButton?: MouseButton;
   clickCount?: number;
-  modifiers?: string;                               // + ZCode ("cmd+shift")
-  strategy?: "auto" | "a11y" | "event";             // + ZCode (default auto)
+  modifiers?: string; // + ZCode ("cmd+shift")
+  strategy?: "auto" | "a11y" | "event"; // + ZCode (default auto)
 }
 interface SelectTextOptions {
   prefix?: string;
@@ -113,19 +114,22 @@ interface SelectTextOptions {
 }
 interface PasteOptions {
   format?: "text" | "md" | "html";
-}                                                   // ← restoreClipboard removed (§3.4)
+} // ← restoreClipboard removed (§3.4)
 interface StateAndScreenshot {
   state: string;
   screenshot?: Uint8Array;
 }
-interface PressKeyOptions {                         // + ZCode (the whole second parameter is an addition)
-  holdSeconds?: number;                             //   > 0 uses hold_key
+interface PressKeyOptions {
+  // + ZCode (the whole second parameter is an addition)
+  holdSeconds?: number; //   > 0 uses hold_key
   strategy?: "auto" | "a11y" | "event";
-}                                                   // ← repeat removed (§3.4)
-interface ScrollOptions {                           // + ZCode
+} // ← repeat removed (§3.4)
+interface ScrollOptions {
+  // + ZCode
   strategy?: "auto" | "a11y" | "event";
-}                                                   // ← amount removed (§3.4)
-interface DragOptions {                             // + ZCode
+} // ← amount removed (§3.4)
+interface DragOptions {
+  // + ZCode
   modifiers?: string;
   strategy?: "auto" | "a11y" | "event";
 }
@@ -144,10 +148,13 @@ interface Target {
   click(target: number | Vec2, options?: ClickOptions): Promise<void>;
   drag(from: Vec2, to: Vec2, options?: DragOptions): Promise<void>;
   pressKey(key: string, options?: PressKeyOptions): Promise<void>;
-  scroll(target: number | Vec2, direction: Direction,
-         pages?: number, options?: ScrollOptions): Promise<void>;
-  selectText(elementIndex: number, text: string,
-             options?: SelectTextOptions): Promise<void>;
+  scroll(
+    target: number | Vec2,
+    direction: Direction,
+    pages?: number,
+    options?: ScrollOptions,
+  ): Promise<void>;
+  selectText(elementIndex: number, text: string, options?: SelectTextOptions): Promise<void>;
   setValue(elementIndex: number, value: string): Promise<void>;
   typeText(text: string): Promise<void>;
   performSecondaryAction(elementIndex: number, action: string): Promise<void>;
@@ -162,8 +169,8 @@ interface AppInfo {
   // listApps passes the producer's list_applications wire shape through (no tool-layer mapping).
   pid: number;
   name: string | null;
-  bundle_id: string | null;                         // macOS bundle id / Windows AUMID
-  active: boolean;                                  // frontmost
+  bundle_id: string | null; // macOS bundle id / Windows AUMID
+  active: boolean; // frontmost
 }
 interface State {
   apps: AppInfo[];
@@ -175,7 +182,7 @@ declare const cua: {
   getState(options?: ObservationOptions): Promise<State>;
   getApp(target: string): Promise<App>;
   listApps(options?: ObservationOptions): Promise<AppInfo[]>;
-  computer: Computer;                               // see §3.5
+  computer: Computer; // see §3.5
 
   /** + ZCode: safety surface. Deliberately top level, not hidden in the escape hatch. */
   requestAccess(capabilities?: string[]): Promise<AccessStatus>;
@@ -187,15 +194,15 @@ declare const cua: {
 
 All 12 `Target` members share name and signature; differences are only in option bags:
 
-| Member | Difference |
-|---|---|
-| `getAXState` / `getScreenshot` / `getAXStateAndScreenshot` | none |
-| `paste` | none |
-| `click` | `ClickOptions` adds `modifiers` / `strategy` |
-| `drag` | adds trailing optional `DragOptions` |
-| `pressKey` | adds trailing optional `PressKeyOptions` |
-| `scroll` | adds trailing optional `ScrollOptions` (`strategy` only) |
-| `selectText` / `setValue` / `typeText` / `performSecondaryAction` | none |
+| Member                                                            | Difference                                               |
+| ----------------------------------------------------------------- | -------------------------------------------------------- |
+| `getAXState` / `getScreenshot` / `getAXStateAndScreenshot`        | none                                                     |
+| `paste`                                                           | none                                                     |
+| `click`                                                           | `ClickOptions` adds `modifiers` / `strategy`             |
+| `drag`                                                            | adds trailing optional `DragOptions`                     |
+| `pressKey`                                                        | adds trailing optional `PressKeyOptions`                 |
+| `scroll`                                                          | adds trailing optional `ScrollOptions` (`strategy` only) |
+| `selectText` / `setValue` / `typeText` / `performSecondaryAction` | none                                                     |
 
 On the `cua` root: `getState` / `getApp` / `listApps` / `computer` form the base surface, `State` has no
 `browsers` key, plus `requestAccess` / `stop`. The browser half (`browsers` / `getBrowser` /
@@ -276,13 +283,13 @@ Change: compact always carries `actions`, never `bounds`; the `detail` parameter
 
 ### 3.4 Folded into options: 4 click variants + hold_key (5 tools)
 
-| Removed tool | Replacement | Broker side |
-|---|---|---|
-| `double_click` | `click(t, {clickCount: 2})` | `click` already carries button + clicks, no change |
-| `triple_click` | `click(t, {clickCount: 3})` | same |
-| `right_click` | `click(t, {mouseButton: "right"})` | same |
-| `middle_click` | `click(t, {mouseButton: "middle"})` | same |
-| `hold_key` | `pressKey(key, {holdSeconds})` | `hold_key` / `hold_key_to_app` stay as primitives |
+| Removed tool   | Replacement                         | Broker side                                        |
+| -------------- | ----------------------------------- | -------------------------------------------------- |
+| `double_click` | `click(t, {clickCount: 2})`         | `click` already carries button + clicks, no change |
+| `triple_click` | `click(t, {clickCount: 3})`         | same                                               |
+| `right_click`  | `click(t, {mouseButton: "right"})`  | same                                               |
+| `middle_click` | `click(t, {mouseButton: "middle"})` | same                                               |
+| `hold_key`     | `pressKey(key, {holdSeconds})`      | `hold_key` / `hold_key_to_app` stay as primitives  |
 
 **Parameters** removed in the same batch:
 
@@ -295,14 +302,14 @@ Change: compact always carries `actions`, never `bounds`; the `detail` parameter
 
 ### 3.5 Tools removed together with broker methods (6 tools)
 
-| Removed tool | Why | Broker method |
-|---|---|---|
-| `wait` | with a settler, calling wait fights the SDK; built-in settle forbids sleeping | none (local sleep) |
-| `read_clipboard` | content AX cannot read is a fallback of a fallback | `read_clipboard` **deleted** |
-| `write_clipboard` | replaced by `paste` | `write_clipboard` **deleted** |
-| `mouse_move` | hover tooltips are rare | `move_to` **deleted** |
-| `left_mouse_down` | an unpaired press has an input-hold leak surface | `mouse_down` **deleted** |
-| `left_mouse_up` | same | `mouse_up` **deleted** |
+| Removed tool      | Why                                                                           | Broker method                 |
+| ----------------- | ----------------------------------------------------------------------------- | ----------------------------- |
+| `wait`            | with a settler, calling wait fights the SDK; built-in settle forbids sleeping | none (local sleep)            |
+| `read_clipboard`  | content AX cannot read is a fallback of a fallback                            | `read_clipboard` **deleted**  |
+| `write_clipboard` | replaced by `paste`                                                           | `write_clipboard` **deleted** |
+| `mouse_move`      | hover tooltips are rare                                                       | `move_to` **deleted**         |
+| `left_mouse_down` | an unpaired press has an input-hold leak surface                              | `mouse_down` **deleted**      |
+| `left_mouse_up`   | same                                                                          | `mouse_up` **deleted**        |
 
 The only real combined use of `mouse_move` + `left_mouse_down` + `left_mouse_up` is "hold -> observe ->
 release" (hover-expand folder while dragging, slider fine-tuning). **v3.1 exposes no hold-style
@@ -362,11 +369,11 @@ needs "confirmed open_application followed by a fresh observation"), and the **`
 
 ### 3.8 Three capabilities that must stay, with evidence
 
-| Capability | Evidence |
-|---|---|
+| Capability          | Evidence                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `strategy: "event"` | `cua-14-tool-e2e-validity.md`: Finder rename (M01/M04), TextEdit character style (M08-M10) and Chromium keyboard navigation (C16) **require** `strategy=event` + exact `window_id`, otherwise AX returns success while the document model is unchanged (responder-chain reality). "Do not steal the user's focus" is a core ZCode selling point and costs this escape hatch |
-| Window addressing | same doc: M01 / M04 / M08-M10 / C16 all bind an exact window. The tool description at `observation.ts:1008-1011` teaches the model to fill `window_id` back |
-| `modifiers` | cmd+click (open in new tab) and shift+click (range select) cannot be composed; modifiers must be active at the moment of press |
+| Window addressing   | same doc: M01 / M04 / M08-M10 / C16 all bind an exact window. The tool description at `observation.ts:1008-1011` teaches the model to fill `window_id` back                                                                                                                                                                                                                 |
+| `modifiers`         | cmd+click (open in new tab) and shift+click (range select) cannot be composed; modifiers must be active at the moment of press                                                                                                                                                                                                                                              |
 
 `strategy: "a11y"` (force AX, fail closed when no action is available) is rarely used but free as an
 option key and the only way to prevent silent degradation to coordinates, so it stays.
@@ -464,7 +471,7 @@ do not delete:
 
 ```ts
 declare class ComputerUseError extends Error {
-  readonly code: ComputerUseErrorCode;   // string code, mapped from BrokerErrorCode
+  readonly code: ComputerUseErrorCode; // string code, mapped from BrokerErrorCode
   /** Whether the action was dispatched. Only false allows safely retrying the same non-idempotent action. */
   readonly actionSent: boolean;
   readonly dispatchStatus?: "accepted" | "possibly_sent";
@@ -473,11 +480,11 @@ declare class ComputerUseError extends Error {
 }
 ```
 
-| runtime receipt | v3.1 behavior |
-|---|---|
-| `action_sent:true, dispatch_status:"accepted"` | resolve (void) |
+| runtime receipt                                     | v3.1 behavior                                      |
+| --------------------------------------------------- | -------------------------------------------------- |
+| `action_sent:true, dispatch_status:"accepted"`      | resolve (void)                                     |
 | `action_sent:true, dispatch_status:"possibly_sent"` | **reject**, `actionSent:true`, `retry:"reobserve"` |
-| `action_sent:false` | reject, `actionSent:false`, `retry` per code |
+| `action_sent:false`                                 | reject, `actionSent:false`, `retry` per code       |
 
 Error codes: `PERMISSION_DENIED` `NOT_AUTHORIZED` `APP_NOT_FOUND` `AMBIGUOUS_APP` `LAUNCH_FAILED`
 `INVALID_APP` `ELEMENT_UNAVAILABLE` `STALE_STATE` `NOT_SETTABLE` `NOT_SELECTABLE` `ACTION_UNAVAILABLE`
@@ -613,17 +620,17 @@ trigger auto-indent / auto-complete; prefer `paste` for formatted and multi-line
 Models have priors for xdotool / keysym key names. A normalization layer goes before
 `findUnsupportedKeyToken`:
 
-| Input alias | Canonical token |
-|---|---|
-| `Return` `Enter` `KP_Enter` | `return` |
-| `Control_L` `Control_R` `Control` `Ctrl` | `ctrl` |
-| `Alt_L` `Alt_R` `Meta_L` | `alt` |
-| `Super_L` `Super_R` `Super` | `cmd` (darwin) / `super` (linux) / `win` (win32) |
-| `Shift_L` `Shift_R` | `shift` |
-| `Escape` | `esc` |
-| `Prior` / `Next` | `pageup` / `pagedown` |
-| `period` `comma` `greater` `slash` `minus` `equal` | `.` `,` `>` `/` `-` `=` |
-| `KP_0`…`KP_9` | needs Helper mapping; throws an explicit error when missing, never silently dropped |
+| Input alias                                        | Canonical token                                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Return` `Enter` `KP_Enter`                        | `return`                                                                            |
+| `Control_L` `Control_R` `Control` `Ctrl`           | `ctrl`                                                                              |
+| `Alt_L` `Alt_R` `Meta_L`                           | `alt`                                                                               |
+| `Super_L` `Super_R` `Super`                        | `cmd` (darwin) / `super` (linux) / `win` (win32)                                    |
+| `Shift_L` `Shift_R`                                | `shift`                                                                             |
+| `Escape`                                           | `esc`                                                                               |
+| `Prior` / `Next`                                   | `pageup` / `pagedown`                                                               |
+| `period` `comma` `greater` `slash` `minus` `equal` | `.` `,` `>` `/` `-` `=`                                                             |
+| `KP_0`…`KP_9`                                      | needs Helper mapping; throws an explicit error when missing, never silently dropped |
 
 Input-side compatibility only; the internal token set and the cross-platform modifier rule are unchanged
 (macOS `cmd`, Linux / Windows `ctrl`; the docs keep saying so).
@@ -654,7 +661,6 @@ Input-side compatibility only; the internal token set and the cross-platform mod
 
 ---
 
-
 ## 7. Compatibility, sweep and tests
 
 ### 7.1 Compatibility channels
@@ -675,7 +681,6 @@ Input-side compatibility only; the internal token set and the cross-platform mod
 - `scripts/cua_act_verify*.py` + `docs/cua-act-verify-{,windows-,linux-}scenarios.md`: sweep each
   platform's scenarios; `hold_key` / `wait` / `select_text` must be rewritten to the new forms.
 - `scripts/windows-*-live-smoke.mjs` / `verify_linux_*.mjs` and other `docs/` references to deleted tools.
-
 
 ### 7.3 Broker protocol slimming (S0c, in scope)
 
@@ -701,13 +706,13 @@ placed before the SDK refactor because `paste` depends on it.
 
 ### 7.4 Contract test changes
 
-| Test | Current assertion | Change |
-|---|---|---|
-| `z-code .../zcode-cua-plugin/tests/sdk.node-test.mjs` | `METHOD_NAMES.length === 30` | becomes: `cua.computer` has 14 entries + all 12 `Target` members present + `cua` has no browser member |
-| same | action results contain `action_sent` / `dispatch_status` | success resolves `undefined`; `possibly_sent` rejects with `actionSent === true` |
-| `zcode-cua/test/skill-keyboard-contract.test.ts` | pins `nodeRepl.write(nextState.text)`, `return_state="none"`, 22KB limit | pins "observation methods display automatically", "never write the observation result again", "per-cell bootstrap" |
-| `zcode-cua/test/observation-tools.test.ts` | delta / no_change -> `null` | inverted: all three states return a complete internal AppState |
-| New | n/a | exact surface assertion (§7.5), `target-binder.test.ts`, `action-settler.test.ts`, `key-alias.test.ts`, `paste.test.ts`, `error-mapping.test.ts`, `compact-carries-actions.test.ts` |
+| Test                                                  | Current assertion                                                        | Change                                                                                                                                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `z-code .../zcode-cua-plugin/tests/sdk.node-test.mjs` | `METHOD_NAMES.length === 30`                                             | becomes: `cua.computer` has 14 entries + all 12 `Target` members present + `cua` has no browser member                                                                              |
+| same                                                  | action results contain `action_sent` / `dispatch_status`                 | success resolves `undefined`; `possibly_sent` rejects with `actionSent === true`                                                                                                    |
+| `zcode-cua/test/skill-keyboard-contract.test.ts`      | pins `nodeRepl.write(nextState.text)`, `return_state="none"`, 22KB limit | pins "observation methods display automatically", "never write the observation result again", "per-cell bootstrap"                                                                  |
+| `zcode-cua/test/observation-tools.test.ts`            | delta / no_change -> `null`                                              | inverted: all three states return a complete internal AppState                                                                                                                      |
+| New                                                   | n/a                                                                      | exact surface assertion (§7.5), `target-binder.test.ts`, `action-settler.test.ts`, `key-alias.test.ts`, `paste.test.ts`, `error-mapping.test.ts`, `compact-carries-actions.test.ts` |
 
 ### 7.5 Surface gate
 
@@ -726,13 +731,16 @@ An addition outside the allowlist fails the test, forcing the next API changer t
 ### 7.6 Bootstrap template
 
 ```js
-const root = process.env.ZCODE_CUA_PLUGIN_ROOT ?? process.env.ZCODE_PLUGIN_ROOT
-  ?? process.env.CLAUDE_PLUGIN_ROOT;
+const root =
+  process.env.ZCODE_CUA_PLUGIN_ROOT ??
+  process.env.ZCODE_PLUGIN_ROOT ??
+  process.env.CLAUDE_PLUGIN_ROOT;
 const { join } = await import("node:path");
 const { pathToFileURL } = await import("node:url");
 const { setupComputerUseRuntime } = await import(
-  pathToFileURL(join(root, "scripts", "computer-use-client.mjs")).href);
-await setupComputerUseRuntime({ globals: globalThis });   // installs globalThis.cua
+  pathToFileURL(join(root, "scripts", "computer-use-client.mjs")).href
+);
+await setupComputerUseRuntime({ globals: globalThis }); // installs globalThis.cua
 
 const app = await cua.getApp("Notes");
 await app.click(42);
@@ -815,16 +823,16 @@ later changes. S0c must precede S1 because `paste` depends on it. Gray-release s
 
 ```js
 // ── Recipe 1: bind → act → observe
-const app = await cua.getApp("Notes");       // shows initial full tree
+const app = await cua.getApp("Notes"); // shows initial full tree
 await app.click(42);
 await app.typeText("hello");
 await app.pressKey("Return");
-await app.getAXState();                       // automatically shows the diff
+await app.getAXState(); // automatically shows the diff
 
 // ── Recipe 3: ZCode additions (option bags only)
 await app.click(42, { mouseButton: "right", modifiers: "cmd", strategy: "a11y" });
 await app.pressKey("Return", { holdSeconds: 0.5 });
-for (let i = 0; i < 3; i++) await app.pressKey("Down");   // replaces the removed repeat
+for (let i = 0; i < 3; i++) await app.pressKey("Down"); // replaces the removed repeat
 await app.paste("多行\n内容");
 
 // ── Recipe 5: error handling
@@ -832,11 +840,11 @@ try {
   await app.performSecondaryAction(7, "Show Menu");
 } catch (e) {
   if (e.code === "ACTION_UNAVAILABLE") {
-    await app.getAXState({ disableDiffing: true });   // compact already carries actions; see the legal values
+    await app.getAXState({ disableDiffing: true }); // compact already carries actions; see the legal values
   } else if (e.code === "CONTROLLER_BUSY") {
     nodeRepl.write(`another ZCode Computer Use session owns control: ${e.details.owner}`);
   } else if (e.actionSent) {
-    await app.getAXState();                            // may have landed; look at state first
+    await app.getAXState(); // may have landed; look at state first
   } else throw e;
 }
 ```

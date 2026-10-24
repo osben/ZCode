@@ -15,72 +15,72 @@ Its stable correlation, time contract, export schema and final OTLP test receive
 ## Acceptance criteria
 
 - [x] Continue ticket 01's observation and export contract; complex scenarios also go through the real send,
-  CLI authoritative lifecycle, content return and final OTLP data, with no second queue, correlation key or
-  parallel exporter.
+      CLI authoritative lifecycle, content return and final OTLP data, with no second queue, correlation key or
+      parallel exporter.
 - [x] Expand hooks, context loading, persistence, compaction, MCP/tool preparation and request assembly that
-  actually happen before first output, with sub-stage distributions and waterfall detail. Concurrent,
-  duplicate and un-run sub-stages appear as real facts; the sum of sub-stages is not the main-stage wall time.
+      actually happen before first output, with sub-stage distributions and waterfall detail. Concurrent,
+      duplicate and un-run sub-stages appear as real facts; the sum of sub-stages is not the main-stage wall time.
 - [x] Distinguish preparation model calls such as internal compaction from the model call that produces the
-  user's first response; interleaved preparation and retry keep their real order; an internal model's first
-  content is never recorded as the user's first output.
+      user's first response; interleaved preparation and retry keep their real order; an internal model's first
+      content is never recorded as the user's first output.
 - [x] A queued send promoted to run keeps the original send correlation; queue edits and send-now do not
-  replace the original input attribution. Total TTFT including queueing, queue wait, and start-of-execution to
-  first output are shown separately; idle and queued messages are counted independently.
+      replace the original input attribution. Total TTFT including queueing, queue wait, and start-of-execution to
+      first output are shown separately; idle and queued messages are counted independently.
 - [x] Queue second confirmation keeps the first-submit start without creating a new send record; the user's
-  wait in the dialog is marked separately so pure-system analysis can exclude it. An immediate guide input
-  records its send result or its own category, does not take other inputs' output and is not mixed into plain
-  TTFT percentiles.
+      wait in the dialog is marked separately so pure-system analysis can exclude it. An immediate guide input
+      records its send result or its own category, does not take other inputs' output and is not mixed into plain
+      TTFT percentiles.
 - [x] After a model failure and retry, physical attempts and retry waits attach to the same send, and a new
-  requestId does not reset the main start. Multiple attempts yield one main TTFT; later tool-loop requests are
-  not mixed into the first-response statistics.
+      requestId does not reset the main start. Multiple attempts yield one main TTFT; later tool-loop requests are
+      not mixed into the first-response statistics.
 - [x] Explicit failure, rejection, cancel or interrupt before first output records the result, time waited and
-  completed stages, with counts and ratios by type. No-first-output samples never enter the success duration
-  distribution as 0 or -1; a failure after first output does not reverse main TTFT.
+      completed stages, with counts and ratios by type. No-first-output samples never enter the success duration
+      distribution as 0 or -1; a failure after first output does not reverse main TTFT.
 - [x] Bounded checkpoints are submitted asynchronously at send start and stage completion so exported stages
-  are queryable while the root is unclosed. No dependence on the whole root span ending; no per-token
-  checkpoint.
+      are queryable while the root is unclosed. No dependence on the whole root span ending; no per-token
+      checkpoint.
 - [x] Records with only a start or partial stages show as unclosed (maybe still running or interrupted); with
-  no explicit evidence they are not judged failed or timed out because they exceed the query window. A killed
-  process does not promise zero loss and missing stages are not fabricated.
+      no explicit evidence they are not judged failed or timed out because they exceed the query window. A killed
+      process does not promise zero loss and missing stages are not fabricated.
 - [x] Terminal/stage reordering, duplicate transport and late legal facts merge by stable identity without
-  duplicate Metric samples. Multi-session/window/workspace/process tests prove no mis-binding to old turns,
-  other inputs or subtask side-channel output.
+      duplicate Metric samples. Multi-session/window/workspace/process tests prove no mis-binding to old turns,
+      other inputs or subtask side-channel output.
 - [x] Collection continues in the background, saving necessary state changes; continuously-foreground differs
-  from backgrounded-and-returned. The default experience query uses only continuously foreground, reliably
-  timed samples; diagnostic queries can see all.
+      from backgrounded-and-returned. The default experience query uses only continuously foreground, reliably
+      timed samples; diagnostic queries can see all.
 - [x] Machine sleep, pause, clock jumps or out-of-bound cross-process error mark data quality, never produce
-  negative durations or forced zero clamps. Reliable same-process stages may stay; unreliable cross-process
-  samples are not mixed into precise stage distributions.
+      negative durations or forced zero clamps. Reliable same-process stages may stay; unreliable cross-process
+      samples are not mixed into precise stage distributions.
 - [x] The waterfall shows parallel, missing, truncated and unattributed intervals and reconciles the real
-  interval union with total time; the difference is not forced onto model or network time.
+      interval union with total time; the difference is not forced onto model or network time.
 - [x] Extend 01's queries and dashboard with views for preparation sub-stages, idle/queued, foreground/
-  background, retry outcome, no-first-output outcome, unclosed and quality classes. Percentiles show sample
-  counts; the statistical unit (cumulative, stage or attempt observation) is explicit.
+      background, retry outcome, no-first-output outcome, unclosed and quality classes. Percentiles show sample
+      counts; the statistical unit (cumulative, stage or attempt observation) is explicit.
 - [x] Bounded stage detail and statistics for the gray population stay fully collected; foreground/background
-  and abnormal paths are not dropped by old sampling config; label combinations and series counts are bounded;
-  no message, trace, workspace or user correlation in metric labels.
+      and abnormal paths are not dropped by old sampling config; label combinations and series counts are bounded;
+      no message, trace, workspace or user correlation in metric labels.
 - [x] Real desktop E2E covers queue and promotion, second confirmation, immediate-guide isolation, first
-  output after retry, failure/cancel, preparation sub-stage delay and return from background, with attribution
-  verified from final OTLP data, reusing 01's receiver and model replay without a test-only business
-  interface.
+      output after retry, failure/cancel, preparation sub-stage delay and return from background, with attribution
+      verified from final OTLP data, reusing 01's receiver and model replay without a test-only business
+      interface.
 - [x] Process-integration or low-level controlled tests cover exit, kill, missing terminal, duplicate/
-  reordered delivery, parallel intervals and alignment error; real-run evidence and simulated results are
-  distinguished, and mock success is not described as real-machine verification.
+      reordered delivery, parallel intervals and alignment error; real-run evidence and simulated results are
+      distinguished, and mock success is not described as real-machine verification.
 - [x] Exporter timeout, full queue, drops and truncation keep the business running with bounded resources;
-  extended scenarios do not change legacy business/RUM counts or remote, mobile or replayable recovery behavior.
+      extended scenarios do not change legacy business/RUM counts or remote, mobile or replayable recovery behavior.
 - [ ] One real desktop run aligning submit, actual content receipt, stage records and final export, measuring
-  message latency, main-thread load, memory, event volume and label cardinality. Core verification covers
-  macOS, Windows and Linux; unfinished platforms stay as explicit to-do.
+      message latency, main-thread load, memory, event volume and label cardinality. Core verification covers
+      macOS, Windows and Linux; unfinished platforms stay as explicit to-do.
 - [x] ARMS verification of full percentile queries, message correlation, waterfall display and data
-  visibility latency. Done 2026-09-15 on the API side: default-experience percentiles, preparation sub-stage
-  P95, `records`/`excluded`/`attempt`/`no_output.wait` all queryable; detail and aggregates visible at run end
-  (upper bound <5 s). Console-UI waterfall visual confirmation is not done.
+      visibility latency. Done 2026-09-15 on the API side: default-experience percentiles, preparation sub-stage
+      P95, `records`/`excluded`/`attempt`/`no_output.wait` all queryable; detail and aggregates visible at run end
+      (upper bound <5 s). Console-UI waterfall visual confirmation is not done.
 - [ ] Verify actual ARMS permissions, capacity, cost and retention (target: detail 7 days, aggregates at least
-  30 days; existing configuration that meets the target is kept). While unverified, keep the item open and do
-  not widen to all-user rollout.
+      30 days; existing configuration that meets the target is kept). While unverified, keep the item open and do
+      not widen to all-user rollout.
 - [ ] Pass related E2E/unit tests, typecheck, lint and architecture gate; complete the stage and query usage
-  notes; check the parent spec acceptance matrix item by item and state the actual results for local tests,
-  platform verification and rollout conditions.
+      notes; check the parent spec acceptance matrix item by item and state the actual results for local tests,
+      platform verification and rollout conditions.
 
 ## Completion boundary
 

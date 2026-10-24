@@ -22,15 +22,15 @@ These are maintenance phases and do not replace the work item's `Status:`. This 
 
 Maintenance items use local Markdown and no remote Issue is created. An existing complete spec can serve directly as the work item without copying the body; new maintenance specs and research records of this area live in this directory with explicit date, goal, acceptance and the status in the table below. If a standalone Issue is needed, the repository location is `docs/issues/<feature-slug>/<NN>-<slug>.md`, which records only the status and the reference to this directory's spec; the maintenance background and requirements stay complete in this directory.
 
-| `Status:` | Applies when |
-| --- | --- |
-| `needs-triage` | The lead is not yet classified, scope to be judged |
-| `needs-info` | Missing official facts, reproduction or other necessary information |
-| `ready-for-human` | Waiting for a manual account, key, budget or product ruling |
-| `ready-for-agent` | Goal and acceptance are clear and it can be implemented |
-| `in-progress` | Work has started |
-| `done` | The acceptance declared by this item is complete; a task that finished only the configuration MR still lists the undelivered state separately |
-| `wontfix` | Decided not to integrate or handle, with the reason recorded |
+| `Status:`         | Applies when                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `needs-triage`    | The lead is not yet classified, scope to be judged                                                                                            |
+| `needs-info`      | Missing official facts, reproduction or other necessary information                                                                           |
+| `ready-for-human` | Waiting for a manual account, key, budget or product ruling                                                                                   |
+| `ready-for-agent` | Goal and acceptance are clear and it can be implemented                                                                                       |
+| `in-progress`     | Work has started                                                                                                                              |
+| `done`            | The acceptance declared by this item is complete; a task that finished only the configuration MR still lists the undelivered state separately |
+| `wontfix`         | Decided not to integrate or handle, with the reason recorded                                                                                  |
 
 Write `Status:` under the file title, use local links for dependencies, and append `## Comments` for necessary discussion. The Issue status and the delivery state of MR, version and dynamic configuration are recorded separately; `done` cannot replace evidence of online adoption.
 
@@ -49,17 +49,17 @@ Write `Status:` under the file title, use local links for dependencies, and appe
 
 The maintenance background, decisions and acceptance records go into the corresponding spec, maintenance spec or dated research of this directory; a standalone Issue only links the task and does not store a second copy of the spec body:
 
-| Field | Required content |
-| --- | --- |
-| Identity and status | templateId / original modelId / protocol; maintenance phase and Issue Status |
-| Scope decision | Add/adjust/retire; key/general maintenance; the applicable confirmed principle for an addition, or the manual confirmation record for an existing change |
-| Sources | Official links, publication date, effective date, check date; conflicts or unknowns |
-| Configuration diff | Members, enabled, capabilities, Map, URL, Access, production/test conversion |
-| Manual collaboration | Which kind of account/key, region/plan, required permissions, budget and safe delivery method is missing; no Secret recorded |
-| Validation | Baseline commit/revision, configuration hash, cases, actual request protocol, results and uncovered items |
-| Git | commit, MR, target branch, review conclusion and follow-up tasks |
-| Delivery | Planned method, compatible clients, final file hash, actual version/dynamic revision and adoption result |
-| Follow-up | owner role, trigger of the next re-check, retirement date or condition to unblock |
+| Field                | Required content                                                                                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity and status  | templateId / original modelId / protocol; maintenance phase and Issue Status                                                                             |
+| Scope decision       | Add/adjust/retire; key/general maintenance; the applicable confirmed principle for an addition, or the manual confirmation record for an existing change |
+| Sources              | Official links, publication date, effective date, check date; conflicts or unknowns                                                                      |
+| Configuration diff   | Members, enabled, capabilities, Map, URL, Access, production/test conversion                                                                             |
+| Manual collaboration | Which kind of account/key, region/plan, required permissions, budget and safe delivery method is missing; no Secret recorded                             |
+| Validation           | Baseline commit/revision, configuration hash, cases, actual request protocol, results and uncovered items                                                |
+| Git                  | commit, MR, target branch, review conclusion and follow-up tasks                                                                                         |
+| Delivery             | Planned method, compatible clients, final file hash, actual version/dynamic revision and adoption result                                                 |
+| Follow-up            | owner role, trigger of the next re-check, retirement date or condition to unblock                                                                        |
 
 ## Scope expansion and cleanup
 

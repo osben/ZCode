@@ -135,6 +135,7 @@ state is introduced.
 ## Implementation plan
 
 **Phase 1: UI visible slash parser and draft session routing**
+
 - Add a pure v4 parser (for example `packages/ui/src/v4/slashCommands.ts`) with output: command type
   (`sendGoalCommand`, `resumeGoal`, `compact`, or unsupported), `objective`, `displayText` (preserving the
   visible command when possible), and whether it requires `baseRevision`.
@@ -146,6 +147,7 @@ state is introduced.
 - Keep `/compact` as implemented; do not broaden into compact rendering changes.
 
 **Phase 2: preserve queued goal command kind**
+
 - Recommended durable path: extend the core/contracts pending-input shape with an explicit command kind
   (`TurnSteerInput.commandKind?: "sendText" | "sendGoalCommand"`, `PendingTurnInput.commandKind`,
   `TurnSteerQueuedPayload.commandKind`); omitted defaults to `sendText`.
@@ -159,6 +161,7 @@ state is introduced.
   starting with `/goal` or `/target`. Weaker (an edited queued goal can lose the prefix); a temporary bridge only.
 
 **Phase 3: command-aware auto-drain**
+
 - Existing text pending inputs keep current behavior. If the queue head is `sendGoalCommand`,
   `drainPendingInput` must not call `persistUserPrompt` or `messageHistory.addUser`.
 - `turn-stop` must not loop forever on a non-text head: replace `hasPendingInput` checks used for auto-drain
@@ -169,6 +172,7 @@ state is introduced.
   the same active-lock wait/retry guard as z-code-2's ready-boundary fixes.
 
 **Phase 4: queue actions**
+
 - Replace `getQueueItemText` with a host method returning `{ kind, text }` (or add a parallel `getQueueItem`).
 - `sendQueuedNow`: read kind and text before removal; remove the item; stop/pause the current active goal when
   preempting (as today); wait for idle; `sendText` -> `startPromptTurn`; `sendGoalCommand` -> parse the
@@ -178,6 +182,7 @@ state is introduced.
 - `reorderQueueItem` and `deleteQueueItem` stay kind-preserving and side-effect-free.
 
 **Phase 5: tests and verification**
+
 - Parser: `/goal fix login`, `/target fix login`, `/goal replace fix login` -> objective `fix login`;
   `/goal resume` -> `resumeGoal`; attachment + `/goal` -> not a command; empty `/goal` consumed as unsupported/empty.
 - UI routing: draft-first `/goal` creates/promotes a session and dispatches `sendGoalCommand`, not `sendText`;

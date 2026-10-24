@@ -23,15 +23,16 @@ stranded.**
 
 ## Behavior matrix
 
-| Platform / environment | Setting switch | Default | Window-close behavior | Tray |
-| --- | --- | --- | --- | --- |
-| Windows | operable (unchanged) | on | hide and stay resident (unchanged) | resident |
-| Linux + tray available | operable | **off** | after the user turns it on: hide and stay resident | created after capability detection passes |
-| Linux + tray unavailable | **greyed out, locked off** | n/a | existing "confirm quit" path, same as today | not created |
-| macOS | setting not shown | n/a | system default (closing does not quit, Dock keeps it alive) | none (unchanged) |
+| Platform / environment   | Setting switch             | Default | Window-close behavior                                       | Tray                                      |
+| ------------------------ | -------------------------- | ------- | ----------------------------------------------------------- | ----------------------------------------- |
+| Windows                  | operable (unchanged)       | on      | hide and stay resident (unchanged)                          | resident                                  |
+| Linux + tray available   | operable                   | **off** | after the user turns it on: hide and stay resident          | created after capability detection passes |
+| Linux + tray unavailable | **greyed out, locked off** | n/a     | existing "confirm quit" path, same as today                 | not created                               |
+| macOS                    | setting not shown          | n/a     | system default (closing does not quit, Dock keeps it alive) | none (unchanged)                          |
 
 Ways to bring a hidden resident window back: the tray icon (click/double-click restores; the menu includes quit)
-+ the existing `second-instance` restore (clicking the pin icon / desktop icon; already implemented, unchanged).
+
+- the existing `second-instance` restore (clicking the pin icon / desktop icon; already implemented, unchanged).
 
 ## Tray capability detection
 

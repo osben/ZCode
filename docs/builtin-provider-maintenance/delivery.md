@@ -8,13 +8,13 @@ The production configuration is the only edit source; the test configuration and
 
 The MR description must at least list template and model additions/removals, default enablement, concrete differences in capability/Map/URL, production/test derivation results, official evidence, real validation and gaps, the effect on old instances/selections, the delivery method and the rollback plan. Content is organized into five chapters:
 
-| Chapter | What this area should state |
-| --- | --- |
-| TL;DR | The concrete problem and the changed behavior; the real file count and added/removed lines |
-| Goal | Background, original behavior, the entries/models integrated or fixed, design intent and acceptance conditions; for a bugfix, root-cause evidence, feedback linkage and this directory's work record |
-| Change scope | The actual changes to production/test configuration, code, tests, this directory's spec and inventory, and non-goals |
-| Validation | The actual commands and results, the key/region/plan/protocol matrix and unvalidated items; for a bugfix the corresponding regression case, and evidence when interaction changed |
-| Risk and rollback | Old instances, personal overrides, target client versions, release method and recovery plan |
+| Chapter           | What this area should state                                                                                                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TL;DR             | The concrete problem and the changed behavior; the real file count and added/removed lines                                                                                                           |
+| Goal              | Background, original behavior, the entries/models integrated or fixed, design intent and acceptance conditions; for a bugfix, root-cause evidence, feedback linkage and this directory's work record |
+| Change scope      | The actual changes to production/test configuration, code, tests, this directory's spec and inventory, and non-goals                                                                                 |
+| Validation        | The actual commands and results, the key/region/plan/protocol matrix and unvalidated items; for a bugfix the corresponding regression case, and evidence when interaction changed                    |
+| Risk and rollback | Old instances, personal overrides, target client versions, release method and recovery plan                                                                                                          |
 
 Commit titles use `<type>(<scope>): <subject>`, for example `docs(provider)` for doc cleanup; content changes are separated from pure docs. File size comes from `git diff --shortstat origin/staging...HEAD`; the description contract follows the repository `zcode-mr` skill, and root causes, feedback linkage or validation results must not be invented.
 
@@ -24,12 +24,12 @@ An ordinary catalog change goes through a configuration MR; a new protocol, Acce
 
 ## Choosing the delivery method
 
-| Case | Delivery method and condition |
-| --- | --- |
-| Routine template/model maintenance | Ship the complete configuration with the product version and verify the final package resource |
-| Uses only fields, protocols and capabilities the target client already supports, and the catalog/rules really must be updated early | Dynamic configuration may be evaluated; it still comes from reviewed Git content and final-file verification |
-| New Schema/Access/protocol, Adapter behavior, image resources or UI capability | Deliver the client capability first; never push only JSON to old clients |
-| Online content is wrong | Publish the corrected content under a higher revision; also fix the Git/in-package baseline so the two chains do not diverge long term |
+| Case                                                                                                                                | Delivery method and condition                                                                                                          |
+| ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Routine template/model maintenance                                                                                                  | Ship the complete configuration with the product version and verify the final package resource                                         |
+| Uses only fields, protocols and capabilities the target client already supports, and the catalog/rules really must be updated early | Dynamic configuration may be evaluated; it still comes from reviewed Git content and final-file verification                           |
+| New Schema/Access/protocol, Adapter behavior, image resources or UI capability                                                      | Deliver the client capability first; never push only JSON to old clients                                                               |
+| Online content is wrong                                                                                                             | Publish the corrected content under a higher revision; also fix the Git/in-package baseline so the two chains do not diverge long term |
 
 The same `schemaVersion=1` does not prove that all old clients understand new fields, values or Maps. Before a dynamic update, confirm the actual decoder, Adapter and known behavior for the target product version/platform; do not verify only on a development branch. Canary, version split, executor and permissions follow the actual control plane; this repository provides no one-click configuration publish/auto-rollback tool that may be assumed to exist.
 

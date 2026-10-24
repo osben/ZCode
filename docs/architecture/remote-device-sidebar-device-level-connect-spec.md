@@ -9,7 +9,7 @@ The effective rule now lives in [Renderer re-attach](../remote/desktop-remote-se
 The historical RDUX-12/13/14 numbers are regression IDs of the old device group header and are not the later UX implementation tickets with the same numbers. Do not replace the current navigation acceptance with old connect-and-chat assertions. Original root-cause log, change list and test record:
 
 ```bash
-git show a17a875588b8d66c2bee49236292e174df651363:docs/architecture/remote-device-sidebar-device-level-connect-spec.md
+git show 45f808f7:docs/architecture/remote-device-sidebar-device-level-connect-spec.md
 ```
 
 Host gate, data format and the desktop continuous / mobile replayable semantics are unchanged.

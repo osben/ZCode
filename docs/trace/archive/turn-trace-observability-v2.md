@@ -139,19 +139,19 @@ parse failure or dynamic commands degrade to a low-cardinality bucket.
 
 ### 2.1 Inside the CLI
 
-| Entry                            | Scope               | v2 Operation                           | Model Call parent |
-| -------------------------------- | ------------------- | -------------------------------------- | ----------------- |
-| Main/Subagent/Workflow model Step | own Turn           | `agent.step`                           | Step              |
-| Auto/manual/reactive Compact     | Turn                | `context.compaction`                   | Compaction        |
-| WebSearch                        | Tool                | `tool.web_search`                      | Tool              |
-| WebFetch content processing      | Tool                | `tool.web_fetch.process`               | Tool              |
-| ReadSessionContext extract       | Tool                | `tool.read_session_context.extract`    | Tool              |
-| ReadSessionContext synthesize    | Tool                | `tool.read_session_context.synthesize` | Tool              |
-| Session title                    | async Sidecar       | `session.title_generation`             | Root + Link       |
-| Goal title                       | async Sidecar       | `goal.title_generation`                | Root + Link       |
-| Goal completion verification     | blocking pre-Turn   | `goal.completion_verification`         | Root + Link       |
-| Git Commit Message               | Workspace operation | `workspace.git_commit_message`         | Root              |
-| `workspace/generateText`         | Workspace operation | controlled Purpose mapping             | Root              |
+| Entry                             | Scope               | v2 Operation                           | Model Call parent |
+| --------------------------------- | ------------------- | -------------------------------------- | ----------------- |
+| Main/Subagent/Workflow model Step | own Turn            | `agent.step`                           | Step              |
+| Auto/manual/reactive Compact      | Turn                | `context.compaction`                   | Compaction        |
+| WebSearch                         | Tool                | `tool.web_search`                      | Tool              |
+| WebFetch content processing       | Tool                | `tool.web_fetch.process`               | Tool              |
+| ReadSessionContext extract        | Tool                | `tool.read_session_context.extract`    | Tool              |
+| ReadSessionContext synthesize     | Tool                | `tool.read_session_context.synthesize` | Tool              |
+| Session title                     | async Sidecar       | `session.title_generation`             | Root + Link       |
+| Goal title                        | async Sidecar       | `goal.title_generation`                | Root + Link       |
+| Goal completion verification      | blocking pre-Turn   | `goal.completion_verification`         | Root + Link       |
+| Git Commit Message                | Workspace operation | `workspace.git_commit_message`         | Root              |
+| `workspace/generateText`          | Workspace operation | controlled Purpose mapping             | Root              |
 
 `workspace/generateText` is an explicit out-of-Turn protocol entry; it should migrate from an arbitrary
 `querySource` to a controlled `purpose` mapped to an Operation by the CLI. All CLI production model
@@ -161,11 +161,11 @@ missed classification stays visible and `other` must be alertable).
 
 ### 2.2 Known gaps outside the CLI
 
-| Traffic               | Fact                                      | Decision                                      |
-| --------------------- | ----------------------------------------- | --------------------------------------------- |
-| Repo Wiki             | `packages/services` calls Provider directly | P1: move into CLI ModelPort or the same Port |
-| Model connectivity test | Host sends a real small request         | Separate `admin.model_probe`, not in Agent SLO |
-| `stream-animate`      | Standalone experimental package           | Not part of ZCode Agent production Trace      |
+| Traffic                 | Fact                                        | Decision                                       |
+| ----------------------- | ------------------------------------------- | ---------------------------------------------- |
+| Repo Wiki               | `packages/services` calls Provider directly | P1: move into CLI ModelPort or the same Port   |
+| Model connectivity test | Host sends a real small request             | Separate `admin.model_probe`, not in Agent SLO |
+| `stream-animate`        | Standalone experimental package             | Not part of ZCode Agent production Trace       |
 
 P0 completion means "all CLI Agent LLM traffic", not all product LLM traffic.
 
@@ -291,21 +291,21 @@ Resource is injected by the Backend as the OTel Resource; business code does not
 
 ### 4.2 Field ownership
 
-| Field                     | Producer                              | Business behavior         |
-| ------------------------- | ------------------------------------- | ------------------------- |
-| Operation                 | Registry / call intent                | picks a constant          |
-| Actor                     | Scope                                 | none                      |
-| Session/Turn/Step/Tool ID | Scope from domain objects             | none                      |
-| OTel Trace/Span/Parent    | Backend                               | invisible                 |
-| `stepIndex`               | Turn Scope counter                    | none                      |
-| Provider/Model/Endpoint   | Adapter's final resolved result       | none                      |
-| Thinking                  | Model Catalog + final Provider Options | none                     |
-| Token/Cache/Finish        | Adapter Normalization                 | none                      |
-| Retry/Transport/TTFT      | Model Runner                          | none                      |
-| Duration                  | Scope/Recorder                        | none                      |
-| Outcome                   | authoritative lifecycle boundary      | picks a legal terminal    |
-| Error                     | Normalizer/Sanitizer                  | passes raw `unknown` only |
-| Child summary             | Scope Registry                        | none                      |
+| Field                     | Producer                               | Business behavior         |
+| ------------------------- | -------------------------------------- | ------------------------- |
+| Operation                 | Registry / call intent                 | picks a constant          |
+| Actor                     | Scope                                  | none                      |
+| Session/Turn/Step/Tool ID | Scope from domain objects              | none                      |
+| OTel Trace/Span/Parent    | Backend                                | invisible                 |
+| `stepIndex`               | Turn Scope counter                     | none                      |
+| Provider/Model/Endpoint   | Adapter's final resolved result        | none                      |
+| Thinking                  | Model Catalog + final Provider Options | none                      |
+| Token/Cache/Finish        | Adapter Normalization                  | none                      |
+| Retry/Transport/TTFT      | Model Runner                           | none                      |
+| Duration                  | Scope/Recorder                         | none                      |
+| Outcome                   | authoritative lifecycle boundary       | picks a legal terminal    |
+| Error                     | Normalizer/Sanitizer                   | passes raw `unknown` only |
+| Child summary             | Scope Registry                         | none                      |
 
 Any API asking business code to fill `modelId`, `turnId` or `durationMs` is a design failure.
 

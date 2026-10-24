@@ -401,23 +401,23 @@ the way. Formal cases:
 
 Workspace-level E2E feature groups:
 
-| Feature                         | E2E case  | Must prove                                                                                                                       |
-| ------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| User/Workspace scope UI         | `WPL-001` | Both config views share Host candidates; User not polluted by project overrides; Workspace inheritance/override and A/B isolation |
-| enabled-state priority          | `WPL-002` | Workspace explicit true/false overrides User, missing key inherits                                                               |
-| options deep merge              | `WPL-003` | Merge by Plugin/key, un-overridden User options kept                                                                             |
-| sensitive/secret                | `WPL-004` | Workspace can save and run; UI/log/provider/mobile artifacts do not leak raw values                                              |
-| all Plugin components to runtime | `WPL-005` | Hook/Skill/Command/Agent/MCP enter a new Session without trust/approval                                                        |
-| missing package behavior        | `WPL-006` | Only shows missing, no automatic install; runs only after an explicit install                                                    |
-| config vs package lifecycle     | `WPL-007` | enable/disable and install/uninstall do not wrongly roll each other back                                                         |
-| resident/cold resume            | `WPL-008` | Resident App frozen, new Session/cold resume reads new config                                                                    |
-| Global Marketplace install      | `WPL-009` | Only the User Marketplace can add/refresh; a declaration alone triggers no download; marketplace install writes User inventory/config, not Workspace enabled/options |
-| Remote target isolation         | `WPL-010` | Same path, different identity do not cross config and runtime                                                                    |
-| Remote missing/explicit install | `WPL-011` | Connecting does not copy the local package; explicit Sync/Install materializes only on the remote Host                           |
-| Mobile shared-host              | `WPL-012` | `/remote` uses the existing Host and does not copy Plugin runtime/store                                                          |
-| builtin Workspace disable       | `WPL-013` | Changes only enabledPlugins, does not delete builtin asset/user data                                                             |
-| project Plugin root/MCP         | `WPL-014` | A legal project Plugin root activates directly; illegal manifest/path fails closed                                               |
-| Marketplace/installed roundtrip | `WPL-015` | From User installed into the global marketplace; browse page has no scope/config; install writes User; primary nav returns to chat, then entering management switches to Workspace for config |
+| Feature                          | E2E case  | Must prove                                                                                                                                                                                    |
+| -------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| User/Workspace scope UI          | `WPL-001` | Both config views share Host candidates; User not polluted by project overrides; Workspace inheritance/override and A/B isolation                                                             |
+| enabled-state priority           | `WPL-002` | Workspace explicit true/false overrides User, missing key inherits                                                                                                                            |
+| options deep merge               | `WPL-003` | Merge by Plugin/key, un-overridden User options kept                                                                                                                                          |
+| sensitive/secret                 | `WPL-004` | Workspace can save and run; UI/log/provider/mobile artifacts do not leak raw values                                                                                                           |
+| all Plugin components to runtime | `WPL-005` | Hook/Skill/Command/Agent/MCP enter a new Session without trust/approval                                                                                                                       |
+| missing package behavior         | `WPL-006` | Only shows missing, no automatic install; runs only after an explicit install                                                                                                                 |
+| config vs package lifecycle      | `WPL-007` | enable/disable and install/uninstall do not wrongly roll each other back                                                                                                                      |
+| resident/cold resume             | `WPL-008` | Resident App frozen, new Session/cold resume reads new config                                                                                                                                 |
+| Global Marketplace install       | `WPL-009` | Only the User Marketplace can add/refresh; a declaration alone triggers no download; marketplace install writes User inventory/config, not Workspace enabled/options                          |
+| Remote target isolation          | `WPL-010` | Same path, different identity do not cross config and runtime                                                                                                                                 |
+| Remote missing/explicit install  | `WPL-011` | Connecting does not copy the local package; explicit Sync/Install materializes only on the remote Host                                                                                        |
+| Mobile shared-host               | `WPL-012` | `/remote` uses the existing Host and does not copy Plugin runtime/store                                                                                                                       |
+| builtin Workspace disable        | `WPL-013` | Changes only enabledPlugins, does not delete builtin asset/user data                                                                                                                          |
+| project Plugin root/MCP          | `WPL-014` | A legal project Plugin root activates directly; illegal manifest/path fails closed                                                                                                            |
+| Marketplace/installed roundtrip  | `WPL-015` | From User installed into the global marketplace; browse page has no scope/config; install writes User; primary nav returns to chat, then entering management switches to Workspace for config |
 
 E2E evidence layers:
 
@@ -495,14 +495,14 @@ This is an explicit exception of the Plugin domain. A tracked `.zcode/config.jso
 secrets and may change Plugin runtime parameters or start Plugin MCP; the product does not block this and
 keeps only schema/path/protocol validation and output redaction.
 
-| Boundary                                 | Decision                                                     |
-| ---------------------------------------- | ------------------------------------------------------------ |
-| Workspace Plugin enable, dirs, options   | No Workspace trust, goes straight into new App resolution    |
-| Plugin Hook/Skill/Command/Agent          | Activate with the enabled Plugin                             |
-| Plugin MCP                               | Goes straight to runtime, no independent approval            |
-| Top-level project hooks/MCP/Agent        | Keep the existing security contract                          |
-| sensitive value persistence              | User/Workspace may both save in plaintext                    |
-| sensitive value output                   | UI/log/diagnostic/provider/mobile artifacts must be redacted |
+| Boundary                               | Decision                                                     |
+| -------------------------------------- | ------------------------------------------------------------ |
+| Workspace Plugin enable, dirs, options | No Workspace trust, goes straight into new App resolution    |
+| Plugin Hook/Skill/Command/Agent        | Activate with the enabled Plugin                             |
+| Plugin MCP                             | Goes straight to runtime, no independent approval            |
+| Top-level project hooks/MCP/Agent      | Keep the existing security contract                          |
+| sensitive value persistence            | User/Workspace may both save in plaintext                    |
+| sensitive value output                 | UI/log/diagnostic/provider/mobile artifacts must be redacted |
 
 ## 13. Evidence and source boundary
 

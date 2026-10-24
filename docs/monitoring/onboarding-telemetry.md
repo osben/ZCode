@@ -7,10 +7,10 @@ receiver await manual acceptance.
 
 Record each onboarding exposure and the choices at its end, reusing the common business telemetry chain.
 
-| Event               | element_name       | event_region   | event_type | event_text                                                                 |
-| ------------------- | ------------------ | -------------- | ---------- | -------------------------------------------------------------------------- |
-| Onboarding exposure | onboarding_expose  | app.onboarding | expose     | empty string                                                               |
-| Onboarding end      | onboarding_end     | app.onboarding | ck         | Localized label of the button or close entry at the time of the action; required |
+| Event               | element_name      | event_region   | event_type | event_text                                                                       |
+| ------------------- | ----------------- | -------------- | ---------- | -------------------------------------------------------------------------------- |
+| Onboarding exposure | onboarding_expose | app.onboarding | expose     | empty string                                                                     |
+| Onboarding end      | onboarding_end    | app.onboarding | ck         | Localized label of the button or close entry at the time of the action; required |
 
 `event_element` in the telemetry table maps to the existing request field `element_name` (call parameter
 `elementName`); no synonym field is added. The end event's event_text must be the button label the user saw when
@@ -63,15 +63,15 @@ X / Esc / onboarding shortcut closing on any page
 
 The exposure event uses an empty object. The end event always contains these fields:
 
-| Field                                  | Logical value       | Meaning                                                                       |
-| -------------------------------------- | ------------------- | ----------------------------------------------------------------------------- |
-| work_direction                         | enum below / null   | Current work direction of a shown page; null if skipped and not re-chosen     |
-| ui_mode                                | work / code / null  | Office / coding; null if not shown, or skipped and not re-chosen              |
-| proactive_task_recommendations_enabled | boolean / null      | Checked state of proactive task recommendations, shown only in office mode    |
-| workspace_memory_enabled               | boolean / null      | Checked state of workspace memory                                             |
-| claude_code_history_migration_selected | boolean / null      | Checked state of migrating session data; does not mean the migration finished |
-| exit_action                            | start / skip / close | End entry                                                                    |
-| exit_step                              | 1 / 2 / 3           | Page at the end; 3 for start / skip, any page for close                       |
+| Field                                  | Logical value        | Meaning                                                                       |
+| -------------------------------------- | -------------------- | ----------------------------------------------------------------------------- |
+| work_direction                         | enum below / null    | Current work direction of a shown page; null if skipped and not re-chosen     |
+| ui_mode                                | work / code / null   | Office / coding; null if not shown, or skipped and not re-chosen              |
+| proactive_task_recommendations_enabled | boolean / null       | Checked state of proactive task recommendations, shown only in office mode    |
+| workspace_memory_enabled               | boolean / null       | Checked state of workspace memory                                             |
+| claude_code_history_migration_selected | boolean / null       | Checked state of migrating session data; does not mean the migration finished |
+| exit_action                            | start / skip / close | End entry                                                                     |
+| exit_step                              | 1 / 2 / 3            | Page at the end; 3 for start / skip, any page for close                       |
 
 Modes are mapped only at the telemetry boundary: internal `office -> work`, `coding -> code`; the modes in
 settings, store or record are not renamed.
@@ -101,20 +101,20 @@ this event alone.
 
 The first column is the UI copy (zh-CN) and stays as is; the reported enum does not change with display language.
 
-| UI copy (zh-CN)         | Internal occupation | work_direction                                  |
-| ----------------------- | ------------------- | ----------------------------------------------- |
-| 软件开发/数据/AI        | developer           | software_data_ai                                |
-| 创业/自由职业/OPC       | independent         | entrepreneurship_freelance_opc                  |
-| 测试/运维/安全          | infrastructure      | qa_operations_security                          |
-| 产品/项目/解决方案      | product             | product_project_solutions                       |
-| UI/UX/视觉设计          | design              | ui_ux_visual_design                             |
-| 学生/教师/科研          | student             | education_research                              |
-| 金融/财务/咨询          | finance             | finance_accounting_consulting                   |
-| 自媒体/内容创作         | creator             | media_content_creation                          |
-| 运营/电商/客户服务      | operations          | business_operations_ecommerce_customer_service  |
-| 市场营销/品牌/公关      | marketing           | marketing_brand_pr                              |
-| 法律/行政/人力资源      | legal               | legal_administration_hr                         |
-| 其他职业                | other               | other                                           |
+| UI copy (zh-CN)    | Internal occupation | work_direction                                 |
+| ------------------ | ------------------- | ---------------------------------------------- |
+| 软件开发/数据/AI   | developer           | software_data_ai                               |
+| 创业/自由职业/OPC  | independent         | entrepreneurship_freelance_opc                 |
+| 测试/运维/安全     | infrastructure      | qa_operations_security                         |
+| 产品/项目/解决方案 | product             | product_project_solutions                      |
+| UI/UX/视觉设计     | design              | ui_ux_visual_design                            |
+| 学生/教师/科研     | student             | education_research                             |
+| 金融/财务/咨询     | finance             | finance_accounting_consulting                  |
+| 自媒体/内容创作    | creator             | media_content_creation                         |
+| 运营/电商/客户服务 | operations          | business_operations_ecommerce_customer_service |
+| 市场营销/品牌/公关 | marketing           | marketing_brand_pr                             |
+| 法律/行政/人力资源 | legal               | legal_administration_hr                        |
+| 其他职业           | other               | other                                          |
 
 The internal occupation enum is not modified. A display-copy or language change must not change the reported enum.
 `other` only means an explicit choice of another occupation and cannot stand for not answered.
@@ -211,13 +211,13 @@ effect, the steps actually shown, the current mode and same-session end de-dupli
 of the answers. The save entry freezes the snapshot first and sends end after settings succeed; close sends
 directly. After the end the steps are reset so a reopen does not inherit the previously shown range.
 
-| Case    | Setup and action                                   | Assertions                                                                   | Automation location                    |
-| ------- | -------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------- |
-| ONBT-01 | First auto/manual open, StrictMode, page switches, reopen | One exposure per actual open, none when not shown                      | UI occupationOnboardingTelemetry.test.ts |
-| ONBT-02 | Three-step selection then start/skip, failed save retry | One end after success; click-time answers and language kept; migration intent is not success | same                       |
-| ONBT-03 | Close on any page, go back and change mode then close | close and page number correct, unshown/invalid preferences empty, nothing saved | same                               |
-| ONBT-04 | Common Core reports anonymous/logged-in events     | Top-level user_id/device_mid; device identifier unchanged after rebuilding Core | services telemetryService.test.ts   |
-| ONBT-05 | Real desktop onboarding reopened, close/start/skip | Actual request body and receiver events, identity and fields complete        | manual verification by the user        |
+| Case    | Setup and action                                          | Assertions                                                                                   | Automation location                      |
+| ------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| ONBT-01 | First auto/manual open, StrictMode, page switches, reopen | One exposure per actual open, none when not shown                                            | UI occupationOnboardingTelemetry.test.ts |
+| ONBT-02 | Three-step selection then start/skip, failed save retry   | One end after success; click-time answers and language kept; migration intent is not success | same                                     |
+| ONBT-03 | Close on any page, go back and change mode then close     | close and page number correct, unshown/invalid preferences empty, nothing saved              | same                                     |
+| ONBT-04 | Common Core reports anonymous/logged-in events            | Top-level user_id/device_mid; device identifier unchanged after rebuilding Core              | services telemetryService.test.ts        |
+| ONBT-05 | Real desktop onboarding reopened, close/start/skip        | Actual request body and receiver events, identity and fields complete                        | manual verification by the user          |
 
 At the user's request E2E is not an acceptance item for this change: code is verified with component interaction
 tests and common-Core request-body tests; the real client and production receiver are manually verified by the user

@@ -61,16 +61,16 @@ both succeed.
 
 ## Configuration (hardcoded)
 
-| Item                       | Location / value                                                                                                                         |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Endpoint                   | `ZCODE_ARMS_RUM_ENDPOINT` (`packages/shared/src/env.ts`)                                                                                 |
+| Item                       | Location / value                                                                                                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint                   | `ZCODE_ARMS_RUM_ENDPOINT` (`packages/shared/src/env.ts`)                                                                                        |
 | Upload environment         | `mapZCodeEnvToArmsRumEnv(runtimeEnv)`: local development runtime is always `local`; for non-local runtime only `ZCODE_ENV=production` is `prod` |
-| `sessionConfig.sampleRate` | `1` (100% session sampling)                                                                                                              |
-| `autoInject`               | `true` (the SDK injects the Browser SDK at `dom-ready`; do not init manually in preload/renderer)                                        |
-| `browserCollectors`        | `perf/webvitals/exception/whiteScreen/api/staticResource/click/longTask: true` (see `ARMS_BROWSER_COLLECTORS`)                           |
-| `spaMode`                  | `false` (Electron loads whole pages, not History SPA)                                                                                    |
-| `parseViewName`            | `file://` uses the html filename; http dev-server uses the pathname                                                                      |
-| `tracing`                  | `arms_env=prod`: `enable: true`, `sample: 0.1` (0.1%); `arms_env=local`: `sample: 1`                                                     |
+| `sessionConfig.sampleRate` | `1` (100% session sampling)                                                                                                                     |
+| `autoInject`               | `true` (the SDK injects the Browser SDK at `dom-ready`; do not init manually in preload/renderer)                                               |
+| `browserCollectors`        | `perf/webvitals/exception/whiteScreen/api/staticResource/click/longTask: true` (see `ARMS_BROWSER_COLLECTORS`)                                  |
+| `spaMode`                  | `false` (Electron loads whole pages, not History SPA)                                                                                           |
+| `parseViewName`            | `file://` uses the html filename; http dev-server uses the pathname                                                                             |
+| `tracing`                  | `arms_env=prod`: `enable: true`, `sample: 0.1` (0.1%); `arms_env=local`: `sample: 1`                                                            |
 
 No `ZCODE_ARMS_*` environment variables exist.
 
@@ -168,14 +168,14 @@ main-process `collectors` still cover the Electron side (crash, rpc, etc.).
 
 ## No data in the console
 
-| Symptom                                                                | Possible cause                                                                                                         |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| No `electron initialized` log                                          | `init` threw (wrong endpoint, remote config fetch failed, etc.)                                                        |
-| Initialized but no `beforeReport`                                      | Session not sampled (`sessionConfig.sampleRate: 1` required), or the renderer process produced no events              |
-| `beforeReport` present but `perf=0` (`view:webvitals` without `view:perf`) | `autoInject` ran later than `load`, so perf-collector did not `sendPerf`; the main window's `scheduleArmsBrowserPerfLoadNudge` re-sends `load` |
-| `beforeReport` present but still no console data                       | Console environment filter set to `prod`, region/application mismatch, intranet cannot reach `*.aliyuncs.com`          |
-| `[RUM] Invalid bundle received from renderer, dropped`                 | The SDK reports `events[]` upstream; the ARMS frame preload closure bypasses the ipc patch; preload must call `patchArmsEventBridgeSend` synchronously |
-| Renderer console `[RUM] ArmsEventBridge is not available`              | First window opened before init finished (fixed by `await armsInitPromise`)                                            |
+| Symptom                                                                    | Possible cause                                                                                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| No `electron initialized` log                                              | `init` threw (wrong endpoint, remote config fetch failed, etc.)                                                                                        |
+| Initialized but no `beforeReport`                                          | Session not sampled (`sessionConfig.sampleRate: 1` required), or the renderer process produced no events                                               |
+| `beforeReport` present but `perf=0` (`view:webvitals` without `view:perf`) | `autoInject` ran later than `load`, so perf-collector did not `sendPerf`; the main window's `scheduleArmsBrowserPerfLoadNudge` re-sends `load`         |
+| `beforeReport` present but still no console data                           | Console environment filter set to `prod`, region/application mismatch, intranet cannot reach `*.aliyuncs.com`                                          |
+| `[RUM] Invalid bundle received from renderer, dropped`                     | The SDK reports `events[]` upstream; the ARMS frame preload closure bypasses the ipc patch; preload must call `patchArmsEventBridgeSend` synchronously |
+| Renderer console `[RUM] ArmsEventBridge is not available`                  | First window opened before init finished (fixed by `await armsInitPromise`)                                                                            |
 
 ## SourceMap
 

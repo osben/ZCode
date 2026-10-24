@@ -15,24 +15,24 @@ remote control stops immediately and stays at `auth-required`; at app start with
 ## Acceptance criteria
 
 - [ ] Docs first: `relay-v2-pairing.md` gains the login/logout and remote-control lifecycle sequence diagram
-  and `auth-required` semantics; the architecture doc's "enabled-state recovery after desktop app restart"
-  section now requires waiting for a JWT; a zh-CN/en-US copy table for the `auth-required` state (title,
-  description, login button) is listed for confirmation.
+      and `auth-required` semantics; the architecture doc's "enabled-state recovery after desktop app restart"
+      section now requires waiting for a JWT; a zh-CN/en-US copy table for the `auth-required` state (title,
+      description, login button) is listed for confirmation.
 - [x] Remote-control status gains an `auth-required` presentation: the dialog shows the "login required" copy
-  and a login entry (reusing the existing login trigger) without a QR code; zh-CN and en-US copy complete.
+      and a login entry (reusing the existing login trigger) without a QR code; zh-CN and en-US copy complete.
 - [x] Visual check: dialog `auth-required` screenshots (dark/light x zh-CN/en-US), produced by this ticket's E2E.
 - [x] A one-way renderer→main IPC login-state notification (login success / logout), sent by the renderer on
-  OAuth session changes; strict types and runtime schema validation.
+      OAuth session changes; strict types and runtime schema validation.
 - [x] Main on "login success": if an enabled target exists and the window workspace is synced, retry
-  restoring; on "logout": stop the current runtime, set `auth-required`, keep the enabled record. App-start
-  recovery without a JWT stays at `auth-required` waiting for the notification and starts no extra host, remote
-  session or Agent runtime.
+      restoring; on "logout": stop the current runtime, set `auth-required`, keep the enabled record. App-start
+      recovery without a JWT stays at `auth-required` waiting for the notification and starts no extra host, remote
+      session or Agent runtime.
 - [x] Tests (manager public interface + fake login-state source): refuse to start without a JWT with no HTTP/WS
-  calls; login notification triggers recovery; logout notification stops and keeps the enabled record;
-  start-up recovery waits without a JWT. The IPC schema has rejection tests for illegal fields; the dialog's
-  `auth-required` state has a render test.
+      calls; login notification triggers recovery; logout notification stops and keeps the enabled record;
+      start-up recovery waits without a JWT. The IPC schema has rejection tests for illegal fields; the dialog's
+      `auth-required` state has a render test.
 - [ ] One desktop E2E: logged out, opening the remote dialog shows login required and main made no registration
-  or relay connection; add, verify and promote per the E2E workflow skill.
+      or relay connection; add, verify and promote per the E2E workflow skill.
 - [ ] `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and the new E2E pass.
 
 ## Implementation and verification

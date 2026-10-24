@@ -87,7 +87,7 @@ function onLogicalFrame(store, frame, deliveryKind) {
   if (frame.subscriptionId !== store.subscriptionId) return; // old generation
 
   if (frame.payload.kind === "snapshot") {
-    store.replaceAll(frame.payload.snapshot);                // replace wholesale
+    store.replaceAll(frame.payload.snapshot); // replace wholesale
     store.logEpoch = frame.payload.snapshot.logEpoch;
     store.seq = frame.toSeq;
     store.hasAppliedBase = true;
@@ -99,7 +99,7 @@ function onLogicalFrame(store, frame, deliveryKind) {
   if (frame.toSeq <= store.seq) {
     // aligned `(N,N]` or a recovery already covered by a newer snapshot is still a valid logical frame.
     if (deliveryKind === "recovery") markRecoveryFrameSeen(store);
-    return;                                                   // late/duplicate, no projection change
+    return; // late/duplicate, no projection change
   }
 
   if (deliveryKind === "online" && store.recoveryFlight) {
@@ -142,17 +142,17 @@ Closed rules:
 
 ## 3. Automatic recovery trigger matrix
 
-| Trigger | Client/host action | Authoritative recovery result |
-| --- | --- | --- |
-| Page refresh, new pane, new device | subscribe without a valid base | snapshot |
-| Short disconnect, in-memory projection intact | subscribe with `{logEpoch,seq}` | resume or snapshot |
-| delta gap | single-flight `v4/conversation/resync` | resume; another gap forces snapshot |
-| `sendText` already `accepted|duplicate`, and after a short grace the queue item / real-user row with the same `sourceCommandId` is still invisible | single-flight `v4/conversation/resync` on the current owned subscription | resume or snapshot; recovers the projection only, does not replay the command |
-| fragment missing/checksum failure | drop the whole assembly + resync | no half-applied state |
-| subscriber buffer over limit | publisher clears that sub's buffer, marks resync | next send is only the latest snapshot |
-| relay/attachment rebuild | after the v2 handshake automatically resubscribe all active topics | new subId; old frames dropped |
-| CLI runtime restart | new `logEpoch`; client automatically resubscribes | snapshot; old base not resumed |
-| port close | host `unsubscribeAll(connectionId)` | release buffer/assembly; other connections unaffected |
+| Trigger                                       | Client/host action                                                                                                    | Authoritative recovery result                                            |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Page refresh, new pane, new device            | subscribe without a valid base                                                                                        | snapshot                                                                 |
+| Short disconnect, in-memory projection intact | subscribe with `{logEpoch,seq}`                                                                                       | resume or snapshot                                                       |
+| delta gap                                     | single-flight `v4/conversation/resync`                                                                                | resume; another gap forces snapshot                                      |
+| `sendText` already `accepted                  | duplicate`, and after a short grace the queue item / real-user row with the same `sourceCommandId` is still invisible | single-flight `v4/conversation/resync` on the current owned subscription | resume or snapshot; recovers the projection only, does not replay the command |
+| fragment missing/checksum failure             | drop the whole assembly + resync                                                                                      | no half-applied state                                                    |
+| subscriber buffer over limit                  | publisher clears that sub's buffer, marks resync                                                                      | next send is only the latest snapshot                                    |
+| relay/attachment rebuild                      | after the v2 handshake automatically resubscribe all active topics                                                    | new subId; old frames dropped                                            |
+| CLI runtime restart                           | new `logEpoch`; client automatically resubscribes                                                                     | snapshot; old base not resumed                                           |
+| port close                                    | host `unsubscribeAll(connectionId)`                                                                                   | release buffer/assembly; other connections unaffected                    |
 
 Mobile relay/main only pass through payload and connection lifecycle. The raw adapter's `onSaturated/onDrained` is written by desktop main into the owning attachment's `connection-flow-v1` MessagePort sideband, and the host sends it into the CLI under the trusted connectionId. main/relay must not cache snapshots, fill gaps, maintain seq or choose a pause target themselves. The desktop MessagePort uses the same strict control/binary distinction; the continuous local link usually does not trigger network-level congestion.
 

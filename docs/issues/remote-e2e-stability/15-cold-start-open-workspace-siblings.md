@@ -70,13 +70,13 @@ recovery.
 Batch `r3-server-20261012012923737-60d156` (business build from issue 11's verified fix; source manifest
 SHA-256 `b7ef08e140b79ff69cda860e617b4f910fc6971e4b56f1780cf6d31bc82811c7`):
 
-| Case          | Result         | Accepted behavior                                                                    |
-| ------------- | -------------- | ------------------------------------------------------------------------------------ |
-| boundary      | PASS, 141.6 s  | active B auto-restores, directory read after restart succeeds, password refs 1/1     |
-| mixed         | PASS, 156.3 s  | A auto-restores, project entries kept, B opened on demand, separate session, resume  |
-| coldreconnect | PASS, 186.8 s  | B auto-restores its session, A opened on demand, both resume, auto-reconnect off/manual restore |
-| project-order | PASS, 142.8 s  | drag, cold restart, disconnect/connect keep project order and online state           |
-| rdux14        | PASS, 132.4 s  | authoritative active B set 20 days back still auto-restores, A on demand, one Host   |
+| Case          | Result        | Accepted behavior                                                                               |
+| ------------- | ------------- | ----------------------------------------------------------------------------------------------- |
+| boundary      | PASS, 141.6 s | active B auto-restores, directory read after restart succeeds, password refs 1/1                |
+| mixed         | PASS, 156.3 s | A auto-restores, project entries kept, B opened on demand, separate session, resume             |
+| coldreconnect | PASS, 186.8 s | B auto-restores its session, A opened on demand, both resume, auto-reconnect off/manual restore |
+| project-order | PASS, 142.8 s | drag, cold restart, disconnect/connect keep project order and online state                      |
+| rdux14        | PASS, 132.4 s | authoritative active B set 20 days back still auto-restores, A on demand, one Host              |
 
 Affected Vitest: 408 files / 4531 tests passed; Node scripts 34 passed; typecheck, lint (207 pre-existing
 warnings), architecture, 5 fixtures, format and link checks pass. Product behavior was not relaxed and no

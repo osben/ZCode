@@ -28,15 +28,15 @@ For an existing session the model authority is the CLI runtime; the draft prefer
 
 ## Complexity that must stay
 
-| Complexity | Why kept | Boundary |
-| --- | --- | --- |
-| workspace provider registry | custom provider credentials and model metadata live on the app/service side | synced by workspace identity and remote session |
-| one-shot `runtimeModel` fallback | installs a client overlay when the CLI registry has not seen the new provider yet | retry once, only after `provider.notInRegistry` |
-| service `runtimeModel` derived cache | provider header/capability hot refresh needs the model runtime config | rebuilt in decision order after accepted/noop; duplicate does not write; Agent validates model+thought; it must not carry switch intent |
-| draft prewarm | avoids creating a session at first send and slow workspace default writes | deferred, in-memory, cleaned up if not promoted |
-| draft global seed | a new draft continues the user's last choice | must not override this draft's explicit selection |
-| Agent registry fallback | a historical session whose model was removed from the registry can still continue | Agent decides by default, last-used, catalog first and publishes the projection; the UI does not write |
-| config command barrier | prevents "switch model -> send immediately" reordering | linearizes only this renderer's admission; no cross-client global FIFO promised |
+| Complexity                           | Why kept                                                                          | Boundary                                                                                                                                |
+| ------------------------------------ | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| workspace provider registry          | custom provider credentials and model metadata live on the app/service side       | synced by workspace identity and remote session                                                                                         |
+| one-shot `runtimeModel` fallback     | installs a client overlay when the CLI registry has not seen the new provider yet | retry once, only after `provider.notInRegistry`                                                                                         |
+| service `runtimeModel` derived cache | provider header/capability hot refresh needs the model runtime config             | rebuilt in decision order after accepted/noop; duplicate does not write; Agent validates model+thought; it must not carry switch intent |
+| draft prewarm                        | avoids creating a session at first send and slow workspace default writes         | deferred, in-memory, cleaned up if not promoted                                                                                         |
+| draft global seed                    | a new draft continues the user's last choice                                      | must not override this draft's explicit selection                                                                                       |
+| Agent registry fallback              | a historical session whose model was removed from the registry can still continue | Agent decides by default, last-used, catalog first and publishes the projection; the UI does not write                                  |
+| config command barrier               | prevents "switch model -> send immediately" reordering                            | linearizes only this renderer's admission; no cross-client global FIFO promised                                                         |
 
 ## Removed old fact sources
 

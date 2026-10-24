@@ -11,10 +11,10 @@ the page becomes visible again.
 
 Measured (2026-09-29, isolated HOME + mock provider streaming stress, after GC):
 
-| State                      | DOM nodes | JS listeners | renderer footprint |
-| -------------------------- | --------- | ------------ | ------------------ |
-| while hidden               | 235,382   | 12,071       | 498 MB             |
-| 1s after becoming visible  | 45,297    | 1,943        | 379 MB             |
+| State                     | DOM nodes | JS listeners | renderer footprint |
+| ------------------------- | --------- | ------------ | ------------------ |
+| while hidden              | 235,382   | 12,071       | 498 MB             |
+| 1s after becoming visible | 45,297    | 1,943        | 379 MB             |
 
 Controlled experiment: triggering a transition while hidden and then removing the element retains 100%
 (even after `cancel()` first); without triggering a transition 0 is retained. The main entry is the
@@ -48,12 +48,12 @@ visibilitychange ──► document.visibilityState === "hidden"
 
 Same stress script, window minimized (hidden), 15 consecutive rounds, compared after GC:
 
-| Metric                                | Before  | After  |
-| ------------------------------------- | ------- | ------ |
-| DOM nodes (Memory counters)           | 175,224 | 22,361 |
-| JS listeners                          | 12,071  | 1,213  |
-| heap snapshot detached nodes          | 109,407 | 3,819  |
-| controlled-experiment retention (20,050 nodes) | 100% | ~2% |
+| Metric                                         | Before  | After  |
+| ---------------------------------------------- | ------- | ------ |
+| DOM nodes (Memory counters)                    | 175,224 | 22,361 |
+| JS listeners                                   | 12,071  | 1,213  |
+| heap snapshot detached nodes                   | 109,407 | 3,819  |
+| controlled-experiment retention (20,050 nodes) | 100%    | ~2%    |
 
 The remaining detached nodes are held by TanStack virtual `elementsCache` through a pending rAF closure,
 settle after the page becomes visible and are bounded.

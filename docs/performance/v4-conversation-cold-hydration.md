@@ -4,13 +4,13 @@ Full history (per-sample timing tables): `git show b8876e8b:docs/performance/v4-
 
 ## Feature Summary
 
-| Field                 | Value                                                                                                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Field                 | Value                                                                                                                                                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Change                | Cold hydration on the first `v4/conversation/subscribe` of a long session changes from a per-event full-projection transaction to bounded batch replay, removing repeated clones, all-row action scans and snapshot serialization that grew with history length |
-| User-visible surfaces | Opening a persisted long session; the wait before the first conversation snapshot arrives                                                                                          |
-| Existing docs         | `docs/v4-refactor/02-projection.md`, `docs/v4-refactor/05-transport-and-backpressure.md`, `docs/v4-refactor/07-persistence.md`                                                     |
-| Existing code owners  | CLI `V4Gateway`, `ConversationTopicPublisher`, `ProductProjection`                                                                                                                 |
-| Out of scope          | Renderer rendering optimization, wire schema changes, SQLite migration, persisted projection checkpoints, an independent mobile runtime, changing the desktop/mobile delivery profile |
+| User-visible surfaces | Opening a persisted long session; the wait before the first conversation snapshot arrives                                                                                                                                                                       |
+| Existing docs         | `docs/v4-refactor/02-projection.md`, `docs/v4-refactor/05-transport-and-backpressure.md`, `docs/v4-refactor/07-persistence.md`                                                                                                                                  |
+| Existing code owners  | CLI `V4Gateway`, `ConversationTopicPublisher`, `ProductProjection`                                                                                                                                                                                              |
+| Out of scope          | Renderer rendering optimization, wire schema changes, SQLite migration, persisted projection checkpoints, an independent mobile runtime, changing the desktop/mobile delivery profile                                                                           |
 
 The goal is long-history cold open, not ordinary streaming throughput. The O(N^2) growth is an implementation
 bug fix, not a reason to add a timeout or lower history fidelity. The work stays scoped: no persistence/schema
@@ -18,24 +18,24 @@ migration.
 
 ## Boundary Decisions
 
-| Boundary         | Decision                                                                                       | Includes                                                                       | Excludes / prunes                                                        | Source                                              |
-| ---------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------- |
-| Cold/hot semantics | Keep `reduce(transcript) ≡ reduce(events)`                                                   | The transcript is still synthesized into canonical events and fed to the same reducer | A second projector going directly `message/part -> row`                  | `docs/v4-refactor/07-persistence.md`                |
-| Atomicity        | Adopt once, only after the candidate fully succeeds                                            | On reducer error the old projection/log/subscription reservation is fully kept | Half-replaying in place on the authoritative publisher                   | current publisher contract                          |
-| payload gate     | The normal batch path must prove it cannot cross 16 MiB; if it cannot, fall back to strict per-event admission | terminal reserve, oversized historical event skip, later terminal still reduced | Raising the limit, truncating the snapshot, silently accepting an untransmittable projection | `docs/v4-refactor/05-transport-and-backpressure.md` |
-| delivery profile | Optimize only the CLI's shared cold materialization                                            | desktop continuous and mobile replayable get the same terminal projection      | Spreading replayable gap/snapshot rules to desktop continuous            | conversation protocol                               |
-| persistence      | No DB schema change                                                                            | Reuse existing message/part/session_entry reads                                | projection checkpoint, row ordinal migration, store-backed lazy range    | user-authorized scoped implementation               |
-| Perf gate        | Performance thresholds are regression gates, not product contracts                             | Representative 2000-turn tool-heavy fixture and a focused synthetic benchmark  | Wall-clock-dependent strict cross-machine E2E pass/fail                  | catalog PERF scope                                  |
+| Boundary           | Decision                                                                                                       | Includes                                                                              | Excludes / prunes                                                                            | Source                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Cold/hot semantics | Keep `reduce(transcript) ≡ reduce(events)`                                                                     | The transcript is still synthesized into canonical events and fed to the same reducer | A second projector going directly `message/part -> row`                                      | `docs/v4-refactor/07-persistence.md`                |
+| Atomicity          | Adopt once, only after the candidate fully succeeds                                                            | On reducer error the old projection/log/subscription reservation is fully kept        | Half-replaying in place on the authoritative publisher                                       | current publisher contract                          |
+| payload gate       | The normal batch path must prove it cannot cross 16 MiB; if it cannot, fall back to strict per-event admission | terminal reserve, oversized historical event skip, later terminal still reduced       | Raising the limit, truncating the snapshot, silently accepting an untransmittable projection | `docs/v4-refactor/05-transport-and-backpressure.md` |
+| delivery profile   | Optimize only the CLI's shared cold materialization                                                            | desktop continuous and mobile replayable get the same terminal projection             | Spreading replayable gap/snapshot rules to desktop continuous                                | conversation protocol                               |
+| persistence        | No DB schema change                                                                                            | Reuse existing message/part/session_entry reads                                       | projection checkpoint, row ordinal migration, store-backed lazy range                        | user-authorized scoped implementation               |
+| Perf gate          | Performance thresholds are regression gates, not product contracts                                             | Representative 2000-turn tool-heavy fixture and a focused synthetic benchmark         | Wall-clock-dependent strict cross-machine E2E pass/fail                                      | catalog PERF scope                                  |
 
 ## Domain Scope
 
-| Domain                        | Include?      | Why it can change behavior                                                     | Primary sources                      |
-| ----------------------------- | ------------- | ------------------------------------------------------------------------------ | ------------------------------------ |
-| Conversation/session behavior | yes           | cold/live projection, row actions and command targets must be equivalent       | conversation declaration, PV4-09     |
+| Domain                        | Include?      | Why it can change behavior                                                                           | Primary sources                      |
+| ----------------------------- | ------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Conversation/session behavior | yes           | cold/live projection, row actions and command targets must be equivalent                             | conversation declaration, PV4-09     |
 | Persistence/index/snapshot    | yes           | The transcript is the authority for completed bodies; cold subscribe must read and synthesize events | `docs/v4-refactor/07-persistence.md` |
-| Rendering/performance         | yes           | Before the first frame CLI CPU is saturated and the renderer has not received the body | 2000-turn runtime measurement  |
-| Mobile remote/replayable      | boundary only | Shares one CLI projection, but delivery recovery semantics must stay isolated  | trusted delivery invariants          |
-| UI/render implementation      | no            | The time is spent before the initial frame is produced                          | runtime trace                        |
+| Rendering/performance         | yes           | Before the first frame CLI CPU is saturated and the renderer has not received the body               | 2000-turn runtime measurement        |
+| Mobile remote/replayable      | boundary only | Shares one CLI projection, but delivery recovery semantics must stay isolated                        | trusted delivery invariants          |
+| UI/render implementation      | no            | The time is spent before the initial frame is produced                                               | runtime trace                        |
 
 ## Concept Map
 
@@ -64,13 +64,13 @@ ConversationTopicPublisher.rehydrate
               desktop-continuous / web-remote-replayable subscribe
 ```
 
-| Concept                | Why it matters                                                                                                               | Source                            |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| candidate publisher    | The outer layer already isolates the old authoritative state, so per-event clone is a duplicate transaction                  | `conversation-topic-publisher.ts` |
-| action materialization | It used to scan all rows on every event, and the assistant branch had nested `find/some`                                     | `product-projection.ts`           |
-| immutable delta apply  | During replay every append/upsert copied the growing row array                                                               | shared `apply.ts`                 |
-| wire tail              | The initial snapshot sends only the last 60 rows; the CLI keeps the full history for range/targets                           | protocol limits / projection docs |
-| recovery boundary      | Batch defers action derivation; after rehydrate an old intermediate base must snapshot, while new events after the current watermark can still resume | publisher retention contract |
+| Concept                | Why it matters                                                                                                                                        | Source                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| candidate publisher    | The outer layer already isolates the old authoritative state, so per-event clone is a duplicate transaction                                           | `conversation-topic-publisher.ts` |
+| action materialization | It used to scan all rows on every event, and the assistant branch had nested `find/some`                                                              | `product-projection.ts`           |
+| immutable delta apply  | During replay every append/upsert copied the growing row array                                                                                        | shared `apply.ts`                 |
+| wire tail              | The initial snapshot sends only the last 60 rows; the CLI keeps the full history for range/targets                                                    | protocol limits / projection docs |
+| recovery boundary      | Batch defers action derivation; after rehydrate an old intermediate base must snapshot, while new events after the current watermark can still resume | publisher retention contract      |
 
 ## State Owners
 
@@ -83,26 +83,26 @@ ConversationTopicPublisher.rehydrate
 
 ## Dimensions, candidates and pruning
 
-| Dimension          | Values / equivalence classes                            | Include?            | Reason                                                                                        |
-| ------------------ | ------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------- |
-| persistence source | durable transcript, existing healthy live publisher     | yes                 | Only a durable transcript needs batch cold replay; a healthy live publisher is skipped by the guard |
-| history size       | small, 2000 turns tool-heavy, growth ratio              | yes                 | Verifies semantics and the complexity trend together                                           |
-| projection payload | safely bounded, uncertain/over limit                    | yes                 | Decides fast path vs strict fallback                                                           |
-| replay outcome     | success, ordinary reducer error, payload-too-large event | yes                | Atomicity and fail-closed                                                                      |
-| delivery profile   | continuous, replayable                                  | representative only | Same terminal projection; profile only affects filtering/recovery, no full permutation         |
-| workspace kind     | local, SSH/WSL/Docker                                   | pruned              | The hydration algorithm consumes only session facts and runs no path operations                |
-| tool shape         | text/reasoning + mixed terminal/pending/error tools     | yes                 | The tool-heavy fixture is the main reproduction                                                |
+| Dimension          | Values / equivalence classes                             | Include?            | Reason                                                                                              |
+| ------------------ | -------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------- |
+| persistence source | durable transcript, existing healthy live publisher      | yes                 | Only a durable transcript needs batch cold replay; a healthy live publisher is skipped by the guard |
+| history size       | small, 2000 turns tool-heavy, growth ratio               | yes                 | Verifies semantics and the complexity trend together                                                |
+| projection payload | safely bounded, uncertain/over limit                     | yes                 | Decides fast path vs strict fallback                                                                |
+| replay outcome     | success, ordinary reducer error, payload-too-large event | yes                 | Atomicity and fail-closed                                                                           |
+| delivery profile   | continuous, replayable                                   | representative only | Same terminal projection; profile only affects filtering/recovery, no full permutation              |
+| workspace kind     | local, SSH/WSL/Docker                                    | pruned              | The hydration algorithm consumes only session facts and runs no path operations                     |
+| tool shape         | text/reasoning + mixed terminal/pending/error tools      | yes                 | The tool-heavy fixture is the main reproduction                                                     |
 
-| Candidate ID | State                                                   | Event                         | Expected guard/effect                                                       | Status                   |
-| ------------ | ------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------- | ------------------------ |
-| V4HYD-01     | completed durable transcript, projection safely bounded | first subscribe               | batch replay, same reducer, one final adopt                                 | accepted                 |
-| V4HYD-02     | same facts                                              | strict replay vs batch replay | snapshot, row actions, command target, seq/revision identical               | accepted                 |
-| V4HYD-03     | history may cross 16 MiB                                | first subscribe               | fast proof fails, fall back to strict per-event payload admission (skip bad event + later terminal kept) | accepted |
-| V4HYD-04     | candidate reducer throws an ordinary error              | first subscribe               | throws, old projection/log/subscription reservation unchanged               | accepted                 |
-| V4HYD-05     | healthy live publisher                                  | subscribe                     | reuse the live publisher, no cold replay (existing gateway guard)           | pruned                   |
-| V4HYD-06     | desktop vs mobile same facts                            | subscribe/recover             | same terminal state; continuous/replayable delivery kept separately         | pruned to representative |
-| V4HYD-07     | persisted projection checkpoint/lazy rows               | cold subscribe                | would fully decouple first-screen cost from total history                   | ignored (later architecture phase, needs migration) |
-| V4HYD-08     | client holds a same-epoch intermediate base from before rehydrate | subscribe after rehydrate | goes through the snapshot recovery boundary; new events after the current seq can still resume | accepted |
+| Candidate ID | State                                                             | Event                         | Expected guard/effect                                                                                    | Status                                              |
+| ------------ | ----------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| V4HYD-01     | completed durable transcript, projection safely bounded           | first subscribe               | batch replay, same reducer, one final adopt                                                              | accepted                                            |
+| V4HYD-02     | same facts                                                        | strict replay vs batch replay | snapshot, row actions, command target, seq/revision identical                                            | accepted                                            |
+| V4HYD-03     | history may cross 16 MiB                                          | first subscribe               | fast proof fails, fall back to strict per-event payload admission (skip bad event + later terminal kept) | accepted                                            |
+| V4HYD-04     | candidate reducer throws an ordinary error                        | first subscribe               | throws, old projection/log/subscription reservation unchanged                                            | accepted                                            |
+| V4HYD-05     | healthy live publisher                                            | subscribe                     | reuse the live publisher, no cold replay (existing gateway guard)                                        | pruned                                              |
+| V4HYD-06     | desktop vs mobile same facts                                      | subscribe/recover             | same terminal state; continuous/replayable delivery kept separately                                      | pruned to representative                            |
+| V4HYD-07     | persisted projection checkpoint/lazy rows                         | cold subscribe                | would fully decouple first-screen cost from total history                                                | ignored (later architecture phase, needs migration) |
+| V4HYD-08     | client holds a same-epoch intermediate base from before rehydrate | subscribe after rehydrate     | goes through the snapshot recovery boundary; new events after the current seq can still resume           | accepted                                            |
 
 Pruning: V4HYD-P1 client profile x history/tool shape full permutation (canonical projection is shared;
 strict-vs-batch golden plus existing profile tests); V4HYD-P2 workspace kind x hydration (no path execution;
@@ -112,14 +112,14 @@ timeout (a delayed failure reduces neither CPU nor RSS; ignored).
 
 ## Accepted Cases
 
-| Case ID  | Setup                                                                                          | Action                                | Assertions                                                                                                       | Evidence layers                                       | E2E status                |
-| -------- | ---------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------- |
-| PERF03-A | A persisted session of 2000 turns, 4000 messages and mixed tool states                         | first subscribe from a cold process   | Initial snapshot arrives; the CLI no longer hits the 180 s timeout; tool/user/assistant tail visible; time and RSS kept as artifacts | CLI log + process CPU/RSS + protocol ACK/frame + UI/CDP | manual performance run    |
-| PERF03-B | synthetic small/mid/large event logs                                                           | strict vs batch replay                | Final snapshot, message target, row action, seq/revision identical; growth ratio not quadratic                   | focused unit/perf test                                | covered                   |
-| PERF03-C | normal history and oversized history                                                           | batch hydrate                         | Normal history uses the fast path; strict fallback when the bound cannot be proven; 16 MiB behavior same as before | publisher unit                                       | covered                   |
-| PERF03-D | an existing projection/subscription reservation, candidate throws midway                       | rehydrate                             | Old projection/log/reservation untouched                                                                          | publisher unit                                        | covered/extend            |
-| PERF03-E | provider compact active tail of 939 messages / 3523 parts, UI active branch of at least 10621 messages, plus 1805 workspace checkpoints | first rehydrate + subscribe after cold merge | Validates provider tail and UI full active branch scale together; full initial snapshot arrives; stage timings and first-frame structure recorded | opt-in CLI perf spec + production fixture | fixed; production verified |
-| PERF03-H | PERF03-E production fixture                                                                    | V4 cold activation -> initial frame   | Normal path fully reads parent messages once; concurrent subscriptions share the same operation materialization; the compact repair path refreshes once | bootstrap/core focused tests + production A/B | fixed; production verified |
+| Case ID  | Setup                                                                                                                                   | Action                                       | Assertions                                                                                                                                              | Evidence layers                                         | E2E status                 |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------- |
+| PERF03-A | A persisted session of 2000 turns, 4000 messages and mixed tool states                                                                  | first subscribe from a cold process          | Initial snapshot arrives; the CLI no longer hits the 180 s timeout; tool/user/assistant tail visible; time and RSS kept as artifacts                    | CLI log + process CPU/RSS + protocol ACK/frame + UI/CDP | manual performance run     |
+| PERF03-B | synthetic small/mid/large event logs                                                                                                    | strict vs batch replay                       | Final snapshot, message target, row action, seq/revision identical; growth ratio not quadratic                                                          | focused unit/perf test                                  | covered                    |
+| PERF03-C | normal history and oversized history                                                                                                    | batch hydrate                                | Normal history uses the fast path; strict fallback when the bound cannot be proven; 16 MiB behavior same as before                                      | publisher unit                                          | covered                    |
+| PERF03-D | an existing projection/subscription reservation, candidate throws midway                                                                | rehydrate                                    | Old projection/log/reservation untouched                                                                                                                | publisher unit                                          | covered/extend             |
+| PERF03-E | provider compact active tail of 939 messages / 3523 parts, UI active branch of at least 10621 messages, plus 1805 workspace checkpoints | first rehydrate + subscribe after cold merge | Validates provider tail and UI full active branch scale together; full initial snapshot arrives; stage timings and first-frame structure recorded       | opt-in CLI perf spec + production fixture               | fixed; production verified |
+| PERF03-H | PERF03-E production fixture                                                                                                             | V4 cold activation -> initial frame          | Normal path fully reads parent messages once; concurrent subscriptions share the same operation materialization; the compact repair path refreshes once | bootstrap/core focused tests + production A/B           | fixed; production verified |
 
 Matrix backfill: `docs/conversation-session-case-catalog.md` gains the PERF03 cold hydration performance case;
 `docs/testing/conversation-session-e2e-coverage-matrix.md` registers the focused benchmark plus manual
@@ -209,13 +209,13 @@ merged events, 30500 rows; every run gives a 25016-byte initial frame with hash
 `2ff4f3816dc88f2f050f1ec52c1772fa137f35192f3bd5ec6a55c42afdf8c881`. Each metric is the median of 5
 independent Vitest processes.
 
-| Step (2026-08-11/12)                                                         | publisher rehydrate | merge -> initial frame |
-| ---------------------------------------------------------------------------- | ------------------: | ---------------------: |
-| Before any fix                                                               | 10.79 s             | 10.92 s                |
-| Dirty-check of subagent derived input in cold batch (gain from skipping unrelated repeated subagent full-row materialization) | 767.4 ms (-92.9%) | 889.2 ms (-91.9%) |
-| `markStableForkAssistant()` reverse search (Node 25.6.0, same-machine increment) | 777.0 -> 643.8 ms | 902.1 -> 774.0 ms |
-| `closeOpenToolRows()` foreground-open index (Node 25.6.0 increment)          | 643.8 -> 354.6 ms   | 774.0 -> 479.3 ms      |
-| Lazy payload proof (Node 24.14.0)                                            | 257.8 ms            | 375.0 ms               |
+| Step (2026-08-11/12)                                                                                                          | publisher rehydrate | merge -> initial frame |
+| ----------------------------------------------------------------------------------------------------------------------------- | ------------------: | ---------------------: |
+| Before any fix                                                                                                                |             10.79 s |                10.92 s |
+| Dirty-check of subagent derived input in cold batch (gain from skipping unrelated repeated subagent full-row materialization) |   767.4 ms (-92.9%) |      889.2 ms (-91.9%) |
+| `markStableForkAssistant()` reverse search (Node 25.6.0, same-machine increment)                                              |   777.0 -> 643.8 ms |      902.1 -> 774.0 ms |
+| `closeOpenToolRows()` foreground-open index (Node 25.6.0 increment)                                                           |   643.8 -> 354.6 ms |      774.0 -> 479.3 ms |
+| Lazy payload proof (Node 24.14.0)                                                                                             |            257.8 ms |               375.0 ms |
 
 Cumulatively roughly -96.7% (30.4x) for rehydrate and -95.6% (22.8x) for merge -> initial frame. After a
 forced production rebuild (Node 24.14.0, 5 independent processes) cold merge median was 123.2 ms and
@@ -235,9 +235,9 @@ Before vs after on the same fixture, 5 fresh processes each:
 
 | Production boundary                | Before (median) | After (median) | Change                  |
 | ---------------------------------- | --------------: | -------------: | ----------------------- |
-| process -> provider-registry ready | 442.7 ms        | 445.2 ms       | +2.5 ms (startup noise) |
-| ready -> complete initial frame    | 1922.2 ms       | 1455.7 ms      | **-466.5 ms (-24.3%)**  |
-| process -> complete initial frame  | 2364.9 ms       | 1905.1 ms      | **-459.8 ms (-19.4%)**  |
+| process -> provider-registry ready |        442.7 ms |       445.2 ms | +2.5 ms (startup noise) |
+| ready -> complete initial frame    |       1922.2 ms |      1455.7 ms | **-466.5 ms (-24.3%)**  |
+| process -> complete initial frame  |       2364.9 ms |      1905.1 ms | **-459.8 ms (-19.4%)**  |
 
 All 10 formal samples kept a 157745-byte initial frame, 157547-byte snapshot, 29950 total rows, 60-row wire
 window and `seq=74164`; with the per-process random `logEpoch` removed the snapshot SHA-256 was identical
@@ -246,11 +246,11 @@ no-copy prospective overlay moved `ready -> frame` to 1662.5 ms (-259.7 ms); reu
 subagent/row indexes cut a further 206.8 ms. Temporary production instrumentation for the same 74164-event
 replay (includes instrumentation overhead, direction only):
 
-| Implementation                      | subagent materialization (2180 calls) | exact wire-delta byte count (72357 calls) | publisher rehydrate |
-| ----------------------------------- | ------------------------------------: | ----------------------------------------: | ------------------: |
-| Before                              | 324.1 ms                              | 354.5 ms                                  | 1014.0 ms           |
-| exact Buffer + no-copy overlay      | 255.7 ms                              | 226.4 ms                                  | 781.3 ms            |
-| plus indexed subagent enumeration   | **68.2 ms**                           | **225.3 ms**                              | **589.5 ms**        |
+| Implementation                    | subagent materialization (2180 calls) | exact wire-delta byte count (72357 calls) | publisher rehydrate |
+| --------------------------------- | ------------------------------------: | ----------------------------------------: | ------------------: |
+| Before                            |                              324.1 ms |                                  354.5 ms |           1014.0 ms |
+| exact Buffer + no-copy overlay    |                              255.7 ms |                                  226.4 ms |            781.3 ms |
+| plus indexed subagent enumeration |                           **68.2 ms** |                              **225.3 ms** |        **589.5 ms** |
 
 The index layer removed scanning of ordinary conversation rows; the remaining ~68 ms is the complete
 subagent derived-state computation, and no more cache is added for the old below-50-ms "full-table scan"
@@ -283,10 +283,10 @@ refresh into a second read.
 
 Same production fixture, Node 24.14.0, warm file cache, fresh `app-server --stdio` per run, 5 runs:
 
-| Implementation                                         | median subscribe -> initial frame | change                        |
-| ------------------------------------------------------ | --------------------------------: | ----------------------------- |
-| Before: parent messages fully materialized 5 times     | **3991.9 ms**                     | -                             |
-| After: single operation materialization on normal path | **2681.6 ms**                     | **-1310.3 ms (-32.8%, ~1.49x)** |
+| Implementation                                         | median subscribe -> initial frame | change                          |
+| ------------------------------------------------------ | --------------------------------: | ------------------------------- |
+| Before: parent messages fully materialized 5 times     |                     **3991.9 ms** | -                               |
+| After: single operation materialization on normal path |                     **2681.6 ms** | **-1310.3 ms (-32.8%, ~1.49x)** |
 
 All 10 runs kept a 158038-byte physical frame, 29950 total rows, 60-row wire window, `toSeq=74164`, 0 running
 subagents and empty stderr. The random `logEpoch/subscriptionId` makes the whole-frame SHA-256 differ per
@@ -300,9 +300,9 @@ order the median was **2649.4 ms** (vs 2681.6 ms post-fix, -1.2%; the old baseli
 not a new same-round A/B), and in the actual production preflight order (wait for the provider registry ACK
 before subscribing):
 
-| Production boundary                | Median      |
-| ---------------------------------- | ----------: |
-| process -> provider-registry ready | **450.4 ms** |
+| Production boundary                |        Median |
+| ---------------------------------- | ------------: |
+| process -> provider-registry ready |  **450.4 ms** |
 | ready -> complete initial frame    | **1785.4 ms** |
 | process -> complete initial frame  | **2228.3 ms** |
 
@@ -324,12 +324,12 @@ the backup: 315.9 ms.
 Fixture `sess_perf_large_20260714130421_2dee7a7b`: 2000 turns, 4000 messages, 13339 parts, 4000 tool parts,
 60 todos. Baseline artifact: `packages/desktop/.e2e-artifacts/large-task-2000-turns-20260714/`.
 
-| Implementation checkpoint                        | `subscribeConversationV4` | Observation                                                                                  |
-| ------------------------------------------------ | ------------------------: | -------------------------------------------------------------------------------------------- |
-| Original                                         | > 180023.4 ms             | 180 s timeout; persisted resume/read only 737 ms, CLI single core saturated, the renderer had not received the body |
-| Only the nested action scan removed, payload proof falling back to strict | 67913.4 ms | Shows the main remaining cost is per-event immutable snapshot apply/serialization            |
-| Exact measurement of the 60-row wire tail per event | 12571.5 ms             | Full-history snapshot serialization removed, but measurement frequency still too high        |
-| Fixed 32-event window measuring the bounded wire tail | 1817.2 ms            | Persistence resume about 624 ms; CDP first screen received the body, 21 virtualized rows in the viewport |
+| Implementation checkpoint                                                 | `subscribeConversationV4` | Observation                                                                                                         |
+| ------------------------------------------------------------------------- | ------------------------: | ------------------------------------------------------------------------------------------------------------------- |
+| Original                                                                  |             > 180023.4 ms | 180 s timeout; persisted resume/read only 737 ms, CLI single core saturated, the renderer had not received the body |
+| Only the nested action scan removed, payload proof falling back to strict |                67913.4 ms | Shows the main remaining cost is per-event immutable snapshot apply/serialization                                   |
+| Exact measurement of the 60-row wire tail per event                       |                12571.5 ms | Full-history snapshot serialization removed, but measurement frequency still too high                               |
+| Fixed 32-event window measuring the bounded wire tail                     |                 1817.2 ms | Persistence resume about 624 ms; CDP first screen received the body, 21 virtualized rows in the viewport            |
 
 At least about 99x faster than the 180 s timeout lower bound; the V4 subscribe stage no longer masks the
 ~0.6-0.7 s persisted-read cost.
@@ -339,7 +339,7 @@ At least about 99x faster than the 180 s timeout lower bound; the V4 subscribe s
 Per turn the synthetic input has 8 events (user, assistant text, tool input, tool scheduled, tool result,
 terminal); warm-up first, then 3 runs and the median.
 
-| Turns | Events | Median   | Growth ratio |
+| Turns | Events |   Median | Growth ratio |
 | ----: | -----: | -------: | -----------: |
 |   500 |   4001 |  37.4 ms |            - |
 |  1000 |   8001 |  68.2 ms |        1.82x |
@@ -355,10 +355,10 @@ Another 1,000-turn fixture `sess_perf_large_20260724034221_af2e36b8` (2,000 mess
 parts, 334 reasoning, 200 patch, 60 todos), fresh production `app-server` per measurement, pre-change HEAD
 and current source built independently, three runs each after warm file cache:
 
-| Implementation                      | median cold subscribe -> initial frame | frame bytes |
-| ----------------------------------- | -------------------------------------: | ----------: |
-| Before: full legacy snapshot x 2    | 3169.5 ms                              | 143,690     |
-| activation-only + narrow usage projection | 2701.5 ms                        | 143,690     |
+| Implementation                            | median cold subscribe -> initial frame | frame bytes |
+| ----------------------------------------- | -------------------------------------: | ----------: |
+| Before: full legacy snapshot x 2          |                              3169.5 ms |     143,690 |
+| activation-only + narrow usage projection |                              2701.5 ms |     143,690 |
 
 The median drops 468.0 ms (14.8%) with a byte-identical first frame. This only proves the local gain of
 removing the duplicate legacy projection; the remaining ~2.7 s still includes Agent runtime activation,

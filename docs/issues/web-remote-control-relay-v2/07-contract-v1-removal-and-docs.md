@@ -16,24 +16,24 @@ single deployment.
 ## Acceptance criteria
 
 - [x] shared deletes V1 relay message types, the V1 parse branch, proof test vectors, QR `hash`/`t` build and
-  parse support and V1 heartbeat constants; no reference remains in either end or in tests.
+      parse support and V1 heartbeat constants; no reference remains in either end or in tests.
 - [ ] Delete the Dockerfiles, nginx configs, build/push/verify scripts and package.json commands of `/remote`,
-  `/remote/v3`, `/remote/v4`; helper scripts used only by these Docker chains go too, those reused by the OSS
-  pipeline or `/remote/__test__` stay. The `/remote/__test__` chain and the OSS pipeline keep working.
+      `/remote/v3`, `/remote/v4`; helper scripts used only by these Docker chains go too, those reused by the OSS
+      pipeline or `/remote/__test__` stay. The `/remote/__test__` chain and the OSS pipeline keep working.
 - [x] Delete references in scripts and docs to the old infrastructure repo, its path environment variables and
-  old Deployment files.
+      old Deployment files.
 - [x] Docs closed out: the architecture doc drops V1 and Docker deployment sections and its "static deployment"
-  section describes only the OSS multi-version chain, noting the old Docker deployment is frozen at the last V1
-  image; `remote-v4-static-deployment.md` drops the Docker/Jenkins sections; the top of
-  `docs/superpowers/specs/2026-04-28-web-remote-login-design.md` marks it superseded by this spec;
-  `relay-v2-pairing.md` gains known limitations (old link to a new desktop stalls at the waiting page, offline
-  devices have no `meta`, `KICKED` semantic compromise) and the external-dependency table.
+      section describes only the OSS multi-version chain, noting the old Docker deployment is frozen at the last V1
+      image; `remote-v4-static-deployment.md` drops the Docker/Jenkins sections; the top of
+      `docs/superpowers/specs/2026-04-28-web-remote-login-design.md` marks it superseded by this spec;
+      `relay-v2-pairing.md` gains known limitations (old link to a new desktop stalls at the waiting page, offline
+      devices have no `meta`, `KICKED` semantic compromise) and the external-dependency table.
 - [ ] Execute the full test-environment real-device matrix and record it in `relay-v2-pairing.md`: first scan
-  with login, logged-in direct connect, no-code device selection, account mismatch and switching, takeover by
-  another phone (this phone stops reconnecting and says so), phone disconnect after desktop logout and recovery
-  after login, automatic `KICKED` recovery after relay rolling restarts.
+      with login, logged-in direct connect, no-code device selection, account mismatch and switching, takeover by
+      another phone (this phone stops reconnecting and says so), phone disconnect after desktop logout and recovery
+      after login, automatic `KICKED` recovery after relay rolling restarts.
 - [ ] All doc link, command and reference consistency checks pass; `pnpm typecheck`, `pnpm lint`,
-  `pnpm architecture:check --changed`, affected unit tests and `pnpm verify:pre-push` pass.
+      `pnpm architecture:check --changed`, affected unit tests and `pnpm verify:pre-push` pass.
 
 ## Implementation record (2026-09-19)
 

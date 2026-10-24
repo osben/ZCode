@@ -44,17 +44,17 @@ consumer provider projection
 
 ## Accepted cases and pruning
 
-| ID | Input | Expected | Evidence |
-| --- | --- | --- | --- |
-| CUA-AUTH-01 | direct PID lookup returns a concretely different PID while the list contains the requested PID | Reject immediately; no launch, no activate | producer unit |
-| CUA-AUTH-02 | direct PID lookup missing or transiently throws, list has a unique requested PID | Exact PID fallback allowed | producer unit |
-| CUA-AUTH-03 | native surface activation already proved WindowServer foreground, but the app-list active mirror then lags | Does not override native success | producer unit + live macOS |
-| CUA-AUTH-04 | native success lacks/mismatches foreground PID | fail closed | producer unit |
-| CUA-AUTH-05 | exact surface replaced or unfocused after activation | later TOCTOU gate fails closed | producer unit |
-| CUA-MEDIA-01 | deliverable image directly adjacent to image_ref | Atomic pair and order kept | adapter unit |
-| CUA-MEDIA-02 | blank/any block between image and image_ref | Whole result errors; frame_id not exposed | adapter unit |
-| CUA-MEDIA-03 | result has an unrelated deliverable image plus an orphan image_ref | The unrelated image cannot authorize the orphan; whole result errors | adapter unit |
-| CUA-HOST-01 | authority-verified official CUA registration | Sets only `modelContentProtection`; no parallel preserve flag | core unit + typecheck |
+| ID           | Input                                                                                                      | Expected                                                             | Evidence                   |
+| ------------ | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------- |
+| CUA-AUTH-01  | direct PID lookup returns a concretely different PID while the list contains the requested PID             | Reject immediately; no launch, no activate                           | producer unit              |
+| CUA-AUTH-02  | direct PID lookup missing or transiently throws, list has a unique requested PID                           | Exact PID fallback allowed                                           | producer unit              |
+| CUA-AUTH-03  | native surface activation already proved WindowServer foreground, but the app-list active mirror then lags | Does not override native success                                     | producer unit + live macOS |
+| CUA-AUTH-04  | native success lacks/mismatches foreground PID                                                             | fail closed                                                          | producer unit              |
+| CUA-AUTH-05  | exact surface replaced or unfocused after activation                                                       | later TOCTOU gate fails closed                                       | producer unit              |
+| CUA-MEDIA-01 | deliverable image directly adjacent to image_ref                                                           | Atomic pair and order kept                                           | adapter unit               |
+| CUA-MEDIA-02 | blank/any block between image and image_ref                                                                | Whole result errors; frame_id not exposed                            | adapter unit               |
+| CUA-MEDIA-03 | result has an unrelated deliverable image plus an orphan image_ref                                         | The unrelated image cannot authorize the orphan; whole result errors | adapter unit               |
+| CUA-HOST-01  | authority-verified official CUA registration                                                               | Sets only `modelContentProtection`; no parallel preserve flag        | core unit + typecheck      |
 
 Pruning conclusions:
 

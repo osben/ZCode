@@ -4,26 +4,26 @@ Status: implemented (2026-10-13). Q1–Q3 were confirmed individually. The share
 
 ## 1. Feature Summary
 
-| Item             | Content                                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------------------------- |
-| Confirmed need   | With source folders, "Create project" creates only after an explicit trust confirmation; local empty projects are created directly |
-| Layer            | Project-creation folder confirmation; presentation, validation, commit-effect; no new persistence             |
-| Baseline source  | `842da373332763dd39fec2bebb4f80c817b410af`                                                                      |
-| Main entry       | `ProjectCreation` → `ProjectEditor.save` → `IProjectService.saveProject`                                        |
-| Scope            | Folder-access confirmation in the creation flow, local and remote, and the desktop, Web and mobile entries that reuse it |
-| Not extended     | Hook auto-authorization, a persistent folder-trust registry, migrating existing projects, adding folders when editing a project, deep link, task permission mode |
+| Item            | Content                                                                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Confirmed need  | With source folders, "Create project" creates only after an explicit trust confirmation; local empty projects are created directly                               |
+| Layer           | Project-creation folder confirmation; presentation, validation, commit-effect; no new persistence                                                                |
+| Baseline source | `842da373332763dd39fec2bebb4f80c817b410af`                                                                                                                       |
+| Main entry      | `ProjectCreation` → `ProjectEditor.save` → `IProjectService.saveProject`                                                                                         |
+| Scope           | Folder-access confirmation in the creation flow, local and remote, and the desktop, Web and mobile entries that reuse it                                         |
+| Not extended    | Hook auto-authorization, a persistent folder-trust registry, migrating existing projects, adding folders when editing a project, deep link, task permission mode |
 
 Related: [virtual project spec](../superpowers/specs/2026-09-09-virtual-project-design.md), [project rules integration](../superpowers/specs/2026-10-10-session-manage-upstream-integration.md), [local directory picker](../ui/project-local-directory-picker.md). Security boundaries: [workspace hook trust](workspace-hook-trust-persistent-only.md) and [project config trust boundary](../security/deep-link-project-trust-boundary.md).
 
 ## 2. Boundary Decisions
 
-| ID  | Decision                                            | Conclusion                                                                        | Impact                                                          |
-| --- | --------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Q1  | Does "trust" also authorize auto-executed config?   | It confirms only this creation's folder access; Hooks keep their own trust rules  | No change to Agent admission or Hook Trust                      |
-| Q2  | Confirm again when the same folder is used again?   | Every creation confirms; no permanent trust record                                | No trust storage, migration or revoke entry                     |
-| Q3  | Dialog for a local zero-folder project?             | Create directly; first use follows the existing default-directory rule            | The default directory is not generated at creation              |
-| Q4  | Remote, Web and mobile entries reusing the flow     | Confirm the real folders on the selected Host; remote keeps a single root         | Mobile shows the Host's folders, never as phone-local folders   |
-| Q5  | Restore, edit, add an existing remote project       | Restore via "Create project" also confirms; editing and add-only entries get no new dialog | The latter two keep current behavior                    |
+| ID  | Decision                                          | Conclusion                                                                                 | Impact                                                        |
+| --- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| Q1  | Does "trust" also authorize auto-executed config? | It confirms only this creation's folder access; Hooks keep their own trust rules           | No change to Agent admission or Hook Trust                    |
+| Q2  | Confirm again when the same folder is used again? | Every creation confirms; no permanent trust record                                         | No trust storage, migration or revoke entry                   |
+| Q3  | Dialog for a local zero-folder project?           | Create directly; first use follows the existing default-directory rule                     | The default directory is not generated at creation            |
+| Q4  | Remote, Web and mobile entries reusing the flow   | Confirm the real folders on the selected Host; remote keeps a single root                  | Mobile shows the Host's folders, never as phone-local folders |
+| Q5  | Restore, edit, add an existing remote project     | Restore via "Create project" also confirms; editing and add-only entries get no new dialog | The latter two keep current behavior                          |
 
 Confirmation applies to this creation only and creates no permanent authorization. Existing service callers, CLI and deep link gain no new global folder admission.
 
@@ -74,33 +74,33 @@ Initial focus is on Cancel; Tab reaches Trust. Only Enter/Space or click on the 
 
 ## 5. Shared and Divergent Behavior
 
-| Concern                | Shared / divergent                                                              | Meaning here                                       |
-| ---------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Concern                | Shared / divergent                                                                                    | Meaning here                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | UI / candidate source  | Shared editor; Desktop local uses the system picker, remote/Web/mobile use the Host directory service | Picker source unchanged; the confirmation list comes from the same draft snapshot |
-| Defaults               | Local allows empty roots; remote requires exactly one root                      | Local zero-folder creates directly; remote still needs one folder |
-| Validation             | Saving already checks folder existence on the Host; trust is an extra user action | Confirmation neither replaces service validation nor grants OS permission |
-| Commit effect          | Remote saves the authoritative project first, then registers the local entry    | Keeps the created ID and the registration-retry branch |
-| Persistence / recovery | Project authority stays on the owning Host; UI has only transient confirmation state | No new database, localStorage or recovery protocol |
+| Defaults               | Local allows empty roots; remote requires exactly one root                                            | Local zero-folder creates directly; remote still needs one folder                 |
+| Validation             | Saving already checks folder existence on the Host; trust is an extra user action                     | Confirmation neither replaces service validation nor grants OS permission         |
+| Commit effect          | Remote saves the authoritative project first, then registers the local entry                          | Keeps the created ID and the registration-retry branch                            |
+| Persistence / recovery | Project authority stays on the owning Host; UI has only transient confirmation state                  | No new database, localStorage or recovery protocol                                |
 
 ## 6. Feature Relationships / State Owners
 
-| Level          | Relationship and evidence                                                    | Reason                                                        |
-| -------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| must-inspect   | `ProjectEditor.save` validation → `ProjectCreation.onBeforeSave` → `saveProject` | Confirmation must precede remote member registration and project write |
-| must-inspect   | `ProjectCreation.saved` → `remoteService.addEntry`; `ProjectEditor.created`  | Keep the two-phase completion; registration retry never recreates |
-| must-inspect   | Editor `epoch` / `alive` / `suspended` → async confirmation result           | A stale confirmation cannot submit a draft after a device change or after leaving the UI |
-| should-inspect | Soft-deleted project with the same roots → restore confirmation              | Confirm after the restore target is decided; the two confirmations are not merged into one default accept |
-| invariant-only | Q2 → no permanent folder trust record                                        | A folder used by another project is not exempt                |
-| invariant-only | Workspace Hook Trust, tool permissions, deep-link confirmation               | Folder confirmation never writes their authorization state    |
-| invariant-only | Mobile shared-host / continuous-replayable                                   | No extra Host/Agent; message delivery boundaries unchanged    |
-| evidence-only  | Project creation, folder picker and mobile project E2E                       | Coverage recorded only from the setup/action/assertion actually run |
+| Level          | Relationship and evidence                                                        | Reason                                                                                                    |
+| -------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| must-inspect   | `ProjectEditor.save` validation → `ProjectCreation.onBeforeSave` → `saveProject` | Confirmation must precede remote member registration and project write                                    |
+| must-inspect   | `ProjectCreation.saved` → `remoteService.addEntry`; `ProjectEditor.created`      | Keep the two-phase completion; registration retry never recreates                                         |
+| must-inspect   | Editor `epoch` / `alive` / `suspended` → async confirmation result               | A stale confirmation cannot submit a draft after a device change or after leaving the UI                  |
+| should-inspect | Soft-deleted project with the same roots → restore confirmation                  | Confirm after the restore target is decided; the two confirmations are not merged into one default accept |
+| invariant-only | Q2 → no permanent folder trust record                                            | A folder used by another project is not exempt                                                            |
+| invariant-only | Workspace Hook Trust, tool permissions, deep-link confirmation                   | Folder confirmation never writes their authorization state                                                |
+| invariant-only | Mobile shared-host / continuous-replayable                                       | No extra Host/Agent; message delivery boundaries unchanged                                                |
+| evidence-only  | Project creation, folder picker and mobile project E2E                           | Coverage recorded only from the setup/action/assertion actually run                                       |
 
-| State                         | Draft / display owner                          | Authority owner / commit target                                    |
-| ----------------------------- | ---------------------------------------------- | ------------------------------------------------------------------ |
-| Name, device, roots, primary  | `ProjectEditor`                                | `saveProject` → owning Host's ProjectRepository                    |
-| Pending target of this creation | `ProjectEditor` local snapshot and request epoch | Not persisted; can trigger exactly one submit bound to the snapshot |
-| Created result, pending registration | Existing `created`                      | Remote project saved; local remote entry still managed by RemoteProjectService |
-| Hook Trust                    | Existing Hook UI projection                    | Agent's exact-declaration Trust authority, unchanged               |
+| State                                | Draft / display owner                            | Authority owner / commit target                                                |
+| ------------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Name, device, roots, primary         | `ProjectEditor`                                  | `saveProject` → owning Host's ProjectRepository                                |
+| Pending target of this creation      | `ProjectEditor` local snapshot and request epoch | Not persisted; can trigger exactly one submit bound to the snapshot            |
+| Created result, pending registration | Existing `created`                               | Remote project saved; local remote entry still managed by RemoteProjectService |
+| Hook Trust                           | Existing Hook UI projection                      | Agent's exact-declaration Trust authority, unchanged                           |
 
 ## 7. Invariants
 
@@ -115,11 +115,11 @@ Initial focus is on Cancel; Tab reaches Trust. Only Enter/Space or click on the 
 
 The checkout had no codegraph index; the relationships were verified with `rg` and source reading (entry, shared editor, Host save, remote registration). No depth-2 graph impact query was run.
 
-| Seed                | Verified direct callers / key path                                         |
-| ------------------- | -------------------------------------------------------------------------- |
-| `ProjectEditor`     | `ProjectCreation`, sidebar edit entry, `RemoteProjectPicker`               |
-| `ProjectCreation`   | Sidebar create, `ProjectComposerMenu`                                      |
-| `saveProject`       | Service schema/folder validation → repository; remote routes by `hostId`   |
+| Seed                | Verified direct callers / key path                                                        |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| `ProjectEditor`     | `ProjectCreation`, sidebar edit entry, `RemoteProjectPicker`                              |
+| `ProjectCreation`   | Sidebar create, `ProjectComposerMenu`                                                     |
+| `saveProject`       | Service schema/folder validation → repository; remote routes by `hostId`                  |
 | `ConfirmDialogHost` | Generic confirm includes a window Enter capture; not usable as the explicit trust control |
 
 Graph delta: folder confirmation applies to this creation only; prior usage records do not waive it; local zero-folder creates directly; Hook Trust is independent. The new feature-graph nodes' code seeds point at the shared creation entry and the confirmation component. The three creation entries and the restore branch are in scope; edit and add-existing keep behavior.

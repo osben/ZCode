@@ -54,13 +54,13 @@ Dialog order: the request handler suspends the callback -> main notifies the mai
 
 ## Permission tiers
 
-| Tier | Permissions | Memory policy |
-| --- | --- | --- |
-| silent allow | `clipboard-sanitized-write`, `fullscreen`, `pointerLock`, `mediaKeySystem` | none |
+| Tier                     | Permissions                                                                                                                                                                                                                                                               | Memory policy                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| silent allow             | `clipboard-sanitized-write`, `fullscreen`, `pointerLock`, `mediaKeySystem`                                                                                                                                                                                                | none                            |
 | Dialog A: confirm bubble | `media` (camera/microphone marked by `details.mediaTypes`), `clipboard-read`, `geolocation`, `notifications`, `midi`, `midiSysex`, `idle-detection`, `speaker-selection`, `window-management`, `storage-access`, `top-level-storage-access`, `keyboardLock`, `fileSystem` | see the four states of Dialog A |
-| Dialog B: source picker | `display-capture` (screen sharing) | ask every time, not remembered |
-| Dialog C: device picker | `hid` / `usb` / `serial` / bluetooth | ask every time, not remembered |
-| explicit deny | `openExternal` (external-protocol window opening already has its own "open in default browser" route), `unknown`, `deprecated-sync-clipboard-read` | — |
+| Dialog B: source picker  | `display-capture` (screen sharing)                                                                                                                                                                                                                                        | ask every time, not remembered  |
+| Dialog C: device picker  | `hid` / `usb` / `serial` / bluetooth                                                                                                                                                                                                                                      | ask every time, not remembered  |
+| explicit deny            | `openExternal` (external-protocol window opening already has its own "open in default browser" route), `unknown`, `deprecated-sync-clipboard-read`                                                                                                                        | —                               |
 
 Any permission string not in the table is explicitly denied with a warn log (fail-closed, against enums newly added by later Electron versions).
 
@@ -86,11 +86,11 @@ UI strings (zh-CN): "访问此网站时允许" (allow while visiting this site),
 
 The bubble pops up as soon as the request arrives (Chrome-style anchored bubble, a `w-80` popover card: `rounded-xl` + `bg-popover` + `border-popover-border` + `shadow-md`). The header is the origin title and a close X; the body is a per-row capability icon list (camera/microphone/clipboard, reusing the `BrowserPermissionIcon` glyphs); the three options are vertical pill buttons (`rounded-full` secondary, left aligned, may wrap). Finalized from the 2026-10-08 measurement: there is no "block permanently" button, because after a mis-click a site misbehaves and cannot self-heal; persisted deny is kept only for management in the site permission settings (the dialog layer does not offer it). The X close and "Do not allow" are both a deny for this time without memory.
 
-| Action | Semantics | Storage |
-| --- | --- | --- |
-| Allow while visiting this site | persistent allow, never asked again | persisted layer `origin+permission → allow` |
-| Allow this time only | allowed for the current app run, invalid after restart | main memory `Map<origin, Set<permission>>` |
-| Do not allow / 20s timeout | denied this time, not remembered, asked again next time | none |
+| Action                         | Semantics                                               | Storage                                     |
+| ------------------------------ | ------------------------------------------------------- | ------------------------------------------- |
+| Allow while visiting this site | persistent allow, never asked again                     | persisted layer `origin+permission → allow` |
+| Allow this time only           | allowed for the current app run, invalid after restart  | main memory `Map<origin, Set<permission>>`  |
+| Do not allow / 20s timeout     | denied this time, not remembered, asked again next time | none                                        |
 
 ### B. Source picker dialog (screen sharing)
 
@@ -141,12 +141,12 @@ info level (low frequency, kept in production); log volume of the dialog paths i
 
 ## Compatibility impact (verified item by item)
 
-| Chain | Impact |
-| --- | --- |
-| agent browser-use (CDP screenshots, virtual clipboard) | none: screenshots use `Page.captureScreenshot`, paste uses synthetic `ClipboardEvent` + `execCommand` (`browserVirtualClipboardPageScript.ts`); neither triggers a permission |
-| page copy buttons / DRM video sites / page fullscreen | unaffected (allowlist) |
-| `window.open` / new-tab routing / "open in default browser" | unaffected (existing independent `setWindowOpenHandler` mechanism) |
-| screen sharing | from silent failure to a controllable, usable dialog, gated by the source picker |
+| Chain                                                       | Impact                                                                                                                                                                        |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| agent browser-use (CDP screenshots, virtual clipboard)      | none: screenshots use `Page.captureScreenshot`, paste uses synthetic `ClipboardEvent` + `execCommand` (`browserVirtualClipboardPageScript.ts`); neither triggers a permission |
+| page copy buttons / DRM video sites / page fullscreen       | unaffected (allowlist)                                                                                                                                                        |
+| `window.open` / new-tab routing / "open in default browser" | unaffected (existing independent `setWindowOpenHandler` mechanism)                                                                                                            |
+| screen sharing                                              | from silent failure to a controllable, usable dialog, gated by the source picker                                                                                              |
 
 ## Test requirements
 

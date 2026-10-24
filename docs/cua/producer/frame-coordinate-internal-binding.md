@@ -6,7 +6,7 @@ The model-facing coordinate contract used to require the model to copy an opaque
 block adjacent to the raster:
 
 ```json
-{"type":"coordinate","frame_id":"frame-ab12cd34","x":38,"y":105}
+{ "type": "coordinate", "frame_id": "frame-ab12cd34", "x": 38, "y": 105 }
 ```
 
 `frame_id` is transport authority, not visual task input. Making the model relay it leaks CUA bookkeeping
@@ -17,7 +17,7 @@ into the model contract and makes correct visual actions depend on copying an op
 The public coordinate target is:
 
 ```json
-{"type":"coordinate","x":38,"y":105}
+{ "type": "coordinate", "x": 38, "y": 105 }
 ```
 
 The model copies the integer pixel indices from the exact raster it just observed. It performs no Retina,

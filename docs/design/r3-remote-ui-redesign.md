@@ -19,7 +19,7 @@ The prototype is not checked in and cannot serve as replayable verification evid
 RUI-SIMPLE numbering, reviews and old open questions are in a pinned snapshot:
 
 ```bash
-git show a17a875588b8d66c2bee49236292e174df651363:docs/design/r3-remote-ui-redesign.md
+git show 45f808f7:docs/design/r3-remote-ui-redesign.md
 ```
 
 Open items are tracked in the [R3 issue ledger](../architecture/r3-source-server-remote-open-issues.md); real

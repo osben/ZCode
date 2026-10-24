@@ -37,13 +37,13 @@ attach time at least:
 - The renderer must pass the tab's own `ownerTaskId` as `sessionId` to `BrowserViewAttachGuest`, never
   the active task at event-arrival time.
 - `browser.user.openTabs()` returns only uncontrolled user tabs whose `windowId + workspaceKey +
-  sessionId` all match the caller.
+sessionId` all match the caller.
 - After a claim, deliverable, turn cleanup or session cleanup releases a tab, it keeps its original
   session ownership; "releasing control" does not mean "publishing to other conversations".
 - An old renderer attach without `sessionId` may keep a visible UI but must never become claimable by any
   new session.
 - Different remote workspaces with the same workspacePath stay isolated by the existing `workspaceKey =
-  workspaceIdentity?.trim() || workspacePath`; never degrade to a path-only comparison.
+workspaceIdentity?.trim() || workspacePath`; never degrade to a path-only comparison.
 
 ### 2.2 Blank/unloaded tabs are not part of `BrowserUser.openTabs`
 
@@ -113,7 +113,7 @@ A active:resolve active tab from registry[A] + ensureResident[A] + side pane exp
 - `packages/ui` reports tab ownership only through `IPlatformService.browserViewAttachGuest`, without
   touching Repo/main directly.
 - `packages/desktop` main binds `windowId` from the sender and hands the renderer-provided `workspaceKey +
-  sessionId` to `BrowserGuestManager`; the renderer cannot forge windowId.
+sessionId` to `BrowserGuestManager`; the renderer cannot forge windowId.
 - The ZCode protocol agent stdio BrowserCommand is unchanged; no main/relay business state is added;
   desktop `continuous` and mobile `replayable` message flows are unchanged.
 - Mobile Web has no Electron `<webview>` attach; the existing fallback stays and no browser runtime is
@@ -121,17 +121,17 @@ A active:resolve active tab from registry[A] + ensureResident[A] + side pane exp
 
 ## 4. Acceptance cases
 
-| Case    | Setup                                                           | Action                                         | Assertion                                                                  |
-| ------- | --------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------- |
-| BCP-176 | session A, B in the same window/workspace; A has a non-empty human tab | B calls `user.openTabs()`                | returns `[]`                                                               |
-| BCP-177 | session A has a non-empty human tab                             | A calls `user.openTabs()`                      | returns A's tab, claimable                                                 |
-| BCP-178 | after A claims, then turn end / deliverable / closeSession      | B calls `user.openTabs()`                      | B never sees it; A still sees the non-empty tab on resume                  |
-| BCP-179 | A has human tabs with URL `""`, `about:blank`, https            | A calls `user.openTabs()`                      | only the https tab                                                         |
-| BCP-180 | A calls `tabs.new()`, guest currently `about:blank`             | A calls `tabs.list()`                          | still returns the controlled tab                                           |
-| BCP-181 | old renderer attach lacks sessionId                             | any session calls `user.openTabs()`            | old tab not claimable; no cross-conversation leak                          |
-| BCP-182 | same path, different workspaceIdentity/session                  | enumerate on both sides                        | no workspace or session mix                                                |
-| BCP-206 | A has a mounted Browser/browser-use tab; B has none             | switch A -> B -> A without budget pressure     | A's webview stays mounted; B collapses; switching back reselects the original tab and actively expands |
-| BCP-217 | A's background guest suspended by the window budget             | switch back to A                               | stable tabId/shell unchanged; new guest restored and shown; B's state does not leak |
+| Case    | Setup                                                                  | Action                                     | Assertion                                                                                              |
+| ------- | ---------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| BCP-176 | session A, B in the same window/workspace; A has a non-empty human tab | B calls `user.openTabs()`                  | returns `[]`                                                                                           |
+| BCP-177 | session A has a non-empty human tab                                    | A calls `user.openTabs()`                  | returns A's tab, claimable                                                                             |
+| BCP-178 | after A claims, then turn end / deliverable / closeSession             | B calls `user.openTabs()`                  | B never sees it; A still sees the non-empty tab on resume                                              |
+| BCP-179 | A has human tabs with URL `""`, `about:blank`, https                   | A calls `user.openTabs()`                  | only the https tab                                                                                     |
+| BCP-180 | A calls `tabs.new()`, guest currently `about:blank`                    | A calls `tabs.list()`                      | still returns the controlled tab                                                                       |
+| BCP-181 | old renderer attach lacks sessionId                                    | any session calls `user.openTabs()`        | old tab not claimable; no cross-conversation leak                                                      |
+| BCP-182 | same path, different workspaceIdentity/session                         | enumerate on both sides                    | no workspace or session mix                                                                            |
+| BCP-206 | A has a mounted Browser/browser-use tab; B has none                    | switch A -> B -> A without budget pressure | A's webview stays mounted; B collapses; switching back reselects the original tab and actively expands |
+| BCP-217 | A's background guest suspended by the window budget                    | switch back to A                           | stable tabId/shell unchanged; new guest restored and shown; B's state does not leak                    |
 
 ## 5. Done criteria
 
@@ -160,11 +160,11 @@ Implemented:
 
 Guest recovery decisions (clarification record):
 
-| Round         | Question                                                    | User answer                                                      | Fixed boundary                                                                                                     |
-| ------------- | ----------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1             | Should a history conversation's browser tab be released on switch | "Keep in the background even when switching conversations" | normal switches keep the same guest, no refresh/rebuild                                                            |
-| 2             | How to handle a guest killed abnormally by Chromium         | after the "last URL + stable tabId in-place recovery" proposal, the user asked for the change | replace only the failed guest; explicit close is not recovered; no cross-process-restart persistence |
-| 3 (2026-07-31) | Introduce budget suspension and cross-restart recovery for background tabs | confirmed                                              | task switching itself still does not unload; beyond 32 live-detached per window, protection/LRU suspension is allowed, plus cross-restart page-state recovery |
+| Round          | Question                                                                   | User answer                                                                                   | Fixed boundary                                                                                                                                                |
+| -------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1              | Should a history conversation's browser tab be released on switch          | "Keep in the background even when switching conversations"                                    | normal switches keep the same guest, no refresh/rebuild                                                                                                       |
+| 2              | How to handle a guest killed abnormally by Chromium                        | after the "last URL + stable tabId in-place recovery" proposal, the user asked for the change | replace only the failed guest; explicit close is not recovered; no cross-process-restart persistence                                                          |
+| 3 (2026-07-31) | Introduce budget suspension and cross-restart recovery for background tabs | confirmed                                                                                     | task switching itself still does not unload; beyond 32 live-detached per window, protection/LRU suspension is allowed, plus cross-restart page-state recovery |
 
 Round 3 supersedes "always the same guest" and "no cross-process recovery" from rounds 1-2 but does not
 change conversation/workspace isolation.

@@ -69,10 +69,10 @@ Model/provider dimension is pruned by invariant: every connected model reuses th
 
 While a task runs, `Cmd+Enter` or holding `Cmd` while clicking send (macOS), and `Ctrl+Enter` or holding `Ctrl` while clicking send (Windows/Linux), apply the opposite delivery to the session `followupMode` for that one message only:
 
-| `followupMode` | `Enter` | `Cmd/Ctrl+Enter` |
-| --- | --- | --- |
-| `queue` | ordinary queue | send now: atomic `sendText(requestedDelivery=startNow)` preempts the current turn, no QueueItem created |
-| `guide` | guide the current turn | ordinary queue |
+| `followupMode` | `Enter`                | `Cmd/Ctrl+Enter`                                                                                        |
+| -------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| `queue`        | ordinary queue         | send now: atomic `sendText(requestedDelivery=startNow)` preempts the current turn, no QueueItem created |
+| `guide`        | guide the current turn | ordinary queue                                                                                          |
 
 - The combo or modifier click overrides only this input; it does not call `setFollowupMode` or change persisted settings. Plain `Enter`, `Shift+Enter` and plain send-button click keep current behavior.
 - In idle state (including a new-task draft) `Cmd/Ctrl+Enter` sends normally like Enter; `Cmd/Ctrl+Shift+Enter` keeps newline.

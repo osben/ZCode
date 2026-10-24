@@ -12,12 +12,12 @@ message.parts[] includes { type: "timeline", ... }
 
 The timeline payload is not free-form JSON. It lives in `part.data`, but TypeScript types and Zod protocol schemas declare it; runtime writes, snapshot recovery and UI rendering consume only that structure.
 
-| Principle | Rule |
-| --- | --- |
-| Timeline is a part | compact, fork, goal verification and model change are written as `part.type="timeline"`. |
+| Principle                               | Rule                                                                                                                            |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Timeline is a part                      | compact, fork, goal verification and model change are written as `part.type="timeline"`.                                        |
 | Role and product semantics are separate | `message.role` is only the provider role; real user, model-only reminder, command and timeline are declared by explicit fields. |
-| Explicit order | Render order of messages and parts never depends on id lexical order. |
-| Old data stays readable | New builds recover from legacy compaction parts, fork text metadata, goal `session_entry` rows. |
+| Explicit order                          | Render order of messages and parts never depends on id lexical order.                                                           |
+| Old data stays readable                 | New builds recover from legacy compaction parts, fork text metadata, goal `session_entry` rows.                                 |
 
 ## Database
 
@@ -69,18 +69,18 @@ interface MessageSemantics {
 
 New writes must set `semantics`. The legacy fields (`synthetic`, `source`, `visibility`, text part metadata `source` / `visibility` / `runtimeMessage`) are kept during the compatibility window and used only for legacy fallback.
 
-| Data | origin | kind | uiVisibility | providerVisibility |
-| --- | --- | --- | --- | --- |
-| Ordinary user input | real_user | user_prompt | visible | visible |
-| Visible `/goal xxx` command | real_user | slash_command | visible | visible |
-| `/compact` operation | real_user | slash_command | hidden | hidden |
-| goal continuation | agent_runtime | system_reminder | hidden | visible |
-| background task notification | agent_runtime | background_notification | hidden | visible |
-| subagent notification | agent_runtime | subagent_notification | hidden | visible |
-| todo reminder | agent_runtime | todo_reminder | hidden | visible |
-| timeline carrier | system | timeline_event | visible | hidden |
-| compact summary context | agent_runtime | compact_summary | hidden | visible |
-| assistant text | agent_runtime | assistant_response | visible | visible |
+| Data                         | origin        | kind                    | uiVisibility | providerVisibility |
+| ---------------------------- | ------------- | ----------------------- | ------------ | ------------------ |
+| Ordinary user input          | real_user     | user_prompt             | visible      | visible            |
+| Visible `/goal xxx` command  | real_user     | slash_command           | visible      | visible            |
+| `/compact` operation         | real_user     | slash_command           | hidden       | hidden             |
+| goal continuation            | agent_runtime | system_reminder         | hidden       | visible            |
+| background task notification | agent_runtime | background_notification | hidden       | visible            |
+| subagent notification        | agent_runtime | subagent_notification   | hidden       | visible            |
+| todo reminder                | agent_runtime | todo_reminder           | hidden       | visible            |
+| timeline carrier             | system        | timeline_event          | visible      | hidden             |
+| compact summary context      | agent_runtime | compact_summary         | hidden       | visible            |
+| assistant text               | agent_runtime | assistant_response      | visible      | visible            |
 
 ## Timeline part
 
@@ -96,11 +96,7 @@ interface TimelinePartBase {
   sessionID: SessionId;
   messageID: MessageId;
   type: "timeline";
-  timelineType:
-    | "context_compaction"
-    | "goal_verification"
-    | "session_fork"
-    | "model_change";
+  timelineType: "context_compaction" | "goal_verification" | "session_fork" | "model_change";
   display: "separator" | "worklog";
   status?: string;
   anchorMessageId?: MessageId;
@@ -168,13 +164,13 @@ interface ModelChangeTimelinePart extends TimelinePartBase {
 
 Every timeline part hangs on a message.
 
-| Case | message | part |
-| --- | --- | --- |
-| manual compact | synthetic assistant carrier | `timeline/context_compaction` |
-| auto compact | current or synthetic assistant carrier, per existing worklog semantics | `timeline/context_compaction` |
-| fork notice | synthetic user or assistant carrier in the fork child (legacy fork notice kept during compat window) | `timeline/session_fork` |
-| goal verifier | synthetic assistant carrier anchored to the verified assistant | `timeline/goal_verification` |
-| model change | synthetic assistant carrier inserted before the next accepted user input | `timeline/model_change` |
+| Case           | message                                                                                              | part                          |
+| -------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------- |
+| manual compact | synthetic assistant carrier                                                                          | `timeline/context_compaction` |
+| auto compact   | current or synthetic assistant carrier, per existing worklog semantics                               | `timeline/context_compaction` |
+| fork notice    | synthetic user or assistant carrier in the fork child (legacy fork notice kept during compat window) | `timeline/session_fork`       |
+| goal verifier  | synthetic assistant carrier anchored to the verified assistant                                       | `timeline/goal_verification`  |
+| model change   | synthetic assistant carrier inserted before the next accepted user input                             | `timeline/model_change`       |
 
 - started -> completed/failed/interrupted updates the same timeline part. `part.id` is identity, `part.sequence` is position; an update never changes sequence.
 - Stable identity per kind:
@@ -210,16 +206,16 @@ Guaranteeing that old builds never meet an unknown part type would require first
 
 ## Code map
 
-| Layer | Files |
-| --- | --- |
-| migration | `apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts` |
-| rows/repositories | `apps/zcode-cli/packages/adapters/src/storage/session-store/rows.ts`, `repositories/messages.ts` |
-| contracts | `apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts` |
-| runtime writes | `apps/zcode-cli/packages/core/src/runtime/methods/message-persistence.ts`, `compact-persistence.ts`, `session-fork.ts`, `events.ts`, model set path |
-| protocol | `packages/shared/src/zcode-protocol/index.ts`, `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/message-mapper.ts` |
-| shared read compatibility | `packages/shared/src/zcode-session-visible-content.ts`, `packages/shared/src/zcodePersistedMessageMerge.ts` |
-| V4 transcript hydration | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts`, `product-projection.ts` |
-| UI projection | `packages/ui/src/v4/conversationProjectionStore.ts`, `packages/ui/src/v4/sessionDataLayer.ts` |
+| Layer                     | Files                                                                                                                                               |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| migration                 | `apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts`                                                                          |
+| rows/repositories         | `apps/zcode-cli/packages/adapters/src/storage/session-store/rows.ts`, `repositories/messages.ts`                                                    |
+| contracts                 | `apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts`                                                                            |
+| runtime writes            | `apps/zcode-cli/packages/core/src/runtime/methods/message-persistence.ts`, `compact-persistence.ts`, `session-fork.ts`, `events.ts`, model set path |
+| protocol                  | `packages/shared/src/zcode-protocol/index.ts`, `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/message-mapper.ts`                             |
+| shared read compatibility | `packages/shared/src/zcode-session-visible-content.ts`, `packages/shared/src/zcodePersistedMessageMerge.ts`                                         |
+| V4 transcript hydration   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts`, `product-projection.ts`                                          |
+| UI projection             | `packages/ui/src/v4/conversationProjectionStore.ts`, `packages/ui/src/v4/sessionDataLayer.ts`                                                       |
 
 ## Required tests
 

@@ -47,13 +47,13 @@ Conversation MCP renderer
 
 ### Lifecycle matrix
 
-| Row state | Summary | Primary detail | Secondary call detail |
-| --- | --- | --- | --- |
-| input streaming / pending approval | MCP source + action; omit pending status | not expandable | not expandable |
-| running | MCP source + action; omit running status | current status until output exists | description + normalized input |
-| success | MCP source + action; omit completed status | result | description + normalized input |
-| error | MCP source + action + failed status | error/result | description + normalized input |
-| cancelled / stopped | MCP source + action + stopped status | not expandable | not expandable |
+| Row state                          | Summary                                    | Primary detail                     | Secondary call detail          |
+| ---------------------------------- | ------------------------------------------ | ---------------------------------- | ------------------------------ |
+| input streaming / pending approval | MCP source + action; omit pending status   | not expandable                     | not expandable                 |
+| running                            | MCP source + action; omit running status   | current status until output exists | description + normalized input |
+| success                            | MCP source + action; omit completed status | result                             | description + normalized input |
+| error                              | MCP source + action + failed status        | error/result                       | description + normalized input |
+| cancelled / stopped                | MCP source + action + stopped status       | not expandable                     | not expandable                 |
 
 ## Compatibility and boundaries
 

@@ -44,15 +44,15 @@ office-runtime/scripts/build.mjs (plugin name taken from .zcode-plugin/plugin.js
 The sole definition of artifact paths is `OFFICE_RUNTIME_OUTPUTS` in office-runtime `contract.ts`:
 `dist/server.mjs`, `dist/ui/assets.json`, `dist/ui/panel.html`. All lists below must stay in sync:
 
-| Location                                              | Content                                                                                                                              |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `bootstrap/src/app/official-plugin-definitions.ts`    | Version 0.2.0 (pdf 0.2.1, declared per plugin); `requiredSeedPaths` adds the viewer skill and `OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS` |
-| `cli/scripts/sea-official-plugin-assets.mjs`          | Version 0.2.0 (pdf 0.2.1); `requiresRuntime: true`, `requiredRuntimePaths` are the panel artifacts                                   |
-| `desktop/scripts/prepare-agent-node-bundle.mjs`       | `requiresRuntime: true`, `runtimeBuildScript` points to the office-runtime build script                                              |
-| `scripts/build-desktop-agent-cli.mjs`                 | The dev chain builds the four plugins and validates `dist/server.mjs`                                                                |
-| `server/src/remote/zcodeAgentOfficialPluginAssets.ts` | Remote required assets include the viewer skill and panel artifacts                                                                  |
-| `docker/plugin-eval/Dockerfile`                       | The eval image builds the four plugins before staging                                                                                |
-| Each plugin's `package.json` / `.zcode-plugin/plugin.json` | Version 0.2.0 (pdf 0.2.1)                                                                                                       |
+| Location                                                   | Content                                                                                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `bootstrap/src/app/official-plugin-definitions.ts`         | Version 0.2.0 (pdf 0.2.1, declared per plugin); `requiredSeedPaths` adds the viewer skill and `OFFICIAL_OFFICE_VIEWER_RUNTIME_PATHS` |
+| `cli/scripts/sea-official-plugin-assets.mjs`               | Version 0.2.0 (pdf 0.2.1); `requiresRuntime: true`, `requiredRuntimePaths` are the panel artifacts                                   |
+| `desktop/scripts/prepare-agent-node-bundle.mjs`            | `requiresRuntime: true`, `runtimeBuildScript` points to the office-runtime build script                                              |
+| `scripts/build-desktop-agent-cli.mjs`                      | The dev chain builds the four plugins and validates `dist/server.mjs`                                                                |
+| `server/src/remote/zcodeAgentOfficialPluginAssets.ts`      | Remote required assets include the viewer skill and panel artifacts                                                                  |
+| `docker/plugin-eval/Dockerfile`                            | The eval image builds the four plugins before staging                                                                                |
+| Each plugin's `package.json` / `.zcode-plugin/plugin.json` | Version 0.2.0 (pdf 0.2.1)                                                                                                            |
 
 When `requiredSeedPaths` has a gap, seeding rejects only that plugin and falls back to a usable old cache,
 leaving other plugins unaffected; an unbuilt dev environment therefore sees these four plugins stuck on an
@@ -93,14 +93,14 @@ compact spacing, an input area and a uniform border, keeping send, cancel and ke
 
 ### Scenario and coverage matrix
 
-| Scenario                                                  | Coverage                                            | Boundary                                                            |
-| --------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
-| Cache entry repair, argument retention, HTTP config       | bootstrap/tests/official-plugin-runtime.test.ts     | unit test                                                           |
-| Chunk order, incomplete rejection, same-name isolation, cancel cleanup | office-runtime/src/adapters/files.test.ts | unit test                                                      |
-| New-window isolation, stable serialization scope, session isolation | packages/ui/src/plugin-ui/contract.test.ts | unit test                                                         |
-| Local import, reload restore, new-window empty state      | documents branch of office-runtime/scripts/e2e.mjs  | Browser AppBridge + real MCP, not an Electron E2E                   |
-| PDF/PPT native file picker, two PDF windows in one session | manual on a macOS dev instance                     | verified; cross-session, remote workspace, Windows/Linux pending    |
-| Compact overlay and confirm dialog                        | existing interaction regression and manual checks   | dual-theme and mobile-remote visual acceptance pending              |
+| Scenario                                                               | Coverage                                           | Boundary                                                         |
+| ---------------------------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------- |
+| Cache entry repair, argument retention, HTTP config                    | bootstrap/tests/official-plugin-runtime.test.ts    | unit test                                                        |
+| Chunk order, incomplete rejection, same-name isolation, cancel cleanup | office-runtime/src/adapters/files.test.ts          | unit test                                                        |
+| New-window isolation, stable serialization scope, session isolation    | packages/ui/src/plugin-ui/contract.test.ts         | unit test                                                        |
+| Local import, reload restore, new-window empty state                   | documents branch of office-runtime/scripts/e2e.mjs | Browser AppBridge + real MCP, not an Electron E2E                |
+| PDF/PPT native file picker, two PDF windows in one session             | manual on a macOS dev instance                     | verified; cross-session, remote workspace, Windows/Linux pending |
+| Compact overlay and confirm dialog                                     | existing interaction regression and manual checks  | dual-theme and mobile-remote visual acceptance pending           |
 
 ## 6. PDF CJK text
 

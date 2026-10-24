@@ -169,40 +169,40 @@ flowchart LR
 "Fix" = a definite definition/display defect; "Improve" = valuable but cannot fully answer its goal; "Keep" =
 still subject to the common statistical boundaries.
 
-| Section | Panel ID            | Verdict | Information and main change                                                                            |
-| ------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------ |
-| Overview | coverage            | Fix     | New-event coverage is valuable; not a hardware-filtered system resource sample count.                  |
-| Overview | events              | Fix     | Report volume is valuable; state it is not linked to hardware/foreground and includes remote/Bash.     |
-| Overview | app-cpu             | Keep    | Long-term CPU of the selected population; state multi-version aggregation and valid devices.           |
-| Overview | app-rss             | Keep    | Memory scale of the selected population; state multi-version aggregation and valid devices.            |
-| Overview | version-summary     | Keep    | The most direct version comparison; per-field valid devices, hardware and population differences apply. |
-| Overview | cpu-trend           | Fix     | Version CPU over time; add per-bucket valid count and result-size control.                             |
-| Overview | rss-trend           | Fix     | Version memory over time; add per-bucket valid count and result-size control.                          |
-| Overview | system-cpu          | Keep    | High-end whole-machine load background; device P95 of window-P95 means, not attributable to the app.   |
-| Overview | free-memory         | Keep    | P05 shows the low free-memory tail; filter hardware when comparing absolute MiB across memory sizes.   |
-| Overview | pressure            | Fix     | Over-the-line device ratio; fix the missing-value denominator, label it "ever over the line in range". |
-| Roles   | roles               | Keep    | Compares role, process count and single-process peak; add heap valid count.                            |
-| Roles   | role-rss            | Fix     | Locates roles that change with version; control series count, bucket samples and LIMIT.                |
-| Roles   | role-background-cpu | Fix     | Finds sustained background CPU; add background valid devices; the fixed background condition is exclusive with a global foreground choice. |
-| Roles   | uptime              | Keep    | Lead on resource vs uptime; different device groups and oldest-process uptime are not a same-process growth curve. |
-| MCP     | mcp                 | Fix     | Finds memory-heavy plugins; rename to largest single-process, split RSS/background-CPU eligibility.    |
-| MCP     | mcp-rss             | Fix     | Plugin memory over time; Top N first, add per-bucket valid count.                                      |
-| MCP     | mcp-cpu             | Fix     | Plugins still using CPU in desktop background; add background valid count, Top N and time-scale control. |
-| Bash    | bash                | Improve | Slow-command distribution; add the per-command resource combination.                                  |
-| Bash    | bash-exits          | Keep    | completed/timeout/killed/error composition; in-version ratios compare better.                          |
-| Bash    | bash-duration       | Fix     | Slow-command durations; fix bucket order, support per-version ratios.                                  |
-| Remote  | remote-roles        | Keep    | Remote role sample distribution; not a remote machine distribution or remote CLI version regression.   |
-| Remote  | remote-mcp          | Fix     | Remote plugin ranking; inherits the MCP eligibility/name issues and the remote identity limit.         |
-| Remote  | remote-bash         | Improve | Remote slow-command summary; also needs in-event correlation and respects the hardware-field limit.    |
-| Device  | device-rss          | Improve | Non-MCP role RSS mean; add MCP, app total and peaks.                                                   |
-| Device  | device-cpu          | Improve | Non-MCP role CPU mean; add MCP, app total and window high.                                             |
-| Device  | device-system       | Keep    | Whole-machine CPU context; more valuable next to app totals.                                           |
-| Device  | device-free         | Keep    | Lower bound of free memory; compare with app RSS.                                                      |
-| Device  | device-list         | Improve | Copyable latest 100 identifiers; make it sortable by high resource values as a diagnosis entry.        |
-| Quality | event-quality       | Fix     | New events and version freshness; keep identifier-less events and state its filter scope.              |
-| Quality | sample-quality      | Fix     | Sample count/heap coverage; add version dimension, low tail and invalid-field statistics.              |
-| Quality | self-cost           | Keep    | Wall-clock cost of sampling aggregation in main windows; not the full probe cost, remnant ≠ full windows. |
-| Quality | latest-observation  | Fix     | No-data/acceptance-only/has-samples status; do not report "no usable device ID" as "no events".        |
+| Section  | Panel ID            | Verdict | Information and main change                                                                                                                |
+| -------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Overview | coverage            | Fix     | New-event coverage is valuable; not a hardware-filtered system resource sample count.                                                      |
+| Overview | events              | Fix     | Report volume is valuable; state it is not linked to hardware/foreground and includes remote/Bash.                                         |
+| Overview | app-cpu             | Keep    | Long-term CPU of the selected population; state multi-version aggregation and valid devices.                                               |
+| Overview | app-rss             | Keep    | Memory scale of the selected population; state multi-version aggregation and valid devices.                                                |
+| Overview | version-summary     | Keep    | The most direct version comparison; per-field valid devices, hardware and population differences apply.                                    |
+| Overview | cpu-trend           | Fix     | Version CPU over time; add per-bucket valid count and result-size control.                                                                 |
+| Overview | rss-trend           | Fix     | Version memory over time; add per-bucket valid count and result-size control.                                                              |
+| Overview | system-cpu          | Keep    | High-end whole-machine load background; device P95 of window-P95 means, not attributable to the app.                                       |
+| Overview | free-memory         | Keep    | P05 shows the low free-memory tail; filter hardware when comparing absolute MiB across memory sizes.                                       |
+| Overview | pressure            | Fix     | Over-the-line device ratio; fix the missing-value denominator, label it "ever over the line in range".                                     |
+| Roles    | roles               | Keep    | Compares role, process count and single-process peak; add heap valid count.                                                                |
+| Roles    | role-rss            | Fix     | Locates roles that change with version; control series count, bucket samples and LIMIT.                                                    |
+| Roles    | role-background-cpu | Fix     | Finds sustained background CPU; add background valid devices; the fixed background condition is exclusive with a global foreground choice. |
+| Roles    | uptime              | Keep    | Lead on resource vs uptime; different device groups and oldest-process uptime are not a same-process growth curve.                         |
+| MCP      | mcp                 | Fix     | Finds memory-heavy plugins; rename to largest single-process, split RSS/background-CPU eligibility.                                        |
+| MCP      | mcp-rss             | Fix     | Plugin memory over time; Top N first, add per-bucket valid count.                                                                          |
+| MCP      | mcp-cpu             | Fix     | Plugins still using CPU in desktop background; add background valid count, Top N and time-scale control.                                   |
+| Bash     | bash                | Improve | Slow-command distribution; add the per-command resource combination.                                                                       |
+| Bash     | bash-exits          | Keep    | completed/timeout/killed/error composition; in-version ratios compare better.                                                              |
+| Bash     | bash-duration       | Fix     | Slow-command durations; fix bucket order, support per-version ratios.                                                                      |
+| Remote   | remote-roles        | Keep    | Remote role sample distribution; not a remote machine distribution or remote CLI version regression.                                       |
+| Remote   | remote-mcp          | Fix     | Remote plugin ranking; inherits the MCP eligibility/name issues and the remote identity limit.                                             |
+| Remote   | remote-bash         | Improve | Remote slow-command summary; also needs in-event correlation and respects the hardware-field limit.                                        |
+| Device   | device-rss          | Improve | Non-MCP role RSS mean; add MCP, app total and peaks.                                                                                       |
+| Device   | device-cpu          | Improve | Non-MCP role CPU mean; add MCP, app total and window high.                                                                                 |
+| Device   | device-system       | Keep    | Whole-machine CPU context; more valuable next to app totals.                                                                               |
+| Device   | device-free         | Keep    | Lower bound of free memory; compare with app RSS.                                                                                          |
+| Device   | device-list         | Improve | Copyable latest 100 identifiers; make it sortable by high resource values as a diagnosis entry.                                            |
+| Quality  | event-quality       | Fix     | New events and version freshness; keep identifier-less events and state its filter scope.                                                  |
+| Quality  | sample-quality      | Fix     | Sample count/heap coverage; add version dimension, low tail and invalid-field statistics.                                                  |
+| Quality  | self-cost           | Keep    | Wall-clock cost of sampling aggregation in main windows; not the full probe cost, remnant ≠ full windows.                                  |
+| Quality  | latest-observation  | Fix     | No-data/acceptance-only/has-samples status; do not report "no usable device ID" as "no events".                                            |
 
 ## Filters and common limits
 

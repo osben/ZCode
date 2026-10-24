@@ -43,7 +43,7 @@ In one line: **the client is demoted from "state reducer" to "projection rendere
 - **Several recovery paths whose base watermark lives and dies with UI state.** Symptom: after a mobile replay
   gap an old snapshot and new stream are stitched into a nonexistent state. v4: unified
   `subscribe(topic, base?)`: a valid base resumes, an invalid base gets a snapshot; `logEpoch + seq +
-  subscriptionId` define generations. Check: late old-subscription frames are silently dropped; a gap triggers
+subscriptionId` define generations. Check: late old-subscription frames are silently dropped; a gap triggers
   only a single-flight resubscribe.
 - **High-frequency deltas pass through relay and IPC and are batched only on the client.** Symptoms: frame
   count explodes on weak networks, RTT amplification, mobile battery drain and dropped frames. v4: batching

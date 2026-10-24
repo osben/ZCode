@@ -46,19 +46,19 @@ Short term, existing `plan_request`, `/event/report`, SQLite Usage, UI performan
 
 ## 3. Confirmed Boundaries
 
-| Boundary            | Decision                                                                                                                               |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Monitoring abstraction | Generic Telemetry runtime + model-specific strongly typed Schema/Recorder                                                           |
-| Model call classes  | Stable dotted `operation` path; no separate `operation_phase`                                                                          |
-| Feature-specific fields | Discriminated union and namespaced fields; no arbitrary attribute Map                                                              |
-| Provider Endpoint   | Sanitized automatically inside the client; no user config, UI or awareness                                                             |
-| Path sanitization   | Remove URL credentials/query/fragment, then lightly regex-replace email, UUID, long number and token/hash-style segments; no over-templating |
-| Endpoint cache      | In-process memoization by `providerKind + baseURL`; not persisted                                                                      |
-| Thought Level       | Reuse the Model Catalog, UI `thoughtLevel` and final Provider Options mapping; no new vendor-neutral levels                           |
-| App ARMS            | Same account/Workspace; App RUM and CLI OTel use separate Service and Endpoint                                                         |
-| Compatibility       | Short term double-write without breaking; mid term reconcile; long term replace the duplicate request-level path                       |
-| Performance         | Business thread only updates small state and enqueues into a bounded queue; real network by a background Batch Exporter               |
-| UID/RID/SID         | Schema uses explicit names; the Exporter may map to the backend's `uid/rid/sid`; the domain layer avoids ambiguous abbreviations       |
+| Boundary                | Decision                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Monitoring abstraction  | Generic Telemetry runtime + model-specific strongly typed Schema/Recorder                                                                    |
+| Model call classes      | Stable dotted `operation` path; no separate `operation_phase`                                                                                |
+| Feature-specific fields | Discriminated union and namespaced fields; no arbitrary attribute Map                                                                        |
+| Provider Endpoint       | Sanitized automatically inside the client; no user config, UI or awareness                                                                   |
+| Path sanitization       | Remove URL credentials/query/fragment, then lightly regex-replace email, UUID, long number and token/hash-style segments; no over-templating |
+| Endpoint cache          | In-process memoization by `providerKind + baseURL`; not persisted                                                                            |
+| Thought Level           | Reuse the Model Catalog, UI `thoughtLevel` and final Provider Options mapping; no new vendor-neutral levels                                  |
+| App ARMS                | Same account/Workspace; App RUM and CLI OTel use separate Service and Endpoint                                                               |
+| Compatibility           | Short term double-write without breaking; mid term reconcile; long term replace the duplicate request-level path                             |
+| Performance             | Business thread only updates small state and enqueues into a bounded queue; real network by a background Batch Exporter                      |
+| UID/RID/SID             | Schema uses explicit names; the Exporter may map to the backend's `uid/rid/sid`; the domain layer avoids ambiguous abbreviations             |
 
 ## 4. Current Facts and Overlapping Chains
 
@@ -106,34 +106,34 @@ Desktop main
 
 ### 4.3 Overlap review
 
-| Mechanism                          | Relation to the new design             | Short term                                   | Long term                                    |
-| ---------------------------------- | -------------------------------------- | -------------------------------------------- | -------------------------------------------- |
-| `ModelNetworkStatusEvent`          | Best source of physical Attempt facts  | Reuse and add fields                         | Stays as Runtime/UI projection and Recorder input |
-| `ModelStatusSink`                  | Existing status-consumer abstraction   | Fix request/global either-or, support fan-out | Keep, or fold into a unified Composite Sink |
-| SQLite `model_usage`               | Local logical-call Token/latency facts | Tables and queries unchanged                 | Consume the same Model Call Terminal Fact    |
-| RUM `plan_request`                 | Highly duplicates request-level Attempt | Double-write for reconciliation             | Stop (or compat Exporter only) once OTel is stable |
-| RUM `plan_ttft`                    | Renderer user-visible latency          | Keep                                         | Keep; never merged with Provider TTFT        |
-| `/event/report message_completion` | User Turn/business quality             | Keep                                         | Keep; correlate via Session/Turn ID          |
-| `/event/report agent_step`         | UI/business step, not a Model API Request | Keep                                      | Keep; docs must avoid confusing it with Model Call |
-| Desktop RUM network monitoring     | Main/Renderer HTTP, RPC, WS            | Keep                                         | Keep; cannot replace CLI child-process model semantics |
-| Local logs                         | Single-machine diagnosis               | Keep                                         | Keep; may be more detailed than ARMS but still redacted |
+| Mechanism                          | Relation to the new design                | Short term                                    | Long term                                               |
+| ---------------------------------- | ----------------------------------------- | --------------------------------------------- | ------------------------------------------------------- |
+| `ModelNetworkStatusEvent`          | Best source of physical Attempt facts     | Reuse and add fields                          | Stays as Runtime/UI projection and Recorder input       |
+| `ModelStatusSink`                  | Existing status-consumer abstraction      | Fix request/global either-or, support fan-out | Keep, or fold into a unified Composite Sink             |
+| SQLite `model_usage`               | Local logical-call Token/latency facts    | Tables and queries unchanged                  | Consume the same Model Call Terminal Fact               |
+| RUM `plan_request`                 | Highly duplicates request-level Attempt   | Double-write for reconciliation               | Stop (or compat Exporter only) once OTel is stable      |
+| RUM `plan_ttft`                    | Renderer user-visible latency             | Keep                                          | Keep; never merged with Provider TTFT                   |
+| `/event/report message_completion` | User Turn/business quality                | Keep                                          | Keep; correlate via Session/Turn ID                     |
+| `/event/report agent_step`         | UI/business step, not a Model API Request | Keep                                          | Keep; docs must avoid confusing it with Model Call      |
+| Desktop RUM network monitoring     | Main/Renderer HTTP, RPC, WS               | Keep                                          | Keep; cannot replace CLI child-process model semantics  |
+| Local logs                         | Single-machine diagnosis                  | Keep                                          | Keep; may be more detailed than ARMS but still redacted |
 
 Principle: merge fact production, do not force-merge every consumer.
 
 ## 5. State Ownership
 
-| Fact                                   | Authoritative source                                      | Mirror/consumer                    |
-| -------------------------------------- | --------------------------------------------------------- | ---------------------------------- |
-| Provider/Model/Base URL/Transport      | Final resolution in the Model Adapter                     | ARMS OTel, UI safe projection, logs |
-| Physical Attempt lifecycle             | `runGenerateText` / `runStreamText`                       | ModelApiTelemetry, UI retry/debug  |
-| Token/Cache/Finish Reason              | Final Usage after Adapter normalization                   | ModelApiTelemetry, SQLite Usage    |
-| Operation semantics                    | Core/Tool/Sidecar call sites                              | ModelApiTelemetry                  |
-| Compaction/Verifier final business result | The calling Operation                                  | Operation Record, existing business events |
-| Requested reasoning level              | Session/Model Ref/caller override                         | ModelApiTelemetry                  |
-| Effective reasoning level              | Final merged Provider Options + Model Catalog reverse lookup | ModelApiTelemetry               |
-| UID                                    | App Host's current OAuth identity snapshot; absent in Standalone | Telemetry Context           |
-| Device MID                             | Existing `telemetry-state.json`                           | App RUM, CLI OTel, `/event/report` |
-| Session/Turn/Trace/Query               | CLI Runtime Trace Context                                 | All model records                  |
+| Fact                                      | Authoritative source                                             | Mirror/consumer                            |
+| ----------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------ |
+| Provider/Model/Base URL/Transport         | Final resolution in the Model Adapter                            | ARMS OTel, UI safe projection, logs        |
+| Physical Attempt lifecycle                | `runGenerateText` / `runStreamText`                              | ModelApiTelemetry, UI retry/debug          |
+| Token/Cache/Finish Reason                 | Final Usage after Adapter normalization                          | ModelApiTelemetry, SQLite Usage            |
+| Operation semantics                       | Core/Tool/Sidecar call sites                                     | ModelApiTelemetry                          |
+| Compaction/Verifier final business result | The calling Operation                                            | Operation Record, existing business events |
+| Requested reasoning level                 | Session/Model Ref/caller override                                | ModelApiTelemetry                          |
+| Effective reasoning level                 | Final merged Provider Options + Model Catalog reverse lookup     | ModelApiTelemetry                          |
+| UID                                       | App Host's current OAuth identity snapshot; absent in Standalone | Telemetry Context                          |
+| Device MID                                | Existing `telemetry-state.json`                                  | App RUM, CLI OTel, `/event/report`         |
+| Session/Turn/Trace/Query                  | CLI Runtime Trace Context                                        | All model records                          |
 
 Renderer, Desktop Main and Relay do not re-derive Provider request facts.
 
@@ -678,18 +678,18 @@ P0: Logical Call Terminal, Error, Cancel, Retry, Fallback 100%; Attempt Terminal
 
 ## 20. Failure and Degradation Matrix
 
-| Scenario                  | Agent behavior      | Telemetry behavior                                     |
-| ------------------------- | ------------------- | ------------------------------------------------------ |
-| OTLP not configured       | Runs normally       | No-op; SQLite kept                                     |
-| ARMS network timeout      | Runs normally       | At most one failed request per Flush cycle; failed batch dropped |
-| Queue full                | Runs normally       | Drop new/old per implementation policy, Drop Counter increments |
-| Endpoint sanitization fails | Runs normally     | Keep Provider Kind/ID, Endpoint fields missing         |
-| Thought reverse lookup fails | Runs normally    | Effective=`unknown`                                    |
-| Provider Usage missing    | Runs normally       | Token may be missing, Cache=`unknown`                  |
-| UID missing               | Runs normally       | Identity=`anonymous/unavailable`                       |
-| Span/Record close fails   | Runs normally       | Rate-limited local log, not thrown to the caller       |
-| CLI abnormal exit         | Process exits       | Bounded Flush only, never blocks exit                  |
-| Remote cannot get OTLP config | Remote Agent runs normally | No-op/local Usage, no Main proxying back        |
+| Scenario                      | Agent behavior             | Telemetry behavior                                               |
+| ----------------------------- | -------------------------- | ---------------------------------------------------------------- |
+| OTLP not configured           | Runs normally              | No-op; SQLite kept                                               |
+| ARMS network timeout          | Runs normally              | At most one failed request per Flush cycle; failed batch dropped |
+| Queue full                    | Runs normally              | Drop new/old per implementation policy, Drop Counter increments  |
+| Endpoint sanitization fails   | Runs normally              | Keep Provider Kind/ID, Endpoint fields missing                   |
+| Thought reverse lookup fails  | Runs normally              | Effective=`unknown`                                              |
+| Provider Usage missing        | Runs normally              | Token may be missing, Cache=`unknown`                            |
+| UID missing                   | Runs normally              | Identity=`anonymous/unavailable`                                 |
+| Span/Record close fails       | Runs normally              | Rate-limited local log, not thrown to the caller                 |
+| CLI abnormal exit             | Process exits              | Bounded Flush only, never blocks exit                            |
+| Remote cannot get OTLP config | Remote Agent runs normally | No-op/local Usage, no Main proxying back                         |
 
 Phase 1 adds no ARMS "table": `zcode.model.call` and `zcode.model.attempt` are two Span kinds under the same `service.name=zcode-cli-agent`; traffic, success rate, latency percentiles and Token/Cache aggregate from Span attributes. A derived Logstore/Scheduled SQL is created on the SLS side only if a fixed wide table is needed, without changing the CLI Schema.
 
@@ -728,13 +728,13 @@ Phase 1 local results (2026-07-22, Node.js 24.14.0): `@zcode/telemetry` 21 tests
 
 ## 24. Open Items
 
-| Item                          | Default decision                                                        | Action before implementation                                                              |
-| ----------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Backend definition of `rid`   | Map to Physical `request_id`                                            | Confirm with ARMS/warehouse field owners; if it is actually Run/Resource ID, use an explicit Canonical field |
-| Raw UID into ARMS             | Decided: never; upload only SHA-256 `user_id_hash/uid`                  | A new privacy review is required to change this                                           |
-| OTel Metrics Endpoint         | Phase 1 aggregates all Terminal Spans in ARMS; separate Metrics is P1   | Verify OTLP Metrics/Prometheus access and permissions in the target ARMS Workspace        |
-| `plan_request` compat period  | Stop after one full gray/reconciliation cycle                           | Confirm old Dashboard owner and the migration-done criteria                               |
-| OTel SDK bundle budget        | Measured: CJS `+5.82%`, darwin-arm64 SEA `+0.62%`                       | Keep watching startup/RSS during gray; optimize if needed                                 |
+| Item                         | Default decision                                                      | Action before implementation                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Backend definition of `rid`  | Map to Physical `request_id`                                          | Confirm with ARMS/warehouse field owners; if it is actually Run/Resource ID, use an explicit Canonical field |
+| Raw UID into ARMS            | Decided: never; upload only SHA-256 `user_id_hash/uid`                | A new privacy review is required to change this                                                              |
+| OTel Metrics Endpoint        | Phase 1 aggregates all Terminal Spans in ARMS; separate Metrics is P1 | Verify OTLP Metrics/Prometheus access and permissions in the target ARMS Workspace                           |
+| `plan_request` compat period | Stop after one full gray/reconciliation cycle                         | Confirm old Dashboard owner and the migration-done criteria                                                  |
+| OTel SDK bundle budget       | Measured: CJS `+5.82%`, darwin-arm64 SEA `+0.62%`                     | Keep watching startup/RSS during gray; optimize if needed                                                    |
 
 ## 25. Implementation Index
 

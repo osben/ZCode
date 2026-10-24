@@ -12,11 +12,11 @@
 
 Three lifecycle ARMS events are kept; resource events are covered in the migration note below:
 
-| Event                      | Trigger                                              | Question answered                                   |
-| -------------------------- | ---------------------------------------------------- | --------------------------------------------------- |
+| Event                      | Trigger                                                 | Question answered                                                        |
+| -------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `perf_mcp_process_start`   | A formal stdio MCP finished connecting and `tools/list` | How many times each MCP started successfully; the crash-rate denominator |
-| `perf_mcp_process_crash`   | A connected stdio MCP exited unexpectedly            | Which MCP crashed, exit traits and run time         |
-| `perf_mcp_session_startup` | A session's first MCP startup snapshot closed        | Per-session configured, connected, process and failed counts |
+| `perf_mcp_process_crash`   | A connected stdio MCP exited unexpectedly               | Which MCP crashed, exit traits and run time                              |
+| `perf_mcp_session_startup` | A session's first MCP startup snapshot closed           | Per-session configured, connected, process and failed counts             |
 
 HTTP/SSE MCPs have no local OS child process and send no process start/crash or resource samples, but they enter
 `perf_mcp_session_startup.configured_count/connected_count/failed_count`.
@@ -121,14 +121,14 @@ task snapshot / queue / replay / owner command ------------ X
 
 ## Feature impact brief
 
-| Field            | Value                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------- |
+| Field            | Value                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- |
 | Developer intent | Report MCP process start, crash and per-session counts; the resource contract is kept by the all-process spec |
-| Capability       | `capability.data-observability` + MCP runtime                                                 |
-| Change layer     | `commit-effect`                                                                               |
-| Operating mode   | implemented                                                                                   |
-| Primary seeds    | MCP adapter/pool, Protocol notification, Agent service, Host parentPort, Desktop ARMS         |
-| Out of scope     | UI, MCP connection semantics, tool calls, persistence, global scan for real OS orphans        |
+| Capability       | `capability.data-observability` + MCP runtime                                                                 |
+| Change layer     | `commit-effect`                                                                                               |
+| Operating mode   | implemented                                                                                                   |
+| Primary seeds    | MCP adapter/pool, Protocol notification, Agent service, Host parentPort, Desktop ARMS                         |
+| Out of scope     | UI, MCP connection semantics, tool calls, persistence, global scan for real OS orphans                        |
 
 Only UI-surface row: online MCP observability has no UI entry; shared implementation is CLI tracker -> Host ->
 main; defaults are 5 min / 60 s constants; strict schemas; commit action ARMS `sendCustom`; authority is the live
@@ -182,10 +182,10 @@ None of these has a draft/display owner.
 
 ### Boundary decisions
 
-| Boundary          | Decision                                  | Includes                            | Excludes / prunes                    |
-| ----------------- | ----------------------------------------- | ----------------------------------- | ------------------------------------ |
-| Crash denominator | successful connected stdio instance       | start + unexpected close            | probe/connect failure/expected close |
-| Session count     | one first snapshot per session lease      | configured/connected/process/failed | per-server event fan-out             |
+| Boundary          | Decision                                   | Includes                            | Excludes / prunes                    |
+| ----------------- | ------------------------------------------ | ----------------------------------- | ------------------------------------ |
+| Crash denominator | successful connected stdio instance        | start + unexpected close            | probe/connect failure/expected close |
+| Session count     | one first snapshot per session lease       | configured/connected/process/failed | per-server event fan-out             |
 | Orphan            | no pool owner for >60 s and still observed | tracker-only suspected orphan       | CLI-death OS sweep                   |
 
 Confirmed with the user: identify the specific MCP (public ID + anonymous device-stable ID + random instance ID);
@@ -194,16 +194,16 @@ MCPs are not anonymized (official Plugins use the public canonical `mcp_id`).
 
 ### Accepted cases
 
-| Case ID      | Setup                                                    | Action                   | Assertions                                                                      | Evidence layers         | E2E status          |
-| ------------ | -------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------- | ----------------------- | ------------------- |
-| MCP-ARMS-001 | connected stdio final transport                          | startup completes        | one start with safe/readable or anonymous ID; probe absent                      | adapter + tracker       | focused integration |
-| MCP-ARMS-002 | connected stdio instance                                 | unexpected exit          | one crash with same instance ID/code/signal/uptime                              | adapter + tracker       | focused integration |
-| MCP-ARMS-003 | connected stdio instance                                 | deliberate close         | no crash                                                                        | adapter                 | unit                |
-| MCP-ARMS-004 | session has stdio + HTTP + failed server                 | first snapshot           | configured/connected/process/failed counts once                                 | pool                    | unit                |
-| MCP-ARMS-005 | shared stdio connection, two sessions                    | acquire/release leases   | each session process_count=1; owner count 2 -> 1                                | pool + tracker          | unit                |
-| MCP-ARMS-006 | tracked process has no owners                            | sample at 60s / 60s+1ms  | false at 60s, true after 60s                                                    | tracker                 | unit                |
-| MCP-ARMS-007 | valid/invalid notification and Host message              | forward                  | strict validation, local/remote only, mobile excluded                           | shared/service/Host     | unit                |
-| MCP-ARMS-008 | main receives each event kind                            | report                   | exact three lifecycle ARMS names; legacy memory ignored                         | Desktop reporter        | unit                |
+| Case ID      | Setup                                                                          | Action                   | Assertions                                                                                            | Evidence layers         | E2E status          |
+| ------------ | ------------------------------------------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------------- | ------------------- |
+| MCP-ARMS-001 | connected stdio final transport                                                | startup completes        | one start with safe/readable or anonymous ID; probe absent                                            | adapter + tracker       | focused integration |
+| MCP-ARMS-002 | connected stdio instance                                                       | unexpected exit          | one crash with same instance ID/code/signal/uptime                                                    | adapter + tracker       | focused integration |
+| MCP-ARMS-003 | connected stdio instance                                                       | deliberate close         | no crash                                                                                              | adapter                 | unit                |
+| MCP-ARMS-004 | session has stdio + HTTP + failed server                                       | first snapshot           | configured/connected/process/failed counts once                                                       | pool                    | unit                |
+| MCP-ARMS-005 | shared stdio connection, two sessions                                          | acquire/release leases   | each session process_count=1; owner count 2 -> 1                                                      | pool + tracker          | unit                |
+| MCP-ARMS-006 | tracked process has no owners                                                  | sample at 60s / 60s+1ms  | false at 60s, true after 60s                                                                          | tracker                 | unit                |
+| MCP-ARMS-007 | valid/invalid notification and Host message                                    | forward                  | strict validation, local/remote only, mobile excluded                                                 | shared/service/Host     | unit                |
+| MCP-ARMS-008 | main receives each event kind                                                  | report                   | exact three lifecycle ARMS names; legacy memory ignored                                               | Desktop reporter        | unit                |
 | MCP-ARMS-009 | ZCode Official Marketplace and Personal Source Plugin each declare a stdio MCP | discover + process start | official Plugin source=builtin with a readable ID; Personal Source source=plugin with an anonymous ID | loader + pool + tracker | unit                |
 
 GUI/conversation product state is unchanged; no new conversation case-catalog/E2E-matrix combination is added.

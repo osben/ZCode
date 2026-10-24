@@ -89,12 +89,12 @@ host frame ──► ConversationProjectionStore.handleFrame
 A/B conditions: same seed data (isolated HOME, mock provider); cold start -> send 2 rounds of large-file
 tool calls -> switch each of 9 tasks 2 rounds -> GC -> heap snapshot.
 
-| Metric                                | Before          | After                     |
-| ------------------------------------- | --------------- | ------------------------- |
-| JS heap after GC                      | 93.3MB          | 68.1MB                    |
-| >=20KB large-string copies (37 values) | 216 / 39.3MB   | 89 / 14.9MB               |
-| Max copies of a single inputText      | 32              | 10                        |
-| States held by the closure chain      | 37              | 37 (not handled here)     |
+| Metric                                 | Before       | After                 |
+| -------------------------------------- | ------------ | --------------------- |
+| JS heap after GC                       | 93.3MB       | 68.1MB                |
+| >=20KB large-string copies (37 values) | 216 / 39.3MB | 89 / 14.9MB           |
+| Max copies of a single inputText       | 32           | 10                    |
+| States held by the closure chain       | 37           | 37 (not handled here) |
 
 Remaining copies mostly come from the UI derivation layer (sliced strings for rendering,
 `assistantWorkRows`, ...), not projection rows, and are out of scope. The more states the closure chain

@@ -7,12 +7,12 @@ caches follows the [virtual project design](../superpowers/specs/2026-09-09-virt
 
 ## Authority and delivery order
 
-| Fact                                                              | Sole owner                                                         |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Source physical connection and recovery                           | Window Host `SourceServerConnectionManager`                        |
-| logical session, remoteSessionId, generation, workspace readiness | Window Host `WindowRemoteConnectionRegistry`                       |
-| Window routing and Renderer port delivery                         | `routesBySessionId` in Main `desktopRemoteSessions.ts`             |
-| Renderer services registration and gate                           | Renderer service store; a sessionId in a tab is not ready evidence |
+| Fact                                                              | Sole owner                                                                              |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Source physical connection and recovery                           | Window Host `SourceServerConnectionManager`                                             |
+| logical session, remoteSessionId, generation, workspace readiness | Window Host `WindowRemoteConnectionRegistry`                                            |
+| Window routing and Renderer port delivery                         | `routesBySessionId` in Main `desktopRemoteSessions.ts`                                  |
+| Renderer services registration and gate                           | Renderer service store; a sessionId in a tab is not ready evidence                      |
 | Project identity                                                  | `workspaceIdentity?.trim() \|\| workspacePath`, separate from the actual execution path |
 
 ```text
@@ -83,13 +83,13 @@ device-connection initiator/credential gate; this rule does not widen it.
 
 ## Regression and evidence boundary
 
-| Stable ID       | Contract and original recorded status                                                                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| DRS-RR-01       | Same-window ready replaces the attachment and keeps the session; originally unit covered.                                                        |
-| DRS-RR-02/05    | pending is not delivered; remote port parked before base ready; originally planned in the Accepted Cases, not to be inferred as passing from the candidate table. |
-| DRS-RR-03/08    | Two-level recovery, legacy→stable re-projection; originally unit / real SSH covered, valid only for the recorded baseline.                       |
-| DRS-RR-04/06/07 | Mobile boundary unchanged; non-qualifying startup candidates stay disconnected; manual disconnect triggers no self-recovery.                     |
-| DRS-RR-09       | An admitted Source flight skips already-live members and continues with siblings; the current UI recovers projects only.                         |
+| Stable ID       | Contract and original recorded status                                                                                                                                |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DRS-RR-01       | Same-window ready replaces the attachment and keeps the session; originally unit covered.                                                                            |
+| DRS-RR-02/05    | pending is not delivered; remote port parked before base ready; originally planned in the Accepted Cases, not to be inferred as passing from the candidate table.    |
+| DRS-RR-03/08    | Two-level recovery, legacy→stable re-projection; originally unit / real SSH covered, valid only for the recorded baseline.                                           |
+| DRS-RR-04/06/07 | Mobile boundary unchanged; non-qualifying startup candidates stay disconnected; manual disconnect triggers no self-recovery.                                         |
+| DRS-RR-09       | An admitted Source flight skips already-live members and continues with siblings; the current UI recovers projects only.                                             |
 | DRS-RR-10       | Route/attachment join on repeated connect; originally conversation scenarios are unit + real SSH pending. Old UI scenarios are not current navigation pass evidence. |
 
 The 10-second startup budget belongs only to the Host physical flight; on timeout a stable error is settled
@@ -98,5 +98,5 @@ that to widen the same recovery flight, and a late handshake must not register o
 
 Test files and run evidence are in the [coverage matrix](../testing/conversation-session-e2e-coverage-matrix.md);
 the old candidate table, Accepted Cases and historical limits are kept in
-`git show a17a875588b8d66c2bee49236292e174df651363:docs/remote/desktop-remote-session-renderer-reattach.md`.
+`git show 45f808f7:docs/remote/desktop-remote-session-renderer-reattach.md`.
 This text records no run results and changes no formal/pending status.

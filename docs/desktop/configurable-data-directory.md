@@ -42,12 +42,12 @@ Path resolution priority (`getDataBaseDir()`):
 
 When the user changes the data directory, old-directory data is copied to the new one:
 
-| Rule | Description |
-|------|------|
+| Rule                                                      | Description                                                                                                                                                                                                                                |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **`setting.json` and its transient files are not copied** | `setting.json` is the bootstrap pointer; `setting.json.lock` and `setting.json.*.tmp` are atomic-write intermediates, all existing only under the default homedir; copying them would cause migration races or old/new directory conflicts |
-| **Existing files are not overwritten** | `force: false`: if the target directory already has a same-name file, the target version is kept. This prevents newly produced data being overwritten by an old copy when restoring to the old directory |
-| **New files are copied normally** | Files present in the source but not the target are copied |
-| **Conversation workspace not yet migrated** | `copyDataDirectory()` currently copies only `.zcode/v2`; non-overwriting copy of `.zcode/workspace` is target semantics, to be included in data-directory migration after CDD02 / later work |
+| **Existing files are not overwritten**                    | `force: false`: if the target directory already has a same-name file, the target version is kept. This prevents newly produced data being overwritten by an old copy when restoring to the old directory                                   |
+| **New files are copied normally**                         | Files present in the source but not the target are copied                                                                                                                                                                                  |
+| **Conversation workspace not yet migrated**               | `copyDataDirectory()` currently copies only `.zcode/v2`; non-overwriting copy of `.zcode/workspace` is target semantics, to be included in data-directory migration after CDD02 / later work                                               |
 
 ### Example scenarios
 
@@ -70,11 +70,11 @@ could let a later update overwrite or clean user data.
 
 Blocking rules:
 
-| Source | Example |
-|------|------|
+| Source                                | Example                                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Current desktop app install directory | parent of `process.resourcesPath`, e.g. `C:\Users\{UserName}\AppData\Local\Programs\ZCode` |
-| Program Files install directory | `%ProgramFiles%\ZCode`, `%ProgramFiles(x86)%\ZCode`, `%ProgramW6432%\ZCode` |
-| User LocalAppData install directory | `%LOCALAPPDATA%\Programs\ZCode` |
+| Program Files install directory       | `%ProgramFiles%\ZCode`, `%ProgramFiles(x86)%\ZCode`, `%ProgramW6432%\ZCode`                |
+| User LocalAppData install directory   | `%LOCALAPPDATA%\Programs\ZCode`                                                            |
 
 `packages/desktop/src/main/desktopRuntimeEnv.ts` passes the current install directory to the host process as
 `ZCODE_WINDOWS_APP_INSTALL_DIR` in the Windows packaged state. `packages/services/src/paths.ts` does a
@@ -162,15 +162,15 @@ candidate, and `CDD01` passing must not be read as fully satisfying item 1.
 
 ## Related code
 
-| File | Responsibility |
-|------|------|
-| `packages/services/src/paths.ts` | `setDataBaseDir` / `getDataBaseDir` / `getAppConfigDir` / `copyDataDirectory` / Windows install-directory validation |
-| `packages/services/src/setting/settingService.ts` | `updateDataBaseDir()`: validate + copy + persist |
-| `packages/services/src/setting/setting.ts` | `ISettingService` interface definition |
-| `packages/shared/src/protocol.ts` | `AppSettings.dataBaseDir` type |
-| `packages/shared/src/validation.ts` | zod schema |
-| `packages/desktop/build/installer.nsh` | Windows installer blocks installs when `.zcode` already exists in the install directory, before writing files |
-| `packages/desktop/src/main/index.ts` | main-process bootstrap read |
-| `packages/desktop/src/main/desktopRuntimeEnv.ts` | `buildHostProcessEnv` passes the environment variable |
-| `packages/ui/src/settingsPageHelpers.tsx` | UI input box + save state management |
-| `packages/ui/src/SettingsPage.tsx` | page-level state + service calls |
+| File                                              | Responsibility                                                                                                       |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `packages/services/src/paths.ts`                  | `setDataBaseDir` / `getDataBaseDir` / `getAppConfigDir` / `copyDataDirectory` / Windows install-directory validation |
+| `packages/services/src/setting/settingService.ts` | `updateDataBaseDir()`: validate + copy + persist                                                                     |
+| `packages/services/src/setting/setting.ts`        | `ISettingService` interface definition                                                                               |
+| `packages/shared/src/protocol.ts`                 | `AppSettings.dataBaseDir` type                                                                                       |
+| `packages/shared/src/validation.ts`               | zod schema                                                                                                           |
+| `packages/desktop/build/installer.nsh`            | Windows installer blocks installs when `.zcode` already exists in the install directory, before writing files        |
+| `packages/desktop/src/main/index.ts`              | main-process bootstrap read                                                                                          |
+| `packages/desktop/src/main/desktopRuntimeEnv.ts`  | `buildHostProcessEnv` passes the environment variable                                                                |
+| `packages/ui/src/settingsPageHelpers.tsx`         | UI input box + save state management                                                                                 |
+| `packages/ui/src/SettingsPage.tsx`                | page-level state + service calls                                                                                     |

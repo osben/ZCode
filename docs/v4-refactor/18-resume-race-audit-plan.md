@@ -34,14 +34,14 @@ timeout / abort / disconnect / deactivate
 
 Authorities stay distinct:
 
-| State / fact                          | Authority                                          | Non-authoritative lookalike                              |
-| ------------------------------------- | -------------------------------------------------- | -------------------------------------------------------- |
-| runtime activated                     | `context.sessions` + activation result             | whether `readyFlights` exists, whether the client RPC returned |
-| cold V4 may admit query/command       | gateway `readyFlights` (snapshot at call start)    | `context.sessions.has(sessionId)`                        |
-| command FIFO / idempotency            | CLI `CommandInbox` + durable command facts         | renderer optimistic overlay, RPC ACK arrival time        |
-| projection watermark                  | publisher `seq/revision/logEpoch`                  | ACK epoch, connection time                               |
-| history body                          | successful transcript / event store read           | the empty array built after a `loadPersistedEvents` failure |
-| desktop / mobile recovery semantics   | trusted `clientMode` / `deliveryKind`              | whether the RPC came back from remote, UI profile guessing |
+| State / fact                        | Authority                                       | Non-authoritative lookalike                                    |
+| ----------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| runtime activated                   | `context.sessions` + activation result          | whether `readyFlights` exists, whether the client RPC returned |
+| cold V4 may admit query/command     | gateway `readyFlights` (snapshot at call start) | `context.sessions.has(sessionId)`                              |
+| command FIFO / idempotency          | CLI `CommandInbox` + durable command facts      | renderer optimistic overlay, RPC ACK arrival time              |
+| projection watermark                | publisher `seq/revision/logEpoch`               | ACK epoch, connection time                                     |
+| history body                        | successful transcript / event store read        | the empty array built after a `loadPersistedEvents` failure    |
+| desktop / mobile recovery semantics | trusted `clientMode` / `deliveryKind`           | whether the RPC came back from remote, UI profile guessing     |
 
 ## 2. Confirmed problems (dynamically reproduced)
 
@@ -83,10 +83,16 @@ Real sqlite + `ZCodeProtocolAgentServer` probe (run; fails on the current implem
 
 ```ts
 await Promise.all([
-  requestResult(server, { id: "resume-a", method: zcodeProtocolMethods.sessionResume,
-    params: { workspace, sessionId } }),
-  requestResult(server, { id: "resume-b", method: zcodeProtocolMethods.sessionResume,
-    params: { workspace, sessionId } }),
+  requestResult(server, {
+    id: "resume-a",
+    method: zcodeProtocolMethods.sessionResume,
+    params: { workspace, sessionId },
+  }),
+  requestResult(server, {
+    id: "resume-b",
+    method: zcodeProtocolMethods.sessionResume,
+    params: { workspace, sessionId },
+  }),
 ]);
 expect(createdAppOptions.filter((o) => o.sessionId === sessionId)).toHaveLength(1);
 ```
@@ -146,28 +152,28 @@ from a runtime that is no longer the registry owner.
 
 ## 4. Entry x state x event matrix
 
-| ID  | Entry                       | Start state          | Concurrency/timeout event                              | Expected                                                                                         |
-| --- | --------------------------- | -------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| C01 | legacy `session/resume`     | cold, no record      | second resume for the same session                     | one runtime owner; both requests share one activation result                                     |
-| C02 | legacy `session/resume`     | cold                 | A sets a model, B sets a different model               | no two interleaved apps; final model follows a defined last-writer/serialization rule            |
-| C03 | V4 subscribe                | cold                 | activation done, hydration read fails                  | return lifecycle/hydration error, not an empty snapshot                                          |
-| C04 | V4 subscribe                | cold                 | A activating, B subscribes (desktop + mobile)          | one READY; the two delivery profiles split only after ready                                      |
-| C05 | V4 subscribe                | cold                 | A activating, `disposeSession` / deactivate            | A must not revive a publisher after cleanup; or fail explicitly and be retryable                 |
-| C06 | rows/plans                  | cold                 | query and subscribe start together                     | query waits only for the READY registered at call start; never reads an old/empty index          |
-| C07 | command/query               | cold                 | command/query before READY map registration            | either call-start snapshot per spec, or an entry-level gate; fix the contract and test microtask order |
-| C08 | attachment/begin            | cold                 | begin\|\|subscribe\|\|command                          | verify the "activation only / no hydration" boundary; no implicit second runtime                 |
-| C09 | attachment/read             | cold                 | runtime registered, projection not hydrated            | must go through READY + hydration, not only `sessionExists`                                      |
-| C10 | hydration                   | warm publisher       | persisted load fails                                   | never treat failure as empty events; if the warm publisher is kept, state whether the snapshot is still trusted |
-| C11 | hydration                   | during load await    | live raw event arrives                                 | after source cursor and buffer merge: no lost event, no permanent gap                            |
-| C12 | command sendText            | warm                 | `waitForSessionIdle` 5 s timeout then old turn ends late | new command must not be wrongly admitted or kill the next-generation turn                      |
-| C13 | command sendQueuedNow/edit  | warm                 | stop / foreground execution id change                  | old stop may only noop, never abort a new execution                                              |
-| C14 | projection commit waiter    | raw gap              | missing event arrives after the 25 s timeout           | waiter failure is final; the late event must not apply                                           |
-| C15 | physical wire               | fragment in flight   | recovery arrives after the 30 s assembly timeout       | fail-closed unlocked only by exact recovery; old online fragments do not pollute the new generation |
-| C16 | UI conversation store       | live                 | runtime restart / proxy replace / old subscribe ACK late | generation drops the old ACK; new subscription keeps correct clientMode/deliveryKind           |
-| C17 | UI restore                  | resume->read         | second restore finishes first, first arrives late      | the old snapshot must not overwrite the new generation                                           |
-| C18 | provider/model              | cold resume          | registry sync interleaves with resume/command          | provider registry revision and session model must not regress                                    |
-| C19 | remote workspace            | cold                 | same path, different workspaceIdentity concurrently    | session, READY, cache, owner do not cross workspaces                                             |
-| C20 | usage/query                 | many workspaces active | first client disposed / replaced                     | choose a healthy client; a stale client is not authoritative                                     |
+| ID  | Entry                      | Start state            | Concurrency/timeout event                                | Expected                                                                                                        |
+| --- | -------------------------- | ---------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| C01 | legacy `session/resume`    | cold, no record        | second resume for the same session                       | one runtime owner; both requests share one activation result                                                    |
+| C02 | legacy `session/resume`    | cold                   | A sets a model, B sets a different model                 | no two interleaved apps; final model follows a defined last-writer/serialization rule                           |
+| C03 | V4 subscribe               | cold                   | activation done, hydration read fails                    | return lifecycle/hydration error, not an empty snapshot                                                         |
+| C04 | V4 subscribe               | cold                   | A activating, B subscribes (desktop + mobile)            | one READY; the two delivery profiles split only after ready                                                     |
+| C05 | V4 subscribe               | cold                   | A activating, `disposeSession` / deactivate              | A must not revive a publisher after cleanup; or fail explicitly and be retryable                                |
+| C06 | rows/plans                 | cold                   | query and subscribe start together                       | query waits only for the READY registered at call start; never reads an old/empty index                         |
+| C07 | command/query              | cold                   | command/query before READY map registration              | either call-start snapshot per spec, or an entry-level gate; fix the contract and test microtask order          |
+| C08 | attachment/begin           | cold                   | begin\|\|subscribe\|\|command                            | verify the "activation only / no hydration" boundary; no implicit second runtime                                |
+| C09 | attachment/read            | cold                   | runtime registered, projection not hydrated              | must go through READY + hydration, not only `sessionExists`                                                     |
+| C10 | hydration                  | warm publisher         | persisted load fails                                     | never treat failure as empty events; if the warm publisher is kept, state whether the snapshot is still trusted |
+| C11 | hydration                  | during load await      | live raw event arrives                                   | after source cursor and buffer merge: no lost event, no permanent gap                                           |
+| C12 | command sendText           | warm                   | `waitForSessionIdle` 5 s timeout then old turn ends late | new command must not be wrongly admitted or kill the next-generation turn                                       |
+| C13 | command sendQueuedNow/edit | warm                   | stop / foreground execution id change                    | old stop may only noop, never abort a new execution                                                             |
+| C14 | projection commit waiter   | raw gap                | missing event arrives after the 25 s timeout             | waiter failure is final; the late event must not apply                                                          |
+| C15 | physical wire              | fragment in flight     | recovery arrives after the 30 s assembly timeout         | fail-closed unlocked only by exact recovery; old online fragments do not pollute the new generation             |
+| C16 | UI conversation store      | live                   | runtime restart / proxy replace / old subscribe ACK late | generation drops the old ACK; new subscription keeps correct clientMode/deliveryKind                            |
+| C17 | UI restore                 | resume->read           | second restore finishes first, first arrives late        | the old snapshot must not overwrite the new generation                                                          |
+| C18 | provider/model             | cold resume            | registry sync interleaves with resume/command            | provider registry revision and session model must not regress                                                   |
+| C19 | remote workspace           | cold                   | same path, different workspaceIdentity concurrently      | session, READY, cache, owner do not cross workspaces                                                            |
+| C20 | usage/query                | many workspaces active | first client disposed / replaced                         | choose a healthy client; a stale client is not authoritative                                                    |
 
 ## 5. Test implementation order
 
@@ -220,28 +226,28 @@ temporary probes exposed the issues as expected and were deleted; no runtime cod
 C01-C20 were run as a finite case matrix (not exhaustive Promise micro-timing); probes were added locally and
 removed after the run.
 
-| Case | Result                          | Evidence / conclusion                                                                                          |
-| ---- | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| C01  | race exposed                    | two legacy resumes with the same `sessionId` created 2 apps. Confirms R2.                                      |
-| C02  | race exposed                    | concurrent resumes with different `runtimeModel` still created 2 apps; model config cannot replace an activation owner. |
-| C03  | wrong semantics exposed         | cold hydration read throw still returns a successful empty snapshot. Confirms R1.                              |
-| C04  | pass                            | desktop continuous and mobile replayable concurrent subscribe call activation once; first snapshots equal.      |
-| C05  | race exposed                    | `disposeSession` before activation ends: the old continuation still creates a publisher and returns a snapshot. Confirms R4/C05. |
-| C06  | pass                            | `rowsRange\|\|subscribe` and command/query during READY share the existing gate; no duplicate activation.      |
-| C07  | pass, contract must stay        | a command before READY registration returns `proto.sessionNotFound`: current "snapshot at call start" semantics, not auto-wait. |
-| C08  | pass                            | `attachment/begin\|\|subscribe\|\|command` share one activation; begin not waiting for hydration is pinned.    |
-| C09  | pass                            | `attachment/read` waits for host activation + projection hydration when detached/cold.                          |
-| C10  | semantic risk exposed           | a warm publisher's persisted-read failure is swallowed and a snapshot still returns, with a `v4.hydrate` error logged; low impact when the body is not cleared but error/success are indistinguishable. |
-| C11  | pass                            | live queue/stream in the hydration await window merges back; seq stays monotonic.                              |
-| C12  | pass                            | `waitForSessionIdle` 5 s timeout fails closed, does not resend the queue item, and does not send a new turn while the old lock is held. |
-| C13  | pass                            | the promotion lease for stop/foreground execution id change prevents notification preemption.                  |
-| C14  | pass                            | after the 25 s projection-commit timeout failure is final; late raw events no longer apply.                    |
-| C15  | pass                            | physical wire 30 s assembly timeout recovery/fail-closed cases pass.                                           |
-| C16  | pass                            | the UI session data layer drops old-generation ACK/frame after runtime restart / transport replace.            |
-| C17  | partial pass                    | the restore helper returns matching results for two interleaved deferred restores, but has no shared owner, so it cannot prove the upper store/broadcast has no old-snapshot overwrite. |
-| C18  | pass                            | provider registry -> cold subscribe order, model-switch cache and stale-model protection pass.                 |
-| C19  | partial pass                    | UI/service remote `workspaceIdentity` isolation passes; the cold-resume integration remote identity + sendText still hits the branch's pre-existing failure. |
-| C20  | low-risk selection issue exposed | usage binds an arbitrary first active client; if it is disposed mid-request the request fails without switching to a second healthy client. |
+| Case | Result                           | Evidence / conclusion                                                                                                                                                                                   |
+| ---- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C01  | race exposed                     | two legacy resumes with the same `sessionId` created 2 apps. Confirms R2.                                                                                                                               |
+| C02  | race exposed                     | concurrent resumes with different `runtimeModel` still created 2 apps; model config cannot replace an activation owner.                                                                                 |
+| C03  | wrong semantics exposed          | cold hydration read throw still returns a successful empty snapshot. Confirms R1.                                                                                                                       |
+| C04  | pass                             | desktop continuous and mobile replayable concurrent subscribe call activation once; first snapshots equal.                                                                                              |
+| C05  | race exposed                     | `disposeSession` before activation ends: the old continuation still creates a publisher and returns a snapshot. Confirms R4/C05.                                                                        |
+| C06  | pass                             | `rowsRange\|\|subscribe` and command/query during READY share the existing gate; no duplicate activation.                                                                                               |
+| C07  | pass, contract must stay         | a command before READY registration returns `proto.sessionNotFound`: current "snapshot at call start" semantics, not auto-wait.                                                                         |
+| C08  | pass                             | `attachment/begin\|\|subscribe\|\|command` share one activation; begin not waiting for hydration is pinned.                                                                                             |
+| C09  | pass                             | `attachment/read` waits for host activation + projection hydration when detached/cold.                                                                                                                  |
+| C10  | semantic risk exposed            | a warm publisher's persisted-read failure is swallowed and a snapshot still returns, with a `v4.hydrate` error logged; low impact when the body is not cleared but error/success are indistinguishable. |
+| C11  | pass                             | live queue/stream in the hydration await window merges back; seq stays monotonic.                                                                                                                       |
+| C12  | pass                             | `waitForSessionIdle` 5 s timeout fails closed, does not resend the queue item, and does not send a new turn while the old lock is held.                                                                 |
+| C13  | pass                             | the promotion lease for stop/foreground execution id change prevents notification preemption.                                                                                                           |
+| C14  | pass                             | after the 25 s projection-commit timeout failure is final; late raw events no longer apply.                                                                                                             |
+| C15  | pass                             | physical wire 30 s assembly timeout recovery/fail-closed cases pass.                                                                                                                                    |
+| C16  | pass                             | the UI session data layer drops old-generation ACK/frame after runtime restart / transport replace.                                                                                                     |
+| C17  | partial pass                     | the restore helper returns matching results for two interleaved deferred restores, but has no shared owner, so it cannot prove the upper store/broadcast has no old-snapshot overwrite.                 |
+| C18  | pass                             | provider registry -> cold subscribe order, model-switch cache and stale-model protection pass.                                                                                                          |
+| C19  | partial pass                     | UI/service remote `workspaceIdentity` isolation passes; the cold-resume integration remote identity + sendText still hits the branch's pre-existing failure.                                            |
+| C20  | low-risk selection issue exposed | usage binds an arbitrary first active client; if it is disposed mid-request the request fails without switching to a second healthy client.                                                             |
 
 Extra timeout check: `PROTOCOL_V4_LIMITS.conversationQueryTimeoutMs=10_000` still has no consumer; the
 `ZCodeProtocolClient` default watchdog test confirms 180 s. R3 is a statically confirmed contract gap; no
@@ -286,14 +292,14 @@ deactivate / dispose
              └─ the old continuation checks its token and may only noop / reject
 ```
 
-| State                                        | Authority                                                                                            | Must not take on                                                       |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| runtime activated, record/app owner          | `context.sessions` + `SessionResidentPool`, writes serialized by `SessionActivationRegistry`         | gateway `readyFlights`, UI pending overlay                             |
-| activation concurrency                       | `activationFlights` shared by protocol server/bootstrap, keyed by `workspaceKey + sessionId`         | living only in the V4 gateway (legacy `session/resume` bypasses it)    |
-| V4 hydration/READY                           | gateway projection state, `readyFlights`, publisher/raw sequence                                     | deciding whether a runtime exists                                      |
-| durable history                              | persisted session/event store                                                                        | treating a read failure as an empty array                              |
-| command admission/idempotency                | CLI `CommandInbox` + durable command facts                                                           | renderer ACK or a second queue built by the gateway                    |
-| UI stale-request filtering                   | UI local generation/pending overlay                                                                  | being the source of truth for session/runtime                          |
+| State                               | Authority                                                                                    | Must not take on                                                    |
+| ----------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| runtime activated, record/app owner | `context.sessions` + `SessionResidentPool`, writes serialized by `SessionActivationRegistry` | gateway `readyFlights`, UI pending overlay                          |
+| activation concurrency              | `activationFlights` shared by protocol server/bootstrap, keyed by `workspaceKey + sessionId` | living only in the V4 gateway (legacy `session/resume` bypasses it) |
+| V4 hydration/READY                  | gateway projection state, `readyFlights`, publisher/raw sequence                             | deciding whether a runtime exists                                   |
+| durable history                     | persisted session/event store                                                                | treating a read failure as an empty array                           |
+| command admission/idempotency       | CLI `CommandInbox` + durable command facts                                                   | renderer ACK or a second queue built by the gateway                 |
+| UI stale-request filtering          | UI local generation/pending overlay                                                          | being the source of truth for session/runtime                       |
 
 `workspaceKey` is uniformly `workspaceIdentity?.trim() || workspacePath`; remote workspaces also pass
 `workspaceIdentity` and `remoteSessionId` end to end; never key activation on path or a bare `sessionId`.

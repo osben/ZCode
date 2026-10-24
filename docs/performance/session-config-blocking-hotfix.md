@@ -15,15 +15,15 @@ below are from 2026-09-14 on macOS arm64.
 
 ## UI surface matrix
 
-| Scenario / UI | Local state / command | Shared owner | Behavior / boundary |
-| --- | --- | --- | --- |
-| Cold draft / Composer | Renderer draft → V4 createSession | Host capability → CLI Runtime | tools registered locally; a pending config does not block sending |
-| Existing session / Composer | sendText | same CLI Runtime | no new budget read; FIFO unchanged |
-| Sidebar cold resume | subscribe → resumePersistedSession | workspace capability → createRecord | keeps the original workspace policy channel, restores history and tools |
-| Idle create tool | approval → OffPeakCreate | Host handler → OffPeakTaskService | gray release / plan / model validated at call time, then take number / persist |
-| Idle query tool | OffPeakList | Host local task repo | workspaceKey isolated; no new remote query |
-| Mobile / remote workspace | trusted attachment → preferences | existing shared-host/remote bridge | same fixed budget; remote still registers no idle tools |
-| Idle page | original store / form | original subscription + task service | page gray release and admission rules unchanged |
+| Scenario / UI               | Local state / command              | Shared owner                         | Behavior / boundary                                                            |
+| --------------------------- | ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| Cold draft / Composer       | Renderer draft → V4 createSession  | Host capability → CLI Runtime        | tools registered locally; a pending config does not block sending              |
+| Existing session / Composer | sendText                           | same CLI Runtime                     | no new budget read; FIFO unchanged                                             |
+| Sidebar cold resume         | subscribe → resumePersistedSession | workspace capability → createRecord  | keeps the original workspace policy channel, restores history and tools        |
+| Idle create tool            | approval → OffPeakCreate           | Host handler → OffPeakTaskService    | gray release / plan / model validated at call time, then take number / persist |
+| Idle query tool             | OffPeakList                        | Host local task repo                 | workspaceKey isolated; no new remote query                                     |
+| Mobile / remote workspace   | trusted attachment → preferences   | existing shared-host/remote bridge   | same fixed budget; remote still registers no idle tools                        |
+| Idle page                   | original store / form              | original subscription + task service | page gray release and admission rules unchanged                                |
 
 ## Shared and divergent behavior
 
@@ -80,12 +80,12 @@ percentiles. The HTTP point is the time the local provider proxy received the re
 point is the CLI `v4 prompt admitted` log; page binding and user message visibility are recorded by a
 DOM observer.
 
-| Scenario | CLI admission | Page binding | User message visible | HTTP request |
-| --- | ---: | ---: | ---: | ---: |
-| baseline cold draft | 39444 | 39486 | 40081 | 40091 |
-| fixed cold draft | 591 | 613 | 1259 | 3373 |
-| fixed existing-session follow-up | 16 | 0 | 115 | 36 |
-| fixed send after restart cold resume | 45 | 0 | 113 | 1476 |
+| Scenario                             | CLI admission | Page binding | User message visible | HTTP request |
+| ------------------------------------ | ------------: | -----------: | -------------------: | -----------: |
+| baseline cold draft                  |         39444 |        39486 |                40081 |        40091 |
+| fixed cold draft                     |           591 |          613 |                 1259 |         3373 |
+| fixed existing-session follow-up     |            16 |            0 |                  115 |           36 |
+| fixed send after restart cold resume |            45 |            0 |                  113 |         1476 |
 
 Page binding 0 in follow-up/resume rows means the session was already open before Enter. The baseline
 had 8 config requests and 0 responses and finally failed because the tool list lacked OffPeakCreate;

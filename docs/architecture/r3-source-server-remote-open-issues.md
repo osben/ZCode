@@ -1,6 +1,6 @@
 # R3 Source Server remote chain issue ledger
 
-Full history: `git show c6cef8cef5ec1e708c3fbf10ece66c43f16ad169:docs/architecture/r3-source-server-remote-open-issues.md` holds the full pre-compaction version, including per-round fix records, artifact paths and live-run logs of closed items. The summaries below do not raise the original verification level.
+Full history: `git show 45f808f7:docs/architecture/r3-source-server-remote-open-issues.md` holds the full pre-compaction version, including per-round fix records, artifact paths and live-run logs of closed items. The summaries below do not raise the original verification level.
 
 ## Document status
 
@@ -12,13 +12,13 @@ Full history: `git show c6cef8cef5ec1e708c3fbf10ece66c43f16ad169:docs/architectu
 
 ## Status definitions
 
-| Status | Meaning |
-| --- | --- |
-| To fix | Registered, no change started |
-| In progress | Implementation or test work is under way |
-| To verify | Implementation done, automated or runtime evidence still missing |
-| Closed | Root cause fixed, related tests and required runtime verification done |
-| Won't fix | Current state accepted by product or architecture decision; the decision basis must be recorded |
+| Status      | Meaning                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| To fix      | Registered, no change started                                                                   |
+| In progress | Implementation or test work is under way                                                        |
+| To verify   | Implementation done, automated or runtime evidence still missing                                |
+| Closed      | Root cause fixed, related tests and required runtime verification done                          |
+| Won't fix   | Current state accepted by product or architecture decision; the decision basis must be recorded |
 
 Severity: `P0` release blocker, data safety or main chain unusable; `P1` high-impact function, permission, identity isolation or lifecycle error; `P2` low/medium-impact defect, architecture debt, verification or documentation gap.
 
@@ -26,34 +26,34 @@ Confidence: `Confirmed` = the static call chain proves the problem; `At risk, to
 
 ## Overview
 
-| ID | Severity | Area | Summary | Confidence | Status |
-| --- | --- | --- | --- | --- | --- |
-| R3-ISSUE-001 | P0 | Release | Official release validator still checks old remote assets | Confirmed | To verify |
-| R3-ISSUE-002 | P1 | Desktop IPC | Preload drops workspace scope | Confirmed | Closed |
-| R3-ISSUE-003 | P1 | Mobile permission | Phone attachment can reach Terminal RPC | Confirmed | Closed |
-| R3-ISSUE-004 | P1 | Lifecycle | Explicit disconnect during retrying does not settle | Confirmed | Closed |
-| R3-ISSUE-005 | P1 | Lifecycle | Different Profiles of one Source may create two logical owners | Confirmed | Closed |
-| R3-ISSUE-006 | P1 | Lifecycle | Manager may still reconnect via the old route after Profile deletion | Confirmed | Closed |
-| R3-ISSUE-007 | P1 | Recovery | Auto recovery keeps retrying in user-action states | Confirmed | Closed |
-| R3-ISSUE-008 | P1 | Settings | Startup auto-reconnect preference dropped by the full AppSettings schema | Confirmed | Closed |
-| R3-ISSUE-009 | P1 | Mobile recovery | No clear terminal state after bridge rebuild budget is exhausted | Confirmed | Closed |
-| R3-ISSUE-010 | P2 | Source Settings | A late close of an old port may delete the new generation's services | Confirmed | Closed |
-| R3-ISSUE-011 | P1 | Recovery | Multi-workspace logical replacement is not fully atomic | Confirmed | Closed |
-| R3-ISSUE-012 | P2 | Provider security | API Key plaintext persistence: spec vs implementation conflict | Confirmed | Won't fix |
-| R3-ISSUE-013 | P2 | Migration | A failed first Directory migration may leave orphan credentials | Confirmed | Closed |
-| R3-ISSUE-014 | P2 | Release Resolver | Download lacks cancellation and cache single-flight | At risk, to reproduce | To fix |
-| R3-ISSUE-015 | P2 | UI architecture | RemoteWorkspaceController is not yet the unified write entry | Confirmed | Closed |
-| R3-ISSUE-016 | P2 | UI projection | RemoteWorkspaceProjection not fully wired and mis-projects local tabs | Confirmed | Closed |
-| R3-ISSUE-017 | P2 | Mobile UI | Phone Source group header status and name may degrade | At risk, to reproduce | To fix |
-| R3-ISSUE-018 | P2 | Design system | New remote UI has arbitrary sizes and ad-hoc alpha | Confirmed | To verify |
-| R3-ISSUE-019 | P2 | Docs | Status drift across architecture, plans, coverage and live records | Confirmed | In progress |
-| R3-ISSUE-020 | P1 | Release evidence | Historical live records cannot prove the current HEAD | Confirmed | To verify |
-| R3-ISSUE-021 | P1 | Lifecycle | Disconnect during handshake persistence is dropped; a dead connection is published online | Confirmed | Closed |
-| R3-ISSUE-022 | P1 | Release | Remote archive lacks the android/ios plugin MCP runtime | Confirmed | Closed |
-| R3-ISSUE-023 | P1 | Recovery | A successful manual connect in a recovering state sends no reconnect; Registry stays recovering | Confirmed | Closed |
-| R3-ISSUE-024 | P0 | WSL transport | wsl.exe without `--exec` lets the default shell pre-expand command variables; WSL install falsely reports a missing tar | Confirmed | To verify |
-| R3-ISSUE-029 | P2 | Recovery | Subsequent reconnect not retained while logical replacement is in flight; not triggered by current timing | Confirmed (conditional) | To fix |
-| R3-ISSUE-030 | P2 | Provider cancel | Waiting for a shared Registry refresh cannot be cancelled promptly; no production caller passes a signal | Confirmed (conditional) | To fix |
+| ID           | Severity | Area              | Summary                                                                                                                 | Confidence              | Status      |
+| ------------ | -------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------- | ----------- |
+| R3-ISSUE-001 | P0       | Release           | Official release validator still checks old remote assets                                                               | Confirmed               | To verify   |
+| R3-ISSUE-002 | P1       | Desktop IPC       | Preload drops workspace scope                                                                                           | Confirmed               | Closed      |
+| R3-ISSUE-003 | P1       | Mobile permission | Phone attachment can reach Terminal RPC                                                                                 | Confirmed               | Closed      |
+| R3-ISSUE-004 | P1       | Lifecycle         | Explicit disconnect during retrying does not settle                                                                     | Confirmed               | Closed      |
+| R3-ISSUE-005 | P1       | Lifecycle         | Different Profiles of one Source may create two logical owners                                                          | Confirmed               | Closed      |
+| R3-ISSUE-006 | P1       | Lifecycle         | Manager may still reconnect via the old route after Profile deletion                                                    | Confirmed               | Closed      |
+| R3-ISSUE-007 | P1       | Recovery          | Auto recovery keeps retrying in user-action states                                                                      | Confirmed               | Closed      |
+| R3-ISSUE-008 | P1       | Settings          | Startup auto-reconnect preference dropped by the full AppSettings schema                                                | Confirmed               | Closed      |
+| R3-ISSUE-009 | P1       | Mobile recovery   | No clear terminal state after bridge rebuild budget is exhausted                                                        | Confirmed               | Closed      |
+| R3-ISSUE-010 | P2       | Source Settings   | A late close of an old port may delete the new generation's services                                                    | Confirmed               | Closed      |
+| R3-ISSUE-011 | P1       | Recovery          | Multi-workspace logical replacement is not fully atomic                                                                 | Confirmed               | Closed      |
+| R3-ISSUE-012 | P2       | Provider security | API Key plaintext persistence: spec vs implementation conflict                                                          | Confirmed               | Won't fix   |
+| R3-ISSUE-013 | P2       | Migration         | A failed first Directory migration may leave orphan credentials                                                         | Confirmed               | Closed      |
+| R3-ISSUE-014 | P2       | Release Resolver  | Download lacks cancellation and cache single-flight                                                                     | At risk, to reproduce   | To fix      |
+| R3-ISSUE-015 | P2       | UI architecture   | RemoteWorkspaceController is not yet the unified write entry                                                            | Confirmed               | Closed      |
+| R3-ISSUE-016 | P2       | UI projection     | RemoteWorkspaceProjection not fully wired and mis-projects local tabs                                                   | Confirmed               | Closed      |
+| R3-ISSUE-017 | P2       | Mobile UI         | Phone Source group header status and name may degrade                                                                   | At risk, to reproduce   | To fix      |
+| R3-ISSUE-018 | P2       | Design system     | New remote UI has arbitrary sizes and ad-hoc alpha                                                                      | Confirmed               | To verify   |
+| R3-ISSUE-019 | P2       | Docs              | Status drift across architecture, plans, coverage and live records                                                      | Confirmed               | In progress |
+| R3-ISSUE-020 | P1       | Release evidence  | Historical live records cannot prove the current HEAD                                                                   | Confirmed               | To verify   |
+| R3-ISSUE-021 | P1       | Lifecycle         | Disconnect during handshake persistence is dropped; a dead connection is published online                               | Confirmed               | Closed      |
+| R3-ISSUE-022 | P1       | Release           | Remote archive lacks the android/ios plugin MCP runtime                                                                 | Confirmed               | Closed      |
+| R3-ISSUE-023 | P1       | Recovery          | A successful manual connect in a recovering state sends no reconnect; Registry stays recovering                         | Confirmed               | Closed      |
+| R3-ISSUE-024 | P0       | WSL transport     | wsl.exe without `--exec` lets the default shell pre-expand command variables; WSL install falsely reports a missing tar | Confirmed               | To verify   |
+| R3-ISSUE-029 | P2       | Recovery          | Subsequent reconnect not retained while logical replacement is in flight; not triggered by current timing               | Confirmed (conditional) | To fix      |
+| R3-ISSUE-030 | P2       | Provider cancel   | Waiting for a shared Registry refresh cannot be cancelled promptly; no production caller passes a signal                | Confirmed (conditional) | To fix      |
 
 ## Issue details
 
@@ -244,13 +244,13 @@ Confidence: `Confirmed` = the static call chain proves the problem; `At risk, to
 
 Source: [UX optimization out of scope](../issues/remote-connection-ux/01-remote-connection-ux-optimization.md#out-of-scope). None is part of the RDUX-03 implementation, and none changes the state machine or the phone recovery protocol.
 
-| ID | Follow-up | Status |
-| --- | --- | --- |
-| R3-ISSUE-017 | Phone Web device name and status display degrade; reuses the existing issue, phone display evaluated separately | To fix |
-| R3-ISSUE-025 | Search, filter and grouping for 20+ devices/projects | To fix |
-| R3-ISSUE-026 | Idle-timeout disconnect when a device is online with no open project | To fix |
-| R3-ISSUE-027 | Unified local/remote scope ownership of settings sections | To fix |
-| R3-ISSUE-028 | Real behavior verification of hooks under remote scope | To verify |
+| ID           | Follow-up                                                                                                       | Status    |
+| ------------ | --------------------------------------------------------------------------------------------------------------- | --------- |
+| R3-ISSUE-017 | Phone Web device name and status display degrade; reuses the existing issue, phone display evaluated separately | To fix    |
+| R3-ISSUE-025 | Search, filter and grouping for 20+ devices/projects                                                            | To fix    |
+| R3-ISSUE-026 | Idle-timeout disconnect when a device is online with no open project                                            | To fix    |
+| R3-ISSUE-027 | Unified local/remote scope ownership of settings sections                                                       | To fix    |
+| R3-ISSUE-028 | Real behavior verification of hooks under remote scope                                                          | To verify |
 
 ## Remaining work
 

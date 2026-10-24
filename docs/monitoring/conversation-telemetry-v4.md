@@ -329,7 +329,7 @@ existing Memory E2E adds three-event assertions for default off and for a new se
 - Root and CLI typecheck, root lint and architecture changed checks pass.
 - UI/protocol unit tests: 112 passed; gateway/workflow fact regression: 108 passed, 1 failed. The failure is the
   pre-existing `Core admission ACK does not wait for TurnStarted projection; old revision retry/file rewind only
-  stale` (the same failure reproduces with the unmodified staging gateway).
+stale` (the same failure reproduces with the unmodified staging gateway).
 - CLI lint is blocked by pre-existing `max-lines` errors in unmodified files.
 - The Memory WDIO `before all` could not select Full access/yolo mode and never reached the new telemetry
   assertions, so that run is not end-to-end evidence for on/off telemetry on desktop. Mobile remote control had no

@@ -38,17 +38,17 @@
 
 ## Impact brief
 
-| Field | Value |
-| --- | --- |
+| Field            | Value                                                                          |
+| ---------------- | ------------------------------------------------------------------------------ |
 | Developer intent | Restore the main window size the user last adjusted after a full ZCode restart |
-| Capability | Desktop main window size persistence |
-| Change layer | persistence / recovery |
-| Operating mode | planning |
-| Primary seeds | `createWindow`, `createBrowserWindow`, `AppSettings`, `createSettingService` |
-| Out of scope | window position, per-window independent sizes, auxiliary windows, Web/mobile |
+| Capability       | Desktop main window size persistence                                           |
+| Change layer     | persistence / recovery                                                         |
+| Operating mode   | planning                                                                       |
+| Primary seeds    | `createWindow`, `createBrowserWindow`, `AppSettings`, `createSettingService`   |
+| Out of scope     | window position, per-window independent sizes, auxiliary windows, Web/mobile   |
 
-| User scenario | UI entry | Display owner | Commit action | Authority/persistence | Mode boundary |
-| --- | --- | --- | --- | --- | --- |
+| User scenario                  | UI entry                                            | Display owner            | Commit action                                    | Authority/persistence                          | Mode boundary                                               |
+| ------------------------------ | --------------------------------------------------- | ------------------------ | ------------------------------------------------ | ---------------------------------------------- | ----------------------------------------------------------- |
 | Restart the app after resizing | Electron main window edge / system maximize control | Electron `BrowserWindow` | update settings after resize/maximize/unmaximize | app-global field in `~/.zcode/v2/setting.json` | packaged/dev Desktop main only; Web/mobile do not take part |
 
 ### Must-preserve invariants
@@ -64,11 +64,11 @@
 
 ## Accepted cases
 
-| Case | Setup | Action | Assertion |
-| --- | --- | --- | --- |
-| WINDOW-SIZE-01 | no saved size | create the main window | uses `1200x800` |
-| WINDOW-SIZE-02 | valid saved normal size | restart and create the main window | constructor arguments restore the saved width and height |
-| WINDOW-SIZE-03 | saved size exceeds the current primary work area | restart and create the main window | width/height clamped to the work area, not below the window minimum |
-| WINDOW-SIZE-04 | quit maximized after a normal size | restart and create the main window | created at the normal size, then maximize is called |
-| WINDOW-SIZE-05 | resize/maximize/unmaximize | wait for the persistence callback | saves the non-maximized width/height and the independent maximized state |
-| WINDOW-SIZE-06 | main window created | trigger window close or app-quit preparation | no new window-size settings write starts |
+| Case           | Setup                                            | Action                                       | Assertion                                                                |
+| -------------- | ------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------ |
+| WINDOW-SIZE-01 | no saved size                                    | create the main window                       | uses `1200x800`                                                          |
+| WINDOW-SIZE-02 | valid saved normal size                          | restart and create the main window           | constructor arguments restore the saved width and height                 |
+| WINDOW-SIZE-03 | saved size exceeds the current primary work area | restart and create the main window           | width/height clamped to the work area, not below the window minimum      |
+| WINDOW-SIZE-04 | quit maximized after a normal size               | restart and create the main window           | created at the normal size, then maximize is called                      |
+| WINDOW-SIZE-05 | resize/maximize/unmaximize                       | wait for the persistence callback            | saves the non-maximized width/height and the independent maximized state |
+| WINDOW-SIZE-06 | main window created                              | trigger window close or app-quit preparation | no new window-size settings write starts                                 |

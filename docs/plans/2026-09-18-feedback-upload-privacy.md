@@ -39,13 +39,13 @@ not replace server retention, access authorization, deletion mechanisms or legal
 
 ## Impact brief
 
-| UI entry                                           | Draft owner / default                                                    | Submit / authority owner                                    | Mode and invariants                                      |
-| -------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- | -------------------------------------------------------- |
-| Help menu, task menu, chat/subscription errors, remote-connection failures | feedbackStore -> FeedbackSubmitForm; logs true (cancelable), images empty | feedbackSubmissionJob -> feedbackService -> FeedbackHttpClient | desktop uses the local service; mobile stays unsupported |
-| New feedback / feature request                     | Separate drafts: new feedback defaults logs on; standalone feature request attaches none | same                                            | User can edit the description and inspect attachments    |
-| Background job resume                              | `job.formDraft` snapshot at submit                                       | job registry, located by jobId                              | Does not affect other jobs; no re-capture of screenshots |
-| Supplement a ticket                                | User-picked attachments and text                                         | feedbackService                                             | No new automatic collection                              |
-| Local export logs                                  | User-explicit export                                                     | desktop exportLogs                                          | Not affected by the feedback source allowlist            |
+| UI entry                                                                   | Draft owner / default                                                                    | Submit / authority owner                                       | Mode and invariants                                      |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------- |
+| Help menu, task menu, chat/subscription errors, remote-connection failures | feedbackStore -> FeedbackSubmitForm; logs true (cancelable), images empty                | feedbackSubmissionJob -> feedbackService -> FeedbackHttpClient | desktop uses the local service; mobile stays unsupported |
+| New feedback / feature request                                             | Separate drafts: new feedback defaults logs on; standalone feature request attaches none | same                                                           | User can edit the description and inspect attachments    |
+| Background job resume                                                      | `job.formDraft` snapshot at submit                                                       | job registry, located by jobId                                 | Does not affect other jobs; no re-capture of screenshots |
+| Supplement a ticket                                                        | User-picked attachments and text                                                         | feedbackService                                                | No new automatic collection                              |
+| Local export logs                                                          | User-explicit export                                                                     | desktop exportLogs                                             | Not affected by the feedback source allowlist            |
 
 Chain: UI default / no auto screenshot -> `job.includeLogs` -> `prepareCompactLogArchive` -> desktop
 injection / services fallback -> ZIP -> `uploadFile`; auto context -> create/comment HTTP. State owners keep
@@ -55,16 +55,16 @@ never written into log archives. The feature graph has no dedicated node for fee
 
 ## Acceptance matrix and E2E handoff
 
-| Case ID    | State / action                                   | Assertions                                                                         | Evidence                     |
-| ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- | ---------------------------- |
-| FB-PRIV-01 | New feedback, every entry                        | Logs default on and cancelable; no automatic capture call                          | UI test + E2E                |
-| FB-PRIV-02 | Default submit / submit after cancel / resume background job | Only attachments chosen this time are uploaded; resume keeps the original choice | job/UI test + service-mock E2E |
-| FB-PRIV-03 | full / compact / desktop archives                | SQLite, config, rollout, symlinks, binaries, expired / oversized files are absent  | temp dir + ZIP extraction    |
-| FB-PRIV-04 | Nested JSON / escaped strings / multi-line private key / Authorization / URL | Synthetic secrets appear in no ZIP entry               | shared + ZIP regression      |
-| FB-PRIV-05 | Diagnostics containing prompt/messages/tool data | Bodies removed; event types / error codes / counts remain usable                   | text redaction tests         |
-| FB-PRIV-06 | Ticket create and supplement                     | Common credentials in title/description are cleaned; user contact and explicit body intent kept; no model list | service/UI mock HTTP |
-| FB-PRIV-07 | Local export / cancel / failure                  | Manual export compatible; archive failure cleans up; cancelled create triggers no attachment | existing regressions  |
-| FB-PRIV-08 | Desktop/mobile, zh/en                            | Switch meaning and hints consistent, accessible on narrow screens; mobile unsupported unchanged | shared UI + E2E          |
+| Case ID    | State / action                                                               | Assertions                                                                                                     | Evidence                       |
+| ---------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| FB-PRIV-01 | New feedback, every entry                                                    | Logs default on and cancelable; no automatic capture call                                                      | UI test + E2E                  |
+| FB-PRIV-02 | Default submit / submit after cancel / resume background job                 | Only attachments chosen this time are uploaded; resume keeps the original choice                               | job/UI test + service-mock E2E |
+| FB-PRIV-03 | full / compact / desktop archives                                            | SQLite, config, rollout, symlinks, binaries, expired / oversized files are absent                              | temp dir + ZIP extraction      |
+| FB-PRIV-04 | Nested JSON / escaped strings / multi-line private key / Authorization / URL | Synthetic secrets appear in no ZIP entry                                                                       | shared + ZIP regression        |
+| FB-PRIV-05 | Diagnostics containing prompt/messages/tool data                             | Bodies removed; event types / error codes / counts remain usable                                               | text redaction tests           |
+| FB-PRIV-06 | Ticket create and supplement                                                 | Common credentials in title/description are cleaned; user contact and explicit body intent kept; no model list | service/UI mock HTTP           |
+| FB-PRIV-07 | Local export / cancel / failure                                              | Manual export compatible; archive failure cleans up; cancelled create triggers no attachment                   | existing regressions           |
+| FB-PRIV-08 | Desktop/mobile, zh/en                                                        | Switch meaning and hints consistent, accessible on narrow screens; mobile unsupported unchanged                | shared UI + E2E                |
 
 Main dimensions: source desktop/fallback; logs default-on/off/restored; file text/binary/link/expired/
 oversized; authorization new/background resume; language/viewport. Pruned: repository snapshot and telemetry

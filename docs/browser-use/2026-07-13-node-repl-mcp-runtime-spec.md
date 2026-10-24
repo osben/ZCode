@@ -213,23 +213,23 @@ so `js` stays approved at high/system execution level.
 
 ## 7. Acceptance cases
 
-| Case   | Scenario          | Assertion                                                                                                                                                 |
-| ------ | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NRM-01 | app bootstrap     | MCP status has host `node_repl`; model tool names are `mcp__node_repl__js*`; no bare `js*`                                                                |
-| NRM-02 | MCP tools/list    | the three tools have correct names and strict schemas; the `js` model contract requires `code + title` while the runtime still accepts old code-only calls |
-| NRM-03 | two `js` calls    | top-level bindings persist; different MCP process/session are isolated                                                                                    |
-| NRM-04 | `js_reset`        | binding/browser generation cleared, module roots kept                                                                                                     |
-| NRM-05 | add dir           | absolute path true first time, false on repeat, relative path rejected                                                                                    |
-| NRM-06 | output            | write/console/result, BigInt/circular error, image blocks and `_meta` projection correct                                                                  |
-| NRM-07 | timeout/cancel    | kernel reset; old async continuation and old browser bridge cannot be reused                                                                              |
+| Case   | Scenario          | Assertion                                                                                                                                                         |
+| ------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NRM-01 | app bootstrap     | MCP status has host `node_repl`; model tool names are `mcp__node_repl__js*`; no bare `js*`                                                                        |
+| NRM-02 | MCP tools/list    | the three tools have correct names and strict schemas; the `js` model contract requires `code + title` while the runtime still accepts old code-only calls        |
+| NRM-03 | two `js` calls    | top-level bindings persist; different MCP process/session are isolated                                                                                            |
+| NRM-04 | `js_reset`        | binding/browser generation cleared, module roots kept                                                                                                             |
+| NRM-05 | add dir           | absolute path true first time, false on repeat, relative path rejected                                                                                            |
+| NRM-06 | output            | write/console/result, BigInt/circular error, image blocks and `_meta` projection correct                                                                          |
+| NRM-07 | timeout/cancel    | kernel reset; old async continuation and old browser bridge cannot be reused                                                                                      |
 | NRM-08 | browser bootstrap | host `ZCODE_PLUGIN_ROOT` builds a cross-platform file URL and importing `scripts/browser-client.mjs` makes `agent.browsers` available; no Skill-dir path guessing |
-| NRM-09 | browser command   | pipe validates token/schema/context and calls the same-session BrowserControlPort                                                                         |
-| NRM-10 | forged pipe       | wrong token, illegal op/command, wrong session all fail closed                                                                                            |
-| NRM-11 | plugin disabled   | browser skill/client bridge not injected; host `node_repl` still runs generic JS                                                                          |
-| NRM-12 | namespace         | a same-named user/plugin server cannot override host-reserved `node_repl`                                                                                 |
-| NRM-13 | desktop/mobile    | clientMode/workspaceIdentity/remoteSessionId still decided by the shared-host session record                                                              |
-| NRM-14 | packaging         | filesystem seed, SEA, Desktop, production remote and development remote all contain the server and browser-client; the development hash covers the client script |
-| NRM-15 | MCP settings      | the browser-use plugin shows read-only `node_repl`; status and 3 tools come from real `mcp/list`; runtime name has no plugin prefix                       |
+| NRM-09 | browser command   | pipe validates token/schema/context and calls the same-session BrowserControlPort                                                                                 |
+| NRM-10 | forged pipe       | wrong token, illegal op/command, wrong session all fail closed                                                                                                    |
+| NRM-11 | plugin disabled   | browser skill/client bridge not injected; host `node_repl` still runs generic JS                                                                                  |
+| NRM-12 | namespace         | a same-named user/plugin server cannot override host-reserved `node_repl`                                                                                         |
+| NRM-13 | desktop/mobile    | clientMode/workspaceIdentity/remoteSessionId still decided by the shared-host session record                                                                      |
+| NRM-14 | packaging         | filesystem seed, SEA, Desktop, production remote and development remote all contain the server and browser-client; the development hash covers the client script  |
+| NRM-15 | MCP settings      | the browser-use plugin shows read-only `node_repl`; status and 3 tools come from real `mcp/list`; runtime name has no plugin prefix                               |
 
 ## 8. Delivery state and remaining risk
 

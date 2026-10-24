@@ -34,23 +34,23 @@ Original problems: connection errors are hard to understand, states are inconsis
 
 ## Sub-tasks and Evidence
 
-| Sub-task                                                                                    | Recorded status |
-| ------------------------------------------------------------------------------------------- | --------------- |
-| [02 — Connection log and error contract](02-connection-log-and-error-contract.md)           | done            |
-| [03 — Presentation model, 5 states and glossary](03-presentation-model-states-and-glossary.md) | done         |
-| [04 — Wizard P0 fixes and flow controller extraction](04-wizard-p0-fixes-and-flow-controller.md) | done       |
-| [05 — Settings safeguards, edit connection and scope labels](05-settings-safeguards-edit-and-scope.md) | done  |
-| [06 — Interaction prototype and review](06-interaction-prototype-review.md)                  | done            |
-| [07 — ssh-agent and default key evaluation](07-ssh-agent-default-key-evaluation.md)          | ready-for-human |
-| [08 — Disconnect experience and in-place reconnect](08-disconnect-experience-and-in-place-reconnect.md) | done |
-| [09 — Return to the original place after reconnect or restart](09-restore-after-reconnect-and-restart.md) | done |
-| [10 — Three-screen wizard: skeleton, unified selection screen and collapsed progress row](10-three-screen-wizard-and-selection.md) | done |
-| [11 — Connecting screen and directory screen redo](11-connecting-and-directory-screens.md)  | done            |
-| [12 — Sidebar, session header and menus](12-sidebar-header-and-menus.md)                    | done            |
-| [13 — Settings device cards, unfinished connections and update notices](13-settings-device-cards-and-updates.md) | done |
-| [14 — Visual polish and accessibility](14-visual-polish-and-accessibility.md)                | done            |
-| [15 — Project creation and remote connection management separation](15-project-device-selection-and-connection-management.md) | ready-for-agent |
-| [27 — New connection form layout and colors](27-new-connection-form-polish.md)              | done            |
+| Sub-task                                                                                                                           | Recorded status |
+| ---------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| [02 — Connection log and error contract](02-connection-log-and-error-contract.md)                                                  | done            |
+| [03 — Presentation model, 5 states and glossary](03-presentation-model-states-and-glossary.md)                                     | done            |
+| [04 — Wizard P0 fixes and flow controller extraction](04-wizard-p0-fixes-and-flow-controller.md)                                   | done            |
+| [05 — Settings safeguards, edit connection and scope labels](05-settings-safeguards-edit-and-scope.md)                             | done            |
+| [06 — Interaction prototype and review](06-interaction-prototype-review.md)                                                        | done            |
+| [07 — ssh-agent and default key evaluation](07-ssh-agent-default-key-evaluation.md)                                                | ready-for-human |
+| [08 — Disconnect experience and in-place reconnect](08-disconnect-experience-and-in-place-reconnect.md)                            | done            |
+| [09 — Return to the original place after reconnect or restart](09-restore-after-reconnect-and-restart.md)                          | done            |
+| [10 — Three-screen wizard: skeleton, unified selection screen and collapsed progress row](10-three-screen-wizard-and-selection.md) | done            |
+| [11 — Connecting screen and directory screen redo](11-connecting-and-directory-screens.md)                                         | done            |
+| [12 — Sidebar, session header and menus](12-sidebar-header-and-menus.md)                                                           | done            |
+| [13 — Settings device cards, unfinished connections and update notices](13-settings-device-cards-and-updates.md)                   | done            |
+| [14 — Visual polish and accessibility](14-visual-polish-and-accessibility.md)                                                      | done            |
+| [15 — Project creation and remote connection management separation](15-project-device-selection-and-connection-management.md)      | ready-for-agent |
+| [27 — New connection form layout and colors](27-new-connection-form-polish.md)                                                     | done            |
 
 Each sub-ticket keeps root cause, the corresponding spec and run evidence. done does not mean formal/CI admission; the [case catalog](../../conversation-session-case-catalog.md) defines scenarios and the [coverage matrix](../../testing/conversation-session-e2e-coverage-matrix.md) records test files, pending status and evidence.
 
@@ -76,5 +76,5 @@ Each sub-ticket keeps root cause, the corresponding spec and run evidence. done 
 - The full problem list, user stories, original screenshot names and the decision process are kept in the pre-cleanup commit and are not a second current spec:
 
 ```bash
-git show a17a875588b8d66c2bee49236292e174df651363:docs/issues/remote-connection-ux/01-remote-connection-ux-optimization.md
+git show 45f808f7:docs/issues/remote-connection-ux/01-remote-connection-ux-optimization.md
 ```

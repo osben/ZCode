@@ -172,14 +172,14 @@ into the single serial run shown.
 
 ### Stage and time contract
 
-| Main stage                   | Boundary to explain                                              | Expandable observation                                                                       |
-| ---------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Renderer send preparation    | Submit start to command dispatch to the Host                     | Local preparation that really happens; user second-confirmation wait marked separately       |
-| Command delivery and CLI acceptance | Dispatch to authoritative CLI acceptance                  | Host forwarding, CLI receipt, admission-gate wait, necessary acceptance persistence; ACK return observed separately as a round trip |
-| Wait for execution           | After acceptance until this input starts executing               | Idle or queued type, queue wait; not double-counted with the ACK round trip                  |
-| Execution and request preparation | Execution start to the main-response model request, keeping actual repeated intervals | hooks, context loading, persistence, necessary compaction, MCP/tool preparation, request assembly |
-| Model request and retries    | After request preparation until the CLI forms this input's first valid output | Failure or output of each attempt, retry gaps; internal compaction model requests attributed apart from the main response request |
-| First-output return          | CLI produces first valid output until the Renderer actually receives it | Send, Host forwarding and client receipt boundaries the real protocol content passes     |
+| Main stage                          | Boundary to explain                                                                   | Expandable observation                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Renderer send preparation           | Submit start to command dispatch to the Host                                          | Local preparation that really happens; user second-confirmation wait marked separately                                              |
+| Command delivery and CLI acceptance | Dispatch to authoritative CLI acceptance                                              | Host forwarding, CLI receipt, admission-gate wait, necessary acceptance persistence; ACK return observed separately as a round trip |
+| Wait for execution                  | After acceptance until this input starts executing                                    | Idle or queued type, queue wait; not double-counted with the ACK round trip                                                         |
+| Execution and request preparation   | Execution start to the main-response model request, keeping actual repeated intervals | hooks, context loading, persistence, necessary compaction, MCP/tool preparation, request assembly                                   |
+| Model request and retries           | After request preparation until the CLI forms this input's first valid output         | Failure or output of each attempt, retry gaps; internal compaction model requests attributed apart from the main response request   |
+| First-output return                 | CLI produces first valid output until the Renderer actually receives it               | Send, Host forwarding and client receipt boundaries the real protocol content passes                                                |
 
 - Main stages are divided along the real path into consecutive, non-overlapping intervals as far as possible;
   boundaries must be checked at real hook points before implementation. Stages may be absent, repeated and
@@ -274,27 +274,27 @@ recorder, supervisor and composer send-funnel tests.
 
 ### Acceptance scenarios
 
-| Scenario                                   | Expected external result                                                                          |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| Ordinary text first                        | One send correlation, one main TTFT, correct stages and first text; no wait for the turn terminal |
-| Reasoning or tool first                    | Correct first_output_kind; main TTFT closes first, first text added later; an empty start event does not trigger |
-| Known delay injected into a stage          | That stage's duration and total TTFT change in real order, other stages absorb nothing; deviation within the verified error |
-| CLI admission contention                   | The wait from command receipt to authoritative acceptance is visible, not hidden in business queue or model time |
-| Queue, promotion and second confirmation   | Original send correlation kept; queue-inclusive and post-execution times distinguishable; confirmation wait marked separately |
-| Immediate guide                            | Does not take the previous input's output and is not mixed into ordinary TTFT quantiles            |
-| hooks, compaction and MCP preparation      | Preparation sub-stages that really happen are visible; the internal compaction model call does not pose as the main response request |
-| First output after retry                   | Several attempts and waits link to one send; main TTFT is not counted per attempt                  |
-| First output before ACK, stage reorder or duplicates | Main correlation and closure correct, late legal stages merge, no duplicate Metric or message Trace |
-| Multi-session, multi-window or workspace   | Messages, runtime instances and observation contexts do not cross; old turns and subtask side-channel output do not take the first response |
-| Failure or cancel before first output      | Outcome counts and waited time correct; no fabricated success TTFT or zero pollution              |
-| Failure after first output, end with no text | Main TTFT keeps the successful first-output fact; first-text status independently correct         |
-| Process exit, force-kill or missing terminal | Exported checkpoints queryable; without end evidence stays unclosed; no fabricated timeout or remaining stages |
-| Background and back, machine pause or clock anomaly | Continuous-foreground judgment accurate; anomalous-quality samples filterable; no negative duration or forced clamping |
-| Parallel, repeated preparation and missing stages | Waterfall shows real intervals; union reconciles, no double-adding, gaps not forcibly attributed |
-| Gray off, on and correlated sampling       | Off: no new collection; on: consistent across the chain; old 10% Trace sampling creates no TTFT gaps |
-| exporter timeout, rejection, full queue    | Sending and output continue; memory/queue bounded, drops observable, normal closure does not depend on export success |
-| Final data contract                        | Strict schema, units, version, low-cardinality labels and redaction rules correct; Trace/Metric reconcile by definition |
-| Old channels and excluded scenarios        | Old business/RUM counts unchanged; remote, mobile, replay and automatic tasks produce no local user TTFT |
+| Scenario                                             | Expected external result                                                                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary text first                                  | One send correlation, one main TTFT, correct stages and first text; no wait for the turn terminal                                           |
+| Reasoning or tool first                              | Correct first_output_kind; main TTFT closes first, first text added later; an empty start event does not trigger                            |
+| Known delay injected into a stage                    | That stage's duration and total TTFT change in real order, other stages absorb nothing; deviation within the verified error                 |
+| CLI admission contention                             | The wait from command receipt to authoritative acceptance is visible, not hidden in business queue or model time                            |
+| Queue, promotion and second confirmation             | Original send correlation kept; queue-inclusive and post-execution times distinguishable; confirmation wait marked separately               |
+| Immediate guide                                      | Does not take the previous input's output and is not mixed into ordinary TTFT quantiles                                                     |
+| hooks, compaction and MCP preparation                | Preparation sub-stages that really happen are visible; the internal compaction model call does not pose as the main response request        |
+| First output after retry                             | Several attempts and waits link to one send; main TTFT is not counted per attempt                                                           |
+| First output before ACK, stage reorder or duplicates | Main correlation and closure correct, late legal stages merge, no duplicate Metric or message Trace                                         |
+| Multi-session, multi-window or workspace             | Messages, runtime instances and observation contexts do not cross; old turns and subtask side-channel output do not take the first response |
+| Failure or cancel before first output                | Outcome counts and waited time correct; no fabricated success TTFT or zero pollution                                                        |
+| Failure after first output, end with no text         | Main TTFT keeps the successful first-output fact; first-text status independently correct                                                   |
+| Process exit, force-kill or missing terminal         | Exported checkpoints queryable; without end evidence stays unclosed; no fabricated timeout or remaining stages                              |
+| Background and back, machine pause or clock anomaly  | Continuous-foreground judgment accurate; anomalous-quality samples filterable; no negative duration or forced clamping                      |
+| Parallel, repeated preparation and missing stages    | Waterfall shows real intervals; union reconciles, no double-adding, gaps not forcibly attributed                                            |
+| Gray off, on and correlated sampling                 | Off: no new collection; on: consistent across the chain; old 10% Trace sampling creates no TTFT gaps                                        |
+| exporter timeout, rejection, full queue              | Sending and output continue; memory/queue bounded, drops observable, normal closure does not depend on export success                       |
+| Final data contract                                  | Strict schema, units, version, low-cardinality labels and redaction rules correct; Trace/Metric reconcile by definition                     |
+| Old channels and excluded scenarios                  | Old business/RUM counts unchanged; remote, mobile, replay and automatic tasks produce no local user TTFT                                    |
 
 Implementation must write appropriate tests before code; interaction chains must have E2E. Complete typecheck,
 lint, the architecture gate and related tests, keeping E2E cases consistent with the implementation. Core

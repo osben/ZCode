@@ -6,9 +6,9 @@
 
 ## 1. Requirement and clarification
 
-| Round | Question | User conclusion | Fixed boundary |
-| --- | --- | --- | --- |
-| 1 | How to settle the URL conflict and all medium-priority behaviors | Implement strictly by the semantics frozen in section 2 | The frozen dynamic docs, runtime black-box and observable command behavior of section 2 decide; neither upstream Playwright nor existing ZCode UX does |
+| Round | Question                                                         | User conclusion                                         | Fixed boundary                                                                                                                                         |
+| ----- | ---------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1     | How to settle the URL conflict and all medium-priority behaviors | Implement strictly by the semantics frozen in section 2 | The frozen dynamic docs, runtime black-box and observable command behavior of section 2 decide; neither upstream Playwright nor existing ZCode UX does |
 
 In scope:
 
@@ -34,13 +34,13 @@ So the ZCode skill no longer claims `file://` is a navigable local target; the s
 
 ### 2.2 CUA / DOM CUA
 
-| API | Frozen semantics | ZCode implementation requirement |
-| --- | --- | --- |
-| `cua.drag({path, keys})` | non-empty path; move along the original point sequence, press at the first point, release at the last | the protocol keeps the full path, no longer taking only the endpoints and re-interpolating |
-| `cua.scroll({x,y,scrollX,scrollY,keypress})` | the mouse first moves to `(x,y)`, then scrolls by delta with `Input.synthesizeScrollGesture` | anchor, delta and modifier are not lost; the Electron `<webview>` guest uses an equivalent CDP `mouseWheel` transport (see 2026-08-03 note) to avoid Chromium 146 silently not executing the synthesized gesture |
-| `cua.move({x,y,keys})` | mouse move carries modifiers | keys preserved |
-| `cua.keypress({keys})` | keys denote a combination; keyDown in order, down/up for the last key, then release in reverse | no longer attaching only a bitmask to the last key |
-| `dom_cua.scroll({node_id?,x,y})` | with a node, delta-scroll at the node center; without, at the viewport center | no longer degrading node scroll to `scrollIntoView` |
+| API                                          | Frozen semantics                                                                                      | ZCode implementation requirement                                                                                                                                                                                 |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cua.drag({path, keys})`                     | non-empty path; move along the original point sequence, press at the first point, release at the last | the protocol keeps the full path, no longer taking only the endpoints and re-interpolating                                                                                                                       |
+| `cua.scroll({x,y,scrollX,scrollY,keypress})` | the mouse first moves to `(x,y)`, then scrolls by delta with `Input.synthesizeScrollGesture`          | anchor, delta and modifier are not lost; the Electron `<webview>` guest uses an equivalent CDP `mouseWheel` transport (see 2026-08-03 note) to avoid Chromium 146 silently not executing the synthesized gesture |
+| `cua.move({x,y,keys})`                       | mouse move carries modifiers                                                                          | keys preserved                                                                                                                                                                                                   |
+| `cua.keypress({keys})`                       | keys denote a combination; keyDown in order, down/up for the last key, then release in reverse        | no longer attaching only a bitmask to the last key                                                                                                                                                               |
+| `dom_cua.scroll({node_id?,x,y})`             | with a node, delta-scroll at the node center; without, at the viewport center                         | no longer degrading node scroll to `scrollIntoView`                                                                                                                                                              |
 
 The IAB dynamic API does not expose CUA/DOM CUA `downloadMedia`. In the static manifest these two helpers are `unsupportedByDefaultIn: ["iab"]` and `documented: false`; IAB must not fake success with an ordinary click.
 
@@ -54,50 +54,50 @@ The IAB dynamic API does not expose CUA/DOM CUA `downloadMedia`. In the static m
 
 ## 3. Domain, state owners and cross-end boundary
 
-| Domain | State owner | This round's role |
-| --- | --- | --- |
-| Agent Browser facade | `apps/zcode-cli/packages/core` | argument validation, dynamic object graph, command mapping |
-| Strict protocol | `packages/shared/src/browser-use` | fully expresses path, scroll anchor/delta, keypress |
-| IAB execution | `packages/desktop/src/main/browserView` | CDP trusted input, isolated world, download action |
-| Plugin docs | `apps/zcode-cli/packages/browser-use-plugin` | URL, regex, networkidle, expectNavigation and effective API guidance |
-| shared-host routing | existing host/services/main context | no change to `workspaceIdentity`, `remoteSessionId`, `clientMode` |
+| Domain               | State owner                                  | This round's role                                                    |
+| -------------------- | -------------------------------------------- | -------------------------------------------------------------------- |
+| Agent Browser facade | `apps/zcode-cli/packages/core`               | argument validation, dynamic object graph, command mapping           |
+| Strict protocol      | `packages/shared/src/browser-use`            | fully expresses path, scroll anchor/delta, keypress                  |
+| IAB execution        | `packages/desktop/src/main/browserView`      | CDP trusted input, isolated world, download action                   |
+| Plugin docs          | `apps/zcode-cli/packages/browser-use-plugin` | URL, regex, networkidle, expectNavigation and effective API guidance |
+| shared-host routing  | existing host/services/main context          | no change to `workspaceIdentity`, `remoteSessionId`, `clientMode`    |
 
 No new runtime for the phone. `desktop-continuous` and `web-remote-replayable` both run the same browser commands through the same shared-host BrowserControl chain; these commands introduce no task stream/snapshot/replay semantics.
 
 ## 4. State combinations and pruning
 
-| Combination | Class | Reason |
-| --- | --- | --- |
-| IAB + http/https/about:blank | accepted | navigation allowlist |
-| IAB + file/other about/javascript/data | accepted rejection | rejected before the backend action |
-| CUA drag 1 point / many points + modifiers | accepted | only requires a non-empty path and all points preserved |
-| CUA scroll + non-zero anchor/delta/modifiers | accepted | prevents arguments being silently dropped |
-| DOM scroll + node/no-node | accepted | node center / viewport center respectively |
-| IAB CUA/DOM downloadMedia | pruned from API | dynamically hidden in IAB |
-| IAB Locator downloadMedia + with/without URL | accepted | with URL triggers the download; without URL fails explicitly |
-| networkidle | accepted rejection | backend explicitly unsupported |
-| expectNavigation + URL | accepted | the URL waiter can prove the target navigation |
-| expectNavigation + no URL + old page already loaded | accepted current behavior | keeps the section 2.3 semantics, not upgraded to upstream Playwright |
-| desktop/mobile x each input method | pairwise | both ends reuse one host executor; one context schema/bridge regression suffices |
-| macOS/Windows/Linux x each ordinary key | pairwise | OS differences only extend `ControlOrMeta` and representative modifier combinations |
+| Combination                                         | Class                     | Reason                                                                              |
+| --------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------- |
+| IAB + http/https/about:blank                        | accepted                  | navigation allowlist                                                                |
+| IAB + file/other about/javascript/data              | accepted rejection        | rejected before the backend action                                                  |
+| CUA drag 1 point / many points + modifiers          | accepted                  | only requires a non-empty path and all points preserved                             |
+| CUA scroll + non-zero anchor/delta/modifiers        | accepted                  | prevents arguments being silently dropped                                           |
+| DOM scroll + node/no-node                           | accepted                  | node center / viewport center respectively                                          |
+| IAB CUA/DOM downloadMedia                           | pruned from API           | dynamically hidden in IAB                                                           |
+| IAB Locator downloadMedia + with/without URL        | accepted                  | with URL triggers the download; without URL fails explicitly                        |
+| networkidle                                         | accepted rejection        | backend explicitly unsupported                                                      |
+| expectNavigation + URL                              | accepted                  | the URL waiter can prove the target navigation                                      |
+| expectNavigation + no URL + old page already loaded | accepted current behavior | keeps the section 2.3 semantics, not upgraded to upstream Playwright                |
+| desktop/mobile x each input method                  | pairwise                  | both ends reuse one host executor; one context schema/bridge regression suffices    |
+| macOS/Windows/Linux x each ordinary key             | pairwise                  | OS differences only extend `ControlOrMeta` and representative modifier combinations |
 
 ## 5. Acceptance cases
 
-| Case | Setup | Action | Assertion | Evidence |
-| --- | --- | --- | --- | --- |
-| BCP-142 | any IAB | navigate with various schemes | only http/https/about:blank pass; other schemes do not call `loadURL` | executor unit |
-| BCP-143 | CUA tab | drag with 3+ path points | CDP sends all points in the original order, pressed at the first and released at the last | core + executor unit |
-| BCP-144 | CUA tab | anchor scroll + modifiers | mouse moves to the anchor; the scroll distance and delta direction follow the section 2.2 contract | core + executor unit |
-| BCP-145 | CUA/DOM CUA | key combination | modifiers each down/up, the last key in the correct modifier state | core + executor unit |
-| BCP-146 | DOM CUA | node/no-node scroll | delta scroll at the node center or viewport center | executor unit |
-| BCP-147 | IAB effective manifest | read CUA/DOM CUA | `downloadMedia` is absent from the object graph and effective docs | manifest/facade docs unit |
-| BCP-148 | locator pointing at media/link | `downloadMedia()` | the isolated world creates a temporary download anchor; no URL errors | locator executor unit |
-| BCP-149 | Playwright helper | element info/screenshot | helpers hidden from the default docs; DOM logic runs in an isolated world | manifest + executor unit |
-| BCP-150 | Browser skill | `getByRole` name | guidance and `TextMatcher` both allow string/RegExp; cross-realm RegExp works | plugin contract + runtime unit |
-| BCP-151 | load wait | networkidle | explicit unsupported error | executor unit |
-| BCP-152 | loaded page | `expectNavigation` with/without URL | with URL wait then action; without URL keeps the section 2.3 loaded-state behavior | facade unit |
-| BCP-153 | shared host context | new input command through the bridge | workspace/clientMode/remoteSession context unchanged; strict schema rejects dropped fields/illegal shapes | shared + bridge unit |
-| BCP-154 | Electron `<webview>` guest | CUA/DOM CUA anchor scroll | real `mouseWheel` input, anchor/delta/modifier preserved; the synthesized gesture that is silently ineffective in Chromium 146 guests is not called | executor unit + Electron runtime |
+| Case    | Setup                          | Action                               | Assertion                                                                                                                                           | Evidence                         |
+| ------- | ------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| BCP-142 | any IAB                        | navigate with various schemes        | only http/https/about:blank pass; other schemes do not call `loadURL`                                                                               | executor unit                    |
+| BCP-143 | CUA tab                        | drag with 3+ path points             | CDP sends all points in the original order, pressed at the first and released at the last                                                           | core + executor unit             |
+| BCP-144 | CUA tab                        | anchor scroll + modifiers            | mouse moves to the anchor; the scroll distance and delta direction follow the section 2.2 contract                                                  | core + executor unit             |
+| BCP-145 | CUA/DOM CUA                    | key combination                      | modifiers each down/up, the last key in the correct modifier state                                                                                  | core + executor unit             |
+| BCP-146 | DOM CUA                        | node/no-node scroll                  | delta scroll at the node center or viewport center                                                                                                  | executor unit                    |
+| BCP-147 | IAB effective manifest         | read CUA/DOM CUA                     | `downloadMedia` is absent from the object graph and effective docs                                                                                  | manifest/facade docs unit        |
+| BCP-148 | locator pointing at media/link | `downloadMedia()`                    | the isolated world creates a temporary download anchor; no URL errors                                                                               | locator executor unit            |
+| BCP-149 | Playwright helper              | element info/screenshot              | helpers hidden from the default docs; DOM logic runs in an isolated world                                                                           | manifest + executor unit         |
+| BCP-150 | Browser skill                  | `getByRole` name                     | guidance and `TextMatcher` both allow string/RegExp; cross-realm RegExp works                                                                       | plugin contract + runtime unit   |
+| BCP-151 | load wait                      | networkidle                          | explicit unsupported error                                                                                                                          | executor unit                    |
+| BCP-152 | loaded page                    | `expectNavigation` with/without URL  | with URL wait then action; without URL keeps the section 2.3 loaded-state behavior                                                                  | facade unit                      |
+| BCP-153 | shared host context            | new input command through the bridge | workspace/clientMode/remoteSession context unchanged; strict schema rejects dropped fields/illegal shapes                                           | shared + bridge unit             |
+| BCP-154 | Electron `<webview>` guest     | CUA/DOM CUA anchor scroll            | real `mouseWheel` input, anchor/delta/modifier preserved; the synthesized gesture that is silently ineffective in Chromium 146 guests is not called | executor unit + Electron runtime |
 
 ## 6. Definition of done
 

@@ -4,11 +4,11 @@ The ZCode desktop adds a request-level usage dashboard for all LLM requests thro
 
 ## Event definition
 
-| Field   | Value                                                                                                                                   |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| group   | `plan_usage`                                                                                                                            |
-| name    | `plan_request` / `plan_ttft`                                                                                                            |
-| value   | `1` for `plan_request`; `ttft_ms` for `plan_ttft`                                                                                       |
+| Field   | Value                                                                                                                                                                          |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| group   | `plan_usage`                                                                                                                                                                   |
+| name    | `plan_request` / `plan_ttft`                                                                                                                                                   |
+| value   | `1` for `plan_request`; `ttft_ms` for `plan_ttft`                                                                                                                              |
 | trigger | `plan_request` is reported when a real network state enters the live fact feed; `plan_ttft` is reported once the first-token time of a foreground local prompt can be computed |
 
 The event does not wait for `message_completion` and does not copy the full `/event/report` completion payload.
@@ -25,21 +25,21 @@ back-reported after switching to background. The full lifecycle and multi-end bo
 
 ## Custom properties
 
-| Property         | Description                                                                                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Property         | Description                                                                                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `provider_id`    | Provider id resolved at request time; built-in providers keep stable IDs (e.g. `builtin:zai` / `builtin:zai-coding-plan`), custom providers are fixed to `custom` |
-| `provider_scope` | `builtin` / `custom` / `unknown`, determined together with `provider_id`                                                                                     |
-| `model_name`     | Model id/name from the model request event; only built-in stable model IDs on the telemetry allow-list are kept, others are `custom`                         |
-| `ask_mode`       | Query source from the model request event                                                                                                                    |
-| `request_status` | `plan_request` only; `started` / `completed` / `failed` / `retry_scheduled` / `stream_stalled`                                                               |
-| `request_id`     | Model request id                                                                                                                                             |
-| `task_id`        | ZCode task id                                                                                                                                                |
-| `input_id`       | User input id                                                                                                                                                |
-| `query_id`       | Query id                                                                                                                                                     |
-| `event_key`      | Protocol event de-duplication key                                                                                                                            |
-| `attempt`        | Current model request attempt                                                                                                                                |
-| `max_attempts`   | Maximum attempts                                                                                                                                             |
-| `ttft_ms`        | `plan_ttft` only; first-token latency in ms                                                                                                                  |
+| `provider_scope` | `builtin` / `custom` / `unknown`, determined together with `provider_id`                                                                                          |
+| `model_name`     | Model id/name from the model request event; only built-in stable model IDs on the telemetry allow-list are kept, others are `custom`                              |
+| `ask_mode`       | Query source from the model request event                                                                                                                         |
+| `request_status` | `plan_request` only; `started` / `completed` / `failed` / `retry_scheduled` / `stream_stalled`                                                                    |
+| `request_id`     | Model request id                                                                                                                                                  |
+| `task_id`        | ZCode task id                                                                                                                                                     |
+| `input_id`       | User input id                                                                                                                                                     |
+| `query_id`       | Query id                                                                                                                                                          |
+| `event_key`      | Protocol event de-duplication key                                                                                                                                 |
+| `attempt`        | Current model request attempt                                                                                                                                     |
+| `max_attempts`   | Maximum attempts                                                                                                                                                  |
+| `ttft_ms`        | `plan_ttft` only; first-token latency in ms                                                                                                                       |
 
 `provider_id` / `model_name` share one allow-list and normalization implementation of `@zcode/shared` with
 `provider_id` / `model_id` of `chat_error_banner`: ids and model names of custom providers are named by users, so

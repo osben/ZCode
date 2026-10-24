@@ -15,12 +15,12 @@ Steps in development, build and packaging that serve only the real Computer Use 
 producer and are skipped otherwise; an entry of the open-source tree must not fail for lack of private
 artifacts:
 
-| Step | Location |
-| --- | --- |
-| Dev launch builds the macOS Helper and injects Helper environment variables | `scripts/dev-desktop-env.mjs` |
-| Dev-time staging of the Computer Use plugin's native dependency (Sharp) | `scripts/stage-dev-cua-plugin-runtime.mjs` |
-| Windows runtime resource preparation `prepare:windows-cua-helper` | `packages/desktop/scripts/prepare-runtime-assets.mjs` |
-| Packaging bundles macOS Helper and Windows Helper resources, and verifies and finalizes the packaged Helper | `packages/desktop/electron-builder.config.js` |
+| Step                                                                                                        | Location                                              |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Dev launch builds the macOS Helper and injects Helper environment variables                                 | `scripts/dev-desktop-env.mjs`                         |
+| Dev-time staging of the Computer Use plugin's native dependency (Sharp)                                     | `scripts/stage-dev-cua-plugin-runtime.mjs`            |
+| Windows runtime resource preparation `prepare:windows-cua-helper`                                           | `packages/desktop/scripts/prepare-runtime-assets.mjs` |
+| Packaging bundles macOS Helper and Windows Helper resources, and verifies and finalizes the packaged Helper | `packages/desktop/electron-builder.config.js`         |
 
 Sharp staging and verification still depend on "whether the producer declares a Sharp dependency"
 (`isSharpRequiredByComputerUse`), consistent with this detection: the real producer declares Sharp, the

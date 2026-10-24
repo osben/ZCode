@@ -6,12 +6,12 @@ Status: implemented. This document describes what the model and the user see whe
 
 A workflow is a TypeScript script. The model writes it, the user confirms it, the harness runs it. Four things reach the model while it writes:
 
-| Surface | What it carries | Where |
-| --- | --- | --- |
-| `CreateWorkflow`, `AmendWorkflow`, `SaveWorkflow`, `EvalWorkflowSnippet` descriptions and schemas | a paragraph each: what the tool does, when to call it, "load the skill first"; one-sentence field hints | `core/src/tool/handlers/*-description.ts`, `contracts/src/tools/*.ts` |
-| `/workflow <instructions>` command | a five-line built-in prompt command that loads the skill and names `CreateWorkflow` | `bootstrap/src/builtin-workflow-command.ts` |
-| `dynamic-workflows` skill | the judgment layer (topology, quality, delivery, after submit) and, in §16, the facade declarations, the rules and each tool's fields | `packages/bundled-skills/skills/dynamic-workflows/` |
-| the skill gate | the four tools refuse a script until the skill has been loaded in the session | `core/src/tool/handlers/workflow-skill-gate.ts` |
+| Surface                                                                                           | What it carries                                                                                                                       | Where                                                                 |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `CreateWorkflow`, `AmendWorkflow`, `SaveWorkflow`, `EvalWorkflowSnippet` descriptions and schemas | a paragraph each: what the tool does, when to call it, "load the skill first"; one-sentence field hints                               | `core/src/tool/handlers/*-description.ts`, `contracts/src/tools/*.ts` |
+| `/workflow <instructions>` command                                                                | a five-line built-in prompt command that loads the skill and names `CreateWorkflow`                                                   | `bootstrap/src/builtin-workflow-command.ts`                           |
+| `dynamic-workflows` skill                                                                         | the judgment layer (topology, quality, delivery, after submit) and, in §16, the facade declarations, the rules and each tool's fields | `packages/bundled-skills/skills/dynamic-workflows/`                   |
+| the skill gate                                                                                    | the four tools refuse a script until the skill has been loaded in the session                                                         | `core/src/tool/handlers/workflow-skill-gate.ts`                       |
 
 The division of labor: the descriptions carry only what the model must know before it decides to call a tool (routing, the never-unsolicited rule of `SaveWorkflow`, the pointer to the skill); the skill carries the API and every rule. The facade text appears in the model's context exactly once, in the skill's §16.2, embedded verbatim from the same constant the compiler is fed, so the contract the model reads cannot drift from what typechecks. The four descriptions and their schemas total under 2 000 tokens, so sessions that never write a workflow do not pay for the facade on every request. Under the `onDemand` gray mode the first row is absent until the session's first `/workflow` (launch.md "On demand: activation"): the command, the skill and the gate are unchanged, only the moment the tools appear moves.
 
@@ -27,18 +27,18 @@ Two calls are exempt because they are not authoring: `CreateWorkflow` with the `
 
 The facade is one `.d.ts` string, `FACADE_DTS` in `dynamic-workflow/src/facade/dts.ts`, built by concatenating named segments. The snippet facade is a subset built from the same segments. Both are injected into the compiler under one file name, `workflow-facade.d.ts`; five modules decide "is this a facade call" by that file name, so a declaration anywhere else is an ordinary script declaration.
 
-| Segment | Declares | Full facade | Snippet facade |
-| --- | --- | --- | --- |
-| actor | `Node<T>`, `AgentPersona`, `Agent`, `agent()` | yes | no |
-| args | `args` | yes | yes (always `{}`) |
-| log | `log()` | yes | yes |
-| report | `report()` | yes | no |
-| artifact | `ArtifactRef`, the option and spec types, `artifact.*` | yes | no |
-| phase | `phase()` | yes | no |
-| world | `GrepMatch`, `GitStatus`, `GitCommit`, `files.*`, `git.*` | yes | yes |
-| world-run | `WorldRunResult`, `world.run` | yes | yes |
-| stream | `Channel<T>`, `channel()`, `future()` | yes | yes |
-| hole | `hole()` | yes | no |
+| Segment   | Declares                                                  | Full facade | Snippet facade    |
+| --------- | --------------------------------------------------------- | ----------- | ----------------- |
+| actor     | `Node<T>`, `AgentPersona`, `Agent`, `agent()`             | yes         | no                |
+| args      | `args`                                                    | yes         | yes (always `{}`) |
+| log       | `log()`                                                   | yes         | yes               |
+| report    | `report()`                                                | yes         | no                |
+| artifact  | `ArtifactRef`, the option and spec types, `artifact.*`    | yes         | no                |
+| phase     | `phase()`                                                 | yes         | no                |
+| world     | `GrepMatch`, `GitStatus`, `GitCommit`, `files.*`, `git.*` | yes         | yes               |
+| world-run | `WorldRunResult`, `world.run`                             | yes         | yes               |
+| stream    | `Channel<T>`, `channel()`, `future()`                     | yes         | yes               |
+| hole      | `hole()`                                                  | yes         | no                |
 
 The doc comments are the reference half of the contract: what a member does, what it returns, when it rejects or fails the run, its caps, and the compile-time rules on its arguments. Judgment (when to reach for a member, how to name things for the user, which idiom to write) is the skill's prose, stated once. The facade reaches the model only through the skill's §16.2, directly after that prose, so a comment that restates it is paid twice and is the copy that drifts. A test caps `FACADE_DTS` at 14 000 bytes.
 
@@ -52,10 +52,18 @@ The compiler runs `strict` against the ES2022 library alone: no DOM, no Node. `p
 
 ```ts
 declare interface Node<T> extends PromiseLike<T> {}
-declare class ModelRef { private constructor(); private readonly modelRef: never }
+declare class ModelRef {
+  private constructor();
+  private readonly modelRef: never;
+}
 declare function model(id: string): ModelRef;
-declare interface AgentPersona { system?: string; model?: ModelRef | string }
-declare interface Agent { ask<T = string>(instructions: string): Node<T> }
+declare interface AgentPersona {
+  system?: string;
+  model?: ModelRef | string;
+}
+declare interface Agent {
+  ask<T = string>(instructions: string): Node<T>;
+}
 declare function agent(name?: string, persona?: string | AgentPersona): Agent;
 ```
 
@@ -80,7 +88,9 @@ const MODELS = {
   light: model("GLM-5.3-Flash"),
   strong: model("GLM-5.3$high"),
 };
-interface Route { tier: "light" | "strong" }
+interface Route {
+  tier: "light" | "strong";
+}
 const route = await agent("分诊", { model: MODELS.light }).ask<Route>(`…${request}`);
 const answer = await agent("答复者", { model: MODELS[route.tier] }).ask(request);
 ```
@@ -105,22 +115,26 @@ A subagent's own model outranks everything else; the run's `subagent_model` is t
 
 These are journaled, read-only observations executed by the harness. A resumed run replays the recorded value rather than re-reading the world. Paths in and out are workspace-relative; the workspace is the world, so a workspace that is a subdirectory of its repository does not see changes outside it (`git.log` excepted, because commits are repository-wide). Every cap rejects the call rather than returning a partial view, and the rejection is catchable, so a script that wants a coarser fallback writes one.
 
-| Call | Returns | Cap |
-| --- | --- | --- |
-| `files.glob(pattern)` | workspace-relative paths, sorted lexicographically | 2000 files |
-| `files.read(path)` | UTF-8 text | size-capped |
-| `files.grep(pattern, glob?)` | `{path, line, text}` per matching line, ripgrep syntax | 2000 matches or 256KB, whichever first |
-| `git.changedFiles(base?)` | changed paths; with no base, modified against HEAD plus untracked | |
-| `git.diff(base?, path?)` | unified diff against base (default HEAD) | 512KB |
-| `git.status()` | `{branch?, clean, staged, unstaged, untracked}` | |
-| `git.log(count?)` | `{hash, subject, author, date}` newest first, default 20 | 100 commits |
+| Call                         | Returns                                                           | Cap                                    |
+| ---------------------------- | ----------------------------------------------------------------- | -------------------------------------- |
+| `files.glob(pattern)`        | workspace-relative paths, sorted lexicographically                | 2000 files                             |
+| `files.read(path)`           | UTF-8 text                                                        | size-capped                            |
+| `files.grep(pattern, glob?)` | `{path, line, text}` per matching line, ripgrep syntax            | 2000 matches or 256KB, whichever first |
+| `git.changedFiles(base?)`    | changed paths; with no base, modified against HEAD plus untracked |                                        |
+| `git.diff(base?, path?)`     | unified diff against base (default HEAD)                          | 512KB                                  |
+| `git.status()`               | `{branch?, clean, staged, unstaged, untracked}`                   |                                        |
+| `git.log(count?)`            | `{hash, subject, author, date}` newest first, default 20          | 100 commits                            |
 
 `git.*` is read-only by construction: the harness builds a fixed argument list for one allowlisted subcommand and never a shell string. A base must name a single ref. Outside a git repository, or with no `git` binary, every call rejects, so the idiom is `try`/`catch` with a `files.glob` fallback. There is no write: writing to the world is a subagent's job.
 
 ### Running commands: `world.run`
 
 ```ts
-declare interface WorldRunResult { exitCode: number; stdout: string; stderr: string }
+declare interface WorldRunResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
 declare const world: {
   run(cmd: string, args?: string[], opts?: { timeoutMs?: number }): Promise<WorldRunResult>;
 };
@@ -231,19 +245,19 @@ There is no `budget`: the harness enforces no token budget and no node cap, and 
 
 The analyzer adds its own diagnostics to TypeScript's. Each names something the script must fix before submission, because it cannot be recovered later. The full table and the reasoning are in `docs/analysis.md`, "Diagnostics"; the authoring-facing summary:
 
-| Code | Rule |
-| --- | --- |
-| 9001 | Facade callables appear only as the callee of a direct call, and a value carrying a site-producing member is never converted to a type that lacks it. |
-| 9002 | An `ask<T>` type is expressible as a JSON schema. |
-| 9003 | `world.run`'s command is a string literal. |
-| 9004 | `phase()`'s name is a non-empty literal and the call is its own statement. |
-| 9005 | Two `agent()` sites do not share a literal name. |
-| 9006 | An `agent("x")` inside a fan-out body has a fixed name for every element. |
-| 9007 | An artifact id is a non-empty literal of at most 64 characters from `[A-Za-z0-9_.-]`; one id belongs to one artifact kind; a `report` tag is a literal naming a preset the script declares. |
-| 9008 | A preset artifact is declared at the top level, not inside a loop, callback or conditional branch. A filled hole's body is not a callback: it runs where the hole stands, so a fill may declare a preset unless the hole itself sits in a loop, callback or branch. |
-| 9009 | At most one artifact id carries a literal `primary: true`. |
-| 9010 | A persona's `model` is a `ModelRef`, a string literal, or a union of string literals, and `model()` takes a non-empty string literal. |
-| 9011 | Every model name the script uses resolves in this host's model catalog (checked at launch, not by the compiler; see "Choosing a model per subagent"). |
+| Code | Rule                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 9001 | Facade callables appear only as the callee of a direct call, and a value carrying a site-producing member is never converted to a type that lacks it.                                                                                                                                                                                                                                  |
+| 9002 | An `ask<T>` type is expressible as a JSON schema.                                                                                                                                                                                                                                                                                                                                      |
+| 9003 | `world.run`'s command is a string literal.                                                                                                                                                                                                                                                                                                                                             |
+| 9004 | `phase()`'s name is a non-empty literal and the call is its own statement.                                                                                                                                                                                                                                                                                                             |
+| 9005 | Two `agent()` sites do not share a literal name.                                                                                                                                                                                                                                                                                                                                       |
+| 9006 | An `agent("x")` inside a fan-out body has a fixed name for every element.                                                                                                                                                                                                                                                                                                              |
+| 9007 | An artifact id is a non-empty literal of at most 64 characters from `[A-Za-z0-9_.-]`; one id belongs to one artifact kind; a `report` tag is a literal naming a preset the script declares.                                                                                                                                                                                            |
+| 9008 | A preset artifact is declared at the top level, not inside a loop, callback or conditional branch. A filled hole's body is not a callback: it runs where the hole stands, so a fill may declare a preset unless the hole itself sits in a loop, callback or branch.                                                                                                                    |
+| 9009 | At most one artifact id carries a literal `primary: true`.                                                                                                                                                                                                                                                                                                                             |
+| 9010 | A persona's `model` is a `ModelRef`, a string literal, or a union of string literals, and `model()` takes a non-empty string literal.                                                                                                                                                                                                                                                  |
+| 9011 | Every model name the script uses resolves in this host's model catalog (checked at launch, not by the compiler; see "Choosing a model per subagent").                                                                                                                                                                                                                                  |
 | 9012 | A `hole<T>()` names its type argument explicitly; its name is a non-empty literal of at most 128 characters, unique among the script's holes and phase markers; the call is awaited; it stands outside every fan-out callback (a `for...of` body is fine: it is sequential); its body, when present, is an inline function literal that references no binding declared after the hole. |
 
 9007, 9008 and 9009 come from `dynamic-workflow/src/analysis/artifacts.ts`. 9008 is separate because its certainty differs: re-declaring an identical spec inside a loop would be a harmless no-op at run time, so this rule can flag a script that would have run. The fix is free (move the declaration to the top). A named helper function that declares a preset and is called once is not flagged; arrow functions and function expressions are treated as callbacks, except the body of a filled hole, which is spliced in where the hole stands and runs once per reach like the statements around it. The rule looks straight through it to whatever encloses the hole; otherwise no fill could declare a dashboard for the stage it writes. 9009 has the same character: two ids flagged in mutually exclusive branches would run, but the run pane and the completion card lead with exactly one deliverable, and a script that cannot say which is not finished. Only a literal `true` counts; a computed flag is left to the run-time check.
@@ -254,10 +268,10 @@ The analysis collects the `world.run` command set (`collectWorldRunCommands`, de
 
 Both are built into the CLI, not a plugin, so the command, the composer's plus-menu entry, the skill and the ten workflow tools have the same lifetime.
 
-| Asset | Where it lives | How it ships |
-| --- | --- | --- |
-| `/workflow` | `bootstrap/src/builtin-workflow-command.ts`, expanded by `builtin-prompt-command.ts` next to `/init` | compiled into the CLI |
-| `dynamic-workflows` skill | `apps/zcode-cli/packages/bundled-skills/skills/dynamic-workflows/` | the **bundled skill pack**, below |
+| Asset                     | Where it lives                                                                                       | How it ships                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `/workflow`               | `bootstrap/src/builtin-workflow-command.ts`, expanded by `builtin-prompt-command.ts` next to `/init` | compiled into the CLI             |
+| `dynamic-workflows` skill | `apps/zcode-cli/packages/bundled-skills/skills/dynamic-workflows/`                                   | the **bundled skill pack**, below |
 
 The bundled skill pack (`bootstrap/src/app/bundled-skills.ts`) is a skill root with `source: "bundled"` and `scope: "system"`, injected next to the plugin skill roots wherever the CLI discovers skills (the runtime's skill port, `zcode skills list`, the protocol's skill catalog). It is not a plugin: it is absent from the plugin store, has no enable/disable switch, cannot be uninstalled, and is not listed on the Settings skills page or in the composer's `$` skill picker (the protocol's `skills/referenceCatalog` filters `bundled` skills out rather than widening its closed `scope` enum, which older clients validate strictly). The model still sees it in the session's skill listing and loads it with the `Skill` tool. It ranks after every user, project and plugin root, so a same-named skill from any of those wins.
 
@@ -294,50 +308,50 @@ The `Skill` tool loads this skill with a 200 000-byte cap (`WORKFLOW_SKILL_MAX_B
 
 What the skill teaches, section by section:
 
-| Section | The rule |
-| --- | --- |
-| The bar | A workflow exists to produce the deliverable a senior practitioner would hand over. When a shortcut and the expert's way disagree, take the expert's way. Depth is measured by what is at stake: trim the work when the task is small, trim the checking when a wrong claim costs little or a command has already decided. |
-| Is this the right tool | Routing is by request, not by task shape. When the user names workflow as the means, `CreateWorkflow` is mandatory and size decides only how many subagents; without that request the task goes to `Agent` (one delegation, or independent lookups in parallel) or is done inline, however multi-step it is. Only once a workflow has been requested does shape matter: results feeding results, a loop with a stopping condition, control flow on a typed result are what the script is good at. |
-| Subagent topology | Fresh subagent per item gives independent, parallel verdicts; one shared subagent gives consistent verdicts and serializes. Names are unique identities and the amend cache key. Personas stack on the harness contract, so write the role, not the rules. At every hand-off, an item moves on to the next stage as soon as it is done; the stage waits for all its items only where the next step needs every one. Reuse the same two subagents across loop rounds. No nesting. |
-| Choosing models | Only when the user asks for a model, with the name they used; never a model under another provider unless the user asked for that model, however light the work. When a lighter model would clearly fit, ask the user before the call and take their yes as the request. A fixed choice is the name inline; routing declares a `model()` table at the top and maps a typed key from the router to it. Names come from `ListModels`; every one is checked at launch. |
-| Fresh eyes | A separate context sees the gaps the author filled. Ask for failures, not approval. Give reviewers the same evidence. One deliverable, one mechanism: a plan gets a reviewer who reads the code, findings get a confirmer, prose gets a reader; two is the ceiling and needs a reason. The independent read is for prose nothing else checked; a report whose findings were each confirmed has had its eyes. Not a gate on submitting the script. |
-| Typed results | Type the ask when control flow branches on it. JSDoc becomes the field description. Keep results narrow; pass paths, not file contents. |
-| Getting the world in | `files.glob` and `git.changedFiles` are fan-out sources. Caps reject. `world.run` is the deterministic gate. Choose the gate from the repository's own checks, build it in two tiers, and let the strongest tier the request implies decide the exit, run at least once before the final return with the timeout it needs. |
-| Test the pieces | Fixed logic is verified in `EvalWorkflowSnippet` before submission; what passed pastes in verbatim. Run the deciding check once there to learn its output shape and its duration. |
+| Section                                                             | The rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The bar                                                             | A workflow exists to produce the deliverable a senior practitioner would hand over. When a shortcut and the expert's way disagree, take the expert's way. Depth is measured by what is at stake: trim the work when the task is small, trim the checking when a wrong claim costs little or a command has already decided.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Is this the right tool                                              | Routing is by request, not by task shape. When the user names workflow as the means, `CreateWorkflow` is mandatory and size decides only how many subagents; without that request the task goes to `Agent` (one delegation, or independent lookups in parallel) or is done inline, however multi-step it is. Only once a workflow has been requested does shape matter: results feeding results, a loop with a stopping condition, control flow on a typed result are what the script is good at.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Subagent topology                                                   | Fresh subagent per item gives independent, parallel verdicts; one shared subagent gives consistent verdicts and serializes. Names are unique identities and the amend cache key. Personas stack on the harness contract, so write the role, not the rules. At every hand-off, an item moves on to the next stage as soon as it is done; the stage waits for all its items only where the next step needs every one. Reuse the same two subagents across loop rounds. No nesting.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Choosing models                                                     | Only when the user asks for a model, with the name they used; never a model under another provider unless the user asked for that model, however light the work. When a lighter model would clearly fit, ask the user before the call and take their yes as the request. A fixed choice is the name inline; routing declares a `model()` table at the top and maps a typed key from the router to it. Names come from `ListModels`; every one is checked at launch.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Fresh eyes                                                          | A separate context sees the gaps the author filled. Ask for failures, not approval. Give reviewers the same evidence. One deliverable, one mechanism: a plan gets a reviewer who reads the code, findings get a confirmer, prose gets a reader; two is the ceiling and needs a reason. The independent read is for prose nothing else checked; a report whose findings were each confirmed has had its eyes. Not a gate on submitting the script.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Typed results                                                       | Type the ask when control flow branches on it. JSDoc becomes the field description. Keep results narrow; pass paths, not file contents.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Getting the world in                                                | `files.glob` and `git.changedFiles` are fan-out sources. Caps reject. `world.run` is the deterministic gate. Choose the gate from the repository's own checks, build it in two tiers, and let the strongest tier the request implies decide the exit, run at least once before the final return with the timeout it needs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Test the pieces                                                     | Fixed logic is verified in `EvalWorkflowSnippet` before submission; what passed pastes in verbatim. Run the deciding check once there to learn its output shape and its duration.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Pipeline by default; join only where the next step needs every item | A run with more than one stage is a pipeline: every stage works at the same time, and each item moves on the moment it is ready. Stages that map one to one are chained per item inside one fan-out, with one join at the end. A pool of shared workers, a producer still finding items, a feedback loop, or stages written as separate blocks use a `channel` between the stages and a `future` per stage. A join is written only where the next step needs every item (deduplication, a ranking on one scale, a synthesis) and carries a comment saying so. Parallelism comes from not awaiting yet. A shared calibrated subagent is a FIFO queue, not a barrier, so it is fed as items land. One rejection inside `Promise.all` sinks the join; catch per item or use `Promise.allSettled`. Results flow through plain variables, interpolation and destructuring so the analyzer can trace them. |
-| Named phases | Required; one marker at the head of each stage; every phase contains an ask or a run; names for the user. Never inside a concurrent fan-out callback: the engine keeps one current phase and stamps each instance at birth, so callbacks re-entering two markers out of order would stamp each other's steps and count every re-entry as a round. A per-item pipeline is one phase, named for what it does to each item. |
-| Write for the user | Seven things are read by the user: phase names, hole names, subagent names, `log` lines, artifact titles and markdown, the four report fields, escalated questions. Write each in the user's words and language, never in the machinery's. Method idioms in the skill are for the author, not words to translate literally. Findings are written by subagents, so asks carry the user's language too. |
-| Verify in proportion to what a wrong claim costs | Confirm the findings the user will act on as fact, and keep a finding that fails confirmation labelled `unconfirmed`. Three things look like verification and are waste: a confirmer on what `world.run` already decided; a confirmer on creative or subjective output, which gets at most one read; the same suite run by the hunter, the confirmer and the gate, when the gate runs it once and the asks say so. `verified` names the commands that decided the result; `notCovered` is for what could not be checked, never for a check that exists and was skipped. Report each finding as it lands. Return the report shape. Publish the deliverable. |
-| Anti-patterns | One row per mistake with the cost it produces, among them stacked verification mechanisms, a confirmer on a decided check, a stage that waits for the whole previous stage though it handles items one at a time, a join with no stated reason, and a wrong run left to finish or a stopped run left unamended. |
-| After you submit | Diagnostics mean nothing ran, and they name the file the script was saved to: edit that file and resubmit with `path`, never by pasting the script again. Do not poll. The three terminal states and what each asks of the model. Amend any run with `AmendWorkflow` by editing the run's script file (the notification and `GetWorkflowRun` name it) and passing `path`; keep tunable constants out of ask text. Repair a run while it is still going with the same call: the amend stops it and starts the revision, and the earlier it happens the less is paid twice. |
-| When a subagent escalates, or a hole is reached | Answer a question that has an answer with `ResolveWorkflowQuestion`; cancel and amend when the script is what is broken. A hole is answered in code: read the draft at the path the notification names, write the body's statements only, rehearse fixed logic in `EvalWorkflowSnippet`, call `FillWorkflowHole`, and on diagnostics edit the fill file it names and resubmit by `path` ("Holes"; launch.md). |
+| Named phases                                                        | Required; one marker at the head of each stage; every phase contains an ask or a run; names for the user. Never inside a concurrent fan-out callback: the engine keeps one current phase and stamps each instance at birth, so callbacks re-entering two markers out of order would stamp each other's steps and count every re-entry as a round. A per-item pipeline is one phase, named for what it does to each item.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Write for the user                                                  | Seven things are read by the user: phase names, hole names, subagent names, `log` lines, artifact titles and markdown, the four report fields, escalated questions. Write each in the user's words and language, never in the machinery's. Method idioms in the skill are for the author, not words to translate literally. Findings are written by subagents, so asks carry the user's language too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Verify in proportion to what a wrong claim costs                    | Confirm the findings the user will act on as fact, and keep a finding that fails confirmation labelled `unconfirmed`. Three things look like verification and are waste: a confirmer on what `world.run` already decided; a confirmer on creative or subjective output, which gets at most one read; the same suite run by the hunter, the confirmer and the gate, when the gate runs it once and the asks say so. `verified` names the commands that decided the result; `notCovered` is for what could not be checked, never for a check that exists and was skipped. Report each finding as it lands. Return the report shape. Publish the deliverable.                                                                                                                                                                                                                                           |
+| Anti-patterns                                                       | One row per mistake with the cost it produces, among them stacked verification mechanisms, a confirmer on a decided check, a stage that waits for the whole previous stage though it handles items one at a time, a join with no stated reason, and a wrong run left to finish or a stopped run left unamended.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| After you submit                                                    | Diagnostics mean nothing ran, and they name the file the script was saved to: edit that file and resubmit with `path`, never by pasting the script again. Do not poll. The three terminal states and what each asks of the model. Amend any run with `AmendWorkflow` by editing the run's script file (the notification and `GetWorkflowRun` name it) and passing `path`; keep tunable constants out of ask text. Repair a run while it is still going with the same call: the amend stops it and starts the revision, and the earlier it happens the less is paid twice.                                                                                                                                                                                                                                                                                                                            |
+| When a subagent escalates, or a hole is reached                     | Answer a question that has an answer with `ResolveWorkflowQuestion`; cancel and amend when the script is what is broken. A hole is answered in code: read the draft at the path the notification names, write the body's statements only, rehearse fixed logic in `EvalWorkflowSnippet`, call `FillWorkflowHole`, and on diagnostics edit the fill file it names and resubmit by `path` ("Holes"; launch.md).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 The "Write for the user" table pairs an English and a Chinese example on every row so the rule reads as one principle rather than a ban list:
 
-| Read by the user | Write | Not |
-| --- | --- | --- |
-| Phase name | Check that the tests still pass / 确认测试仍然通过 | Gate: test verification / 执行测试验证任务 |
-| Subagent name | Code reviewer / 代码评审员 | reviewer_2 / 节点3 |
-| Hole name | Decide the split / 决定分组 | hole1 / 待定 |
-| Subagent name | Independent reviewer / 独立评审员 | cold-reviewer / 冷眼评审 |
-| `log` line | Reviewing 12 changed files / 正在检查 12 个改动的文件 | Fan-out sized: n=12 / 扇出阶段初始化完成 |
-| Artifact title | Review report / 评审报告 | report-artifact-v1 / 产物输出 |
+| Read by the user | Write                                                 | Not                                        |
+| ---------------- | ----------------------------------------------------- | ------------------------------------------ |
+| Phase name       | Check that the tests still pass / 确认测试仍然通过    | Gate: test verification / 执行测试验证任务 |
+| Subagent name    | Code reviewer / 代码评审员                            | reviewer_2 / 节点3                         |
+| Hole name        | Decide the split / 决定分组                           | hole1 / 待定                               |
+| Subagent name    | Independent reviewer / 独立评审员                     | cold-reviewer / 冷眼评审                   |
+| `log` line       | Reviewing 12 changed files / 正在检查 12 个改动的文件 | Fan-out sized: n=12 / 扇出阶段初始化完成   |
+| Artifact title   | Review report / 评审报告                              | report-artifact-v1 / 产物输出              |
 
 The report shape the skill hands the model to copy, which compiles as-is:
 
 ```ts
 interface Finding {
-  where: string;                          // "src/a.ts:42"
-  what: string;                           // one sentence
-  evidence: string;                       // the lines read, or the command and its output
+  where: string; // "src/a.ts:42"
+  what: string; // one sentence
+  evidence: string; // the lines read, or the command and its output
   status: "verified" | "unconfirmed";
   severity: "low" | "medium" | "high";
 }
 interface WorkflowReport {
-  conclusion: string;                     // two or three sentences answering the request
+  conclusion: string; // two or three sentences answering the request
   findings: Finding[];
-  verified: string[];                     // what the run checked and how
-  notCovered: string[];                   // what it did not look at, and why
+  verified: string[]; // what the run checked and how
+  notCovered: string[]; // what it did not look at, and why
 }
 ```
 
@@ -418,9 +432,18 @@ Only the script publishes. Subagents have no artifact tool; a file a subagent wr
 ### Two families
 
 ```ts
-declare interface ArtifactRef { id: string; version: number }
-declare interface ArtifactOptions { title?: string; description?: string; primary?: boolean }
-declare interface ArtifactFileOptions extends ArtifactOptions { contentType?: string }
+declare interface ArtifactRef {
+  id: string;
+  version: number;
+}
+declare interface ArtifactOptions {
+  title?: string;
+  description?: string;
+  primary?: boolean;
+}
+declare interface ArtifactFileOptions extends ArtifactOptions {
+  contentType?: string;
+}
 declare const artifact: {
   file(id: string, path: string, opts?: ArtifactFileOptions): Promise<ArtifactRef>;
   markdown(id: string, content: string, opts?: ArtifactOptions): Promise<ArtifactRef>;
@@ -431,10 +454,10 @@ declare const artifact: {
 };
 ```
 
-| Family | Members | Nature | Failure channel |
-| --- | --- | --- | --- |
-| content | `file`, `markdown` | an effect: async, goes through the driver, copies bytes into the store, resolves to an `ArtifactRef` | rejects catchably; the node is recorded as failed |
-| preset | `chart`, `table`, `metrics`, `board` | a declaration: synchronous, returns nothing, never touches a file; says how items tagged with its id are drawn | fails the whole run; a void return has no rejection channel |
+| Family  | Members                              | Nature                                                                                                         | Failure channel                                             |
+| ------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| content | `file`, `markdown`                   | an effect: async, goes through the driver, copies bytes into the store, resolves to an `ArtifactRef`           | rejects catchably; the node is recorded as failed           |
+| preset  | `chart`, `table`, `metrics`, `board` | a declaration: synchronous, returns nothing, never touches a file; says how items tagged with its id are drawn | fails the whole run; a void return has no rejection channel |
 
 The asymmetry is the design. A content publish can fail for reasons the script can act on (the file is missing, the subagent wrote it somewhere else), so `try { await artifact.file("book", "out/book.pdf") } catch { …ask a subagent to write it… }` is the intended idiom. A preset is declared once at the top and fed by `report(item, "<id>")`.
 
@@ -450,15 +473,15 @@ A `report` tag is a compile-time literal naming a preset declared somewhere in t
 
 Caps, in `dynamic-workflow/src/facade/artifact-caps.ts`:
 
-| Cap | Value |
-| --- | --- |
-| ids per run | 32 |
-| versions per id | 16 |
-| `artifact.file` bytes | 20 MiB |
-| `artifact.markdown` bytes | 256 KB |
-| title | 120 characters |
-| description | 500 characters |
-| preset spec, canonical JSON | 8 KB |
+| Cap                         | Value          |
+| --------------------------- | -------------- |
+| ids per run                 | 32             |
+| versions per id             | 16             |
+| `artifact.file` bytes       | 20 MiB         |
+| `artifact.markdown` bytes   | 256 KB         |
+| title                       | 120 characters |
+| description                 | 500 characters |
+| preset spec, canonical JSON | 8 KB           |
 
 ### Publishing content
 
@@ -470,35 +493,48 @@ The content type comes from the extension (`pdf html htm md markdown txt csv jso
 
 What can reject a content publish, all catchable and all recorded as a failed node:
 
-| Code | Raised by | When |
-| --- | --- | --- |
-| `ArtifactSourceMissing` | driver | the path does not exist or is not a regular file |
-| `ArtifactPathOutsideWorkspace` | driver | the resolved path leaves the workspace |
-| `ArtifactTooLarge` | driver | over the file, markdown, title or description cap |
-| `ArtifactStoreUnavailable` | driver or engine | the host has no artifact store, no binary write, or no session scope |
-| `ArtifactVersionCapExceeded` | engine | the id already has 16 versions |
-| `ArtifactKindMismatch` | engine | the id was published under another kind |
-| `ArtifactCapExceeded` | engine | a 33rd id |
-| `ArtifactPrimaryConflict` | engine | `primary: true` on an id while another id is already primary |
-| `DriverError` | either | a malformed argument (including a non-boolean `primary`), or the store write itself failed |
+| Code                           | Raised by        | When                                                                                       |
+| ------------------------------ | ---------------- | ------------------------------------------------------------------------------------------ |
+| `ArtifactSourceMissing`        | driver           | the path does not exist or is not a regular file                                           |
+| `ArtifactPathOutsideWorkspace` | driver           | the resolved path leaves the workspace                                                     |
+| `ArtifactTooLarge`             | driver           | over the file, markdown, title or description cap                                          |
+| `ArtifactStoreUnavailable`     | driver or engine | the host has no artifact store, no binary write, or no session scope                       |
+| `ArtifactVersionCapExceeded`   | engine           | the id already has 16 versions                                                             |
+| `ArtifactKindMismatch`         | engine           | the id was published under another kind                                                    |
+| `ArtifactCapExceeded`          | engine           | a 33rd id                                                                                  |
+| `ArtifactPrimaryConflict`      | engine           | `primary: true` on an id while another id is already primary                               |
+| `DriverError`                  | either           | a malformed argument (including a non-boolean `primary`), or the store write itself failed |
 
 A missing store is a named failure the script sees, never a silent fallback to writing the workspace or publishing an empty artifact.
 
 ### Declaring a dashboard
 
 ```ts
-declare interface ArtifactField { field: string; label?: string; unit?: string }
-declare interface ChartSpec extends ArtifactOptions {
-  type?: "line" | "bar" | "scatter";   // default "line"
-  x: ArtifactField;
-  y: ArtifactField | ArtifactField[];   // several = several series
-  scale?: "linear" | "log";
-  baseline?: ArtifactField;             // a horizontal rule from the first item that has it
+declare interface ArtifactField {
+  field: string;
+  label?: string;
+  unit?: string;
 }
-declare interface TableSpec extends ArtifactOptions { columns: ArtifactField[]; key?: string }
-declare interface MetricsSpec extends ArtifactOptions { metrics: ArtifactField[] }
+declare interface ChartSpec extends ArtifactOptions {
+  type?: "line" | "bar" | "scatter"; // default "line"
+  x: ArtifactField;
+  y: ArtifactField | ArtifactField[]; // several = several series
+  scale?: "linear" | "log";
+  baseline?: ArtifactField; // a horizontal rule from the first item that has it
+}
+declare interface TableSpec extends ArtifactOptions {
+  columns: ArtifactField[];
+  key?: string;
+}
+declare interface MetricsSpec extends ArtifactOptions {
+  metrics: ArtifactField[];
+}
 declare interface BoardSpec extends ArtifactOptions {
-  key: string; status: string; columns: string[]; cardTitle?: string; detail?: ArtifactField[];
+  key: string;
+  status: string;
+  columns: string[];
+  cardTitle?: string;
+  detail?: ArtifactField[];
 }
 ```
 
@@ -517,12 +553,15 @@ interface ArtifactVersionRecord {
   id: string;
   kind: "file" | "markdown" | "chart" | "table" | "metrics" | "board";
   version: number;
-  title?: string; description?: string;
-  contentType?: string; bytes?: number; uri?: string;   // content only
-  sourcePath?: string;                                   // file only
-  spec?: unknown;                                        // preset only
+  title?: string;
+  description?: string;
+  contentType?: string;
+  bytes?: number;
+  uri?: string; // content only
+  sourcePath?: string; // file only
+  spec?: unknown; // preset only
   publishedAt?: number;
-  primary?: true;                                        // stamped by the engine; sticky per id
+  primary?: true; // stamped by the engine; sticky per id
 }
 ```
 
@@ -549,14 +588,14 @@ Every list is ordered **primary first, then publish order**. The order is fixed 
 
 Where a click on an HTML artifact lands, from any of those surfaces:
 
-| The click | Where it lands |
-| --- | --- |
-| local workspace, a shell with the browser, a source path in hand or in the journal | the browser tab, on the workspace file's `file://` URL |
-| the same artifact clicked again | that same browser tab, focused and reloaded, never a second tab |
-| a remote workspace or a remote session | the full-size tab, whose HTML card shows the local-only note |
-| the phone remote-control shell | the full-size tab; that shell has no browser |
-| the journal query fails, or the record has no source path | the full-size tab |
-| the summary carries no `contentType` (an old CLI that emitted none) | the full-size tab |
+| The click                                                                          | Where it lands                                                  |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| local workspace, a shell with the browser, a source path in hand or in the journal | the browser tab, on the workspace file's `file://` URL          |
+| the same artifact clicked again                                                    | that same browser tab, focused and reloaded, never a second tab |
+| a remote workspace or a remote session                                             | the full-size tab, whose HTML card shows the local-only note    |
+| the phone remote-control shell                                                     | the full-size tab; that shell has no browser                    |
+| the journal query fails, or the record has no source path                          | the full-size tab                                               |
+| the summary carries no `contentType` (an old CLI that emitted none)                | the full-size tab                                               |
 
 On the model side, the completion notification's `<artifacts count shown>` section lists one line per artifact, `- {id} ({kind}, primary, v{version}, {contentType}, {bytes} bytes): {title}` (`primary` appears only on the primary; presets show `{n} items` instead of bytes), at most eight lines after the `<reports>` section; `GetWorkflowRun` lists up to 32 the same way. Neither gives the model a URI: the model cannot read the store, and content is reached through `GetWorkflowRun` or by a subagent reading the workspace path.
 
@@ -568,11 +607,11 @@ The skill's "Deliver artifacts" section carries two habits; the facade comment o
 
 `EvalWorkflowSnippet` is the test bench for authoring. It compiles and runs a small TypeScript snippet synchronously against the same compiler, lowering, sandbox and world-read execution path a real run uses, and returns the result in the tool call. It exists because testing fixed logic (a parser, a glob pattern, a gate predicate) in plain Node has the wrong fidelity: `files.glob` returns workspace-relative sorted paths, caps reject, `GrepMatch` has a shape, and the compiler options are the run's. A snippet that passes pastes into a workflow verbatim.
 
-| Input | Meaning |
-| --- | --- |
-| `code` | the snippet, written against the snippet facade |
-| `path` | or: a file holding the snippet, read whole (relative to the working directory or absolute); exactly one of `code` and `path` |
-| `timeoutMs` | wall clock for the whole snippet; default 60 000, accepted between 1 000 and 600 000 |
+| Input       | Meaning                                                                                                                      |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `code`      | the snippet, written against the snippet facade                                                                              |
+| `path`      | or: a file holding the snippet, read whole (relative to the working directory or absolute); exactly one of `code` and `path` |
+| `timeoutMs` | wall clock for the whole snippet; default 60 000, accepted between 1 000 and 600 000                                         |
 
 The snippet facade is the args, log, world and world-run segments. `agent()`, `report()`, `artifact.*` and `phase()` are absent, so a snippet that uses one fails to compile with an ordinary "cannot find name" diagnostic; asks cannot be rehearsed, only the pieces can. The tool's description says what it is for and points at the skill; the facade subset and the snippet rules are the skill's §16.6, and the call is refused until the skill has been loaded in the session (see "The skill gate"). The pipeline is the production one: one TypeScript program feeds diagnostics, the site table and lowering; `world.run` commands are collected and a non-literal command is the same diagnostic 9003; the lowered code runs in the sandbox harness with an in-memory journal, a random run id, the production `executeWorldRead` (real file system, real git, production caps) and a driver whose ask methods throw, as defence against a wiring error that could never reach them.
 

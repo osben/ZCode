@@ -21,13 +21,13 @@ model
 
 ## 2. Clarifications and fixed boundaries
 
-| Question | User confirmation | Fixed boundary |
-| --- | --- | --- |
-| CLI self-launch or connect to an external CDP | recommended option | P0 is a CLI managed launch; attach-cdp later |
-| Start by default? | recommended option | must be explicit `--browser-use=headless` |
-| Browser profile | recommended option | a temporary profile per CLI process; no login state restored across processes |
-| Entry points in effect | recommended option | `--prompt`, `--target` and TUI; the ZCode app-server is excluded |
-| Browser distribution | recommended option | P0 downloads/bundles no browser; an explicit path wins, then installed Chromium |
+| Question                                      | User confirmation  | Fixed boundary                                                                  |
+| --------------------------------------------- | ------------------ | ------------------------------------------------------------------------------- |
+| CLI self-launch or connect to an external CDP | recommended option | P0 is a CLI managed launch; attach-cdp later                                    |
+| Start by default?                             | recommended option | must be explicit `--browser-use=headless`                                       |
+| Browser profile                               | recommended option | a temporary profile per CLI process; no login state restored across processes   |
+| Entry points in effect                        | recommended option | `--prompt`, `--target` and TUI; the ZCode app-server is excluded                |
+| Browser distribution                          | recommended option | P0 downloads/bundles no browser; an explicit path wins, then installed Chromium |
 
 ## 3. CLI contract
 
@@ -81,13 +81,13 @@ P0 must hide unfinished capabilities with `apiSupportOverrides`: user history/cl
 
 The state owner is the CLI adapter, not the Agent core, the MCP child, the relay or desktop main:
 
-| State | Owner | Lifetime |
-| --- | --- | --- |
-| Chromium process | managed CDP adapter | the current CLI/TUI app runtime |
-| BrowserContext | managed CDP adapter | one isolated context per ZCode session |
-| target/tab registry | managed CDP adapter | `workspaceKey + sessionId` scope |
-| request/cancel ledger | managed CDP adapter | request/turn, controlled by AbortSignal |
-| Browser/Tab JS binding | Node REPL kernel | kernel generation; backend generation is checked separately |
+| State                  | Owner               | Lifetime                                                    |
+| ---------------------- | ------------------- | ----------------------------------------------------------- |
+| Chromium process       | managed CDP adapter | the current CLI/TUI app runtime                             |
+| BrowserContext         | managed CDP adapter | one isolated context per ZCode session                      |
+| target/tab registry    | managed CDP adapter | `workspaceKey + sessionId` scope                            |
+| request/cancel ledger  | managed CDP adapter | request/turn, controlled by AbortSignal                     |
+| Browser/Tab JS binding | Node REPL kernel    | kernel generation; backend generation is checked separately |
 
 Behavior:
 
@@ -124,35 +124,35 @@ A CLI local session without `workspaceIdentity` keeps using the `workspacePath` 
 
 Main domains: permission/tool/MCP, architecture/process boundary, desktop lifecycle, CLI packaging.
 
-| Candidate | Combination | Class | Reason |
-| --- | --- | --- | --- |
-| HCDP-001 | prompt + explicit headless + real Chromium | accepted | main Linux automation path |
-| HCDP-002 | TUI multi-session + headless | accepted | high risk for context/tab isolation |
-| HCDP-003 | app-server + headless | pruned/rejected | violates shared-host ownership |
-| HCDP-004 | plugin disabled + headless | accepted | must fail closed and start no process |
-| HCDP-005 | missing executable | accepted | no leftover process or fake descriptor |
-| HCDP-006 | external attach CDP | pruned | P0 does not own an external browser lifecycle |
-| HCDP-007 | persistent profile | pruned | P0 prefers CI repeatability |
-| HCDP-008 | Linux x real CDP x no DISPLAY | accepted | user's target environment |
-| HCDP-009 | macOS/Windows path resolution | accepted pairwise | cross-platform resolution; real-machine risk listed separately |
-| HCDP-010 | mobile/web remote starting its own headless | pruned | keeps depending on the existing shared host |
+| Candidate | Combination                                 | Class             | Reason                                                         |
+| --------- | ------------------------------------------- | ----------------- | -------------------------------------------------------------- |
+| HCDP-001  | prompt + explicit headless + real Chromium  | accepted          | main Linux automation path                                     |
+| HCDP-002  | TUI multi-session + headless                | accepted          | high risk for context/tab isolation                            |
+| HCDP-003  | app-server + headless                       | pruned/rejected   | violates shared-host ownership                                 |
+| HCDP-004  | plugin disabled + headless                  | accepted          | must fail closed and start no process                          |
+| HCDP-005  | missing executable                          | accepted          | no leftover process or fake descriptor                         |
+| HCDP-006  | external attach CDP                         | pruned            | P0 does not own an external browser lifecycle                  |
+| HCDP-007  | persistent profile                          | pruned            | P0 prefers CI repeatability                                    |
+| HCDP-008  | Linux x real CDP x no DISPLAY               | accepted          | user's target environment                                      |
+| HCDP-009  | macOS/Windows path resolution               | accepted pairwise | cross-platform resolution; real-machine risk listed separately |
+| HCDP-010  | mobile/web remote starting its own headless | pruned            | keeps depending on the existing shared host                    |
 
 ## 9. Acceptance cases
 
-| Case | Setup / action | Assertions | Evidence |
-| --- | --- | --- | --- |
-| HCDP-001 | explicit headless, first list | launches once; returns one real `cdp` descriptor | adapter integration + real Chrome |
-| HCDP-002 | plugin disabled | no broker, no Chromium process, node_repl usable | bootstrap/CLI integration |
-| HCDP-003 | executable missing/not executable | CLI fails explicitly; no session, no zombie, no descriptor | CLI unit + process probe |
-| HCDP-004 | real model script calls Browser Use | MCP js -> browser-client -> broker -> port -> Chromium holds end to end | CLI E2E artifact |
-| HCDP-005 | local HTTP fixture | navigate, DOM, locator, click/fill, screenshot correct | real Chromium E2E |
-| HCDP-006 | no DISPLAY | native headless succeeds without launching Xvfb | Linux container E2E |
-| HCDP-007 | turn end / session close | turn keeps tabs; close cleans context/process/temp profile | integration + process evidence |
-| HCDP-008 | cancel/timeout | no late cross-request mixing; side-effect uncertainty correct | adapter unit/integration |
-| HCDP-009 | browser crash/restart | generation increments; old binding stale | adapter integration |
-| HCDP-010 | unsupported API | members hidden from object graph and docs | manifest contract |
-| HCDP-011 | URL scheme | http/https/about:blank allowed, other schemes rejected | runtime unit + real smoke |
-| HCDP-012 | Node bundle / SEA | injected asset resolvable, startup smoke succeeds | build contract + startup smoke |
+| Case     | Setup / action                      | Assertions                                                                                                      | Evidence                            |
+| -------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| HCDP-001 | explicit headless, first list       | launches once; returns one real `cdp` descriptor                                                                | adapter integration + real Chrome   |
+| HCDP-002 | plugin disabled                     | no broker, no Chromium process, node_repl usable                                                                | bootstrap/CLI integration           |
+| HCDP-003 | executable missing/not executable   | CLI fails explicitly; no session, no zombie, no descriptor                                                      | CLI unit + process probe            |
+| HCDP-004 | real model script calls Browser Use | MCP js -> browser-client -> broker -> port -> Chromium holds end to end                                         | CLI E2E artifact                    |
+| HCDP-005 | local HTTP fixture                  | navigate, DOM, locator, click/fill, screenshot correct                                                          | real Chromium E2E                   |
+| HCDP-006 | no DISPLAY                          | native headless succeeds without launching Xvfb                                                                 | Linux container E2E                 |
+| HCDP-007 | turn end / session close            | turn keeps tabs; close cleans context/process/temp profile                                                      | integration + process evidence      |
+| HCDP-008 | cancel/timeout                      | no late cross-request mixing; side-effect uncertainty correct                                                   | adapter unit/integration            |
+| HCDP-009 | browser crash/restart               | generation increments; old binding stale                                                                        | adapter integration                 |
+| HCDP-010 | unsupported API                     | members hidden from object graph and docs                                                                       | manifest contract                   |
+| HCDP-011 | URL scheme                          | http/https/about:blank allowed, other schemes rejected                                                          | runtime unit + real smoke           |
+| HCDP-012 | Node bundle / SEA                   | injected asset resolvable, startup smoke succeeds                                                               | build contract + startup smoke      |
 | HCDP-013 | context/browser close never settles | every close has a deadline; a Browser failure does not block Execution/MCP; the CLI finally exits within bounds | adapter + session/CLI focused tests |
 
 The real E2E must go through `mcp__node_repl__js` and the plugin browser-client; calling the adapter directly proves only the adapter, not ZCode Browser Use.

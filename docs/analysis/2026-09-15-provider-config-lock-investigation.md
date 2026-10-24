@@ -12,13 +12,13 @@ Conclusion: multiple processes poll the same personal Provider configuration und
 
 ### 1.1 Involved files and state
 
-| Object                                       | Purpose                                                                       | Relation to this issue                                                                                                                     |
-| -------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `provider_config.json`                       | Saves personal Provider, model rules, and other configuration                 | File that failed to read                                                                                                                   |
-| `provider_config.json.lock/owner-*.json`     | Cross-process exclusive lock via directory and owner file                     | Even pure polling creates, writes, and deletes this lock metadata                                                                          |
-| In-memory Provider Registry                  | Provides available Providers for model settings, model selection, and runtime | May receive empty personal configuration and keep the degraded state after the fault recovers                                              |
-| `setting.json` and its independent file lock | Saves app preferences, last workspace, etc.                                   | Repeated saving is a side finding; it does not occupy the Provider file's lock                                                             |
-| SQLite session library                       | Saves session and related data                                                | Different lock mechanism; no evidence that a migration failure triggered this fault                                                        |
+| Object                                       | Purpose                                                                       | Relation to this issue                                                                        |
+| -------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `provider_config.json`                       | Saves personal Provider, model rules, and other configuration                 | File that failed to read                                                                      |
+| `provider_config.json.lock/owner-*.json`     | Cross-process exclusive lock via directory and owner file                     | Even pure polling creates, writes, and deletes this lock metadata                             |
+| In-memory Provider Registry                  | Provides available Providers for model settings, model selection, and runtime | May receive empty personal configuration and keep the degraded state after the fault recovers |
+| `setting.json` and its independent file lock | Saves app preferences, last workspace, etc.                                   | Repeated saving is a side finding; it does not occupy the Provider file's lock                |
+| SQLite session library                       | Saves session and related data                                                | Different lock mechanism; no evidence that a migration failure triggered this fault           |
 
 ### 1.2 Chain
 
@@ -55,19 +55,19 @@ A new poll is scheduled only after the previous one completes, so the 1-second i
 
 Times are Host message inner time. The outer time in Desktop logs is Main's receive/forward time and may lag.
 
-| Time                         | Log fact                                                                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 15:44                        | Loaded normally after upgrading to 3.12.1; Host Registry's `providerCount=8`                                                    |
-| 18:07:56–58                  | Host 30660 loaded config normally; four Agents completed database migration checks                                              |
-| 18:38:10–19:08:02            | First round: 11 poll alerts, 16 read degradations, 26 lock timeouts and 1 `mkdir EPERM`                                         |
-| 19:10:10                     | New Host 31780 loaded normally, recovering to 8 Providers; personal configuration content version same as before                 |
-| 19:23:51–19:27:06            | Second round: 1 poll alert, 5 read degradations, all lock timeouts                                                              |
-| 19:28:59                     | New Host 25264 loaded normally, 8 Providers; content version same                                                               |
-| 20:24:48–20:28:50            | Third round: 4 poll alerts, 4 read degradations, all lock timeouts                                                              |
-| 20:34:49, 20:35:03, 20:35:12 | Same task accepted three short inputs; all failed in model creation with `provider_not_found`                                   |
-| 21:40, 22:11                 | Startups loaded 8 Providers normally; content version same                                                                      |
-| 22:13–22:14                  | 1 delete Provider and 2 save Provider Overlay RPCs succeeded                                                                    |
-| 22:15                        | Host startup loaded 7 Providers; content version changed                                                                        |
+| Time                         | Log fact                                                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 15:44                        | Loaded normally after upgrading to 3.12.1; Host Registry's `providerCount=8`                                     |
+| 18:07:56–58                  | Host 30660 loaded config normally; four Agents completed database migration checks                               |
+| 18:38:10–19:08:02            | First round: 11 poll alerts, 16 read degradations, 26 lock timeouts and 1 `mkdir EPERM`                          |
+| 19:10:10                     | New Host 31780 loaded normally, recovering to 8 Providers; personal configuration content version same as before |
+| 19:23:51–19:27:06            | Second round: 1 poll alert, 5 read degradations, all lock timeouts                                               |
+| 19:28:59                     | New Host 25264 loaded normally, 8 Providers; content version same                                                |
+| 20:24:48–20:28:50            | Third round: 4 poll alerts, 4 read degradations, all lock timeouts                                               |
+| 20:34:49, 20:35:03, 20:35:12 | Same task accepted three short inputs; all failed in model creation with `provider_not_found`                    |
+| 21:40, 22:11                 | Startups loaded 8 Providers normally; content version same                                                       |
+| 22:13–22:14                  | 1 delete Provider and 2 save Provider Overlay RPCs succeeded                                                     |
+| 22:15                        | Host startup loaded 7 Providers; content version changed                                                         |
 
 Daily total: 16 poll alerts, 25 read degradations, i.e. 40 lock timeouts and 1 lock directory creation failure. The count only compares Host `Provider Registry ready` events, not `providerCount` from other layers.
 

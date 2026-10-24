@@ -14,18 +14,18 @@ the main agent ends naturally, a background reply or completion notification kee
 agent. Ticket lifecycle is managed separately from the whole-task lifecycle, and the main execution
 loop reuses the ordinary agent mechanism.
 
-| Confirmed item     | Target behavior                                                                                           |
-| ------------------ | --------------------------------------------------------------------------------------------------------- |
-| Background ability | Supports the existing explicit background start and the ordinary agent move-to-background path, not only lifting the tool-visibility restriction |
-| Messages           | SendMessage supports delivery to running agents and resumption of terminal agents; RespondToCoordinator keeps the existing reply queue |
-| Main turn ends     | The whole task is not complete while associated background work, pending replies/notifications, or a continuation waiting for a new ticket exists |
+| Confirmed item     | Target behavior                                                                                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Background ability | Supports the existing explicit background start and the ordinary agent move-to-background path, not only lifting the tool-visibility restriction           |
+| Messages           | SendMessage supports delivery to running agents and resumption of terminal agents; RespondToCoordinator keeps the existing reply queue                     |
+| Main turn ends     | The whole task is not complete while associated background work, pending replies/notifications, or a continuation waiting for a new ticket exists          |
 | User takeover      | A real user message accepted by the authoritative entry takes over the whole task; send failure, model-only change and approval responses do not take over |
-| Running subagent   | On takeover the current subagent turn finishes with its original model; later wake-ups and resumptions use the user's choice |
-| Ticket expiry      | Local Bash may finish and save its result; model continuation waits for a new ticket and does not rerun completed tools |
-| Chat stop          | Keeps ordinary agent stop scope and notification rules, no idle-specific difference                        |
-| Task-card cancel   | Keeps the existing cancel terminal semantics; late associated background events must not re-dispatch idle execution |
-| Restart            | Does not restore background processes, pending wake-up notifications or temporary idle execution state; no new recovery queue |
-| Migration          | No config or database migration; reuses existing fields, records and formats                               |
+| Running subagent   | On takeover the current subagent turn finishes with its original model; later wake-ups and resumptions use the user's choice                               |
+| Ticket expiry      | Local Bash may finish and save its result; model continuation waits for a new ticket and does not rerun completed tools                                    |
+| Chat stop          | Keeps ordinary agent stop scope and notification rules, no idle-specific difference                                                                        |
+| Task-card cancel   | Keeps the existing cancel terminal semantics; late associated background events must not re-dispatch idle execution                                        |
+| Restart            | Does not restore background processes, pending wake-up notifications or temporary idle execution state; no new recovery queue                              |
+| Migration          | No config or database migration; reuses existing fields, records and formats                                                                               |
 
 Existing capability boundaries are not widened: Workflow, recursive OffPeakCreate/CronCreate, nested
 subagents, background Bash inside a child runtime. Idle automatic project-memory extraction stays
@@ -34,14 +34,14 @@ the background work not restored here are handled separately.
 
 ## 2. Selection responsibilities and storage
 
-| Concept                      | Single responsibility                                                         | Owner / storage                                                                                                          |
-| ---------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Configured Default           | Initial user model preference for new CLI sessions                            | Personal Provider config `config.defaultModelSelection`; default `~/.zcode/v2/provider_config.json`, existing path override allowed |
-| `cliDefaultSelection`        | Default for user input without an explicit selection in the current CLI/TUI session | bootstrap session layer memory; restored from the per-session ordinary user selection record                        |
-| App Composer Selection       | Selection for the next App user message                                       | existing renderer draft and localStorage; no CLI state copy                                                              |
-| `sessionModelSelection`      | Selection used by later execution, background wake-ups and Goal auto-continuation | CLI Runtime; an idle selection is valid only within this run lifecycle                                               |
-| Submission Selection         | Model selection fixed for one accepted input                                  | existing canonical intent; the mutable default is not re-read while queued                                               |
-| Active Model                 | Model instance actually used by the current turn                              | the current execution turn; ordinary selection updates do not change other running turns                                |
+| Concept                      | Single responsibility                                                                 | Owner / storage                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Configured Default           | Initial user model preference for new CLI sessions                                    | Personal Provider config `config.defaultModelSelection`; default `~/.zcode/v2/provider_config.json`, existing path override allowed |
+| `cliDefaultSelection`        | Default for user input without an explicit selection in the current CLI/TUI session   | bootstrap session layer memory; restored from the per-session ordinary user selection record                                        |
+| App Composer Selection       | Selection for the next App user message                                               | existing renderer draft and localStorage; no CLI state copy                                                                         |
+| `sessionModelSelection`      | Selection used by later execution, background wake-ups and Goal auto-continuation     | CLI Runtime; an idle selection is valid only within this run lifecycle                                                              |
+| Submission Selection         | Model selection fixed for one accepted input                                          | existing canonical intent; the mutable default is not re-read while queued                                                          |
+| Active Model                 | Model instance actually used by the current turn                                      | the current execution turn; ordinary selection updates do not change other running turns                                            |
 | `highspeedFallbackSelection` | Ordinary model selection used in the fallback scenarios defined by the highspeed card | execution snapshot fixed at highspeed turn start; specific to the highspeed card, not an idle re-ticket or generic downgrade config |
 
 The existing SQLite `session_entry` record `runtime/model_selection` keeps storing the ordinary user
@@ -97,13 +97,13 @@ on unsent drafts; a late idle-end callback must not overwrite the Session Select
 
 ## 3. Idle lifecycle and owners
 
-| Fact                                       | Owner                                          | Forbidden duplicate state                                |
-| ------------------------------------------ | ---------------------------------------------- | -------------------------------------------------------- |
-| Main turn, background tasks, commands, notifications | CLI RuntimeTaskRegistry, existing command queue | Host keeping another accepted queue or background count table |
-| Idle work ownership, takeover, local lifecycle | independent CLI-side lifecycle coordinator using generic execution facts | idle-specific branches scattered through every main-loop step |
-| Apply, re-ticket, settle                   | existing OffPeakTaskService                    | tool handlers requesting/renewing tickets themselves     |
-| Persistent task-card state                 | existing service and Repo, consuming explicit events | inferring whole-task completion from first-turn terminal or UI loading |
-| Main-turn Active Model                     | the current turn                               | deriving the running model from the mutable Session Selection |
+| Fact                                                 | Owner                                                                    | Forbidden duplicate state                                              |
+| ---------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Main turn, background tasks, commands, notifications | CLI RuntimeTaskRegistry, existing command queue                          | Host keeping another accepted queue or background count table          |
+| Idle work ownership, takeover, local lifecycle       | independent CLI-side lifecycle coordinator using generic execution facts | idle-specific branches scattered through every main-loop step          |
+| Apply, re-ticket, settle                             | existing OffPeakTaskService                                              | tool handlers requesting/renewing tickets themselves                   |
+| Persistent task-card state                           | existing service and Repo, consuming explicit events                     | inferring whole-task completion from first-turn terminal or UI loading |
+| Main-turn Active Model                               | the current turn                                                         | deriving the running model from the mutable Session Selection          |
 
 ```mermaid
 stateDiagram-v2
@@ -192,19 +192,19 @@ release, explicit title model isolation; iterator.return rejecting/never finishi
 and cancel preserved, delivered stream not replayed. Desktop OP10 keeps the default title path and
 checks its idle ticket; the continuous/replayable delivery boundary is unchanged.
 
-| Priority  | Module / entry                                                | Expected change                                                                       |
-| --------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Must      | CLI command-center, bootstrap session/input facade            | CLI input default selection, model/effort switching, explicit Submission, legacy default rules |
-| Must      | Core turn-model, admission, recovery and persistence interfaces | separate accepted-selection update, single-turn model creation and user-preference saving; handle FIFO/Guide races |
-| Must      | highspeed card selection fallback                             | fix the card's fallback selection at start; never read the mutable Session on failure |
-| Must      | tool visibility, Bash/SendMessage handlers, subagent runner   | lift the matching restrictions together; keep Workflow, recursive creation and other limits |
-| Must      | subagent port, background start / move-to-background / message resumption | consistent model selection, execution ownership and request dependencies          |
-| Must      | CLI background notifications, command queue, runtime residency | reuse the notification path; add work-lifecycle events; never lose work while waiting for a ticket |
-| Must      | Host dispatch/track/finalize, OffPeakTaskService, task adapter | whole-task lifecycle replaces first-turn terminal closing; re-ticket, takeover, settle and stale callback invalidation |
-| Check     | App/protocol settings and model projection                    | input model display shows the user selection; the actual execution model comes from execution facts |
-| Check     | title, memory, sampling, Compact                              | distinguish independent config from owned execution; do not inherit only the idle model id and lose request auth |
-| Check     | Cron, Fork, session cold resume, Workflow model pin           | keep a temporary idle selection out of future ordinary execution; keep each feature's explicit model contract |
-| Invariant | ordinary background, Goal, permission responses, child Bash cleanup | no widening of stop, nesting, permission or result-visibility semantics          |
+| Priority  | Module / entry                                                            | Expected change                                                                                                        |
+| --------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Must      | CLI command-center, bootstrap session/input facade                        | CLI input default selection, model/effort switching, explicit Submission, legacy default rules                         |
+| Must      | Core turn-model, admission, recovery and persistence interfaces           | separate accepted-selection update, single-turn model creation and user-preference saving; handle FIFO/Guide races     |
+| Must      | highspeed card selection fallback                                         | fix the card's fallback selection at start; never read the mutable Session on failure                                  |
+| Must      | tool visibility, Bash/SendMessage handlers, subagent runner               | lift the matching restrictions together; keep Workflow, recursive creation and other limits                            |
+| Must      | subagent port, background start / move-to-background / message resumption | consistent model selection, execution ownership and request dependencies                                               |
+| Must      | CLI background notifications, command queue, runtime residency            | reuse the notification path; add work-lifecycle events; never lose work while waiting for a ticket                     |
+| Must      | Host dispatch/track/finalize, OffPeakTaskService, task adapter            | whole-task lifecycle replaces first-turn terminal closing; re-ticket, takeover, settle and stale callback invalidation |
+| Check     | App/protocol settings and model projection                                | input model display shows the user selection; the actual execution model comes from execution facts                    |
+| Check     | title, memory, sampling, Compact                                          | distinguish independent config from owned execution; do not inherit only the idle model id and lose request auth       |
+| Check     | Cron, Fork, session cold resume, Workflow model pin                       | keep a temporary idle selection out of future ordinary execution; keep each feature's explicit model contract          |
+| Invariant | ordinary background, Goal, permission responses, child Bash cleanup       | no widening of stop, nesting, permission or result-visibility semantics                                                |
 
 New or changed App/Agent contracts need strict types and runtime schemas, exported through the
 existing protocol entry; Host consumes CLI facts and Service never imports Runtime implementation.
@@ -217,14 +217,14 @@ a global default never replaces another session's selection.
 
 ## 6. Spec and capability-graph backfill
 
-| File                                                                                                                           | Update                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| [idle spec](./spec.md), [tech design](./tech-design.md)                                                                        | open background ability, whole-task closing, re-ticket, takeover, current vs target boundary    |
-| [Selection state design](../working-memory/provider-refactor/design/interaction/selection-state.md)                            | cliDefaultSelection, update at admission, storage semantics; drop the outdated separate default file description |
-| [execution selection design](../working-memory/provider-refactor/design/execution/execution.md)                                | Session continuation selection, subagent current turn, highspeed-specific fallback, independent auxiliary calls |
-| [background coverage matrix](../testing/conversation-session-background-e2e-coverage-matrix.md)                                | add idle representative scenarios and link the mobile-specific verification; keep the original desktop matrix scope |
-| [session case catalog](../conversation-session-case-catalog.md), [total coverage matrix](../testing/conversation-session-e2e-coverage-matrix.md) | register the new scenarios; update OP10's background-denial assertion; planned cases are not marked covered |
-| [capability graph](../../.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml)                          | replace the old invariant "idle does not write the Runtime Session, denies background"          |
+| File                                                                                                                                             | Update                                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| [idle spec](./spec.md), [tech design](./tech-design.md)                                                                                          | open background ability, whole-task closing, re-ticket, takeover, current vs target boundary                        |
+| [Selection state design](../working-memory/provider-refactor/design/interaction/selection-state.md)                                              | cliDefaultSelection, update at admission, storage semantics; drop the outdated separate default file description    |
+| [execution selection design](../working-memory/provider-refactor/design/execution/execution.md)                                                  | Session continuation selection, subagent current turn, highspeed-specific fallback, independent auxiliary calls     |
+| [background coverage matrix](../testing/conversation-session-background-e2e-coverage-matrix.md)                                                  | add idle representative scenarios and link the mobile-specific verification; keep the original desktop matrix scope |
+| [session case catalog](../conversation-session-case-catalog.md), [total coverage matrix](../testing/conversation-session-e2e-coverage-matrix.md) | register the new scenarios; update OP10's background-denial assertion; planned cases are not marked covered         |
+| [capability graph](../../.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml)                                            | replace the old invariant "idle does not write the Runtime Session, denies background"                              |
 
 The impact analysis is based on source call chains and existing specs; no codegraph was available
 and text scans are not presented as graph queries. Interface signatures, event names and test file
@@ -232,24 +232,24 @@ splits not yet fixed are implementation detail and do not change the confirmed p
 
 ## 7. Acceptance scenarios
 
-| ID   | Scenario and action                                        | Key assertions                                                          | Evidence layer             |
-| ---- | ---------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------- |
-| IL01 | idle explicit background Agent, main turn ends first       | background continues; notification wake-up still goes idle; card does not complete early | Core + desktop E2E/request log |
-| IL02 | idle background Bash, explicit and movable-on-timeout      | command runs once, artifact kept; completion can wake                   | adapter/Core + E2E         |
-| IL03 | SendMessage to running and finished agents                 | delivery/resumption valid, execution selection and auth right, reply can wake | Core + representative E2E |
-| IL04 | background notification catches the main turn, or arrives after it ends | merge / new turn by existing rules; no loss, no duplicates     | Core timing tests          |
-| IL05 | Bash finishes after ticket expiry, new ticket arrives later | Bash not rerun, result not lost, model waits for the ticket and continues | service + Core integration |
-| IL06 | several backgrounds hit ticket expiry together             | single re-ticket, no duplicated work, old-ticket events do not overwrite the new ticket | service concurrency tests |
-| IL07 | user sends B while waiting for background / new ticket     | after acceptance Session is B; the current subagent turn keeps I, later wake-ups/resumptions use B | CLI + desktop/mobile E2E |
-| IL08 | old ticket expires or ready callback arrives after takeover | no re-queue, no selection grab-back, no original task resend           | service/protocol tests     |
-| IL09 | CLI /model or App menu changes to B without sending        | only the user input selection changes; background still continues with I | CLI + UI tests            |
-| IL10 | B then C accepted in a row, earlier B starts running later | B turn uses B; the latest continuation selection stays C                | admission/queue/Guide tests |
-| IL11 | session B changes the global default, session A sends again | A keeps its own input default; only new sessions use the new default   | CLI multi-session tests    |
-| IL12 | user selection changes after highspeed start, then the defined fallback triggers | uses the fallback selection fixed at start                | Core regression            |
-| IL13 | chat stop, single background stop, task-card cancel        | each entry keeps its original scope contract; no idle resurrection after cancel | Core + service + representative E2E |
-| IL14 | restart / branch invalidation / teardown                   | temporary idle selection and re-wake not restored; user selection restores normally | storage/protocol tests |
-| IL15 | background terminal, notification enqueue and closing interleave | the whole task closes exactly once; no completion from a false mid-state idle | deterministic concurrency tests |
-| IL16 | permission response and auxiliary model call               | approval does not trigger user takeover; auxiliary call selection matches request ownership | Core/protocol regression |
+| ID   | Scenario and action                                                              | Key assertions                                                                                     | Evidence layer                      |
+| ---- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| IL01 | idle explicit background Agent, main turn ends first                             | background continues; notification wake-up still goes idle; card does not complete early           | Core + desktop E2E/request log      |
+| IL02 | idle background Bash, explicit and movable-on-timeout                            | command runs once, artifact kept; completion can wake                                              | adapter/Core + E2E                  |
+| IL03 | SendMessage to running and finished agents                                       | delivery/resumption valid, execution selection and auth right, reply can wake                      | Core + representative E2E           |
+| IL04 | background notification catches the main turn, or arrives after it ends          | merge / new turn by existing rules; no loss, no duplicates                                         | Core timing tests                   |
+| IL05 | Bash finishes after ticket expiry, new ticket arrives later                      | Bash not rerun, result not lost, model waits for the ticket and continues                          | service + Core integration          |
+| IL06 | several backgrounds hit ticket expiry together                                   | single re-ticket, no duplicated work, old-ticket events do not overwrite the new ticket            | service concurrency tests           |
+| IL07 | user sends B while waiting for background / new ticket                           | after acceptance Session is B; the current subagent turn keeps I, later wake-ups/resumptions use B | CLI + desktop/mobile E2E            |
+| IL08 | old ticket expires or ready callback arrives after takeover                      | no re-queue, no selection grab-back, no original task resend                                       | service/protocol tests              |
+| IL09 | CLI /model or App menu changes to B without sending                              | only the user input selection changes; background still continues with I                           | CLI + UI tests                      |
+| IL10 | B then C accepted in a row, earlier B starts running later                       | B turn uses B; the latest continuation selection stays C                                           | admission/queue/Guide tests         |
+| IL11 | session B changes the global default, session A sends again                      | A keeps its own input default; only new sessions use the new default                               | CLI multi-session tests             |
+| IL12 | user selection changes after highspeed start, then the defined fallback triggers | uses the fallback selection fixed at start                                                         | Core regression                     |
+| IL13 | chat stop, single background stop, task-card cancel                              | each entry keeps its original scope contract; no idle resurrection after cancel                    | Core + service + representative E2E |
+| IL14 | restart / branch invalidation / teardown                                         | temporary idle selection and re-wake not restored; user selection restores normally                | storage/protocol tests              |
+| IL15 | background terminal, notification enqueue and closing interleave                 | the whole task closes exactly once; no completion from a false mid-state idle                      | deterministic concurrency tests     |
+| IL16 | permission response and auxiliary model call                                     | approval does not trigger user takeover; auxiliary call selection matches request ownership        | Core/protocol regression            |
 
 The full Cartesian product of model providers and background counts is not enumerated; ordinary /
 idle / highspeed, single / multiple, before / after takeover, valid / expired ticket represent the
@@ -266,18 +266,18 @@ promotion flow.
 All checkpoints are done.
 
 - [x] P0: independent dev container from the current staging; check source baseline, toolchain,
-  dependencies; reproduce and classify existing test failures.
+      dependencies; reproduce and classify existing test failures.
 - [x] P1: update the specs, case catalog and matrices; write CLI default/Session separation,
-  admission-order and highspeed-fallback tests first, then implement the Selection split.
+      admission-order and highspeed-fallback tests first, then implement the Selection split.
 - [x] P2: write work ownership, background closing, re-ticket, takeover and stale-callback race
-  tests first, then implement the independent lifecycle and generic contract.
+      tests first, then implement the independent lifecycle and generic contract.
 - [x] P3: write background Agent/Bash/SendMessage and resumption tests first, then wire the context
-  and lift the matching restrictions.
+      and lift the matching restrictions.
 - [x] P4: wire Host/service whole-task closing; OP10 desktop three variants and the existing
-  continuous/replayable protocol-boundary regression done. Mobile browser whole-device interaction is
-  not verified and stays a verification limit.
+      continuous/replayable protocol-boundary regression done. Mobile browser whole-device interaction is
+      not verified and stays a verification limit.
 - [x] P5: relevant verification and diff self-check done, spec updated, committed locally; full
-  baseline failures and unverified platforms are recorded below.
+      baseline failures and unverified platforms are recorded below.
 
 Container checks: a container passing only the toolchain check does not prove Electron E2E support;
 graphics dependencies, replay resources and the container test entry must be confirmed separately,

@@ -38,39 +38,39 @@ Spec: offPeakTaskId -> future Host sendPrompt -> inputId/sourceCommandId
 
 Common correlation fields:
 
-| Field                           | Meaning                                                                                                         |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `talk_id`                       | task / session ID.                                                                                              |
-| `message_id`                    | Current input turn ID; in V4 it is `sourceCommandId` / `inputId`. Completion and steps of one turn must match.  |
-| `model_name` / `model_provider` | The model and provider actually used in this turn.                                                              |
+| Field                           | Meaning                                                                                                        |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `talk_id`                       | task / session ID.                                                                                             |
+| `message_id`                    | Current input turn ID; in V4 it is `sourceCommandId` / `inputId`. Completion and steps of one turn must match. |
+| `model_name` / `model_provider` | The model and provider actually used in this turn.                                                             |
 
 ### `message_completion`
 
 Final summary of one Agent input turn; at most one per `talk_id + message_id`.
 
-| Group                                  | Fields                                                                                                                 | Meaning                                                                                                                                                                       |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Latency                                | `request_time`, `duration_ms`, `time_to_first_token`, `waiting_ms`                                                     | Send time, end-to-end duration, time to first token, accumulated waits such as permission.                                                                                    |
-| Usage                                  | `input_tokens`, `output_tokens`, `reasoning_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `total_tokens` | Main Agent usage of this turn.                                                                                                                                                |
-| Steps and tools                        | `agent_step_cnt`, `tool_call_total`, `tool_call_failed`                                                                | Number of closed steps and tool-call statistics of the turn.                                                                                                                  |
-| Result                                 | `status`, `error_type`, `error_msg`                                                                                    | `success` / `fail` / `user_interrupt`; failure attribution uses `error_type`; non-empty raw `error_msg` is uniformly `[redacted]`, an empty string stays empty.               |
-| Plan identity                          | `plan_status`, `plan_product_id`                                                                                       | User plan identity frozen at send time: `coding_plan` / `start_plan` / `no_plan` / `unknown`; the backend stable product ID of the current plan.                             |
-| Source and correlation (new)           | `message_source`, `task_trigger`, `automation_id` / `off_peak_task_id`                                                 | Written to `event_extra_detail`; state the source and the schedule/immediate run mode and link a scheduled task's creation turn with its later runs.                          |
-| Scheduled-run timing (new, schedule only) | `scheduled_at`, `schedule_lag_ms`                                                                                   | Written to `event_extra_detail`: the planned trigger Unix-ms timestamp, and the Host admission time minus `scheduled_at`. Only for `task_trigger=schedule`; empty for manual runs; not copied to each step. |
-| Compatibility                          | `file_change_cnt`, `generated_code_lines`, `ask_mode`, `retry_cnt`                                                     | Existing report-compatible fields; some keep historical fixed definitions.                                                                                                    |
+| Group                                     | Fields                                                                                                                 | Meaning                                                                                                                                                                                                     |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Latency                                   | `request_time`, `duration_ms`, `time_to_first_token`, `waiting_ms`                                                     | Send time, end-to-end duration, time to first token, accumulated waits such as permission.                                                                                                                  |
+| Usage                                     | `input_tokens`, `output_tokens`, `reasoning_tokens`, `cached_input_tokens`, `cache_write_input_tokens`, `total_tokens` | Main Agent usage of this turn.                                                                                                                                                                              |
+| Steps and tools                           | `agent_step_cnt`, `tool_call_total`, `tool_call_failed`                                                                | Number of closed steps and tool-call statistics of the turn.                                                                                                                                                |
+| Result                                    | `status`, `error_type`, `error_msg`                                                                                    | `success` / `fail` / `user_interrupt`; failure attribution uses `error_type`; non-empty raw `error_msg` is uniformly `[redacted]`, an empty string stays empty.                                             |
+| Plan identity                             | `plan_status`, `plan_product_id`                                                                                       | User plan identity frozen at send time: `coding_plan` / `start_plan` / `no_plan` / `unknown`; the backend stable product ID of the current plan.                                                            |
+| Source and correlation (new)              | `message_source`, `task_trigger`, `automation_id` / `off_peak_task_id`                                                 | Written to `event_extra_detail`; state the source and the schedule/immediate run mode and link a scheduled task's creation turn with its later runs.                                                        |
+| Scheduled-run timing (new, schedule only) | `scheduled_at`, `schedule_lag_ms`                                                                                      | Written to `event_extra_detail`: the planned trigger Unix-ms timestamp, and the Host admission time minus `scheduled_at`. Only for `task_trigger=schedule`; empty for manual runs; not copied to each step. |
+| Compatibility                             | `file_change_cnt`, `generated_code_lines`, `ask_mode`, `retry_cnt`                                                     | Existing report-compatible fields; some keep historical fixed definitions.                                                                                                                                  |
 
 ### `agent_step`
 
 A closed execution step within a turn; `message_completion.agent_step_cnt` must equal the number of steps
 actually reported for that turn.
 
-| Group                        | Fields                                                                      | Meaning                                                                                                                                                  |
-| ---------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Group                        | Fields                                                                      | Meaning                                                                                                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Order and type               | `step_id`, `loop_index`, `step_type`, `is_tool_call`                        | `step_id` is the stable unique ID of a closed step within one `message_id`, `loop_index` the in-turn order; types `reasoning` / `generation` / `tool_call`. |
-| Tool                         | `tool_name`, `tool_call_id`                                                 | Tool step name and call ID; empty for non-tool steps.                                                                                                    |
-| Latency and result           | `duration_ms`, `waiting_ms`, `generation_tail_finalize_ms`, `status`        | Step duration, permission wait, text last-frame closing latency, success/failure/timeout.                                                                |
-| Usage and error              | `input_tokens`, `output_tokens`, `cached_tokens`, `error_type`, `error_msg` | Step usage under the compatibility definition; failure attribution uses `error_type`, non-empty raw `error_msg` is `[redacted]`, empty stays empty.       |
-| Source and correlation (new) | `message_source`, `task_trigger`, `automation_id` / `off_peak_task_id`      | Same as the owning `message_completion` for ordinary input; the completion woken by an independent background subagent refines the source.              |
+| Tool                         | `tool_name`, `tool_call_id`                                                 | Tool step name and call ID; empty for non-tool steps.                                                                                                       |
+| Latency and result           | `duration_ms`, `waiting_ms`, `generation_tail_finalize_ms`, `status`        | Step duration, permission wait, text last-frame closing latency, success/failure/timeout.                                                                   |
+| Usage and error              | `input_tokens`, `output_tokens`, `cached_tokens`, `error_type`, `error_msg` | Step usage under the compatibility definition; failure attribution uses `error_type`, non-empty raw `error_msg` is `[redacted]`, empty stays empty.         |
+| Source and correlation (new) | `message_source`, `task_trigger`, `automation_id` / `off_peak_task_id`      | Same as the owning `message_completion` for ordinary input; the completion woken by an independent background subagent refines the source.                  |
 
 `send_btn` is a user click/submit event and must not be forged by background automation; automation reuses only
 completion and step.
@@ -180,13 +180,13 @@ talk_id    = which session executed
 message_id = which scheduled run in that session (runId)
 ```
 
-| Field              | Scope and generation                                                                       | Use                                                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `automationId`     | One per rule, constant across every schedule / manual run.                                 | `event_extra_detail.automation_id` of the creation turn and all run turns; **not** `message_id`.                                                 |
+| Field              | Scope and generation                                                                       | Use                                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `automationId`     | One per rule, constant across every schedule / manual run.                                 | `event_extra_detail.automation_id` of the creation turn and all run turns; **not** `message_id`.                                                                                |
 | `runId`            | One per run: `automationId:scheduledAt` or `automationId:manual:uuid`.                     | Host `traceId`, then run-turn `inputId/sourceCommandId/message_id`; the idempotency namespace of this turn's telemetry. Completion is keyed by it; a step also needs `step_id`. |
-| `scheduledAt`      | The theoretical trigger time of this run in `automation_runs` (Unix ms); empty for manual. | Written to this `message_completion.event_extra_detail.scheduled_at` and used for schedule lag; **not** the rule's cron expression.              |
-| `talk_id`          | Session/task ID of this execution; bound rules reuse the target task, unbound create one.  | Groups this turn's completion and steps into the executing session; **not** the rule ID.                                                         |
-| `cronAutomationId` | Session ownership marker in task meta.                                                     | UI grouping/tool isolation only; never use for message source or creation-to-run correlation.                                                    |
+| `scheduledAt`      | The theoretical trigger time of this run in `automation_runs` (Unix ms); empty for manual. | Written to this `message_completion.event_extra_detail.scheduled_at` and used for schedule lag; **not** the rule's cron expression.                                             |
+| `talk_id`          | Session/task ID of this execution; bound rules reuse the target task, unbound create one.  | Groups this turn's completion and steps into the executing session; **not** the rule ID.                                                                                        |
+| `cronAutomationId` | Session ownership marker in task meta.                                                     | UI grouping/tool isolation only; never use for message source or creation-to-run correlation.                                                                                   |
 
 ```text
 Creation turn: ordinary chat
@@ -240,16 +240,16 @@ execution; to relate Agent/provider keep using `agent`, `model_provider`, `model
 
 ### Usability of existing fields
 
-| Existing field                  | Verdict                                | Reason                                                                                                                                                |
-| ------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing field                  | Verdict                                       | Reason                                                                                                                                                   |
+| ------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scheduled `runId`               | Run-turn message ID and idempotency namespace | `runId -> Host traceId -> inputId/sourceCommandId`, unique per run. `message_completion` de-duplicates by it; several `agent_step`s also need `step_id`. |
-| Scheduled `trigger`             | Usable as `task_trigger` source        | Persisted as `schedule` / `manual`.                                                                                                                   |
-| Scheduled `automationId`        | Correlation key for creation and runs  | Written to `event_extra_detail.automation_id`; also used for this turn's tool isolation.                                                              |
-| `cronAutomationId` (task meta)  | Not usable for message classification  | Task-level ownership; later ordinary user messages in that session may carry it too.                                                                  |
-| `inputId` / `sourceCommandId`   | Correlation only, not classification   | Every input has one.                                                                                                                                  |
-| `clientMode=desktop-continuous` | Cannot classify                        | Ordinary desktop chat is the same as scheduled tasks.                                                                                                 |
-| `querySource`                   | Not reused                             | Internal model-request source, not a product-level message source.                                                                                    |
-| `offPeakTaskId`                 | Future internal correlation key        | Off-peak tasks currently exist only as a spec: no runtime, repo, scheduler or UI.                                                                     |
+| Scheduled `trigger`             | Usable as `task_trigger` source               | Persisted as `schedule` / `manual`.                                                                                                                      |
+| Scheduled `automationId`        | Correlation key for creation and runs         | Written to `event_extra_detail.automation_id`; also used for this turn's tool isolation.                                                                 |
+| `cronAutomationId` (task meta)  | Not usable for message classification         | Task-level ownership; later ordinary user messages in that session may carry it too.                                                                     |
+| `inputId` / `sourceCommandId`   | Correlation only, not classification          | Every input has one.                                                                                                                                     |
+| `clientMode=desktop-continuous` | Cannot classify                               | Ordinary desktop chat is the same as scheduled tasks.                                                                                                    |
+| `querySource`                   | Not reused                                    | Internal model-request source, not a product-level message source.                                                                                       |
+| `offPeakTaskId`                 | Future internal correlation key               | Off-peak tasks currently exist only as a spec: no runtime, repo, scheduler or UI.                                                                        |
 
 ## 3. Current MVP runtime chain and boundary
 

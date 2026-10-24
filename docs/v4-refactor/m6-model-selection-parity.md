@@ -33,6 +33,7 @@ Full history: `git show b8876e8b:docs/v4-refactor/m6-model-selection-parity.md`
 ## 1. Gap list (capability, old implementation, v4 status)
 
 **A. Remember last choice (persistence), real gap**
+
 - last-model persistence (global key `zcode-last-agent-model`, ZCode-Agent `__global__`, custom per workspace;
   `lib/zcodeModelPreference.ts`): v4 only had workspace-default (per workspace) in `useDraftConfigControl.ts`.
 - legacy key migration (workspace-scoped / path-only -> global): missing.
@@ -41,6 +42,7 @@ Full history: `git show b8876e8b:docs/v4-refactor/m6-model-selection-parity.md`
   draft falls back to workspace-default with no global seed/revalidation.
 
 **B. Fallback / auto-positioning, real gap**
+
 - Current model not in the selectable group -> first available / clear (`modelSelection.ts` + state machine
   in `ChatInputToolbar.tsx` + `setTaskVisibleModelListFallback`): missing, an invalid model does not self-heal and shows the raw id.
 - Auto-select the family's first model after login (`resolveLoginProviderFirstModel`): missing.
@@ -49,6 +51,7 @@ Full history: `git show b8876e8b:docs/v4-refactor/m6-model-selection-parity.md`
 - Empty-config degradation: present (`SessionPane.tsx` + `modelMenuVisible` in `V4ComposerToolbar.tsx`).
 
 **C. Coding-plan list correctness, partial gap**
+
 - Group building + coding-plan grouping/badge (`lib/modelSelectionGroups.ts`): done via `buildModelSelectGroups`.
 - **Entitlement visibility gating** (unauthorized not shown, start <-> coding mutually exclusive): missing,
   only `shouldIncludeModelProviderInSelection` filtered; `entitlements` only fed the start balance.
@@ -57,6 +60,7 @@ Full history: `git show b8876e8b:docs/v4-refactor/m6-model-selection-parity.md`
 - coding-plan usage panel, and context-usage breakdown + cache-hit: missing then (`m5-composer-parity §6` phases 2 and 1).
 
 **D. CLI write-path provider / credential resolution (foundation of C), real gap**
+
 - Switching a model resolves the provider client + credentials + connection mode to replace the runtime
   (`modelChangeActions.ts` + `useToolbarRecoveryModelChange.ts`): v4 `handlers/model-config.ts` said
   "credentials not done... only same-provider direct switch" and only called `app.setModel`.
@@ -145,10 +149,10 @@ snapshot model identity unchanged -> setThoughtLevel(user's explicit value)
 ## 4. Progress
 
 - [x] **Phase 4a entitlement gating** (`5c14a3927`): `filterModelProvidersByEntitlement` pure function +
-  V4ComposerToolbar group building + 7 unit tests.
+      V4ComposerToolbar group building + 7 unit tests.
 - [x] **Phase 3 global last-model persistence:** `seedDraftOptionsFromGlobalPreference` (draft catalog seed,
-  revalidated against the catalog) + `useDraftConfigControl` writes global / first-send-consistent seed +
-  `SessionPane` also writes global on a mid-session switch + 4 unit tests.
+      revalidated against the catalog) + `useDraftConfigControl` writes global / first-send-consistent seed +
+      `SessionPane` also writes global on a mid-session switch + 4 unit tests.
 - [~] **Phase 2 fallback / auto-positioning (slice 1+2 done):** slice 1 trigger display (`<synthetic>` /
   unavailable model falls back to the placeholder "Choose model", `resolveModelSelectTriggerDisplay`); slice 2
   session-state invalid-model self-healing to the first available (`resolveV4ModelAutoFallback` pure function,

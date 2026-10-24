@@ -58,15 +58,15 @@ CUA: start + original startup tracker
 
 Median comparison (ms):
 
-| Metric | staging | after CUA optimization | delta (after - before) |
-| --- | ---: | ---: | ---: |
-| a6 click → first visible row (Agent reused) | 796 | 766 | -30 |
-| 6951 click → first visible row (Agent spawned) | 2704 | 1476 | -1228 |
-| 6951 command resolved → spawn preflight (Host sub-stage) | 1051 | 60 | -991 |
-| 6951 Host prepare | 1775 | 770 | -1005 |
-| 6951 CLI request → ACK | 566 | 541 | -25 |
-| 6951 session restore (request → ACK sub-stage) | 343 | 330 | -13 |
-| 6951 ACK → visible row (residual, incl. instrumentation gaps) | 225 | 115 | -110 |
+| Metric                                                        | staging | after CUA optimization | delta (after - before) |
+| ------------------------------------------------------------- | ------: | ---------------------: | ---------------------: |
+| a6 click → first visible row (Agent reused)                   |     796 |                    766 |                    -30 |
+| 6951 click → first visible row (Agent spawned)                |    2704 |                   1476 |                  -1228 |
+| 6951 command resolved → spawn preflight (Host sub-stage)      |    1051 |                     60 |                   -991 |
+| 6951 Host prepare                                             |    1775 |                    770 |                  -1005 |
+| 6951 CLI request → ACK                                        |     566 |                    541 |                    -25 |
+| 6951 session restore (request → ACK sub-stage)                |     343 |                    330 |                    -13 |
+| 6951 ACK → visible row (residual, incl. instrumentation gaps) |     225 |                    115 |                   -110 |
 
 Each row takes its own median and rows have parent-child relations, so they cannot be summed.
 End-to-end drops about 45%; what is clearly attributable is removing the fixed Host wait of about 1s,
@@ -79,16 +79,16 @@ Interval / cumulative of the run whose first visible row sits at each group's me
 round3, optimized 6951 round5), in ms; cumulative is the arithmetic accumulation of measured stages with
 unmeasured time listed separately, and the visible row uses an independent DOM end point:
 
-| Stage | staging interval | staging cumulative | optimized interval | optimized cumulative |
-| --- | ---: | ---: | ---: | ---: |
-| click → acquire | 55 | 55 | 52 | 52 |
-| Renderer prepare | 0 | 55 | 0 | 52 |
-| Host prepare | 1775 | 1830 | 770 | 822 |
-| CLI request → ACK | 644 | 2474 | 526 | 1348 |
-| initial frame transport + snapshot apply | 5 | 2479 | 2 | 1350 |
-| React render | 92 | 2571 | 56 | 1406 |
-| paint → interactive | 134 | 2705 | 35 | 1441 |
-| unallocated instrumentation gap (to the independent click → interactive) | 11 | 2716 | 41 | 1482 |
+| Stage                                                                    | staging interval | staging cumulative | optimized interval | optimized cumulative |
+| ------------------------------------------------------------------------ | ---------------: | -----------------: | -----------------: | -------------------: |
+| click → acquire                                                          |               55 |                 55 |                 52 |                   52 |
+| Renderer prepare                                                         |                0 |                 55 |                  0 |                   52 |
+| Host prepare                                                             |             1775 |               1830 |                770 |                  822 |
+| CLI request → ACK                                                        |              644 |               2474 |                526 |                 1348 |
+| initial frame transport + snapshot apply                                 |                5 |               2479 |                  2 |                 1350 |
+| React render                                                             |               92 |               2571 |                 56 |                 1406 |
+| paint → interactive                                                      |              134 |               2705 |                 35 |                 1441 |
+| unallocated instrumentation gap (to the independent click → interactive) |               11 |               2716 |                 41 |                 1482 |
 
 The independent DOM visible end points are 2704 / 1476ms.
 

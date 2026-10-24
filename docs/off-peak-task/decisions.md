@@ -12,7 +12,7 @@
 ### Current code reading index (2026-07-23)
 
 - Server interfaces follow D26/D39: `availability -> POST /ticket -> POST /ticket/status -> messages
-  -> settle`; D25's register/per-task GET is a historical shape.
+-> settle`; D25's register/per-task GET is a historical shape.
 - The formal ticket-invalid code is `400/3102`; `3001` remains only as adapter rolling-release
   compatibility and historical notes.
 - Create quota follows the D39 availability snapshot + the 3103 of `POST /ticket`; D36's
@@ -181,11 +181,11 @@ The client never sleeps long (the server confirmed 2026-07-14 that 429 returns `
 carrier is HTTP 429/3105, not a custom response header):
 
 - **Rule 1 (abandon first dispatch):** a queued first request with Retry-After > `max(10 min, current
-  pollInterval)` abandons this dispatch and leaves the task queued for the next authorization.
+pollInterval)` abandons this dispatch and leaves the task queued for the next authorization.
   (Later D26/spec §3 dropped the abandon-dispatch state machine: a ready ticket waiting until TTL
   expiry is re-taken uniformly via 3102.)
 - **Rule 2 (single clamp x unlimited probing):** while running, a single wait = `min(Retry-After,
-  5 min)` with unlimited idempotent probes (3h is about 36 probes), so freed resources are caught by
+5 min)` with unlimited idempotent probes (3h is about 36 probes), so freed resources are caught by
   the next probe. Clamp and Retry-After parsing reuse the `bigmodel-business-error-retry` logic;
   **budget exemption is a new switch**: the new retry reason `offpeak_queued` bypasses the unified
   retry budget (otherwise the current behavior fails after four or five probes).
@@ -755,7 +755,7 @@ tests assert against this decision.
 ## D48 Sidebar idle group converges to first-class tasks-index rows (decided 2026-07-28, replaces the same-day virtual-id collapse / renderer sorting)
 
 Background: the Idle-time sidebar group was an independent component borrowing only Scheduled's
-TASK_GROUP_* visual classes; two user reports (no in-group drag, collapse-all not covered) exposed the
+TASK*GROUP*\* visual classes; two user reports (no in-group drag, collapse-all not covered) exposed the
 cost of "visually consistent, behaviorally dual track". After a morning patch with a virtual group id +
 localStorage ordering, a grilling session converged fully. Core mechanism = copy cron: `offPeakTaskId`
 becomes a persistent task-meta marker (not reusing cronAutomationId, D45), and
@@ -912,16 +912,16 @@ three (resume / bound-first-run / init).
 - **CR-02:** the CLI port's binding guard (D50-4) read `offPeak/list`, which is display-truncated to
   top-20, so with more than 20 tasks and an older bound task the guard let it through; a second review
   noted the TOCTOU between the pre-check and INSERT around the take-number round trip. Final two layers:
-  1) `OffPeakTaskService.createTask` calls `repo.hasActiveBoundTask(workspaceKey, sessionId)` as an
-  exact pre-check before taking a number (not reusing the display list), hitting returns
-  `client_validation / session_bound`; 2) a storage-level partial unique index
-  `idx_off_peak_bound_active ON (workspace_key, session_id) WHERE session_id IS NOT NULL AND status NOT
-  IN terminal` rejects the INSERT of a concurrent request that passed the pre-check, also mapped to
-  `session_bound` (the ticket already taken is voided with the task and reclaimed by server expiry; no
-  release endpoint). A stock database already holding duplicate rows fails to create the index and skips
-  it, leaving only the pre-check until manual inspection. The host `offPeak/create` handler no longer
-  carries its own pre-check; the CLI port's top-20 guard stays as a fast path and the CLI translates to
-  stable wording.
+  1. `OffPeakTaskService.createTask` calls `repo.hasActiveBoundTask(workspaceKey, sessionId)` as an
+     exact pre-check before taking a number (not reusing the display list), hitting returns
+     `client_validation / session_bound`; 2) a storage-level partial unique index
+     `idx_off_peak_bound_active ON (workspace_key, session_id) WHERE session_id IS NOT NULL AND status NOT
+IN terminal` rejects the INSERT of a concurrent request that passed the pre-check, also mapped to
+     `session_bound` (the ticket already taken is voided with the task and reclaimed by server expiry; no
+     release endpoint). A stock database already holding duplicate rows fails to create the index and skips
+     it, leaving only the pre-check until manual inspection. The host `offPeak/create` handler no longer
+     carries its own pre-check; the CLI port's top-20 guard stays as a fast path and the CLI translates to
+     stable wording.
 - **SG-02:** `workspace/updateOffPeakToolPolicy` failures swallowed only -32601, others rejected client
   readiness; now all errors log warn and are not thrown (the failure direction is fail-closed: the CLI
   does not register the tool by default).

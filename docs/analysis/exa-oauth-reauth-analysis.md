@@ -5,7 +5,7 @@
 > Scope: analysis only; no production code changes; no OAuth authorization or token requests executed
 > MCP server: `plugin:exa:exa`
 >
-> Compaction note: source line numbers and test line ranges were dropped; locations are given as file paths. Full history: `git show c6cef8cef5:docs/analysis/exa-oauth-reauth-analysis.md`.
+> Compaction note: source line numbers and test line ranges were dropped; locations are given as file paths. Full history: `git show 45f808f7:docs/analysis/exa-oauth-reauth-analysis.md`.
 
 ## 1. Conclusion Summary
 
@@ -527,17 +527,17 @@ leaseId/isolation
 
 ## 10. Final Qualitative Table
 
-| Problem                                    | Root Cause/Factors                                                                                    | Qualitative                                                      |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Periodic re-authentication required        | Tokens no longer exist; interactive authorization entered after refresh did not recover               | Direct mechanism confirmed                                       |
-| Whether refresh tokens are saved/loaded    | Current implementation saves, loads, updates after refresh                                            | Not a bug                                                        |
-| Why this specific refresh failed           | Token endpoint error codes missing, cannot uniquely determine                                         | Observability design defect                                      |
-| Cross-process client/token overwrites      | Current canonical pairs + file locks protect; old processes still carry compatibility risk            | Not current primary root cause / historical implementation risk  |
-| Secondary authentication timed out         | Session hard-coded 15 seconds and closed its own OAuth sessions                                       | Implementation bug                                               |
-| Why settings page 5 minutes is ineffective | Settings/sessions are different leases and connections                                                | Architecture design defect                                       |
-| Callback/verifier after timeout            | Listeners closed, current state verifiers cleaned up                                                  | Implementation basically correct                                 |
-| Stale state                                | Old browser URLs, obsolete DCR clients, multiple URLs coexisting                                      | Design defect                                                    |
-| Exa Server Components errors               | Most likely triggered by old clients/new redirects or concurrent stale URLs; server errors not caught | ZCode boundary defects + Exa page robustness bugs                |
+| Problem                                    | Root Cause/Factors                                                                                    | Qualitative                                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Periodic re-authentication required        | Tokens no longer exist; interactive authorization entered after refresh did not recover               | Direct mechanism confirmed                                      |
+| Whether refresh tokens are saved/loaded    | Current implementation saves, loads, updates after refresh                                            | Not a bug                                                       |
+| Why this specific refresh failed           | Token endpoint error codes missing, cannot uniquely determine                                         | Observability design defect                                     |
+| Cross-process client/token overwrites      | Current canonical pairs + file locks protect; old processes still carry compatibility risk            | Not current primary root cause / historical implementation risk |
+| Secondary authentication timed out         | Session hard-coded 15 seconds and closed its own OAuth sessions                                       | Implementation bug                                              |
+| Why settings page 5 minutes is ineffective | Settings/sessions are different leases and connections                                                | Architecture design defect                                      |
+| Callback/verifier after timeout            | Listeners closed, current state verifiers cleaned up                                                  | Implementation basically correct                                |
+| Stale state                                | Old browser URLs, obsolete DCR clients, multiple URLs coexisting                                      | Design defect                                                   |
+| Exa Server Components errors               | Most likely triggered by old clients/new redirects or concurrent stale URLs; server errors not caught | ZCode boundary defects + Exa page robustness bugs               |
 
 ## 11. One-Sentence Root Cause
 

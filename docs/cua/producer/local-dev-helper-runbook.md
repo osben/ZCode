@@ -51,5 +51,5 @@ JPEG pipeline is verified on a real machine.
 
 - Fix script: `scripts/build-cua-helper-app.mjs` (z-code-toolset repo).
 - Product-side D-018 (commit `f811c910fd`, `fix(desktop): package sharp into ZCode.app for product CUA
-  server`) packaged sharp into the product Helper; the same staging logic was added to the dev Helper build
+server`) packaged sharp into the product Helper; the same staging logic was added to the dev Helper build
   script to remove the dev/product difference on sharp.

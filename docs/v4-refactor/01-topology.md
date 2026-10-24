@@ -54,12 +54,12 @@ interface TrustedConnectionContext {
 
 The mapping is a fixed product boundary, never guessed from UI parameters or the underlying socket type:
 
-| attachment                                  | trusted `clientMode`    | profile      |
-| ------------------------------------------- | ----------------------- | ------------ |
-| Local desktop window                        | `desktop-continuous`    | `continuous` |
-| SSH / WSL / Docker desktop window           | `desktop-continuous`    | `continuous` |
-| Mobile `/remote` shared-host attachment     | `web-remote-replayable` | `replayable` |
-| Web remote / relay WebSocket                | `web-remote-replayable` | `replayable` |
+| attachment                              | trusted `clientMode`    | profile      |
+| --------------------------------------- | ----------------------- | ------------ |
+| Local desktop window                    | `desktop-continuous`    | `continuous` |
+| SSH / WSL / Docker desktop window       | `desktop-continuous`    | `continuous` |
+| Mobile `/remote` shared-host attachment | `web-remote-replayable` | `replayable` |
+| Web remote / relay WebSocket            | `web-remote-replayable` | `replayable` |
 
 `zcode-server /ws` always uses replayable for ordinary connections; even a caller sending the old `x-zcode-rpc-client-mode` header cannot upgrade the connection to continuous. A desktop server-remote Node host must first request a short-lived, single-use random capability from `POST /api/rpc-host-capability` (protected by the existing server auth middleware), then put it into a Node-only header to connect the dedicated `/ws/host`. Only after the server consumes the capability does it create a continuous trusted relay attachment, still allocating a fresh `connectionId`. An open/no-token server follows the same explicit request and single consumption; forging a role header alone, or replaying a capability, never yields the trusted role.
 
@@ -100,13 +100,13 @@ Normative rules:
 
 ## 4. Ownership of authoritative state
 
-| State                                   | Sole authoritative location                          | Other layers' role                                  |
-| --------------------------------------- | ---------------------------------------------------- | --------------------------------------------------- |
-| session event log / projection          | CLI                                                  | host only routes and bounded-buffers; UI applies    |
-| Committed busy/running input            | CLI `CommandInbox` / runtime queue                   | UI keeps only the optimistic overlay                |
-| Uncommitted draft, scroll position      | Current client                                       | Not part of protocol facts                          |
-| command idempotency result              | CLI LRU + transcript/marker/child + discarded ledger | UI 24h pending registry used for reconciliation     |
-| subscription buffer / fragment assembly | Per connection/subscriber volatile state             | Dropped on close, recovered by resync               |
+| State                                   | Sole authoritative location                          | Other layers' role                                                          |
+| --------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------- |
+| session event log / projection          | CLI                                                  | host only routes and bounded-buffers; UI applies                            |
+| Committed busy/running input            | CLI `CommandInbox` / runtime queue                   | UI keeps only the optimistic overlay                                        |
+| Uncommitted draft, scroll position      | Current client                                       | Not part of protocol facts                                                  |
+| command idempotency result              | CLI LRU + transcript/marker/child + discarded ledger | UI 24h pending registry used for reconciliation                             |
+| subscription buffer / fragment assembly | Per connection/subscriber volatile state             | Dropped on close, recovered by resync                                       |
 | owner / lease / stale-run               | host routing layer                                   | Guarantees single owner, blocking responses and correct cross-host commands |
 
 Mobile V4 no longer goes through the host runtime command queue. All committed input, from desktop or mobile, enters the same `CommandInbox` FIFO in CLI serial admission order. owner/lease must not be deleted because the shared-host main path exists: remote workspaces, bot/proxy, cross-host fallback and blocking requests still depend on it, but it no longer owns a second conversation queue.

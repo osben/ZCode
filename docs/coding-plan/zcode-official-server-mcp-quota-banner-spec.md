@@ -59,11 +59,11 @@ A local tool handler returns `ToolErrorFor(err, requestID)` (go-sdk wraps the or
 
 ### 4.2 Codes
 
-| Code | Meaning | Client behavior |
-| --- | --- | --- |
-| `quota_exceeded` | Daily bucket quota exhausted / no quota available | Show "Today's quota is used up"; dismissible; no action |
-| `coding_plan_required` | No available Coding Plan (context missing or signature verification failed) | Show "Coding Plan required"; dismissible; upgrade entry point |
-| `internal_error` | Fallback mask for all other failures | Do not recognize or show a notice; details stay in server logs; users cannot resolve it |
+| Code                   | Meaning                                                                     | Client behavior                                                                         |
+| ---------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `quota_exceeded`       | Daily bucket quota exhausted / no quota available                           | Show "Today's quota is used up"; dismissible; no action                                 |
+| `coding_plan_required` | No available Coding Plan (context missing or signature verification failed) | Show "Coding Plan required"; dismissible; upgrade entry point                           |
+| `internal_error`       | Fallback mask for all other failures                                        | Do not recognize or show a notice; details stay in server logs; users cannot resolve it |
 
 ### 4.3 Conventions
 
@@ -82,10 +82,10 @@ A local tool handler returns `ToolErrorFor(err, requestID)` (go-sdk wraps the or
 
 ## 6. Client side (`z-code`, T1 completed)
 
-| Trigger | Scenario | Signal | Status |
-| --- | --- | --- | --- |
-| T1 | Credentials present, request sent: quota exhausted / plan invalid | `error_code` in tool error content | Implemented |
-| T2 | Signed out and switched to API Key, or not signed in: no request sent | Local `official_auth_plan_required` | Not implemented (§10.2) |
+| Trigger | Scenario                                                              | Signal                              | Status                  |
+| ------- | --------------------------------------------------------------------- | ----------------------------------- | ----------------------- |
+| T1      | Credentials present, request sent: quota exhausted / plan invalid     | `error_code` in tool error content  | Implemented             |
+| T2      | Signed out and switched to API Key, or not signed in: no request sent | Local `official_auth_plan_required` | Not implemented (§10.2) |
 
 ### 6.1 Single contract declaration point
 
@@ -95,11 +95,11 @@ A local tool handler returns `ToolErrorFor(err, requestID)` (go-sdk wraps the or
 
 Without a source check, any MCP server could put the same payload in a result and forge a Coding Plan notice (no credential exposure, but it could mislead users into buying or upgrading). The criterion is who produced the result, not who owns the Plugin (SG-02):
 
-| Form | Result producer | Can forge `error_code`? | Flagged |
-| --- | --- | --- | --- |
-| `http` + `auth.type=zcode_official` | ZCode backend (connection alive, per-request Origin validation passed and fails closed) | No: the Plugin can only send requests to real ZCode and does not control the response body | yes |
-| `stdio` + `auth.type=zcode_official` | The Plugin process | Yes, any string | no |
-| Other | Third-party server | Yes | no |
+| Form                                 | Result producer                                                                         | Can forge `error_code`?                                                                    | Flagged |
+| ------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------- |
+| `http` + `auth.type=zcode_official`  | ZCode backend (connection alive, per-request Origin validation passed and fails closed) | No: the Plugin can only send requests to real ZCode and does not control the response body | yes     |
+| `stdio` + `auth.type=zcode_official` | The Plugin process                                                                      | Yes, any string                                                                            | no      |
+| Other                                | Third-party server                                                                      | Yes                                                                                        | no      |
 
 The Plugin's marketplace origin is intentionally not checked: it would break official Plugins from unofficial install sources (local testing, `zcode-plugins-test`) and is not a real security boundary (see "Known Residual Risks" in `isOfficialMcpOriginTrusted`).
 
@@ -124,14 +124,14 @@ Known cost: failures from the official stdio Plugin (`video-agent-kit`) no longe
 
 ## 7. Display specification
 
-| Field | `mcp-quota-exhausted` | `mcp-plan-required` |
-| --- | --- | --- |
-| Label | `chat.quota.mcp.quotaExhausted` (names the server; resets tomorrow) | `chat.quota.mcp.codingPlanRequired` (names the server; Coding Plan required) |
-| Action | None (wait for calendar-day reset) | Reuse the banner's existing `onUpgrade` (Coding Plan upgrade / purchase dialog) |
-| Dismissible | Yes | Yes |
-| Blocks input | No | No |
-| Priority | 6 | 8; both below all model quota kinds |
-| Dedup key | `kind` + `serverName` + `rowId` | same |
+| Field        | `mcp-quota-exhausted`                                               | `mcp-plan-required`                                                             |
+| ------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Label        | `chat.quota.mcp.quotaExhausted` (names the server; resets tomorrow) | `chat.quota.mcp.codingPlanRequired` (names the server; Coding Plan required)    |
+| Action       | None (wait for calendar-day reset)                                  | Reuse the banner's existing `onUpgrade` (Coding Plan upgrade / purchase dialog) |
+| Dismissible  | Yes                                                                 | Yes                                                                             |
+| Blocks input | No                                                                  | No                                                                              |
+| Priority     | 6                                                                   | 8; both below all model quota kinds                                             |
+| Dedup key    | `kind` + `serverName` + `rowId`                                     | same                                                                            |
 
 - Priority must be lower than model quota kinds: model quota exhaustion directly affects the conversation.
 - The label uses i18n, not the server message (English, `daily quota exceeded for bucket ...`; unacceptable in a Chinese UI). The server message is only logged.

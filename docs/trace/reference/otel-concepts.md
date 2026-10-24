@@ -154,15 +154,15 @@ whether an Agent Turn stays Root + Link is decided separately by execution owner
 - Status and business Outcome: OTel Status is only `UNSET/OK/ERROR`, so ZCode uses a Span-specific
   `outcome`:
 
-| Outcome        | OTel Status | Meaning                                        |
-| -------------- | ----------- | ---------------------------------------------- |
-| `completed`    | `OK`        | Business completed normally                    |
-| `failed`       | `ERROR`     | Business failed                                |
-| `cancelled`    | `UNSET`     | Cancelled, not counted as system error by default |
-| `denied`       | `UNSET`     | Permission or policy denied                    |
-| `discarded`    | `UNSET`     | Result explicitly discarded                    |
+| Outcome        | OTel Status | Meaning                                                   |
+| -------------- | ----------- | --------------------------------------------------------- |
+| `completed`    | `OK`        | Business completed normally                               |
+| `failed`       | `ERROR`     | Business failed                                           |
+| `cancelled`    | `UNSET`     | Cancelled, not counted as system error by default         |
+| `denied`       | `UNSET`     | Permission or policy denied                               |
+| `discarded`    | `UNSET`     | Result explicitly discarded                               |
 | `backgrounded` | `UNSET`     | Command moved to background, foreground observation ended |
-| `abandoned`    | `UNSET`     | Writer did not reach a normal terminal and was reclaimed |
+| `abandoned`    | `UNSET`     | Writer did not reach a normal terminal and was reclaimed  |
 
 `failure_stage` says where in the Span's business phases the error occurred, `error_category` is the
 low-cardinality classification, `error_message` keeps the sanitized source information; they are

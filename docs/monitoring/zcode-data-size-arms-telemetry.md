@@ -56,19 +56,19 @@ generation, commands or automations.
 
 Event: `perf_resource_zcode_data_size`, `group=resource`.
 
-| Field                 | Meaning                                                  |
-| --------------------- | -------------------------------------------------------- |
-| `value`               | `zcode_data_bytes` counted in this run                   |
-| `metric_kind`         | fixed `zcode_data_bytes`                                 |
-| `zcode_data_bytes`    | sum of regular-file `stat.size`                          |
-| `scan_status`         | `complete` / `partial`                                   |
+| Field                 | Meaning                                                         |
+| --------------------- | --------------------------------------------------------------- |
+| `value`               | `zcode_data_bytes` counted in this run                          |
+| `metric_kind`         | fixed `zcode_data_bytes`                                        |
+| `zcode_data_bytes`    | sum of regular-file `stat.size`                                 |
+| `scan_status`         | `complete` / `partial`                                          |
 | `partial_reason`      | `time_limit` / `file_limit` / `io_error`; omitted when complete |
-| `scan_duration_ms`    | Worker scan wall-clock time                              |
-| `files_scanned`       | regular files counted                                    |
-| `directories_scanned` | directories opened successfully                          |
-| `scan_error_count`    | permission errors, vanished files and other local IO errors |
-| `data_root_kind`      | `default` / `custom`                                     |
-| `schema_version`      | fixed `1`                                                |
+| `scan_duration_ms`    | Worker scan wall-clock time                                     |
+| `files_scanned`       | regular files counted                                           |
+| `directories_scanned` | directories opened successfully                                 |
+| `scan_error_count`    | permission errors, vanished files and other local IO errors     |
+| `data_root_kind`      | `default` / `custom`                                            |
+| `schema_version`      | fixed `1`                                                       |
 
 Desktop main still writes the common dimensions `device_mid`, `platform`, `app_version`,
 `arms_env`, `event_name` and `metric_value`. The payload must never contain the absolute data root
@@ -155,16 +155,16 @@ protection and must not pass as a complete value.
 
 ### Must-preserve invariants
 
-| Invariant                                  | Proof                    |
-| ------------------------------------------ | ------------------------ |
-| no synchronous directory traversal in main | scanner runs in Worker (unit/build) |
-| no user path/name in payload               | exact payload test       |
-| at most one successful report per 24h      | persisted scheduler test |
-| a running ZCode task always blocks the scan | state-machine test      |
-| partial is distinguishable from complete   | scanner + payload test   |
-| remote/mobile delivery unchanged           | no protocol/schema edits (static) |
-| data-size event never enters continuous/replayable conversation delivery | architecture/spec |
-| local data root only; remote `~/.zcode` (SSH/WSL/Docker/server) never inspected | spec |
+| Invariant                                                                       | Proof                               |
+| ------------------------------------------------------------------------------- | ----------------------------------- |
+| no synchronous directory traversal in main                                      | scanner runs in Worker (unit/build) |
+| no user path/name in payload                                                    | exact payload test                  |
+| at most one successful report per 24h                                           | persisted scheduler test            |
+| a running ZCode task always blocks the scan                                     | state-machine test                  |
+| partial is distinguishable from complete                                        | scanner + payload test              |
+| remote/mobile delivery unchanged                                                | no protocol/schema edits (static)   |
+| data-size event never enters continuous/replayable conversation delivery        | architecture/spec                   |
+| local data root only; remote `~/.zcode` (SSH/WSL/Docker/server) never inspected | spec                                |
 
 ## Case planning
 

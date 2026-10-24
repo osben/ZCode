@@ -143,12 +143,12 @@ interface TimelineRenderRow {
 }
 ```
 
-| Timeline | placement | foldPolicy | Note |
-| --- | --- | --- | --- |
-| context compact | `inside_turn_worklog` | `worklog`, or visible while running | assistant worklog, does not split the turn |
-| goal verification | `after_turn` | `never` | post-turn judge event of the verified turn |
-| session fork | `session_lineage` | `never` | conversation lineage event, not assistant worklog |
-| model change | `session_lineage` or `after_turn` | `never` | depends on whether a turn is anchored; new data must set placement explicitly |
+| Timeline          | placement                         | foldPolicy                          | Note                                                                          |
+| ----------------- | --------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------- |
+| context compact   | `inside_turn_worklog`             | `worklog`, or visible while running | assistant worklog, does not split the turn                                    |
+| goal verification | `after_turn`                      | `never`                             | post-turn judge event of the verified turn                                    |
+| session fork      | `session_lineage`                 | `never`                             | conversation lineage event, not assistant worklog                             |
+| model change      | `session_lineage` or `after_turn` | `never`                             | depends on whether a turn is anchored; new data must set placement explicitly |
 
 ### Compact
 

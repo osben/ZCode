@@ -25,13 +25,13 @@ All conclusions are measured on a real machine, not inferred from static reading
 (`src/native/win.ts`, 413 lines) in the win32 branch and **does not go through `nativeAxSource.ts`**, so the
 macOS transparent-launch control flow (`nativeAxSource.ts:1676-1751`) never runs on Windows.
 
-| Capability | macOS | Windows |
-| --- | --- | --- |
-| `captureApp` implementation | `nativeAxSource.ts` | `src/native/win.ts` |
-| Transparent background launch | yes (`openApplicationInBackgroundAsync`, `ax_macos.mm:8883`) | **no export** |
-| Name -> canonical identity | `resolveApplicationBundleId` (LaunchServices, `macosApplicationResolver.ts:106`) | only a hard-coded 5-entry table (1.2) |
-| Wait for AX tree to settle after launch | `settleFreshlyLaunchedTree` | **none** |
-| `window_id` takes part in capture | yes | yes (`win.ts:313`, and the returned window_id is verified) |
+| Capability                              | macOS                                                                            | Windows                                                    |
+| --------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `captureApp` implementation             | `nativeAxSource.ts`                                                              | `src/native/win.ts`                                        |
+| Transparent background launch           | yes (`openApplicationInBackgroundAsync`, `ax_macos.mm:8883`)                     | **no export**                                              |
+| Name -> canonical identity              | `resolveApplicationBundleId` (LaunchServices, `macosApplicationResolver.ts:106`) | only a hard-coded 5-entry table (1.2)                      |
+| Wait for AX tree to settle after launch | `settleFreshlyLaunchedTree`                                                      | **none**                                                   |
+| `window_id` takes part in capture       | yes                                                                              | yes (`win.ts:313`, and the returned window_id is verified) |
 
 ### 1.2 "Launch by name" is only a Calculator alias table
 
@@ -39,8 +39,11 @@ macOS transparent-launch control flow (`nativeAxSource.ts:1676-1751`) never runs
 
 ```ts
 const WINDOWS_PACKAGED_APP_ALIASES = new Map<string, string>([
-  ["calculator", CALC], ["windows calculator", CALC],
-  ["calc", CALC], ["calc.exe", CALC], ["计算器", CALC],
+  ["calculator", CALC],
+  ["windows calculator", CALC],
+  ["calc", CALC],
+  ["calc.exe", CALC],
+  ["计算器", CALC],
 ]);
 ```
 
@@ -61,11 +64,11 @@ happens to contain it.
 
 `win.ts:118 windowsNameMatches` is a **case-insensitive substring** match:
 
-| `app_ref.name` | Result | Reason |
-| --- | --- | --- |
-| `"计算器"` | hit | the Calculator window title happens to equal the app name |
-| `"记事本"` | `capture_app: could not be resolved` | title is `无标题 - Notepad`, does not contain "记事本" |
-| `"设置"` | silently wrong | hits two entries (1.4); `win.ts:188` takes `active` or the first, **no ambiguity error** |
+| `app_ref.name` | Result                               | Reason                                                                                   |
+| -------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `"计算器"`     | hit                                  | the Calculator window title happens to equal the app name                                |
+| `"记事本"`     | `capture_app: could not be resolved` | title is `无标题 - Notepad`, does not contain "记事本"                                   |
+| `"设置"`       | silently wrong                       | hits two entries (1.4); `win.ts:188` takes `active` or the first, **no ambiguity error** |
 
 Substring semantics are itself dangerous: `{name:"cli"}` hits the terminal window `◐ agent-cli`.
 
@@ -111,10 +114,10 @@ Paint are packaged desktop apps and have no such property on their window.
 
 **Conclusion: binding must be pid first, AUMID as fallback;** each covers half:
 
-| App form | pid returned by activation | That pid has a visible window | AUMID binding | Use |
-| --- | --- | --- | --- | --- |
-| packaged desktop (Paint/Notepad) | the app itself | yes | null | **pid** |
-| UWP (Settings/Calculator) | real process (e.g. 348) | window cloaked / non-visual frame | host pid | **AUMID** |
+| App form                         | pid returned by activation | That pid has a visible window     | AUMID binding | Use       |
+| -------------------------------- | -------------------------- | --------------------------------- | ------------- | --------- |
+| packaged desktop (Paint/Notepad) | the app itself             | yes                               | null          | **pid**   |
+| UWP (Settings/Calculator)        | real process (e.g. 348)    | window cloaked / non-visual frame | host pid      | **AUMID** |
 
 ### 1.6 Installed-app registry: `shell:AppsFolder`
 
@@ -133,11 +136,11 @@ today only 38/134 are reachable.
 
 Classified by "valid AUMID or `.exe` target":
 
-| Class | Count | Launch method |
-| --- | --- | --- |
-| valid AUMID | 38 | `ActivateApplication(AO_NONE)` |
-| `.exe` target | 75 | `CreateProcess(target)` |
-| not launchable (`.url` / `.msc` / `.html` / shell CLSID) | 21 | reject |
+| Class                                                    | Count | Launch method                  |
+| -------------------------------------------------------- | ----- | ------------------------------ |
+| valid AUMID                                              | 38    | `ActivateApplication(AO_NONE)` |
+| `.exe` target                                            | 75    | `CreateProcess(target)`        |
+| not launchable (`.url` / `.msc` / `.html` / shell CLSID) | 21    | reject                         |
 
 **113/134 (84%) are launchable;** the 21 rejected are doc links, admin consoles and shell-namespace items that
 should not launch as apps anyway. Enumeration cost (PowerShell COM automation, two property reads per entry;
@@ -145,13 +148,13 @@ native is faster): 386 / 281 / 280 ms.
 
 ### 1.7 Focus semantics: the two paths differ and Win32 cannot block it
 
-| Path | Measured | Note |
-| --- | --- | --- |
-| `ActivateApplication(AO_NONE)` | **does not steal focus** (two independent measurements, incl. cold start) | equals macOS `activates=NO` |
-| `CreateProcess` / `spawn` | **steals focus** (`FOREGROUND_CHANGED=true`, new window `focused:true`) | |
-| `CreateProcess` + `STARTF_USESHOWWINDOW` + `SW_SHOWNOACTIVATE` | **still steals focus** | charmap calls `SetForegroundWindow` itself; nCmdShow is only a hint |
-| `ShowWindow(SW_SHOWNOACTIVATE)` to un-minimize | **steals focus** (`focused=true`, foreground 32324->25792) | restoring a minimized window cannot avoid a focus shift |
-| `PreventActivation` / `IsFocusStealPrevented` | honest no-op (`ax_win.cc:3345-3357`, "Windows has no equivalent") | no usable suppression mechanism |
+| Path                                                           | Measured                                                                  | Note                                                                |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `ActivateApplication(AO_NONE)`                                 | **does not steal focus** (two independent measurements, incl. cold start) | equals macOS `activates=NO`                                         |
+| `CreateProcess` / `spawn`                                      | **steals focus** (`FOREGROUND_CHANGED=true`, new window `focused:true`)   |                                                                     |
+| `CreateProcess` + `STARTF_USESHOWWINDOW` + `SW_SHOWNOACTIVATE` | **still steals focus**                                                    | charmap calls `SetForegroundWindow` itself; nCmdShow is only a hint |
+| `ShowWindow(SW_SHOWNOACTIVATE)` to un-minimize                 | **steals focus** (`focused=true`, foreground 32324->25792)                | restoring a minimized window cannot avoid a focus shift             |
+| `PreventActivation` / `IsFocusStealPrevented`                  | honest no-op (`ax_win.cc:3345-3357`, "Windows has no equivalent")         | no usable suppression mechanism                                     |
 
 **Decision: accept that the Win32 branch steals focus.** No more suppression attempts. The tool description
 must say so honestly and must not claim "background launch".
@@ -160,12 +163,12 @@ must say so honestly and must not claim "background launch".
 
 "Does observation need activation" is not yes/no: two of four states do, at very different costs.
 
-| Target state | UIA tree | Window screenshot | Needs | Focus cost |
-| --- | --- | --- | --- | --- |
-| not running | n/a | n/a | launch | packaged **no**; Win32 **yes** |
-| running, window normal (may be occluded) | 229 elements | 112,795 B | **nothing** | none |
-| running, UWP suspended (`cloaked=2`) | **1 element only** | stale frame 20,478 B | `ActivateApplication(AUMID)` | **no** |
-| running, minimized (`iconic=True`) | full | `invalid_target` | un-minimize | **always** |
+| Target state                             | UIA tree           | Window screenshot    | Needs                        | Focus cost                     |
+| ---------------------------------------- | ------------------ | -------------------- | ---------------------------- | ------------------------------ |
+| not running                              | n/a                | n/a                  | launch                       | packaged **no**; Win32 **yes** |
+| running, window normal (may be occluded) | 229 elements       | 112,795 B            | **nothing**                  | none                           |
+| running, UWP suspended (`cloaked=2`)     | **1 element only** | stale frame 20,478 B | `ActivateApplication(AUMID)` | **no**                         |
+| running, minimized (`iconic=True`)       | full               | `invalid_target`     | un-minimize                  | **always**                     |
 
 Key measurements:
 
@@ -307,12 +310,12 @@ therefore already has an expression, and a minimized window **physically** canno
 being restored (`ValidateWindowTarget` rejects `IsIconic`, `screen_capture_win.cc:268`). The trigger is thus
 exact and self-consistent:
 
-| Case | Touch the window | Focus cost |
-| --- | --- | --- |
-| window normal (even fully occluded) | no | none |
-| window iconic, `include_screenshot=false` | no, tree only | none |
-| window iconic, `include_screenshot=true` | restore | **yes** |
-| UWP suspended cloaked | AUMID wake | none |
+| Case                                      | Touch the window | Focus cost |
+| ----------------------------------------- | ---------------- | ---------- |
+| window normal (even fully occluded)       | no               | none       |
+| window iconic, `include_screenshot=false` | no, tree only    | none       |
+| window iconic, `include_screenshot=true`  | restore          | **yes**    |
+| UWP suspended cloaked                     | AUMID wake       | none       |
 
 So **the default path never steals focus;** it happens only when the model says "I want to see the picture"
 and the picture is truly unobtainable.
@@ -342,16 +345,16 @@ failing**, so newly installed apps need no Helper restart.
 
 The tool disappears (not a platform contraction). Deleted along with it:
 
-| Deleted | Location |
-| --- | --- |
-| Tool definition (about 183 lines) | `src/tools/observation.ts:1038-1220` |
-| Registration / tier / policy / legacy map | `manifest.ts:138`, `tier-table.ts`, `action-policy.ts`, `legacyToolMap.ts:26` |
-| Argument schema | `src/tools/schemas/openApplicationAppArg.ts`, `schemas/index.ts`, `schemas/jsonSchemas.ts` |
-| Broker method and handler | method name in `broker/types.ts`, two special cases in `broker-client.ts`, the handler in `electronNativeBackend.ts` (688 lines) + helpers serving only it (`resolveAppByPid` / `rollbackFreshApplication` / `discoverFreshApplicationForRollback` / `settleActivatedAppByPid` / `positiveWindowId` / `activateMacFilePanelSurface`, 378 lines) + the `broker_info` capability flag |
-| Windows launch machinery | `openApplication` in `windowsSystemSurface.ts`, the Calculator alias table, the whole `openRunner` / `WindowsAumidActivator` (173 -> 44 lines); with it the `windowsOpenRunner` / `windowsActivateApplicationByAumid` options of `nodeSystemSurface` and the injection points in `helperMain` / `windowsDevHelperMain` |
-| Platform-contraction mechanism (dead once emptied) | all of `src/tools/platform-surface.ts` + `tools/index.ts:61-62`, `manifest.ts:241-242`, `computer-use-runtime.ts:111-167` |
-| Activation contract doc | `docs/open-application-activation-contract.md` |
-| `prevent_activation` rejection branch | `electronNativeBackend.ts:1386-1389`. It guarded the model's explicit activation request, which no longer exists; and on Windows the gate never fires (`IsFocusStealPrevented()` hard-coded false, `ax_win.cc:3353`), so it is dead code |
+| Deleted                                            | Location                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool definition (about 183 lines)                  | `src/tools/observation.ts:1038-1220`                                                                                                                                                                                                                                                                                                                                                |
+| Registration / tier / policy / legacy map          | `manifest.ts:138`, `tier-table.ts`, `action-policy.ts`, `legacyToolMap.ts:26`                                                                                                                                                                                                                                                                                                       |
+| Argument schema                                    | `src/tools/schemas/openApplicationAppArg.ts`, `schemas/index.ts`, `schemas/jsonSchemas.ts`                                                                                                                                                                                                                                                                                          |
+| Broker method and handler                          | method name in `broker/types.ts`, two special cases in `broker-client.ts`, the handler in `electronNativeBackend.ts` (688 lines) + helpers serving only it (`resolveAppByPid` / `rollbackFreshApplication` / `discoverFreshApplicationForRollback` / `settleActivatedAppByPid` / `positiveWindowId` / `activateMacFilePanelSurface`, 378 lines) + the `broker_info` capability flag |
+| Windows launch machinery                           | `openApplication` in `windowsSystemSurface.ts`, the Calculator alias table, the whole `openRunner` / `WindowsAumidActivator` (173 -> 44 lines); with it the `windowsOpenRunner` / `windowsActivateApplicationByAumid` options of `nodeSystemSurface` and the injection points in `helperMain` / `windowsDevHelperMain`                                                              |
+| Platform-contraction mechanism (dead once emptied) | all of `src/tools/platform-surface.ts` + `tools/index.ts:61-62`, `manifest.ts:241-242`, `computer-use-runtime.ts:111-167`                                                                                                                                                                                                                                                           |
+| Activation contract doc                            | `docs/open-application-activation-contract.md`                                                                                                                                                                                                                                                                                                                                      |
+| `prevent_activation` rejection branch              | `electronNativeBackend.ts:1386-1389`. It guarded the model's explicit activation request, which no longer exists; and on Windows the gate never fires (`IsFocusStealPrevented()` hard-coded false, `ax_win.cc:3353`), so it is dead code                                                                                                                                            |
 
 **One spec error corrected by fact:** `adapter.openApplication` (the adapter-layer launch capability) **must be
 kept.** `reopenWindowlessApp` (darwin only) uses it inside `capture_app` to reopen a windowless macOS app,
@@ -366,11 +369,11 @@ reason (callers outside the handler).
 **Activation is no longer a capability but the minimal action `get_app_state` takes to complete an
 observation.** Split apart, the three things each have a home:
 
-| Capability | Owner | Focus cost |
-| --- | --- | --- |
-| Wake suspended UWP | automatic inside `get_app_state` (2.2) | **none** |
-| Raise to foreground (for raw input) | raw input does it at dispatch (1.10 `activateConcreteWindow`) | yes, but that is raw input's existing semantics |
-| Restore minimized window (for pixels) | `get_app_state` + `include_screenshot=true` (2.2) | yes, explicitly triggered by the model |
+| Capability                            | Owner                                                         | Focus cost                                      |
+| ------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------- |
+| Wake suspended UWP                    | automatic inside `get_app_state` (2.2)                        | **none**                                        |
+| Raise to foreground (for raw input)   | raw input does it at dispatch (1.10 `activateConcreteWindow`) | yes, but that is raw input's existing semantics |
+| Restore minimized window (for pixels) | `get_app_state` + `include_screenshot=true` (2.2)             | yes, explicitly triggered by the model          |
 
 None needs a standalone tool. A narrow `activate_window` tool was considered and rejected: it would have one
 use (pixels of a window that cannot be seen), which is already `get_app_state`'s job; another tool does not
@@ -424,19 +427,19 @@ New:
 
 Rewrite / delete (about 3,200 lines):
 
-| File | Lines | Disposition |
-| --- | --- | --- |
-| `test/windows-open-application-identity.test.ts` | 771 | delete; identity assertions move into the new transparent-launch suite |
-| `test/open-application-new-instance.test.ts` | 584 | delete (`new_instance` goes with the tool) |
-| `test/open-application-identity-conjunction.test.ts` | 474 | delete |
-| `test/open-application-args.test.ts` | 423 | delete |
-| `test/open-application-error-taxonomy.test.ts` | 268 | delete; error taxonomy assertions move to `get_app_state` |
-| `test/broker/windowsSystemSurface.test.ts` | 201 | trim (drop openApplication and the alias table) |
-| `test/get-app-state-transparent-launch.test.ts` | 205 | extend with a Windows branch |
-| `test/native/windows-app-ref-resolution.test.ts` | 278 | rewrite for `resolveTarget` |
-| `test/tool-platform-surface.test.ts` | 47 | delete (`open_application` is its only entry; the mechanism becomes dead) |
-| `test/resolve-opened-app-active-settle.test.ts` | 237 | delete (`settleActivatedAppByPid` deleted; native activation has its own foreground verification loop) |
-| `test/manifest.test.ts` / `tier-table` / `schemas-*` / `skill-tool-signatures` / `tool-return-shape.parity` | n/a | sync tool count and signatures (15 -> 14) |
+| File                                                                                                        | Lines | Disposition                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------ |
+| `test/windows-open-application-identity.test.ts`                                                            | 771   | delete; identity assertions move into the new transparent-launch suite                                 |
+| `test/open-application-new-instance.test.ts`                                                                | 584   | delete (`new_instance` goes with the tool)                                                             |
+| `test/open-application-identity-conjunction.test.ts`                                                        | 474   | delete                                                                                                 |
+| `test/open-application-args.test.ts`                                                                        | 423   | delete                                                                                                 |
+| `test/open-application-error-taxonomy.test.ts`                                                              | 268   | delete; error taxonomy assertions move to `get_app_state`                                              |
+| `test/broker/windowsSystemSurface.test.ts`                                                                  | 201   | trim (drop openApplication and the alias table)                                                        |
+| `test/get-app-state-transparent-launch.test.ts`                                                             | 205   | extend with a Windows branch                                                                           |
+| `test/native/windows-app-ref-resolution.test.ts`                                                            | 278   | rewrite for `resolveTarget`                                                                            |
+| `test/tool-platform-surface.test.ts`                                                                        | 47    | delete (`open_application` is its only entry; the mechanism becomes dead)                              |
+| `test/resolve-opened-app-active-settle.test.ts`                                                             | 237   | delete (`settleActivatedAppByPid` deleted; native activation has its own foreground verification loop) |
+| `test/manifest.test.ts` / `tier-table` / `schemas-*` / `skill-tool-signatures` / `tool-return-shape.parity` | n/a   | sync tool count and signatures (15 -> 14)                                                              |
 
 E2E: `docs/cua-act-verify-windows-scenarios.md` needs a case "cold-launch and observe by Chinese app name"
 (today `{name:"记事本"}` must fail).
@@ -445,11 +448,11 @@ E2E: `docs/cua-act-verify-windows-scenarios.md` needs a case "cold-launch and ob
 
 ## 4. Phases
 
-| Phase | Content | Independently verifiable |
-| --- | --- | --- |
-| A | Native: `listInstalledApplications` + `launchApplicationAsync` + `window_id` + cloaked criterion | yes: pure new exports, no existing behavior changed |
-| B | `win.ts`: `resolveTarget` + transparent launch + iconic restore + settle + ambiguity error | yes: `get_app_state({name})` end to end |
-| C | Delete all `open_application` surfaces + platform-contraction mechanism + contract doc | yes: pure deletion |
+| Phase | Content                                                                                          | Independently verifiable                            |
+| ----- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| A     | Native: `listInstalledApplications` + `launchApplicationAsync` + `window_id` + cloaked criterion | yes: pure new exports, no existing behavior changed |
+| B     | `win.ts`: `resolveTarget` + transparent launch + iconic restore + settle + ambiguity error       | yes: `get_app_state({name})` end to end             |
+| C     | Delete all `open_application` surfaces + platform-contraction mechanism + contract doc           | yes: pure deletion                                  |
 
 C depends on B (replacement before deleting the old tool), B on A. The iconic restore in B adds no native
 code: `activateWindow` / `activateApplication` both exist and both contain `IsIconic -> SW_RESTORE`
@@ -529,6 +532,7 @@ code: `activateWindow` / `activateApplication` both exist and both contain `IsIc
   The only two remaining consequences cause no misoperation: asked "which apps are open now" the model misses
   UWP apps on the same host, and `application_info({pid})` on AFH reports the wrong app name. **Workaround:**
   bind by app name (main path, works), or take the `window_id` from the shared-host error.
+
 - **The full failure baseline was never triaged item by item, so "N = N" is a regression gate, not proof of
   health.** The repo has had about 50 failures on Windows, generally summarized as "macOS / PiP contracts must
   be red on Windows". On 2026-09-16 triaging one of them,

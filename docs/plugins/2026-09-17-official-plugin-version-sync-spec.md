@@ -12,11 +12,11 @@ describes a single plugin and cannot express the ownership after the move.
 
 ## 1. Version decisions
 
-| Package | Old | New | Rationale |
-| --- | --- | --- | --- |
-| `@zcode/browser-use-plugin` | 0.4.2 | 0.5.0 | The release unit changed: the node_repl MCP server is no longer carried by this plugin (`dist/mcp/server.js` left the seed list); only the skill, client runtime and docs remain. A composition change, not a fix, so minor. |
-| `@zcode/node-repl-host` | 0.4.2 | 0.5.0 | The host contract changed: extracted from Browser Use as a standalone seed unit, tool surface adjusted with the Computer Use node_repl SDK rebuild. It inherited Browser Use's 0.4.2 on extraction and is lifted by the same minor step. |
-| `zcode-cua` / `@zcode/zcode-cua-plugin` | 0.5.14 | 0.6.0 | The producer rebuild is breaking (`feat(cua)!`: tool surface, background input and observation surface), so a patch number cannot let downstream tell old and new producers apart. |
+| Package                                 | Old    | New   | Rationale                                                                                                                                                                                                                                |
+| --------------------------------------- | ------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@zcode/browser-use-plugin`             | 0.4.2  | 0.5.0 | The release unit changed: the node_repl MCP server is no longer carried by this plugin (`dist/mcp/server.js` left the seed list); only the skill, client runtime and docs remain. A composition change, not a fix, so minor.             |
+| `@zcode/node-repl-host`                 | 0.4.2  | 0.5.0 | The host contract changed: extracted from Browser Use as a standalone seed unit, tool surface adjusted with the Computer Use node_repl SDK rebuild. It inherited Browser Use's 0.4.2 on extraction and is lifted by the same minor step. |
+| `zcode-cua` / `@zcode/zcode-cua-plugin` | 0.5.14 | 0.6.0 | The producer rebuild is breaking (`feat(cua)!`: tool surface, background input and observation surface), so a patch number cannot let downstream tell old and new producers apart.                                                       |
 
 node-repl-host and Browser Use sharing the number is a coincidence of shared history, not coupling: each
 bumps independently, and the comment on `NODE_REPL_SERVER_VERSION` records this.
@@ -90,12 +90,12 @@ as history, but official discovery must point only to the new version.
 
 ## 5. Mechanical drift checks
 
-| Check | Coverage |
-| --- | --- |
-| `plugins.test.ts` "keeps every bundled plugin package, manifest, and seed version aligned" | Per official plugin, compares package / manifest / Bootstrap definition |
-| `build-sea.test.mjs` "keeps SEA official plugin versions aligned with package and plugin manifests" | Per SEA entry, compares package / manifest / SEA list |
-| `node-repl-host/test/mcp-server.test.ts` | Pins `serverInfo.version` == this package's `package.json.version` |
-| `check-version-coherence.mjs --check` | Pins the whole CUA chain (workspace producer / producer manifest / wrapper / official definition / consumer `workspace:*`) |
+| Check                                                                                               | Coverage                                                                                                                   |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `plugins.test.ts` "keeps every bundled plugin package, manifest, and seed version aligned"          | Per official plugin, compares package / manifest / Bootstrap definition                                                    |
+| `build-sea.test.mjs` "keeps SEA official plugin versions aligned with package and plugin manifests" | Per SEA entry, compares package / manifest / SEA list                                                                      |
+| `node-repl-host/test/mcp-server.test.ts`                                                            | Pins `serverInfo.version` == this package's `package.json.version`                                                         |
+| `check-version-coherence.mjs --check`                                                               | Pins the whole CUA chain (workspace producer / producer manifest / wrapper / official definition / consumer `workspace:*`) |
 
 ## 6. Verification
 

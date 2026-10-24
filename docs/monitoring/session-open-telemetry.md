@@ -65,42 +65,42 @@ duration and the Renderer computes the perceivable duration from pane acquire.
 
 `group=ui_perf`, `value=1`. Properties:
 
-| Field             | Value                                                          |
-| ----------------- | -------------------------------------------------------------- |
-| `session_open_id` | Opaque correlation ID of this logical open                     |
+| Field             | Value                                                                      |
+| ----------------- | -------------------------------------------------------------------------- |
+| `session_open_id` | Opaque correlation ID of this logical open                                 |
 | `session_id`      | Current session ID, following the existing talk/session correlation policy |
-| `open_trigger`    | Low-cardinality buckets such as sidebar/search/deeplink/reload |
-| `open_kind`       | `cold` / `warm` / `keep_warm`                                  |
-| `client_mode`     | `desktop-continuous`                                           |
+| `open_trigger`    | Low-cardinality buckets such as sidebar/search/deeplink/reload             |
+| `open_kind`       | `cold` / `warm` / `keep_warm`                                              |
+| `client_mode`     | `desktop-continuous`                                                       |
 
 ### `perf_ui_session_open_result`
 
 `group=ui_perf`, `value=total_ms`. Besides the start-event fields, properties allow:
 
-| Field                                               | Meaning                                                                                                          |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `status`                                            | `success` / `failed` / `timeout`                                                                                 |
-| `error_phase` / `error_code`                        | Failure stage and structured reason code                                                                         |
-| `total_ms`                                          | pane acquire → interactive_ready                                                                                 |
-| `renderer_prepare_ms`                               | click → subscribe issued                                                                                         |
-| `host_prepare_ms`                                   | Host receives the request → CLI subscribe request sent                                                           |
+| Field                                               | Meaning                                                                                                                                 |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`                                            | `success` / `failed` / `timeout`                                                                                                        |
+| `error_phase` / `error_code`                        | Failure stage and structured reason code                                                                                                |
+| `total_ms`                                          | pane acquire → interactive_ready                                                                                                        |
+| `renderer_prepare_ms`                               | click → subscribe issued                                                                                                                |
+| `host_prepare_ms`                                   | Host receives the request → CLI subscribe request sent                                                                                  |
 | `provider_registry_sync_ms`                         | Historical field name; currently the time the Host waits for this Environment's Provider Registry readiness, not cross-Environment sync |
-| `task_meta_read_ms`                                 | Time for the Host to read session/task metadata                                                                  |
-| `cli_request_ms`                                    | Host issues the CLI subscribe request → receives the CLI ACK                                                     |
-| `cli_bootstrap_ms`                                  | New CLI process start → Protocol ready; empty for a reused process                                              |
-| `cli_session_restore_ms`                            | CLI receives conversation subscribe → initial projection ready                                                   |
-| `initial_frame_encode_ms`                           | CLI builds the first-frame wire projection → physical wire encoding done                                         |
-| `initial_frame_transport_ms`                        | initial frame ready → Renderer received it completely                                                            |
-| `renderer_snapshot_apply_ms`                        | frame received → ProjectionStore apply done                                                                      |
-| `react_render_ms`                                   | snapshot apply → React commit                                                                                    |
-| `paint_to_interactive_ms`                           | React commit → main-thread yield after paint                                                                     |
-| `cli_process_state`                                 | `spawned` / `reused`                                                                                             |
-| `session_runtime_state`                             | `cold` / `warm`                                                                                                  |
-| `attempt_count`                                     | Number of subscribe/retry attempts                                                                               |
-| `persisted_message_count`                           | Number of history messages, count only, no body                                                                  |
-| `snapshot_row_count`                                | Number of first-screen projection rows                                                                           |
-| `snapshot_bytes`                                    | First-frame size                                                                                                 |
-| `plugin_count` / `skill_count` / `mcp_server_count` | Low-cardinality counts                                                                                           |
+| `task_meta_read_ms`                                 | Time for the Host to read session/task metadata                                                                                         |
+| `cli_request_ms`                                    | Host issues the CLI subscribe request → receives the CLI ACK                                                                            |
+| `cli_bootstrap_ms`                                  | New CLI process start → Protocol ready; empty for a reused process                                                                      |
+| `cli_session_restore_ms`                            | CLI receives conversation subscribe → initial projection ready                                                                          |
+| `initial_frame_encode_ms`                           | CLI builds the first-frame wire projection → physical wire encoding done                                                                |
+| `initial_frame_transport_ms`                        | initial frame ready → Renderer received it completely                                                                                   |
+| `renderer_snapshot_apply_ms`                        | frame received → ProjectionStore apply done                                                                                             |
+| `react_render_ms`                                   | snapshot apply → React commit                                                                                                           |
+| `paint_to_interactive_ms`                           | React commit → main-thread yield after paint                                                                                            |
+| `cli_process_state`                                 | `spawned` / `reused`                                                                                                                    |
+| `session_runtime_state`                             | `cold` / `warm`                                                                                                                         |
+| `attempt_count`                                     | Number of subscribe/retry attempts                                                                                                      |
+| `persisted_message_count`                           | Number of history messages, count only, no body                                                                                         |
+| `snapshot_row_count`                                | Number of first-screen projection rows                                                                                                  |
+| `snapshot_bytes`                                    | First-frame size                                                                                                                        |
+| `plugin_count` / `skill_count` / `mcp_server_count` | Low-cardinality counts                                                                                                                  |
 
 These stages overlap, so the stage properties need not add up to `total_ms`; dashboards use `total_ms` as the main
 metric and the stage fields for attribution.

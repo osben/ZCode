@@ -8,11 +8,11 @@ Status: producer, standalone MCP, ZCode Agent and visible Desktop Kimi K3 real-d
 
 Trace `model-io-sess_364a4761` (2026-08-19 19:19-19:53, Helper 3.8.1 / producer 0.5.7) lost three clicks in a row; the returned `resolved_app_ref` recorded the actual delivery targets:
 
-| Request # | Window that received the click | layer | bounds |
-| --- | --- | --- | --- |
-| 18 | `com.electron.lark.iron` (Lark screen-sharing prompt layer LarkSSPromptWindow) | non-zero | `[0,0,1512,982]` |
-| 25 | `com.volcengine.corplink.networkextension-wrapper` (Corplink network extension) | 25 | `[0,0,1512,982]` |
-| 31 | `now.typeless.desktop` (Typeless "Status") | 1001 | `[381,482,750,500]` |
+| Request # | Window that received the click                                                  | layer    | bounds              |
+| --------- | ------------------------------------------------------------------------------- | -------- | ------------------- |
+| 18        | `com.electron.lark.iron` (Lark screen-sharing prompt layer LarkSSPromptWindow)  | non-zero | `[0,0,1512,982]`    |
+| 25        | `com.volcengine.corplink.networkextension-wrapper` (Corplink network extension) | 25       | `[0,0,1512,982]`    |
+| 31        | `now.typeless.desktop` (Typeless "Status")                                      | 1001     | `[381,482,750,500]` |
 
 All three had `isError=false`. 22 tool calls were spent locating and moving these invisible windows. On a machine with Corplink installed any point on the main display attributes to its wrapper window, so coordinate clicks are not flaky but unusable across the whole screen.
 
@@ -98,27 +98,27 @@ capture/zoom -> final raster + frame_id -> model {frame_id, x, y}
 
 ## Evidence (final state)
 
-| Layer | Result | Note |
-| --- | --- | --- |
-| Historical `v0.5.3/6d02fc3c` | rejected | Diverges from `72a8487d` and lacks frame-contract; proves the same version number is not proof of implementation |
-| producer frame baseline `v0.5.4/a0d4eaca` | 2750 passed, 38 skipped | 225 files passed, 3 skipped; frame, Zoom, Retina, stale, native gate |
-| producer `v0.5.5/372cbac9` | 2766 passed, 23 skipped | adds 30-tool subagent stable error code and package/plugin version consistency gate; full socket suite passes on Node 24.14.0 |
-| pixel click implementation `v0.5.6/625b32ad` | 2786 passed, 23 skipped | unified WindowServer owner, no-AX window/full/Zoom click, localized AX regression, K3 model-evidence adjudication, Helper LaunchServices TCC attribution gate |
-| producer `v0.5.6/c863cff9` | 2814 passed, 23 skipped | after merging latest `main` AX authoritative-state barrier; build/typecheck/lint, evaluator 472/472, Python 32/32 |
-| producer `v0.5.6/07a6dca8` (final pin) | 2814 passed, 23 skipped | frame hint fixed between image and AX tree, trace records only delivered frame provenance before truncation; evaluator 474/474, Python 32/32, Kimi K3 direct/app-server pass |
-| producer trace/coordinate focus set | 77/77 | 12 files; old chess trace adds 3 fail-closed cases |
-| ZCode consumer integrity | 124/124 | 6 files; final dependency pinned to `07a6dca8`/`0.5.6`; full pre-commit gate and MR pipeline still need re-verification |
-| wrapper version/skill/contract gate | 13/13 | missing Windows Helper or final-raster frame-contract is rejected outright; wrapper host authority 1/1 |
-| CUA eval evaluator / definition | 474/474; 31/31 (definition-only quality 100) | Node evaluator full set; Python 32/32 covers C07, region, K3 model-I/O and frame-id recovery |
-| ZCode full unit tests | 11476 passed, 12 skipped | 1309 files passed, 1 skipped; local full `test:unit` on the consumer final tree; the affected/pre-push gate re-verifies by commit range |
-| ZCode / producer Node 24.14.0 static gates | pass | ZCode `typecheck`, `lint` 0 errors (38 existing warnings); producer `typecheck`, `lint` 0 errors (14 existing warnings) |
-| plugin product package check | pass | bundled skill provenance, producer SHA, version and contract consistent |
-| standalone `zcode-cua` MCP | pass | stdio start of `v0.5.6` on Node `24.14.0`; canvas marker-grid window 5/5, full, strict-interior Zoom, drag all proven by authenticated DOM oracle, all report `window_event`; stale frame zero dispatch |
-| CUA Helper dev wrapper | build passes | Node `24.14.0` SEA base with same-ABI `ax_native.node`, provenance `arm64/node_abi=137` passes, installed to `~/.zcode/computer-use/dev` |
-| macOS C07 runtime | pass | latest Dev Helper Accessibility/Screen Recording granted; final-SHA direct C07 and Calculator M02 AX both 100 |
-| Kimi K3 app-server | pass | final-SHA gate direct and `zcode_agent_core` lanes pass; product/release score 100; the model really received and recognized the screenshot |
-| Kimi K3 visible ZCode Desktop | pass | session `sess_be30c6a3-2ce7-4574-aaac-2fe821e311ed`; window raster `1280x900`, `frame-0c9a96ea`, model pixel `(641,496)`, DOM oracle `Marker placed at 450, 280`, canvas has no AX children |
-| Desktop plugin cache sharp | pass | first run reproducibly missed sharp; after `sync:cache` reused the product staging, sharp `0.34.5`/libvips `8.17.3` native load smoke and a fresh MCP/K3 C07 pass |
+| Layer                                        | Result                                       | Note                                                                                                                                                                                                    |
+| -------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Historical `v0.5.3/6d02fc3c`                 | rejected                                     | Diverges from `72a8487d` and lacks frame-contract; proves the same version number is not proof of implementation                                                                                        |
+| producer frame baseline `v0.5.4/a0d4eaca`    | 2750 passed, 38 skipped                      | 225 files passed, 3 skipped; frame, Zoom, Retina, stale, native gate                                                                                                                                    |
+| producer `v0.5.5/372cbac9`                   | 2766 passed, 23 skipped                      | adds 30-tool subagent stable error code and package/plugin version consistency gate; full socket suite passes on Node 24.14.0                                                                           |
+| pixel click implementation `v0.5.6/625b32ad` | 2786 passed, 23 skipped                      | unified WindowServer owner, no-AX window/full/Zoom click, localized AX regression, K3 model-evidence adjudication, Helper LaunchServices TCC attribution gate                                           |
+| producer `v0.5.6/c863cff9`                   | 2814 passed, 23 skipped                      | after merging latest `main` AX authoritative-state barrier; build/typecheck/lint, evaluator 472/472, Python 32/32                                                                                       |
+| producer `v0.5.6/07a6dca8` (final pin)       | 2814 passed, 23 skipped                      | frame hint fixed between image and AX tree, trace records only delivered frame provenance before truncation; evaluator 474/474, Python 32/32, Kimi K3 direct/app-server pass                            |
+| producer trace/coordinate focus set          | 77/77                                        | 12 files; old chess trace adds 3 fail-closed cases                                                                                                                                                      |
+| ZCode consumer integrity                     | 124/124                                      | 6 files; final dependency pinned to `07a6dca8`/`0.5.6`; full pre-commit gate and MR pipeline still need re-verification                                                                                 |
+| wrapper version/skill/contract gate          | 13/13                                        | missing Windows Helper or final-raster frame-contract is rejected outright; wrapper host authority 1/1                                                                                                  |
+| CUA eval evaluator / definition              | 474/474; 31/31 (definition-only quality 100) | Node evaluator full set; Python 32/32 covers C07, region, K3 model-I/O and frame-id recovery                                                                                                            |
+| ZCode full unit tests                        | 11476 passed, 12 skipped                     | 1309 files passed, 1 skipped; local full `test:unit` on the consumer final tree; the affected/pre-push gate re-verifies by commit range                                                                 |
+| ZCode / producer Node 24.14.0 static gates   | pass                                         | ZCode `typecheck`, `lint` 0 errors (38 existing warnings); producer `typecheck`, `lint` 0 errors (14 existing warnings)                                                                                 |
+| plugin product package check                 | pass                                         | bundled skill provenance, producer SHA, version and contract consistent                                                                                                                                 |
+| standalone `zcode-cua` MCP                   | pass                                         | stdio start of `v0.5.6` on Node `24.14.0`; canvas marker-grid window 5/5, full, strict-interior Zoom, drag all proven by authenticated DOM oracle, all report `window_event`; stale frame zero dispatch |
+| CUA Helper dev wrapper                       | build passes                                 | Node `24.14.0` SEA base with same-ABI `ax_native.node`, provenance `arm64/node_abi=137` passes, installed to `~/.zcode/computer-use/dev`                                                                |
+| macOS C07 runtime                            | pass                                         | latest Dev Helper Accessibility/Screen Recording granted; final-SHA direct C07 and Calculator M02 AX both 100                                                                                           |
+| Kimi K3 app-server                           | pass                                         | final-SHA gate direct and `zcode_agent_core` lanes pass; product/release score 100; the model really received and recognized the screenshot                                                             |
+| Kimi K3 visible ZCode Desktop                | pass                                         | session `sess_be30c6a3-2ce7-4574-aaac-2fe821e311ed`; window raster `1280x900`, `frame-0c9a96ea`, model pixel `(641,496)`, DOM oracle `Marker placed at 450, 280`, canvas has no AX children             |
+| Desktop plugin cache sharp                   | pass                                         | first run reproducibly missed sharp; after `sync:cache` reused the product staging, sharp `0.34.5`/libvips `8.17.3` native load smoke and a fresh MCP/K3 C07 pass                                       |
 
 Final Kimi K3 real-device record bound to producer `07a6dca8`: direct C07 100; the ZCode app-server lane `vision-pass`, product score 100. The model really received window image `frame-8ce8ecf9`, submitted integer pixel `(641,469)`, the Helper dispatched via `window_event`, and the DOM oracle returned `Marker placed at 450, 280`. The same candidate's direct C07 also covers retained-raster Zoom, and Calculator M02 AX regression is also 100.
 

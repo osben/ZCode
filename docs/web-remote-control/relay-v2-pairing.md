@@ -54,11 +54,13 @@ Entry `/api/v1/remote/ws2?token=...`, optionally with the gateway routing hint `
 expired or reused token returns 401 before upgrade. Only JSON text is accepted; at most 1 MiB per message.
 
 Client to relay:
+
 - `auth_init`: `device_sid` (non-blank, at most 128 UTF-8 bytes), optional `meta`, optional `client_ts`; no `role`.
 - `pair_status_query`: optional `client_ts`; no `device_sid`.
 - `data`: must have `payload` (any JSON), optional `client_ts`.
 
 Relay to client:
+
 - `auth_ack`: `device_sid`, `terminal_sid`, `pair_status`, optional `server_ts`.
 - `pair_status_ack`: `terminal_sid`, `pair_status`, optional `server_ts`.
 - `data`: `payload`, optional `server_ts`; no `client_ts`.
@@ -278,6 +280,7 @@ The dialog's login button closes the remote control dialog and reuses the existi
 not a global OAuth logout command; HTTP 401 only stops remote control.
 
 Dialog copy (implemented and visually accepted):
+
 - Title: "需要先登录" / "Sign in required".
 - Description: "登录后即可使用手机远程控制。手机和电脑需登录同一账号。" / "Sign in to control this computer from your phone. Use the same account on both devices."
 - Login button: "登录" / "Sign in".
@@ -357,6 +360,7 @@ source + a real loopback relay, IPC schema and dialog rendering; the desktop E2E
 without login, zero remote control HTTP/WS, and Zai Light/Dark x zh-CN/en-US screenshots.
 
 <a id="手机首次进入与恢复05"></a>
+
 ## Phone first entry and recovery (05)
 
 The pre-orchestration owns only the entry flow; the credential owner is `BrowserOAuthCredentialRepo` /
@@ -481,6 +485,7 @@ auto-promoted. The test seam is the pre-orchestration with injected auth/fetch/l
 a real loopback fake relay.
 
 Cases:
+
 - ML01: no JWT shows the two-provider login gate, zero token/WS; 8 of the 24 matrix shots (pending browser).
 - ML02: logged-in no-SID queries devices and shows the list, zero token/WS before selection; 06 updated it to mixed/empty lists, 16 shots (pending browser).
 - ML03: AUTH_FAILED shows the ownership failure; switch account clears the session and keeps the URL; 8 shots (pending browser).
@@ -501,6 +506,7 @@ dynamic-session/workspace event subscription missing warnings existed (see the 2
 full unit run was blocked by an existing feedback E2E `/private/tmp` path assertion.
 
 <a id="手机设备列表与最近设备06"></a>
+
 ## Phone device list and last device (06)
 
 This section corresponds to the [06 issue](../issues/web-remote-control-relay-v2/06-mobile-device-list-and-last-device.md);
@@ -509,6 +515,7 @@ the hidden "Choose another device" action; 05's SID direct connect, OAuth return
 contracts still apply.
 
 <a id="落点状态归属与刷新"></a>
+
 ### Landing, state ownership and refresh
 
 `WebRemoteControlEntry` is the sole owner of the entry view, the device list request and the auto-connect
@@ -577,6 +584,7 @@ over; the owner, workspaceIdentity, ACK and snapshot/gap order of desktop `deskt
 `web-remote-replayable` are unchanged.
 
 <a id="列表排布与文本线框"></a>
+
 ### List layout and text wireframe
 
 2026-09-23 redesign (prototype confirmed, archived in branch `prototype/mobile-remote-redesign`): a standalone
@@ -931,6 +939,7 @@ directories. The current root version is `3.13.0`; before overwriting the same-v
 OSS, notify colleagues still using that version's V1 desktop.
 
 <a id="测试环境真机验收矩阵07"></a>
+
 ## Real-device acceptance matrix on the test environment (07)
 
 Recorded 2026-09-19. Target entry: test environment `/remote/v4`. Execution needs a deployed page of the

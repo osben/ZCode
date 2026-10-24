@@ -210,11 +210,11 @@ round used a fresh Electron process, user data and database clone, alternating b
 the OS file cache was not cleared, so "cold start" here means cold process start and does not assume an
 uncontrollable whole-machine cold cache.
 
-| Metric | Median before | Median after | Change |
-| --- | ---: | ---: | ---: |
-| T0 to input available (T6) | 5,441ms | 3,249ms | -2,193ms (40.3% faster) |
-| Local Host initialization | 2,707ms | 17ms | -2,690ms (99.4% faster) |
-| startup gate after React commit | 3,278ms | 579ms | -2,699ms (82.3% faster) |
+| Metric                          | Median before | Median after |                  Change |
+| ------------------------------- | ------------: | -----------: | ----------------------: |
+| T0 to input available (T6)      |       5,441ms |      3,249ms | -2,193ms (40.3% faster) |
+| Local Host initialization       |       2,707ms |         17ms | -2,690ms (99.4% faster) |
+| startup gate after React commit |       3,278ms |        579ms | -2,699ms (82.3% faster) |
 
 The new single async login shell snapshot itself still has a median of about `1,626ms`, but it starts at Main
 module initialization and overlaps with Electron ready, window and renderer loading; in all 5 rounds it

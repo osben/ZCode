@@ -139,16 +139,16 @@ This path does not depend on a periodic watchdog, background health probe or Age
 
 ## IV. Boundaries and state owners
 
-| State/Fact | Authoritative owner | Can Helper modify? | Can Agent be affected? |
-| --- | --- | --- | --- |
-| Helper process/readiness | Host + Helper lifecycle | Yes | Only CUA tool readiness |
-| Broker transport facade | Host | Yes | Agent connection contract unchanged |
-| Agent process/runtime | Agent process manager | No | Only the Agent's own lifecycle policy |
-| Session messages/active turn | Agent runtime/session store | No | Helper must not clear or rebuild |
-| Task index metadata | Host task index syncer | No | Helper ready must not trigger Agent dispose |
-| CUA tool retry state | CUA broker client/facade | Yes | Only the current CUA request |
-| Desktop realtime | `desktop-continuous` attachment | No | No Helper-specific replay messages |
-| Mobile remote realtime | `web-remote-replayable` attachment | No | Snapshot/gap recovery; no independent Helper created |
+| State/Fact                   | Authoritative owner                | Can Helper modify? | Can Agent be affected?                               |
+| ---------------------------- | ---------------------------------- | ------------------ | ---------------------------------------------------- |
+| Helper process/readiness     | Host + Helper lifecycle            | Yes                | Only CUA tool readiness                              |
+| Broker transport facade      | Host                               | Yes                | Agent connection contract unchanged                  |
+| Agent process/runtime        | Agent process manager              | No                 | Only the Agent's own lifecycle policy                |
+| Session messages/active turn | Agent runtime/session store        | No                 | Helper must not clear or rebuild                     |
+| Task index metadata          | Host task index syncer             | No                 | Helper ready must not trigger Agent dispose          |
+| CUA tool retry state         | CUA broker client/facade           | Yes                | Only the current CUA request                         |
+| Desktop realtime             | `desktop-continuous` attachment    | No                 | No Helper-specific replay messages                   |
+| Mobile remote realtime       | `web-remote-replayable` attachment | No                 | Snapshot/gap recovery; no independent Helper created |
 
 Workspace isolation uses `workspaceIdentity?.trim() || workspacePath`; Helper recovery must not treat different remote workspaces as the same Agent by bare `workspacePath`.
 
@@ -160,22 +160,22 @@ Workspace isolation uses `workspaceIdentity?.trim() || workspacePath`; Helper re
 
 ## VI. Verification matrix
 
-| Case | Initial state | Event | Expected |
-| --- | --- | --- | --- |
-| HLR-01 | Helper cold-start, normal Agent spawn | Helper delayed ready | Agent starts immediately; PID/runtime generation unchanged |
-| HLR-02 | Helper cold-start, pre-allocated tuple published | Helper ready | Agent does not restart; the same CUA MCP connection eventually available |
-| HLR-03 | Helper cold-start, tuple temporarily unavailable | CUA tool request | bounded retry or `broker_not_ready`; Agent not recycled |
-| HLR-04 | Agent has active CUA turn | Helper health probe failure | Agent not restarted due to Helper; current request handled by safe delivery state |
-| HLR-05 | Agent has normal non-CUA turn | Helper recovery | Conversation continues; non-CUA MCP, model provider, task index unaffected |
-| HLR-06 | Helper stuck or process exits after idle, no CUA requests | Wait exceeds historical watchdog cycle | No periodic probe/restart or exit-event auto-recovery; Agent PID/session unchanged; next CUA demand recovers on demand |
-| HLR-07 | Multiple parallel workspaces | Single Helper recovery | No cross-workspace Agent dispose; workspace identity isolation preserved |
-| HLR-08 | Desktop continuous | Helper ready/recovery | No replayable recovery messages injected; continuous cursor unchanged |
-| HLR-09 | Mobile remote/replayable | Desktop Helper recovery | Phone recovers through shared-host attachment only; no second Helper/runtime |
-| HLR-10 | Helper recovery and Agent spawn concurrent | Generation interleaving | Old tuples not delivered; running agents not disposed due to generation check failure |
-| HLR-11 | Helper token/identity verification failure | Recovery completes | CUA fail-closed; Agent and normal modules keep running |
-| HLR-12 | User closes workspace / Agent crashes | Non-Helper event | Existing Agent dispose/restart semantics allowed; not attributed to Helper recovery |
-| HLR-13 | Helper already unavailable | Next CUA resolve/spawn boundary | One bounded on-demand probe/recovery; no periodic timer started, no Agent recycled |
-| HLR-14 | CUA plugin running with active Agent | Settings page submit disable | Only writes startup configuration; existing CUA MCP/Helper not closed, Agent not restarted; existing conversations keep capabilities, new conversations do not inject CUA MCP; prompt that existing conversations need to restart ZCode |
+| Case   | Initial state                                             | Event                                  | Expected                                                                                                                                                                                                                                |
+| ------ | --------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HLR-01 | Helper cold-start, normal Agent spawn                     | Helper delayed ready                   | Agent starts immediately; PID/runtime generation unchanged                                                                                                                                                                              |
+| HLR-02 | Helper cold-start, pre-allocated tuple published          | Helper ready                           | Agent does not restart; the same CUA MCP connection eventually available                                                                                                                                                                |
+| HLR-03 | Helper cold-start, tuple temporarily unavailable          | CUA tool request                       | bounded retry or `broker_not_ready`; Agent not recycled                                                                                                                                                                                 |
+| HLR-04 | Agent has active CUA turn                                 | Helper health probe failure            | Agent not restarted due to Helper; current request handled by safe delivery state                                                                                                                                                       |
+| HLR-05 | Agent has normal non-CUA turn                             | Helper recovery                        | Conversation continues; non-CUA MCP, model provider, task index unaffected                                                                                                                                                              |
+| HLR-06 | Helper stuck or process exits after idle, no CUA requests | Wait exceeds historical watchdog cycle | No periodic probe/restart or exit-event auto-recovery; Agent PID/session unchanged; next CUA demand recovers on demand                                                                                                                  |
+| HLR-07 | Multiple parallel workspaces                              | Single Helper recovery                 | No cross-workspace Agent dispose; workspace identity isolation preserved                                                                                                                                                                |
+| HLR-08 | Desktop continuous                                        | Helper ready/recovery                  | No replayable recovery messages injected; continuous cursor unchanged                                                                                                                                                                   |
+| HLR-09 | Mobile remote/replayable                                  | Desktop Helper recovery                | Phone recovers through shared-host attachment only; no second Helper/runtime                                                                                                                                                            |
+| HLR-10 | Helper recovery and Agent spawn concurrent                | Generation interleaving                | Old tuples not delivered; running agents not disposed due to generation check failure                                                                                                                                                   |
+| HLR-11 | Helper token/identity verification failure                | Recovery completes                     | CUA fail-closed; Agent and normal modules keep running                                                                                                                                                                                  |
+| HLR-12 | User closes workspace / Agent crashes                     | Non-Helper event                       | Existing Agent dispose/restart semantics allowed; not attributed to Helper recovery                                                                                                                                                     |
+| HLR-13 | Helper already unavailable                                | Next CUA resolve/spawn boundary        | One bounded on-demand probe/recovery; no periodic timer started, no Agent recycled                                                                                                                                                      |
+| HLR-14 | CUA plugin running with active Agent                      | Settings page submit disable           | Only writes startup configuration; existing CUA MCP/Helper not closed, Agent not restarted; existing conversations keep capabilities, new conversations do not inject CUA MCP; prompt that existing conversations need to restart ZCode |
 
 Must assert: Helper lifecycle logs contain no `workspace-dispose` directly caused by readiness/recovery; the same Agent's `runtimeIdentity`, session event sequence and active turn do not change due to Helper ready; CUA request failures carry retryable/delivery-state facts, not disguised as Agent crash; non-CUA module startup time does not include the full Helper health budget; desktop and mobile delivery profiles do not propagate to each other.
 

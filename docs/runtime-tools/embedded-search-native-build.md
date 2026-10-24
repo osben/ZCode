@@ -15,13 +15,13 @@ provider-visible prompt do not change with the execution backend switch.
 
 Cross-platform target capability and current distribution enablement must be managed separately:
 
-| Platform        | Target in-package tools                                           | Enabled in current distribution |
-| --------------- | ----------------------------------------------------------------- | ------------------------------- |
-| macOS arm64     | `bfs`, `ugrep`, `rg`                                              | yes                             |
-| macOS x64       | `bfs`, `ugrep`, `rg`                                              | yes                             |
-| Linux x64/arm64 | `bfs`, `ugrep`, `rg`                                              | yes                             |
-| Windows x64     | `ugrep.exe`, `rg.exe`; `find` falls back to Git Bash/system       | yes                             |
-| Windows arm64   | `ugrep.exe`, `rg.exe`; `find` falls back to Git Bash/system       | yes                             |
+| Platform        | Target in-package tools                                     | Enabled in current distribution |
+| --------------- | ----------------------------------------------------------- | ------------------------------- |
+| macOS arm64     | `bfs`, `ugrep`, `rg`                                        | yes                             |
+| macOS x64       | `bfs`, `ugrep`, `rg`                                        | yes                             |
+| Linux x64/arm64 | `bfs`, `ugrep`, `rg`                                        | yes                             |
+| Windows x64     | `ugrep.exe`, `rg.exe`; `find` falls back to Git Bash/system | yes                             |
+| Windows arm64   | `ugrep.exe`, `rg.exe`; `find` falls back to Git Bash/system | yes                             |
 
 Windows has no native `bfs`: ZCode does not port Windows `bfs` itself and does not wrap the upstream Unix
 `bfs` package as a fake native artifact.
@@ -244,10 +244,10 @@ must not override the user's existing system `rg`.
 server-cli staging and remote asset preparation. The source is decided once by
 `resolveNativeSearchArtifactSource(env)`; callers do not decide on their own:
 
-| Condition                                                                                              | Source       | Behavior                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------------------------------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Condition                                                                                                   | Source       | Behavior                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NATIVE_SEARCH_TOOLS_DOWNLOAD_BASE_URL` is set, or `resolveIntranetDepsBaseUrl(env)` can resolve an address | `intranet`   | Calls `downloadNativeSearchTools` as is: URL, proxy, SHA-256, bundle meta and cache-skip semantics unchanged; remote Linux/macOS still run the existing `download-native-search-tools.mjs` and the legacy rg13 `download-ripgrep.mjs` commands respectively |
-| The intranet dependency source is unconfigured (resolution throws or is empty)                         | `repository` | First verify the SHA-256 of all archives of this plan in `apps/zcode-cli/dependencies/native-search`, then unpack one by one, run the target-architecture check and write bundle meta; no download, no fallback to the mirror            |
+| The intranet dependency source is unconfigured (resolution throws or is empty)                              | `repository` | First verify the SHA-256 of all archives of this plan in `apps/zcode-cli/dependencies/native-search`, then unpack one by one, run the target-architecture check and write bundle meta; no download, no fallback to the mirror                               |
 
 - This repo's `intranetDefaults.mjs` carries a default intranet address, so the default is always `intranet` and intranet builds and CI behave unchanged; the in-repo archive takes effect only in environments where the dependency source is truly unconfigured (such as an exported open-source tree).
 - The in-repo archive and the intranet mirror have the same name and SHA-256; the release plan gives both `downloadUrl` (`intranet` only) and `archivePath`; the two sources cannot be mixed or serve as each other's failure fallback, and a validation failure on either path terminates immediately.
@@ -261,16 +261,16 @@ server-cli staging and remote asset preparation. The source is decided once by
 The build entry must pin the source commit or release version and verify SHA-256 before unpacking. The three
 platform builds share these version sources:
 
-| Component | Pinned version                                     | Purpose                              |
-| --------- | -------------------------------------------------- | ------------------------------------ |
-| bfs       | 4.1.1 / `f220fb5afd8dd7f46b1d1a2ae9c36261eaccf3cd` | `find` backend                       |
-| ugrep     | 7.8.4 / `550599a6434fc5315fb6ecd415a5d859e6d846a8` | `grep` backend                       |
-| Oniguruma | 6.9.10                                             | bfs GNU find regex semantics         |
-| PCRE2     | 10.43                                              | ugrep `-P`                           |
-| zlib      | 1.3.1                                              | ugrep gzip/zip/archive support       |
-| bzip2     | 1.0.8                                              | ugrep bzip2 support                  |
-| zstd      | 1.5.6                                              | ugrep zstd support                   |
-| Brotli    | 1.1.0                                              | ugrep Brotli support                 |
+| Component | Pinned version                                     | Purpose                        |
+| --------- | -------------------------------------------------- | ------------------------------ |
+| bfs       | 4.1.1 / `f220fb5afd8dd7f46b1d1a2ae9c36261eaccf3cd` | `find` backend                 |
+| ugrep     | 7.8.4 / `550599a6434fc5315fb6ecd415a5d859e6d846a8` | `grep` backend                 |
+| Oniguruma | 6.9.10                                             | bfs GNU find regex semantics   |
+| PCRE2     | 10.43                                              | ugrep `-P`                     |
+| zlib      | 1.3.1                                              | ugrep gzip/zip/archive support |
+| bzip2     | 1.0.8                                              | ugrep bzip2 support            |
+| zstd      | 1.5.6                                              | ugrep zstd support             |
+| Brotli    | 1.1.0                                              | ugrep Brotli support           |
 
 These dependencies take part only in the build and are statically linked into the target program; they are
 not distributed separately as final runtime sidecars.

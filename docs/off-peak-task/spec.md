@@ -238,13 +238,13 @@ project runtime key, yet the server's Coding Plan verifier subscription dependen
 with `3101 coding plan is required`, which the server wrapped into `500/2007`. The support matrix
 therefore distinguishes "client credential/transport supported" from "test backend end-to-end usable":
 
-| Current provider family / selected connection                                                                    | Coding Plan credential used by Off-Peak                                                | Eligibility                                      |
-| ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| ZAI + `coding-plan:builtin:zai-coding-plan`                                                                      | raw business API Key of the selected ZAI Coding Plan provider                          | supported                                        |
-| BigModel + `coding-plan:builtin:bigmodel-coding-plan`                                                            | raw API Key of the selected BigModel personal Coding Plan provider                     | supported                                        |
-| BigModel + full `team-plan:builtin:bigmodel-coding-plan:<product>:<organization>:<project>`                      | reuses the Team Plan runtime-key resolver, `${apiKey}.${secretKey}` of the selected organization/project | **client supported; test backend verifier blocked** |
-| ZAI / BigModel Start Plan                                                                                        | Start Plan has only the zcode JWT, not a Coding Plan API Key                           | **rejected**                                     |
-| API Key mode, family/connection unselected, login provider differing from selected family, missing/disabled/stale connection, malformed Team key | no Coding Plan runtime credential consistent with the current selection | **rejected**                                     |
+| Current provider family / selected connection                                                                                                    | Coding Plan credential used by Off-Peak                                                                  | Eligibility                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| ZAI + `coding-plan:builtin:zai-coding-plan`                                                                                                      | raw business API Key of the selected ZAI Coding Plan provider                                            | supported                                           |
+| BigModel + `coding-plan:builtin:bigmodel-coding-plan`                                                                                            | raw API Key of the selected BigModel personal Coding Plan provider                                       | supported                                           |
+| BigModel + full `team-plan:builtin:bigmodel-coding-plan:<product>:<organization>:<project>`                                                      | reuses the Team Plan runtime-key resolver, `${apiKey}.${secretKey}` of the selected organization/project | **client supported; test backend verifier blocked** |
+| ZAI / BigModel Start Plan                                                                                                                        | Start Plan has only the zcode JWT, not a Coding Plan API Key                                             | **rejected**                                        |
+| API Key mode, family/connection unselected, login provider differing from selected family, missing/disabled/stale connection, malformed Team key | no Coding Plan runtime credential consistent with the current selection                                  | **rejected**                                        |
 
 `providerFamilyDomain`, the family mode and `modelProviderFamilySelectedKeys` are the source of truth
 for execution selection. Never scan all cached providers and pick a key, and never fall back to a
@@ -383,6 +383,7 @@ idle create entry is hidden; non-terminal idle stock is still shown and runs to 
 no idle stock the idle entry is hidden.
 
 **Automations main view.**
+
 - When scheduled and idle are both empty, the Tabs (no filtering value) are hidden and the large
   Figma empty card is used. With tasks, two tabs "Scheduled tasks / Idle-time task" are shown (D47
   removed the All mixed overview; when the gray release is not hit and there is no idle stock only
@@ -408,6 +409,7 @@ no idle stock the idle entry is hidden.
   templates use the current Client Scenes catalog and a two-column grid.
 
 **Create eligibility.** The home-template navigation gate and the real create gate are separate.
+
 - Home: any ZAI personal Coding Plan, BigModel personal Coding Plan or BigModel Team Plan in the
   provider snapshot that is not system-judged invalid lets the user enter the form, without a
   pre-selected provider. When no Coding Plan exists at all, the template keeps its normal look and a
@@ -428,6 +430,7 @@ no idle stock the idle entry is hidden.
   still backstops the race after the query.
 
 **Create form (full page).**
+
 - The create-state header is New Idle-time task with default title=Untitled; the default follows the
   locale while the user has not edited it and it is not template-prefilled; user input, template
   drafts and saved titles are never auto-translated. Instructions examples are per locale.
@@ -446,6 +449,7 @@ no idle stock the idle entry is hidden.
   container; on narrow screens the whole control group may wrap safely.
 
 **List cards.**
+
 - Position badge `#N in queue` / `#N Paused` (**no Est.**). queued and paused both use the idle-time
   specific purple weak-emphasis pill; do not reuse `brand`, which turns white in Zai Dark. Zai Light
   foreground/background `#9E77ED / #F5F3FF`; Zai Dark `#7B5CE5 / #160D38`. The scheduled-task
@@ -456,7 +460,7 @@ no idle stock the idle entry is hidden.
   notifications).
 - Menu: queued = Pause/Delete, paused = Continue/Delete, running = Cancel. Pause keeps a trailing
   info icon with a hover Tooltip; English text `Tasks paused beyond the queue wait time will be
-  placed back in the queue`, Chinese text `暂停时长超过队列等待时限的任务，将会被重新放回队列。`.
+placed back in the queue`, Chinese text `暂停时长超过队列等待时限的任务，将会被重新放回队列。`.
   Pause executes directly with no second confirmation.
 - Delete confirmation, Chinese: title 「删除此闲时任务？」, body 「此操作无法撤销。如果任务当前正在排队或运行中，将立即停止。」, actions 「取消 / 删除闲时任务」;
   English: title `Delete this idle-time task?`, body `This action can't be undone. If the task is currently queued or running, it will stop immediately.`, actions `Cancel / Delete idle-time task`.
@@ -478,6 +482,7 @@ it in the viewport. Delete history writes `historyDeletedAt` immediately, with n
 and deletes no task, session or execution fields.
 
 **Templates.**
+
 - New task and Automations share the remote catalog `off-peak-task.options.prompts.items` of the
   `clientScenesService.list()` response. The title uses the current-language `labels`; only the New
   task home card description prefers the current-language `descs` and falls back to `contents` when
@@ -586,6 +591,7 @@ off-peak-task remote candidate catalog ----+----> Automations full template area
   must not be used because it overflows on narrow screens.
 
 **Visual contracts (Figma).**
+
 - Completed-state cards stay consistent with scheduled tasks as a static muted level: the whole card
   uses `opacity-60`, and title, description, status and icon are all demoted; the completed status
   uses `text-foreground-subtle`, never the success highlight; on hover the muted opacity stays but
@@ -773,10 +779,10 @@ creation (taking a number on creation, fail-closed, server 3103 is the final aut
 **Tool surface** (agent tools, bridged to the host via zcode-protocol `offPeak/create` /
 `offPeak/list`):
 
-| Tool            | Parameters                                                                       | Notes                                                                                                                                                                                                                                                                                                    |
-| --------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OffPeakCreate` | `title`/`prompt` required; `permissionMode`/`model`/`thoughtLevel` optional      | Defaults = **yolo (fully automatic) / the last of `allowed_models` / highest reasoning level** (intentionally different from the form defaults, reasoning in D49-4); default resolution is on the host; when `model` is passed it is pre-checked against allowed_models. `needsApproval: true`. **D50: always bound to the current session** (the port fills `boundSessionId`); at dispatch it resumes this session to run the task's original prompt; creation is rejected when this session already has a non-terminal idle task. |
-| `OffPeakList`   | none                                                                             | Read-only; returns the minimal fields of the current workspace's idle tasks (id/title/status/position/times/sessionId?) so the agent can answer task status.                                                                                                                                              |
+| Tool            | Parameters                                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OffPeakCreate` | `title`/`prompt` required; `permissionMode`/`model`/`thoughtLevel` optional | Defaults = **yolo (fully automatic) / the last of `allowed_models` / highest reasoning level** (intentionally different from the form defaults, reasoning in D49-4); default resolution is on the host; when `model` is passed it is pre-checked against allowed_models. `needsApproval: true`. **D50: always bound to the current session** (the port fills `boundSessionId`); at dispatch it resumes this session to run the task's original prompt; creation is rejected when this session already has a non-terminal idle task. |
+| `OffPeakList`   | none                                                                        | Read-only; returns the minimal fields of the current workspace's idle tasks (id/title/status/position/times/sessionId?) so the agent can answer task status.                                                                                                                                                                                                                                                                                                                                                                        |
 
 **Turn boundary:**
 
@@ -871,15 +877,15 @@ in a child runtime is the same as for an ordinary Agent.
 
 ## 6. Reuse quick reference (feat/cron infrastructure)
 
-| Reuse                                              | Location                                                         |
-| -------------------------------------------------- | ---------------------------------------------------------------- |
-| scheduler utility process + transactional claim pattern | `packages/desktop/src/scheduler/`                            |
-| tasks-index.sqlite + Repo pattern                  | modeled on `packages/services/src/session/automationRepo.ts`     |
-| dispatch -> main -> host -> createTask/sendPrompt pipeline | `desktopCronScheduler.ts` / host domain                  |
-| permission modes                                   | existing `ZCodeTaskMode` `bypassPermissions` / `default`, no new mode |
-| sensitive-operation confirmation                   | existing permission_request / elicitation chain                  |
-| notifications                                      | `desktopNotifications.ts`                                        |
-| built-in invisible provider                        | Start plan mechanism (reuse after verifying the provider injection path) |
+| Reuse                                                      | Location                                                                 |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------ |
+| scheduler utility process + transactional claim pattern    | `packages/desktop/src/scheduler/`                                        |
+| tasks-index.sqlite + Repo pattern                          | modeled on `packages/services/src/session/automationRepo.ts`             |
+| dispatch -> main -> host -> createTask/sendPrompt pipeline | `desktopCronScheduler.ts` / host domain                                  |
+| permission modes                                           | existing `ZCodeTaskMode` `bypassPermissions` / `default`, no new mode    |
+| sensitive-operation confirmation                           | existing permission_request / elicitation chain                          |
+| notifications                                              | `desktopNotifications.ts`                                                |
+| built-in invisible provider                                | Start plan mechanism (reuse after verifying the provider injection path) |
 
 ## 7. Not doing (v1 cut list, needs alignment with product)
 

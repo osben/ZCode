@@ -133,10 +133,10 @@ Impact boundary: Main's ordinary viewport screenshot selection and the renderer'
 
 Increment on top of `28f297339ad2126fdd92e0e69277e432be9ae95a`: normal-mode background screenshot temporary layout, the guest zoom release boundary, and the fallback metrics zoom-in compensation (the latter removed on 2026-10-16). Old-build native red run `desktop-e2e-20260908-024203-610`: requested 1280x720, the actual webview in a 960x600 window was 960x552 and inactive, with a 3000ms prepare timeout.
 
-| Windows display scale | Final build result | Artifact run ID |
-| --- | --- | --- |
-| system native 125% | both cases passed | `desktop-e2e-20260908-025710-354` |
-| forced 200% | both cases passed | `desktop-e2e-20260908-031302-774` |
+| Windows display scale | Final build result | Artifact run ID                   |
+| --------------------- | ------------------ | --------------------------------- |
+| system native 125%    | both cases passed  | `desktop-e2e-20260908-025710-354` |
+| forced 200%           | both cases passed  | `desktop-e2e-20260908-031302-774` |
 
 Each tier keeps the original five rounds of app/preview zoom screenshots and clicks and adds one round of normal background 960x600 window with app 110% prepare/capture/release, in total 12 screenshots and 36 trusted clicks. In the new scenario ready stays 1280x720 and the three target color blocks are right; after release the same guest, normal mode, guest zoom=1 and 1280x720 viewport hold, and three consecutive clicks have a max error of 1px.
 
@@ -148,12 +148,12 @@ The new native scenario uses the production prepare/ready/release IPC directly, 
 
 Windows 11 x64 (10.0.26200) / Electron 41.0.3 / Chromium 146.0.7680.80. All are the same final-patch and strengthened case; each tier has 5 rounds, 15 trusted clicks and 5 PNGs, in total 20 rounds / 60 clicks. All PNGs and guest viewports are 1280x720, page DPR=1, guest zoom=1, the same guest throughout; the max image color block center error is 0 px, the max real click error 1 px, and screenshot release and preview restoration all passed.
 
-| Windows display scale | How run | Result | Artifact run ID |
-| --- | --- | --- | --- |
-| 125% | system native display scale | PASS | `desktop-e2e-20260907-153516-455` |
-| 100% | Chromium forced device scale factor 1 | PASS | `desktop-e2e-20260907-153630-178` |
-| 150% | Chromium forced device scale factor 1.5 | PASS | `desktop-e2e-20260907-153744-604` |
-| 200% | Chromium forced device scale factor 2 | PASS | `desktop-e2e-20260907-153901-372` |
+| Windows display scale | How run                                 | Result | Artifact run ID                   |
+| --------------------- | --------------------------------------- | ------ | --------------------------------- |
+| 125%                  | system native display scale             | PASS   | `desktop-e2e-20260907-153516-455` |
+| 100%                  | Chromium forced device scale factor 1   | PASS   | `desktop-e2e-20260907-153630-178` |
+| 150%                  | Chromium forced device scale factor 1.5 | PASS   | `desktop-e2e-20260907-153744-604` |
+| 200%                  | Chromium forced device scale factor 2   | PASS   | `desktop-e2e-20260907-153901-372` |
 
 Per-round platform info, viewport, DPR, coordinate error and PNG SHA-256 are committed in the [machine-readable verification record](../testing/browser-zoom-windows-regression-2026-09-07.json). Raw PNG / JSON are in `packages/desktop/.e2e-artifacts/<run ID>/zoom-coordinates/`.
 

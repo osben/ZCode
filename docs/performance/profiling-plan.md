@@ -81,19 +81,19 @@ cost.
 - **Verify before the first run:** after launch, `lsof -p <pids> | grep .zcode` lists only paths under
   `<dir>`.
 - Two data sets: `empty` (a fresh base dir) and `heavy` (a copy of a real profile with long sessions,
-  >= 300 turns, many tool calls). Make the copy once and keep it outside the repo. Never upload it,
-  never paste its content into reports; report sizes and counts only.
+  > = 300 turns, many tool calls). Make the copy once and keep it outside the repo. Never upload it,
+  > never paste its content into reports; report sizes and counts only.
 
 ### 1.4 Debug ports and process flags (verified in code)
 
-| Process                | How to profile                                                                                                                                                                                                                                                      | Source                                                                           |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Main (dev, unpackaged) | Chromium remote debugging is already on **port 9229**. To use 9229 for Node `--inspect` instead, disable it with `ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1`.                                                                                                      | `packages/desktop/src/main/index.ts:290-292`                                     |
-| Main (any build)       | Launch the binary directly: `"/Applications/ZCode Preview.app/Contents/MacOS/ZCode Preview" --inspect=9230 --remote-debugging-port=9222`. macOS has no fuses that block this; only win32 disables Node CLI inspect.                                                  | `electron-builder.config.js:607-610`                                             |
-| Renderer               | Help → Toggle DevTools (always present), or attach over CDP on the remote-debugging port.                                                                                                                                                                             | `desktopApplicationMenu.ts:341-346`                                              |
-| Host (utilityProcess)  | `ZCODE_DEBUG=<port>` in main's env → `--inspect-brk=<port>`. **Host blocks at startup until a debugger attaches.**                                                                                                                                                    | `desktopHostProcess.ts:276-279`                                                  |
+| Process                | How to profile                                                                                                                                                                                                                                                                                                                 | Source                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Main (dev, unpackaged) | Chromium remote debugging is already on **port 9229**. To use 9229 for Node `--inspect` instead, disable it with `ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1`.                                                                                                                                                                | `packages/desktop/src/main/index.ts:290-292`                                     |
+| Main (any build)       | Launch the binary directly: `"/Applications/ZCode Preview.app/Contents/MacOS/ZCode Preview" --inspect=9230 --remote-debugging-port=9222`. macOS has no fuses that block this; only win32 disables Node CLI inspect.                                                                                                            | `electron-builder.config.js:607-610`                                             |
+| Renderer               | Help → Toggle DevTools (always present), or attach over CDP on the remote-debugging port.                                                                                                                                                                                                                                      | `desktopApplicationMenu.ts:341-346`                                              |
+| Host (utilityProcess)  | `ZCODE_DEBUG=<port>` in main's env → `--inspect-brk=<port>`. **Host blocks at startup until a debugger attaches.**                                                                                                                                                                                                             | `desktopHostProcess.ts:276-279`                                                  |
 | Agent CLI              | `ZCODE_AGENT_SERVER_COMMAND=node`, `ZCODE_AGENT_SERVER_ARGS_JSON='["--cpu-prof","--cpu-prof-dir=<PERF_OUT>/cli-prof","<repo>/apps/zcode-cli/packages/cli/dist/zcode.cjs","app-server","--stdio"]'`. `--surface desktop` is appended automatically. `NODE_OPTIONS` also reaches the agent, but the explicit command is cleaner. | `zcodeAgentProcessManager.ts:442-456`, `packages/shared/src/runtimeEnv.ts:43-97` |
-| Dev launch             | `pnpm dev:desktop` spawns Electron with fixed args `["."]` (`packages/desktop/scripts/dev.mjs:136-142`). Pass flags through env only (`NODE_OPTIONS`, `ELECTRON_ENABLE_LOGGING=1`), or launch the built app directly.                                                  |                                                                                  |
+| Dev launch             | `pnpm dev:desktop` spawns Electron with fixed args `["."]` (`packages/desktop/scripts/dev.mjs:136-142`). Pass flags through env only (`NODE_OPTIONS`, `ELECTRON_ENABLE_LOGGING=1`), or launch the built app directly.                                                                                                          |                                                                                  |
 
 ---
 
@@ -154,9 +154,9 @@ fixture is long enough for S2, record one once (live) and reuse it.
    (`scripts/dev/zcode-stdio-tap.mjs`). Use it to compute frames/s and bytes/s in S2/S7.
 9. **TTFT stage breakdown**: run `node packages/desktop/scripts/ttft-otlp-receiver.mjs`
    (127.0.0.1:14318). Launch with `ZCODE_LOCAL_TTFT_ENABLED=1
-   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318`, then read `GET /records`. Stages:
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:14318`, then read `GET /records`. Stages:
    `renderer_prepare → command_admission → execution_wait → request_prepare → model_request →
-   output_return` (`packages/shared/src/localTtft.ts`). Recipe: `docs/monitoring/local-ttft-queries.md`.
+output_return` (`packages/shared/src/localTtft.ts`). Recipe: `docs/monitoring/local-ttft-queries.md`.
 10. **Native/OS view (macOS)**: Instruments → Time Profiler (all ZCode processes), Allocations, and
     Energy Log for S5. Use only when JS profiles do not explain the CPU (GPU, native modules,
     `node-pty`).

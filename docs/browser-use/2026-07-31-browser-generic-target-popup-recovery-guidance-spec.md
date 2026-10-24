@@ -74,11 +74,11 @@ runtime, CDP, protocol, UI, remote sync, site specialization.
 
 ### 4.1 Surface matrix
 
-| Scenario | Shared implementation | Validation / gating | Commit action | Boundary |
-| --- | --- | --- | --- | --- |
-| User asks to open the detail page of a unique title | Browser Skill + dynamic docs | snapshot real target type, `count() === 1`, existing safety approval | `locator.click()`, at most once per observation cycle | desktop and web remote share agent guidance; each delivers results over its existing path |
-| User asks to open a new URL | Browser Skill + API semantics + included/fallback docs | after a successful `goto()` wait explicitly for `domcontentloaded`, then read title/URL/DOM | `tab.goto(url)` -> `tab.playwright.waitForLoadState(...)` | `goto()` runtime completion, protocol, task snapshot, relay untouched |
-| Source URL unchanged after click | tab list / claim API | when an action may open a new window, read `browser.tabs.list()` and `browser.user.openTabs()` unconditionally and concurrently in one observation cell, return together, judge once | activate/claim the tab that shows the expected effect; no second click before the full observation returns | desktop continuous and mobile replayable semantics unchanged; independent of pre-action tab selection, UI drafts, remote command queue |
+| Scenario                                            | Shared implementation                                  | Validation / gating                                                                                                                                                                  | Commit action                                                                                              | Boundary                                                                                                                               |
+| --------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| User asks to open the detail page of a unique title | Browser Skill + dynamic docs                           | snapshot real target type, `count() === 1`, existing safety approval                                                                                                                 | `locator.click()`, at most once per observation cycle                                                      | desktop and web remote share agent guidance; each delivers results over its existing path                                              |
+| User asks to open a new URL                         | Browser Skill + API semantics + included/fallback docs | after a successful `goto()` wait explicitly for `domcontentloaded`, then read title/URL/DOM                                                                                          | `tab.goto(url)` -> `tab.playwright.waitForLoadState(...)`                                                  | `goto()` runtime completion, protocol, task snapshot, relay untouched                                                                  |
+| Source URL unchanged after click                    | tab list / claim API                                   | when an action may open a new window, read `browser.tabs.list()` and `browser.user.openTabs()` unconditionally and concurrently in one observation cell, return together, judge once | activate/claim the tab that shows the expected effect; no second click before the full observation returns | desktop continuous and mobile replayable semantics unchanged; independent of pre-action tab selection, UI drafts, remote command queue |
 
 Shared vs different: the Skill, API semantics, dynamic docs and Node REPL tool description jointly
 constrain default behavior; the fallback doc keeps only minimal key rules, but no injection path may
@@ -94,27 +94,27 @@ need an explicit claim.
   delivery for `boundary.desktop-continuous` and `boundary.web-remote-replayable` (popup observation does
   not become task recovery state).
 
-| State/fact | Authoritative owner | Commit command/service | Persistence |
-| --- | --- | --- | --- |
-| role and text of the target in the snapshot | current page DOM snapshot | none; only for locator planning | none |
-| DOMContentLoaded after new-URL navigation | browser backend's current tab load state | `tab.playwright.waitForLoadState({ state: "domcontentloaded" })` | none |
-| whether the click happened | browser backend | `locator.click()` | browser tab runtime |
-| whether a new tab appeared | controlled/user tab registries | `tabs.list()` / `user.openTabs()` / `user.claimTab()` | existing tab ownership |
+| State/fact                                  | Authoritative owner                      | Commit command/service                                           | Persistence            |
+| ------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------- | ---------------------- |
+| role and text of the target in the snapshot | current page DOM snapshot                | none; only for locator planning                                  | none                   |
+| DOMContentLoaded after new-URL navigation   | browser backend's current tab load state | `tab.playwright.waitForLoadState({ state: "domcontentloaded" })` | none                   |
+| whether the click happened                  | browser backend                          | `locator.click()`                                                | browser tab runtime    |
+| whether a new tab appeared                  | controlled/user tab registries           | `tabs.list()` / `user.openTabs()` / `user.claimTab()`            | existing tab ownership |
 
 ### 4.3 Must-preserve invariants
 
-| Invariant | Proof |
-| --- | --- |
-| A snapshot-proven `heading` is never rewritten to a guessed `link` role | Skill, bundled docs, fallback all state it (BCP-218) |
-| With authorized navigation and a unique target, heading/text may be clicked directly | guidance states "real type first" (BCP-218) |
-| Observe after each state-changing action; no retry before observing | Skill/workflow/playwright docs consistent (BCP-219) |
-| Success after an action is judged only by the expected URL/title/page state, not by a non-empty controlled list | old source tab / unrelated controlled tab is not an effect; with no expected effect continue to claimable user tabs (BCP-219) |
+| Invariant                                                                                                       | Proof                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A snapshot-proven `heading` is never rewritten to a guessed `link` role                                         | Skill, bundled docs, fallback all state it (BCP-218)                                                                                                     |
+| With authorized navigation and a unique target, heading/text may be clicked directly                            | guidance states "real type first" (BCP-218)                                                                                                              |
+| Observe after each state-changing action; no retry before observing                                             | Skill/workflow/playwright docs consistent (BCP-219)                                                                                                      |
+| Success after an action is judged only by the expected URL/title/page state, not by a non-empty controlled list | old source tab / unrelated controlled tab is not an effect; with no expected effect continue to claimable user tabs (BCP-219)                            |
 | The two popup-recovery tab queries return together in one observation cell, with no model decision between them | Skill, API semantics, bundled/fallback docs and tool description use the same atomic observation rule and forbid separate/dedicated list calls (BCP-219) |
-| Pre-action tab selection and post-action popup observation are two different protocols | API/Skill state the former "observe, then bind" and the latter "return both states in the same cell" (BCP-219 + existing tab recovery tests) |
-| After a new-URL `goto()`, wait explicitly for `domcontentloaded` before the first page read | Skill, API semantics, included docs, Playwright docs and fallback use one call order (BCP-223) |
-| The explicit wait only aligns guidance trajectory; runtime timeout and navigation owner unchanged | no runtime/protocol/UI diff; docs keep the 3000ms cap and no `networkidle` (BCP-223 + diff check) |
-| Safety approval and destructive-action boundaries unchanged | existing safety docs and runtime tests pass |
-| Desktop/mobile delivery unchanged | no protocol/runtime/UI diff; typecheck/lint |
+| Pre-action tab selection and post-action popup observation are two different protocols                          | API/Skill state the former "observe, then bind" and the latter "return both states in the same cell" (BCP-219 + existing tab recovery tests)             |
+| After a new-URL `goto()`, wait explicitly for `domcontentloaded` before the first page read                     | Skill, API semantics, included docs, Playwright docs and fallback use one call order (BCP-223)                                                           |
+| The explicit wait only aligns guidance trajectory; runtime timeout and navigation owner unchanged               | no runtime/protocol/UI diff; docs keep the 3000ms cap and no `networkidle` (BCP-223 + diff check)                                                        |
+| Safety approval and destructive-action boundaries unchanged                                                     | existing safety docs and runtime tests pass                                                                                                              |
+| Desktop/mobile delivery unchanged                                                                               | no protocol/runtime/UI diff; typecheck/lint                                                                                                              |
 
 ### 4.4 Code evidence
 
@@ -235,19 +235,19 @@ snapshot-proven locator -- count === 1 --> click once
 
 ## 6. Acceptance cases
 
-| Case    | Setup | Action | Assertions | Evidence layers | E2E status |
-| ------- | ----- | ------ | ---------- | --------------- | ---------- |
-| BCP-218 | snapshot has only a unique `heading`/visible text, no `link` role | plan a locator | guidance requires keeping the real type, allows clicking a unique generic target under user authorization, forbids guessing `link` | Skill + bundled docs + fallback contract | not-needed |
-| BCP-219 | click may trigger a popup; source tab URL/state shows no expected effect; controlled list still contains the old source tab | post-action recovery | the same observation cell reads and returns controlled/user tabs unconditionally; no model decision between the two queries; after the combined return the expected URL/title/state is judged once; no second click before observation completes | Skill + API semantics + bundled/fallback docs + Node REPL tool description contract | not-needed |
-| BCP-223 | the task provides a not-yet-open new URL | create a tab and `goto(url)` | Skill, API semantics, overview/workflow/playwright and fallback all require an explicit `waitForLoadState({ state: "domcontentloaded" })` before the first page observation; no `networkidle` or fixed sleep | core Browser guidance contract | not-needed |
+| Case    | Setup                                                                                                                       | Action                       | Assertions                                                                                                                                                                                                                                       | Evidence layers                                                                     | E2E status |
+| ------- | --------------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ---------- |
+| BCP-218 | snapshot has only a unique `heading`/visible text, no `link` role                                                           | plan a locator               | guidance requires keeping the real type, allows clicking a unique generic target under user authorization, forbids guessing `link`                                                                                                               | Skill + bundled docs + fallback contract                                            | not-needed |
+| BCP-219 | click may trigger a popup; source tab URL/state shows no expected effect; controlled list still contains the old source tab | post-action recovery         | the same observation cell reads and returns controlled/user tabs unconditionally; no model decision between the two queries; after the combined return the expected URL/title/state is judged once; no second click before observation completes | Skill + API semantics + bundled/fallback docs + Node REPL tool description contract | not-needed |
+| BCP-223 | the task provides a not-yet-open new URL                                                                                    | create a tab and `goto(url)` | Skill, API semantics, overview/workflow/playwright and fallback all require an explicit `waitForLoadState({ state: "domcontentloaded" })` before the first page observation; no `networkidle` or fixed sleep                                     | core Browser guidance contract                                                      | not-needed |
 
 ## 7. Pruning decisions
 
-| ID        | Pruned combinations | Guard/invariant | Reason | Representative coverage |
-| --------- | ------------------- | --------------- | ------ | ----------------------- |
-| PRUNE-001 | DOM and selector of a specific book site | rules must rely on generic snapshot evidence | avoid site specialization and brittle fixtures | BCP-218 |
-| PRUNE-002 | every model provider x reasoning effort | the doc contract is the deterministic gate | model output varies by sampling, unfit as a commit gate | BCP-218/219/223 |
-| PRUNE-003 | desktop/mobile each running popup/navigation E2E | runtime and delivery unchanged | existing tab/runtime coverage already verifies the underlying ability | BCP-219/223 + existing tab lifecycle tests |
+| ID        | Pruned combinations                              | Guard/invariant                              | Reason                                                                | Representative coverage                    |
+| --------- | ------------------------------------------------ | -------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------ |
+| PRUNE-001 | DOM and selector of a specific book site         | rules must rely on generic snapshot evidence | avoid site specialization and brittle fixtures                        | BCP-218                                    |
+| PRUNE-002 | every model provider x reasoning effort          | the doc contract is the deterministic gate   | model output varies by sampling, unfit as a commit gate               | BCP-218/219/223                            |
+| PRUNE-003 | desktop/mobile each running popup/navigation E2E | runtime and delivery unchanged               | existing tab/runtime coverage already verifies the underlying ability | BCP-219/223 + existing tab lifecycle tests |
 
 ## 8. Verification
 

@@ -95,15 +95,15 @@ When the old version has no manifest, the target design is to move entries that 
 
 ## Acceptance Cases
 
-| Case | Scenario | Must observe |
-| --- | --- | --- |
-| WIN-INSTALL-OWNERSHIP-001 | `notes.txt` or a custom directory exists before the update | The files remain after the update; application files are replaced |
-| WIN-INSTALL-OWNERSHIP-002 | Old version has no manifest | Not guaranteed; the old uninstaller may keep native behavior; migration support is added later only with clear benefit |
-| WIN-INSTALL-DIAG-001 | Managed cleanup hits a lock/permission/disk error | The cleanup log has stage, classification and numeric PID; the outer installer returns nonzero and shows a cleanup failure |
-| WIN-INSTALL-DIAG-003 | Old version has no manifest, or the extract stage fails | No fine-grained diagnostics guarantee; the native installer result is kept; converge on real problems later |
-| WIN-INSTALL-DIAG-002 | Silent `/S` update | No UI but stage logs exist; the log PID is numeric and there is no raw command line |
-| WIN-INSTALL-SHORTCUT-001 | Correct / stale / deleted shortcuts | The correct one keeps its arguments, the stale one is repaired, the deleted one is not recreated |
-| WIN-INSTALL-AUMID-001 | Production and Preview packaged runs | The main-process AUMID equals the NSIS `appId` and the Shell can index/pin it correctly |
+| Case                      | Scenario                                                   | Must observe                                                                                                               |
+| ------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| WIN-INSTALL-OWNERSHIP-001 | `notes.txt` or a custom directory exists before the update | The files remain after the update; application files are replaced                                                          |
+| WIN-INSTALL-OWNERSHIP-002 | Old version has no manifest                                | Not guaranteed; the old uninstaller may keep native behavior; migration support is added later only with clear benefit     |
+| WIN-INSTALL-DIAG-001      | Managed cleanup hits a lock/permission/disk error          | The cleanup log has stage, classification and numeric PID; the outer installer returns nonzero and shows a cleanup failure |
+| WIN-INSTALL-DIAG-003      | Old version has no manifest, or the extract stage fails    | No fine-grained diagnostics guarantee; the native installer result is kept; converge on real problems later                |
+| WIN-INSTALL-DIAG-002      | Silent `/S` update                                         | No UI but stage logs exist; the log PID is numeric and there is no raw command line                                        |
+| WIN-INSTALL-SHORTCUT-001  | Correct / stale / deleted shortcuts                        | The correct one keeps its arguments, the stale one is repaired, the deleted one is not recreated                           |
+| WIN-INSTALL-AUMID-001     | Production and Preview packaged runs                       | The main-process AUMID equals the NSIS `appId` and the Shell can index/pin it correctly                                    |
 
 ## Implementation Boundary
 

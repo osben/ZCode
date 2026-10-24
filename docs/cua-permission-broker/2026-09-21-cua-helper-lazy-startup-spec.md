@@ -38,10 +38,10 @@ Structural waste: the 1 s grace race on the spawn side waits for full startup (7
 
 ### 3.1 Credential creation and injection (both platforms)
 
-| Platform | Transport path | pluginAuthority |
-| --- | --- | --- |
-| darwin | `resolveBrokerSocketPath()` stable derivation (from ZCODE_HOME), zero IO | Created at spawn (per-bootstrap config-provenance, current behavior preserved) |
-| win32 | Stable pipe name created once by the Host app process (includes a random segment; module-level singleton; reused on Host rebuild; must differ across app runs) | Same as darwin |
+| Platform | Transport path                                                                                                                                                 | pluginAuthority                                                                |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| darwin   | `resolveBrokerSocketPath()` stable derivation (from ZCODE_HOME), zero IO                                                                                       | Created at spawn (per-bootstrap config-provenance, current behavior preserved) |
+| win32    | Stable pipe name created once by the Host app process (includes a random segment; module-level singleton; reused on Host rebuild; must differ across app runs) | Same as darwin                                                                 |
 
 - Spawn env injection is a pure table lookup; no `await` on Helper-related IO inside the function.
 - win32 spawn env additionally injects the fork recipe (§3.3).
@@ -151,14 +151,14 @@ User                        Host(settings page/getStatus)              Helper
 
 ## IV. Boundaries and state owners
 
-| State/Fact | Authoritative owner | Notes |
-| --- | --- | --- |
-| Stable pipe name (win32) | Host module-level singleton | Created once per app process, reused on Host rebuild |
-| Stable socket path (darwin) | `resolveBrokerSocketPath()` pure derivation | Zero state |
-| pluginAuthority | Created on the spawn side | config-provenance semantics; the Helper does not verify it |
-| Helper process lifecycle | Launcher watchdog (recognizes hostPid) + idle timer (darwin standalone) | Exits if nobody uses it |
-| Helper health | On-demand query (call retry, settings page, permission maintenance) | No periodic probe |
-| spawn admission marker | Obsolete | Recovery generation inside resolver restart is retained but no longer consumed by spawn env |
+| State/Fact                  | Authoritative owner                                                     | Notes                                                                                       |
+| --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Stable pipe name (win32)    | Host module-level singleton                                             | Created once per app process, reused on Host rebuild                                        |
+| Stable socket path (darwin) | `resolveBrokerSocketPath()` pure derivation                             | Zero state                                                                                  |
+| pluginAuthority             | Created on the spawn side                                               | config-provenance semantics; the Helper does not verify it                                  |
+| Helper process lifecycle    | Launcher watchdog (recognizes hostPid) + idle timer (darwin standalone) | Exits if nobody uses it                                                                     |
+| Helper health               | On-demand query (call retry, settings page, permission maintenance)     | No periodic probe                                                                           |
+| spawn admission marker      | Obsolete                                                                | Recovery generation inside resolver restart is retained but no longer consumed by spawn env |
 
 ## V. Implementation phases
 
@@ -177,18 +177,18 @@ User                        Host(settings page/getStatus)              Helper
 
 ## VI. Verification matrix
 
-| Case | Platform | Initial state | Event | Expected |
-| --- | --- | --- | --- | --- |
-| MC-1 | darwin | Cold-start app | spawn env resolution | No Helper IO (fake host asserts start/checkHealth not called), milliseconds |
-| MC-2 | darwin | Clean machine | First CUA call | SDK install + launch then call succeeds (M7 regression) |
-| MC-3 | darwin | Authorization flow just ended (host present) | spawn | Still always injects the stable socket; no probe, no 1 s wait |
-| MC-4 | win32 | Cold-start app | spawn env resolution | Zero wait, zero acquire; env contains pipe name + recipe |
-| MC-5 | win32 | No Helper | First CUA call | SDK fork -> connected within warmup window -> call succeeds |
-| MC-6 | win32 | Helper killed | Next CUA call | Fails retryable -> ensure re-forks (same pipe name) -> recovers |
-| MC-7 | win32 | Dual Agent concurrent first call | Concurrent ensure | Pipe single instance; second fork failure harmless; connects to the same Helper |
-| MC-8 | both | Helper restarted / regenerated | spawn env and existing Agent credentials | Transport path constant (same socket/pipe); Helper generation change does not reissue credentials; darwin authority is created at spawn, each agent may differ (existing semantics) |
-| MC-9 | win32 | No conversation open | Enter settings page directly | Probe -> Host fork -> permission truth; failure yields idle:true fallback |
-| MC-10 | darwin | Packaged build, installed Helper with old buildId | Enter settings page directly | ensureInstalled replaces with the bundled Helper before launch; on install failure degrade with idle:true and never launch the old copy |
+| Case  | Platform | Initial state                                     | Event                                    | Expected                                                                                                                                                                            |
+| ----- | -------- | ------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MC-1  | darwin   | Cold-start app                                    | spawn env resolution                     | No Helper IO (fake host asserts start/checkHealth not called), milliseconds                                                                                                         |
+| MC-2  | darwin   | Clean machine                                     | First CUA call                           | SDK install + launch then call succeeds (M7 regression)                                                                                                                             |
+| MC-3  | darwin   | Authorization flow just ended (host present)      | spawn                                    | Still always injects the stable socket; no probe, no 1 s wait                                                                                                                       |
+| MC-4  | win32    | Cold-start app                                    | spawn env resolution                     | Zero wait, zero acquire; env contains pipe name + recipe                                                                                                                            |
+| MC-5  | win32    | No Helper                                         | First CUA call                           | SDK fork -> connected within warmup window -> call succeeds                                                                                                                         |
+| MC-6  | win32    | Helper killed                                     | Next CUA call                            | Fails retryable -> ensure re-forks (same pipe name) -> recovers                                                                                                                     |
+| MC-7  | win32    | Dual Agent concurrent first call                  | Concurrent ensure                        | Pipe single instance; second fork failure harmless; connects to the same Helper                                                                                                     |
+| MC-8  | both     | Helper restarted / regenerated                    | spawn env and existing Agent credentials | Transport path constant (same socket/pipe); Helper generation change does not reissue credentials; darwin authority is created at spawn, each agent may differ (existing semantics) |
+| MC-9  | win32    | No conversation open                              | Enter settings page directly             | Probe -> Host fork -> permission truth; failure yields idle:true fallback                                                                                                           |
+| MC-10 | darwin   | Packaged build, installed Helper with old buildId | Enter settings page directly             | ensureInstalled replaces with the bundled Helper before launch; on install failure degrade with idle:true and never launch the old copy                                             |
 
 Regression red line (isolation spec §7, still in effect): Helper lifecycle logs contain no `workspace-dispose` directly caused by readiness/recovery; normal Agent spawn / session create timing includes no Helper IO; non-CUA module startup time includes no Helper health budget.
 

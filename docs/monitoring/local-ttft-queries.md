@@ -137,18 +137,18 @@ classified `guided` and records no independent successful TTFT.
 
 ### Statistical units
 
-| Metric                                              | What one sample means                                                                                  |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `zcode.local_ttft.duration`                         | One successful first output, including queueing and user-confirmation wait                             |
-| `zcode.local_ttft.execution.duration`               | From execution start to the actual first output; produced only when cross-process alignment is reliable |
-| `zcode.local_ttft.system.duration`                  | Total TTFT of the same message minus the explicit confirmation wait, not derived by subtracting quantiles |
-| `zcode.local_ttft.stage.duration`                   | One main stage of a successful input; each stage is recorded once after complete quality is confirmed  |
-| `zcode.local_ttft.preparation.duration`             | One preparation/confirmation/retry-wait interval before first output of a successful input; repeats count separately |
-| `zcode.local_ttft.stage.observation.duration`       | One completed main stage, without waiting for root closure; includes inputs that end with no output    |
-| `zcode.local_ttft.preparation.observation.duration` | One completed preparation/confirmation/retry-wait interval, without waiting for root closure          |
+| Metric                                              | What one sample means                                                                                                        |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `zcode.local_ttft.duration`                         | One successful first output, including queueing and user-confirmation wait                                                   |
+| `zcode.local_ttft.execution.duration`               | From execution start to the actual first output; produced only when cross-process alignment is reliable                      |
+| `zcode.local_ttft.system.duration`                  | Total TTFT of the same message minus the explicit confirmation wait, not derived by subtracting quantiles                    |
+| `zcode.local_ttft.stage.duration`                   | One main stage of a successful input; each stage is recorded once after complete quality is confirmed                        |
+| `zcode.local_ttft.preparation.duration`             | One preparation/confirmation/retry-wait interval before first output of a successful input; repeats count separately         |
+| `zcode.local_ttft.stage.observation.duration`       | One completed main stage, without waiting for root closure; includes inputs that end with no output                          |
+| `zcode.local_ttft.preparation.observation.duration` | One completed preparation/confirmation/retry-wait interval, without waiting for root closure                                 |
 | `zcode.local_ttft.attempt.duration`                 | One physical attempt before first output, until failure, completion or first output; role distinguishes response/preparation |
-| `zcode.local_ttft.no_output.wait`                   | Waited time before an explicit failed/cancelled/rejected/interrupted outcome with no first output      |
-| `zcode.local_ttft.records`                          | One de-duplicated lifecycle record; total inputs = kind=start, never sum all kinds as a message count  |
+| `zcode.local_ttft.no_output.wait`                   | Waited time before an explicit failed/cancelled/rejected/interrupted outcome with no first output                            |
+| `zcode.local_ttft.records`                          | One de-duplicated lifecycle record; total inputs = kind=start, never sum all kinds as a message count                        |
 
 `send_mode=idle|queued|guided`; `visibility=foreground|background|background_returned`. The default experience must
 add `visibility="foreground",quality="complete"`; background, returned-to-foreground, unreliable-clock and
