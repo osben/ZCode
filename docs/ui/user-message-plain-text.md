@@ -1,12 +1,13 @@
-# User Message Row（当前事实）
+# User Message Row (Current Facts)
 
-V4 user row 以纯文本/附件呈现，并提供 copy 与真实的 inline edit。编辑提交
-`editUserQuery { target: { rowId, entityId }, newText, attachments, workspaceMode }`，信封同时携带
-`baseRevision/baseLogEpoch`，由 CLI 按投影权威 `actions.canEdit` 裁决。编辑器固定提供“取消 / 文件重置图标 /
-发送”：中间动作使用 `FileClock` 图标，与发送按钮同尺寸并保留 outline 颜色，hover/focus 提示
-“与文件一起重置”。
-禁用态由图标按钮外层的 hover trigger 承接指针事件并显示具体禁用原因，实际按钮仍保持 disabled。
-普通发送使用 `workspaceMode=preserve`；组合重置使用 `workspaceMode=rewind`，冲突时显示文件列表并允许
-降级为 preserve。取消编辑只恢复本地编辑态。
+The V4 user row presents plain text/attachments and offers copy and a real inline edit. Edit submits
+`editUserQuery { target: { rowId, entityId }, newText, attachments, workspaceMode }`; the envelope also
+carries `baseRevision/baseLogEpoch`, and the CLI decides by the projection-authoritative `actions.canEdit`.
+The editor fixedly offers "Cancel / file-reset icon / Send": the middle action uses the `FileClock` icon,
+the same size as the send button with outline color, and hover/focus shows "与文件一起重置" (Reset together
+with files). In the disabled state, a hover trigger wrapping the icon button receives pointer events and
+shows the specific disabled reason, while the real button stays disabled. Ordinary send uses
+`workspaceMode=preserve`; combined reset uses `workspaceMode=rewind`, and on conflict shows the file list
+and allows downgrading to preserve. Cancelling the edit only restores the local edit state.
 
-Retry 不在 user row 上，它属于 assistant turn action，并发送 `retryTurn`。
+Retry is not on the user row: it is an assistant turn action and sends `retryTurn`.

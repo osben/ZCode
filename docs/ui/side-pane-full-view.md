@@ -1,140 +1,234 @@
-# Side Pane 完整视图
+# Side Pane Full View
 
-状态：已实现（2026-10-16），E2E 已转正（2026-10-17）：`ui-shell/side-pane-full-view.test.ts`、`conversation-session/conversation-session-side-pane-full-view.test.ts`。仅桌面 Electron；普通 Web、手机远控 `/remote` 不提供入口。代码模块：`packages/ui/src/side-pane-full-view/`（managed，见其 `CONTRACT.md`）。
+Status: implemented (2026-10-16), E2E promoted (2026-10-17): `ui-shell/side-pane-full-view.test.ts` and
+`conversation-session/conversation-session-side-pane-full-view.test.ts`. Desktop Electron only; ordinary Web
+and mobile remote `/remote` offer no entry. Code module: `packages/ui/src/side-pane-full-view/` (managed, see
+its `CONTRACT.md`).
 
-## 目标
+## Goal
 
-右侧面板可以临时占满左侧任务列表以外的全部区域。中间对话区不再占布局空间，对话变成面板 tab 栏里的第一个 tab，并在面板 tab 上方提供一个浮动的输入窗口。左侧任务列表与左上角按钮组（切换侧边栏、后退、前进、新建对话）保持原样。
+The right panel can temporarily fill the whole area except the left task list. The middle conversation area no
+longer takes layout space; the conversation becomes the first tab in the panel tab strip and a floating input
+window is offered above the panel tabs. The left task list and the top-left button group (toggle sidebar,
+back, forward, new conversation) stay as is.
 
-## 入口与退出
+## Entry and Exit
 
-| 动作                                                                       | 结果                                                     |
-| -------------------------------------------------------------------------- | -------------------------------------------------------- |
-| 面板右上角「进入完整视图」按钮（位于面板开关左侧）、`⇧⌘F` / `Ctrl+Shift+F` | 进入完整视图，当前 tab 保持为面板 tab，浮窗为收起态      |
-| 同一按钮（此时为「退出完整视图」）、同一快捷键                             | 退出完整视图，回到原三栏布局                             |
-| 面板开关 ◫                                                                 | 关闭面板，同时退出完整视图；再次打开面板不会回到完整视图 |
-| 关闭最后一个面板 tab                                                       | 面板按既有规则收起，同时退出完整视图                     |
-| 面板关闭时按快捷键                                                         | 打开面板并进入完整视图                                   |
+| Action | Result |
+| --- | --- |
+| The panel top-right "进入完整视图" (Enter full view) button (left of the panel toggle), `⇧⌘F` / `Ctrl+Shift+F` | Enter full view; the current tab stays a panel tab and the floating window is collapsed |
+| The same button (now "退出完整视图", Exit full view), the same shortcut | Exit full view and return to the original three-column layout |
+| Panel toggle ◫ | Close the panel and exit full view; reopening the panel does not return to full view |
+| Close the last panel tab | The panel collapses by existing rules and full view exits |
+| Press the shortcut while the panel is closed | Open the panel and enter full view |
 
-- 快捷键命令 id 为 `toggleSidePaneFullView`，可在设置页改键；Web 端不注册处理器，也不在设置页显示。
-- 退出完整视图不修改任何原有状态：侧栏显隐、侧栏宽度、面板宽度、终端开合都沿用进入前的值。
+- The shortcut command id is `toggleSidePaneFullView`, rebindable in settings; Web registers no handler and
+  does not show it in settings.
+- Exiting full view modifies no original state: sidebar visibility, sidebar width, panel width and terminal
+  open/close keep their values from before entering.
 
-## 布局
+## Layout
 
 ```
-普通视图                                   完整视图
+Normal view                                Full view
 ┌────────┬────────────────┬────────────┐   ┌────────┬───────────────────────────────┐
-│ 任务列表 │ WorkspaceHeader │ [tabs][⤢][◫] │   │ 任务列表 │ [💬 对话][tab…][+]   [⤡][◫] │
-│        │ 对话            │ 面板内容      │   │        │ 面板内容（或对话全宽）           │
-│        │ 终端            │             │   │        │              ┌─────────────┐ │
-└────────┴────────────────┴────────────┘   │        │              │ 浮动输入框    │ │
+│ task list │ WorkspaceHeader │ [tabs][⤢][◫] │   │ task list │ [💬 chat][tab…][+]   [⤡][◫] │
+│        │ conversation    │ panel content│   │        │ panel content (or full-width chat) │
+│        │ terminal        │             │   │        │              ┌─────────────┐ │
+└────────┴────────────────┴────────────┘   │        │              │ floating input │ │
                                            └────────┴──────────────┴─────────────┴─┘
 ```
 
-- 左侧任务列表、左上角按钮组照常显示，侧边栏开关照常生效。侧边栏收起时，tab 栏左侧按 `WorkspaceHeader` 的同一规则为按钮组留白；侧边栏展开时不留白。
-- `WorkspaceHeader` 不显示，面板 tab 栏取代它成为内容区顶栏；Windows/Linux 的窗口按钮仍在面板右上角。
-- 对话 tab 固定在第一位：聊天图标 + 当前任务标题（草稿显示「新任务」），不能关闭、不能拖动排序，没有「⋯」菜单（任务菜单仍在退出完整视图后的标题栏）。tab 栏是窗口拖拽区（`app-region: drag`），对话 tab 必须显式标为 `no-drag`，否则真实鼠标点击会被当成拖动窗口。
-- 点对话 tab：对话在面板内容区全宽显示（含底部终端）。点任意面板 tab：显示该 tab，同时出现浮动输入窗口。
-- 面板外框在完整视图中是 `absolute inset-0 z-0`：只建立自己的层叠上下文，不抬高层级。插件 UI 页面不在面板 DOM 里，而是挂在 `body` 末尾的 fixed 停靠层（`[data-sandbox-page-parking]`，无 z-index）并按 tab 占位元素的坐标摆放；外框若用正的 z-index，会把不透明背景画在插件页面上面。对话内容都在宿主（`fixed z-30`）里，浮窗仍在插件页面之上。
-- 面板展开后的空标签集合由 `useAppPanels` 补建「新标签页」tab（见 `docs/ui/side-pane-tabs.md`），完整视图沿用；补建前的瞬间内容区显示同一个启动页，tab 栏只有对话 tab 与「+」。
+- The left task list and the top-left button group show as usual, and the sidebar toggle works as usual. When
+  the sidebar is collapsed the left of the tab strip leaves room for the button group by the same rule as
+  `WorkspaceHeader`; when expanded it leaves none.
+- `WorkspaceHeader` is not shown; the panel tab strip replaces it as the content-area top bar; Windows/Linux
+  window buttons stay at the panel top right.
+- The conversation tab is fixed first: chat icon + current task title (a draft shows "新任务" (New task)); it
+  cannot be closed or drag-sorted and has no "..." menu (the task menu stays on the title bar after exiting
+  full view). The tab strip is a window drag area (`app-region: drag`), so the conversation tab must be marked
+  `no-drag` explicitly, or a real mouse click would be taken as a window drag.
+- Clicking the conversation tab shows the conversation full width in the panel content area (including the
+  bottom terminal). Clicking any panel tab shows that tab and the floating input window appears.
+- In full view the panel frame is `absolute inset-0 z-0`: it only establishes its own stacking context and
+  does not raise the level. Plugin UI pages are not in the panel DOM but sit in a fixed parking layer at the
+  end of `body` (`[data-sandbox-page-parking]`, no z-index) placed by the tab placeholder's coordinates; if
+  the frame used a positive z-index, its opaque background would paint over the plugin pages. The conversation
+  content lives in the host (`fixed z-30`), so the floating window stays above plugin pages.
+- When an expanded panel has an empty tab set, `useAppPanels` creates a "新标签页" tab (see
+  `docs/ui/side-pane-tabs.md`) and full view follows; in the instant before it is created the content area
+  shows the same launcher page, and the tab strip has only the conversation tab and "+".
 
-## 单实例原则
+## Single-Instance Principle
 
-对话区只保留一个 `SessionPane` 实例。完整视图只改变它所在容器的定位方式，不移动 DOM、不重新挂载、不复制第二个 composer。
+The conversation area keeps only one `SessionPane` instance. Full view only changes the positioning of its
+container: no DOM move, no remount, no second composer copy.
 
 ```
-WorkspaceShellLayout（React 树结构在三种形态下相同）
-└─ #content / ResizablePanelGroup（已保存的面板占比不改）
+WorkspaceShellLayout (the React tree structure is the same in all three forms)
+└─ #content / ResizablePanelGroup (saved panel ratios unchanged)
    ├─ conversation-column
-   │   └─ 完整视图宿主（固定存在的包装层）
-   │       ├─ 普通视图：静态布局，h-full
-   │       ├─ 完整视图 + 对话 tab：position: fixed，铺满面板内容区（slot）
-   │       └─ 完整视图 + 面板 tab：position: fixed，按吸附位置浮在 slot 内
-   ├─ ResizableHandle：完整视图中隐藏
-   └─ 面板 panel：完整视图中占满宽度
+   │   └─ full-view host (a permanently present wrapper)
+   │       ├─ normal view: static layout, h-full
+   │       ├─ full view + conversation tab: position: fixed, fills the panel content area (slot)
+   │       └─ full view + panel tab: position: fixed, floats inside the slot at the snap position
+   ├─ ResizableHandle: hidden in full view
+   └─ panel panel: fills the width in full view
 ```
 
-原因：
+Reasons:
 
-- 两个 composer 绑定同一 session 时各自持有草稿副本，最后写入者覆盖另一份；附件上传控制器也按实例保存。
-- 换容器会重新挂载 SessionPane，丢失滚动位置、焦点和上传中的附件。
-- 权限 / 问答卡片依赖对话 context，必须留在原 React 树内。
-- Esc 停止只在焦点位于对话 DOM 内时生效，浮窗仍是同一份 DOM，所以在浏览器 tab 里按 Esc 不会停止 agent。
-- 内嵌浏览器是 DOM `<webview>`，HTML 浮层可以盖在网页上。
+- Two composers bound to the same session each hold a draft copy and the last writer overwrites the other;
+  the attachment upload controller is also saved per instance.
+- Switching containers remounts SessionPane, losing scroll position, focus and in-flight attachments.
+- Permission / Q&A cards depend on the conversation context and must stay in the original React tree.
+- Esc-to-stop works only when focus is inside the conversation DOM; the floating window is the same DOM, so
+  pressing Esc in a browser tab does not stop the agent.
+- The embedded browser is a DOM `<webview>`, so an HTML floating layer can cover the web page.
 
-slot 是面板 tab 栏下方的内容区。宿主通过 ResizeObserver 读取 slot 的窗口坐标，写到宿主 style 上；这只是 DOM 布局投影，不是业务状态。
+The slot is the content area below the panel tab strip. The host reads the slot's window coordinates through
+ResizeObserver and writes them to the host style; this is only a DOM layout projection, not business state.
 
-面板宽度：完整视图不改 react-resizable-panels 管理的 flex，面板外框改为 `absolute inset-0`，以 PanelGroup 为定位容器铺满整行。库按各 panel 的 `offsetWidth` 之和计算 group 尺寸，若用 CSS 把对话列压成 0，面板从收起展开时 group 尺寸为 0，resize 失败。
+Panel width: full view does not change the flex managed by react-resizable-panels; the panel frame becomes
+`absolute inset-0`, using the PanelGroup as positioning container to fill the whole row. The library computes
+group size from the sum of each panel's `offsetWidth`; squeezing the conversation column to 0 with CSS would
+make the group size 0 when the panel expands from collapsed, and the resize would fail.
 
-## 状态归属
-
-```
-按 session 记忆：taskSidePaneMemory.sidePaneFullViewByOwner[ownerTaskId ?? "__draft__"]
-└─ { surface: "conversation" | "side-pane", floating: "collapsed" | "expanded" | "minimized" } | 缺省
-
-全局偏好：localStorage「zcode:side-pane-full-view:floating-anchor」
-└─ 7 个吸附位置之一，默认 bottom-right
-
-宿主组件内临时状态（不记忆）
-└─ 拖动中的坐标、操作栏是否显示、底部输入区高度
-
-只读派生
-├─ 完整视图生效 = 桌面 && 非远控 && 面板打开 && 当前 owner 有记录
-├─ WorkspaceHeader 显示 = !完整视图生效
-└─ 浮窗显示 = 完整视图生效 && surface === "side-pane"
-```
-
-- owner 与 `sidePaneCollapsedByOwner` 相同：正式任务用 taskId，草稿用 `__draft__`。切走再切回同一 session，完整视图、当前 surface 和浮窗形态都保留。
-- 与面板 tab 一样只存在内存里，按 workspace 做 LRU；刷新或重启应用后不保留。
-- 同一 owner 下面板从打开变为关闭时清除该 owner 的记录（◫、关闭最后一个 tab 都走这条）。切换 owner 时面板开合变化不清除任何记录。
-- 窗口变窄时的自动收起策略只在普通视图生效；完整视图中对话由宿主定位，对话列宽度不代表可见对话区，不能据此收起面板或侧栏。
-
-## 浮动输入窗口
-
-浮窗由两层组成：前面是输入框本身，后面是一个抽屉。收起态只看得到输入框，没有外层边框和留白；抽屉藏在输入框后面，聚焦时从输入框后面向上滑出，露出操作栏；展开时抽屉继续向上拉高，里面是窄消息流。
+## State Ownership
 
 ```
- 收起（失焦）             收起 + 操作栏（聚焦）          展开
+Remembered per session: taskSidePaneMemory.sidePaneFullViewByOwner[ownerTaskId ?? "__draft__"]
+└─ { surface: "conversation" | "side-pane", floating: "collapsed" | "expanded" | "minimized" } | absent
+
+Global preference: localStorage "zcode:side-pane-full-view:floating-anchor"
+└─ one of 7 snap positions, default bottom-right
+
+Transient state inside the host component (not remembered)
+└─ coordinates while dragging, whether the action bar shows, bottom input area height
+
+Read-only derivation
+├─ full view in effect = desktop && not remote && panel open && current owner has a record
+├─ WorkspaceHeader shown = !full view in effect
+└─ floating window shown = full view in effect && surface === "side-pane"
+```
+
+- The owner is the same as `sidePaneCollapsedByOwner`: taskId for a formal task, `__draft__` for a draft.
+  Switching away and back to the same session keeps full view, the current surface and the floating form.
+- Like panel tabs it lives only in memory, LRU per workspace; not retained after refresh or restart.
+- When the panel goes from open to closed under the same owner, that owner's record is cleared (◫ and
+  closing the last tab both take this path). A panel open/close change caused by switching owners clears no
+  record.
+- The auto-collapse strategy on window narrowing applies only in normal view; in full view the conversation
+  is positioned by the host and the conversation column width does not represent the visible conversation
+  area, so it must not be used to collapse the panel or sidebar.
+
+## Floating Input Window
+
+The floating window has two layers: the input box itself in front, and a drawer behind. The collapsed form
+shows only the input box, with no outer border or margin; the drawer hides behind the input box, slides up
+from behind it on focus to reveal the action bar, and when expanded keeps pulling up, holding a narrow message
+stream.
+
+```
+ collapsed (blurred)        collapsed + action bar (focused)     expanded
                         ┌──────────────────────┐   ┌──────────────────────┐
                         │ [−] [⌃] ◌        [⠿] │   │ [−] [⌄] ◌        [⠿] │
-                        │╭────────────────────╮│   │ 窄消息流               │
- ╭────────────────────╮ ││[+] 输入…   [控件][↑]││   │╭────────────────────╮│
- │[+] 输入…   [控件][↑]│ │╰────────────────────╯│   ││[+] 输入…   [控件][↑]││
+                        │╭────────────────────╮│   │ narrow message stream │
+ ╭────────────────────╮ ││[+] input…  [ctrls][↑]││   │╭────────────────────╮│
+ │[+] input…  [ctrls][↑]│ │╰────────────────────╯│   ││[+] input…  [ctrls][↑]││
  ╰────────────────────╯ └──────────────────────┘   │╰────────────────────╯│
-                          ▲ 抽屉从输入框后面向上滑出    └──────────────────────┘
+                          ▲ drawer slides up from behind the input box    └──────────────────────┘
 
- ◌ = 对话运行中的 loading，空闲时不显示
- 焦点进入浮窗 ─▶ 抽屉滑出（收起 + 操作栏）；焦点离开浮窗 ─▶ 抽屉收回输入框后面
- 点 [⌃] ─▶ 展开；点 [⌄] ─▶ 收起
- 任一形态 ──「−」或菜单「最小化编辑器」──▶ 最小化（圆形按钮，显示运行状态）
- 圆形按钮 ── 点击 ──▶ 收起 + 操作栏，输入框获得焦点
- 最小化时出现新的权限 / 问答请求 ──▶ 自动恢复为收起态，卡片替换输入框
- 拖 ⠿ 或拖圆形按钮 ── 松手 ──▶ 吸附到最近的位置
+ ◌ = conversation-running loading, hidden when idle
+ focus enters the floating window -> drawer slides out (collapsed + action bar); focus leaves -> drawer retracts behind the input box
+ click [⌃] -> expand; click [⌄] -> collapse
+ any form -- "−" or menu "最小化编辑器" (Minimize editor) --> minimized (round button showing run state)
+ round button -- click --> collapsed + action bar, input box focused
+ a new permission / Q&A request while minimized --> auto-restore to collapsed, the card replaces the input box
+ drag ⠿ or the round button -- release --> snap to the nearest position
 ```
 
-- 输入框层：只露出 SessionPane 底部输入区（`data-v4-composer-dock`），浮窗形态下输入区不留内边距，输入框外壳就是浮窗最外层，并带 `shadow-lg`。内部 SessionPane 保持展开态的固定高度并贴底，输入区上方内容被裁掉但仍然挂载。权限 / 问答卡片出现时输入区变高，浮窗随之变高，行为与桌面主对话一致。
-- 浮窗形态下输入区不在消息滚动容器里：它仍是同一个 DOM 节点（不重新挂载），但从 sticky 改为相对时间线根节点贴底；滚动容器底边让出「输入区高度 + 12px」，消息底部再留 16px 空白，滚动条止于输入框上方，不再延伸到输入框后面。浮窗形态下消息层不加底部渐隐遮罩（消息不会经过输入框）。对话 tab 与普通视图仍是 sticky 输入区。
-- 浮窗形态下对话不使用空会话居中布局，输入区始终贴底，草稿推荐提示和草稿顶部的「选择项目 / 分支」栏都不显示（切到对话 tab 可选择项目）。
-- 输入框在浮窗形态下是单行布局：`[+] [输入区] [模式 / 模型等控件] [发送]` 排在同一行。输入区至少占一半宽度；控件放不下时沿用主输入框工具栏的逐级收起规则（先收文字，最后只留图标）。文字超过一行时输入区向上长高，左右按钮贴底。附件等 `topContent` 单独占输入行上方一整行。
-- 单行与普通两行布局共用同一棵 DOM 树，只切换样式：编辑器节点位置不变，在浮窗和对话 tab 之间切换不会重新挂载编辑器，草稿、光标和撤销历史都保留。只有「+」菜单按钮会换位置重新挂载。
-- 运行中占位：浮窗形态下对话运行时，输入框占位文字显示「工作中 {时长}」（`chat.history.workingFor`），时长与流式消息里运行中 work segment 的「工作中 N 秒」同值（同一个 `workStatus.durationMs`，每秒刷新），用同一个格式化函数（`formatConversationWorkDuration`，天 / 时 / 分 / 秒后缀，最多两段）。时长尚未产生时沿用原占位；对话 tab 与普通视图不变。
-- 回答气泡：浮窗形态下，一轮回答结束（出现一个已结束、最终回答为 complete、且不同于基线的回合）时，在浮窗上方（顶部吸附位置时在下方）显示一个气泡，只显示回答正文的纯文本前两行，不显示图标和标题。基线：浮窗第一次看到某个会话时，已结束的回合算看过，正在运行的回合不算；离开浮窗形态时清空基线，回到浮窗重新建立，所以在对话 tab 里看过的回答不会弹出。不要求看到「运行中」：回放或很快的回答可能在一次渲染里就从未开始变成已结束。
-  - 只有两种方式让气泡消失：点左上角 ×；点气泡本身（同时把浮窗切到展开态显示消息流）。发送下一条消息时气泡保留，下一轮回答结束后替换为新回答。
-  - 气泡按会话记录（只在内存里），切走再切回仍在；只在浮窗收起态显示，展开态和最小化时隐藏但不清除。
-  - 数据来源唯一：时间线最后一个回合（render unit）同时给出 turnKey、运行状态、运行时长和最终回答，经 `reportFloatingStatus` 一次性上报，避免运行状态与回答来自两个源时出现先后不一致。
-- 抽屉层：与输入框同宽，`rounded-2xl`、`bg-background`、`border-border`、`shadow-lg`。失焦时整个藏在输入框后面；操作栏可见时一直向下延伸到输入框底边，两侧边线连续到底，输入框顶部圆角外露出的是抽屉背景（只伸到输入框后面一小段时，抽屉底角和输入框顶角会对出一个凹口）。高度随浮窗尺寸过渡，形成从输入框后面滑出的效果。
-- 操作栏只有按钮：左侧「−」最小化、「⌃ / ⌄」展开或收起消息流，右侧 ⠿ 是拖动柄与菜单二合一。不显示任务标题（标题在对话 tab 上）。对话运行中（`snapshot.control.canStop`，与圆形按钮同一状态源）时，「⌃ / ⌄」右侧显示一个旋转的 loading 图标，空闲时不显示。操作栏空白处没有点击行为，按下时不夺走输入框焦点。
-- 操作栏在收起态只在浮窗内有焦点或菜单打开时显示；展开态始终显示。
-- ⠿ 悬停提示「拖动以移动 · 点击查看选项」。点击（移动不足 4px）打开菜单：「在完整视图中打开」切到对话 tab；「最小化编辑器」进入最小化。拖动超过 4px 时浮窗跟随指针，松手吸附。⠿ 菜单 portal 的点击会沿 React 树冒泡，操作栏容器不能挂点击行为。
-- 最小化与恢复之间切换时，浮窗尺寸直接到位，不做宽高过渡；改为从圆形按钮所在的吸附角缩放（0.92 → 1）并淡入，150ms。最小化期间输入层保持浮窗宽度排版（不可见），不随 48px 的按钮重排。原因：宽度从 48px 过渡到 560px 时单行输入框会折成多行，测得的输入区高度先变大再缩回，浮窗背景会先变高再往下掉。
-- 吸附位置：左上、右上、左中、右中、左下、下中、右下；与 slot 边缘保持 16px。顶部位置向下展开，底部位置向上展开，中部位置居中。
-- 展开态宽 560px、高 min(640px, slot 高度 − 32px)，消息流在窗口内滚动；收起态同宽；slot 过窄时宽度收缩到 slot 宽度 − 32px。
+- Input box layer: only the bottom input area of SessionPane (`data-v4-composer-dock`) shows; in floating form
+  the input area has no inner padding, the input shell is the outermost layer of the floating window with
+  `shadow-lg`. The inner SessionPane keeps the fixed expanded-state height and sticks to the bottom; content
+  above the input area is clipped but still mounted. When a permission / Q&A card appears the input area grows
+  and the floating window grows with it, as in the desktop main conversation.
+- In floating form the input area is not in the message scroll container: it is still the same DOM node (no
+  remount) but changes from sticky to bottom-attached relative to the timeline root; the scroll container's
+  bottom edge yields "input area height + 12px" and messages leave 16px blank at the bottom, so the scrollbar
+  stops above the input box and no longer extends behind it. In floating form the message layer adds no bottom
+  fade mask (messages never pass through the input box). The conversation tab and normal view keep the sticky
+  input area.
+- In floating form the conversation uses no centered empty-session layout, the input area always sticks to the
+  bottom, and neither the draft recommended hints nor the "choose project / branch" bar at the draft top show
+  (switch to the conversation tab to choose a project).
+- The input box is single-line in floating form: `[+] [input area] [mode / model controls] [send]` on one row.
+  The input area takes at least half the width; when controls do not fit, the main input toolbar's progressive
+  collapse rule applies (text first, finally icon only). When text exceeds one line the input area grows
+  upward with left/right buttons stuck to the bottom. `topContent` such as attachments takes a full row above
+  the input row.
+- The single-line and ordinary two-line layouts share one DOM tree and switch only styles: the editor node
+  position is unchanged, so switching between the floating window and the conversation tab does not remount the
+  editor and the draft, cursor and undo history are kept. Only the "+" menu button changes position and
+  remounts.
+- Running placeholder: in floating form while the conversation runs, the input placeholder shows
+  "工作中 {duration}" (`chat.history.workingFor`), the same value as the running work segment's "工作中 N 秒" in
+  the message stream (the same `workStatus.durationMs`, refreshed every second) with the same formatter
+  (`formatConversationWorkDuration`, day / hour / minute / second suffixes, at most two segments). Before a
+  duration exists the original placeholder is kept; the conversation tab and normal view are unchanged.
+- Answer bubble: in floating form, when one round of answer ends (a turn appears that is ended, whose final
+  answer is complete and different from the baseline), a bubble shows above the floating window (below it at a
+  top snap position) with only the first two lines of plain text of the answer body, no icon or title.
+  Baseline: when the floating window first sees a session, ended turns count as seen and a running turn does
+  not; leaving floating form clears the baseline and re-establishes it on return, so answers seen in the
+  conversation tab do not pop up. It does not require seeing "running": replay or a very fast answer may go
+  from not started to ended within one render.
+  - Only two ways dismiss the bubble: click the top-left x; click the bubble itself (which also switches the
+    floating window to the expanded form to show the message stream). Sending the next message keeps the
+    bubble, and it is replaced by the new answer after the next round ends.
+  - The bubble is recorded per session (memory only) and survives switching away and back; it shows only in the
+    collapsed floating form and hides (without clearing) when expanded or minimized.
+  - The data source is unique: the timeline's last turn (render unit) gives turnKey, run state, run duration and
+    final answer together, reported once via `reportFloatingStatus`, avoiding inconsistent order when run state
+    and answer come from two sources.
+- Drawer layer: the same width as the input box, `rounded-2xl`, `bg-background`, `border-border`, `shadow-lg`.
+  When blurred it hides wholly behind the input box; when the action bar is visible it extends all the way down
+  to the input box bottom edge with continuous side borders, and what shows outside the input box's top
+  rounded corners is the drawer background (if the drawer reached only a short way behind the input box, the
+  drawer's bottom corners and the input box's top corners would leave a notch). Height transitions with the
+  floating window size, producing the slide-out effect from behind the input box.
+- The action bar has only buttons: "−" minimize on the left, "⌃ / ⌄" expand or collapse the message stream,
+  and on the right ⠿ is the drag handle and menu in one. It shows no task title (the title is on the
+  conversation tab). While the conversation runs (`snapshot.control.canStop`, the same state source as the round
+  button), a spinning loading icon shows right of "⌃ / ⌄" and hides when idle. Blank space on the action bar has
+  no click behavior and pressing it does not steal the input box's focus.
+- In the collapsed form the action bar shows only when focus is inside the floating window or a menu is open;
+  in the expanded form it always shows.
+- ⠿ hover hint "拖动以移动 · 点击查看选项" (Drag to move, click for options). A click (movement under 4px)
+  opens the menu: "在完整视图中打开" (Open in full view) switches to the conversation tab; "最小化编辑器"
+  enters minimized. A drag over 4px makes the floating window follow the pointer and snap on release. Clicks of
+  the ⠿ menu portal bubble along the React tree, so the action bar container must carry no click behavior.
+- Switching between minimized and restored, the floating window size takes effect directly with no width/height
+  transition; instead it scales (0.92 -> 1) and fades in from the snap corner of the round button for 150ms.
+  While minimized the input layer keeps the floating-window width layout (invisible) and does not reflow with
+  the 48px button. Reason: a width transition from 48px to 560px would wrap the single-line input into several
+  lines, the measured input height would grow first then shrink back, and the floating window background would
+  first get taller and then drop.
+- Snap positions: top-left, top-right, middle-left, middle-right, bottom-left, bottom-center, bottom-right,
+  16px from the slot edge. Top positions expand downward, bottom positions upward, middle positions centered.
+- The expanded form is 560px wide and min(640px, slot height - 32px) tall, with the message stream scrolling
+  inside; the collapsed form has the same width; when the slot is too narrow the width shrinks to slot width -
+  32px.
 
-## 拆分 pane 入口下线
+## Split Pane Entry Removal
 
-本功能同时下线对话区拆分 pane 的全部入口（见 `docs/v4-split-pane-workbench.md`）：任务行右键「在分屏打开」、把任务行拖到对话区边缘创建拆分。任务行拖到项目上移动任务仍保留。已经存在的拆分布局仍可正常显示与关闭。完整视图浮窗只显示当前焦点 pane。
+This feature also removes all entries of the conversation-area split pane (see
+`docs/v4-split-pane-workbench.md`): the task row context "在分屏打开" (Open in split) and dragging a task row to
+the conversation area edge to create a split. Dragging a task row onto a project to move the task is kept.
+Existing split layouts still display and close normally. The full-view floating window shows only the
+currently focused pane.
 
-## 验证
+## Verification
 
-- 单元测试：吸附位置计算、最近吸附点、owner 记忆与退出规则、快捷键表。
-- 桌面 E2E（正式）：见 `docs/testing/side-pane-tabs-e2e-case-catalog.md` 的 SPFV 用例。
+- Unit tests: snap position computation, nearest snap point, owner memory and exit rules, shortcut table.
+- Desktop E2E (formal): see the SPFV cases of `docs/testing/side-pane-tabs-e2e-case-catalog.md`.

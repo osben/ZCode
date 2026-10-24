@@ -1,114 +1,131 @@
 # Task File Change Summary
 
-## 目标
+## Goal
 
-任务结束后，把该任务涉及的文件改动汇总到任务标题和任务条目下方，同时保留后续接入回滚功能需要的轮次信息。
+After a task ends, summarize the file changes involved in the task under the task title and task entry,
+while keeping the turn information a later rollback feature needs.
 
-## 数据流
+## Data Flow
 
-1. Agent runtime 的文件写入继续只记录原始 `fileChanges`
-   - 会话文件追踪器在 `packages/services/src/session/fileChangeTracker.ts`
-   - 每次写入都会把 `beforeContent` / `afterContent` 记到 session file change tracker
+1. Agent runtime file writes keep recording only the raw `fileChanges`: the session file tracker is
+   `packages/services/src/session/fileChangeTracker.ts`, and each write records `beforeContent` /
+   `afterContent` in the session file change tracker.
+2. The task summary is aggregated dynamically when the task list is read: aggregation in
+   `packages/services/src/session/taskChangeSummary.ts`, injected in
+   `packages/services/src/session/zcodeTaskService.ts`; the summary field hangs on
+   `ZCodeTaskMeta.changeSummary`.
+3. The UI consumes only the summary and never scans full snapshots: formatting in
+   `packages/ui/src/lib/taskChangeSummary.ts`, task list in `packages/ui/src/TaskList.tsx`, top title in
+   `packages/ui/src/App.tsx`.
 
-2. 任务摘要在读取任务列表时动态聚合
-   - 聚合实现：`packages/services/src/session/taskChangeSummary.ts`
-   - 注入位置：`packages/services/src/session/zcodeTaskService.ts`
-   - 摘要字段挂在 `ZCodeTaskMeta.changeSummary`
+## Summary Structure
 
-3. UI 只消费摘要，不直接扫描完整快照
-   - 格式化实现：`packages/ui/src/lib/taskChangeSummary.ts`
-   - 任务列表：`packages/ui/src/TaskList.tsx`
-   - 顶部标题：`packages/ui/src/App.tsx`
+`fileCount` (unique files involved), `added` / `removed` (total lines aggregated by the task's final
+result), `files[]` with `path`, `added` / `removed`, `writeCount`, `lastTurnIndex`.
 
-## 摘要结构
+## Rollback Reservation
 
-- `fileCount`: 任务涉及的唯一文件数
-- `added` / `removed`: 按任务最终结果聚合后的总行数
-- `files[]`
-  - `path`
-  - `added` / `removed`
-  - `writeCount`
-  - `lastTurnIndex`
+Real rollback still depends only on `fileChanges`; `changeSummary.files[].lastTurnIndex` is only a UI quick
+locator. A later "roll back the whole task" or "roll back a single file" reuses the rewind/truncate
+capability of the session file change tracker. `task_error` also persists the turn's `fileChanges`, so a
+failed task also shows the file summary and keeps the data needed for later rollback.
 
-## 回滚预留
+## v4 Per-Turn File Summary and File Undo
 
-- 真正的回滚仍然只依赖 `fileChanges`
-- `changeSummary.files[].lastTurnIndex` 只是 UI 快速定位入口
-- 后续如果要做“回滚整个任务”或“回滚单个文件”，直接复用 session file change tracker 的 rewind/truncate 能力
+The v4 conversation does not reuse the old `session/previewFileRewind` / `session/applyFileRewind` entries;
+per-turn file summary and undo go through the v4 projection and command/query boundary. The product
+semantics are fixed as "undo only workspace file modifications": after a successful undo no chat history is
+deleted, truncated or rewritten; only the matching turn's file state is marked undone.
 
-## v4 每轮文件摘要与文件撤销规划
-
-v4 conversation 不复用旧 `session/previewFileRewind` / `session/applyFileRewind` 入口；每轮文件摘要和撤销要走 v4 投影与命令/查询边界。产品语义固定为“只撤销工作区文件修改”：撤销成功后不删除、不截断、不改写聊天历史，只把对应轮次的文件状态标记为已撤销。
-
-### 状态与事件链路
+### State and Event Chain
 
 ```text
-Write/Edit 等文件工具
-  -> core 写入 workspace checkpoint artifact
+Write/Edit and other file tools
+  -> core writes a workspace checkpoint artifact
   -> SessionEvent.CheckpointCreated(snapshotRef/diffRef/messageId/targetMessageId/toolMessageId)
-  -> 同步写入既有 session_entry(runtime/workspace_checkpoint)，冷恢复时重建 checkpoint event
-  -> v4 ProductProjection 按 stable messageId/turnId 归属到 turnHeader
+  -> also written to the existing session_entry(runtime/workspace_checkpoint); cold restore rebuilds the checkpoint event
+  -> v4 ProductProjection attributes it to turnHeader by stable messageId/turnId
   -> TurnHeader.fileChanges = { files, additions, deletions }
-  -> UI 在该轮尾部显示文件摘要
+  -> UI shows the file summary at the tail of that turn
 
-用户点击撤销文件
+user clicks undo files
   -> previewFileRewind(turn/message target)
-  -> core previewWorkspaceFileRewind 做 hash 安全检查
-  -> UI 弹窗展示 safe / unsafe / ignored 文件
+  -> core previewWorkspaceFileRewind does a hash safety check
+  -> UI dialog shows safe / unsafe / ignored files
   -> applyFileRewind
-  -> core applyWorkspaceFileRewind 写回或删除文件
+  -> core applyWorkspaceFileRewind writes back or deletes files
   -> SessionEvent.RewindTriggered(scope=workspace, reason=file_summary_rewind)
-  -> 同步写入既有 session_entry(runtime/workspace_file_rewind)，冷恢复时重建撤销事件
-  -> v4 ProductProjection 标记该轮文件已撤销，不触发 row.removed
+  -> also written to the existing session_entry(runtime/workspace_file_rewind); cold restore rebuilds the undo event
+  -> v4 ProductProjection marks the turn's files as undone, without row.removed
 ```
 
-### 投影边界
+### Projection Boundary
 
-- `turnHeader.fileChanges` 只承载轻量摘要：文件数、总新增行、总删除行，以及后续需要的撤销状态；不要把完整 patch 或 before/after content 放进 replayable snapshot。
-- 文件明细、readonly diff patch、preview safe/unsafe 列表按需从 host/core 查询；展开面板或点击撤销时再读取 checkpoint artifact。
-- `CheckpointCreated` 的 event store 是运行时内存账本；checkpoint payload 还必须写入既有
-  `session_entry`，child/main runtime 冷恢复时先重建事件再执行 preview/apply。该持久化复用现有表，
-  不新增数据库表或 migration；artifact 仍是 before/after 内容的唯一大对象来源。
-- workspace-only `RewindTriggered` 同样写入既有 `session_entry`；否则关闭详情或重启后会把已撤销
-  turn 重新投影成 active。detached child cold resume 产生新的 raw event epoch 时，以
-  `SessionResumed` 重设 gateway raw cursor，但 transport sequence 继续单调递增。
-- 同一轮同一文件多次改动时，摘要按该轮最初 before 到最终 after 计算；中间 checkpoint 只用于安全撤销顺序，不重复累计展示行数。
-- 归属和撤销目标优先使用 stable `messageId` / `turnId` / checkpoint id；`turnIndex` 只能作为旧数据兼容 fallback，不能作为新协议的主要定位。
-- `CheckpointCreated(scope=workspace|both)` 可以贡献文件摘要；shell/bash checkpoint 如果 core 判为 ignored，撤销 preview 只展示 ignored，不作为可安全写回文件。
+- `turnHeader.fileChanges` carries only a light summary: file count, total additions, total deletions, and
+  the undo state needed later; full patches or before/after content must not enter the replayable snapshot.
+- File details, readonly diff patch and preview safe/unsafe lists are queried on demand from host/core; the
+  checkpoint artifact is read when the panel expands or undo is clicked.
+- The `CheckpointCreated` event store is an in-memory runtime ledger; the checkpoint payload must also be
+  written to the existing `session_entry`, so child/main runtime cold restore rebuilds events before
+  preview/apply. This persistence reuses the existing table, adding no table or migration; the artifact
+  remains the only large-object source of before/after content.
+- A workspace-only `RewindTriggered` is also written to the existing `session_entry`; otherwise closing
+  details or restarting would project an undone turn as active again. When a detached child cold resume
+  produces a new raw event epoch, `SessionResumed` resets the gateway raw cursor while the transport
+  sequence keeps increasing monotonically.
+- When the same file is changed several times in one turn, the summary is computed from the turn's initial
+  before to the final after; intermediate checkpoints serve only the safe undo order and do not
+  double-count lines.
+- Attribution and undo targets prefer stable `messageId` / `turnId` / checkpoint id; `turnIndex` is only an
+  old-data compatibility fallback, not the main locator of the new protocol.
+- `CheckpointCreated(scope=workspace|both)` may contribute to the file summary; if core judges a shell/bash
+  checkpoint as ignored, undo preview shows it only as ignored, not as a safely writable file.
 
-### 撤销边界
+### Undo Boundary
 
-- 只允许在 session 空闲时执行文件撤销；running、compacting、permission/elicitation 等 active 状态下入口 disabled 或命令被拒绝，避免和正在写文件的 tool loop 竞争。
-- preview 阶段如果任一文件存在外部修改、checkpoint 缺失、checkpoint 不可读或 unsupported patch，确认按钮 disabled；apply 不做部分写回。
-- apply 成功后对话行保持不变，只在对应 turn 的文件摘要面板显示已撤销状态，并可保留 diff review 入口。
-- Subagent 文件撤销只使用 child projection 的 `canRewindFiles` 门禁；父 task 是否仍在运行不新增
-  父级 guard。父任务或外部进程对同一文件的修改继续由现有 hash preview 判为 unsafe。
-- 右侧 child 详情保持 conversation 只读，仅把 preview/apply 作为显式 workspace capability；不得
-  因此开放 composer、edit/retry/fork/stop 或 permission/elicitation response。
-- detached live child 没有直接 bootstrap record 时，首次 preview 可以 cold resume 已持久化的
-  child record，但不得启动新 turn；后续 apply 仍以 `childSessionId` 为命令 session。
-- apply 只恢复真实 workspace 并把目标 child turn 标为已撤销，不改写父 Agent 行、目录、父 task
-  aggregate 或任一聊天历史。
-- 桌面端 `desktop-continuous` 通过 live delta 更新摘要和撤销状态；手机 `/remote` 的 `web-remote-replayable` 通过同一 host projection/snapshot 恢复，不在 relay 或 main 进程下沉 session/task/stream/file 状态。
-- 远程 workspace 必须沿用 `workspaceIdentity` / `remoteSessionId` 贯穿 bridge、snapshot、撤销 target 和缓存 key；身份隔离使用 `workspaceKey = workspaceIdentity?.trim() || workspacePath`。
+- File undo is allowed only when the session is idle; in running, compacting, permission/elicitation and
+  other active states the entry is disabled or the command is rejected, avoiding a race with a tool loop
+  that is writing files.
+- At the preview stage, if any file has an external modification, a missing or unreadable checkpoint or an
+  unsupported patch, the confirm button is disabled; apply does no partial write-back.
+- After a successful apply the conversation rows stay unchanged; only the file summary panel of the turn
+  shows the undone state and may keep the diff review entry.
+- Subagent file undo is gated only by the child projection's `canRewindFiles`; whether the parent task is
+  still running adds no parent guard. Modifications by the parent task or external processes to the same
+  file are still judged unsafe by the existing hash preview.
+- The right-side child detail keeps the conversation read-only, exposing preview/apply only as an explicit
+  workspace capability; this must not open the composer, edit/retry/fork/stop or permission/elicitation
+  responses.
+- A detached live child with no direct bootstrap record may cold resume the persisted child record on first
+  preview but must not start a new turn; a later apply still uses `childSessionId` as the command session.
+- Apply only restores the real workspace and marks the target child turn as undone; it does not rewrite the
+  parent Agent row, directory, parent task aggregate or any chat history.
+- Desktop `desktop-continuous` updates the summary and undo state through live deltas; mobile `/remote`
+  `web-remote-replayable` recovers through the same host projection/snapshot; no session/task/stream/file
+  state sinks into relay or main.
+- A remote workspace must carry `workspaceIdentity` / `remoteSessionId` through bridge, snapshot, undo
+  target and cache key; identity isolation uses `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
 
-### UI 形态
+### UI Form
 
-- 每轮文件摘要显示在该 turn 的 assistant 工作区尾部，格式为 `N files changed +A -D`；移动端保持同等信息，但按钮和文件行更紧凑。
-- 展开后展示每个文件的相对路径和 `+/-` 行数，不展示写入/修改次数；点击文件行或 Review 打开 code viewer diff。
-- 写入/修改次数只在文件撤销预检弹窗中展示，用于解释撤销操作边界，不作为摘要行信息。
-- 撤销按钮先打开 preview dialog；dialog 区分 safe、unsafe、ignored 文件，unsafe 原因必须可见。
-- 手机远控继续隐藏“选择 App 打开”下拉，只保留应用内 diff review 和文件撤销能力。
+- The per-turn file summary shows at the tail of the turn's assistant work area as `N files changed +A -D`;
+  mobile keeps the same information with more compact buttons and file rows.
+- Expanded, it shows each file's relative path and `+/-` line counts, without write/modify counts; clicking
+  a file row or Review opens the code viewer diff. Write/modify counts show only in the undo pre-check
+  dialog to explain the undo boundary, not in the summary row.
+- The undo button first opens a preview dialog that separates safe, unsafe and ignored files, with unsafe
+  reasons visible.
+- Mobile remote keeps hiding the "choose app to open" dropdown and keeps only in-app diff review and file
+  undo.
 
-## 消息内变更摘要交互
+## In-Message Change Summary Interaction
 
-- 消息里的变更摘要默认只展开到文件列表，不再支持在单个文件行内继续展开 inline diff
-- 单个文件行点击、Enter、Space 的行为与该行的 `Review` 按钮一致：打开右侧 code viewer 的 diff 预览
-- `Review` 按钮保留文字入口，不展示图标，避免和整行点击入口形成重复视觉强调
-- 文件行仍保留普通文件打开入口；手机远控继续隐藏“选择 App 打开”下拉，只保留应用内预览能力
-- diff 预览源继续优先使用 readonly patch，没有 patch 时使用本轮 checkpoint 的 before/after snapshot
-
-## 额外修正
-
-- `task_error` 现在也会持久化本轮 `fileChanges`
-- 这样失败任务同样能显示文件汇总，也不会丢掉后续回滚所需的数据
+- The change summary in a message expands only to the file list by default; inline diff expansion inside a
+  single file row is no longer supported.
+- Click, Enter and Space on a file row behave like that row's `Review` button: open the diff preview in the
+  right code viewer. The `Review` button keeps a text entry without an icon, avoiding duplicate emphasis
+  with the whole-row click.
+- The file row keeps the ordinary file-open entry; mobile remote keeps hiding the "choose app to open"
+  dropdown and keeps only in-app preview.
+- The diff preview source still prefers the readonly patch, and falls back to the turn checkpoint's
+  before/after snapshot when there is no patch.

@@ -1,32 +1,38 @@
 # Slash Command Leading Dunhao Alias
 
-## 背景
+## Background
 
-中文输入法下，用户想在聊天输入框第一位输入 `/` 唤起 slash command 时，可能会打出中文顿号 `、`。如果直接把 `、` 纳入 slash command 匹配，会扩大命令解析边界，也容易影响正常中文标点输入。
+With a Chinese IME, a user who wants to type `/` as the first character of the chat input to summon the
+slash command panel may type the Chinese enumeration comma `、`. Adding `、` to slash command matching would
+widen the command parsing boundary and could disturb normal Chinese punctuation input.
 
-## 目标
+## Goal
 
-- 仅在聊天输入框中处理用户手输的首字符 `、`。
-- 当 `、` 会成为输入框全文第一个字符时，立即替换成 ASCII `/`。
-- 替换后继续复用现有 `/` slash command 面板、过滤、mention 插入和发送解析逻辑。
-- 不全局替换正文里的顿号，不处理粘贴或程序预填内容。
+- Handle only a hand-typed leading `、` in the chat input: when `、` would become the first character of the
+  whole input, replace it with ASCII `/` immediately.
+- After replacement, keep reusing the existing `/` slash command panel, filtering, mention insertion and
+  send parsing logic.
+- Never replace `、` globally in the body, nor handle pasted or programmatically prefilled content.
 
-## 边界
+## Boundary
 
-- 只处理浏览器 `beforeinput` 里的 `inputType === "insertText"` 且 `data === "、"` 的真实输入。
-- 光标不在编辑器全文开头时不替换，例如 `你好、` 保持原样。
-- 粘贴 `、goal`、历史草稿恢复、外部预填等程序化内容不替换。
-- slash command 的匹配和执行仍只识别标准 `/`，本功能只在输入进入编辑器前做一次纠正。
+- Only a real input of the browser `beforeinput` with `inputType === "insertText"` and `data === "、"` is
+  handled.
+- No replacement when the caret is not at the start of the whole editor text, e.g. `你好、` stays as is.
+- Pasting `、goal`, restoring a draft, or external prefill is not replaced.
+- Slash command matching and execution still recognize only the standard `/`; this feature only corrects
+  once before the input enters the editor.
 
-## 兼容性
+## Compatibility
 
-- 逻辑位于 `packages/ui` 的 Lexical 输入层，桌面端、本地 Web 和手机远控复用同一输入组件。
-- 不修改 `@zcode/protocol`，不影响 agent、session、continuous/replayable 消息流或远控 task command queue。
+The logic sits in the Lexical input layer of `packages/ui`; desktop, local Web and mobile remote reuse the
+same input component. No change to `@zcode/protocol`; agent, session, continuous/replayable message flows
+and the remote task command queue are unaffected.
 
-## 验收
+## Acceptance
 
-- 空输入框手输 `、` 后，输入内容变成 `/` 并自然唤起 slash command 面板。
-- 光标在已有内容开头手输 `、` 时，首字符被纠正成 `/`。
-- 光标不在全文开头时手输 `、` 不会被替换。
-- 粘贴或程序写入 `、goal` 不会被替换。
-- 原有 `/` slash command 行为保持不变。
+- Hand-typing `、` in an empty input turns the content into `/` and summons the slash command panel.
+- Hand-typing `、` with the caret at the start of existing content corrects the first character to `/`.
+- Hand-typing `、` when the caret is not at the start is not replaced.
+- Pasting or programmatically writing `、goal` is not replaced.
+- Existing `/` slash command behavior is unchanged.

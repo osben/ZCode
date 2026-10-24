@@ -1,10 +1,13 @@
 # Built-In Subagent Colors
 
-内置子智能体必须在 profile 数据上提供显式颜色，不依赖 UI 按名称 hash 的 fallback。
+Built-in subagents must provide an explicit color in the profile data and not depend on the UI's name-hash
+fallback.
 
-- `general-purpose` 使用 `blue`。
-- `Explore` 使用 `cyan`。
-- UI 仍保留按名称 hash 的 fallback，只用于旧事件、外部 agent 或没有配置颜色的自定义 subagent。
-- 内置颜色只是身份标识，不表达成功、失败、危险等状态语义。
+- `general-purpose` uses `blue`; `Explore` uses `cyan`.
+- The UI keeps the name-hash fallback only for old events, external agents or custom subagents with no
+  configured color.
+- A built-in color is only an identity marker and expresses no success, failure, danger or other status
+  semantics.
 
-这样可以避免内置 `general-purpose` 因名称 hash 结果显示为 `red`，让用户误以为它是错误或危险状态。
+This avoids the built-in `general-purpose` showing `red` through its name hash, which would make users think it
+is an error or danger state.

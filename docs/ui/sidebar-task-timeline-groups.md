@@ -1,19 +1,11 @@
 # Sidebar Task Timeline Groups
 
-Sidebar 的 timeline 视图按当前排序字段做时间分组：
+The sidebar timeline view groups by time on the current sort field: `updatedAt` when sorted by update time,
+`createdAt` when sorted by creation time.
 
-- `updatedAt`：排序方式为更新时间时使用。
-- `createdAt`：排序方式为创建时间时使用。
+Group order runs from specific to coarse: 1. Today, 2. Yesterday, 3. 2 days ago / 3 days ago, 4. This week,
+5. Last week, 6. This month, 7. Last month, 8. Earlier.
 
-分组顺序从具体到粗粒度：
-
-1. 今天
-2. 昨天
-3. 2 天前 / 3 天前
-4. 本周
-5. 上周
-6. 本月
-7. 上月
-8. 更早
-
-周分组按当前 UI 语言决定自然周起点：英文为周日，中文为周一。分组逻辑只在 UI 层使用，service 仍只提供任务时间戳，避免把展示文案或 locale 规则下沉到任务数据层。
+The week group's natural-week start follows the current UI language: Sunday for English, Monday for
+Chinese. The grouping logic lives only in the UI layer; the service still provides only task timestamps, so
+display text and locale rules do not sink into the task data layer.

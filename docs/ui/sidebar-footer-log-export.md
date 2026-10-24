@@ -1,18 +1,23 @@
 # Sidebar Footer Log Export
 
-## 目标
+## Goal
 
-左下角账号菜单补齐“导出日志”入口，让用户不需要进入 Windows 标题栏菜单或系统菜单也能导出诊断包。
+The bottom-left account menu gets an "Export logs" entry, so users can export a diagnostic bundle without
+going into the Windows title bar menu or the system menu.
 
-## 行为
+## Behavior
 
-- 入口位于账号菜单的支持动作区，和“问题反馈”“用户社群”同组。
-- 菜单文案复用 Windows 菜单的 `titleBar.menu.help.exportLogs`，toast 文案复用已有 `sidebar.exportLogs.pending`、`sidebar.exportLogs.error`。
-- 点击后复用 `platform.exportLogs()`，由 desktop main 负责打包日志并在系统文件浏览器中显示导出结果。
-- Web 端继续使用平台层 fallback，返回不支持时展示错误 toast，不新增 desktop-only 分支。
+- The entry sits in the account menu's support action area, in the same group as "问题反馈" (Feedback) and
+  "用户社群" (User community).
+- Menu copy reuses the Windows menu's `titleBar.menu.help.exportLogs`; toast copy reuses the existing
+  `sidebar.exportLogs.pending` and `sidebar.exportLogs.error`.
+- Clicking reuses `platform.exportLogs()`; the desktop main packages the logs and reveals the export result in
+  the system file browser.
+- Web keeps using the platform-layer fallback and shows an error toast when unsupported, adding no
+  desktop-only branch.
 
-## 实现位置
+## Implementation Locations
 
-- 菜单入口：`packages/ui/src/WorkspaceSidebarFooter.tsx`
-- 共享动作：`packages/ui/src/lib/exportLogsAction.ts`
-- Windows 标题栏菜单复用同一动作：`packages/ui/src/WindowsCaptionMenuButton.tsx`
+- Menu entry: `packages/ui/src/WorkspaceSidebarFooter.tsx`
+- Shared action: `packages/ui/src/lib/exportLogsAction.ts`
+- The Windows title bar menu reuses the same action: `packages/ui/src/WindowsCaptionMenuButton.tsx`

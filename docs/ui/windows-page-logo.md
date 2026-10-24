@@ -1,22 +1,36 @@
-# Windows 页面左上角 Logo
+# Windows Page Top-Left Logo
 
-## 范围
+## Scope
 
-- Windows 桌面端的 `SettingsPage` 左上角补充应用 logo。
-- 仅增加品牌标识，不新增点击行为，也不改变现有返回、打开工作区、设置分区等交互。
+- The Windows desktop `SettingsPage` top left gets the app logo. Only a brand mark is added: no click
+  behavior, and the existing back, open workspace and settings-section interactions are unchanged.
 
-## 实现
+## Implementation
 
-- UI 使用 `packages/ui/src/WindowsTopLeftLogo.tsx`，统一复用静态 `ZCodeStartupLogoBadge`。
-- `SettingsPage` 只在 `isWindowsDesktop` 条件下渲染该组件，继续保留顶部 `app-region:drag`。
+- The UI uses `packages/ui/src/WindowsTopLeftLogo.tsx`, uniformly reusing the static `ZCodeStartupLogoBadge`.
+  `SettingsPage` renders the component only under `isWindowsDesktop` and keeps the top `app-region:drag`.
 
-## 桌面 Logo 样式迁移
+## Desktop Logo Style Migration
 
-- Windows/Linux 工作区左上角与 Windows 设置页复用 `ZCodeStartupLogoBadge` 的 compact 外观：20px 渐变底座、4px 圆角、1px white/20 描边、13px 宽的内联 SVG，按比例保持高度且关闭呼吸动画。
-- 工作区保留现有 28px 点击区域、导航位置、侧栏切换回调及 hover 图标；键盘聚焦同样显示侧栏图标。设置页保留原有定位和展示语义，不新增点击行为。
-- Logo 外部占位为 20px；工作区保留 28px 点击区域，设置页外部占位左上角保留 17px/19px，保持原中心点。启动页和引导页的默认 96px Logo、macOS/Web/手机入口保持既有外观。
-- 不迁移独立标题栏、原生窗控、面板按钮、圆角或留白。状态仍由现有 Sidebar owner 管理，不增加状态、协议或远程消息链路。
-- 回归：组件测试验证静态 SVG、尺寸与默认 hero；SPT-E2E-000 验证工作区 Logo 尺寸、hover 与点击切换；UP-00 验证设置页 Logo 和双主题定位。运行结果在对应覆盖矩阵记录。
-- E2E 前置复用本地账号控制面 mock，避免模拟凭据触发线上 401 并遮挡截图；工作区使用标准启动准备 helper 等待首屏和跳过职业引导，不以修改产品登录状态或隐藏弹窗替代验证。
+- The Windows/Linux workspace top left and the Windows settings page reuse the compact look of
+  `ZCodeStartupLogoBadge`: 20px gradient base, 4px radius, 1px white/20 outline, a 13px-wide inline SVG that
+  keeps its height proportionally, with the breathing animation off.
+- The workspace keeps its 28px click area, navigation position, sidebar toggle callback and hover icon;
+  keyboard focus also shows the sidebar icon. The settings page keeps its positioning and display semantics
+  with no new click behavior.
+- The Logo's outer footprint is 20px; the workspace keeps a 28px click area, and the settings page's outer
+  footprint keeps 17px/19px at the top left, preserving the original center point. The default 96px Logo of the
+  startup and onboarding pages and the macOS/Web/mobile entries keep their look.
+- The standalone title bar, native window controls, panel buttons, radius and margins are not migrated. State
+  is still owned by the existing Sidebar owner; no state, protocol or remote message chain is added.
+- Regression: component tests verify static SVG, size and the default hero; SPT-E2E-000 verifies workspace
+  Logo size, hover and click toggle; UP-00 verifies the settings page Logo and dual-theme positioning. Results
+  are recorded in the matching coverage matrices.
+- E2E prerequisites reuse the local account control-plane mock, so simulated credentials do not trigger an
+  online 401 that covers the screenshot; the workspace uses the standard launch-prep helper to wait for the
+  first screen and skip the career onboarding, rather than changing product login state or hiding dialogs.
 
-最终尺寸验证：20px 底座、13px SVG、4px 圆角、28px 工作区点击区。8 项组件测试、typecheck、typecheck:e2e、lint、架构检查通过；Windows SPT-E2E-000 run desktop-e2e-20261009074039183-p26228-1224c47db4432985、UP-00 run desktop-e2e-20261009074139434-p10168-0faa703391ebcbc2 均通过。Linux 真机待补。
+Final size verification: 20px base, 13px SVG, 4px radius, 28px workspace click area. 8 component tests,
+typecheck, typecheck:e2e, lint and architecture check passed; Windows SPT-E2E-000 run
+desktop-e2e-20261009074039183-p26228-1224c47db4432985 and UP-00 run
+desktop-e2e-20261009074139434-p10168-0faa703391ebcbc2 both passed. Linux real machine is still to do.

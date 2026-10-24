@@ -1,81 +1,107 @@
 # Windows Titlebar Menu
 
-## 目标
+## Goal
 
-在 Windows 桌面端启用自绘顶部菜单，将常用的 `File / View / Help` 动作放入工作区顶部栏，同时保留系统窗口控制按钮。
+Enable a custom-drawn top menu on Windows desktop that puts the common `File / View / Help` actions into
+the workspace top bar while keeping the system window control buttons.
 
-## 实现
+## Implementation
 
-- 主窗口在 Windows 上改为 `titleBarStyle: "hidden" + titleBarOverlay`，继续保留 `backgroundMaterial: "acrylic"`。
-- 主进程新增统一的 `executeDesktopCommand` 命令入口，原生应用菜单和 renderer 顶部菜单共用同一套动作实现。
-- UI 在 `WorkspaceHeader` 中按 Windows/Linux 桌面端条件渲染 `WindowsCaptionMenuButton`，通过 `IPlatformService.executeDesktopCommand()` 调用主进程命令。
-- 新任务草稿态不会渲染完整 `WorkspaceHeader`，但 Windows/Linux 桌面端仍需要保留右上角 Terminal 切换按钮和合并菜单按钮。UI 在 shell 外层标题栏区域依次渲染共享的 Terminal 入口与 `WindowsCaptionMenuButton`，只恢复桌面窗口级入口，不恢复 workspace 路径、分支和 task 相关 header 内容。Windows 草稿态合并菜单按钮保持和 session task header 入口一致的尺寸、直角和 hover 样式，但去掉左侧边框，外层不额外绘制 `bg-background-win-alt` 或 `border-b border-border`，避免在透明标题区形成孤立色块。
-- Linux 新任务草稿态的合并菜单外层保留 Linux 标题栏 surface 样式，左下角使用 `rounded-bl-xl`，和右侧自绘窗口按钮区域形成同一层级。
-- 新任务草稿态在桌面端不渲染完整 `WorkspaceHeader`，但会在相同布局位置渲染轻量 `<header class="h-10 [app-region:drag]">` 作为标题栏拖拽区。该 header 参与主内容纵向布局，避免用 absolute overlay 覆盖 ChatView，同时仍低于右上角窗口菜单的点击层级。
-- 检查更新菜单项订阅 `IPlatformService.onUpdateStateChanged()`，并在菜单打开时通过 `IPlatformService.getUpdateState()` 主动拉取当前状态。主进程的 `electron-updater` 状态会通过 `PlatformChannels.UpdateStateChanged` 持续同步到 renderer，因此 Windows 自绘菜单可以和 macOS 原生菜单一样显示检查、下载进度和可重启安装状态。
+- The Windows main window uses `titleBarStyle: "hidden" + titleBarOverlay` and keeps
+  `backgroundMaterial: "acrylic"`.
+- The main process has one `executeDesktopCommand` entry; the native application menu and the renderer top
+  menu share the same action implementations.
+- `WorkspaceHeader` conditionally renders `WindowsCaptionMenuButton` on Windows/Linux desktop and calls the
+  main-process command through `IPlatformService.executeDesktopCommand()`.
+- The new-task draft state does not render the full `WorkspaceHeader`, but Windows/Linux desktop still
+  keeps the top-right Terminal toggle and merged menu button. The UI renders the shared Terminal entry and
+  `WindowsCaptionMenuButton` in the shell's outer title-bar area, restoring only the window-level entries,
+  not workspace path, branch or task header content. The Windows draft merged menu button keeps the same
+  size, square corners and hover style as the session task header entry but drops the left border, and its
+  outer wrapper draws no `bg-background-win-alt` or `border-b border-border`, avoiding an isolated color
+  block in the transparent title area.
+- The Linux draft merged menu wrapper keeps the Linux title-bar surface style with `rounded-bl-xl` at the
+  lower left, forming one layer with the custom-drawn window button area on the right.
+- In the desktop draft state a lightweight `<header class="h-10 [app-region:drag]">` is rendered at the
+  same layout position as the title-bar drag region. It takes part in the vertical main layout (no
+  absolute overlay over ChatView) while staying below the click layer of the top-right window menu.
+- The check-update item subscribes to `IPlatformService.onUpdateStateChanged()` and pulls the current
+  state with `IPlatformService.getUpdateState()` when the menu opens. The main process's `electron-updater`
+  state is synced continuously to the renderer through `PlatformChannels.UpdateStateChanged`, so the
+  Windows custom menu shows checking, download progress and ready-to-restart like the macOS native menu.
 
-## 当前菜单项
+## Current Menu Items
 
-- 合并菜单：New task、Open Workspace、Open in File Explorer、About ZCode、Check for Updates（检查中/下载中会显示状态与百分比）、Feedback、Community（有可用入口时）、Export Logs、Toggle Developer Tools（开发态）、Resource Manager（资源管理器，开发态）、Close Window
+Merged menu: New task, Open Workspace, Open in File Explorer, About ZCode, Check for Updates (shows state
+and percentage while checking/downloading), Feedback, Community (when an entry is available), Export Logs,
+Toggle Developer Tools (dev), Resource Manager (dev), Close Window.
 
-## Windows 工作区外沿
+## Windows Workspace Outer Edge
 
-### 产品语义
+### Product Semantics
 
-系统窗口外形由 Windows/DWM 决定，renderer 只负责工作区内容面板。两者不能只按
-`isWindowsDesktop` 合并处理，否则 Windows 10 与 Windows 11、普通窗口与最大化窗口会互相污染。
+The system window shape is decided by Windows/DWM; the renderer owns only the workspace content panel. They
+must not be merged by `isWindowsDesktop` alone, or Windows 10 vs 11 and normal vs maximized windows would
+contaminate each other.
 
-| 系统与窗口状态 | 系统窗口外形 | 工作区内容面板 |
+| System and window state | System window shape | Workspace content panel |
 | --- | --- | --- |
-| Windows 11 普通窗口 | DWM 原生圆角 | 保持圆角与完整弱边框 |
-| Windows 11 最大化 | DWM 外沿为直角 | 内容面板同步改为直角；移除贴窗口外沿的上、右、下边框，只保留左侧分隔 |
-| Windows 10 普通/最大化 | 系统原生直角 | 只把贴系统外沿的右侧两角改为直角；保留既有完整弱边框与内部左圆角 |
-| Windows 能力未知/IPC 失败 | 尚未确认 | 保持改动前的圆角与完整弱边框，不把未知状态误判为 Windows 10 |
-| macOS、Linux、Web、手机 Web | 不属于本功能 | 保持既有样式与响应式覆盖 |
+| Windows 11 normal window | DWM native rounded corners | Keep rounded corners and the full weak border |
+| Windows 11 maximized | DWM outer edge is square | Panel switches to square corners; remove the top, right and bottom borders against the window edge, keep only the left separator |
+| Windows 10 normal/maximized | System native square corners | Only the two right corners against the system edge become square; keep the existing full weak border and inner left rounded corners |
+| Windows capability unknown / IPC failure | Not yet confirmed | Keep the pre-change rounded corners and full weak border; do not misjudge unknown as Windows 10 |
+| macOS, Linux, Web, mobile Web | Not part of this feature | Keep existing styles and responsive overrides |
 
-以 Windows build `>= 22000` 作为 Windows 11 原生圆角能力边界。build 与最大化状态由
-Electron main 进程读取，通过 preload 和 `IPlatformService` 注入 UI；UI 不直接读取 Node 或
-`window.zcode`。
+Windows build `>= 22000` is the Windows 11 native-rounded-corner boundary. Build and maximized state are
+read by the Electron main process and injected into the UI through preload and `IPlatformService`; the UI
+never reads Node or `window.zcode`. When Windows 11 is maximized, the renderer content panel and the DWM
+outline both use square corners. This feature does not change the system window shape through fake
+maximize, window shape or work-area bounds changes.
 
-Windows 11 最大化时，renderer 工作区内容面板与 DWM 外轮廓统一使用直角。本功能不通过
-伪最大化、窗口 shape 或修改 work area bounds 改变系统窗口形态。
-
-### 状态链路
+### State Chain
 
 ```text
 Windows build ───────────────┐
                              v
-BrowserWindow maximize/unmaximize -> main 计算窗口外观状态
+BrowserWindow maximize/unmaximize -> main computes window appearance state
                                       |
                                       v
-                         preload IPC 查询 + 状态事件
+                         preload IPC query + state event
                                       |
                                       v
-                           IPlatformService（desktop）
+                           IPlatformService (desktop)
                                       |
                                       v
-                           useAppChromeState（UI）
+                           useAppChromeState (UI)
                                       |
                                       v
-                     WorkspaceShellLayout 样式矩阵
+                     WorkspaceShellLayout style matrix
 
-Web / 手机 Web -> IPlatformService fallback -> 不进入 Windows 样式分支
+Web / mobile Web -> IPlatformService fallback -> does not enter the Windows style branch
 ```
 
-### 影响面与不变量
+### Impact and Invariants
 
-- 直接影响：desktop main 窗口状态、desktop preload、共享平台接口、工作区 shell 外沿样式。
-- 必须检查：Windows 10/11 × 普通/最大化四种组合，以及首次以最大化状态加载窗口的初始化路径。
-- 不影响：标题栏按钮命令、Agent/session、桌面 continuous 消息流、手机 remote replayable 恢复链路。
-- 不新增持久化：最大化状态由 `BrowserWindow` 实时持有，renderer 首次查询后订阅变化。
-- Windows Snap 分屏与系统全屏不等同于 `BrowserWindow.isMaximized()`，本次保持普通窗口样式，
-  不宣称改变这些状态的 DWM 外轮廓。
+- Direct impact: desktop main window state, desktop preload, shared platform interface, workspace shell
+  outer-edge styles.
+- Must check: the four Windows 10/11 x normal/maximized combinations and the initialization path when the
+  window first loads maximized.
+- No impact: title-bar button commands, Agent/session, desktop continuous message flow, mobile remote
+  replayable recovery chain.
+- No new persistence: the maximized state is held live by `BrowserWindow`; the renderer queries once and
+  subscribes to changes.
+- Windows Snap layouts and system fullscreen are not `BrowserWindow.isMaximized()`; they keep the normal
+  window style and no DWM outline change is claimed.
 
-### 验收用例
+### Acceptance
 
-1. Windows 11 普通窗口仍显示原生窗口圆角，内容面板保持现有圆角与弱边框。
-2. Windows 11 最大化后内容面板四角均为直角，窗口外沿不出现额外上、右、下描边。
-3. Windows 11 在最大化与还原之间切换时，样式立即跟随且无须刷新。
-4. Windows 10 普通与最大化均不模拟右侧外圆角，同时保留原有上、右、下弱边框。
-5. 窗口能力查询失败或 bridge 不可用时保持改动前样式，不闪断到 Windows 10 样式。
-6. macOS、Linux、Web 与手机 Web 的现有布局和响应式样式不变。
+1. Windows 11 normal window still shows native rounded corners; the panel keeps its rounded corners and
+   weak border.
+2. Windows 11 maximized: all four panel corners are square and no extra top, right or bottom stroke
+   appears on the window edge.
+3. Switching Windows 11 between maximized and restored updates the style immediately without refresh.
+4. Windows 10 normal and maximized both avoid simulating right outer rounded corners while keeping the
+   original top, right and bottom weak borders.
+5. A failed capability query or unavailable bridge keeps the pre-change style, with no flash to Windows 10
+   style.
+6. Existing layout and responsive styles of macOS, Linux, Web and mobile Web are unchanged.
