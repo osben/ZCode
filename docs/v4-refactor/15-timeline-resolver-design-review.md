@@ -1,174 +1,72 @@
-# Timeline Resolver Design — 架构/逻辑 Review
+# Timeline Resolver Design: Architecture/Logic Review
 
-> 状态：**历史前审记录**。评审结论已经由
-> [16-timeline-authority-plan.md](./16-timeline-authority-plan.md) 收敛并实施；下文路径和发现描述评审时基线。
+> Status: **historical pre-implementation review record.** The conclusions were consolidated and implemented by [16-timeline-authority-plan.md](./16-timeline-authority-plan.md); the paths and findings below describe the baseline at review time. Full pre-compaction review: `git show b8876e8b:docs/v4-refactor/15-timeline-resolver-design-review.md`.
+>
+> Reviewed document: [`15-timeline-resolver-design.md`](./15-timeline-resolver-design.md). Nature: architecture/logic review only (no code or reviewed-document change), from reading the design, the projection/hydration/persistence code, the case catalog and the coverage matrix, with code-level verification of key empirical judgments.
 
-> 评审对象：[`15-timeline-resolver-design.md`](./15-timeline-resolver-design.md)
-> 评审性质：只做架构/逻辑 review，不改代码、不改被评审文档。
-> 评审方式：通读设计文档 + 投影/hydration/持久化代码 + case catalog + coverage matrix，并对关键经验判断做代码级核实。
+## Verdict first
 
-## 结论先行
+The direction is right: upgrading the CLI from a "row append reducer" to a "timeline authority" is the correct move. But **the design bets authority on the constraint graph / resolver layer, while the least authoritative layer, the one most likely to keep swallowing messages, is upstream: "semantic normalization + entity identity"**. That layer has two implementations today (live and cold), persisted anchor coverage is about 2%, and the design gives only a field list for it, with no normalization algorithm or identity derivation rule.
 
-方向是对的：把 CLI 从 "row append reducer" 升级为 "timeline authority" 是正解。
+One judgment of the reviewed document to correct: **fork's transcript copy does not bypass sequence writes.** `copySessionMessagesForFork` (`apps/zcode-cli/packages/core/src/runtime/methods/workspace-checkpoints.ts:51-93`) goes through `persistMessage/persistPart` -> `sessionStore.saveMessage/savePart` (`.../methods/message-persistence.ts:331-364`), and saveMessage/savePart always allocate a sequence (`apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/messages.ts:32-35,73-77`); the document's guess "fork/copy paths bypass the unified saveMessage" does not hold for the main fork path (see F5).
 
-但**设计文档把权威性押在了 constraint graph / resolver 这一层，而真正最不权威、最容易继续吞消息的是它上游的「语义归一 + 实体身份」这一层**——这一层今天在 live 和 cold 两条路径上是两套实现，持久化锚点覆盖率 ~2%，而设计文档对它只给了字段清单，没有给归一算法和身份推导规则。
+## Findings (by severity)
 
-下面 10 条 finding 按严重度排序，最后给出必须冻结的 invariant、mental-model 裁决和 E2E 补充。
+- **F1 [Blocker; Q1] Cold hydration is a "defective reverse mapper": goal verify / model change / session_entry facts are dropped wholesale on every cold recovery.** `synthesizeEventsFromMessages` reverse-synthesizes only text / reasoning / tool / **compact-only** timeline / subtask (`transcript-hydration.ts:627-651`; `synthesizeCompactPart` returns true only for `context_compaction`, `165-198`). Timeline parts of `goal_verification / model_change` fall to a `false` return with no consuming branch; `session_fork` is handled separately by message-level `isForkTimelineMessage`. Real goal verify data mostly lives in **`session_entry` (1,402 rows, mainly `target_completion_verification`)**, which hydration (reading `messages()`) never touches. Consequence: **every desktop refresh recovery and web remote replay loses goal verify and model change markers**, a general regression for any session with goal/model switches. The conservation check `eventsCoverTranscript` (`transcriptFootprint`, `807-862`) counts only compact/subagent/fork, is a `>=` subset cover (`footprintCovered`, `907-917`) and is blind to these two marker classes. Fix: session_entry and the goal_verification/model_change timeline parts must be Event Normalizer input sources, with an L1/L2 golden "cold recovery of a transcript with goal verify + model change == live snapshot".
+- **F2 [Blocker; Q1/Q6] queue drain and background wake land in the "current runtime turn" live but cold splits by real user; the two paths behave oppositely, which is the mechanism of "the previous assistant gets swallowed", and the design lacks the algorithm for splitting productTurns inside one runtimeTurn.** `drainPendingInput` (`.../methods/steering.ts:712-751`) emits `TurnSteerDrained` inside the active turn loop (`.../methods/turn-loop.ts:39`); drain produces no new TurnStarted. The projection `onTurnSteerDrained` (`product-projection.ts:879-903`) appends the drained userInput row under the **current turnId** with no new turnHeader/productTurn, while cold recovery starts a new turn per real user via `isRealUserTurnStarter` (`transcript-hydration.ts:708,714-728`): live puts Q1/A1/Q2(drained)/A2 under T1 (so a UI taking latestAssistantText by turnId folds A1 into history, Case A), cold makes hydrate-turn-2 and A2 belongs to T2. Background wake likewise: a model-only user is not a real-user-starter, so cold merges the A2 handling `<task-notification>` into T1 while live may make a model-only turn. The design asserts drain/wake must split a new `productTurnId` (right direction) but gives only cause/turn edges, not the rule for assigning linear-stream AssistantSegments to productTurns when several share one runtimeTurnId. Fix: freeze as a first-class invariant: within one runtimeTurnId, productTurn boundaries are drawn by the eventSeq of trigger-class UserIntents (drain / model-only continuation / background wake); every AssistantSegment / WorkActivity between a boundary and the next belongs to that productTurn; live and cold must both go through this rule (live must produce the boundary at drain, not merely append a userInput row).
+- **F3 [Critical; Q5/Q2] Entity identity cannot be derived from persisted facts: rowId is a volatile counter and UserIntent (drained/model-only especially) has no messageId, so the input-conservation invariant cannot be keyed.** `rowId = this.nextRowId++` (`product-projection.ts:1612-1619`) is an in-process counter re-laid on cold recovery; `messageIdByRowId` is written only for assistant rows (`openTextRow`, `597-599`); `buildUserInputRow` never registers a messageId; `sourceCommandId` exists only on queue items (`onTurnSteerQueued:859`); the `rowIdForMessageId` reverse lookup (`303-309`) works only for assistant and user rows are abandoned in `onRewindTriggered` (`287-289`). So the conservation, fork target counting and "drained text goes to history or stays in queue" rulings all lack a keyable identity. Fix: derive `entityId` deterministically per entity class: UserIntent from the persisted **user message id** (`persistUserPrompt` already has `messageID`, `message-persistence.ts:44`); drained/queue from `sourceCommandId`; assistant from assistantMessageId; compact from operationId; goal verify from `targetId+iteration`; fork from `parentSessionId+targetMessageId`. An entity without a stable id may not bear conservation judgments.
+- **F4 [Critical; Q6 goal verify] Goal verify today uses verificationId as identity, with no targetId and no anchor: exactly the anti-pattern the design forbids.** `onTargetVerification` keys `goalVerifyMarkerRowIdByVerificationId` (`product-projection.ts:1398,1430`), the marker payload carries only `iteration + outcome` (`1396`) and the marker is appended at the end of `turnIdOf(event)` (`1393-1397`). So (a) a retry of the same iteration with a new verificationId yields a second marker; (b) with no anchor a late event, or a trace turnId different from the verified assistant's, lands on the wrong turn tail (Case C); (c) a new target's iteration resets to 1 and collides across targets. The storage document already sets identity to `targetId + goalIteration` and the contract `GoalVerificationTimelinePart` has `targetId/goalIteration/anchorMessageId`: the design is right and the current reducer lags the contract. Fix: identity `targetId + goalIteration`, verificationId demoted to a per-attempt alias, placement by `anchor = anchorAssistantMessageId || anchorTurnId || explicit fallback`; conservation: one boundary entity per targetId+iteration.
+- **F5 [Major; Q4] sequence NULL does not come from the main runtime/fork path (verified); it comes from an unlocated side path, and the on-conflict semantics move a NULL row to the queue tail when re-saved.** Both main writes (runtime persist and fork copy) go through saveMessage/savePart using `coalesce(max(sequence),-1)+1`, and on conflict `coalesce(existing.sequence, excluded.sequence)` keeps the old value, so the fork part of the document's guess does not hold. But the observed 1,690 NULL messages / 331 sessions, still growing after migration, signal another unlocated write path (raw SQL / import / repair script / migration tool). Hidden risk: the on-conflict branch (`messages.ts:41-44` / `84-88`) re-saving a row whose existing sequence is NULL takes `excluded.sequence` = the session's `max+1` = the queue tail, so any NULL-sequence historical row, once re-saved (an assistant is saved twice after completion), drifts to the timeline end. Fix: (1) audit and seal the side path per the design's migration advice 2 and add a DB invariant (NOT NULL / trigger); (2) the resolver always keeps a deterministic tiebreak when reading (the read order `sequence is null, sequence, time_created, rowid`, `messages.ts:117`, is right, and the golden must pin that multiple hydrations of one session give the same order even with NULLs mixed in); (3) fix on-conflict so re-saving a NULL row does not change its relative position.
+- **F6 [Major; Q8 "looks advanced but fails to land"] The constraint graph + global topological sort is over-engineering for a nearly total-order problem; snapshot.resync granularity conflicts with windowing; fallback row placement is undefined.** `(branchEpoch, eventSeq)` already gives most of the order; only a few boundaries (late goal verify, fork notice) need non-tail correction, while the design argues "deterministic topological placement" over five edge kinds. A general topological sort fails subtly on a missing or cyclic edge (late event + retry + fork copy easily make implicit cycles) and its determinism relies on stable entityOrdinal per entity, which returns to F3. Second, the design says "an orderKey landing mid sent window -> snapshot resync" but `rows.window` is windowed (26,942 messages / 96,112 parts cannot all stay resident); it does not define whether resync is whole-session or window-only, what to do when the anchor is outside the loaded window, and frequent full resyncs (late goal verify is common) would flicker in long sessions. Third, the diagnostics fallback row of migration advice 7 is good but its orderKey/productTurn is undefined, merely deferring the placement problem. Fix: (1) express ordering as a `(branchEpoch, eventSeq)` primary total order + a bounded set of local anchor re-parents (an anchor only decides which productTurn tail a boundary hangs under, not global topology); (2) define resync as a productTurn-subtree scoped resync with explicit "anchor outside the window -> widen the window or defer placement"; (3) fallback row placement = the known timeline end + a visible diagnostic mark + counted into conservation failures, never silent.
+- **F7 [Major; Q2] Four layers are not enough: branchEpoch, delivery/snapshot revision and visibility/semantics are stuffed into other layers.** `eventSeq / runtimeTurnId / productTurnId / visualPlacement` cover arrival order / runtime ownership / logical turn / visual position, but: **branchEpoch** (rewind truncation, which linear history after a fork) appears only inside `TimelineOrderKey` and is not a first-class order layer, while rewind rewrites history (`onRewindTriggered:275-301` removes whole rows from the turn head) so the same productTurnOrdinal means different things before/after and branch must be the outermost sort key; **delivery/snapshot revision** is a delivery dimension (`attachRevision:181-192`) orthogonal to visual order but `visualPlacement` carries lane, anchor and order together; **visibility/semantics** (visible / modelOnly / stateOnly) is an independent normalization dimension currently implied in lane (lane = which swim lane, visibility = whether it enters rows.window; see F8). Fix: extend the order model to `branchEpoch` (outermost) -> `productTurnOrdinal` -> `laneRank` -> `entityOrdinal` -> `lifecycleOrdinal`, and write `visibility` and `deliveryRevision` into the snapshot contract as two dimensions orthogonal to order.
+- **F8 [Moderate; Q6 modelChange + rows.window purity] The implementation has no stateOnly lane: every marker is a row in rows.window; modelChange does not appear at all after cold recovery.** `onTurnStarted` appends modelChange as `row.appended` into rows.window (`product-projection.ts:388-403`); compact/goal/fork/model are all `timelineMarker` rows with no stateOnly channel. The design (§Model Change and §conservation) requires that a modelChange not visible in the transcript be stateOnly and stay out of rows.window, but the structure cannot express it. Cold recovery synthesizes neither ModelSelected nor a model_change timeline part (F1) while the modelChange marker is derived live from `lastTurnModel` vs `config` (`381-410`), so a model change never appears after cold recovery. A hidden/modelOnly/stateOnly entity entering the window as a row pollutes virtual scroll, turn grouping and history folding; model-only is currently handled only case by case in "skip the visible userInput row" (`416-421`). Fix: introduce a true `stateOnly` class and make "stateOnly/hidden must not enter rows.window" and "hidden/modelOnly triggers must not affect the visible user turn count" hard validations at the materializer exit; fold the model_change timeline part into cold reverse synthesis (merged into F1).
+- **F9 [Moderate; Q3 persistence judgment] The three-store judgment mostly holds, but session_entry is the real authority of goal verify and must join the normalizer and be deduplicated against the new timeline part.** The document's positioning of the three stores (CLI `db.sqlite` = transcript authority; app `zcode.db` = metadata/notifications; `tasks-index.sqlite` = list/search, not an order source) matches the storage document. But the document itself lists `session_entry` (1,402 rows, mainly `target_completion_verification`) as goal verify facts while its read path and migration advice give it little weight and hydration never reads it (F1); in real data `timelineType=goal_verification` has only 10 rows and session_entry is the bulk. Fix: list session_entry as a first-class normalizer input; the goal verify dedup key = `targetId+iteration`, merged across `session_entry` (legacy) and `timeline/goal_verification` (new). The fork side already has `copyGoalVerificationEntriesForFork` rewriting the anchor to the child message id (`session-fork.ts:282-354`), showing the session_entry anchor semantics are in use and the resolver cannot ignore them.
+- **F10 [Moderate; Q7] desktop continuous and web replayable can "share a resolver" only after F1/F2/F3 are unified; the current "equivalence" criterion is a subset and unordered and cannot prove convergence.** Design goal 6 claims both profiles share an authoritative snapshot with delivery affecting only intermediate frames. Architecturally live (`applyEvent`) and cold (`synthesize -> applyEvent`) do reuse one `ProductProjection`, but the sharing is nominal: classification forks (live uses `TurnStarted.inputVisibility`/event payload, cold uses `getConversationMessageProjectionPolicy` + `isRealUserTurnStarter`), and equivalence is guaranteed only by the `>=` subset, order-insensitive, goal/model-blind footprint of `eventsCoverTranscript` (`907-941`), which passes "coverage" but cannot catch the structural forks of F1/F2. Fix: (1) the Event Normalizer becomes the **only** classification entry, and live and cold both first normalize to the same typed semantic event before the ledger; (2) upgrade the equivalence criterion from a footprint subset to **node-level golden equivalence** (productTurn structure, segment order per turn, boundary anchor and visibility all correct); delivery profile differences may appear only in the number of intermediate frames, never in the terminal snapshot.
 
-## 需要先纠正被评审文档的一处判断
+## Direction accepted and invariants to freeze
 
-**fork 复制 transcript 并没有绕过 sequence 写入。** `copySessionMessagesForFork`（`apps/zcode-cli/packages/core/src/runtime/methods/workspace-checkpoints.ts:51-93`）走 `persistMessage/persistPart` → `sessionStore.saveMessage/savePart`（`.../methods/message-persistence.ts:331-364`），而 saveMessage/savePart 一定会分配 sequence（`apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/messages.ts:32-35,73-77`）。所以文档「fork/copy 之类路径绕过统一 saveMessage」的猜测，对当前 fork 主路径不成立（见 F5）。
+Direction accepted: raw facts -> **semantic normalization** -> semantic ledger -> constraint (suggested weakened to local anchor re-parent) -> resolved snapshot -> UI. For it to really "not guess, not patch, not swallow", freeze these invariants before implementation (design already has / needs landing, or design lacks):
 
----
+1. **Input conservation**: every visible inputId is in exactly one of QueueItem or UserIntent. Precondition: F3 gives UserIntent a stable entityId.
+2. **productTurn split rule** (design lacks): within one runtimeTurnId, productTurn boundaries are drawn by the eventSeq of trigger-class UserIntents; assistant segments after a boundary belong to the new productTurn (F2).
+3. **Single goal verify identity**: `targetId+iteration` unique, verificationId only an alias, an anchor required (F4/F9).
+4. **visibility orthogonal to lane** (design lacks): stateOnly/hidden structurally cannot enter rows.window; hard validation at the materializer exit (F8).
+5. **live == cold node-level equivalence** (design lacks): both profiles pass the same normalizer with node-level golden equality, not a footprint subset (F1/F10).
+6. **Identity derivable from persistence** (design lacks): every entityId derives from messageId/partId/operationId/targetId+iteration/sourceCommandId, never relying on nextRowId++ or DB lexicographic order (F3/F7).
+7. **No silent drop**: a visible message/part that cannot be grouped must enter the diagnostics fallback and count as a conservation failure (F6).
+8. **Layered order keys** (design lacks): `branchEpoch` is outermost; rewind/fork switch epoch and do not mix with productTurnOrdinal (F7).
 
-## Findings（按严重度排序）
+## Mental-model verdict: which layer is least authoritative and most likely to keep swallowing messages
 
-### F1 —【Blocker，命中 Q1】冷恢复 hydration 是「残缺的反向映射器」：goal verify / model change / session_entry 事实在每次冷恢复被整段丢弃
+**The least authoritative layer is "semantic normalization + entity identity assignment", not the constraint graph:**
 
-**问题。** `synthesizeEventsFromMessages` 只反向合成 text / reasoning / tool / **仅 compact 的** timeline / subtask（`transcript-hydration.ts:627-651`；`synthesizeCompactPart` 只对 `context_compaction` 返回 true，`165-198`）。`timelineType = goal_verification / model_change` 的 timeline part 落到 `synthesizeCompactPart` 返回 false 后**没有任何分支消费**；`session_fork` 靠 message 级 `isForkTimelineMessage` 单独处理。更关键：真实数据里 goal verify 主要存在 **`session_entry`（1,402 行，主体 `target_completion_verification`）**，而 hydration 读的是 `messages()`（message+part），根本不碰 session_entry。
+1. It has two implementations today (live event payload vs cold projection policy) and the cold path is defective (F1: goal/model dropped wholesale, session_entry unread), so the same persisted facts yield different typed entities on the two paths; however refined the downstream ledger/graph/resolver, the semantics fed in have already forked.
+2. The persisted anchors it depends on have very low coverage: `semantics` 569/26,942, `anchor` 432/26,942, goal_verification timeline only 10 rows. The underlying fields are not there for normalization to judge visible/modelOnly stably or to find anchors for boundaries.
+3. Entity identity is not pinned (F3), so the conservation invariant cannot be keyed and resolver determinism has no ground.
 
-**为什么会吞消息 / marker 漂移 / 老数据不可恢复。** 直接后果：**每一次桌面刷新恢复、web remote replay，goal verify marker 和 model change marker 都会消失**（它们只在 live 事件流里存在，冷路径不重建）。这不是边缘 case，是所有含 goal / model 切换的会话的普遍回归。而且 `eventsCoverTranscript` 的守恒判据（`transcriptFootprint`，`807-862`）只数 compact/subagent/fork，**完全不检查 goalVerify/modelChange**，且是 `>=` 子集覆盖（`footprintCovered`，`907-917`），所以它会把「缺 goal verify 的 snapshot」判为已覆盖——守恒检查对这两类 marker 是瞎的。
+The constraint graph should actually be the layer to weight last (F6): the ordering skeleton is nearly total order, and the real difficulty is **normalizing every fact upstream into a typed entity with stable identity, anchor and visibility**. The landing order should be: make the normalizer the single entry + fill the session_entry/goal/model reverse synthesis + pin entityId + fill the writes of the 4 semantic field classes, **then** discuss resolver placement.
 
-**建议改法。** 这恰恰印证设计 §「持久化字段与数据库关系」第 7 条。但文档必须显式把 **session_entry 与 goal_verification/model_change timeline part 列入 Event Normalizer 的输入源**，并在 L1/L2 golden 里加「含 goal verify + model change 的 transcript 冷恢复 ≡ live snapshot」。在 resolver 落地前，这是当前栈最确定、最普遍的丢 marker 根因。
+## E2E / coverage matrix items to add (Q9)
 
-### F2 —【Blocker，命中 Q1/Q6】queue drain 与 background wake 在 live 落进「当前 runtime turn」，cold 却按 real-user 切分——两条路径行为相反，正是「上一轮 assistant 被吞」的机制；而设计缺「同一 runtimeTurn 内如何切 productTurn」的算法
+Status then: A09/E06/E08/F07/H08 missing, E10 failing, G01-G04 partial. The resolver also needs new items (land L1/L2 golden first, then pick representative L4):
 
-**问题。** runtime 侧核实：`drainPendingInput`（`.../methods/steering.ts:712-751`）发 `TurnSteerDrained`，它在 `.../methods/turn-loop.ts:39` 的 **active turn loop 内**被调用，drained 输入作为 `drainedSteerForNextRequest` 喂进同一轮的下一个 provider request——**drain 不产生新的 TurnStarted**。投影侧 `onTurnSteerDrained`（`product-projection.ts:879-903`）据此把 drained userInput row 追加进 `turnIdOf(event)`=**当前 turnId**，不建新 turnHeader、不建新 productTurn。而冷恢复按 `isRealUserTurnStarter` 给每个真实 user 起新 turn（`transcript-hydration.ts:708,714-728`）。于是：
+**L1/L2 golden (reducer/materializer, under `LC` / a new abbreviation):**
 
-- **live**：Q1/A1/Q2(drained)/A2 全在 T1 一个 turnId 下 → UI 若按 turnId 取 latestAssistantText，A1 被折进 history（设计 Case A）；
-- **cold**：Q2 是 real user starter → 起 hydrate-turn-2，A2 归 T2 → 结构与 live 不一致。
+- **QD-node**: two queue-drain rounds -> productTurn split golden: A1 belongs to T1, A2 to T2, both visible; assert **live == cold productTurn structure** (F2/F10).
+- **GV-identity**: a verifier retry with the same targetId and iteration (two verificationIds) -> a single boundary (F4); iteration reset across targets does not collide.
+- **GV-late-anchor**: `TargetCompletionVerification` arriving late after the next round's start -> falls back to the original turn tail by anchor (Case C; the existing `P03` covers only "marker arrives before the final assistant").
+- **MC-cold**: the marker is still there after cold recovery of a transcript containing model_change (F1/F8).
+- **GV-cold / session_entry**: goal verify present in session_entry can be rebuilt on cold recovery (F1/F9).
+- **coverage conservation extension**: add goalVerifyCount / modelChangeCount to the `eventsCoverTranscript` footprint and change it to **order-sensitive equivalence** (F1, `807-941`).
 
-background wake 同理：model-only user 不是 real-user-starter（`isRealUserTurnStarter`→false），冷恢复会把处理 `<task-notification>` 的 A2 并进上一轮 T1；live 则可能建 model-only 轮。**两条路径对同一份事实给出不同 turn 结构**，这就是「错位/吞消息」的结构性来源。
+**L4 representative:**
 
-**为什么设计还没真正解决。** 设计 §「Queue Drain」/「Background Bash」主张 drain/wake 必须拆新 `productTurnId`，方向正确。但**设计只声明了 cause edge 和 turn edge，没有给出「当多个 productTurn 共享一个 runtimeTurnId 时，如何把线性事件流里的 AssistantSegment 分配给哪个 productTurn」的规则**。A2 与 A1 同 turnId、同 runtime turn，resolver 凭什么把 A2 判给 T2？唯一可用的判据是 `eventSeq`：drain/wake 的 UserIntent 的 eventSeq 之后、同 runtimeTurn 内的 assistant segment 归新 productTurn。这条规则是 Case A 的核心，却在文档里缺失。
+- **BG-wake-turn**: a background completion -> a model-only wake builds an independent productTurn, A2 belongs to it, no user bubble (the existing `BG05` asserts only "no notification bubble").
+- **multi-segment**: one turn A1.1 + tool + A1.2 -> one ProductTurn with both AssistantSegments kept, fork/retry hanging only on the last segment (E10 currently failing, `FM` covers fork but lacks node assertions).
+- **modelChange stateOnly**: if the product rules modelChange as stateOnly, assert it does not enter rows.window and does not affect turn count / virtual scroll (F8).
+- **fork/null-sequence**: a fork child containing a NULL sequence or re-save path has a stable cold-recovery order that does not drift to the queue tail (F5).
+- **resync-scope**: scoped resync behavior when the anchor lands mid sent window / outside the window (F6).
 
-**建议改法。** 把这条切分规则写成一等 invariant：*在同一 runtimeTurnId 内，productTurn 边界由 trigger 类 UserIntent（drain / model-only continuation / background wake）的 eventSeq 划定；边界之后、下一个边界之前的所有 AssistantSegment / WorkActivity 归该 productTurn*。并要求 live 与 cold 都只经这条规则（即 live 也要在 drain 处产出 productTurn 边界，不能只追加 userInput row）。
+## Appendix: code/document anchors read in the review
 
-### F3 —【Critical，命中 Q5/Q2】实体身份无法从持久化事实推导：rowId 是易失计数器，UserIntent（尤其 drained/model-only）根本没有 messageId → 输入守恒 invariant 无法 keying
-
-**问题。** `rowBase` 的 `rowId = this.nextRowId++`（`product-projection.ts:1612-1619`）是进程内自增，冷恢复从头重排，**rowId 不是稳定业务身份**。而 `messageIdByRowId` 只在 assistant 行（`openTextRow`，`597-599`）写入；`buildUserInputRow`（user/drained/model-only）**从不登记 messageId**。
-
-**为什么导致守恒不可执行 / 老数据不可恢复。** 设计 §「守恒不变量」第一条「每个 visible inputId 必须在 QueueItem 或 UserIntent 二选一」，其 keying 依赖一个稳定的 `inputId`——但当前 UserIntent 没有任何稳定 id 可用（rowId 易失、messageId 缺失、`sourceCommandId` 只在 queue item 上有，`onTurnSteerQueued:859`）。fork/edit 的 `rowIdForMessageId` 反查（`303-309`）也因此只对 assistant 有效，user 行「暂无 messageId」在 `onRewindTriggered` 里被直接放弃（`287-289`）。结果是：核心的输入守恒、fork target 计数、「drained 文本进 history 还是留 queue」的二选一裁决，**都缺一个可 key 的实体身份**。
-
-**建议改法。** 设计必须为**每一类实体**给出 `entityId` 的确定性推导。优先级：UserIntent 的 entityId 应由持久化的 **user message id**（runtime 侧 `persistUserPrompt` 已有 `messageID`，`message-persistence.ts:44`）派生；drained/queue 用 `sourceCommandId`；assistant 用 assistantMessageId；compact 用 operationId；goal verify 用 `targetId+iteration`；fork 用 `parentSessionId+targetMessageId`。没有稳定 id 的实体不允许承载守恒判定。这一条不定死，F1/F2 的守恒检查都是空中楼阁。
-
-### F4 —【Critical，命中 Q6 goal verify】当前 goal verify 以 verificationId 为身份、无 targetId、无 anchor——正是设计明令禁止的反模式
-
-**问题。** `onTargetVerification` 用 `goalVerifyMarkerRowIdByVerificationId.set(payload.verificationId, …)`（`product-projection.ts:1398,1430`）作身份，marker payload 只带 `iteration + outcome`（`1396`），**不带 targetId，也不带任何 anchor**——marker 直接 append 在 `turnIdOf(event)` 的行尾（`1393-1397`）。
-
-**为什么会错位。** (a) 同一 iteration 的 retry 会带**新的 verificationId** → 生成**第二个 marker**（设计 §「Goal Verify」：`verificationId` 只能是 alias）；(b) 无 anchor → 事件迟到或 trace turnId ≠ 被验证 assistant 的 turnId 时，marker 落到错误轮次尾部（设计 Case C）；(c) 新 target 的 iteration 从 1 重置，单靠 iteration 会跨 target 撞号。存储文档 §「更新规则」已经把身份定为 `targetId + goalIteration`，契约里 `GoalVerificationTimelinePart` 也有 `targetId/goalIteration/anchorMessageId`——**设计是对的，是当前 reducer 落后于契约**。
-
-**建议改法。** resolver 里 goal verify 身份必须是 `targetId + goalIteration`，`verificationId` 降为单次 attempt alias；placement 必须走 `anchor = anchorAssistantMessageId || anchorTurnId || explicit fallback`（设计 §「Goal Verify」）。并把这条写成守恒：*同一 targetId+iteration 只有一个 boundary entity*。
-
-### F5 —【Major，命中 Q4】sequence NULL 不来自主 runtime/fork 路径（已核实），来自尚未定位的旁路；且 on-conflict 语义会把 NULL 行「再保存即漂到队尾」
-
-**问题与核实。** 已核实两条主要写入：runtime persist 与 fork copy **都**经 saveMessage/savePart，后者永远用 `coalesce(max(sequence),-1)+1` 分配非空 sequence（`messages.ts:32-35,73-77`），on-conflict 时 `coalesce(existing.sequence, excluded.sequence)` 保留旧值。所以文档「NULL 是老数据包袱 + 疑似 fork/copy 旁路」的判断，**fork 主路径这部分不成立**。但文档观察到的 1,690 条 message NULL / 331 sessions / 迁移后仍在增长是真实信号 → 说明存在**另一条未定位的写入旁路**（raw SQL / 导入 / 修复脚本 / 迁移工具），它绕过了 saveMessage。
-
-**隐藏风险（值得单独钉）。** on-conflict 分支 `sequence = coalesce(existing.sequence, excluded.sequence)`（`messages.ts:41-44` / `84-88`）：若一条**现存行 sequence 为 NULL**被再次 saveMessage（assistant 完成后会二次保存），`existing.sequence` 为空 → 取 `excluded.sequence`=该 session `max+1`=**队尾**。也就是说，任何 NULL-sequence 历史行一旦被再保存，会被搬到时间线末尾 → 错位。这是一个具体的数据搬移向量。
-
-**建议改法。** (1) 先按设计 §「迁移建议」第 2 条审计并封死旁路，加 DB invariant（NOT NULL / 触发器）阻止未来再产 NULL；(2) resolver 读取期**永远保留确定性 tiebreak**（现读序 `sequence is null, sequence, time_created, rowid`，`messages.ts:117` 是对的，但要保证「同一 session 多次 hydrate 得到同一顺序」这条设计承诺在 NULL 混排时也成立——需 golden 钉死）；(3) 修 on-conflict，使「再保存 NULL 行」不改变相对位置。
-
-### F6 —【Major，命中 Q8「看起来高级但落地会失败」】constraint graph + 全局拓扑排序，对一个近乎全序的问题是过度设计；snapshot.resync 粒度与 windowing 冲突；fallback row 放置未定义
-
-**问题。** 排序问题的骨架其实是**近乎全序**：`(branchEpoch, eventSeq)` 已能给出绝大多数顺序，真正需要「非尾部修正」的只有一小撮 boundary（goal verify 迟到、fork notice）。设计 §「权威排序」却主张对五类边做 "deterministic topological placement"。**通用拓扑排序的风险**：边一旦缺失或成环（late event + retry + fork copy 很容易造出隐式环），会 fail 得很隐蔽，且「相同位置再用 entityOrdinal」的 determinism 依赖每个实体都拿到稳定 ordinal——这又回到 F3 的身份问题。
-
-其次，设计 §「Delta 与 Resync」说「可见 entity 的 orderKey 落在已发送窗口中间 → snapshot resync」，但 `rows.window` 是**窗口化**的（26,942 messages / 96,112 parts 不可能全量常驻）。文档没有定义：resync 是整会话还是仅窗口？锚点落在**未加载窗口之外**时怎么放？goal verify 迟到很常见 → 频繁全量 resync 会在长会话里造成可感知的刷屏。
-
-第三，迁移建议第 7 条的 diagnostics fallback row 很好，但**没定义 fallback row 的 orderKey/productTurn 归属**——「无法归组」的行仍然需要一个位置才能渲染，fallback 只是把放置问题往后推。
-
-**建议改法。** (1) 把排序表述为「以 `(branchEpoch, eventSeq)` 为主全序 + 一组**有界的 anchor 局部重挂（re-parent）**」，而不是通用图求解；anchor 只影响「这条 boundary 挂到哪个 productTurn 尾」，不改全局拓扑。(2) resync 定义为**按 productTurn 子树的 scoped resync**，并明确「anchor 在窗口外 → 扩窗或延迟放置」的行为。(3) fallback row 明确放置=已知时间线末尾 + 可见诊断标记 + 计入守恒失败计数，不得静默。
-
-### F7 —【Major，命中 Q2】四层拆分不够：branchEpoch（分支身份）、delivery/snapshot revision、visibility/semantics 都被塞进了其它层
-
-**问题。** `eventSeq / runtimeTurnId / productTurnId / visualPlacement` 覆盖了「到达序 / runtime 归属 / 逻辑轮 / 视觉位置」，但：
-
-- **branchEpoch**（rewind 截断、fork 后处于哪条线性历史）只出现在 `TimelineOrderKey` 里，没被抬成一等「顺序层」。rewind 会重写历史（`onRewindTriggered:275-301` 从 turn 首行整段 `row.removed`），同一 productTurnOrdinal 在 rewind 前后语义不同 → branch 必须是排序主键的最外层。
-- **delivery/snapshot revision** 与 timeline order 被混在一起。`visualPlacement` 同时承担 lane、anchor、order 三件事；而「客户端已收到哪一版」（revision/epoch，`attachRevision:181-192` 已有 revision）是 delivery 维度，和视觉排序正交，应单列。
-- **visibility/semantics** 是独立的归一维度（visible / modelOnly / stateOnly），现在被隐含进 lane。lane 是「放哪条泳道」，visibility 是「放不放进 rows.window」——二者正交（见 F8）。
-
-**建议改法。** 把顺序模型显式扩成：`branchEpoch`（最外）→ `productTurnOrdinal` → `laneRank` → `entityOrdinal` → `lifecycleOrdinal`，并把 `visibility` 和 `deliveryRevision` 作为与「顺序」正交的两个独立维度写进 snapshot contract。
-
-### F8 —【Moderate，命中 Q6 modelChange + rows.window 纯度】实现里根本没有 stateOnly 泳道：每个 marker 都是 rows.window 里的 row；modelChange 冷恢复根本不出现
-
-**问题。** `onTurnStarted` 把 modelChange 直接 `row.appended` 进 rows.window（`product-projection.ts:388-403`）；投影里 compact/goal/fork/model 全部是 `timelineMarker` row，**没有任何 stateOnly 通道**。设计 §「Model Change」和 §「守恒·渲染守恒」要求「若 modelChange 不在 transcript 可见，应为 stateOnly，不进 rows.window」——但当前结构无法表达 stateOnly。另外，冷恢复不合成 ModelSelected，也不合成 model_change timeline part（F1），而 modelChange marker 又由 live 的 `lastTurnModel` vs `config` 比较得出（`381-410`）→ **model change 在冷恢复里既无 config 变化事件、又无 timeline 反合成 → 永远不出现**。
-
-**为什么会错位。** hidden/modelOnly/stateOnly 的实体一旦以 row 形式进 window，会污染虚拟滚动、turn grouping、history 折叠（设计 §「Lane 与 Placement」明确点名）。当前 model-only 只在「跳过 visible userInput row」（`416-421`）这一处 case-by-case 处理，没有结构保证。
-
-**建议改法。** 引入真正的 `stateOnly` 分类，并把「stateOnly/hidden 不得进入 rows.window」「hidden/modelOnly trigger 不得影响 visible user turn count」做成 materializer 出口的硬校验。modelChange 的 timeline part 也必须纳入冷恢复反合成（合入 F1）。
-
-### F9 —【Moderate，命中 Q3 持久化判断】三层存储判断总体成立，但 session_entry 是 goal verify 的真实权威源，需并入 normalizer 并与新 timeline part 去重
-
-**问题/肯定。** 文档对三库定位（CLI `db.sqlite` = transcript 权威；app `zcode.db` = 元数据/通知；`tasks-index.sqlite` = 列表/搜索，不作顺序源）与存储文档一致，判断成立。但文档自己列出 `session_entry`（1,402 行，主体 `target_completion_verification`）是 goal verify 事实，而 §「读路径」/迁移建议里对 session_entry 的读取地位着墨很轻，hydration 也完全不读它（F1）。真实数据里 `timelineType=goal_verification` 只有 10 条、session_entry 却是主体 → **goal verify 现阶段主要活在 session_entry**。
-
-**建议改法。** 把 session_entry 显式列为 Event Normalizer 的一等输入源；goal verify 去重键 = `targetId+iteration`，跨 `session_entry`（legacy）与 `timeline/goal_verification`（new）合并。fork 侧已有 `copyGoalVerificationEntriesForFork` 改写 anchor 到 child message id（`session-fork.ts:282-354`），说明 session_entry 的 anchor 语义已在用，resolver 不能忽略它。
-
-### F10 —【Moderate，命中 Q7】desktop continuous 与 web replayable 只有在 F1/F2/F3 统一后才能「共享 resolver」；当前「等价」判据是子集、无序，证明不了收敛
-
-**问题。** 设计目标 6 主张两 profile 共享权威 snapshot、delivery 只影响中间帧。架构上 live（`applyEvent`）与 cold（`synthesize→applyEvent`）确实复用同一个 `ProductProjection`，这点是对的。但「共享」目前是名义的：分类机制分叉（live 用 `TurnStarted.inputVisibility`/事件 payload；cold 用 `getConversationMessageProjectionPolicy` + `isRealUserTurnStarter`），等价性只由 `eventsCoverTranscript` 的 `>=` 子集、顺序不敏感、且对 goal/model 瞎的 footprint 保证（`907-941`）。所以它能通过「覆盖」，却挡不住 F1/F2 的结构分叉。
-
-**建议改法。** (1) Event Normalizer 成为**唯一**分类入口，live 与 cold 都先归一到同一 typed semantic event，再进 ledger；(2) 把等价判据从 footprint 子集升级为**节点级 golden 等价**（productTurn 结构、每 turn 的 segment 顺序、boundary anchor、visibility 全都要对）；delivery profile 差异只允许出现在「中间帧数量」，不允许出现在终态 snapshot。
-
----
-
-## 方向对的部分 & 必须冻结的 invariant
-
-方向认可：raw facts → **semantic normalization** → semantic ledger → constraint（建议弱化为 anchor 局部重挂）→ resolved snapshot → UI。要让它真正「不猜/不补/不吞」，以下 invariant 必须在实现前就冻结（✅=设计已有需落地；➕=设计缺）：
-
-1. ✅→落地 **输入守恒**：每个可见 inputId 恰在 QueueItem 或 UserIntent 二选一——**前提是 F3 给出 UserIntent 稳定 entityId**。
-2. ➕ **productTurn 切分规则**：同一 runtimeTurnId 内，productTurn 边界由 trigger 类 UserIntent 的 eventSeq 划定，边界后的 assistant segment 归新 productTurn（F2）。
-3. ✅→落地 **goal verify 单一身份**：`targetId+iteration` 唯一，verificationId 仅 alias，必须带 anchor（F4/F9）。
-4. ➕ **visibility 与 lane 正交**：stateOnly/hidden 结构上不可进入 rows.window；materializer 出口硬校验（F8）。
-5. ➕ **live≡cold 节点级等价**：两 profile 经同一 normalizer，节点级 golden 相等，而非 footprint 子集（F1/F10）。
-6. ➕ **身份可从持久化推导**：entityId 全部由 messageId/partId/operationId/targetId+iteration/sourceCommandId 派生，严禁依赖 nextRowId++ 或 DB 字典序（F3/F7）。
-7. ✅→落地 **无静默丢弃**：无法归组的 visible message/part 必进 diagnostics fallback 且计入守恒失败（F6）。
-8. ➕ **顺序主键分层**：`branchEpoch` 为最外层，rewind/fork 换 epoch，不与 productTurnOrdinal 混用（F7）。
-
----
-
-## Mental-model 裁决：哪一层最不权威、最可能继续吞消息
-
-**最不权威的是「semantic normalization + 实体身份赋予」这一层**，不是 constraint graph：
-
-- **它今天是两套实现**（live 事件 payload vs cold projection policy），且冷路径残缺（F1：goal/model 整段丢、session_entry 不读），所以同一份持久化事实经两路径会得到不同 typed entity——下游 ledger/graph/resolver 再精巧，喂进来的语义已经分叉。
-- **它依赖的持久化锚点覆盖率极低**：`semantics` 569/26,942、`anchor` 432/26,942、goal_verification timeline 仅 10 条。normalization 想稳定判 visible/modelOnly、想给 boundary 找 anchor，底层字段还不在。
-- **实体身份没定死**（F3），导致守恒 invariant 无法 keying，resolver 的 determinism 无从谈起。
-
-constraint graph 反而是最不该先重的一层（F6）：排序骨架近乎全序，真正的难点是**上游把每条事实归一成带稳定身份、带 anchor、带 visibility 的 typed entity**。落地顺序应是：先把 normalizer 做成唯一入口 + 补齐 session_entry/goal/model 反合成 + 定死 entityId + 补 4 类语义字段的写入，**再**谈 resolver 的 placement。
-
----
-
-## E2E / coverage matrix 需要补的条目（命中 Q9）
-
-现状：A09/E06/E08/F07/H08 missing、E10 failing、G01–G04 partial。resolver 专项还需新增（先落 L1/L2 golden，再挑代表性 L4）：
-
-**L1/L2 golden（reducer/materializer，归 `LC`/新增缩写）：**
-- **QD-node**：queue drain 两轮 → productTurn 切分 golden：A1 属 T1、A2 属 T2 且都可见；断言 **live≡cold 的 productTurn 结构一致**（F2/F10）。
-- **GV-identity**：同 targetId 同 iteration 的 verifier retry（两 verificationId）→ 单一 boundary（F4）；跨 target iteration 重置不撞号。
-- **GV-late-anchor**：`TargetCompletionVerification` 迟到到下一轮 start 之后 → 按 anchor 落回原 turn tail（Case C；现 `P03` 只覆盖「marker 先于 final assistant 到达」）。
-- **MC-cold**：含 model_change 的 transcript 冷恢复后 marker 仍在（F1/F8）。
-- **GV-cold / session_entry**：goal verify 存在 session_entry 时冷恢复可重建（F1/F9）。
-- **coverage 守恒扩项**：`eventsCoverTranscript` footprint 增加 goalVerifyCount / modelChangeCount 且改为**顺序敏感等价**（F1，`807-941`）。
-
-**L4 代表性：**
-- **BG-wake-turn**：background completion → model-only wake 建独立 productTurn、A2 归属它、无 user 气泡（现 `BG05` 只断「无 notification 气泡」）。
-- **multi-segment**：一轮 A1.1 + tool + A1.2 → 一个 ProductTurn 两个 AssistantSegment 全保留，fork/retry 只挂最后一段（现 `E10` failing、`FM` 覆盖 fork，但缺 node 断言）。
-- **modelChange stateOnly**：若产品裁 modelChange 为 stateOnly，断言它不进 rows.window、不影响 turn count / 虚拟滚动（F8）。
-- **fork/null-sequence**：含 NULL sequence 或再保存路径的 fork child，冷恢复顺序稳定、不漂队尾（F5）。
-- **resync-scope**：anchor 落在已发送窗口中间/窗口外时的 scoped resync 行为（F6）。
-
----
-
-## 附：评审读取的代码/文档锚点
-
-| 层 | 路径 |
-| --- | --- |
-| 设计文档 | `docs/v4-refactor/15-timeline-resolver-design.md` |
-| 投影 reducer | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts` |
-| 冷恢复反合成 | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts` |
-| message/part 仓库 | `apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/messages.ts` |
-| 迁移 0014 | `apps/zcode-cli/packages/adapters/src/storage/session-store/migrations.ts` |
-| drain/turn 运行时 | `apps/zcode-cli/packages/core/src/runtime/methods/steering.ts`、`turn-loop.ts`、`turn.ts` |
-| fork copy | `apps/zcode-cli/packages/core/src/runtime/methods/workspace-checkpoints.ts`、`session-fork.ts`、`message-persistence.ts` |
-| 存储契约 | `docs/chat/conversation-transcript-storage.md` |
-| case catalog | `docs/conversation-session-case-catalog.md` |
-| coverage matrix | `docs/testing/conversation-session-e2e-coverage-matrix.md` |
+Design doc `docs/v4-refactor/15-timeline-resolver-design.md`; projection reducer `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts`; cold reverse synthesis `.../transcript-hydration.ts`; message/part repository `apps/zcode-cli/packages/adapters/src/storage/session-store/repositories/messages.ts`; migration 0014 `.../session-store/migrations.ts`; drain/turn runtime `apps/zcode-cli/packages/core/src/runtime/methods/steering.ts`, `turn-loop.ts`, `turn.ts`; fork copy `.../workspace-checkpoints.ts`, `session-fork.ts`, `message-persistence.ts`; storage contract `docs/chat/conversation-transcript-storage.md`; case catalog `docs/conversation-session-case-catalog.md`; coverage matrix `docs/testing/conversation-session-e2e-coverage-matrix.md`.
