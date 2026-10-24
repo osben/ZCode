@@ -1,81 +1,81 @@
 # Coding Plan WebView Bridge
 
-官网 `/coding-plan` 页面只允许 ZCode App WebView 内嵌访问，App 打开时必须携带 `embedded=app`，并通过 WebView 注入当前 provider 的购买凭据。
+The official-site `/coding-plan` page is embedded only inside the ZCode App WebView. The App must open it with `embedded=app` and inject the current provider's purchase credentials through the WebView.
 
-同步链路：
+Sync chain:
 
 ```text
-用户点击升级/续费
-  -> CodingPlanUpgradeDialog 收到 providerId、audience，以及可选的 teamPlanKey
-  -> App 解析官网地址
-     - 本地开发：    http://localhost:3000
-     - 测试环境：    https://zcode.z.ai
-     - 正式环境：    https://zcode.z.ai
-     - 显式 override：VITE_CODING_PLAN_WEBVIEW_ORIGIN
-  -> WebView 打开 /coding-plan?provider={zai|bigmodel}&audience={personal|team}&teamPlanKey={可选}&embedded=app&lang={cn|en}&theme={zai-light|zai-dark}
-  -> dom-ready 后从 credentialService 读取 token
-  -> executeJavaScript 先清理旧 provider token，再写入 WebView origin 的 localStorage，并同步 App theme class
+user clicks upgrade/renew
+  -> CodingPlanUpgradeDialog receives providerId, audience, and optional teamPlanKey
+  -> App resolves the official-site origin
+     - local dev:      http://localhost:3000
+     - test env:       https://zcode.z.ai
+     - production:     https://zcode.z.ai
+     - explicit override: VITE_CODING_PLAN_WEBVIEW_ORIGIN
+  -> WebView opens /coding-plan?provider={zai|bigmodel}&audience={personal|team}&teamPlanKey={optional}&embedded=app&lang={cn|en}&theme={zai-light|zai-dark}
+  -> after dom-ready, read the token from credentialService
+  -> executeJavaScript first clears the old provider token, then writes it to the WebView origin's localStorage, and syncs the App theme class
   -> dispatch zcode-coding-plan-auth-ready
-  -> 官网页重新拉取 batch-preview / preview / purchase
+  -> the official-site page re-fetches batch-preview / preview / purchase
 ```
 
-`lang` 和 `theme` 都是首屏 hint：官网会在 App 注入脚本执行前先用它们渲染正确语言和主题。尤其是 `theme`，用于避免官网 SSR 默认深色和 App 浅色主题之间的首次打开闪烁；真实运行态主题仍以后续注入脚本写入的 `zcode-theme` 和 class 为准。
+`lang` and `theme` are first-paint hints: the site uses them to render the right language and theme before the App's injected script runs. `theme` in particular avoids a first-open flash between the site's SSR-default dark and the App's light theme; the live theme is still whatever the later injected script writes as `zcode-theme` and class.
 
-`audience` 与 `teamPlanKey` 表达用户点击升级时的套餐意图。Z.ai/BigModel 只由 Provider ID 决定官网 family；个人套餐传 `audience=personal`，团队套餐传 `audience=team` 并携带当前团队连接 key。它们不参与鉴权，也不替代官网对实际套餐和团队权限的判断。
+`audience` and `teamPlanKey` express the plan intent of the click. The Z.ai/BigModel family is decided by Provider ID alone; a personal plan passes `audience=personal`, a team plan passes `audience=team` with the current team connection key. They play no role in auth and do not replace the site's own judgment of the actual plan and team permissions.
 
-WebView 外壳继续保留 App 购买页原有结构：全屏覆盖、顶部“升级套餐”标题栏、右侧关闭按钮，以及标题栏下方的 150% 配额活动提示。官网页面只承载套餐主体和后续支付流程。
+The WebView shell keeps the App purchase page's original structure: full-screen overlay, top 「升级套餐」 (Upgrade plan) title bar with a close button on the right, and the 150% quota campaign notice under the title bar. The official-site page carries only the plan body and the following payment flow.
 
-WebView 接入层隐藏宿主滚动容器和 guest 页面内的原生滚动条，但不禁用页面滚动。App 在每次 `dom-ready` 后注入 `zcode-coding-plan-hide-scrollbar` 样式，覆盖官网页和后续三方支付/回跳页，避免官网内容与 App 全局滚动条样式叠加后出现额外视觉噪音。
+The WebView integration layer hides the host scroll container and the native scrollbars inside the guest page but does not disable page scrolling. After every `dom-ready` the App injects the `zcode-coding-plan-hide-scrollbar` style, covering the official-site page and later third-party payment/return pages, so site content and the App's global scrollbar styling do not stack into extra visual noise.
 
-注入 key 与 App 购买接口保持一致：
+Injected keys match the App purchase API:
 
-| Provider             | WebView localStorage key      |
-| -------------------- | ----------------------------- |
-| Z.ai                 | `oauth:zai:access_token`      |
-| Z.ai Start Plan 兜底 | `zcodejwttoken`               |
-| BigModel             | `oauth:bigmodel:access_token` |
+| Provider                 | WebView localStorage key      |
+| ------------------------ | ----------------------------- |
+| Z.ai                     | `oauth:zai:access_token`      |
+| Z.ai Start Plan fallback | `zcodejwttoken`               |
+| BigModel                 | `oauth:bigmodel:access_token` |
 
-token 不放入 URL query，避免被浏览器历史、日志、埋点和 Referer 泄露。WebView 页面只能通过当前 origin 的 localStorage 读取注入值。
+The token never goes into the URL query, so it cannot leak through browser history, logs, analytics, or Referer. The WebView page can only read injected values via the current origin's localStorage.
 
-## 加载失败 fallback
+## Load-failure fallback
 
-按用户决策，WebView 不可用时**不回退到老 React Dialog**，只报错并引导用户去官网自行购买：
+By user decision, when the WebView is unavailable it does **not** fall back to the old React Dialog; it reports the error and guides the user to buy on the official site:
 
-- 监听 `<webview>` 的 `did-fail-load`（主 frame）和 `render-process-gone` 事件。
-- 触发后展示错误态：`settings.modelProvider.codingPlan.webview.loadFailed` + 错误详情。
-- 错误态下 webview 元素 `hidden`，并提供两个操作：
-  - **前往官网购买**：`IPlatformService.openExternal(webviewUrl)` 打开系统浏览器。
-  - **重试**：`webview.reload()`。
-- 凭据注入失败（`executeJavaScript` 抛错）走单独的 `authInjectFailed` 重试条，与加载失败区分。
+- Listen for `<webview>` `did-fail-load` (main frame) and `render-process-gone`.
+- On trigger, show the error state: `settings.modelProvider.codingPlan.webview.loadFailed` plus error details.
+- In the error state the webview element is `hidden`, with two actions:
+  - **Buy on the official site**: `IPlatformService.openExternal(webviewUrl)` opens the system browser.
+  - **Retry**: `webview.reload()`.
+- Credential-injection failure (`executeJavaScript` throwing) uses a separate `authInjectFailed` retry banner, distinct from load failure.
 
-## 购买完成回传
+## Purchase-completion callback
 
-官网页购买成功后，通过 **preload + ipc-message** 通道实时通知 App，App 刷新套餐状态后自动关闭 webview。
+After a successful purchase, the official-site page notifies the App in real time over the **preload + ipc-message** channel; the App refreshes plan state and closes the webview automatically.
 
-### 协议
+### Protocol
 
 ```text
-[官网页] 购买成功（Alipay 轮询 / Stripe / 企业订单 onSuccess）
+[official-site page] purchase success (Alipay polling / Stripe / enterprise order onSuccess)
     │
     │ window.zcodeBridge?.notifyPurchaseComplete?.({ provider })   ← no-op guard
     ▼
 [preload: packages/desktop/src/preload/codingPlanWebview.ts]
     │ ipcRenderer.sendToHost("zcode:coding-plan-purchase-complete", {
     │   provider: "zai" | "bigmodel",
-    │   timestamp: number,            ← 客户端时间戳，仅用于日志/去重
+    │   timestamp: number,            ← client timestamp, logs/dedup only
     │ })
     ▼
 [host renderer: CodingPlanEmbeddedWebviewDialog]
     │ webview.addEventListener("ipc-message", ...)
     │   if (event.channel !== CodingPlanWebviewChannels.PurchaseComplete) return
-    │   校验 payload.provider ∈ {"zai","bigmodel"}
+    │   validate payload.provider ∈ {"zai","bigmodel"}
     │   onPurchaseCompleteRef.current?.()
     ▼
 [CodingPlanUpgradeDialog.handlePurchaseComplete]
     │ closeAndRefreshCodingPlanUpgradeFromWebview(...)
-    │   1. onClose()   ← 先关闭 webview，避免弱网刷新阻塞用户回到主界面
+    │   1. onClose()   ← close the webview first, so a slow-network refresh does not block the user's return to the main UI
     │   2. refreshCodingPlanUpgradeCompletion(...)
-    │      ├─ refreshCodingPlanApiKey（每个 provider）
+    │      ├─ refreshCodingPlanApiKey (per provider)
     │      ├─ refreshModelProviders
     │      ├─ refreshCodingPlanEntitlements
     │      └─ codingPlanSubscriptionService.getEnterprisePricing({
@@ -84,35 +84,35 @@ token 不放入 URL query，避免被浏览器历史、日志、埋点和 Refere
     │         })
 ```
 
-### 频道与 payload
+### Channel and payload
 
-- 频道名：`zcode:coding-plan-purchase-complete`（定义于 `packages/shared/src/channels.ts` 的 `CodingPlanWebviewChannels.PurchaseComplete`）
-- payload 类型：`CodingPlanPurchaseCompletePayload`
-  - `provider`: `"zai" | "bigmodel"`，与 auth-ready 事件的 `detail.provider` 同构
-  - `timestamp`: `number`，客户端时间戳，App 侧仅用于日志/去重，不参与判等
+- Channel: `zcode:coding-plan-purchase-complete` (defined as `CodingPlanWebviewChannels.PurchaseComplete` in `packages/shared/src/channels.ts`)
+- Payload type: `CodingPlanPurchaseCompletePayload`
+  - `provider`: `"zai" | "bigmodel"`, same shape as the auth-ready event's `detail.provider`
+  - `timestamp`: `number`, client timestamp; the App uses it for logs/dedup only, never for equality
 
-### preload 分流
+### Preload routing
 
-`desktopWindowChrome.ts` 的 `will-attach-webview` 钩子按 `params.src` 分流：
+The `will-attach-webview` hook in `desktopWindowChrome.ts` routes by `params.src`:
 
-- `/coding-plan?...&embedded=app`（http/https）→ `codingPlanWebviewPreloadPath`（挂 `window.zcodeBridge`）
-- 其余 webview（内置浏览器等）→ `embeddedBrowserJavaScriptDialogPreloadPath`（原 alert/confirm 桥）
+- `/coding-plan?...&embedded=app` (http/https) → `codingPlanWebviewPreloadPath` (mounts `window.zcodeBridge`)
+- all other webviews (embedded browser etc.) → `embeddedBrowserJavaScriptDialogPreloadPath` (the original alert/confirm bridge)
 
-两者 webPreferences（contextIsolation=true / sandbox=true / nodeIntegration=false）一致。
+Both share the same webPreferences (contextIsolation=true / sandbox=true / nodeIntegration=false).
 
-### 官网页调用点
+### Official-site call sites
 
-`components/coding-plan/coding-plan-page.tsx` 中 3 处（helper `notifyZcodeBridgePurchaseComplete(provider)` 内置 no-op guard，官网单独跑零影响）：
+Three call sites in `components/coding-plan/coding-plan-page.tsx` (the helper `notifyZcodeBridgePurchaseComplete(provider)` has a built-in no-op guard, so the site runs standalone with zero impact):
 
-| 支付场景                                | 位置                        | provider   |
-| --------------------------------------- | --------------------------- | ---------- |
-| Alipay 二维码轮询成功（bigmodel 个人）  | alipay-qr useEffect         | `bigmodel` |
-| 企业订单轮询 onSuccess（bigmodel 团队） | `pollEnterpriseOrderStatus` | `bigmodel` |
-| Stripe 支付成功（zai 个人 + 海外团队）  | `onStripePay`               | `zai`      |
+| Payment scenario                                  | Location                    | provider   |
+| ------------------------------------------------- | --------------------------- | ---------- |
+| Alipay QR polling success (bigmodel personal)     | alipay-qr useEffect         | `bigmodel` |
+| Enterprise order polling onSuccess (bigmodel team)| `pollEnterpriseOrderStatus` | `bigmodel` |
+| Stripe payment success (zai personal + overseas team) | `onStripePay`            | `zai`      |
 
-### 安全
+### Security
 
-- host renderer 收到 `ipc-message` 后校验 `provider` 字段，只接受 `zai`/`bigmodel`，忽略非法 payload。
-- 官网页是外部 https 站点；`will-attach-webview` 仍按 `isAllowedEmbeddedBrowserUrl` 做 protocol 白名单。
-- preload 暴露的 `window.zcodeBridge` 只包含业务最小面：`notifyPurchaseComplete`、`getLang`、`onLangChange`、`openExternal`，不暴露 `ipcRenderer` / Node 原语；`openExternal` 在 preload 和 main 进程都只允许 `http:` / `https:`。
-- WebView 使用 `persist:zcode-coding-plan` 独立持久 partition。App 注入凭据前和关闭购买页时会清理 `oauth:zai:access_token` / `zcodejwttoken` / `oauth:bigmodel:access_token`；退出登录或 Clear All Data 会通过桌面命令清理整个 partition，避免账号切换后官网首屏读到旧 token。
+- The host renderer validates the `provider` field on `ipc-message`, accepting only `zai`/`bigmodel` and ignoring invalid payloads.
+- The official-site page is an external https site; `will-attach-webview` still applies the `isAllowedEmbeddedBrowserUrl` protocol allowlist.
+- The preload-exposed `window.zcodeBridge` keeps a minimal business surface: `notifyPurchaseComplete`, `getLang`, `onLangChange`, `openExternal` — no `ipcRenderer` / Node primitives; `openExternal` allows only `http:` / `https:` in both the preload and main process.
+- The WebView uses the dedicated persistent partition `persist:zcode-coding-plan`. Before the App injects credentials and when the purchase page closes, it clears `oauth:zai:access_token` / `zcodejwttoken` / `oauth:bigmodel:access_token`; logout and Clear All Data clear the whole partition via the desktop command, so the site's first paint never reads a stale token after an account switch.
