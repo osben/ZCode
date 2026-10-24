@@ -17,11 +17,11 @@ import {
   chipColor,
   chipLabels,
   clickChip,
-  composerMentionCount,
   composerText,
-  isSaveScopeDisabled,
+  createQuickPrompt,
+  isEditorScopeDisabled,
   openChipContextMenu,
-  saveDraftAsQuickPrompt,
+  openQuickPromptCreateEditor,
 } from "../helpers/quick-prompts.js";
 import {
   clickV4SlashOption,
@@ -37,7 +37,7 @@ const MENTION_QUERY = "quick-prompt-mention-target";
 
 describe("composer quick prompts", () => {
   before(async () => {
-    // Opens the fixture project draft (ZCodeProject) so that a Save draft from this session is project-scoped.
+    // Opens the fixture project draft (ZCodeProject) so that a quick prompt created from this session is project-scoped.
     await prepareV4ConversationE2E();
   });
   afterEach(async () => {
@@ -49,11 +49,7 @@ describe("composer quick prompts", () => {
 
   it("scenario 1: first run shows no chips, and a saved project quick prompt appears in the row", async () => {
     expect(await chipLabels()).toEqual([]);
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, PROJECT_PROMPT_NAME, {
-      stabilizeLexicalCaretAtEnd: true,
-      timeout: 15000,
-    });
-    await saveDraftAsQuickPrompt(PROJECT_PROMPT_NAME);
+    await createQuickPrompt(PROJECT_PROMPT_NAME, PROJECT_PROMPT_NAME);
     await browser.waitUntil(async () => (await chipLabels()).includes(PROJECT_PROMPT_NAME), {
       timeout: 10000,
     });
@@ -106,31 +102,30 @@ describe("composer quick prompts", () => {
     expect(text).toContain(PROJECT_PROMPT_NAME);
   });
 
-  it("scenario 5: a draft with an @file mention disables Global and saves as a project quick prompt", async () => {
-    // The mention is picked from the real "@" panel, so the saved content holds a file mention chip.
+  it("scenario 5: an @file mention in the editor disables Global and saves as a project quick prompt", async () => {
+    // A typed draft keeps the "+" chip (rule 14: no Save draft shortcut).
+    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "typed draft", {
+      stabilizeLexicalCaretAtEnd: true,
+      timeout: 15000,
+    });
+    await openQuickPromptCreateEditor();
+    // The mention is picked from the editor's real "@" panel, so the saved content holds a file mention chip.
     await writeFile(join(DEFAULT_WORKSPACE, MENTION_FILE_NAME), "# quick prompt mention target\n");
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "", { timeout: 15000 });
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, `@${MENTION_QUERY}`, {
+    await setInputValueByTestIdDom("quick-prompt-editor-body", `@${MENTION_QUERY}`, {
       stabilizeLexicalCaretAtEnd: true,
       timeout: 15000,
     });
     const fileOptionId = await waitForV4MentionOptionPrefix("file:");
     expect(await clickV4SlashOption(fileOptionId)).toBe(true);
-    await browser.waitUntil(async () => (await composerMentionCount()) >= 1, {
+    await browser.waitUntil(async () => isEditorScopeDisabled("global"), {
       timeout: 10000,
-      timeoutMsg: "picking the @file entry did not insert a mention chip",
+      timeoutMsg: "Global stayed enabled for a body with an @file mention",
     });
-
-    await clickTestIdByDom("quick-prompt-save-draft");
-    await browser.waitUntil(async () => isSaveScopeDisabled("global"), {
-      timeout: 10000,
-      timeoutMsg: "Global stayed enabled for a draft with an @file mention",
-    });
-    expect(await isSaveScopeDisabled("project")).toBe(false);
-    await setInputValueByTestIdDom("quick-prompt-save-name", MENTION_PROMPT_NAME, {
+    expect(await isEditorScopeDisabled("project")).toBe(false);
+    await setInputValueByTestIdDom("quick-prompt-editor-name", MENTION_PROMPT_NAME, {
       timeout: 10000,
     });
-    await clickTestIdByDom("quick-prompt-save-submit");
+    await clickTestIdByDom("quick-prompt-editor-save");
     await browser.waitUntil(async () => (await chipLabels()).includes(MENTION_PROMPT_NAME), {
       timeout: 10000,
     });
@@ -138,11 +133,7 @@ describe("composer quick prompts", () => {
 
   it("scenario 7: editing a global quick prompt from a session shows the global banner", async () => {
     // The chip from scenario 1 is project-scoped, so this scenario saves its own global prompt.
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, GLOBAL_PROMPT_NAME, {
-      stabilizeLexicalCaretAtEnd: true,
-      timeout: 15000,
-    });
-    await saveDraftAsQuickPrompt(GLOBAL_PROMPT_NAME, "global");
+    await createQuickPrompt(GLOBAL_PROMPT_NAME, GLOBAL_PROMPT_NAME, "global");
     await browser.waitUntil(async () => (await chipLabels()).includes(GLOBAL_PROMPT_NAME), {
       timeout: 10000,
     });

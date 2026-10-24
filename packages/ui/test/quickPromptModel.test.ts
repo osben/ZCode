@@ -11,7 +11,6 @@ import {
   isQuickPromptFirstRun,
   isQuickPromptBodyPresent,
   isValidQuickPromptName,
-  prefillQuickPromptName,
   quickPromptErrorMessageId,
   quickPromptBlockMessageId,
   quickPromptProjectRefOf,
@@ -189,17 +188,6 @@ describe("scope rules (defaults, blocks, limits)", () => {
 });
 
 describe("names and chip actions", () => {
-  it("prefills names from the first words and shows mention links by label", () => {
-    expect(prefillQuickPromptName("review the diff")).toBe("review the diff");
-    expect(prefillQuickPromptName("look at [demo.ts](src/demo.ts) please")).toBe(
-      "look at demo.ts please",
-    );
-    const long = "word ".repeat(30);
-    const name = prefillQuickPromptName(long);
-    expect(name.length).toBeLessThanOrEqual(40);
-    expect(name.endsWith(" ")).toBe(false);
-  });
-
   it("requires a non-empty name of at most 40 characters after trimming (rule 15)", () => {
     expect(isValidQuickPromptName("  ")).toBe(false);
     expect(isValidQuickPromptName("a".repeat(40))).toBe(true);

@@ -36,8 +36,7 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
 2. **Row content** for a session's project P: pinned global quick prompts not hidden in P, in global order, then
    pinned project quick prompts of P, in their order. A session with no project (`projectId === null`) or in a
    legacy single-root project shows pinned globals only.
-3. The row ends with a `+` chip. With a non-empty draft it reads **Save draft** (rule 14); with an empty draft it
-   opens the editor.
+3. The row ends with a `+` chip that opens the editor, whatever the draft holds (rule 14).
 4. **"/" panel** (board C). The slash panel gains a fourth section, "Quick prompts", listing every quick prompt
    available in the session (globals not hidden in P + P's quick prompts), pinned or not, matched by name and
    text. The section is not offered inside the quick prompt editor's own body field.
@@ -69,13 +68,13 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
 13. **Default scope**: created from a session that has a project → `project` (pinned); from a session without a
     project → `global` (pinned); in Settings → the list whose `+` was used. The scope stays changeable; the last
     choice is not remembered.
-14. **Save draft** (board L): a popover asks only for a name (prefilled from the first words) and the scope. The
-    content is the current draft exactly as typed, mentions included. "More options…" opens the editor.
+14. **No "Save draft"** (removed 2026-10-23): the row offers no shortcut that turns the current draft into a quick
+    prompt; a typed draft does not change the `+` chip. Quick prompts are created in the editor only.
 15. **Editor** (board F2): name (required, ≤ 40 characters after trim), body (required, non-blank) = the
     composer's prompt editor with `/`, `$`, `@` triggers (not Enter-to-submit), scope (project / global),
     **Duplicate**, **Delete**. No other fields. Save stays disabled until a stored body has loaded into the editor;
-    if it cannot be loaded, only the name can be saved. "Save draft" appears only when the draft has text;
-    attachments and contexts are never part of a quick prompt.
+    if it cannot be loaded, only the name can be saved. Attachments and contexts are never part of a quick
+    prompt.
     The dialog has exactly two dismissal/commit controls: the header ✕ (close) and the footer **Save**; the embedded
     prompt editor renders no cancel ✕ and no send arrow of its own (they duplicated close/Save).
 16. Editing a global quick prompt from a session shows "This quick prompt is global. Changes apply in every
@@ -110,13 +109,13 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
     one color; the color is independent of scope and pinning.
 23. **Where it shows**: a small dot before the name on the chip in the row above the composer (desktop and
     mobile web; the chip stays a neutral outline, the name keeps the standard text color), and the same dot
-    before the name in Settings rows. The hover preview, the "/" panel and the Save draft popover are unchanged.
+    before the name in Settings rows. The hover preview and the "/" panel are unchanged.
     The dot is decoration: the accessible name of a chip stays the quick prompt name. Each hue's dot token keeps
     3:1 or higher against the card surface of its theme (white in light, neutral-800 / `#2b2b2b` in dark), so
     light themes use darker steps for the pale hues (`orange-600`, `yellow-700`, `green-600`).
 24. **Where it is set**: the editor (rule 15) gains a **Color** row of eight swatches (the seven hues and a dashed
     "No color" swatch), below Name and above Scope, one selected at a time, each with an accessible name.
-    Save draft creates a prompt with no color; Duplicate copies the color. Color does not affect rule 12.
+    A new prompt starts with no color; Duplicate copies the color. Color does not affect rule 12.
 
 ## Storage and ownership
 
@@ -210,7 +209,8 @@ sequenceDiagram
 3. ⌘-click with an empty draft sends via the composer path (queued when busy); with a non-empty draft it only
    inserts.
 4. "/" + query lists matching quick prompts; Enter replaces the token with the content.
-5. Save draft containing `@file`: Global is disabled with the explanation; saved as project quick prompt.
+5. Editor body containing `@file`: Global is disabled with the explanation; saved as project quick prompt. A typed
+   draft keeps the row's `+` chip (no "Save draft").
 6. Hide in this project: the global chip disappears in this project only; other projects keep it; a newly pinned
    global appears in every project that has not hidden it.
 7. Edit a global from a session → banner; Duplicate to <project> creates an independent pinned copy.
@@ -222,8 +222,8 @@ sequenceDiagram
 12. Incognito session shows and uses quick prompts.
 13. Upstream build and older fork builds open the shared DB with the fork tables present.
 14. Color: a legacy prompt (no color) renders exactly as before; picking a hue in the editor shows the dot on its
-    chip and Settings row after save; picking "No color" removes it; Duplicate keeps the color; Save draft makes
-    an uncolored prompt; an unknown stored value shows no dot and the prompt still works; a rename never erases a
+    chip and Settings row after save; picking "No color" removes it; Duplicate keeps the color; a new prompt is
+    uncolored; an unknown stored value shows no dot and the prompt still works; a rename never erases a
     stored value; the mobile row shows the dot.
 
 Interaction scenarios 2–5, 7 and 10 need desktop/web E2E coverage.

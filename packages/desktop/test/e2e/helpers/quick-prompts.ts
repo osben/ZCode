@@ -1,7 +1,7 @@
 // Shared DOM helpers for composer quick prompt E2E (specs/composer-quick-prompts.md).
 // Test ids are owned by packages/ui/src/quick-prompts; keep them in sync with that module.
 import { TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
-import { clickTestIdByDom, setInputValueByTestIdDom } from "./desktop-app.js";
+import { clickTestIdByDom, setInputValueByTestIdDom, waitForTestIdByDom } from "./desktop-app.js";
 
 export const QUICK_PROMPT_CHIP_TEST_ID = "quick-prompt-chip";
 const COMPOSER_INPUT_SELECTOR = `[data-testid="${TID_V4_COMPOSER_INPUT}"]`;
@@ -10,16 +10,6 @@ const COMPOSER_INPUT_SELECTOR = `[data-testid="${TID_V4_COMPOSER_INPUT}"]`;
 export async function composerText(): Promise<string> {
   return browser.execute((selector: string) => {
     return document.querySelector<HTMLElement>(selector)?.textContent ?? "";
-  }, COMPOSER_INPUT_SELECTOR);
-}
-
-/** Counts mention chips in the composer; mentions are serialized with a data-mention-id attribute. */
-export async function composerMentionCount(): Promise<number> {
-  return browser.execute((selector: string) => {
-    return (
-      document.querySelector<HTMLElement>(selector)?.querySelectorAll("[data-mention-id]").length ??
-      0
-    );
   }, COMPOSER_INPUT_SELECTOR);
 }
 
@@ -94,23 +84,33 @@ export async function openChipContextMenu(label: string) {
   );
 }
 
-/** Whether a scope button of the Save draft popover is disabled. */
-export async function isSaveScopeDisabled(scope: "global" | "project"): Promise<boolean> {
+/** Whether a scope button of the quick prompt editor is disabled. */
+export async function isEditorScopeDisabled(scope: "global" | "project"): Promise<boolean> {
   return browser.execute((testId: string) => {
     const button = document.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
     return button?.disabled === true;
-  }, `quick-prompt-save-scope-${scope}`);
+  }, `quick-prompt-editor-scope-${scope}`);
+}
+
+/** Opens the editor from the row's "+" chip (spec rule 3) and waits for its Lexical body. */
+export async function openQuickPromptCreateEditor() {
+  await clickTestIdByDom("quick-prompt-add");
+  await waitForTestIdByDom("quick-prompt-editor-body", { timeout: 10000 });
 }
 
 /**
- * Saves the composer draft through the Save draft popover. When scope is omitted the popover default
+ * Creates a quick prompt through the "+" chip and the editor. When scope is omitted the editor default
  * applies (project for a session with a project).
  */
-export async function saveDraftAsQuickPrompt(name: string, scope?: "global" | "project") {
-  await clickTestIdByDom("quick-prompt-save-draft");
-  await setInputValueByTestIdDom("quick-prompt-save-name", name, { timeout: 10000 });
+export async function createQuickPrompt(name: string, body: string, scope?: "global" | "project") {
+  await openQuickPromptCreateEditor();
+  await setInputValueByTestIdDom("quick-prompt-editor-name", name, { timeout: 10000 });
+  await setInputValueByTestIdDom("quick-prompt-editor-body", body, {
+    stabilizeLexicalCaretAtEnd: true,
+    timeout: 15000,
+  });
   if (scope) {
-    await clickTestIdByDom(`quick-prompt-save-scope-${scope}`);
+    await clickTestIdByDom(`quick-prompt-editor-scope-${scope}`);
   }
-  await clickTestIdByDom("quick-prompt-save-submit");
+  await clickTestIdByDom("quick-prompt-editor-save");
 }
