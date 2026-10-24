@@ -1,13 +1,15 @@
-# 可配置数据存储目录
+# Configurable data storage directory
 
-## 概述
+## Overview
 
-应用数据默认存储在 `~/.zcode/v2/`（`~` 即 `os.homedir()`）。用户可在「设置 → 通用 → 数据存储路径」中更改 `~` 对应的根目录，`.zcode/v2` 后缀不可更改。
+App data is stored in `~/.zcode/v2/` by default (`~` is `os.homedir()`). The user can change the root
+corresponding to `~` in "Settings -> General -> Data storage path" (设置 → 通用 → 数据存储路径); the
+`.zcode/v2` suffix cannot be changed.
 
-## 目录结构
+## Directory layout
 
 ```
-<dataBaseDir>/.zcode/v2/          ← 可配置的数据目录
+<dataBaseDir>/.zcode/v2/          ← configurable data directory
   ├── logs/
   ├── perf/
   ├── sessions/
@@ -15,100 +17,125 @@
   ├── telemetry-state.json
   └── ...
 
-<dataBaseDir>/.zcode/workspace/default/  ← 非项目对话共享的真实工作目录
+<dataBaseDir>/.zcode/workspace/default/  ← real working directory shared by non-project conversations
 
-~/.zcode/v2/setting.json          ← Bootstrap 指针（永远在默认 homedir 下）
+~/.zcode/v2/setting.json          ← Bootstrap pointer (always under the default homedir)
 ```
 
-## Bootstrap 机制
+## Bootstrap mechanism
 
-`setting.json` 始终且只存在于默认 `homedir()/.zcode/v2/setting.json`，不跟随自定义目录迁移。它是整个路径切换的引导入口：
+`setting.json` always and only exists at the default `homedir()/.zcode/v2/setting.json` and does not follow a
+custom directory migration. It is the bootstrap entry of the whole path switch:
 
-1. 主进程启动 → 从 `homedir()/.zcode/v2/setting.json` 读取 `dataBaseDir`
-2. 如果有值 → 调用 `setDataBaseDir(dir)` 切换后续所有数据路径
-3. 启动 host process 时通过环境变量 `ZCODE_DATA_BASE_DIR` 传递给子进程
+1. Main process starts -> reads `dataBaseDir` from `homedir()/.zcode/v2/setting.json`.
+2. If set -> calls `setDataBaseDir(dir)` to switch all later data paths.
+3. When starting the host process it is passed to the child through the environment variable
+   `ZCODE_DATA_BASE_DIR`.
 
-路径解析优先级（`getDataBaseDir()`）：
-1. `setDataBaseDir()` 设置的值（主进程 bootstrap）
-2. `process.env.ZCODE_DATA_BASE_DIR`（host process 通过环境变量接收）
-3. `os.homedir()`（兜底默认值）
+Path resolution priority (`getDataBaseDir()`):
 
-## 复制行为
+1. The value set by `setDataBaseDir()` (main-process bootstrap).
+2. `process.env.ZCODE_DATA_BASE_DIR` (received by the host process through the environment variable).
+3. `os.homedir()` (fallback default).
 
-当用户更改数据目录时，会将旧目录的数据复制到新目录：
+## Copy behavior
 
-| 规则 | 说明 |
+When the user changes the data directory, old-directory data is copied to the new one:
+
+| Rule | Description |
 |------|------|
-| **setting.json 及其瞬时文件不复制** | `setting.json` 是 bootstrap 指针，`setting.json.lock` 与 `setting.json.*.tmp` 是原子写入中间态，均只存在于默认 homedir 下；复制它们会导致迁移竞态或新旧目录冲突 |
-| **已有文件不覆盖** | `force: false` — 如果目标目录已存在同名文件，保留目标版本。防止还原回旧目录时，新产生的数据被旧副本覆盖 |
-| **新文件正常复制** | 源目录有、目标没有的文件会被复制过去 |
-| **conversation workspace 暂未迁移** | 当前 `copyDataDirectory()` 只复制 `.zcode/v2`；`.zcode/workspace` 的非覆盖复制属于目标语义，待 CDD02/后续实现后再纳入数据目录迁移 |
+| **`setting.json` and its transient files are not copied** | `setting.json` is the bootstrap pointer; `setting.json.lock` and `setting.json.*.tmp` are atomic-write intermediates, all existing only under the default homedir; copying them would cause migration races or old/new directory conflicts |
+| **Existing files are not overwritten** | `force: false`: if the target directory already has a same-name file, the target version is kept. This prevents newly produced data being overwritten by an old copy when restoring to the old directory |
+| **New files are copied normally** | Files present in the source but not the target are copied |
+| **Conversation workspace not yet migrated** | `copyDataDirectory()` currently copies only `.zcode/v2`; non-overwriting copy of `.zcode/workspace` is target semantics, to be included in data-directory migration after CDD02 / later work |
 
-### 场景示例
+### Example scenarios
 
-**正向迁移**（`/Users/a` → `/Users/a/test`）：
-- `/Users/a/.zcode/v2/` 下的所有文件（除 setting.json）复制到 `/Users/a/test/.zcode/v2/`
-- 目标目录如果不存在会自动创建
+**Forward migration** (`/Users/a` -> `/Users/a/test`):
 
-**还原**（`/Users/a/test` → `/Users/a`）：
-- `/Users/a/test/.zcode/v2/` 下的文件复制到 `/Users/a/.zcode/v2/`
-- 但 `/Users/a/.zcode/v2/` 里这段时间新产生的文件不会被覆盖
-- `setting.json` 始终不受影响
+- All files under `/Users/a/.zcode/v2/` (except setting.json) are copied to `/Users/a/test/.zcode/v2/`.
+- The target directory is created automatically if absent.
 
-## Windows 安装目录保护
+**Restore** (`/Users/a/test` -> `/Users/a`):
 
-Windows 上禁止把数据根目录设置到 ZCode 的安装目录或其子目录。原因是安装目录会被安装器和自动更新流程管理，若把 `<dataBaseDir>/.zcode/v2/` 放进去，后续更新可能覆盖或清理用户数据。
+- Files under `/Users/a/test/.zcode/v2/` are copied to `/Users/a/.zcode/v2/`.
+- Files newly produced in `/Users/a/.zcode/v2/` in the meantime are not overwritten.
+- `setting.json` is never affected.
 
-拦截规则：
+## Windows install directory protection
 
-| 来源 | 示例 |
+On Windows, the data root must not be set to ZCode's install directory or a subdirectory of it, because the
+install directory is managed by the installer and auto-update flow; putting `<dataBaseDir>/.zcode/v2/` there
+could let a later update overwrite or clean user data.
+
+Blocking rules:
+
+| Source | Example |
 |------|------|
-| 当前桌面应用安装目录 | `process.resourcesPath` 的上级目录，例如 `C:\Users\{UserName}\AppData\Local\Programs\ZCode` |
-| Program Files 安装目录 | `%ProgramFiles%\ZCode`、`%ProgramFiles(x86)%\ZCode`、`%ProgramW6432%\ZCode` |
-| 用户 LocalAppData 安装目录 | `%LOCALAPPDATA%\Programs\ZCode` |
+| Current desktop app install directory | parent of `process.resourcesPath`, e.g. `C:\Users\{UserName}\AppData\Local\Programs\ZCode` |
+| Program Files install directory | `%ProgramFiles%\ZCode`, `%ProgramFiles(x86)%\ZCode`, `%ProgramW6432%\ZCode` |
+| User LocalAppData install directory | `%LOCALAPPDATA%\Programs\ZCode` |
 
-`packages/desktop/src/main/desktopRuntimeEnv.ts` 会在 Windows 打包态把当前安装目录通过 `ZCODE_WINDOWS_APP_INSTALL_DIR` 传给 host process。`packages/services/src/paths.ts` 在服务层按 Windows 路径规则做大小写不敏感的“等于或位于其下”判断，`packages/services/src/setting/settingService.ts` 在复制数据前执行该校验。UI 只展示错误提示，不作为唯一安全边界。
+`packages/desktop/src/main/desktopRuntimeEnv.ts` passes the current install directory to the host process as
+`ZCODE_WINDOWS_APP_INSTALL_DIR` in the Windows packaged state. `packages/services/src/paths.ts` does a
+case-insensitive "equal to or under" check by Windows path rules at the service layer, and
+`packages/services/src/setting/settingService.ts` runs that check before copying data. The UI only shows the
+error and is not the sole safety boundary.
 
-### 安装器阻断保护
+### Installer blocking protection
 
-Windows 安装包不会禁止用户选择任意安装目录。为覆盖历史版本已把数据放进安装目录的用户，NSIS assisted installer 会在用户选完安装目录、真正写入文件前检查最终安装目录及其子目录是否存在 `.zcode`：
+The Windows installer does not forbid the user choosing any install directory. To cover users whose historical
+version already put data in the install directory, the NSIS assisted installer checks, after the user picks the
+install directory and before any file is written, whether the final install directory or its subdirectories
+contain `.zcode`:
 
-1. 按 electron-builder assisted installer 的目录补齐规则计算最终安装目录
-2. 若用户选择的是父目录，electron-builder 会安装到 `$INSTDIR\ZCode`，因此检查 `$INSTDIR\ZCode` 及其子目录
-3. 命中后展示阻断页，提示安装目录或其子目录包含 `.zcode` 数据，继续安装或更新会让安装器清理历史会话和配置
-4. 阻断页禁用“下一步”，并把“上一步”按钮加宽、文案改为“重选目录”
-5. 用户点击“重选目录”后回到目录选择页，必须选择其他安装目录才能继续安装
-6. 用户仍可取消安装器退出；不提供“忽略并继续”入口
-7. 静默安装命中 `.zcode` 时直接退出失败，避免自动化安装绕过数据保护
+1. Compute the final install directory by electron-builder assisted installer's directory completion rule.
+2. If the user picked a parent directory, electron-builder installs to `$INSTDIR\ZCode`, so check
+   `$INSTDIR\ZCode` and its subdirectories.
+3. On a hit, show a blocking page saying the install directory or its subdirectories contain `.zcode` data and
+   that continuing to install or update would make the installer clean historical sessions and configuration.
+4. The blocking page disables "Next", widens the "Back" button and changes its text to "重选目录" (re-pick
+   directory).
+5. After clicking "重选目录" the user returns to the directory page and must choose another install directory
+   to continue.
+6. The user can still cancel and exit the installer; there is no "ignore and continue" entry.
+7. A silent install that hits `.zcode` exits with failure directly, so automated installs cannot bypass the data
+   protection.
 
-该阻断保护只面向安装包流程，不替代设置页的数据迁移校验。
+This blocking protection applies only to the installer flow and does not replace the settings page's data
+migration validation.
 
-## UI 交互流程
+## UI flow
 
-1. 只读路径框默认显示当前生效路径（已配置的路径或 homedir）
-2. 点击「选择文件夹」，通过系统目录弹窗选择新的根目录
-3. 确认无误后点击「保存」
-4. 按钮显示加载动画，选择按钮禁用，提示"正在复制数据，请勿关闭应用…"
-5. 复制完成 → 提示"数据已保存，重启应用后生效。"
-6. 复制失败 → 提示"数据复制失败，路径未更改。"（红色），可重新选择后重试
-7. Windows 上若选择了 ZCode 安装目录或其子目录 → 提示"不能选择 ZCode 安装目录作为数据存储路径"，路径不写入配置
-8. 用户重启应用后新路径生效
+1. A read-only path box shows the currently effective path by default (the configured path or homedir).
+2. Click "选择文件夹" (choose folder) and pick the new root through the system directory dialog.
+3. After confirming, click "保存" (save).
+4. The button shows a loading animation, the choose button is disabled, and the hint reads "正在复制数据，请勿关闭应用…"
+   (copying data, do not close the app).
+5. Copy done -> hint "数据已保存，重启应用后生效。" (data saved, takes effect after restart).
+6. Copy failed -> hint "数据复制失败，路径未更改。" (data copy failed, path unchanged; in red); the user may
+   re-pick and retry.
+7. On Windows, if the ZCode install directory or a subdirectory is chosen -> hint "不能选择 ZCode 安装目录作为数据存储路径"
+   (the ZCode install directory cannot be used as the data storage path), and the path is not written to config.
+8. The new path takes effect after the user restarts the app.
 
-## 已确认的迁移边界
+## Confirmed migration boundary
 
-用户于 2026-08-10 确认以下目标语义：
+The user confirmed the following target semantics on 2026-08-10:
 
-1. App `.zcode/v2` 与非项目对话 `.zcode/workspace` 一并迁移。
-2. 只允许在当前 conversation 已空闲时发起迁移。
-3. 保存成功后进入待重启状态；目标产品态应阻止继续向旧 App 数据目录写入。
-4. 目标目录已有 ZCode 数据时拒绝迁移，不做逐文件或 SQLite 合并。
-5. 完整冷重启后，迁移前任务历史仍可见，并且可以在同一任务中继续对话。
-6. `dataBaseDir` 只改变 App 数据目录；CLI 用户资源仍使用 `<HOME>/.zcode/cli`，项目内
-   `.zcode/*` 也保持原路径。
+1. App `.zcode/v2` and non-project conversation `.zcode/workspace` migrate together.
+2. Migration may start only when the current conversation is idle.
+3. After a successful save the app enters a restart-pending state; the target product state should prevent
+   further writes to the old App data directory.
+4. If the target directory already holds ZCode data, migration is refused, with no per-file or SQLite merge.
+5. After a full cold restart, pre-migration task history is still visible and the same task can continue the
+   conversation.
+6. `dataBaseDir` changes only the App data directory; CLI user resources still use `<HOME>/.zcode/cli`, and
+   in-project `.zcode/*` keeps its original path.
 
-首个自动化 case `CDD01` 暂不修改上述产品行为，只验证当前可安全执行的代表路径：Desktop
-本地 `desktop-continuous`、任务已空闲、目标目录为空、保存后不再执行任何业务操作并立即完整
-重启 Electron、Host 与 Agent。
+The first automated case `CDD01` does not change the above product behavior and verifies only the currently
+safely executable representative path: Desktop local `desktop-continuous`, task idle, empty target directory,
+no business operation after saving and an immediate full restart of Electron, Host and Agent.
 
 ```text
 old App root + idle task
@@ -127,22 +154,23 @@ new App root
           +--> CLI stays under <HOME>/.zcode/cli
 ```
 
-`CDD01` 的 idle 与立即重启是测试前置/时序约束，不代表当前产品已经机械阻止 busy 迁移或保存后的
-继续写入；非空目标拒绝也不由该 case 证明。当前 `copyDataDirectory()` 只复制 `.zcode/v2`，尚未
-实现本 spec 要求的 `.zcode/workspace` 迁移，因此 workspace 断言单独记录为 bug candidate，不能
-把 `CDD01` 的通过解释为完整满足第 1 条。
+The idle state and immediate restart of `CDD01` are test preconditions/timing constraints and do not mean the
+product currently blocks busy migration or writes after saving mechanically; refusing a non-empty target is not
+proven by this case either. `copyDataDirectory()` currently copies only `.zcode/v2` and does not yet implement
+the `.zcode/workspace` migration this spec requires, so the workspace assertion is recorded separately as a bug
+candidate, and `CDD01` passing must not be read as fully satisfying item 1.
 
-## 相关代码
+## Related code
 
-| 文件 | 职责 |
+| File | Responsibility |
 |------|------|
-| `packages/services/src/paths.ts` | `setDataBaseDir` / `getDataBaseDir` / `getAppConfigDir` / `copyDataDirectory` / Windows 安装目录校验 |
-| `packages/services/src/setting/settingService.ts` | `updateDataBaseDir()` — 校验 + 复制 + 持久化 |
-| `packages/services/src/setting/setting.ts` | `ISettingService` 接口定义 |
-| `packages/shared/src/protocol.ts` | `AppSettings.dataBaseDir` 类型 |
+| `packages/services/src/paths.ts` | `setDataBaseDir` / `getDataBaseDir` / `getAppConfigDir` / `copyDataDirectory` / Windows install-directory validation |
+| `packages/services/src/setting/settingService.ts` | `updateDataBaseDir()`: validate + copy + persist |
+| `packages/services/src/setting/setting.ts` | `ISettingService` interface definition |
+| `packages/shared/src/protocol.ts` | `AppSettings.dataBaseDir` type |
 | `packages/shared/src/validation.ts` | zod schema |
-| `packages/desktop/build/installer.nsh` | Windows 安装器在写入文件前阻断安装目录内已有 `.zcode` 的安装 |
-| `packages/desktop/src/main/index.ts` | 主进程 bootstrap 读取 |
-| `packages/desktop/src/main/desktopRuntimeEnv.ts` | `buildHostProcessEnv` 传递环境变量 |
-| `packages/ui/src/settingsPageHelpers.tsx` | UI 输入框 + 保存状态管理 |
-| `packages/ui/src/SettingsPage.tsx` | 页面级状态 + 服务调用 |
+| `packages/desktop/build/installer.nsh` | Windows installer blocks installs when `.zcode` already exists in the install directory, before writing files |
+| `packages/desktop/src/main/index.ts` | main-process bootstrap read |
+| `packages/desktop/src/main/desktopRuntimeEnv.ts` | `buildHostProcessEnv` passes the environment variable |
+| `packages/ui/src/settingsPageHelpers.tsx` | UI input box + save state management |
+| `packages/ui/src/SettingsPage.tsx` | page-level state + service calls |

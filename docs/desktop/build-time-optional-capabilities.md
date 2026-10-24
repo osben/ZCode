@@ -1,43 +1,47 @@
-# 桌面构建期可选能力
+# Desktop build-time optional capabilities
 
-## 目标
+## Goal
 
-三项能力由构建期配置决定是否启用，未配置时一律关闭：
+Three capabilities are enabled by build-time configuration and are off when unconfigured:
 
-| 能力 | 配置项 | 关闭时的行为 |
+| Capability | Config key | Behavior when off |
 | --- | --- | --- |
-| ARMS RUM 上报 | `ZCODE_ARMS_RUM_ENDPOINT` | 主进程与渲染进程的 ARMS SDK 以 `enable: false` 初始化，不产生上报 |
-| 事件上报（数仓） | `ZCODE_TELEMETRY_REPORT_ENDPOINT` | 遥测事件在发送前直接返回 |
-| 自动更新 | `ZCODE_AUTO_UPDATE`（`1`、`true`、`yes` 为启用） | 与 Preview 形态相同，不检查、不下载更新 |
+| ARMS RUM reporting | `ZCODE_ARMS_RUM_ENDPOINT` | the ARMS SDK in the main and renderer processes initializes with `enable: false` and produces no reports |
+| Event reporting (data warehouse) | `ZCODE_TELEMETRY_REPORT_ENDPOINT` | telemetry events return directly before sending |
+| Auto update | `ZCODE_AUTO_UPDATE` (`1`, `true`, `yes` enable) | same as the Preview flavor: no update check or download |
 
-这样同一份源码可以产出“默认不上报、不自动更新”的构建，也可以产出启用这些能力的正式构建，
-不需要在源码里写死上报地址。
+The same source can therefore produce a build that does not report or auto-update by default, or an official
+build with these capabilities enabled, without hard-coding reporting addresses in source.
 
-## 配置来源与优先级
+## Config source and priority
 
-1. 构建进程的环境变量。显式设置为空字符串表示关闭。
-2. `config/private/build-defaults.json`。只存在于内部仓库，开源导出不包含。
-3. 以上都没有时关闭。
+1. Environment variables of the build process. An explicitly empty string means off.
+2. `config/private/build-defaults.json`. Exists only in the internal repo; the open-source export excludes it.
+3. If neither exists, off.
 
-## 所有者与数据流
+## Owner and data flow
 
 ```
-环境变量 / config/private/build-defaults.json
-        │ scripts/build-time-config.mjs（唯一解析入口）
+env vars / config/private/build-defaults.json
+        │ scripts/build-time-config.mjs (the only parsing entry)
         ▼
-desktop tsup（main、host、preload）与 desktop vite（renderer）的 define
+define of desktop tsup (main, host, preload) and desktop vite (renderer)
         │ __ZCODE_ARMS_RUM_ENDPOINT__ / __ZCODE_TELEMETRY_REPORT_ENDPOINT__ / __ZCODE_AUTO_UPDATE_ENABLED__
         ▼
-@zcode/shared env 常量 ── 运行时代码只读这些常量
+@zcode/shared env constants ── runtime code reads only these constants
 ```
 
-- 未注入 define 的环境（测试、其他 bundle）得到关闭值；vitest 为测试注入固定的事件上报端点，以便验证上报链路。
-- 自动更新在 Desktop Main 启动时判定：`ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED`。
-- Agent 的 OTLP 遥测沿用既有机制，由打包环境的 `ZCODE_PACKAGED_AGENT_OTEL_*` 注入，不在本文件范围内。
+- Environments with no injected define (tests, other bundles) get the off value; vitest injects a fixed event
+  reporting endpoint so the reporting chain can be verified.
+- Auto update is decided at Desktop Main startup: `ZCODE_PRODUCT_FLAVOR === "production" && ZCODE_AUTO_UPDATE_ENABLED`.
+- The Agent's OTLP telemetry keeps the existing mechanism, injected by the packaging environment's
+  `ZCODE_PACKAGED_AGENT_OTEL_*`, and is out of scope here.
 
-## 验收
+## Acceptance
 
-1. 内部仓库存在私有默认配置时，构建结果与改造前一致：ARMS、事件上报、自动更新均启用，地址不变。
-2. 没有私有默认配置、也没有环境变量时，三项均关闭。
-3. 环境变量优先于私有默认配置，显式空字符串可以关闭单项能力。
-4. 类型检查、Lint 与相关单测通过。
+1. With a private default config in the internal repo, the build result matches the pre-change one: ARMS, event
+   reporting and auto update are all enabled with unchanged addresses.
+2. With no private default config and no environment variables, all three are off.
+3. Environment variables take priority over the private default config, and an explicit empty string turns off a
+   single capability.
+4. Typecheck, lint and the related unit tests pass.

@@ -1,19 +1,31 @@
-# Linux AppImage Deep Link 回调
+# Linux AppImage deep link callback
 
-## 背景
+## Background
 
-Linux `.deb` / `.rpm` 安装包会通过系统级 desktop entry 注册 `zcode://` 协议，登录回调可以稳定回到已安装应用。AppImage 直跑没有固定安装入口，ZCode 会在启动时写入用户级 `~/.local/share/applications/zcode.desktop`，让浏览器登录后的 `zcode://...` 能交给当前 AppImage（前提是系统中不存在系统级同 ID 条目，见下文"与系统安装共存"）。
+Linux `.deb` / `.rpm` packages register the `zcode://` protocol through a system-level desktop entry, so the
+login callback reliably returns to the installed app. An AppImage run directly has no fixed install entry; ZCode
+writes the user-level `~/.local/share/applications/zcode.desktop` at startup so the browser-login `zcode://...`
+can be handed to the current AppImage (provided no system-level entry with the same ID exists, see "Coexistence
+with system installs" below).
 
-用户在 Ubuntu 24.04 + NVIDIA 环境中发现：手动启动 AppImage 时带了 `--no-sandbox`、`--disable-gpu`、`--use-gl=swiftshader` 等参数，窗口和登录页都能打开；但浏览器回调触发 `.desktop Exec` 后，系统按裸 AppImage 路径二次启动，缺少这些参数，进程在 Electron sandbox/GPU 初始化阶段崩溃，导致应用一直停留在“等待浏览器回调”。
+A user on Ubuntu 24.04 + NVIDIA found that when manually launching the AppImage with `--no-sandbox`,
+`--disable-gpu`, `--use-gl=swiftshader` and so on, the window and login page open; but when the browser callback
+triggers the `.desktop Exec`, the system relaunches the bare AppImage path without those arguments, the process
+crashes during Electron sandbox/GPU initialization, and the app stays stuck at "waiting for browser callback".
 
-## 方案
+## Approach
 
-- 仅在 AppImage 场景使用 `APPIMAGE` 环境变量作为协议处理器 executable；前提是无系统级同 ID 条目（存在时跳过用户级写入，见"与系统安装共存"）。
-- AppImage 场景下，从当前 `process.argv` 中保留一小组会影响 Electron/Chromium 启动成败的安全启动开关，写入 `.desktop Exec`。
-- `.deb`、开发态和普通二进制安装继续写裸 executable，不复制当前 argv。
-- 不持久化 deep link URL、工作区路径、调试端口、用户数据目录等一次性或敏感参数。
+- Only in the AppImage case use the `APPIMAGE` environment variable as the protocol handler executable, provided
+  there is no system-level entry with the same ID (when one exists, user-level writing is skipped, see
+  "Coexistence with system installs").
+- In the AppImage case, keep from the current `process.argv` a small set of safe startup switches that affect
+  whether Electron/Chromium starts, and write them to `.desktop Exec`.
+- `.deb`, dev mode and ordinary binary installs keep writing the bare executable and do not copy the current
+  argv.
+- Do not persist one-off or sensitive arguments such as the deep link URL, workspace path, debug port or user
+  data directory.
 
-当前允许持久化的开关：
+Switches currently allowed to persist:
 
 - `--no-sandbox`
 - `--disable-gpu`
@@ -23,16 +35,28 @@ Linux `.deb` / `.rpm` 安装包会通过系统级 desktop entry 注册 `zcode://
 - `--disable-features=...`
 - `--enable-features=...`
 
-## 与系统安装（rpm/deb）共存
+## Coexistence with system installs (rpm/deb)
 
-用户级 desktop entry 在 XDG 解析中永远优先于系统级同 ID 条目（`~/.local/share/applications` 先于 `/usr/share/applications`）。历史上旧 AppImage 写入的用户级 `zcode.desktop` 会在用户迁移到 rpm/deb 后持续遮蔽 `/usr/share/applications/zcode.desktop`，导致快捷方式和 `zcode://` 回调仍指向旧 AppImage（文件还在时）或直接失效（文件被删后）。为此注册逻辑按以下优先级工作：
+A user-level desktop entry always takes priority over a system-level entry with the same ID in XDG resolution
+(`~/.local/share/applications` comes before `/usr/share/applications`). Historically, a user-level
+`zcode.desktop` written by an old AppImage kept shadowing `/usr/share/applications/zcode.desktop` after the user
+migrated to rpm/deb, so shortcuts and the `zcode://` callback still pointed at the old AppImage (while the file
+existed) or broke (after the file was deleted). The registration logic therefore works in this priority order:
 
-1. 启动时按 `XDG_DATA_DIRS`（默认 `/usr/local/share:/usr/share`）探测系统级 `zcode.desktop`，**必须是普通文件**才视为有效系统条目。
-2. **存在系统级条目时**：AppImage 运行不再写入用户级同名条目和用户级图标，避免再度遮蔽系统安装；rpm/deb 等系统安装形态运行时会清理本应用写入的遗留用户级条目。归属识别依赖 `Comment=ZCode Desktop App` 标记行——只有带该标记的条目会被删除，用户手写的自定义 `zcode.desktop`（无标记、读取失败或无法确认归属）一律保留不清理。
-3. **不存在系统级条目时**：保持原有 AppImage 用户级注册行为不变。
+1. At startup, probe for a system-level `zcode.desktop` along `XDG_DATA_DIRS` (default
+   `/usr/local/share:/usr/share`); it **must be a regular file** to count as a valid system entry.
+2. **When a system-level entry exists:** an AppImage run no longer writes the user-level same-name entry or the
+   user-level icon, avoiding shadowing the system install again; when running in a system-install form such as
+   rpm/deb, the leftover user-level entry written by this app is cleaned up. Ownership is recognized by the
+   marker line `Comment=ZCode Desktop App`: only entries carrying that marker are deleted; a user's hand-written
+   custom `zcode.desktop` (no marker, read failure, or ownership cannot be confirmed) is always kept.
+3. **When no system-level entry exists:** the original AppImage user-level registration behavior is unchanged.
 
-清理与读取失败只记录 `warn` 降级，不阻断 `update-desktop-database` / `xdg-mime` 协议注册。
+Cleanup and read failures only log a `warn` degradation and do not block the `update-desktop-database` /
+`xdg-mime` protocol registration.
 
-## 边界
+## Boundary
 
-这次只修 AppImage 协议回调二次启动参数丢失，不改变 OAuth state 路由、单实例转发和 `.deb` 协议注册语义。若用户环境仍需要 `chrome-sandbox` SUID 或 `libfuse2`，安装文档需要单独说明。
+This only fixes the loss of startup arguments on the AppImage protocol-callback relaunch; it does not change
+OAuth state routing, single-instance forwarding or `.deb` protocol registration semantics. If the user's
+environment still needs `chrome-sandbox` SUID or `libfuse2`, the install docs must say so separately.
