@@ -145,6 +145,20 @@ describe("QuickPromptBar chip (rule 23)", () => {
       chips[1]?.querySelector("[data-testid=quick-prompt-color-dot]")?.getAttribute("data-color"),
     ).toBe("blue");
   });
+
+  it("gives every chip and the add chip an opaque card fill (rule 1)", () => {
+    renderBar([prompt({ promptId: "plain", name: "Plain" })]);
+    const chips = [
+      ...screen.getAllByTestId("quick-prompt-chip"),
+      screen.getByTestId("quick-prompt-add"),
+    ];
+    for (const chip of chips) {
+      const classes = chip.className.split(/\s+/);
+      expect(classes).toContain("bg-card");
+      expect(classes).toContain("hover:bg-card-selected");
+      expect(classes).not.toContain("hover:bg-input/50");
+    }
+  });
 });
 
 describe("QuickPromptColorPicker (rule 24)", () => {

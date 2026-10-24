@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Behavioral render tests for the sidebar child-conversation marker (spec:
-// sidebar-child-conversation-counts.md §4): per-segment zero-hide, running form with the
-// TTL-lag clamp, tooltip composition, and the expander click contract.
+// sidebar-child-conversation-counts.md §4, §9): side-chat count only, subagent facts ignored,
+// tooltip, and the expander click contract.
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -33,21 +33,6 @@ function taskWith(overrides: Partial<ZCodeTaskMeta>): ZCodeTaskMeta {
 
 afterEach(cleanup);
 
-describe("ChildSessionCountsMarker running spinner", () => {
-  it("rotates an HTML wrapper instead of the SVG", () => {
-    const { container } = render(
-      createElement(ChildSessionCountsMarker, {
-        task: taskWith({ subagentCount: 2, runningSubagentCount: 1 }),
-        expanded: false,
-      }),
-    );
-    const spinner = container.querySelector(".motion-safe\\:animate-spin");
-    expect(spinner?.tagName).toBe("SPAN");
-    expect(spinner?.querySelector("svg")).not.toBeNull();
-    expect(container.querySelector("svg.motion-safe\\:animate-spin")).toBeNull();
-  });
-});
-
 describe("ChildSessionCountsMarker render behavior", () => {
   it("renders nothing for a task without children", () => {
     const { container } = render(
@@ -67,7 +52,15 @@ describe("ChildSessionCountsMarker render behavior", () => {
     expect(screen.getByText("1")).toBeTruthy();
   });
 
-  it("renders the running form (loader + running/total) and includes all tooltip phrases", () => {
+  it("ignores subagent counters from older hosts (§9)", () => {
+    const { container } = render(
+      createElement(ChildSessionCountsMarker, {
+        task: taskWith({ subagentCount: 3, runningSubagentCount: 1 }),
+        expanded: false,
+      }),
+    );
+    expect(container.innerHTML).toBe("");
+
     render(
       createElement(ChildSessionCountsMarker, {
         task: taskWith({ sideChatCount: 2, subagentCount: 3, runningSubagentCount: 1 }),
@@ -75,29 +68,16 @@ describe("ChildSessionCountsMarker render behavior", () => {
       }),
     );
     expect(screen.getByText("2")).toBeTruthy();
-    expect(screen.getByText("1/3")).toBeTruthy();
-    expect(
-      screen.getByTitle(
-        "taskList.childSideChatsCount · taskList.childSubagentsCount · taskList.childSubagentsRunningCount",
-      ),
-    ).toBeTruthy();
-  });
-
-  it("clamps the denominator when the live running count outruns the cached total (TTL lag)", () => {
-    render(
-      createElement(ChildSessionCountsMarker, {
-        task: taskWith({ runningSubagentCount: 2 }),
-        expanded: false,
-      }),
-    );
-    expect(screen.getByText("2/2")).toBeTruthy();
+    expect(screen.queryByText("1/3")).toBeNull();
+    expect(screen.getByTitle("taskList.childSideChatsCount")).toBeTruthy();
+    expect(document.querySelector(".motion-safe\\:animate-spin")).toBeNull();
   });
 
   it("expander click fires onToggle and reflects aria-expanded; the display-only variant has none", () => {
     const onToggle = vi.fn();
     const { rerender } = render(
       createElement(ChildSessionCountsMarker, {
-        task: taskWith({ subagentCount: 2 }),
+        task: taskWith({ sideChatCount: 2 }),
         expanded: false,
         onToggle,
       }),
@@ -108,7 +88,7 @@ describe("ChildSessionCountsMarker render behavior", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
     rerender(
       createElement(ChildSessionCountsMarker, {
-        task: taskWith({ subagentCount: 2 }),
+        task: taskWith({ sideChatCount: 2 }),
         expanded: true,
         onToggle,
       }),
@@ -118,7 +98,7 @@ describe("ChildSessionCountsMarker render behavior", () => {
     // Drag-overlay variant: plain span, no button semantics, no toggle.
     const display = render(
       createElement(ChildSessionCountsMarker, {
-        task: taskWith({ subagentCount: 2 }),
+        task: taskWith({ sideChatCount: 2 }),
         expanded: false,
       }),
     );

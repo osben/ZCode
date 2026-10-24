@@ -3450,30 +3450,29 @@ describe("sidebar child session facts", () => {
     return { parentID, otherParent };
   }
 
-  it("counts side chats and subagents per parent, excluding workflow children and forks", async () => {
+  it("counts side chats per parent, excluding subagents, workflow children and forks (§9)", async () => {
     const { store, raw, close } = await openFamilyStore();
     try {
       const { parentID, otherParent } = await seedFamily(store, raw);
       const counts = await store.countChildSessions({ parentIds: [parentID, otherParent] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
-      expect(counts.get(String(otherParent))).toEqual({ sideChats: 1, subagents: 0 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1 });
+      expect(counts.get(String(otherParent))).toEqual({ sideChats: 1 });
       await expect(store.countChildSessions({ parentIds: [] })).resolves.toBeInstanceOf(Map);
     } finally {
       await close();
     }
   });
 
-  it("lists newest-first children capped per parent while counts stay true totals", async () => {
+  it("lists side chats only, so newer subagents never push a side chat past the cap (§9)", async () => {
     const { store, raw, close } = await openFamilyStore();
     try {
       const { parentID } = await seedFamily(store, raw);
-      const listed = await store.listChildSessions({ parentIds: [parentID], limitPerParent: 2 });
+      const listed = await store.listChildSessions({ parentIds: [parentID], limitPerParent: 1 });
       const children = listed.get(String(parentID));
-      expect(children.map((child) => child.title)).toEqual(["archived subagent", "newest subagent"]);
-      expect(children[0]).toMatchObject({ taskType: "subagent_child", lastActivityAt: 80 });
-      // The cap truncates the list, but the grouped counts still report all live children.
+      expect(children.map((child) => child.title)).toEqual(["side chat"]);
+      expect(children[0]).toMatchObject({ taskType: "selection_side_chat", lastActivityAt: 40 });
       const counts = await store.countChildSessions({ parentIds: [parentID] });
-      expect(counts.get(String(parentID))).toEqual({ sideChats: 1, subagents: 3 });
+      expect(counts.get(String(parentID))).toEqual({ sideChats: 1 });
     } finally {
       await close();
     }

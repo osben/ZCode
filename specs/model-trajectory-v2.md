@@ -13,6 +13,8 @@ v2 is a second, independent view built for those questions. v1 stays unchanged a
 
 ## Scope
 
+Seven blocks, agreed on a mockup with the user:
+
 | Block            | Content                                                                                                               |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------- |
 | A Summary        | One line: calls, tokens, cache hit %, peak context %, model time vs tool time                                         |
@@ -23,7 +25,7 @@ v2 is a second, independent view built for those questions. v1 stays unchanged a
 | F Context chart  | Context % per main call, with compaction and context-reset markers                                                    |
 | G Time by tool   | Execution time and call count per tool name, plus a model bar                                                         |
 
-Non-goals: live streaming updates, editing or replaying requests, cross-session aggregation, changes to v1.
+Non-goals: live streaming updates, editing or replaying requests, cross-session aggregation, and changes to v1.
 
 ## Owners and event order
 
@@ -56,10 +58,10 @@ The Host owns facts only and keeps no cache. The UI owns presentation: rows, fil
 
 ## Interfaces
 
-- RPC: `IZCodeTaskService.getModelTrajectoryV2({ taskId, limit? }): Promise<ZCodeModelTrajectoryV2>` on the existing `zcode-task` channel. Desktop host routing, the server and the mobile allow-list pass it through unchanged.
-- Host module `model-trajectory-v2-projection` (`packages/services/src/model-trajectory-v2/`); its `contract.ts` owns the response types.
-- UI module `model-trajectory-v2` (`packages/ui/src/model-trajectory-v2/`); its `contract.ts` is the only file that imports `@zcode/services`.
-- Side-pane tab type `model-trajectory-v2`, id `model-trajectory-v2:<taskId>`, deduplicated per task, independent of the v1 tab.
+- RPC: `IZCodeTaskService.getModelTrajectoryV2({ taskId, limit? }): Promise<ZCodeModelTrajectoryV2>` on the existing `zcode-task` channel. Desktop host routing, the server and the mobile allow-list pass it through without changes.
+- Host module `model-trajectory-v2-projection` (`packages/services/src/model-trajectory-v2/`). Its `contract.ts` owns the response types.
+- UI module `model-trajectory-v2` (`packages/ui/src/model-trajectory-v2/`). Its `contract.ts` is the only file that imports `@zcode/services`.
+- Side-pane tab type `model-trajectory-v2`, id `model-trajectory-v2:<taskId>`, deduplicated per task and independent of the v1 tab.
 
 Response shape (summary; the module contract is authoritative):
 
@@ -75,13 +77,14 @@ Response shape (summary; the module contract is authoritative):
 
 1. Parameters come from the wire body. Anthropic: `max_tokens`, `thinking`, `output_config.effort`, `tool_choice`, `temperature`, `stream`. OpenAI-style: `max_completion_tokens` or `max_tokens`, `reasoning_effort`, `tool_choice`. Missing values stay absent.
 2. Cache breakpoints are recorded for `cache_control` on system blocks, tool definitions and message parts. Production trimming removes message bodies, so message-level breakpoints are reported only when the body messages are present; otherwise `cacheBreakpointsComplete` is `false`.
-3. A record without a wire body has no catalog or system prompt id. The UI then falls back to `request.toolNames` and the system-role input messages.
+3. A record without a wire body has no catalog or system prompt id. The UI then falls back to `request.toolNames` and to the system-role input messages.
+   3a. A subagent session's own loop is written to its own `model-io-<childSessionId>.jsonl` with `querySource: "subagent"`; parent sessions never carry those calls (they live in the child's file). The v2 Host projection (`promoteSubagentSessionLoop`, `model-trajectory-v2/domain/subagentLoop.ts`) therefore treats a window that has no `main` call but has `subagent` calls as a subagent session's trajectory: those calls become `callSource.kind = "main"` (their `querySource` stays `subagent`) before input deltas are decided, so its calls chain as deltas (an exception to input-deltas rule 1, which is about a parent's subagent calls). Main-call metrics, the context chart, the ledger turns and input deltas then work for a subagent trajectory opened from the Agent row (specs/conversation-agent-row-context-menu.md). A window with any `main` call is unchanged. The v1 viewer is unchanged (added 2026-10-24).
 
 ### Payload budget
 
-4. Tool definitions are interned per definition by canonical JSON, so a catalog that changes by one tool costs one new definition plus an id list. Each description is bounded to 16 KiB and each schema to 32 KiB (stringified and marked `truncated`). Total definition bytes are capped at 1 MiB; definitions past the cap keep only name and size, are marked `omitted`, and `budget.omitted` is set.
+4. Tool definitions are interned per definition by canonical JSON, so a catalog that changes by one tool costs one new definition plus an id list. Each description is bounded to 16 KiB and each schema to 32 KiB (stringified and marked `truncated`). Total definition bytes are capped at 1 MiB; definitions past the cap keep only name and size and are marked `omitted`, and `budget.omitted` is set.
 5. System blocks are interned per block. Each block is bounded to 64 KiB (head and tail), total 256 KiB, with the same `omitted` rule.
-6. Message parts keep the v1 per-part budget and input-delta projection. Expected response size is the v1 size plus 200–350 KB, at most about 1.5 MiB. Attaching `request.body` per record is forbidden (200 × 160 KB = 32 MB).
+6. Message parts keep the v1 per-part budget and input-delta projection. Expected response size is the v1 size plus 200–350 KB, at most about 1.5 MiB more. Attaching `request.body` per record is forbidden (200 × 160 KB = 32 MB).
 
 ### Tool timing
 
@@ -103,7 +106,7 @@ Response shape (summary; the module contract is authoritative):
 16. A tool row's result is the `tool-result` part with the same `toolCallId` in any later call's input. A missing result shows as pending.
 17. Compact calls emit a `compact` marker. Sidecar and subagent calls are hidden by default behind a toggle; shown, they render as their own request groups. A retried attempt emits a `retry` marker. A truncated window starts with a `window-truncated` marker.
 18. The request separator shows model, parameters, catalog size (tool count and KB), system prompt size, breakpoints count, and the change from the previous request of the same source kind: parameters, tools added or removed, system prompt changed, model changed.
-19. Row keys derive from request ids, tool call ids and message indexes, so they stay stable when records are appended.
+19. Row keys are derived from request ids, tool call ids and message indexes, so they stay stable when records are appended.
 
 ### Metrics (blocks A and G)
 
@@ -114,7 +117,7 @@ Response shape (summary; the module contract is authoritative):
 ### Overview strip (block B)
 
 23. The x axis is wall-clock time over the window. Overlapping spans are packed into sub-rows of their lane.
-24. A model span with known TTFT draws the TTFT part lighter and decoding solid; without TTFT it is drawn solid.
+24. A model span with known TTFT draws the TTFT part lighter and decoding solid. Without TTFT it is drawn solid.
 25. Dragging selects a range in epoch milliseconds. The ledger shows every row whose interval intersects the range, inclusive. Clear-range and Escape reset it. A click without drag selects the row under the pointer. Ctrl or Cmd plus wheel zooms around the pointer; Shift plus wheel pans. The strip handles these wheel events with a non-passive listener and prevents their default, so the page neither zooms nor scrolls.
 
 ### Inspector (block D)
@@ -136,7 +139,7 @@ Response shape (summary; the module contract is authoritative):
 
 ### Event categories: skills, memory, MCP (H1–H4)
 
-Classification is a pure UI function of the v2 response; the Host contract does not change. It relies on the runtime names and text markers listed below, so a runtime change to any of them must update `domain/eventCategories.ts` and its tests.
+Agreed on a mockup with the user (2026-10-22). Classification is a pure UI function of the v2 response; the Host contract does not change. It relies on runtime names and text markers listed below, so a runtime change to any of them must update `domain/eventCategories.ts` and its tests.
 
 34. Categories: `skill`, `memory` (operation `read` or `write`), `mcp`; everything else stays uncategorized.
 35. Skill: a tool call named `Skill`. The skill name is `input.skill`, arguments `input.args`. Slash commands also go through this tool (the Skill tool description instructs it; no other injection path exists in the runtime). Loaded size is the result's `truncated.originalBytes` when bounded, otherwise its serialized length.
@@ -177,3 +180,4 @@ E2E: `packages/desktop/test/e2e/conversation-session/conversation-session-model-
 7. A narrow pane uses a single column with drill-in and no horizontal scroll.
 8. With the session database unavailable, the trajectory loads and timing shows as unavailable.
 9. Skills, memory and MCP: a Skill call, an MCP call, a memory Write, an index and a recall injection, and `project_memory_recall` and `dream` sidecars produce categorized rows with badges, filter chips with correct counts (filtering keeps only that category), strip colors and a memory lane, and the summary line of skills, memory and MCP servers.
+10. A subagent session's trajectory (all calls `querySource: "subagent"`) counts them as main calls: the summary shows `N calls`, not `0 calls (+N other)`, the context chart has one point per call, and later calls are input deltas of earlier ones. A parent session's trajectory is unchanged.
