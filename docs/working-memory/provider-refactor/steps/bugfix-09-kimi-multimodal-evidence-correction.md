@@ -3,54 +3,38 @@
 > Status: Completed
 >
 > Date: 2026-09-01
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/bugfix-09-kimi-multimodal-evidence-correction.md`
 
-## Problem
+## Problem and Cause
 
-The Built-in Config writes the following model capabilities incorrectly:
+The Built-in Config recorded wrong model capabilities, and `packages/provider-node/test/zcode-builtin-integrity.test.ts`
+asserted the first two wrong values, so the error passed tests:
 
-| Model            | Current Value            | Current Official Fact                                                                                           | Target Value |
-| ---------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------ |
-| `kimi-k3`        | Image=false, Video=false | The Kimi API and the K3 release materials clearly state native visual, supporting image and video understanding | true / true  |
-| `kimi-k2.7-code` | Image=false, Video=false | The Kimi official FAQ clearly supports Text, Image, Video                                                       | true / true  |
-| `k3-256k`        | Image=true, Video=true   | The Kimi Code model table clearly states Image only                                                             | true / false |
+| Model            | Was                      | Official fact                                                           | Target       |
+| ---------------- | ------------------------ | ----------------------------------------------------------------------- | ------------ |
+| `kimi-k3`        | Image=false, Video=false | Native visual; image and video understanding                            | true / true  |
+| `kimi-k2.7-code` | Image=false, Video=false | Kimi official FAQ: Text, Image, Video                                   | true / true  |
+| `k3-256k`        | Image=true, Video=true   | Kimi Code model table: Image only                                       | true / false |
 
-The `packages/provider-node/test/zcode-builtin-integrity.test.ts` also asserts the first two incorrect values, allowing the incorrect configuration to stably pass the test.
+Cause: the 2026-08-28 Built-in refresh recorded only K3's context length in its research summary; "not recorded"
+was read as "not supported" and positive values were demoted to `false`. This is not a Resolver, Overlay or Adapter
+problem but an incomplete human projection rule from release evidence to Config.
 
-## Root Cause
+## Rules
 
-The Built-in data refresh on 2026-08-28 only recorded the K3's context length in the research summary, without recording the multimodal capability. During implementation, "not recorded in this data" was incorrectly interpreted as "the model does not support it," demoting the original positive value to `false`. This is not a problem with the Resolver, the Overlay, or the Adapter; it is the incomplete human projection rule from the release evidence to the Config.
-
-## Fix
-
-1. First modify the integrity test, fixing the three official facts and proving the old Config fails.
-2. Correct the corresponding Model Match Rules, without adding the Provider/Model specialized code.
-3. Increment the Built-in revision to ensure the running Config Source can observe the new published fact.
-4. Add the capability degradation gate in the Built-in maintenance design: missing data cannot overturn the already-published positive capability.
-5. Record this revision and the current official source in the release evidence report.
-
-## Impact Scope
-
-```text
-Built-in Model Match Rules
-            |
-            v
-Effective Model Config
-            |
-            v
-Provider Registry / Active Model.properties
-        |                    |
-        v                    v
-The settings page and the model selector       The Runtime input check / Adapter encoding
-```
-
-- No new capability DTO is added; the capability is not inferred by the Model ID at Runtime.
-- The already-created Active Model continues to freeze; the new Model created after the Config refresh uses the new fact.
-- The Desktop continuous, Web Remote replayable, Session Selection, and queue semantics remain unchanged.
-- The Video is still constrained by both the `input_format.support_video` and the Adapter's actual encoding capability.
+1. Correct the Model Match Rules (no Provider/Model specialized code); the integrity test pins the three official
+   facts.
+2. Increment the Built-in revision so running Config Sources observe the new published fact.
+3. Built-in maintenance gate: missing data cannot overturn an already-published positive capability.
+4. Record the revision and current official sources in the release evidence report.
+5. Flow: Built-in Model Match Rules -> Effective Model Config -> Provider Registry / Active Model.properties ->
+   settings page, model selector, Runtime input check, Adapter encoding. No new capability DTO; capability is never
+   inferred from Model ID at Runtime. Already-created Active Models stay frozen; Models created after the Config
+   refresh use the new fact. Video remains bounded by both `input_format.support_video` and the Adapter's actual
+   encoding capability. Desktop continuous, Web Remote replayable, Session Selection and queue semantics unchanged.
 
 ## Verification
 
-- The real Built-in Config parses: the K3, K2.7 Code, and K3-256K media capabilities.
-- The `@zcode/provider-node` targeted unit test and typecheck.
-- The root `pnpm typecheck`, `pnpm lint`.
-- The configuration and document format check, the `git diff --check`.
+Real Built-in Config parse of K3, K2.7 Code and K3-256K media capabilities; `@zcode/provider-node` targeted unit
+test and typecheck; root `pnpm typecheck`, `pnpm lint`; config/doc format check and `git diff --check`.
