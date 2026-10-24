@@ -1,120 +1,113 @@
 # Bash Effective Shell Snapshot
 
-## 背景
+## Background
 
-Bash tool 的 shell 选择会同时影响三类行为：
+The Bash tool's shell selection affects three kinds of behavior:
 
-- Bash 命令实际由哪个 shell 执行。
-- provider-visible 的 `# Environment` 里展示哪个 Shell。
-- Explore 子任务继承到的执行环境和 prompt 环境。
+- Which shell actually runs Bash commands.
+- Which Shell the provider-visible `# Environment` shows.
+- The execution environment and prompt environment inherited by Explore subtasks.
 
-过去这些信息分别从环境变量、执行 adapter、settings/runtime config 中读取，容易出现“模型看到的 shell”和“Bash 实际执行的 shell”不一致。这个文档定义统一后的运行时契约。
+These used to be read separately from environment variables, the execution adapter and settings/runtime
+config, so "the shell the model sees" and "the shell Bash actually runs" could differ. This document defines
+the unified runtime contract.
 
-## 核心契约
+## Core contract
 
-运行时维护一个 session 级别的 `ExecutionShellSelection`，它是 Bash tool 的有效 shell 快照。新 session 的初始状态是未初始化；第一次真正接受用户 prompt 前才把当前候选 shell 初始化为 session-start 快照。
+The runtime keeps a session-level `ExecutionShellSelection`, the Bash tool's effective shell snapshot. A new
+session starts uninitialized; the current candidate shell is initialized as the session-start snapshot only
+just before the first user prompt is truly accepted.
 
-- 普通 session 创建和 deferred draft 预热都不解析用户配置的 shell selection。
-- `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts` 是 session shell environment 的唯一 owner，负责初始化、读取、EnvInfo patch、持久化和 resume 恢复。
-- session 第一次接受输入前，统一用户执行边界通过 `session/requestRuntimePreferences` 的 `user-execution` scope 向所属 Host 读取一次当前 shell 候选值，再由 `initializeSessionShellEnvironmentIfNeeded()` 初始化。该请求最多等待 15 秒；超时按协议错误阻断首次用户执行，不重试或静默回退到其他 shell。
-- 初始 `# Environment` 的 `Shell` 字段只展示这个 session-start 快照的 `display.name`。
-- Bash tool 执行时使用同一个 selection。
-- Explore 子任务的 prompt 环境和 child runtime 继承同一个 selection。
-- 如果用户在同一 session 中切换 shell，当前 session 不会热更新；用户需要新建 session 才会生效。
-- deferred draft session 只是新会话的隐藏预热态，不是用户已经开始的稳定会话。预热创建时不读取用户配置的 shell selection。
-- legacy `session/send`、V4 `sendText`、create/resume/subscribe 都不携带 shell 候选值；Host 读取只发生在 Agent 的统一首次用户执行边界，不能让 desktop/mobile 或各 command 入口分别维护分支。
-- app 层的普通 prompt、goal external activity、expert workflow 和 script workflow 共用同一个用户执行边界。任何会创建首条用户可见事实、启动模型 turn 或 workflow child agent 的入口，都必须先调用这个边界初始化 shell snapshot，再持久化 session 或创建子 runtime。
-- Protocol 的 `session/create` / `session/resume` 不接受 shell 候选值，避免调用方误以为可以在创建或恢复阶段覆盖 session shell。
-- session 第一次真正落库时，runtime 会把创建时的 shell selection 写入 `session_entry`。
-- cold resume 时由 core runtime 优先读取这个持久化 selection 重建 runtime config，而不是重新读取最新 settings。
-- cold resume 会先校验持久化 selection 是否仍可用：`legacy-shell` 可以没有 path；Windows `cmd.exe` fallback 继续按原有语义接受；其他具体 shell path 必须仍是可执行文件。失效时不把旧 path 交给 Bash executor，而是回退到 resume 入口已经解析出的当前 selection。
-- legacy session 如果没有持久化 selection，或持久化 selection 已失效，只能按当前自动解析逻辑 best-effort 恢复；当历史 `# Environment` 的 Shell 与当前执行 shell 不一致时，必须通过 `shell_environment_change` attachment 告知模型。Windows legacy session 被当前 auto Git Bash 接管时，即使历史 `# Environment` 没有可靠 Shell 字段，也会插入一次 Git Bash shell 提醒，避免模型继续沿用旧 shell 习惯。
+- Ordinary session creation and deferred-draft warm-up do not resolve the user-configured shell selection.
+- `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts` is the sole owner of the session shell environment, responsible for initialization, reading, EnvInfo patch, persistence and resume restoration.
+- Before the session first accepts input, the unified user-execution boundary reads the current shell candidate once from the owning Host through the `user-execution` scope of `session/requestRuntimePreferences`, and `initializeSessionShellEnvironmentIfNeeded()` then initializes. The request waits at most 15 seconds; on timeout the first user execution is blocked with a protocol error, with no retry and no silent fallback to another shell.
+- The `Shell` field of the initial `# Environment` shows only the `display.name` of this session-start snapshot.
+- The Bash tool executes with the same selection.
+- The Explore subtask's prompt environment and child runtime inherit the same selection.
+- If the user switches shell within a session, the current session is not hot-updated; the user must create a new session for it to take effect.
+- A deferred draft session is only a hidden warm-up state of a new conversation, not a stable session the user has started. Warm-up creation does not read the user-configured shell selection.
+- legacy `session/send`, V4 `sendText`, create/resume/subscribe carry no shell candidate; the Host read happens only at the Agent's unified first-user-execution boundary, so desktop/mobile or individual command entries cannot each maintain a branch.
+- The app layer's ordinary prompt, goal external activity, expert workflow and script workflow share the same user-execution boundary. Any entry that creates the first user-visible fact, starts a model turn or a workflow child agent must call this boundary first to initialize the shell snapshot, before persisting the session or creating the child runtime.
+- The Protocol's `session/create` / `session/resume` accept no shell candidate, so callers do not mistake them as a way to override the session shell at creation or resume.
+- When the session is first truly persisted, the runtime writes the creation-time shell selection into `session_entry`.
+- On cold resume the core runtime reads this persisted selection first to rebuild the runtime config instead of re-reading the latest settings.
+- Cold resume first checks whether the persisted selection is still usable: `legacy-shell` may have no path; the Windows `cmd.exe` fallback keeps being accepted under its original semantics; any other concrete shell path must still be an executable file. If invalid, the old path is not handed to the Bash executor, and it falls back to the current selection the resume entry has already resolved.
+- A legacy session with no persisted selection, or whose persisted selection is invalid, can only be restored best-effort by the current auto-resolution logic; when the historical `# Environment` Shell differs from the current execution shell, the model must be told through a `shell_environment_change` attachment. When a Windows legacy session is taken over by the current auto Git Bash, a one-time Git Bash shell reminder is inserted even if the historical `# Environment` has no reliable Shell field, so the model does not keep using old shell habits.
 
-## Bash Runtime `.sh` Snapshots
+## Bash Runtime `.sh` snapshots
 
-Bash tool 运行时有三种名字相近但职责不同的 snapshot：
+The Bash tool runtime has three similarly named snapshots with different responsibilities:
 
 1. session shell selection snapshot
-   - 由 `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts` 管理。
-   - 决定当前 session 的有效 shell、provider-visible `# Environment` Shell 字段、Explore 继承的 shell display。
-   - session 创建后不会因为 settings 切换而热更新。
+   - Managed by `apps/zcode-cli/packages/core/src/runtime/methods/session-shell-environment.ts`.
+   - Decides the session's effective shell, the provider-visible `# Environment` Shell field and the shell display Explore inherits.
+   - Not hot-updated by settings switches after session creation.
 
 2. shell init snapshot
-   - 由 `apps/zcode-cli/packages/adapters/src/exec/shell-init-snapshot.ts` 管理。
-   - POSIX/Git Bash 下，adapter 首次用 login shell 执行 snapshot creation script，source 用户 rc 文件，并把 functions、aliases、shell options、PATH 写入 ZCode storage 下的 `shell-snapshots/snapshot-${shell}-${timestamp}-${random}.sh`。
-   - functions/options/aliases 的导出策略：只在用户 rc 存在时导出，过滤单下划线补全函数，options/aliases 输出最多 1000 行，并在 Git Bash/MSYS/Cygwin 下过滤 `winpty` aliases。
-   - snapshot creation script 使用 adapter 侧 host path 写文件；Git Bash path 转换只发生在后续真实命令 source snapshot 时。
-   - 创建成功后，后续 Bash tool command 会先 source 这个 snapshot，再用非 login shell 执行真实命令，即 spawn args 从 `-c -l <command>` 变为 `-c <command>`。
-   - 创建失败时降级为原行为，继续使用 `-c -l <command>`。
-   - hot resume 如果仍复用同一个 adapter/manager，可以继续复用当前进程内 ready snapshot。
-   - cold resume 不恢复 snapshot 文件 path；恢复 session shell selection 后，第一次 Bash toolcall 重新创建 shell init snapshot。
-   - cold resume 或新 adapter 不会扫描/复活旧 snapshot，也不会按 session/hash 复用同名文件；新进程会创建新的随机 snapshot 文件，旧残留只由 retention cleanup 处理。
-   - 每次真实 Bash command 执行前都会重新检查 cached snapshot 文件是否仍可访问；如果文件已丢失，本次回退为 login shell，不跳过 `-l`。
-   - 如果用户在 snapshot 创建期间取消命令或关闭 adapter，真实模型命令不会继续 spawn。
-   - 当前进程创建成功的 snapshot 会在 `NodeExecutionAdapter.close()` 时尝试 unlink；异常残留会由 retention cleanup 清理。
-   - retention cleanup 默认删除 `shell-snapshots/` 顶层 mtime 超过 30 天的 `.sh` 文件。
-   - CMD 和 legacy shell 不创建也不 source shell init snapshot。
+   - Managed by `apps/zcode-cli/packages/adapters/src/exec/shell-init-snapshot.ts`.
+   - On POSIX/Git Bash the adapter first runs a snapshot creation script with a login shell, sources the user's rc files, and writes functions, aliases, shell options and PATH into `shell-snapshots/snapshot-${shell}-${timestamp}-${random}.sh` under ZCode storage.
+   - Export policy for functions/options/aliases: exported only when the user rc exists, single-underscore completion functions filtered, options/aliases output capped at 1000 lines, and `winpty` aliases filtered under Git Bash/MSYS/Cygwin.
+   - The snapshot creation script writes the file using the adapter-side host path; Git Bash path conversion happens only when a later real command sources the snapshot.
+   - After successful creation, later Bash tool commands source this snapshot first and then run the real command with a non-login shell, i.e. the spawn args change from `-c -l <command>` to `-c <command>`.
+   - On creation failure it degrades to the original behavior and keeps `-c -l <command>`.
+   - Hot resume that still reuses the same adapter/manager can keep reusing the in-process ready snapshot.
+   - Cold resume does not restore the snapshot file path; after restoring the session shell selection, the first Bash toolcall recreates the shell init snapshot.
+   - Cold resume or a new adapter does not scan/revive old snapshots and does not reuse same-named files by session/hash; a new process creates a new random snapshot file, and old leftovers are handled only by retention cleanup.
+   - Before every real Bash command the cached snapshot file is re-checked for accessibility; if the file is lost, this run falls back to a login shell and does not skip `-l`.
+   - If the user cancels the command or closes the adapter during snapshot creation, the real model command is not spawned.
+   - Snapshots created by the current process are unlinked on a best effort at `NodeExecutionAdapter.close()`; abnormal leftovers are cleaned by retention cleanup.
+   - Retention cleanup by default deletes top-level `.sh` files in `shell-snapshots/` with mtime older than 30 days.
+   - CMD and legacy shell neither create nor source a shell init snapshot.
 
 3. ZCode startup script snapshot
-   - 由 `apps/zcode-cli/packages/adapters/src/exec/bash-startup-script.ts` 根据 execution request 的 `bashPrelude` 生成并物化；不再有 core 侧 `bash-startup.ts` descriptor。
-   - 这个脚本是 ZCode 内部执行基础设施，不是 provider-visible prompt content，也不改变 tool schema。
-   - `rg` fallback 始终保留；`find` / `grep` 是否映射到 `bfs` / `ugrep`，由根 Session runtime 物化时固定的增强搜索启动偏好决定，默认启用。
+   - Generated and materialized by `apps/zcode-cli/packages/adapters/src/exec/bash-startup-script.ts` from the execution request's `bashPrelude`; the core-side `bash-startup.ts` descriptor no longer exists.
+   - This script is ZCode internal execution infrastructure, not provider-visible prompt content, and does not change the tool schema.
+   - The `rg` fallback is always kept; whether `find` / `grep` map to `bfs` / `ugrep` is decided by the enhanced-search startup preference fixed when the root Session runtime materializes, enabled by default.
 
-执行顺序是：先 source shell init snapshot，再 source ZCode startup script，最后执行模型命令和 cwd capture trailer。snapshot 文件 path 不作为 session state 持久化；cold resume 后由 adapter 基于恢复后的 shell selection lazy 创建新的随机 snapshot。旧文件不能直接作为 ready snapshot 被恢复。
+Execution order: source the shell init snapshot first, then the ZCode startup script, and finally run the model command and the cwd capture trailer. The snapshot file path is not persisted as session state; after cold resume the adapter lazily creates a new random snapshot based on the restored shell selection. An old file cannot be restored directly as a ready snapshot.
 
-## Selection 结构
+## Selection structure
 
-`ExecutionShellSelection` 是跨 contracts、adapters、core、bootstrap 的唯一 shell selection 数据结构。
+`ExecutionShellSelection` is the only shell selection data structure across contracts, adapters, core and bootstrap.
 
-- `dialect`：执行包装语义，当前为 `posix`、`git-bash`、`cmd` 或 `legacy-shell`。
-- `source`：selection 来源，当前为 `auto-detected`、`user-config` 或 `legacy-fallback`。
-- `path`：已解析出的可执行路径。legacy fallback 可以没有路径。
-- `display.name`：provider-visible 的稳定名称，例如 `zsh`、`bash`、`Git Bash`、`CMD`、`system shell`。这里禁止展示绝对路径。
-- `id` / `label`：设置项或诊断展示用元数据，不作为 provider-visible contract。
+- `dialect`: execution wrapping semantics, currently `posix`, `git-bash`, `cmd` or `legacy-shell`.
+- `source`: where the selection came from, currently `auto-detected`, `user-config` or `legacy-fallback`.
+- `path`: the resolved executable path. A legacy fallback may have no path.
+- `display.name`: the provider-visible stable name, such as `zsh`, `bash`, `Git Bash`, `CMD`, `system shell`. Absolute paths must not be shown here.
+- `id` / `label`: metadata for settings items or diagnostics display, not a provider-visible contract.
 
-Runtime config 只以 `bashShellSelection` 作为 source of truth。底层 execution adapter 的 command 仍使用既有 `shellOverride` 字段承载这个 selection，但 runtime / tool context 不再维护第二份 `bashShellOverride` 状态。
+Runtime config uses only `bashShellSelection` as the source of truth. The underlying execution adapter's
+command still carries this selection in the existing `shellOverride` field, but the runtime / tool context no
+longer keeps a second `bashShellOverride` state.
 
-## 解析规则
+## Resolution rules
 
 macOS / Linux:
 
-- 优先解析可用的 `zsh` / `bash`。
-- 如果 `$SHELL` 本身是可执行的 `zsh` 或 `bash`，可以直接使用。
-- 如果用户使用 `fish` 等非 Bash-compatible shell，不把 `fish` 作为 Bash tool shell；继续从 `PATH` 和固定路径中找 `zsh` / `bash`。
-- 找不到 `zsh` / `bash` 时，返回 `legacy-fallback`，保留旧的 generic shell fallback 行为。
+- Prefer an available `zsh` / `bash`.
+- If `$SHELL` itself is an executable `zsh` or `bash`, it can be used directly.
+- If the user uses a non-Bash-compatible shell such as `fish`, `fish` is not taken as the Bash tool shell; keep searching `PATH` and fixed paths for `zsh` / `bash`.
+- When no `zsh` / `bash` is found, return `legacy-fallback`, keeping the old generic shell fallback behavior.
 
 Windows:
 
-- 用户显式选择 Git Bash 时，优先使用该 selection。
-- 用户显式选择 CMD 时，优先使用 CMD。
-- 自动模式下优先解析 Git Bash。
-- 找不到 Git Bash 时返回 `legacy-fallback`，保留旧的 cmd / ComSpec fallback 行为。
+- When the user explicitly selects Git Bash, that selection is used first.
+- When the user explicitly selects CMD, CMD is used first.
+- In auto mode Git Bash is resolved first.
+- When Git Bash is not found return `legacy-fallback`, keeping the old cmd / ComSpec fallback behavior.
 
-## Prompt 与缓存
+## Prompt and cache
 
-`# Environment` 是 session-start 快照，不会因为同一 session 内用户切换 shell 而被重写。这样可以避免 prompt-cache 被整段 system context mutation 击穿。
+`# Environment` is a session-start snapshot and is not rewritten when the user switches shell within the same
+session. This avoids breaking the prompt-cache through a whole-system-context mutation.
 
-切换 shell 不会向已有 session 追加 `shell_environment_change` attachment。因为 Bash 执行仍然使用 session-start selection，模型看到的初始 `# Environment` 和真实 Bash 执行环境保持一致。
+Switching shell does not append a `shell_environment_change` attachment to an existing session. Because Bash
+execution still uses the session-start selection, the initial `# Environment` the model sees stays consistent
+with the real Bash execution environment.
 
-例外是 legacy/no-usable snapshot 的 cold resume：这类会话没有稳定的 session-start shell selection 可恢复，runtime 只能用当前解析出的 selection 继续执行。若 Windows 上最终由 auto Git Bash 接管，会通过 `shell_environment_change` 插入一次短提醒，告诉模型后续 Bash command 当前使用 Git Bash 执行。这不是同 session 内 shell hot update，也不会读取用户最新设置覆盖已有可用 snapshot。
-
-`apps/zcode-cli/packages/bootstrap/src/app/create-app.ts` 在统一用户执行边界 lazy 请求一次 Host 候选值，并在 app 生命周期内复用该结果。Host 候选无效或未显式选择时，再由 CLI 运行环境的 `resolveEffectiveBashShellSelection()` 自动解析。已有或持久化 selection 的 session 会忽略候选值；持久化 selection 的读取、可用性校验和 fallback 应用统一由 `AgentRuntime.resumeFromStore()` 负责。
-
-deferred draft 预热不冻结 shell；首次真实用户执行前才读取。desktop continuous、web-remote replayable、legacy/V4 prompt、goal external activity、expert workflow 和 script workflow 都必须经过同一 app/runtime admission。desktop-attached remote 通过 workspace-scoped Agent service 请求回到 desktop shared Host 的本地 `SettingService`；手机 `/remote` 复用该 Host。relay/main 不保存 shell 设置，远端 `~/.zcode/v2` 也不作为 desktop-attached workspace 的权威源。
-
-旧 Host 返回 `-32601` 或 Agent 尚未连接 Host 返回 `-32020` 时，保持 CLI 自动解析；其他协议、resolver 或传输错误原样失败。这里不新增 per-send pull、设置广播、缓存同步或 Session 级 setting snapshot。
-
-## Explore 继承
-
-Explore 子任务继承父 runtime 的有效 shell selection：
-
-- child prompt 的 `EnvInfo.shell` 使用父 selection 的 `display.name`。
-- child runtime 的 Bash tool 执行也使用同一个 selection。
-
-这样 Explore 里模型看到的 Shell 和真实 Bash 执行路径保持一致。
-
-## 非目标
-
-- 不在 provider-visible 文本里暴露绝对 shell 路径。
-- 不把 app-global shell 设置复制为 remote-scoped setting；远端只通过所属 shared Host 按需读取一次。
-- 不因为自动解析失败而让 Bash tool 直接 spawn error；解析失败继续走原来的 generic shell fallback。
+The exception is a cold resume of a legacy/no-usable-snapshot session: such a session has no stable
+session-start shell selection to restore, so the runtime can only continue with the currently resolved
+selection. If on Windows auto Git Bash finally takes over, a short reminder is inserted through
+`shell_environment_change` telling the model that later Bash commands currently run with Git Bash. This is
+not an in-session shell hot update and does not read the user's latest settings to override an existing
+usable snapshot.

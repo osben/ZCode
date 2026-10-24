@@ -1,23 +1,33 @@
 # Mobile Remote Control Theme Control
 
-Mobile remote control theme is handled in two stages:
+Mobile remote control theme works in two parts:
 
-1. The QR code link no longer appends a `theme` query parameter, avoiding the desktop theme from continuing to couple the mobile client's first-entry path.
-2. When the mobile client opens `/remote` for the first time, if the local browser does not have `localStorage["zcode-theme"]`, it uses the default `zai-dark` as the initial theme; subsequent theme changes only use the mobile client's local preference.
+1. The QR code link no longer appends a `theme` query parameter, so the desktop theme does not couple to the
+   mobile client's first-entry path.
+2. When the mobile client first opens `/remote` and the browser has no `localStorage["zcode-theme"]`, it uses
+   the default `zai-dark`; later theme changes use only the mobile client's local preference.
 
-This ensures that the two ends no longer affect each other: switching the theme on the mobile client only changes the mobile browser's local storage, while switching the theme on the desktop only changes the desktop renderer's local storage.
+The two ends do not affect each other: switching the theme on mobile only changes the mobile browser's local
+storage, and switching it on the desktop only changes the desktop renderer's local storage.
 
-The task list page and the top header of the chat page on the mobile client both render `WebRemoteControlThemeMenu` on the right side. The menu only exposes `system`, `zai-dark`, and `zai-light`, where `zai-dark` / `zai-light` are displayed as Dark Theme / Light Theme respectively.
+The task list page and the chat page header on mobile both render `WebRemoteControlThemeMenu` on the right.
+The menu exposes only `system`, `zai-dark` and `zai-light`, shown as Dark Theme / Light Theme for the latter two.
 
-## Browser Surface Synchronization
+## Browser surface synchronization
 
-The mobile remote control runs in a standard browser page; theme switching cannot only change the React subtree. The web entry point must synchronize the same resolved theme to the following browser-level surfaces:
+Mobile remote control runs in a standard browser page, so theme switching cannot only change the React subtree.
+The web entry synchronizes the same resolved theme to these browser-level surfaces:
 
-- `html`, `body`, and `#root` use the current theme's `--color-background`; they must not inherit the transparent root background required by Electron vibrancy.
-- `color-scheme` declares the light/dark scheme used by the current page, so that native controls and browser default surfaces use a consistent scheme.
-- `meta[name="theme-color"]` uses the current theme's page background color, for browsers that support this standard to color their own UI.
+- `html`, `body` and `#root` use the current theme's `--color-background`; they must not inherit the
+  transparent root background that Electron vibrancy requires.
+- `color-scheme` declares the page's light/dark scheme so native controls and browser default surfaces agree.
+- `meta[name="theme-color"]` uses the current theme's page background color, for browsers that color their own UI from it.
 
-This synchronization is a browser capability boundary, branching by neither Safari, Chrome, Firefox, nor specific system versions. The initial load is completed by `index.html` before the business bundle executes, based on the mobile client's local preference; runtime switching and `system` mode system theme changes continue to be updated by the shared `applyTheme()` using the same resolved theme. Desktop Electron does not declare browser surface opt-in and continues to retain the transparent root background and native window vibrancy.
+This is a browser capability boundary and does not branch on Safari, Chrome, Firefox or system versions. Initial
+load is done by `index.html` before the business bundle runs, from the mobile client's local preference;
+runtime switching and `system` mode system-theme changes keep being updated by the shared `applyTheme()` with
+the same resolved theme. Desktop Electron does not opt in to browser surfaces and keeps the transparent root
+background and native window vibrancy.
 
 ```text
 localStorage / system preference

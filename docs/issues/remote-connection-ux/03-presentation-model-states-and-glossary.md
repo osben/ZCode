@@ -1,69 +1,69 @@
-# 03 — 远程连接展示模型、5 种状态与术语
+# 03 — Remote Connection Presentation Model, 5 States and Glossary
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：** [02 — 连接日志与错误契约](./02-connection-log-and-error-contract.md)。本票的错误分类要覆盖 02 定下的全部错误码。
+**Blocked by:** [02 — Connection log and error contract](./02-connection-log-and-error-contract.md). This ticket's error classification must cover every error code defined by 02.
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-- **各处一致**：同一台设备在侧栏、会话头部、详情卡、设置页、向导和任务行里，状态的颜色、文案和主操作完全一致。
-- **只有 5 种状态**：用户只需要认识这 5 种状态：已连接、连接中、未连接、需要处理、连接失败。
-- **主动断开不算失败**：用户主动断开时显示中性色的"未连接"。
-- **需要处理有下一步**：以下情况都显示为"需要处理"，并给出对应的操作：需要更新、需要安装、需要确认新设备、需要补充密码。
-- **本机过旧时指向桌面端**：本机桌面端版本过旧时，引导用户去更新桌面端。
-- **不再有工程术语**：界面上不再出现工程术语。
+- **Consistent everywhere**: the same device has exactly the same state color, copy and primary action in the sidebar, session header, detail card, Settings page, wizard and task rows.
+- **Only 5 states**: 已连接 (connected), 连接中 (connecting), 未连接 (not connected), 需要处理 (needs action), 连接失败 (connection failed).
+- **User-initiated disconnect is not a failure**: shown as neutral "未连接".
+- **Needs-action has a next step**: these all show as "需要处理" with a matching action: needs update, needs install, needs new-device confirmation, needs password.
+- **Too-old local app points to desktop**: when the local desktop version is too old, guide the user to update the desktop app.
+- **No engineering terms** on the interface.
 
-对应父规格中的「远程连接展示模型」「连接错误分类」「术语与文案」「设计系统」几节。
+It corresponds to the "remote connection presentation model", "connection error classification", "terminology and copy" and "design system" sections of the parent spec.
 
-范围：
+Scope:
 
-- **展示模型**：新建一个 UI 层的纯函数模块，提供两个入口：状态映射和错误分类。输入、输出和判定规则按父规格。
-  - 用它替换现有的三套状态映射，以及现有的错误文案映射。
-  - 所有消费界面迁移到展示模型上，但保留现在的布局，不重排版式。版式重做由 10～13 负责。
-- **设计系统**：新增"进行中"语义色。"连接中"不再借用 SSH 类型色或琥珀色。
-- **缺陷修复**：
-  - 连接中出现两个转圈。
-  - "自动恢复 n/3"要在界面上可见，不能只写在 aria-label 里。
-  - 本机过旧时主操作应为"更新桌面端"，"连接"按钮不应被错误隐藏。
-  - 需要安装、需要更新的设备不再显示为"离线"。
-- **术语**：
-  - 按父规格术语表清理所有远程相关的中英文案。
-  - 设置分区改名为"远程设备"。
-  - "换代""正史"和迁移报告里的文案改写成用户能看懂的说法。
-- **跨模块规格整理**：
-  - 在 [远程设备连接 UX 规格](../../architecture/remote-device-connection-ux-spec.md) 中写入状态映射表、术语表、错误分类表和验收场景。
-  - 为已被替代的旧规格段落加上标注。
-  - 更新 [远程主链阅读入口](../../remote/README.md) 的索引。
-  - 更新 [DESIGN.md](../../../DESIGN.md) 和 [token 约定](../../../DESIGN.md)。
-  - 在 [R3 open issues](../../architecture/r3-source-server-remote-open-issues.md) 中登记父规格"范围外"里的后续议题。
+- **Presentation model**: a new UI-layer pure-function module with two entry points: state mapping and error classification. Inputs, outputs and decision rules follow the parent spec.
+  - It replaces the three existing state mappings and the existing error copy mapping.
+  - All consumer screens migrate onto the presentation model but keep their current layout; layout redo belongs to 10-13.
+- **Design system**: add an "in progress" semantic color. "Connecting" no longer borrows the SSH type color or amber.
+- **Defects fixed**:
+  - Two spinners while connecting.
+  - "自动恢复 n/3" (auto-recovery n/3) must be visible on screen, not only in an aria-label.
+  - When the local app is too old the primary action is "更新桌面端" (update desktop app) and the "连接" (connect) button must not be wrongly hidden.
+  - Devices that need install or update no longer show as "离线" (offline).
+- **Terminology**:
+  - Clean all remote-related Chinese and English copy according to the parent spec glossary.
+  - Rename the Settings section to "远程设备" (remote devices).
+  - Rewrite copy about "generation change", "canonical history" and the migration report in language users understand.
+- **Cross-module spec cleanup**:
+  - Write the state mapping table, glossary, error classification table and acceptance scenarios into the [remote device connection UX spec](../../architecture/remote-device-connection-ux-spec.md).
+  - Mark superseded old spec paragraphs.
+  - Update the index of the [remote main-chain reading entry](../../remote/README.md).
+  - Update [DESIGN.md](../../../DESIGN.md) and the [token conventions](../../../DESIGN.md).
+  - Register the follow-up topics in the parent spec's "out of scope" in [R3 open issues](../../architecture/r3-source-server-remote-open-issues.md).
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] **状态映射测试**：用表驱动测试覆盖父规格列出的所有输入组合，断言可见状态、短文字、语义色、图标和主操作。
-- [x] **错误分类测试**覆盖：
-  - 02 的全部错误码，以及未知情况的兜底；
-  - 各连接方式的文案变体；
-  - "改用远端下载"只在 SSH 且选了本地下载时出现。
-- [x] **所有界面只读展示模型**：侧栏、会话头部、详情卡、设置卡、向导、任务行和设置导航状态点都只从展示模型读取状态，旧映射全部删除。每个界面都有组件测试，断言它渲染的是模型的输出。
-- [x] **主动断开**：主动断开后，侧栏和设置页都显示中性色的"未连接"。用 E2E 覆盖。
-- [x] **需要更新**：
-  - 显示"需要处理 · 需要更新"。
-  - 本机桌面端过旧时，主操作是"更新桌面端"。
-  - 修复前先写出复现测试。
-- [x] **启动静默重连**：每个项目行只有一个转圈；自动恢复的进度在界面上可见。
-- [x] **设计 token**："进行中"语义色写入设计规范和 token 文档。扩展远程 UI 的 token 合规测试，并让它通过。
-- [x] **禁用词扫描**：新增一个测试，扫描远程相关的中英文语言包，确认没有出现父规格列出的禁用词。所有新增和改写的文案都要中英文齐全。
-- [x] **规格与用例同步**：跨模块规格整理完成，所有链接可用；按 [E2E 工作流](../../../.agents/skills/e2e-case-lifecycle/SKILL.md) 同步用例目录。
-- [x] **必跑检查**：`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响的单测、受影响的 E2E 全部通过后，本地提交。
+- **State mapping tests**: table-driven tests cover every input combination listed in the parent spec and assert visible state, short text, semantic color, icon and primary action.
+- **Error classification tests** cover:
+  - all error codes of 02 and the unknown fallback;
+  - copy variants per connection method;
+  - "改用远端下载" (use remote download instead) appears only for SSH with local download selected.
+- **All screens read only the presentation model**: sidebar, session header, detail card, settings card, wizard, task rows and the Settings navigation status dot read state only from the presentation model; the old mappings are all deleted. Every screen has a component test asserting it renders the model output.
+- **User-initiated disconnect**: after a user-initiated disconnect, the sidebar and Settings both show neutral "未连接". Covered by E2E.
+- **Needs update**:
+  - Shows "需要处理 · 需要更新".
+  - When the local desktop app is too old the primary action is "更新桌面端".
+  - A reproduction test is written before the fix.
+- **Silent reconnect at startup**: each project row has a single spinner; auto-recovery progress is visible.
+- **Design token**: the "in progress" semantic color is written into the design guidelines and token docs. The token compliance test of the remote UI is extended and passes.
+- **Forbidden word scan**: a new test scans the remote-related Chinese and English language packs to confirm none of the forbidden words listed in the parent spec appear. All new and rewritten copy is complete in Chinese and English.
+- **Spec and cases in sync**: the cross-module spec cleanup is complete and all links work; the case catalog is synced per the [E2E workflow](../../../.agents/skills/e2e-case-lifecycle/SKILL.md).
+- **Required checks**: `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and affected E2E all pass before the local commit.
 
-## 验证记录（2026-09-27）
+## Verification Record (2026-09-27)
 
-- 五态与错误分类统一到 UI 纯函数展示模块；设备原文与项目显示错误分开输入，修复动作关联实际产生状态的连接。侧栏、会话头部、详情卡、设置卡、向导、任务标签、设置导航均读取模型。
-- 规范/规格双轴评审已复核通过。评审中的操作分发、错误连接选择、项目恢复事实和本地化错误覆盖问题均有回归。
-- `pnpm typecheck`、`pnpm lint`（仅存量警告）、`pnpm architecture:check --changed`、桌面 E2E 类型检查通过。最终受影响回归 95 个文件、755 项通过，包含已有手机 replayable/隔离/恢复单测；没有手机实机验证。
-- 真实 SSH 三个用例全部通过：RDUX-STATE 主动断开、中性色；SSH-P0-CONN-01/02 错误密码后重试和首装/目录选择；RDUX-LOG 拒绝连接与日志过滤。artifact：`packages/desktop/.e2e-artifacts/rdux03-verified-final`。中英文、light/dark、1400/900px 桌面截图已检查；新增用例保持 pending，不自动人工转正。
-- 同步了 case catalog、coverage matrix 和远程服务器执行队列；新增 fixture 校验通过。修正了既有 SSH 测试初始化抢在首屏前判断引导页的竞态，以及 02 错误码扩展后 telemetry 测试的旧断言。
-- **全量限制**：implement 要求的全量单测已执行，18,586 项通过；当次本票旧断言与评审后修改已由最终受影响回归全部验证。剩余基线故障为 `packages/services/test/repoSnapshotUploadTransport.test.ts:133` 两项 `ReferenceError: mode is not defined`，单独复跑仍失败；该文件与 HEAD blob 均为 `8738440a41e8e19f98a31918a54b7cc61ee8ce6b`，本票未修改 services。全量时出现的上传内存阈值失败单独复跑通过。
-- 用户知悉上述两项基线失败后，已明确授权记录例外并本地提交本票改动；基线失败未纳入本票修复。
+- Five states and error classification are unified in a UI pure-function presentation module; raw device text and project display errors are separate inputs, and repair actions are tied to the connection that actually produced the state. Sidebar, session header, detail card, settings card, wizard, task label and Settings navigation all read the model.
+- The dual-axis review (conventions/spec) passed. The review findings (action dispatch, error connection selection, project recovery facts, localized error coverage) have regressions.
+- `pnpm typecheck`, `pnpm lint` (pre-existing warnings only), `pnpm architecture:check --changed` and the desktop E2E type check pass. Final affected regression: 95 files, 755 tests passed, including existing mobile replayable / isolation / recovery unit tests; there was no real-device mobile verification.
+- Three real SSH cases all pass: RDUX-STATE user-initiated disconnect, neutral color; SSH-P0-CONN-01/02 retry after wrong password and first install/directory selection; RDUX-LOG refused connection and log filtering. Artifact: `packages/desktop/.e2e-artifacts/rdux03-verified-final`. Chinese/English, light/dark and 1400/900px desktop screenshots were checked; the new cases stay pending and were not promoted manually.
+- The case catalog, coverage matrix and remote-server execution queue were synced; the new fixture check passes. A race in the existing SSH test setup (the onboarding-page check ran before the first screen) and an old telemetry-test assertion after the 02 error code extension were fixed.
+- **Full-suite limit**: the full unit run required by implement was executed with 18,586 passing; this ticket's old assertions and post-review changes were all verified by the final affected regression. The remaining baseline failure is two `ReferenceError: mode is not defined` cases at `packages/services/test/repoSnapshotUploadTransport.test.ts:133`, still failing when re-run alone; the file and the HEAD blob are both `8738440a41e8e19f98a31918a54b7cc61ee8ce6b`, and this ticket did not modify services. An upload-memory-threshold failure seen in the full run passed when re-run alone.
+- The user, aware of these two baseline failures, explicitly authorized recording the exception and committing this ticket locally; the baseline failures are not fixed by this ticket.

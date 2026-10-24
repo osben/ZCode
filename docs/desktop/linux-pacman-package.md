@@ -1,16 +1,19 @@
 # Linux Arch pacman package
 
-## 目标
+## Goal
 
-为 Linux x64/arm64 构建额外的 Arch Linux 原生安装包 `.pkg.tar.zst`，复用现有 Electron Builder 应用内容；AppImage 继续作为 Linux 自动更新主产物，deb/rpm 保持不变。
+Build an additional native Arch Linux package `.pkg.tar.zst` for Linux x64/arm64, reusing the existing Electron
+Builder app content; AppImage remains the main Linux auto-update artifact, and deb/rpm are unchanged.
 
-## 边界
+## Boundary
 
-- 本阶段不发布 PKGBUILD/AUR 源码配方；`.pkg.tar.zst` 由 Electron Builder 直接生成。
-- 不改变应用运行时、协议、Agent、远程控制或自动更新协议。
-- pacman 包作为下载/安装分发产物，不作为 `latest.yml` 的 primary update artifact。
+- This phase does not publish PKGBUILD/AUR source recipes; `.pkg.tar.zst` is produced directly by Electron
+  Builder.
+- App runtime, protocol, Agent, remote control and the auto-update protocol are unchanged.
+- The pacman package is a download/install distribution artifact and is not the primary update artifact of
+  `latest.yml`.
 
-## 构建与发布链路
+## Build and release chain
 
 ```text
 Linux x64/arm64 CI
@@ -25,33 +28,56 @@ AppImage deb     rpm     pacman (.pkg.tar.zst)
         +--> latest.yml primary path remains AppImage
 ```
 
-## 包契约
+## Package contract
 
-- 文件名沿用现有命名：`ZCode-<version>-linux-<arch>.pkg.tar.zst`。
-- package name 与 deb/rpm 使用相同的 flavor 隔离名称，避免 Preview/Production 互相覆盖。
-- pacman 依赖由配置中的 Arch 官方仓库运行时依赖列表生成（gtk3、nss、libxss、libxtst、libnotify、alsa-lib、mesa、xdg-utils）；计划在 Arch x64/arm64 上执行安装、启动、卸载 smoke test。
-- `.pkg.tar.zst` 进入 CI artifact manifest、OSS 上传和 release metadata，但不替代 AppImage 更新路径。
+- The file name follows the existing naming: `ZCode-<version>-linux-<arch>.pkg.tar.zst`.
+- The package name uses the same flavor-isolated name as deb/rpm, so Preview/Production do not overwrite each
+  other.
+- pacman dependencies are generated from the configured list of Arch official-repository runtime dependencies
+  (gtk3, nss, libxss, libxtst, libnotify, alsa-lib, mesa, xdg-utils); install, launch and uninstall smoke tests
+  are planned on Arch x64/arm64.
+- `.pkg.tar.zst` enters the CI artifact manifest, OSS upload and release metadata but does not replace the
+  AppImage update path.
 
-## 客户端自动更新契约（2026-09-16 修订）
+## Client auto-update contract (revised 2026-09-16)
 
-ZCT-2100231841920471040：3.12.1 在 Ubuntu deb 安装形态下载 3.12.2 时，旧过滤器删除 deb，只留下 AppImage；DebUpdater 找不到文件，读取 `fileInfo.info` 抛错。旧约定“Linux 仅 AppImage 支持自动更新”错误，现予以替换。
+ZCT-2100231841920471040: when 3.12.1 in the Ubuntu deb install form downloaded 3.12.2, the old filter deleted
+the deb and left only the AppImage; DebUpdater could not find the file and reading `fileInfo.info` threw. The
+old convention "Linux supports auto update only for AppImage" was wrong and is replaced.
 
-- macOS、Windows、Linux 各安装形态均沿用 electron-updater 的下载、校验和安装流程；Linux 不再统一删除 deb/rpm/pacman。
-- 当前 updater 实例是安装类型的唯一真源；ManifestUpdateProvider 只为 Linux 更新器选择同类型产物，不另读 package-type、不维护第二份平台状态。AppImageUpdater 对应 `.AppImage`，DebUpdater 对应 `.deb`，RpmUpdater 对应 `.rpm`，PacmanUpdater 对应 `.pkg.tar.zst`（兼容 `.pacman`）。
-- 清单缺少当前安装类型时，在解析边界明确失败，禁止 updater 的 fallback 误选其他格式。缺少包是发布不完整，不等于该安装方式不支持更新。
-- URL 按 pathname 判定后缀，支持绝对/相对地址、查询参数及大小写；保留真实下载 URL 与校验值。
-- PacmanUpdater 仍按旧 `.pacman` 后缀生成缓存路径，`.pkg.tar.zst` 的 `info.url` 使用实际文件名，避免把完整 URL 拼入缓存路径；网络下载 URL 不变。
-- macOS/Windows 保持原清单解析语义，下载器负责选 zip/exe；不改变更新通道、下载时序、权限、安装命令、UI 或手机远控链路。
+- macOS, Windows and every Linux install form follow electron-updater's download, verification and install flow;
+  Linux no longer deletes deb/rpm/pacman uniformly.
+- The current updater instance is the single source of truth for the install type; ManifestUpdateProvider only
+  selects the same-type artifact for the Linux updater, reads no package-type elsewhere and keeps no second
+  platform state. AppImageUpdater maps to `.AppImage`, DebUpdater to `.deb`, RpmUpdater to `.rpm`,
+  PacmanUpdater to `.pkg.tar.zst` (`.pacman` accepted for compatibility).
+- When the manifest lacks the current install type, fail explicitly at the parsing boundary; the updater's
+  fallback must not pick another format by mistake. A missing package is an incomplete release, not "this install
+  method does not support updates".
+- URL suffixes are judged on the pathname, supporting absolute/relative addresses, query parameters and case;
+  the real download URL and checksum are kept.
+- PacmanUpdater still builds the cache path by the old `.pacman` suffix, and the `info.url` of
+  `.pkg.tar.zst` uses the actual file name so a full URL is not concatenated into the cache path; the network
+  download URL is unchanged.
+- macOS/Windows keep the original manifest parsing semantics, the downloader picks zip/exe; update channels,
+  download timing, permissions, install commands, UI and the mobile remote link are unchanged.
 
 ```text
-服务端完整清单 → 当前 updater 实例决定安装类型 → 同类型文件 → 下载/校验 → 原平台安装器
-                                             └─ 缺少同类型包：明确失败，不跨格式回退
+server full manifest → current updater instance decides install type → same-type file → download/verify → original platform installer
+                                             └─ no same-type package: explicit failure, no cross-format fallback
 ```
 
-验收：测试须在任意开发机运行 Linux 安装类型矩阵，覆盖混合清单、单类型清单、缺失类型、绝对/相对 URL、query、校验值与 Pacman 缓存路径；macOS/Windows 原解析行为回归。现场日志与失败测试先于修复，禁止只断言过滤器本身。真实提权安装仍需对应系统的发行包 smoke 验证。
+Acceptance: tests must run the Linux install-type matrix on any dev machine, covering mixed manifests,
+single-type manifests, missing types, absolute/relative URLs, query, checksums and the Pacman cache path;
+macOS/Windows original parsing behavior regression. Live logs and failing tests precede the fix; asserting only
+the filter itself is forbidden. A real elevated install still needs a per-system distribution-package smoke
+verification.
 
-## 风险与验收
+## Risks and acceptance
 
-- 产物收集、共享目录清理、OSS glob、发布校验必须识别复合后缀 `.pkg.tar.zst`。
-- 不得把源码、source map、密钥或 CI 凭据加入包；沿用现有 app.asar 裁剪策略。
-- 需要验证 pacman 包的架构、依赖、桌面 entry、`zcode://` 协议注册，以及与 deb/rpm 共存时的 package identity。
+- Artifact collection, shared-directory cleanup, OSS globs and release validation must recognize the compound
+  suffix `.pkg.tar.zst`.
+- Source code, source maps, keys or CI credentials must not enter the package; the existing app.asar trimming
+  strategy is kept.
+- Verify the pacman package's architecture, dependencies, desktop entry, `zcode://` protocol registration, and
+  package identity when coexisting with deb/rpm.

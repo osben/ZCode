@@ -37,7 +37,7 @@ Admission does not change the push/CI comparison base, does not change the chang
 
 The policy file and module declarations must validate one another (rule `manifest-policy-mismatch`). Modules not covered by the policy and unknown dependencies in module declarations are prohibited.
 
-Import edges follow the real resolution behavior of Node and TypeScript: relative paths, `imports` in `package.json` (`#src/*`), `paths` in `tsconfig.json` (`@/*`), and workspace package names with `exports` (conditional exports and `dist/` targets map back to `src/`). A 2026-09 review found that the first version resolved only relative paths, so cross-package dependencies created no edges and the module-dependency, deep-import, cycle, and layer-direction rules were blind to `@zcode/*` imports. This has been fixed and covered by regression tests.
+Import edges follow the real resolution behavior of Node and TypeScript: relative paths, `imports` in `package.json` (`#src/*`), `paths` in `tsconfig.json` (`@/*`), and workspace package names with `exports` (conditional exports and `dist/` targets map back to `src/`). Cross-package `@zcode/*` imports create edges, so the module-dependency, deep-import, cycle, and layer-direction rules cover them (regression-tested).
 
 Configuration is read with TypeScript's JSONC parser, which supports block comments, end-of-line comments, and trailing commas, and preserves globs inside strings. Comments must not be removed with regular expressions: `@/*`, `#src/*`, and later patterns such as `src/**/*.ts` or script arguments like `cache-*/**` would be misread as comments, causing a whole package or path mapping to disappear. Regression tests require both alias styles to trigger real layer-direction violations.
 
@@ -56,7 +56,7 @@ pnpm architecture:context <module-id>
 pnpm architecture:adopt <module-id> --root <dir> [--layer domain|app|adapters|ui] [--owner <group>]
 ```
 
-The comparison base for `--changed` is chosen in this order: `--base <sha>` or `ZCODE_PRE_PUSH_BASE` > CI merge-request variables (such as `CI_MERGE_REQUEST_DIFF_BASE_SHA`) > the remote sha from pre-push stdin > `@{upstream}` > the default-branch merge-base (same order as `run-affected-unit-tests`, with `origin/staging` preferred) > `HEAD`. The second line of the report prints the base actually used. A 2026-09 review found that the first version used only `git diff HEAD`; in a clean CI checkout and during pre-push the diff was empty, so the gate effectively checked only cycles. This has been fixed.
+The comparison base for `--changed` is chosen in this order: `--base <sha>` or `ZCODE_PRE_PUSH_BASE` > CI merge-request variables (such as `CI_MERGE_REQUEST_DIFF_BASE_SHA`) > the remote sha from pre-push stdin > `@{upstream}` > the default-branch merge-base (same order as `run-affected-unit-tests`, with `origin/staging` preferred) > `HEAD`. The second line of the report prints the base actually used. The base is never just `git diff HEAD`: in a clean CI checkout and during pre-push that diff is empty and the gate would check only cycles.
 
 `architecture:adopt` registers a directory as a managed module: it infers `requires` from real imports, generates the missing five-file skeleton, and registers the module in the policy file while preserving comments. It exists so that registering a module is cheaper than bypassing the rules.
 
@@ -64,7 +64,7 @@ Local development and CI use the same checker. `--changed` resolves the complete
 
 ### Git File Enumeration and CI Cache
 
-The macOS packaging job on 2026-09-10 failed during file enumeration: the Runner's retained `.electron-builder-cache` was not ignored by Git, and `git ls-files --others --exclude-standard` exceeded `execFile`'s default buffer. The fix belongs in the existing change-collection entry point in `scripts/architecture/index.mjs`; it does not change business modules, policy, or the baseline.
+File enumeration must survive large untracked caches (the macOS packaging job once overflowed `execFile`'s default buffer on the Runner's retained `.electron-builder-cache`). The behavior lives in the change-collection entry point in `scripts/architecture/index.mjs`; it does not change business modules, policy, or the baseline.
 
 - Root-level `.electron-builder-cache/`, `.electron-cache/`, `.pnpm-store/`, and `.npm-cache/` are persistent CI caches and are added to `.gitignore`. Keep the CI cache paths and cleanup exclusions; do not solve the problem by deleting caches on every run.
 - Tracked files are still compared with `HEAD`, and untracked files still follow Git ignore rules. Both commands use NUL-delimited streaming output to avoid a fixed `maxBuffer` limit, without trimming path whitespace or corrupting non-ASCII filenames.
@@ -78,7 +78,7 @@ Git diff / untracked-file enumeration
 Either Git process fails -> check fails
 ```
 
-Verification uses a temporary Git repository to cover more than 1 MiB of tracked and untracked changes, cache ignores, special paths, and propagation of Git failures. This affects only development/CI checks; it does not involve product UI, runtime, or persistent-data migrations.
+Verification uses a temporary Git repository covering more than 1 MiB of tracked and untracked changes, cache ignores, special paths, and propagation of Git failures. This affects only development/CI checks.
 
 ## Agent Workflow
 

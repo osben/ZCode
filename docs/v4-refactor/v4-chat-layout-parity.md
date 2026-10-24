@@ -1,21 +1,34 @@
 # V4 Chat Layout Parity
 
-## 背景
+## Background
 
-v4 会话区已经恢复旧版 composer 外观，但消息列表与 composer 的父级布局仍和 z-code-2 不一致。z-code-2 的对话区把消息内容和底部输入区放在同一个滚动容器里：滚动条可以滚到包含输入框的最底部，消息主列与 composer 都使用同一套最大宽度。
+The v4 conversation area restored the old composer look, but the parent layout of the message list and the
+composer still differed from z-code-2. z-code-2 puts message content and the bottom input area in one scroll
+container: the scrollbar reaches the very bottom including the input box, and the message column and composer
+share one maximum width.
 
-当前 v4 的 `ConversationTimeline` 自己持有滚动容器，`ConversationComposer` 是 `SessionPane` 的兄弟节点。结果是滚动条只覆盖 timeline，composer 不属于同一个滚动上下文；同时 row 渲染没有统一的主内容最大宽度，宽屏下文本和工具输出会比旧版发散。
+v4 `ConversationTimeline` owned its scroll container and `ConversationComposer` was a sibling of `SessionPane`,
+so the scrollbar covered only the timeline, and rows had no unified main-column max width (text and tool
+output diverged on wide screens).
 
-## 目标
+## Goals
 
-- 会话态下，v4 消息区和 composer 使用同一个 vertical scroll viewport。
-- composer 保持在该 viewport 内 `sticky bottom-0`，滚动到最底部时输入框底部也属于可达范围。
-- composer 的底部留白由 dock 内层的透明 `padding-bottom` 承担；消息层在接近 sticky composer 时逐渐 mask 到透明，避免滚动内容直接穿过留白。会话态 `chat-composer-input-surface` 保持透明，不绘制 `background`；草稿态带 context header 的卡片仍使用 `bg-surface`。
-- 消息内容、空消息提示、回到底部按钮和 composer 复用 `conversationLayout` 的统一主列布局；已绑定会话在 `conversation < 864px` 时使用 `w-full`，`864px <= conversation < 1136px` 时使用 `calc(100% - 96px)`、`max-w-4xl`，达到 `1136px` 后使用 `calc(100% - 384px)`、`max-w-6xl`；草稿使用 `max-w-2xl`。消息轮次通过 `@max-md/conversation:px-4` 响应 conversation 容器，composer dock 则始终使用 `px-4 pb-4`。
-- 保留 v4 虚拟滚动、row 测高缓存、底部跟随和 `loadOlder` 语义。
-- 不改变草稿态居中布局，也不改变远控 replayable / desktop continuous 的数据链路。
+- In a session, the v4 message area and composer share one vertical scroll viewport.
+- The composer stays `sticky bottom-0` inside that viewport; scrolled to the bottom, the composer bottom is
+  within reach.
+- The composer's bottom whitespace is carried by a transparent `padding-bottom` of the inner dock; messages
+  gradually mask to transparent near the sticky composer so scrolled content does not run through the
+  whitespace. In session state `chat-composer-input-surface` stays transparent with no `background`; the
+  draft card with a context header still uses `bg-surface`.
+- Message content, empty-message hint, back-to-bottom button and composer reuse the unified main column of
+  `conversationLayout`. For a bound session: `w-full` below `conversation < 864px`; `calc(100% - 96px)` with
+  `max-w-4xl` for `864px <= conversation < 1136px`; `calc(100% - 384px)` with `max-w-6xl` from `1136px`;
+  drafts use `max-w-2xl`. Message turns respond to the conversation container via `@max-md/conversation:px-4`,
+  while the composer dock always uses `px-4 pb-4`.
+- Keep v4 virtual scrolling, row measure cache, bottom following and `loadOlder` semantics.
+- Do not change the centered draft layout or the data links of remote replayable / desktop continuous.
 
-## 布局链路
+## Layout chain
 
 ```text
 SessionPane
@@ -32,19 +45,32 @@ SessionPane
   runtime/dialog controllers
 ```
 
-## 实现约束
+## Constraints
 
-- `ConversationTimeline` 继续拥有虚拟列表与滚动锚定逻辑，但新增 `bottomDock` 插槽，把 composer 渲染进 timeline scroll viewport 的尾部。
-- bottom dock 的底部留白属于 dock 容器自身布局，使用响应式透明 padding，不渲染仅用于间距的背景子节点。padding 必须计入 dock 实际高度，保证 Markdown 表格浮动滚动条继续按完整输入区高度避让。
-- 消息 mask 只包裹 virtual history 与 running live tail，不作用于 composer、回到底部按钮或 pane focus ring。mask 的渐隐位置按 scroll viewport 与 dock 实际高度同步，不能按虚拟内容总高度定位；桌面与移动端统一使用 40px 渐隐距离。滚动条到达底部时关闭 mask，只有离开底部、消息可能从 sticky composer 下方经过时才显示渐隐。
-- `SessionPane` 会话态不再在 timeline 之外渲染 composer；草稿态仍由居中容器渲染 composer。
-- `ConversationTimeline` 的滚动 ref 仍是唯一 scroll element，`useVirtualizer.getScrollElement` 不变，避免多 pane 的滚动状态串扰。
-- row 的外层绝对定位仍保持 `w-full`，其内部新增居中内容列，避免改变 virtualizer 的测高方式。
-- `ConversationComposer` 会话态去掉自身横向 padding，宽度由外层 dock 控制；草稿态和 context header 卡片语义不变。
+- `ConversationTimeline` keeps the virtual list and scroll anchoring but gains a `bottomDock` slot that
+  renders the composer at the tail of its scroll viewport.
+- The dock's bottom whitespace belongs to the dock container's own layout (responsive transparent padding, no
+  spacing-only background child). The padding counts in the dock's real height so the Markdown table floating
+  scrollbar keeps avoiding the full input-area height.
+- The message mask wraps only the virtual history and the running live tail, not the composer, back-to-bottom
+  button or pane focus ring. The fade position tracks the scroll viewport and the dock's real height (not the
+  virtual content total height); desktop and mobile use a uniform 40px fade distance. The mask is off when the
+  scrollbar is at the bottom and shows only when scrolled away from the bottom, where messages can pass under
+  the sticky composer.
+- In session state `SessionPane` no longer renders the composer outside the timeline; the draft state still
+  renders it in the centered container.
+- The scroll ref of `ConversationTimeline` stays the only scroll element and `useVirtualizer.getScrollElement`
+  is unchanged, avoiding scroll-state crosstalk between panes.
+- The row's outer absolute positioning stays `w-full`, with a new centered content column inside, so the
+  virtualizer's measurement is unchanged.
+- In session state `ConversationComposer` drops its own horizontal padding and the outer dock controls the
+  width; draft state and the context-header card semantics are unchanged.
 
-## 验收
+## Acceptance
 
-- SSR 结构测试能看到会话态 composer 被渲染在 timeline scroll viewport 内，并带有共享 dock 标识。
-- SSR 结构测试能看到 timeline row 内容列和 bottom dock 都使用同一组 `conversationLayout` 布局类。
-- `pnpm vitest run packages/ui/test/v4SessionPaneLayoutParity.test.ts` 通过。
-- `pnpm typecheck` 和 `pnpm lint` 通过，若环境中存在无关失败，提交说明必须列出。
+- An SSR structure test sees the session-state composer rendered inside the timeline scroll viewport with the
+  shared dock marker.
+- An SSR structure test sees the timeline row content column and the bottom dock using the same
+  `conversationLayout` classes.
+- `pnpm vitest run packages/ui/test/v4SessionPaneLayoutParity.test.ts` passes.
+- `pnpm typecheck` and `pnpm lint` pass; if unrelated failures exist in the environment, the commit note must list them.

@@ -1,63 +1,73 @@
-# Ghost cursor overlay 多显示器可见性（窗口跟随目标屏）
+# Ghost cursor overlay multi-display visibility (window follows the target screen)
 
-## 问题
+## Problem
 
-ghost cursor 的 overlay 原先是**一个**覆盖全部显示器并集（`ComputeDisplayUnion()`）的
-borderless 窗口。macOS 默认开启「显示器具有单独的空间」（`com.apple.spaces spans-displays`
-未设置 / 为 false），此时一个窗口横跨多块屏只会出现在**它占面积最大的那块屏**上，其余屏上的
-那部分画布根本不上屏。
+The ghost cursor overlay used to be **one** borderless window covering the union of all displays
+(`ComputeDisplayUnion()`). macOS defaults to "Displays have separate Spaces" (`com.apple.spaces
+spans-displays` unset / false); there a window spanning several screens appears only on **the screen where
+it has the largest area**, and the canvas on other screens is never shown.
 
-实测（2026-10-10，主屏 1512×982 + 外接 2560×1440 位于左侧）：并集窗口为
-`[-2560,-458, 4072×1440]`，只出现在外接屏；CUA 在笔记本屏上的全部动作反馈（glide、涟漪、
-focus-rect、键盘 cue）永远不可见，而 native 的 `ghostState().shown` 仍报 `true`。单屏时并集
-就是那块屏，因此问题只在多屏 + 默认 Spaces 设置下出现。
+Measured (2026-10-10, primary 1512x982 + external 2560x1440 on the left): the union window was
+`[-2560,-458, 4072x1440]` and appeared only on the external screen; all CUA action feedback on the laptop
+screen (glide, ripple, focus-rect, keyboard cue) was invisible while native `ghostState().shown` still
+reported `true`. With a single screen the union is that screen, so the problem occurs only with multiple
+screens + default Spaces.
 
-## 决策
+## Decision
 
-overlay 仍是**单窗口**，但窗口 frame 由「整个并集」改为「**当前反馈点所在的那块屏**」：
+The overlay stays a **single window**, but its frame changes from "the whole union" to "**the screen of the
+current feedback point**":
 
-1. 每次把反馈落到一个全局 DIP 点之前（指针移动、点击涟漪、focus-rect、屏幕配置变化），
-   先算出该点所在的 `NSScreen`，若与窗口当前 frame 不同则 `setFrame` 到那块屏。
-2. 换 frame 时沿用 `ScreenParamsChanged` 的保位逻辑：先按旧 frame 把 dot/bloom 的位置
-   读回全局 DIP，换 frame 后再映射回新的 content-local 坐标。
-3. 点不落在任何屏内（屏幕刚被拔掉的竞态等）时回退到最近的屏，再回退到主屏，不抛错。
-4. 坐标系不变：layer 写入继续经 `GlobalDipToContent`（以 `g_window.frame` 原点换算），
-   CG 全局坐标→NS 全局坐标的翻转基准仍是主屏高度。
+1. Before feedback lands on a global DIP point (pointer move, click ripple, focus-rect, screen-configuration
+   change), compute the `NSScreen` containing the point; if it differs from the window's current frame,
+   `setFrame` to that screen.
+2. On a frame change, reuse the `ScreenParamsChanged` position-preserving logic: read the dot/bloom position
+   back to global DIP from the old frame, switch frame, then map back to new content-local coordinates.
+3. If the point is in no screen (race right after a screen is unplugged), fall back to the nearest screen,
+   then the primary screen, without throwing.
+4. The coordinate system is unchanged: layer writes still go through `GlobalDipToContent` (converted from the
+   `g_window.frame` origin), and the CG-global to NS-global flip base is still the primary-screen height.
 
-### 已知代价
+### Known cost
 
-跨屏 glide 在屏幕边界处会跳一下：窗口切到新屏后，旧屏上那段动画路径不在窗口内。CUA 的动作
-通常落在单个目标窗口内，跨屏移动罕见，可接受。
+A cross-screen glide jumps at the screen boundary: once the window switches to the new screen, the part of
+the animation path on the old screen is outside the window. CUA actions usually land in one target window and
+cross-screen moves are rare, so this is accepted.
 
-## 第二个根因：翻转基准误用 key window 所在屏
+## Second root cause: flip base used the key window's screen
 
-窗口跟随修好后真机仍复现「外接屏上点击搜索框看不到光标、在地图区滚动却能看到」。原因是 CG
-全局坐标（左上原点）与 NS 全局坐标（左下原点）互转时，翻转基准高度取的是
-`NSScreen.mainScreen`。它的语义是**key window 所在的屏**，并不是原点 (0,0) 的主显示器：焦点在
-外接屏时返回 2560×1440，基准就从主屏的 982 错成 1440，所有反馈整体下移 458px。外接屏顶部那段
-落到 overlay 窗口之外，所以顶部搜索框的点击不可见、靠下的地图区可见。
+After the window-follows-screen fix, a real machine still showed "clicking the search box on the external
+screen shows no cursor, scrolling in the map area does". Converting CG-global (top-left origin) to NS-global
+(bottom-left origin) used `NSScreen.mainScreen` for the flip base height. Its semantics is **the screen of the
+key window**, not the primary display at origin (0,0): with focus on the external screen it returns 2560x1440,
+the base goes from the primary's 982 to 1440, and all feedback shifts down 458px. The top of the external
+screen then falls outside the overlay window, so the top search-box click is invisible while the lower map
+area is visible.
 
-决策：所有翻转、frame 回读、兜底 frame 一律使用 `PrimaryScreenFrame()`（`[NSScreen screens]` 的
-第一块屏，即主显示器）。CG 全局坐标本就以主显示器左上角为原点。该问题与焦点在哪块屏有关，
-早先 live 用例通过只是因为当时焦点恰好在主屏。
+Decision: all flips, frame read-backs and fallback frames use `PrimaryScreenFrame()` (the first screen of
+`[NSScreen screens]`, i.e. the primary display). CG-global coordinates already use the primary display's
+top-left as origin. The issue depends on which screen has focus; earlier live cases passed only because
+focus happened to be on the primary screen.
 
-### 未选方案
+### Rejected
 
-「每块屏一个 overlay 窗口」能保留跨屏动画，但显隐、层级、遮挡 probe 对 overlay 自身的排除
-（`g_window_server_id`）、capture 开关都要改成多窗口，改动面与风险都明显更大。
+"One overlay window per screen" would keep cross-screen animation, but show/hide, level, the occlusion
+probe's exclusion of the overlay itself (`g_window_server_id`) and capture switches would all become
+multi-window, with a clearly larger change surface and risk.
 
-## 不变量
+## Invariants
 
-- 反馈点所在屏与 overlay 窗口 frame 一致：`ghostState().windowFrame` 等于该点所在屏的
-  frame（CG 全局 DIP，左上原点）。
-- 换 frame 前后 dot 的屏幕位置不变（不跳位）。
-- overlay 窗口身份（window number）不变，遮挡 probe 排除自身的逻辑无需改动。
+- The screen containing the feedback point matches the overlay window frame: `ghostState().windowFrame`
+  equals that screen's frame (CG-global DIP, top-left origin).
+- The dot's on-screen position does not change across a frame switch (no jump).
+- The overlay window identity (window number) is unchanged, so the occlusion probe's self-exclusion logic
+  needs no change.
 
-## 验证
+## Verification
 
-- 源码契约：窗口 frame 不再取 `ComputeDisplayUnion()`；`MoveGhostTo` / 涟漪 / focus-rect /
-  `ScreenParamsChanged` 都先经 `EnsureWindowOnScreenForGlobalDip`。
-- live（`ZCODE_CUA_LIVE_NATIVE=1`）：对每块活动显示器的中心点 `ghostMove`，断言
-  `windowFrame` 等于该显示器 bounds。
-- 真机：多屏 + 默认 Spaces 下，光标在两块屏上都能被肉眼看到（截屏对该窗口无效，默认
-  `NSWindowSharingNone`）。
+- Source contract: the window frame no longer uses `ComputeDisplayUnion()`; `MoveGhostTo` / ripple /
+  focus-rect / `ScreenParamsChanged` all go through `EnsureWindowOnScreenForGlobalDip` first.
+- Live (`ZCODE_CUA_LIVE_NATIVE=1`): `ghostMove` to the center of each active display and assert
+  `windowFrame` equals that display's bounds.
+- Real machine: with multiple screens + default Spaces, the cursor is visible to the eye on both screens
+  (screenshots are useless for this window; default `NSWindowSharingNone`).

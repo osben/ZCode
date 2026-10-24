@@ -1,30 +1,35 @@
-# 自动重连执行三次，但项目页不显示重试进度
+# Auto-reconnect runs three times but the project page shows no retry progress
 
 Status: ready-for-human
 
-业务基线 `d31e735905cf744e75a0a93548a80acabe871ae5`，测试补丁 07。
-批次 `r3-server-20261011125749338-152f05` 的 `retry-budget` 在 122.7 秒失败。
-真实 TCP gate 中断连接并拒绝后续连接；`retry-budget.json` 记录拒绝次数为 3，
-整个重试期间的 DOM MutationObserver 没有观察到任何 `1/3`、`2/3`、`3/3`。
-项目最终已处于 offline，并显示连接错误入口。
+Baseline `d31e735905cf744e75a0a93548a80acabe871ae5`, test patch 07, batch
+`r3-server-20261011125749338-152f05`; `retry-budget` failed after 122.7 s. A real TCP gate dropped the
+connection and refused later ones; `retry-budget.json` records 3 refusals, but a DOM MutationObserver over the
+whole retry period never saw `1/3`, `2/3` or `3/3`. The project ended offline with the connection error
+entry.
 
 ```text
-真实断线 → 三次 TCP 重连均被拒绝 → offline + 错误入口
-  └─ 页面观察：进度计数始终为空
+real disconnect → three TCP reconnects refused → offline + error entry
+  └─ page observation: progress counter always empty
 ```
 
-[连接展示验收](../remote-connection-ux/12-sidebar-header-and-menus.md) 要求展示“自动恢复 2/3”
-这样的进度。当前 `ProjectConnectionStatus` 只接收 connecting/error/logs，连接中仅显示 spinner；
-`RemoteConversationBanner` 虽获取 presentation，却没有渲染其中的 recovery 计数。
-本次只确认项目/会话页面缺少进度，不声称设置页也没有，更不把它误报为后台没执行重试。
+The [connection display acceptance](../remote-connection-ux/12-sidebar-header-and-menus.md) requires progress
+such as "自动恢复 2/3" (auto-recovery 2/3). At the time, `ProjectConnectionStatus` took only
+connecting/error/logs and showed a spinner while connecting, and `RemoteConversationBanner` fetched the
+presentation but did not render its recovery count. Only the project/conversation pages were confirmed
+lacking progress; Settings was not claimed, and the background retries were not claimed missing.
 
-本轮保留业务实现。测试将此非前置的展示断言移到场景末尾，保留失败要求，同时继续验证
-网络放通后的静默恢复与手动接管。补丁 08 的批次 `r3-server-20261011143037600-31012b`
-已完成这两段：静默恢复和手动接管分别获得不同的新 session，Host 数量保持；最后仍因
-displayedAttempts=[] 失败（276.8 秒）。因此当前剩余缺陷是可见进度，后台恢复路径已有独立通过证据。
+The test moved this non-prerequisite display assertion to the end of the scenario and keeps the failing
+requirement, while still verifying silent recovery after the network reopens and manual takeover. Patch 08,
+batch `r3-server-20261011143037600-31012b`, completed both (distinct new sessions, Host count unchanged) and
+failed only on displayedAttempts=[] (276.8 s): the remaining defect is the visible progress; background
+recovery has independent pass evidence.
 
-证据：上述批次 `retry-budget` 的 `retry-budget.json`、run log 和失败录像。
+2026-10-15 progress: the project-row remote identity details now have a connection-progress section at the
+top that reads `recoveryAttempt/Limit` from the status registry and shows "自动恢复 n/3". `retry-budget` now
+opens the details while connecting and keeps them open until the terminal state; `hovercard-retry-20261015-r3`
+observed `displayedAttempts=[1,2,3]` and PASSED. By confirmed design the project row itself shows only
+"连接中" (connecting) with no persistent counter. Whether the conversation banner should also render the
+recovery count is awaiting human confirmation.
 
-2026-10-15 进展：项目行远程身份详情顶部新增连接进度区，读取状态注册表的 `recoveryAttempt/Limit` 显示“自动恢复 n/3”。
-`retry-budget` 改为连接中打开详情并保持到终态，`hovercard-retry-20261015-r3` 观察到 `displayedAttempts=[1,2,3]` 并 PASS。
-项目行本身按已确认设计只显示“连接中”，不常驻计数；会话横幅仍未渲染 recovery 计数，是否补充待人工确认。
+Evidence: `retry-budget.json`, run log and failure video of the batch above.

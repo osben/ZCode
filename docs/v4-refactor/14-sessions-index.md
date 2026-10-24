@@ -1,47 +1,33 @@
-# sessions-index topic 当前规格
+# sessions-index topic: Current Spec
 
-更新日期：2026-07-22
+Updated: 2026-07-22
 
-`sessions-index/<workspaceId>` 是侧栏和任务列表的会话活性与实时详情数据源。持久 task 行集合由
-`tasks-index.sqlite` 决定；summary 缺失只表示实时详情尚不可用，不能据此删除左侧行。schema 位于
-`packages/shared/src/zcode-protocol-v4/sessions-index.ts`；CLI projection/publisher 与 UI
-store/transport 已投入主链路。
+`sessions-index/<workspaceId>` is the data source of session liveness and live detail for the sidebar and task list. The set of persisted task rows is decided by `tasks-index.sqlite`; a missing summary only means live detail is not yet available and the left-side row must not be deleted because of it. The schema is in `packages/shared/src/zcode-protocol-v4/sessions-index.ts`; the CLI projection/publisher and the UI store/transport are in the main chain.
 
-## 定位
+## Positioning
 
-- CLI 权威、客户端只读：列表不再扫描 conversation rows 推导会话状态；该权威仅覆盖 session activity
-  和详情字段，不覆盖持久 task 行存在性。
-- workspace 维度：`workspaceId = workspaceIdentity?.trim() || workspacePath`。
-- conflated 最新态：同一 session 连续更新只保留最后摘要；断线按 snapshot 恢复，不把它当完整事件日志。
-- 与 conversation topic 正交：index 提供列表摘要，`conversation/<sessionId>` 提供完整 rows、config、
-  control 和 action。
+1. CLI-authoritative, client read-only: the list no longer scans conversation rows to derive session state; this authority covers only session activity and detail fields, not the existence of persisted task rows.
+2. Per workspace: `workspaceId = workspaceIdentity?.trim() || workspacePath`.
+3. Conflated latest state: consecutive updates of one session keep only the last summary; after a disconnect recovery is by snapshot, not treated as a complete event log.
+4. Orthogonal to the conversation topic: the index gives list summaries, `conversation/<sessionId>` gives full rows, config, control and actions.
 
 ## Schema
 
-`SessionSummary` 当前包含会话身份、workspaceId、phase、标题及 title source、父会话、创建/活动时间、
-usage 摘要，以及 permission/user-input 的轻量计数。它不能承载完整 interaction payload、conversation
-rows 或 tasks-index 组织态。
+`SessionSummary` currently contains session identity, workspaceId, phase, title and title source, parent session, creation/activity times, a usage summary, and lightweight permission/user-input counts. It must not carry a full interaction payload, conversation rows or tasks-index organization state.
 
-帧遵守 V4 topic 五件套：
+Frames follow the V4 topic five-piece set: subscribe / unsubscribe; snapshot; delta (`session.upserted` / `session.removed`); seq/logEpoch; resync.
 
-- subscribe / unsubscribe；
-- snapshot；
-- delta（`session.upserted` / `session.removed`）；
-- seq/logEpoch；
-- resync。
+Schema boundaries:
 
-schema 边界：
+1. **sessions-index contains only pure session state** and **not pin/archive/groups**: organization state (the user's marks on the list) goes through the slim CRUD (pin/archive/groups) of the host-side tasks-index.sqlite and is **client-joined** in the sidebar state layer (M5 (2)); it does not enter this topic and does not break the schema freeze.
+2. **Unread is not in the schema**: unread belongs to tasks-index organization state, queried in parallel with pin/archive as `unreadAt` and joined on the client; `lastActivityAt` only serves activity sorting and must not be modified by unread reads/writes.
+3. **Scheduled-task identity is not in the schema**: `cronAutomationId` is tasks-index persisted metadata, with `tasks.meta_json` / `cron_automation_id` remaining authoritative. Every sessions-index-derived list must back-fill this field by `taskId` at the client membership join, so workspace, grouped, timeline and pinned/archived rows judge the clock icon uniformly; relying on `SessionSummary` alone is forbidden, as is breaking the frozen schema for this.
+4. **Blocking interactions enter only a lightweight summary**: the sidebar needs permission/userInput attention synchronously but does not subscribe to full conversation rows. The summary carries only an optional kind/count summary; the full pending-interaction payload belongs only to the conversation snapshot.
+5. **archived does not enter sessions-index**: archived rows and section membership come from tasks-index, and the client then joins the available session detail.
 
-- **sessions-index 只含纯会话状态**，**不含 pin/archive/groups**：组织态（用户对列表的标注）走 host 侧 tasks-index.sqlite 的 slim CRUD（pin/archive/groups 三面），侧栏状态层**客户端 join**——归属 M5 ②，不进本 topic、不破坏 schema 冻结。
-- **未读不进 schema**：未读属于 tasks-index 组织态，以 `unreadAt` 与 pin/archive 平行查询并在客户端 join；`lastActivityAt` 只负责活动排序，禁止由未读读写修改。
-- **定时任务身份不进 schema**：`cronAutomationId` 属于 tasks-index 持久化元数据，继续以 `tasks.meta_json` / `cron_automation_id` 为权威。所有 sessions-index 派生列表必须在客户端 membership join 时按 `taskId` 回填该字段，供 workspace、grouped、timeline 和 pinned/archived 行统一判断 clock icon；禁止只依赖 `SessionSummary`，也禁止为此破坏已冻结的 sessions-index schema。
-- **阻塞交互只进轻量摘要**：侧栏需要同步 permission/userInput attention，但不订阅完整 conversation rows。summary 只携带可选 kind/count 摘要；完整 pending interaction payload 仍只属于 conversation snapshot。
-- **archived 不进 sessions-index**：归档行和分区归属由 tasks-index 提供，客户端再 join 可用的 session detail。
+A draft prewarm session is filtered by the gateway's `isDraftSession` and does not enter the sidebar; the event fan-out adds it to the index only after the first input promotes it to a real session.
 
-draft prewarm session 由 gateway 的 `isDraftSession` 过滤，不进入侧栏；首条输入提升为正式 session 后，
-事件 fan-out 才把它加入 index。
-
-## CLI 写侧
+## CLI write side
 
 ```text
 session runtime/product projection event
@@ -51,78 +37,51 @@ session runtime/product projection event
   -> owner subscription wire frame
 ```
 
-### 事件 fan-out 节奏
+### Event fan-out pacing
 
-默认每条会话事件 fan-out 一次：摘要有变化就立刻 flush 给列表订阅者。高频事件流必须先降频，
-否则列表订阅者会按事件频率重算 task 行：
+By default every session event fans out once: if the summary changed it is flushed immediately to list subscribers. High-frequency event streams must be throttled first, otherwise list subscribers recompute task rows at event frequency:
 
-- `ModelStreaming`（正文流式增量）完全不触发列表重算，预览在 turn 收口或其他事件时更新；
-- `DynamicWorkflowRunProgress`（工作流运行进度，一次运行可达每秒数百条）按 leading + trailing
-  窗口节流：静默后的第一条立即发布，`WORKFLOW_PROGRESS_INDEX_FANOUT_MS`（250ms）窗口内的后续
-  进度合并为窗口末尾的一次发布。侧栏运行行（`workflowActivity`）刷新率因此不超过 4Hz，运行终态
-  仍在一个窗口内送达；
-- 其余事件保持即时发布。窗口内发生的任何即时发布都满足待发的 trailing，并把它取消，不重复发帧。
+1. `ModelStreaming` (streaming body increments) never triggers a list recompute; the preview updates at turn closeout or other events.
+2. `DynamicWorkflowRunProgress` (workflow run progress, up to hundreds per second in one run) is throttled by a leading + trailing window: the first after quiet publishes immediately, and later progress within the `WORKFLOW_PROGRESS_INDEX_FANOUT_MS` (250ms) window merges into one publish at the window end. The sidebar run row (`workflowActivity`) therefore refreshes at no more than 4Hz, and the run terminal state is still delivered within one window.
+3. Other events publish immediately. Any immediate publish inside a window satisfies and cancels the pending trailing one, with no duplicate frame.
 
-节流只改变帧节奏：`record.updatedAt` / `lastActivityAt` 语义与 delta 顺序都不变。窗口定时器按
-session 持有，会话清理与 gateway dispose 必须清除它，且不得阻止进程退出。
+The throttle changes only frame pacing: `record.updatedAt` / `lastActivityAt` semantics and delta order are unchanged. The window timer is held per session; session cleanup and gateway dispose must clear it, and it must not keep the process from exiting.
 
-冷订阅先从持久 session store 构造轻量摘要，再用当前在册 session 的 live projection 覆盖。远程 workspace
-读取时必须把完整 identity 解析为实际 directory 执行路径，同时按完整 `workspace_id` 精确过滤：
+A cold subscription first builds a lightweight summary from the persisted session store and then overlays it with the live projection of currently registered sessions. When reading a remote workspace the full identity must be resolved to the actual directory execution path while filtering exactly by the full `workspace_id`:
 
-- 本地 session 继续使用 path + `workspace_id is null`；
-- 远程 session 写入完整 `workspaceIdentity`；
-- 旧 `workspace_id is null` 数据不能只凭相同路径自动 claim 成某个远程 identity；
-- 同一路径的不同 SSH/WSL/Docker identity 不能互相出现在 index。
+1. A local session keeps using path + `workspace_id is null`.
+2. A remote session writes the full `workspaceIdentity`.
+3. Old `workspace_id is null` data must not be auto-claimed into a remote identity by the same path alone.
+4. Different SSH/WSL/Docker identities on the same path must not appear in each other's index.
 
-### 3.3.6 SSH/WSL 历史会话升级兼容
+### 3.3.6 SSH/WSL historical session upgrade compatibility
 
-3.3.6 创建远程 session 时，CLI session store 尚未持久化 `workspace_id`，但远端 host 的
-`tasks-index.sqlite` 已按完整 `workspaceIdentity` 隔离任务。因此 3.4+ 首次订阅 SSH 或 WSL
-`sessions-index` 时，允许 host 把当前 identity 的 task index 中已验证的 `taskId` 作为有限
-allowlist 随 subscribe 传给 CLI。CLI 只能对同时满足以下条件的 session 做一次性归属迁移：
+When 3.3.6 created remote sessions, the CLI session store did not yet persist `workspace_id`, while the remote host's `tasks-index.sqlite` already isolated tasks by the full `workspaceIdentity`. So on the first SSH or WSL `sessions-index` subscription in 3.4+, the host may pass verified `taskId`s of the current identity's task index as a bounded allowlist with subscribe. The CLI may do a one-time ownership migration only for a session that meets all of:
 
-- `session.id` 在 host 提供的 allowlist 中；
-- `session.directory` 与 identity 解析出的实际路径完全相等；
-- `session.workspace_id is null`；
-- 当前 topic 是合法的远程 workspace identity。
+1. `session.id` is in the allowlist the host provided;
+2. `session.directory` is exactly equal to the actual path resolved from the identity;
+3. `session.workspace_id is null`;
+4. the current topic is a legal remote workspace identity.
 
-迁移必须原子写入当前完整 `workspaceIdentity`，再按正常的严格 identity 条件构造 snapshot。
-已带其他 identity 的 session 禁止覆盖；本地路径订阅禁止消费该 allowlist；空 allowlist 禁止退化为
-按路径认领。allowlist 由 host 按精确 `workspaceKey` 从 tasks-index 读取，只取未删除的 GLM task，
-并限制为 sessions-index 单次冷种子的上限，避免同路径不同 SSH authority 串读或无界放大协议帧。
-tasks-index 读取失败时必须放弃旧数据迁移并继续严格 identity 订阅，不得因兼容逻辑阻断当前会话列表。
+The migration must atomically write the current full `workspaceIdentity` and then build the snapshot under the normal strict identity condition. A session already carrying another identity must not be overwritten; a local-path subscription must not consume the allowlist; an empty allowlist must not degrade to claiming by path. The host reads the allowlist from tasks-index by the exact `workspaceKey`, takes only undeleted GLM tasks, and limits it to the cold-seed cap of one sessions-index (to avoid cross-reading different SSH authorities on the same path or unbounded protocol-frame growth). If reading tasks-index fails the old-data migration must be abandoned and the strict identity subscription continues; compatibility logic must not block the current session list.
 
-迁移机会不能绑定到 `sessions-index` publisher 的首次构造。对同一 `workspaceId` 的冷种子与迁移操作
-必须串行化；后续订阅只要携带非空 allowlist，就必须重新执行幂等 claim，并在 claim 完成后重新按
-严格 identity 读取 store。即使本次 `claimedCount = 0` 也必须完成重读，因为上一次执行可能已经成功
-claim、但在读取或合并摘要前失败。读取成功后，此前缺失的摘要必须合并到已有 publisher，并作为
-正常 `session.upserted` delta 推给现有订阅者；迁移或读取失败只能让本次订阅沿用当前严格快照，不能
-留下“已迁移”标记，后续携带 allowlist 的订阅仍可重试。重读只把 publisher 中此前缺失的 store
-摘要补入 index，已存在的 live 或旧种子摘要继续由既有事件投影更新，不能被冷存储默认态降级覆盖。
+The migration opportunity must not be tied to the first construction of the `sessions-index` publisher. Cold seeding and migration for the same `workspaceId` must be serialized; any later subscription carrying a non-empty allowlist must re-run the idempotent claim and, after the claim, re-read the store by strict identity. The re-read must complete even if this time `claimedCount = 0`, since a previous run may have claimed successfully but failed before reading or merging summaries. After a successful read, previously missing summaries must merge into the existing publisher and be pushed to existing subscribers as a normal `session.upserted` delta; a migration or read failure may only let this subscription keep the current strict snapshot and must leave no "migrated" mark, so a later allowlist-carrying subscription can retry. The re-read only adds store summaries missing in the publisher; existing live or old-seed summaries continue to be updated by the normal event projection and must not be downgraded by cold-store defaults.
 
 ```text
-同 workspace 订阅 A（无 allowlist） -> 严格读取/初始化 publisher
+same-workspace subscription A (no allowlist) -> strict read / initialize publisher
                                       |
-                                      v（串行边界）
-同 workspace 订阅 B（有 allowlist） -> 幂等 claim -> 严格重读 -> merge + delta
+                                      v (serialization boundary)
+same-workspace subscription B (allowlist)    -> idempotent claim -> strict re-read -> merge + delta
 ```
 
-本地 workspace 不消费 allowlist，也不进入上述迁移分支，继续保持 `workspace_id is null + directory`
-的既有查询和 publisher 生命周期语义。
+A local workspace does not consume the allowlist, does not enter the migration branch above, and keeps the existing query and publisher lifecycle semantics of `workspace_id is null + directory`.
 
-3.4.2 曾把带显式 user 的 WSL identity（`remote:wsl:<distro>:<user>:<path>`）错误解析成执行
-路径，导致部分持久 session 的 `directory/path` 被写成 identity 本身，或
-`<workspacePath>/<workspaceIdentity>`。冷恢复在 materialize runtime 前必须修复这些确定、可逆的历史形态：
+3.4.2 wrongly parsed a WSL identity with an explicit user (`remote:wsl:<distro>:<user>:<path>`) as the execution path, so the `directory/path` of some persisted sessions was written as the identity itself or as `<workspacePath>/<workspaceIdentity>`. Cold recovery must repair these deterministic, reversible historical shapes before materializing the runtime:
 
-- `workspace_id` 已存在时，只接受合法 remote identity，并把上述两种污染形态还原为 identity 解析出的
-  `workspacePath`；正常路径、合法子目录不改写；包含 identity 但不属于已知形态的数据 fail-closed；
-- `workspace_id is null` 时，只有当前恢复 workspace 的合法 identity 能从上述污染形态中得到完整证明；
-  修复必须原子写入 `workspace_id + directory + path`；写入未命中后必须重新读取，只有并发请求已经写入同一
-  identity 和真实 `directory/path` 时才能继续，否则以可恢复的 session corruption fail-closed，禁止物化 runtime；
-- 已有 identity 的路径修复必须使用只更新 `directory/path` 与单调 `time_updated` 的窄 CAS，禁止复用会把
-  title、summary、permission、revert、archive 等并发事实写回的通用 `updateSession`；CAS 未命中时重新读取并
-  重新裁决，暂时性写盘异常可用同一确定性内存结果继续本次恢复并保留后续重试机会；
-- 修复不得依赖 client mode，也不得改变 desktop `continuous` 与 mobile `replayable` 的消息恢复边界。
+1. When `workspace_id` exists, accept only a legal remote identity and restore the two polluted shapes above to the `workspacePath` the identity resolves to; normal paths and legal subdirectories are not rewritten; data containing the identity but not matching a known shape fails closed.
+2. When `workspace_id is null`, only a legal identity of the currently recovered workspace that can fully prove itself from the polluted shapes qualifies; the repair must atomically write `workspace_id + directory + path`; after a write miss it must re-read, and may continue only if a concurrent request already wrote the same identity and real `directory/path`, otherwise it fails closed with a recoverable session corruption and the runtime must not be materialized.
+3. A path repair for an existing identity must use a narrow CAS updating only `directory/path` and a monotonic `time_updated`, never reusing the general `updateSession` that would write back concurrent facts such as title, summary, permission, revert and archive; on a CAS miss re-read and re-rule, and a transient write exception may continue this recovery with the same deterministic in-memory result while keeping later retry chances.
+4. The repair must not depend on client mode and must not change the message-recovery boundary of desktop `continuous` and mobile `replayable`.
 
 ```text
 host task allowlist + clean path + null identity -> atomic claim -> strict sessions-index read
@@ -130,10 +89,9 @@ known polluted path + proven remote identity     -> path repair -> runtime mater
 unknown/mismatched shape                         -X-> no claim / fail-closed
 ```
 
-remote identity 解析必须 fail-closed：任何以 `remote:` 开头但不符合统一 parser 的 workspace id 都不能
-回退为本地路径。这样修复的是 3.4.2 的错误持久化根因，而不是在发送按钮处增加兜底。
+remote identity parsing must fail closed: any workspace id starting with `remote:` that does not match the unified parser must not fall back to a local path. This repairs the wrong-persistence root cause of 3.4.2, rather than adding a fallback at the send button.
 
-实现入口：
+Entry points:
 
 - `packages/services/src/zcode-agent/zcodeAgentService.ts`
 - `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts`
@@ -143,19 +101,11 @@ remote identity 解析必须 fail-closed：任何以 `remote:` 开头但不符�
 - `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/sessions-index-publisher-registry.ts`
 - `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts`
 
-## UI 读侧
+## UI read side
 
-`agentSessionsIndexTransport` 把 service 的 V4 帧转给 `SessionsIndexStore`。store 原子应用 snapshot，要求
-delta 连续；gap、runtime generation 变化或 wire assembly fault 触发 recovery，恢复失败时 fail-closed。
+`agentSessionsIndexTransport` hands the service's V4 frames to `SessionsIndexStore`. The store applies snapshots atomically and requires contiguous deltas; a gap, runtime generation change or wire assembly fault triggers recovery, and failed recovery fails closed.
 
-任务列表订阅采用 `existing-only` runtime policy。scope acquire 只登记观察关系；workspace Agent 尚未运行时，
-store 进入 `dormant`，不发起 spawn、不计作 hydration，也不把此前 live summary 的 `running` 当成当前 activity。
-持久行继续由 tasks-index 展示。显式草稿预热、打开 session、发送命令或其它真实运行入口发布 runtime
-available 后，dormant store 才 fresh subscribe；Host task-index syncer 的 dormant state 必须在第一次 available
-时先幂等安装 workspace 级 sessions-index/workspace-config frame listener，再发起 subscribe，确保同一次 stdio
-read 中在 ACK promise resolve 后、await continuation/subscription ownership 生效前到达的 initial frame 不丢失。
-后续 runtime generation 换代复用同一组 listener，只重订阅；
-runtime unavailable 后撤销订阅与重试并回到 dormant。
+The task-list subscription uses the `existing-only` runtime policy. Scope acquire only registers the observation relation; while the workspace Agent is not yet running, the store enters `dormant`, does not spawn, does not count as hydration and does not treat the earlier live summary's `running` as the current activity. Persisted rows continue to be displayed by tasks-index. Only after an explicit draft prewarm, opening a session, sending a command or another real running entry publishes runtime available does the dormant store fresh-subscribe. The Host task-index syncer's dormant state, on the first available, must first idempotently install the workspace-level sessions-index/workspace-config frame listener and only then subscribe, so an initial frame arriving in the same stdio read after the ACK promise resolves but before the await continuation / subscription ownership takes effect is not lost. Later runtime generation changes reuse the same listeners and only resubscribe; after runtime unavailable, subscriptions and retries are revoked and the store returns to dormant.
 
 ```text
 restored inactive workspace -> tasks-index row + dormant observer -X-> Agent spawn
@@ -163,30 +113,22 @@ explicit runtime operation  -> runtime available -> install listener -> fresh su
 runtime unavailable         -> clear live ownership/retry -> dormant -X-> implicit restart
 ```
 
-`start-if-needed` 只保留给具有明确用户/系统执行意图的入口；任务列表、grouped/timeline/pinned/archived
-消费者和 Host task-index syncer 均不得使用它。runtime lifecycle 与订阅都按
-`workspaceIdentity?.trim() || workspacePath` 隔离。
+`start-if-needed` is kept only for entries with explicit user/system execution intent; task-list, grouped/timeline/pinned/archived consumers and the Host task-index syncer must not use it. Runtime lifecycle and subscriptions are isolated by `workspaceIdentity?.trim() || workspacePath`.
 
-Main 的本地冷启动预热名单是另一种明确系统意图：恢复多个本地 workspace 时，只选择上次激活的
-workspace（上限 1），随首次 `InitLocal` 交给同一 Host。Host 对该 target 复用既有完整
-`initializeWorkspace` 路径；`recentProjects` 与其它 restored workspace 均保持 dormant。预热失败不以其它
-workspace 补位，renderer reload 只 reattach 既有 Host，远端 shared-host/mobile attachment 不消费或
-扩展这份本地名单。
+Main's local cold-start prewarm list is a different explicit system intent: when restoring multiple local workspaces it selects only the last-activated workspace (cap 1) and hands it to the same Host with the first `InitLocal`. The Host reuses the existing full `initializeWorkspace` path for that target; `recentProjects` and other restored workspaces stay dormant. A prewarm failure is not backfilled by another workspace, a renderer reload only reattaches the existing Host, and remote shared-host/mobile attachments neither consume nor extend this local list.
 
-同一 endpoint + workspaceKey 的多个消费者通过 `sessionsIndexRegistry` 共享 store/订阅并做引用计数。
-多 endpoint 聚合用 `workspaceSessionsIndexSubscriptionSet` 差量协调 scope：
+Multiple consumers of the same endpoint + workspaceKey share the store/subscription through `sessionsIndexRegistry` with reference counting. Multi-endpoint aggregation reconciles scopes differentially with `workspaceSessionsIndexSubscriptionSet`:
 
 ```text
-已有 local-A + remote-A
-  -> 新增 remote-B：保留 A 的 store/subscription，只 acquire B
-  -> 删除 remote-B：只 release B
-  -> service generation 换代：只替换受影响 scope
+existing local-A + remote-A
+  -> add remote-B: keep A's store/subscription, acquire only B
+  -> remove remote-B: release only B
+  -> service generation change: replace only the affected scope
 ```
 
-这条规则避免新远端 endpoint 水合时拆掉已就绪列表。远程 pane 必须使用自己的 endpoint service，不能向
-本地 `__base__` 查询同路径 session。
+This rule avoids tearing down an already-ready list while a new remote endpoint hydrates. A remote pane must use its own endpoint service and must not query the local `__base__` for same-path sessions.
 
-实现入口：
+Entry points:
 
 - `packages/ui/src/v4/agentSessionsIndexTransport.ts`
 - `packages/ui/src/v4/sessionsIndexStore.ts`
@@ -195,43 +137,23 @@ workspace 补位，renderer reload 只 reattach 既有 Host，远端 shared-host
 - `packages/ui/src/v4/useWorkspaceSessionsIndexItems.ts`
 - `packages/ui/src/v4/workspaceSessionsIndexSubscriptionSet.ts`
 
-## 与 tasks-index 的 join
+## Join with tasks-index
 
-tasks-index 提供持久 task 基础行及以下组织态，sessions-index 只按
-`workspaceKey + taskId(sessionId)` 覆盖命中的实时字段：
+tasks-index provides the persisted base task rows and the following organization state; sessions-index only overrides the live fields it hits by `workspaceKey + taskId(sessionId)`: pinned / archived / group membership; unreadAt; the search text or slim metadata needed by compatible list queries.
 
-- pinned / archived / group membership；
-- unreadAt；
-- 兼容列表查询所需的搜索文本或 slim metadata。
+The client projection uses the task-index row as the left table: when a summary hits it fills phase, lastActivityAt, background work, pending interaction and the session title; when the summary is missing it keeps the persisted row and forbids deriving a spinner from a historical `status=running`. A newly created task not yet persisted is shown temporarily only through the renderer's existing optimistic/live overlay.
 
-客户端投影使用 task-index row 做左表：summary 命中时补 phase、lastActivityAt、background work、
-pending interaction 和 session 标题；summary 缺失时保留持久行并禁止从历史 `status=running` 推导 spinner。
-新建但尚未落库的任务只通过 renderer 已有 optimistic/live overlay 临时显示。
+An organization-state mutation does not change sessions-index, so `taskListMembershipVersion.ts` explicitly triggers a membership refetch; it must not wait for a nonexistent index delta. Task creation also changes tasks-index's forward row set: the Host emits `task_created` after the task row and the grouped initial order are committed, and the renderer must use that event to roll the task-row/membership read generation. Updating only session activity is not enough, otherwise an old membership Promise keeps the new row out of Project/Timeline/Grouped after it is persisted.
 
-组织态 mutation 不会改变 sessions-index，因此
-`taskListMembershipVersion.ts` 显式触发 membership 重拉；不能等待一条不存在的 index delta。
-任务创建同样会改变 tasks-index 的正向行集合：Host 在 task row 与 grouped 初始顺序提交后发出
-`task_created`，renderer 必须用该事件换代 task-row/membership 读取。不能只更新 session activity，
-否则旧 membership Promise 会在新行已经落库后继续把它挡在 Project/Timeline/Grouped 之外。
+## Recovery and multi-end boundary
 
-## 恢复与多端边界
+1. Desktop online continuous and mobile replayable recovery may consume the same index authority, but each attachment has independent subscription ownership and recovery state.
+2. relay/main do not cache the index and do not broadcast one client's saturated/resync state to other clients.
+3. A snapshot is a wholesale replacement for the current workspace; frames of an old generation must be dropped.
+4. The index seq serves subscription continuity only and is not a permanently replayable business history.
 
-- 桌面 online continuous 与手机 replayable recovery 可以消费同一份 index 权威，但各 attachment 有独立
-  subscription ownership 和 recovery 状态。
-- relay/main 不缓存 index，也不把一个客户端的 saturated/resync 状态广播给其他客户端。
-- snapshot 是当前 workspace 的整体替换；旧 generation 的帧必须丢弃。
-- index 的 seq 只服务订阅连续性，不代表可永久回放的业务历史。
+## Test boundary
 
-## 测试边界
+Evidence should come at least from these layers: shared (session summary / snapshot / delta / topic schema and wire codec); CLI (projection derivation, publisher conflation, cold seed, draft filtering, remote identity); UI (snapshot/delta/gap, store reference reuse, multi-endpoint differential lifecycle, list join); WDIO (list visibility after create, open, rename, archive/delete, and remote scope not crossing lines); process lifecycle (when a single window restores multiple local workspaces, only the one active workspace selected at startup may be explicitly prewarmed as a runtime; expanding any task-list view must not increase the Agent count; a workspace outside the list can start only via an explicit open/send/background-task entry, and after runtime unavailable the passive observer must not pull it up again).
 
-当前应至少由以下层级提供证据：
-
-- shared：session summary / snapshot / delta / topic schema 与 wire codec；
-- CLI：projection 派生、publisher conflation、冷种子、draft 过滤、remote identity；
-- UI：snapshot/delta/gap、store 引用复用、多 endpoint 差量生命周期、列表 join；
-- WDIO：新建、打开、重命名、归档/删除后列表可见性，以及 remote scope 不串线。
-- process lifecycle：单窗口恢复多个本地 workspace 时只允许启动时选出的 active workspace 这 1 个显式预热 runtime；
-  展开任意 task-list 视图不得增加 Agent 数量；名单外 workspace 只有显式打开/发送/后台任务入口才能启动，
-  runtime unavailable 后被动 observer 不得把它重新拉起。
-
-覆盖矩阵中的现存测试才算自动覆盖；历史 M5 清单或建议文件名不能替代测试证据。
+Only existing tests in the coverage matrix count as automatic coverage; a historical M5 list or suggested file names cannot replace test evidence.

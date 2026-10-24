@@ -1,33 +1,37 @@
-# 版本门禁详情没有说明应升级桌面端
+# Version-gate details do not say the desktop must be upgraded
 
 Status: ready-for-human
 
-业务基线 `d31e735905cf744e75a0a93548a80acabe871ae5`。版本夹具使用当前 runtime 的编译版本元数据变体，
-Server=`3.16.0`、minimum=`3.16.0`，Desktop=`3.15.1`。
+Baseline `d31e735905cf744e75a0a93548a80acabe871ae5`. The version fixture is a compiled-version metadata
+variant of the current runtime: Server=`3.16.0`, minimum=`3.16.0`, Desktop=`3.15.1`.
 
-## 运行证据
+## Facts
 
-补丁 07 的 Host 日志明确拒绝项目连接：`ZCode Desktop 3.15.1 must be upgraded to at least 3.16.0`。
-主页只显示“需要处理 / 请查看详细信息并按提示处理后重试”。测试随后补齐真实详情操作。
+In patch 07 the Host log correctly rejects the project connection: `ZCode Desktop 3.15.1 must be upgraded to at least 3.16.0`.
+The home page shows only “需要处理 / 请查看详细信息并按提示处理后重试” (needs attention / see details and
+follow the prompts, then retry); the test was extended to open real details.
 
-补丁 08、批次 `r3-server-20261011143037600-31012b` 的 `version-controller-required`
-在 223.4 秒后失败。已点击横幅的“详细信息”，并尝试展开可见技术详情；弹窗文本仍只有
-“需要处理 / 需要更新 / 请查看详细信息并按提示处理后重试”，没有桌面端、所需版本或对应动作。
-录像与 `controllerGuidance` 一致，已经排除“未打开详情便扫描主页”的测试问题。
+Patch 08, batch `r3-server-20261011143037600-31012b`, `version-controller-required` failed after 223.4 s even
+after clicking the banner's "详细信息" (details) and expanding the visible technical details: the dialog text
+is still only “需要处理 / 需要更新 / 请查看详细信息并按提示处理后重试”, with no mention of the desktop, the
+required version or an action. Video matches `controllerGuidance`; a "scanned home page without opening
+details" test problem is excluded.
 
 ```text
-Host 正确拒绝旧 Desktop → 主界面要求查看详情
-  → 打开详情 → 仍让用户查看详情，没有说明升级对象
+Host correctly rejects the old Desktop → main UI tells the user to view details
+  → details open → still "view details", no statement of what to upgrade
 ```
 
-同页路径标签直接显示 `workspaceSidebar.projectPath`，也是可见的文案缺失。
-最终远端版本仍为 `3.16.0`；原归档 SHA 不变的后续断言尚未到达，不将版本字段当作完整归档验真。
+The path label on the same page renders the raw `workspaceSidebar.projectPath` key, a visible missing-copy
+bug. The remote stays `3.16.0`; the later "original archive SHA unchanged" assertion is not reached and the
+version field is not treated as full archive verification.
 
-## 处理范围
+## Scope
 
-应保留正确的兼容门禁，把已有 controller 升级方向、最低版本和可执行动作传到当前项目详情 UI。
-不应降级远端，也不应让用户在没有方向的“需要更新”中猜测。与
-[兼容版本的可选提示缺失](21-optional-update-notice-missing.md) 分开记录；本轮业务代码未修改。
+Keep the correct compatibility gate and carry the existing controller upgrade direction, minimum version and
+actionable step into the current project details UI. Do not downgrade the remote or leave users guessing at
+a directionless "needs update". Tracked separately from
+[the optional-update notice issue](21-optional-update-notice-missing.md). Business code is unchanged.
 
-证据：补丁 07 的 `version-controller-required` Desktop 日志；补丁 08 同名用例的
-`version-policy.json`、失败录像和日志。
+Evidence: patch 07 `version-controller-required` Desktop log; patch 08 `version-policy.json`, failure video
+and log of the same case.

@@ -1,38 +1,34 @@
-# 新建 Task 的当前模型判定链路
+# New Task Model Resolution Chain
 
-> 新建草稿、模型与权限默认值及未归类任务目录生命周期以 [统一设计](../ui/project-task-draft-lifecycle.md) 为准：按客户端、目标主机及项目 ID 隔离；首发接纳后消费未归类待发送目录。本文其他组织态与执行目录约束继续适用。
+> Draft creation, model and permission defaults, and the lifecycle of the uncategorized task directory are governed by the [unified design](../ui/project-task-draft-lifecycle.md): isolated per client, target host and project ID; the uncategorized pending directory is consumed after first send is accepted. The other organization-state and execution-directory constraints in this document still apply.
 
-更新日期：2026-07-16
+Updated: 2026-07-16
 
-V4 中“新建 task”先表现为未绑定 session 的 draft pane。模型事实来自 renderer draft intent 与
-last-selected 配置种子；首发后才由 CLI session projection 成为权威。旧
-`createTaskWithSessionControl` 和 legacy `runtimeModel` 首发链路已不再是 UI 主路径。
+In V4 a "new task" is first an unbound draft pane. Model facts come from the renderer draft intent and the last-selected config seed; only after first send does the CLI session projection become authoritative. The old `createTaskWithSessionControl` and legacy `runtimeModel` first-send chain are no longer the UI main path.
 
-## 草稿配置来源
+## Draft config sources
 
-草稿配置由 `useDraftConfigControl` 维护：
+Draft config is maintained by `useDraftConfigControl`:
 
-1. mode 从 renderer 的 draft mode 偏好读取，不以 workspace catalog 为持久事实。
-2. 模型和 thought 优先读取该 workspace 身份下的全局 last-selected 配置元组。
-3. workspace `configOptions` 提供可选目录并校验选择；目录未加载时
-   `prepareWorkspaceWithZCodeSessionService` 负责水合。
-4. 用户本次显式选择写入 reactive draft intent，优先于初始种子和异步目录回包。
-5. `followupMode` 来自 app 设置，并随 create config 传递。
+1. Mode is read from the renderer's draft mode preference, not from the workspace catalog.
+2. Model and thought prefer the global last-selected config tuple under that workspace identity.
+3. Workspace `configOptions` provides the selectable catalog and validates the selection; when the catalog is not loaded, `prepareWorkspaceWithZCodeSessionService` hydrates it.
+4. The user's explicit choice is written to the reactive draft intent and beats the initial seed and async catalog responses.
+5. `followupMode` comes from the app setting and is passed with the create config.
 
-last-selected 的 model 与 thought 是一个不可拆分元组：
+The last-selected model and thought are an inseparable tuple:
 
-- thought 必须按该模型的能力过滤，不能把全局独立 thought 应用到另一模型；
-- 跨模型 intent 先清空 thought，由目标 runtime 决定实际默认/兼容档位；
-- 外部 custom provider 的上次模型仍可用时，Z.ai/BigModel family 的连接记忆不能把它覆盖；
-- 上次模型属于当前 family 时，Coding/Team Plan 只约束该 family 内的 provider 与可用模型；
-- 当前 Plan provider 暂不可用时，不退回同 family 的旧连接。
+- thought is filtered by the model's capabilities; a global independent thought is never applied to another model;
+- a cross-model intent clears thought first, and the target runtime decides the actual default/compatible level;
+- when the last model of an external custom provider is still available, the Z.ai/BigModel family connection memory must not overwrite it;
+- when the last model belongs to the current family, Coding/Team Plan only constrains providers and available models within that family;
+- when the current Plan provider is temporarily unavailable, do not fall back to an older connection of the same family.
 
-所有 workspace 级隔离使用 `workspaceKey = workspaceIdentity?.trim() || workspacePath`；文件和命令
-执行仍使用 `workspacePath`。
+All workspace-level isolation uses `workspaceKey = workspaceIdentity?.trim() || workspacePath`; file and command execution still use `workspacePath`.
 
-## 显式选择与偏好确认
+## Explicit selection and preference confirmation
 
-草稿切换先更新 intent；有 prewarm session 时再对明确 `targetSessionId` 发送 V4 CAS。偏好写入遵守：
+A draft switch updates the intent first; with a prewarm session it then sends a V4 CAS to the explicit `targetSessionId`. Preference writes follow:
 
 ```text
 draft intent: { model: B, thought: null }
@@ -42,74 +38,59 @@ draft intent: { model: B, thought: null }
 
 synthetic empty thought ----------------X
 failed/stale/superseded ----------------X
-历史 session snapshot -----------------X
+historical session snapshot ------------X
 ```
 
-pending intent 绑定发起 session；迟到 ACK 或投影不能覆盖更新的用户选择。用户显式选择非空 thought
-时，accepted/noop 提交完整 `{ model, thoughtLevel }`。自动 fallback、打开历史 session、App 重启和
-后台 selected-key 迁移都不构成用户选择。
+The pending intent is bound to the originating session; a late ACK or projection cannot overwrite a newer user choice. When the user explicitly selects a non-empty thought, accepted/noop commits the full `{ model, thoughtLevel }`. Automatic fallback, opening a historical session, app restart and background selected-key migration are not user selections.
 
-Model Settings 的 family 连接切换也不等于聊天工具条选模型：当前草稿使用 family 外且仍可用的模型时，
-保留原 draft session；只有草稿属于变化的 family，或当前模型已无法识别时，才关闭未使用的 deferred
-session 并按目标连接重建。目标 Plan 内仍可用的具体模型继续保留。
+A family connection switch in Model Settings is not a chat-toolbar model selection either: if the current draft uses a still-available model outside the family, the original draft session is kept; only when the draft belongs to the changed family or the current model can no longer be recognized is the unused deferred session closed and rebuilt for the target connection. A concrete model still available in the target Plan is kept.
 
-## 预热路径
+## Prewarm path
 
-draft pane 后台创建一个纯内存、deferred 的 draft session：
+The draft pane creates a pure in-memory, deferred draft session in the background:
 
 ```text
 draft pane mount
   -> createSession { workspaceId, config: initialDraftConfig }
-  -> CLI 创建 deferred session（不落 SQLite、不进 sessions-index）
-  -> conversation snapshot 到达
-  -> draft intent 如有更新，再用 CAS 对齐 config
-  -> 首发 sendText
-  -> promote，pane 原地绑定 sessionId
+  -> CLI creates a deferred session (not in SQLite, not in sessions-index)
+  -> conversation snapshot arrives
+  -> if the draft intent changed, align config with CAS
+  -> first send sendText
+  -> promote, pane binds sessionId in place
 ```
 
-预热 session 未使用就切走时调用 `deleteSession` 清理。创建仍在飞时，ACK 到达后只能条件清理
-`deferred` session；首发已经提升为 `immediate` 后不得被迟到 cleanup 删除。提交 prepare 结果前也要
-重新核对 pane/session binding，避免旧 workspace 回包覆盖已创建 task。
+If a prewarm session is unused when the user navigates away, `deleteSession` cleans it up. While create is still in flight, after the ACK arrives only a `deferred` session may be cleaned up conditionally; once first send has promoted it to `immediate`, a late cleanup must not delete it. Before committing a prepare result, re-check the pane/session binding so an old workspace response cannot overwrite an already created task.
 
-## 首发路径
+## First-send path
 
-首发按以下优先级执行：
+By priority:
 
-1. 有预热 session：等待配置屏障，再对预热 session 执行 `sendText`；accepted 后提升并绑定。
-2. 无预热且无附件：执行
-   `createSession { workspaceId, config, firstInput: { text } }`，配置必须在 firstInput 前应用。
-3. 无预热且附件 ready：先创建空 session，再用 `sendText` 提交附件引用；点击发送时不启动上传。
-4. `/goal` 等需要 session 的 draft slash command：复用预热 session，或创建空 session，再派发命令。
+1. With a prewarm session: wait for the config barrier, then `sendText` on the prewarm session; promote and bind after accepted.
+2. No prewarm, no attachments: `createSession { workspaceId, config, firstInput: { text } }`; config must apply before firstInput.
+3. No prewarm, attachments ready: create an empty session first, then submit attachment references with `sendText`; clicking send does not start uploads.
+4. Draft slash commands that need a session (such as `/goal`): reuse the prewarm session or create an empty session, then dispatch the command.
 
-`buildDraftCreateConfigPayload` 合并当前 intent、app follow-up 设置和同步可读的初始配置。用户显式写入
-的 draft 值优先，避免目录水合晚于立即首发时退回 builtin 模型。首发经过同一个 config barrier，
-不能越过最新模型/mode/thought 命令。
+`buildDraftCreateConfigPayload` merges the current intent, the app follow-up setting and the synchronously readable initial config. The user's explicit draft value wins, so catalog hydration finishing later than an immediate first send does not fall back to the builtin model. First send passes through the same config barrier and cannot overtake the latest model/mode/thought command.
 
-## CLI 创建语义
+## CLI creation semantics
 
-`commands/handlers/session-mgmt.ts` 创建 deferred session 后，在首条输入之前调用
-`applyRequestedSessionConfig`：
+After creating a deferred session, `commands/handlers/session-mgmt.ts` calls `applyRequestedSessionConfig` before the first input:
 
-- 请求 config 覆盖 runtime 缺省；
-- 跨模型时安装/解析 provider client，并采用目标模型支持的实际 thought；
-- mode 只接受 `build | edit | plan | yolo`；
-- 非默认 follow-up mode 写入 runtime；
-- `ModelSelected` / `SessionModeChanged` 等事件让 projection 可冷恢复。
+- the requested config overrides runtime defaults;
+- on a cross-model request, install/resolve the provider client and adopt the actual thought the target model supports;
+- mode accepts only `build | edit | plan | yolo`;
+- a non-default follow-up mode is written to the runtime;
+- events such as `ModelSelected` / `SessionModeChanged` keep the projection cold-recoverable.
 
-配置应用失败时 create ACK 仍可成功，session 保持 runtime 缺省并记录 warn。因此 UI 的预热与首发
-屏障仍要检查配置 ACK 和最终 projection，不能只相信本地选择器。
+If config application fails the create ACK can still succeed, the session keeps runtime defaults and a warn is logged. So the UI prewarm and first-send barriers still check the config ACK and the final projection and must not trust only the local selector.
 
-如果 last-selected 元组在当前 registry 已不可解析，renderer 不按菜单第一项另写一份 fallback。
-`createSession` 使用可用 runtime 缺省；registry 在 session 创建后变化时，由 Agent 在 idle/next-turn
-安全边界执行同一套 fallback，并以目标模型实际 thought 的 `ModelSelected` 校准草稿 projection。
+If the last-selected tuple can no longer be resolved in the current registry, the renderer does not write a separate fallback from the first menu item. `createSession` uses the available runtime default; if the registry changes after the session is created, the Agent runs the same fallback at an idle/next-turn safe boundary and calibrates the draft projection with a `ModelSelected` carrying the target model's actual thought.
 
-## 多端边界
+## Multi-end boundary
 
-桌面和手机附着到同一 shared-host/CLI session 事实。区别只在 topic delivery：桌面是 continuous，
-手机远控是 replayable recovery。relay/main 不创建另一份 draft runtime，也不保存草稿模型或 session
-queue。远程链路必须贯穿 `workspaceIdentity` 和 `remoteSessionId`。
+Desktop and mobile attach to the same shared-host/CLI session facts; only topic delivery differs: desktop is continuous, mobile remote is replayable recovery. The relay/main create no second draft runtime and keep no draft model or session queue. Remote links must carry `workspaceIdentity` and `remoteSessionId` throughout.
 
-## 当前代码入口
+## Code entry points
 
 - `packages/ui/src/v4/composer/useDraftConfigControl.ts`
 - `packages/ui/src/v4/composer/useDraftSessionPrewarm.ts`

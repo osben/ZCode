@@ -1,49 +1,38 @@
-# Subagent Computer Use 不可用边界
+# Subagent Computer Use Unavailable Boundary
 
-## 目标
+Subagents must not use the official `zcode-cua` Computer Use. The restriction binds only to the official CUA server already verified by Host authority, not guessed from a tool name or display name, so third-party MCP is unaffected.
 
-子 Agent 不得使用官方 `zcode-cua` Computer Use。限制只绑定已经由 Host authority
-验证的官方 CUA server，不按工具名称或 display name 猜测，因此第三方 MCP 不受影响。
+The main Agent keeps using canonical `mcp__computer-use__*` and compatible aliases; desktop `desktop-continuous`, Web remote `web-remote-replayable`, Host, UI and protocol schemas are unchanged.
 
-主 Agent 继续使用 canonical `mcp__computer-use__*` 及兼容 alias；桌面
-`desktop-continuous`、Web 远控 `web-remote-replayable`、Host、UI 和协议 schema 均不变。
-
-## 两层边界
+## Two layers
 
 ```text
 child spawn
   ├─ authority = computeOfficialCuaServerNames(parent config, trusted names)
-  ├─ wildcard profile -> 从 borrowed snapshot 移除官方 server/tools
-  ├─ explicit CUA server/tool/selector/skill -> 启动前配置错误
-  └─ child SkillPort -> 隐藏官方 computer-use
+  ├─ wildcard profile -> remove official server/tools from the borrowed snapshot
+  ├─ explicit CUA server/tool/selector/skill -> configuration error before startup
+  └─ child SkillPort -> hide official computer-use
 
 child MCP call (runtime_scope=subagent)
-  └─ zcode-cua preflight -> 返回错误，不进入 kill-switch/Broker/handler
+  └─ zcode-cua preflight -> return error, never reach kill-switch/Broker/handler
 ```
 
-错误码为 `SUBAGENT_COMPUTER_USE_UNAVAILABLE`，错误文本为
-`Computer Use is not available in subagent`。producer 只信任 namespaced
-`com.zcode/request-context.runtime_scope`；缺失、格式错误或 `main` 保持兼容，顶层同名字段不可信。
+The error code is `SUBAGENT_COMPUTER_USE_UNAVAILABLE` and the error text is `Computer Use is not available in subagent`. The producer trusts only the namespaced `com.zcode/request-context.runtime_scope`; missing, malformed or `main` stays compatible, and a top-level field of the same name is not trusted.
 
-## 子 Agent 语义
+## Subagent semantics
 
-- 没有显式 CUA 配置时，wildcard、Explore、general-purpose、custom、background 和 resume
-  子 Agent 都不看到官方 CUA server、descriptor、canonical/raw/alias 工具或 Skill。
-- 显式声明官方 server、canonical/raw/alias tool、MCP server selector 或官方 Skill 时，child
-  runtime 在首次模型请求前失败，不静默删除用户配置。
-- 过滤使用冻结的官方 plugin catalog、plugin id、root path 和 qualified name；同名第三方
-  Skill 不受影响。
-- parent snapshot、parent MCP lifecycle 和主 Agent registry 不被修改。
+- Without explicit CUA configuration, wildcard, Explore, general-purpose, custom, background and resume subagents all see no official CUA server, descriptor, canonical/raw/alias tool or Skill.
+- When an official server, canonical/raw/alias tool, MCP server selector or official Skill is explicitly declared, the child runtime fails before the first model request and does not silently drop the user's configuration.
+- Filtering uses the frozen official plugin catalog, plugin id, root path and qualified name; same-named third-party Skills are unaffected.
+- The parent snapshot, parent MCP lifecycle and main Agent registry are not modified.
 
-## Producer 语义
+## Producer semantics
 
-`zcode-cua` 的 30 个工具共享同一个 preflight。`runtime_scope=subagent` 时在 kill-switch
-检查、Broker 访问和 handler 之前返回 `isError`；request access、stop、wait、clipboard 等
-工具也不能绕过该边界。工具名称、schema、annotations、权限组和结果协议不变。
+All 30 `zcode-cua` tools share one preflight. With `runtime_scope=subagent` it returns `isError` before the kill-switch check, Broker access and handler; request access, stop, wait, clipboard and other tools cannot bypass this boundary. Tool names, schemas, annotations, permission groups and result protocol are unchanged.
 
-## 验收
+## Acceptance
 
-- 子 Agent provider-visible tool/Skill surface 不含官方 CUA，非官方 MCP/Skill 仍可用。
-- 直接绕过 surface 的 CUA 调用不会触发 Broker。
-- 主 Agent 官方 CUA 调用行为保持不变。
-- 覆盖 z-code 单元测试、zcode-cua producer 单元测试及一条 conversation manual-review/replay case。
+- The subagent's provider-visible tool/Skill surface contains no official CUA, and non-official MCP/Skills still work.
+- A direct CUA call bypassing the surface does not trigger the Broker.
+- Main Agent official CUA behavior is unchanged.
+- Covered by z-code unit tests, zcode-cua producer unit tests and one conversation manual-review/replay case.

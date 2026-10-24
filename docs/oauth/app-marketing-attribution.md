@@ -2,17 +2,15 @@
 
 ## Objectives
 
-ZCode Desktop receives official website marketing attribution from a unified OAuth callback, and uniformly carries the top-level string field `marketing_params` in all business telemetry sent to `/api/v1/event/report`.
+ZCode Desktop receives official-website marketing attribution through the unified OAuth callback
+and carries it as the top-level string field `marketing_params` in all business telemetry sent to
+`/api/v1/event/report`.
 
-## Callback Protocol
+## Callback protocol
 
-The unified callback `zcode://oauth/callback` supports:
-
-- `channel_id`
-- `utm_source`
-- `utm_campaign`
-
-All three marketing parameters are allowed to exist partially; blank values are not saved. The app does not receive or maintain marketing attribution expiration times.
+The unified callback `zcode://oauth/callback` supports `channel_id`, `utm_source` and
+`utm_campaign`. Any subset may be present; blank values are not saved. The app neither receives nor
+maintains an attribution expiration time.
 
 ## Lifecycle
 
@@ -34,17 +32,22 @@ Local attribution record
        └─ Read failure -> Single throttled alert + marketing_params={}, continue reporting
 ```
 
-- New valid promotion callbacks fully overwrite old values.
-- Pure attribution callbacks are a transit phase before the final authorization; the same OAuth state accepts at most one; it does not consume the final authorization code callback.
-- Repeated pure attribution callbacks must not write attribution again, nor extend the 5-minute lifecycle of the pending state.
-- Re-initiating OAuth cancels the old state; attribution-then-final authorization is only allowed to continue on the same unexpired state.
-- Saved attributions do not expire automatically, until overwritten by a new attribution or local credentials are cleared.
-- Compatible with the briefly-used `{ params, expiresAt }` storage structure from early this branch; on read, ignore `expiresAt` and keep only the three marketing fields.
+- A new valid promotion callback fully overwrites the old values.
+- A pure attribution callback is a transit phase before the final authorization. The same OAuth
+  state accepts at most one, and it does not consume the final authorization code callback.
+- A repeated pure attribution callback neither rewrites attribution nor extends the 5-minute
+  lifecycle of the pending state.
+- Re-initiating OAuth cancels the old state; attribution-then-authorization may continue only on
+  the same unexpired state.
+- Saved attribution does not expire automatically; it is replaced by a new attribution or removed
+  when local credentials are cleared.
+- Reading tolerates the briefly used `{ params, expiresAt }` storage shape: `expiresAt` is ignored
+  and only the three marketing fields are kept.
 
-## Telemetry Contract
+## Telemetry contract
 
-All events reported through `TelemetryCore` to `/api/v1/event/report`, including
-`app_launch`, `app_daily_active`, and renderer business events, carry:
+Every event reported through `TelemetryCore` to `/api/v1/event/report` (`app_launch`,
+`app_daily_active`, renderer business events, ...) carries:
 
 ```json
 {
@@ -52,7 +55,7 @@ All events reported through `TelemetryCore` to `/api/v1/event/report`, including
 }
 ```
 
-The field is retained even when there is no attribution:
+The field is kept when there is no attribution:
 
 ```json
 {
@@ -60,14 +63,16 @@ The field is retained even when there is no attribution:
 }
 ```
 
-ARMS crash, performance, resource, and network observations are not `/api/v1/event/report` business telemetry,
-and do not carry marketing attribution.
+ARMS crash, performance, resource and network observations are not `/api/v1/event/report` business
+telemetry and carry no marketing attribution.
 
-The attribution credential read is additional context for telemetry, not a pre-condition for reporting. On read exception, send the original event anyway,
-with `marketing_params` as an empty object; the same `TelemetryCore` lifecycle records a single fixed redaction alert via service logger,
-without attaching the original Error, stack, local paths, or credential backend details, to avoid flooding high-frequency events and expanding the privacy exposure surface.
+Reading the attribution credential is extra context, not a precondition for reporting. On a read
+exception the original event is still sent with `marketing_params` as an empty object, and the same
+`TelemetryCore` lifecycle logs one fixed redacted alert via the service logger, without the
+original Error, stack, local paths or credential backend details. This avoids flooding on
+high-frequency events and widening privacy exposure.
 
-## Audit Fix Coverage
+## Acceptance scenarios
 
 | Case ID       | Setup                                      | Action                                             | Assertions                                                    |
 | ------------- | ------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------- |
@@ -78,8 +83,8 @@ without attaching the original Error, stack, local paths, or credential backend 
 | OAuth-ATTR-05 | Same state already received attribution    | Wait over 5 minutes then submit authorization code | Reject by state expiration                                    |
 | OAuth-ATTR-06 | Attribution credential read failure        | Telemetry report                                   | Continue sending with `{}` and alert only once                |
 
-## Storage Boundaries
+## Storage boundaries
 
-Attribution is saved as key `oauth:login_attribution`, encrypted via CredentialService into App
-global credential storage. It is not isolated by provider, window, or workspace; local and remote workspace
-windows share the same App attribution.
+Attribution is stored under the key `oauth:login_attribution`, encrypted via CredentialService in
+App-global credential storage. It is not isolated by provider, window or workspace; local and
+remote workspace windows share the same App attribution.

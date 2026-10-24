@@ -1,26 +1,32 @@
 # Web Remote Control Mobile Stability Analysis
 
-> Status: Stability background analysis; some "current risks" have been fixed by subsequent implementations.
->
-> The current effective architecture is shared-host attachment + desktop `continuous` / mobile `replayable`
-> message streams. Specific message recovery semantics are defined in `docs/web-remote-control/task-realtime-sync.md`
-> and `docs/web-remote-control/web-remote-control-architecture.md`.
+> Status: stability background analysis; some "current risks" have been fixed by later implementations.
+> The current architecture is shared-host attachment + desktop `continuous` / mobile `replayable` message
+> streams. Message recovery semantics are defined in `docs/web-remote-control/task-realtime-sync.md` and
+> `docs/web-remote-control/web-remote-control-architecture.md`.
 
-This document analyzes the main reasons why mobile Web remote control "disconnects always" and provides actionable experience optimization directions.
+Full history: `git show b8876e8b:docs/web-remote-control/mobile-stability-analysis.md`
+
+This document explains why mobile Web remote control "keeps disconnecting" and lists actionable experience
+optimizations.
 
 ## Conclusion
 
-The current implementation's stability boundaries are not a single issue. They are simultaneously affected by three types of factors:
+Stability is affected by three kinds of factors at once:
 
-1. Mobile Web platform limitations: When a mobile browser switches to the background, locks the screen, or the system is in low-battery or low-memory mode, pages may be hidden, frozen, or discarded; WebSocket and JS timers cannot guarantee continued operation.
-2. The current mobile transport recovery strategy is coarse: after pairing, a socket close triggers a full page reload, lacking an in-place recovery state machine triggered by `visibilitychange` / `pageshow` / `online`.
-3. The external relay and network path carry semi-disconnect risks: the code has already patched actual issues like `waiting` false positives, one-way paths, and relay `INTERNAL`, indicating that stability depends on more than just the browser.
+1. Mobile Web platform limits: when the browser goes to the background, the screen locks, or the system is in
+   low-battery/low-memory mode, pages may be hidden, frozen or discarded; WebSocket and JS timers are not
+   guaranteed to keep running.
+2. The mobile transport recovery strategy was coarse: after pairing, a socket close triggered a full page
+   reload, with no in-place recovery state machine on `visibilitychange` / `pageshow` / `online`.
+3. The external relay and network path carry semi-disconnect risk: the code already patched real issues such
+   as `waiting` false positives, one-way paths and relay `INTERNAL`.
 
-Therefore, it cannot be simply attributed to "the Web stack is inadequate." The correct judgment is: **Web can support this feature, but it cannot guarantee that a mobile page maintains a real-time control connection for extended periods in the background; both product and implementation must be designed around "real-time in foreground, recoverable from background".**
+So it is not simply "the Web stack is inadequate". **Web can support this feature, but cannot guarantee a
+mobile page keeps a real-time control connection in the background; product and implementation must be
+designed as "real-time in foreground, recoverable from background".**
 
-## Current Connection Model
-
-The current `/remote` uses an external relay:
+## Current connection model
 
 ```text
 mobile browser /remote
@@ -32,345 +38,180 @@ mobile browser /remote
   -> existing workspace scope in the single Host Process
 ```
 
-Key points:
+- The desktop connects to the relay as a `device`; the mobile web as a `terminal`.
 
-- The desktop connects to the relay as a `device`.
-- The mobile web connects to the same relay as a `terminal`.
-- Both ends use `pair_status_query` / `pair_status_ack` for heartbeats at an average of 10 seconds, bounded to 8~12 seconds of jitter; when the most recent ACK has not been updated for over 30 seconds, a local watchdog triggers reconnection.
-- All ZCode business messages are wrapped in the relay `data.payload`.
-- The mobile UI还原s to `IMessagePassingProtocol` through `rpc-frame`, then reuses the existing `Root`.
-- The mobile client does not own an independent Agent host process; reconnection only rebuilds the bridge attachment, without destroying the still-running host/runtime.
+  > Current timing (Relay V2, `packages/shared/src/web-remote-relay/domain/heartbeatTiming.ts`): 5 s heartbeat with ±1 s jitter and a 15 s ACK watchdog, shared by desktop and web clients. The 10 s / 30 s figures here are the V1 values.
 
-Corresponding implementation:
+- Both ends heartbeat with `pair_status_query` / `pair_status_ack` at about 10 s, jittered within 8-12 s; if
+  the latest ACK is not updated for over 30 s, a local watchdog triggers reconnection.
+- All ZCode business messages are wrapped in the relay `data.payload`; the mobile UI restores
+  `IMessagePassingProtocol` from `rpc-frame` and reuses the existing `Root`.
+- The mobile client owns no independent Agent host process; reconnection only rebuilds the bridge attachment
+  and does not destroy the still-running host/runtime.
 
-- `packages/web/src/webRemoteControlTransport.ts`
-- `packages/web/src/main.tsx`
-- `packages/desktop/src/main/webRemoteControlTransport.ts`
-- `packages/desktop/src/main/webRemoteControlManager.ts`
-- `docs/web-remote-control/web-remote-control-architecture.md`
+Implementation: `packages/web/src/webRemoteControlTransport.ts`, `packages/web/src/main.tsx`,
+`packages/desktop/src/main/webRemoteControlTransport.ts`,
+`packages/desktop/src/main/webRemoteControlManager.ts`.
 
-## Hard Boundaries of Mobile Web
+## Hard boundaries of mobile Web
 
-### Switching App or Browser Tab
+- **Switching app or browser tab:** the page usually becomes hidden and may be frozen or discarded. JS timers
+  may run late (the 10 s heartbeat can be delayed a lot); the WebSocket may stay open for a while or be closed
+  by the system or network; a discarded page runs no JS callback, so recovery equals a full reload;
+  `beforeunload` / `unload` are unreliable on mobile and cannot be the core of disconnect save/recovery.
+- **Lock screen / screen off:** more aggressive than backgrounding; even if the browser does not close the
+  WebSocket at once, long-term availability cannot be relied upon. Screen Wake Lock solves "user is actively
+  remote-controlling but the phone auto-sleeps" but not background keep-alive: it applies only to
+  active/visible documents and is released when the page is hidden, on low battery or in power-saving mode.
 
-After a mobile user switches to another App, the page typically enters a hidden state. Modern browsers can further freeze or discard the page to save power and memory.
+References: Chrome Page Lifecycle (developer.chrome.com/docs/web-platform/page-lifecycle-api), MDN Page
+Visibility API, MDN WebSocket close event, MDN Screen Wake Lock API / WakeLockSentinel.
 
-This produces several results:
+## Stability boundaries in the current implementation
 
-- JS timers may not run on schedule; the 10-second heartbeat may be delayed significantly.
-- WebSocket may remain open for a while, or may be closed by the system or network layer.
-- When the page is discarded, no JS callback can run; recovery is equivalent to a full reload.
-- `beforeunload` / `unload` are unreliable on mobile and cannot serve as the core mechanism for disconnection save and recovery.
+1. **Mobile socket close no longer reloads the page after pairing.** The terminal transport is now a state
+   machine: `connecting`, `authenticating`, `waiting`, `paired`, `reconnecting`, `suspended`, `kicked`,
+   `error`. Paired socket close, network changes and background recovery first enter `reconnecting` /
+   `suspended` and try in-place recovery; `reloadPage` remains only as a fallback injection point. Still to
+   watch: slow recovery must still show a clear reconnecting/suspended state; old RPC frames must not be
+   blindly replayed (hard recovery is re-attach bridge + snapshot alignment); non-idempotent business commands
+   still need business-layer accepted acks or idempotency keys rather than transport retransmission.
+2. **Mobile page lifecycle recovery.** The entry listens to `visibilitychange`, `pagehide`, `pageshow`,
+   `online` and Chrome `freeze` / `resume`; recovery triggers `recoverConnection()` and re-aligns the current
+   workspace/task via bridge/runtime snapshot. Still to watch: whether the host still exists after long
+   background periods, whether the relay still matches, and whether the snapshot covers the replayable gap.
+3. **Desktop is still more stable than mobile.** The desktop device transport calls `scheduleReconnect()`
+   after socket close and treats relay `INTERNAL` as recoverable. The mobile terminal now has
+   `recoverConnection()` and recoverable states, but background freezing, lock screens and system reclamation
+   remain hard limits, so the product semantics stay "real-time in foreground, recoverable from background"
+   and cannot promise long-term background online. The desktop keeps holding the host/runtime; the mobile
+   recovers through replayable streams and snapshots when it returns.
+4. **The relay has shown semi-disconnect and routing issues:** the edge layer may shard only by `query.mid`
+   (relying on `X-Device-ID` alone puts desktop and mobile on different backends); paired heartbeats
+   occasionally return `waiting`; the relay occasionally keeps only the mobile-to-desktop one-way path; a fast
+   terminal refresh/reconnect may briefly return `INTERNAL`. These are relay/network/load-balancing issues,
+   not mobile background limits.
+5. **High-frequency RPC shares one relay channel.** Business RPC, workspace bridge and task realtime mirror all
+   use the same relay data channel. Stream mirror already aggregates, detects seq gaps and falls back to
+   snapshots, but control messages and real-time updates still share the channel under jitter. Risks: many UI
+   stream frames can delay control requests; after a pending request times out, the upper layer cannot tell
+   whether the desktop did not process it, the relay was one-way, or the mobile did not receive it; a replayable
+   stream gap can fall back to snapshot but transport-layer RPC frames still cannot be replayed universally.
 
-External references:
+## User-perceivable disconnection scenarios
 
-- Chrome Page Lifecycle: https://developer.chrome.com/docs/web-platform/page-lifecycle-api
-- MDN Page Visibility API: https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API
-- MDN WebSocket close event: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket/close_event
+- Phone in another app/browser background for minutes, then return: page hidden/frozen/socket close; was
+  reload or error page; direction: auto-reconnect and restore workspace/task on foreground recovery.
+- Lock then unlock: screen off breaks the WebSocket or pauses JS; was reload, stuck or relay-unavailable
+  prompt; direction: Wake Lock + recovery state machine.
+- Wi-Fi to 5G switch: TCP/WebSocket disconnect; request timeout or failure; direction: `online` event
+  triggers reconnect + request replay.
+- Brief relay jitter: relay close / INTERNAL / waiting false positive; desktop may recover while mobile fails;
+  direction: mobile uses an equivalent reconnection strategy.
+- Relay one-way path: mobile sends but receives no desktop response; bootstrap/list timeout; direction:
+  request-level timeout diagnostics + rebuild the terminal socket.
+- Another phone scans the code: relay kick / session conflict; the current phone is kicked; direction: keep it
+  a terminal failure but show the reason in text.
 
-### Lock Screen and Screen Off
+## Optimization proposals
 
-Locking the screen is more aggressive than simply switching to the background. Even if the browser does not immediately close the WebSocket in the short term, it cannot be relied upon for long-term availability.
+**P0: productize "the background will disconnect".** Do not let users think it is an unrecoverable crash.
 
-Screen Wake Lock can address the "user is actively remote-controlling but the phone auto-screens-off" problem, but cannot solve background preservation after switching apps. Wake Lock only applies to active / visible documents; it is released when the page is hidden, the device is low on power, or in power-saving mode.
+1. Save minimal recovery state when the page becomes hidden: `deviceSid`, `currentWorkspaceKey`,
+   `currentTaskId`, `bridgeSessionId`, last successful pair time, last received desktop payload time.
+2. On visible / pageshow / online: check socket readyState; if unavailable create a new terminal socket; wait
+   for pair matched; resend `bootstrap-request`; send `workspace-bridge-open` with the saved workspace/task;
+   re-render Root or trigger snapshot reload.
+3. Show explicit status: "Connection paused", "Restoring remote control", "Recovery failed, please scan the QR code again".
 
-External references:
+Principle: promise no real-time online in the background, but make foreground recovery as automatic as possible.
 
-- MDN Screen Wake Lock API: https://developer.mozilla.org/en-US/docs/Web/API/Screen_Wake_Lock_API
-- MDN WakeLockSentinel: https://developer.mozilla.org/en-US/docs/Web/API/WakeLockSentinel
-
-## Stability Boundaries in the Current Implementation
-
-### 1. Mobile Socket Close No Longer Reloads Page After Pairing
-
-In early implementations, `WebRemoteControlTerminalTransport` would call `reloadPage()` after receiving a close during the paired state. The current implementation has been changed to a connection state machine:
-
-- `connecting`
-- `authenticating`
-- `waiting`
-- `paired`
-- `reconnecting`
-- `suspended`
-- `kicked`
-- `error`
-
-Paths such as paired socket close, network changes, and background recovery first enter `reconnecting` / `suspended` and attempt in-place recovery. `reloadPage` is kept only as a fallback injection point, not the primary strategy for paired close.
-
-Still worth monitoring:
-
-- When recovery takes too long, the UI must still display a clear reconnecting/suspended state.
-- Old RPC frames should not be blindly replayed; hard recovery should use re-attach bridge + snapshot alignment as the boundary.
-- Non-idempotent business commands still need business-layer accepted acks or idempotency keys, not reliance on transport retransmission.
-
-### 2. Mobile Page Lifecycle Recovery State Machine
-
-The current entry point already listens to key mobile lifecycle events:
-
-- `visibilitychange`
-- `pagehide`
-- `pageshow`
-- `online`
-- Chrome's `freeze` / `resume`
-
-Page recovery triggers `recoverConnection()`, and the current workspace/task is re-aligned via bridge/runtime snapshot. Still worth monitoring is whether the host still exists after long background periods, whether the relay is still matched, and whether the snapshot covers the replayable gap.
-
-### 3. Desktop Remains More Stable Than Mobile
-
-The desktop device transport automatically calls `scheduleReconnect()` after socket close. Relay `INTERNAL` is also treated as a recoverable error.
-
-The mobile terminal transport now also has `recoverConnection()` and recoverable states, but mobile browser background freezing, lock screens, and system reclamation remain hard boundaries. Therefore, the product semantics should remain "real-time in foreground, recoverable from background," and cannot promise long-term online in the background.
-
-This creates an asymmetric experience: the desktop can run long-term and continue holding the host/runtime; when the mobile returns, it must recover through replayable streams and snapshots.
-
-### 4. Relay Has Already Experienced Semi-Disconnect and Routing Issues
-
-Existing code comments indicate several categories of relay issues have been encountered:
-
-- The external relay edge layer may shard only by `query.mid`, relying solely on `X-Device-ID` causes the desktop and mobile to fall to different backends.
-- In paired sessions, heartbeats occasionally return `waiting`.
-- The relay occasionally retains only a one-way path from mobile to desktop; the desktop has responded but the mobile does not receive it.
-- When the terminal refreshes/reconnects quickly, the relay may briefly return `INTERNAL`.
-
-These are not mobile browser background limitations; they are stability issues at the relay / network / load-balancing layers.
-
-### 5. High-Frequency RPC Relies on the Same Relay Channel
-
-Current business RPC, workspace bridge, and task realtime mirror all go through the same relay data channel. Stream mirror has already implemented aggregation, seq gap detection, and snapshot fallback, but control messages and real-time updates still share the same channel during link jitter.
-
-Risks:
-
-- A large number of UI stream frames may affect the response latency of control requests.
-- After pending request timeouts, the upper layer cannot determine whether the desktop did not process it, the relay was one-way disconnected, or the mobile did not receive it.
-- The gap in replayable streams can fall back to snapshots, but transport-layer RPC frames still cannot be universally replayed.
-
-## User-Perceivable Disconnection Scenarios
-
-| Scenario                                                                       | Main Cause                                         | Current Behavior                           | Optimization Direction                                           |
-| ------------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Switching phone to WeChat/browser background for a few minutes, then returning | Page hidden / frozen / socket close                | Reload or error page                       | Auto-reconnect and restore workspace/task on foreground recovery |
-| Locking phone screen, then unlocking                                           | Screen-off causes WebSocket disconnect or JS pause | Reload, stuck, or relay unavailable prompt | Wake Lock + recovery state machine                               |
-| Mobile network switching from Wi-Fi to 5G                                      | TCP/WebSocket disconnect                           | Request timeout or failure                 | `online` event triggers reconnect + request replay               |
-| Brief relay jitter                                                             | Relay close / INTERNAL / waiting false positive    | Desktop may recover, mobile may fail       | Mobile uses equivalent reconnection strategy                     |
-| Relay one-way path                                                             | Mobile sends, does not receive desktop response    | bootstrap/list timeout                     | Request-level timeout diagnostics + rebuild terminal socket      |
-| Another phone scans code                                                       | Relay kick / session conflict                      | Current phone kicked                       | Maintain terminal failure, but display reason in text            |
-
-## Optimization Suggestions
-
-### P0: Productize "The Background Will Disconnect"
-
-Goal: Do not let users mistakenly believe this is an unrecoverable crash.
-
-Suggestions:
-
-1. Save minimal recovery state when the page enters hidden:
-   - `deviceSid`
-   - `currentWorkspaceKey`
-   - `currentTaskId`
-   - `bridgeSessionId`
-   - Last successful pair time
-   - Last received desktop payload time
-2. Execute recovery when the page returns to visible / pageshow / online:
-   - Check socket readyState.
-   - If the socket is unavailable, create a new terminal socket.
-   - Wait for pair matched.
-   - Send `bootstrap-request` again.
-   - Send `workspace-bridge-open` with the saved workspace/task.
-   - Re-render Root or trigger snapshot reload.
-3. UI displays explicit status:
-   - "Connection paused"
-   - "Restoring remote control"
-   - "Recovery failed, please scan the QR code again"
-
-Key principle: No real-time online is promised in the background, but foreground recovery should be as automatic as possible.
-
-### P0: Refactor Mobile Transport Close Strategy
-
-Goal: Do not directly reload on close after pairing.
-
-Proposed new states:
-
-```ts
-type WebRemoteControlTerminalTransportState =
-  | "idle"
-  | "connecting"
-  | "authenticating"
-  | "waiting"
-  | "paired"
-  | "reconnecting"
-  | "suspended"
-  | "kicked"
-  | "error";
-```
-
-Strategy:
+**P0: mobile transport close strategy.** Do not reload on close after pairing (states as listed above).
 
 - `KICKED` / `AUTH_FAILED` / `DEVICE_NOT_FOUND`: terminal failure.
-- `close` / `error` / `desktop-bootstrap-timeout`: enter `reconnecting`, exponential backoff.
-- `document.hidden`: enter `suspended`, stop high-frequency operations, save recovery state.
-- `document.visible`: immediately attempt recovery.
+- `close` / `error` / `desktop-bootstrap-timeout`: enter `reconnecting` with exponential backoff.
+- `document.hidden`: enter `suspended`, stop high-frequency work, save recovery state.
+- `document.visible`: attempt recovery immediately.
+- Pending requests: idempotent ones (`bootstrap-request`, `workspace-list-request`) may auto-replay; a bridge
+  switch may replay if the old/new `bridgeSessionId` relation is clear; an RPC frame must not be blindly
+  replayed and needs upper-layer snapshot reconciliation.
 
-Note pending requests:
+**P0: disconnection diagnostic logs** so "always disconnecting" is traceable. Mobile logs secure metadata:
+transport state transitions; WebSocket close `code` / `reason` / `wasClean`; `document.visibilityState`;
+`navigator.onLine`; hidden duration; last sent/received payload time; pending request type and timeout; pair
+status ack `matched` / `waiting` / `kicked`. Never log QR URL content, `hash` / `passHash`, or raw payload
+JSON; for high-frequency stream/rpc frames record counts and lengths only.
 
-- Idempotent requests: `bootstrap-request`, `workspace-list-request` can be automatically replayed.
-- Bridge switch: can be replayed, but must ensure old/new `bridgeSessionId` relationships are clear.
-- RPC frame: cannot be blindly replayed; needs upper-layer snapshot reconciliation.
+**P1: foreground Wake Lock** (not implemented). Request `navigator.wakeLock.request("screen")` once `/remote`
+enters an active bridge; offer an off switch ("Keep screen on"); re-apply on WakeLockSentinel `release` when
+visible; degrade silently when unsupported. Wake Lock cannot keep the background alive and is released on low
+battery, power-saving mode or hidden page.
 
-### P0: Add Disconnection Diagnostic Logs
+**P1: snapshot reconciliation on recovery.** After the terminal recovers matched, open the bridge first; once
+ready, fetch the workspace task list, the active task snapshot and the current task runtime status; if the
+owner run is still running, resubscribe to dynamic task events; if the replayable stream has a gap, do not
+chase every chunk: wait for a snapshot whose `runtime.streamWatermark` covers the gap, then continue the
+stream. Replayable streams handle runtime continuity across recovery, and snapshots handle eventual
+consistency and large-gap alignment.
 
-Goal: Make "always disconnecting" traceable to causes.
+**P1: connection generation and observability at the relay layer** (not implemented). Add secure metadata to
+relay/app payloads: `connectionId`, `connectionGeneration`, `lastPairMatchedAt`, `lastHeartbeatAckAt`, device
+and terminal `mid` routing shards, relay close reason categories, so one disconnection can be correlated
+across mobile and desktop logs.
 
-Mobile side should log secure metadata:
+**P2: tier control requests and stream frames** (not implemented). App payload priority: high (permission
+response, stop generation, workspace switch), normal (bootstrap, workspace list, platform request), low
+(stream mirror batch). If the relay supports queues, forward high/normal first; keep merging mirror batches
+on the desktop and pause mirrors when the mobile is invisible, leaving only snapshot invalidation.
 
-- Transport state transitions.
-- WebSocket close `code` / `reason` / `wasClean`.
-- `document.visibilityState`.
-- `navigator.onLine`.
-- Hidden duration.
-- Last sent/received payload time.
-- Pending request type and timeout.
-- Pair status ack: `matched` / `waiting` / `kicked`.
+**P2: PWA / installed state.** Add a Web App Manifest, reduce browser UI in standalone mode, save the last
+recovery state. iOS/Android PWAs cannot guarantee long-lived background WebSockets or replace native
+background execution.
 
-Log notes:
+## Recommended order
 
-- Do not log QR URL content.
-- Do not log `hash` / `passHash`.
-- Do not log raw payload JSON.
-- High-frequency stream/rpc frame logs only record counts and lengths, not content.
+1. Diagnostic logs (visibility, close code, pending request, pair status).
+2. Mobile close does not reload (paired close -> `reconnecting`; error page only for unrecoverable errors).
+3. Foreground recovery state machine (visible / pageshow / online, restore workspace/task).
+4. Wake Lock.
+5. Relay observability (connection generation and shard logs).
+6. Payload tiering and recovery protocol.
 
-### P1: Add Foreground Wake Lock
+## Acceptance
 
-Goal: Reduce "user is viewing the remote control page, but the phone auto-screens-off causing disconnection."
+Manual scenarios:
 
-Suggestions:
+1. Enter remote control, switch to another app for 30 s and return: auto-restores the same workspace/task.
+2. Lock the screen for 1 minute and unlock: auto-recovers or shows an explicit retryable state.
+3. After a Wi-Fi/cellular switch: auto-reconnects, not an immediate permanent failure page.
+4. When the desktop relay recovers from a brief disconnect: the mobile needs no re-scan.
+5. When another phone scans and kicks the current phone: it shows a session conflict, not infinite reconnect.
 
-- Request `navigator.wakeLock.request("screen")` after `/remote` enters an active bridge.
-- UI provides an off switch, e.g., "Keep screen on."
-- Listen for WakeLockSentinel `release`; automatically re-apply when the page is visible.
-- Silently degrade when Wake Lock is not supported; just prompt the user to keep the screen on.
+Recommended unit tests: close after paired enters reconnecting, not reload; `visibilitychange hidden ->
+visible` triggers recover; `online` triggers recover; idempotent requests replay after recover; `KICKED` and
+`AUTH_FAILED` do not reconnect; pending RPC frames are not blindly replayed.
 
-Boundaries:
+Recommended metrics: mobile terminal socket close counts and close-code distribution; disconnection ratio
+after hidden; auto-recovery success rate after visible; average recovery time; bootstrap / workspace-list /
+workspace-bridge-open timeout rates; relay `waiting` after paired counts; suspected relay one-way path counts
+(mobile request sent, desktop response logged sent, mobile timeout).
 
-- Wake Lock cannot preserve in the background.
-- Released by the system in low-battery, power-saving mode, or when the page is hidden.
+User-facing wording: "Mobile Web remote control is suited to foreground real-time operation. When switching
+apps, locking the screen or changing networks, the mobile browser may pause the connection; ZCode restores the
+most recent workspace and task when you return. For a more stable experience keep the page in the foreground
+and let the screen stay on."
 
-### P1: Prioritize Snapshot Reconciliation on Recovery
+## P0 implementation status
 
-Goal: Tasks continue running during disconnection; when the user returns, they see the latest state.
+Implemented:
 
-Suggestions:
+1. The mobile terminal transport has `reconnecting` / `suspended` states.
+2. A paired socket close no longer reloads the page; it reconnects in place and triggers bootstrap after re-pairing.
+3. `/remote` listens for `visibilitychange` / `pagehide` / `pageshow` / `online` / `freeze` / `resume`;
+   heartbeats pause when the page hides and the terminal socket is rebuilt on foreground or network recovery.
+4. Diagnostic logs record secure metadata only (state transitions, close code/reason/wasClean, visibility,
+   online, hidden duration, pair status); no QR URL, hash, passHash or business payload content.
+5. Automated tests cover paired close not reloading, hidden suspended, and visible/pageshow/online recovery.
 
-1. After the terminal recovers matched, open the bridge first.
-2. After the bridge is ready, proactively fetch:
-   - workspace task list
-   - active task snapshot
-   - current task runtime status
-3. If the owner run is still running, resubscribe to dynamic task events.
-4. If the replayable stream has a gap, do not pursue catching up every chunk; first wait for the snapshot with `runtime.streamWatermark` to cover the gap, then continue with subsequent streams.
-
-This is consistent with the existing realtime sync document: replayable streams handle runtime continuity during disconnection recovery, and snapshots handle eventual consistency and large gap alignment.
-
-### P1: Add Connection Generation and Observability at the Relay Layer
-
-Goal: Distinguish normal reconnection, stale connections, one-way paths, and route mismatches.
-
-Suggestions for adding secure metadata to relay / app payloads:
-
-- `connectionId`
-- `connectionGeneration`
-- `lastPairMatchedAt`
-- `lastHeartbeatAckAt`
-- Device and terminal `mid` routing shards
-- Relay close reason categories
-
-Mobile and desktop logs use these IDs to correlate one disconnection.
-
-### P2: Tier Control Requests and Stream Frames
-
-Goal: Prioritize guaranteeing user operation responses during link congestion.
-
-Suggestions:
-
-- Add priority to app payloads:
-  - high: permission response, stop generation, workspace switch
-  - normal: bootstrap, workspace list, platform request
-  - low: stream mirror batch
-- If the relay supports queues, prioritize forwarding high / normal.
-- When the desktop main sends mirror batches, continue merging; if necessary, pause mirrors when the mobile is invisible, keeping only snapshot invalidation.
-
-### P2: PWA / Installed State Optimization
-
-Goal: Improve entry and foreground experience, but do not treat it as a background preservation solution.
-
-Suggestions:
-
-- Add a Web App Manifest so users can add to the home screen.
-- Reduce browser UI interference in standalone mode.
-- Save the last remote control recovery state.
-
-Boundaries:
-
-- iOS / Android PWAs cannot guarantee long-lived background WebSockets.
-- PWAs cannot replace native app background execution capabilities.
-
-## Recommended Implementation Order
-
-1. **Diagnostic logs first**: Add visibility, close code, pending request, pair status logs to confirm which categories of scenarios cause user disconnections.
-2. **Mobile close does not reload**: Change paired close to `reconnecting`, keeping the error page only for unrecoverable errors.
-3. **Foreground recovery state machine**: Implement visible / pageshow / online automatic recovery, and restore workspace/task.
-4. **Wake Lock**: Reduce disconnections caused by screen-off during foreground use.
-5. **Relay observability**: Add connection generation and shard logs.
-6. **Payload tiering and recovery protocol**: Optimize high-frequency stream and control message channel contention.
-
-## Acceptance Criteria
-
-### Manual Scenarios
-
-1. Scanning the QR code to enter remote control, switching to another App for 30 seconds and returning should automatically restore to the same workspace/task.
-2. Scanning the QR code to enter remote control, locking the screen for 1 minute and unlocking should auto-recover or show an explicit retryable state.
-3. After mobile Wi-Fi/cellular network switching, it should auto-reconnect, not immediately go to a permanent failure page.
-4. When the desktop relay recovers from a brief disconnect, the mobile should not need to re-scan the QR code.
-5. When another phone scans the code and kicks the current phone, the current phone should show a session conflict, not infinitely reconnect.
-
-### Automated Tests
-
-Recommended additional unit tests:
-
-- Close after paired enters reconnecting, not reload.
-- `visibilitychange hidden -> visible` triggers recover.
-- `online` event triggers recover.
-- Idempotent requests replay after recover.
-- `KICKED` does not reconnect.
-- `AUTH_FAILED` does not reconnect.
-- Pending RPC frames are not blindly replayed.
-
-### Observation Metrics
-
-Recommended statistics:
-
-- Mobile terminal socket close counts and close code distribution.
-- Disconnection ratio after hidden.
-- Auto-recovery success rate after visible.
-- Average recovery time.
-- bootstrap / workspace-list / workspace-bridge-open timeout rates.
-- Relay `waiting` after paired counts.
-- Suspected relay one-way path counts: mobile request sent, desktop response logged sent, but mobile timeout.
-
-## User-Facing Description Suggestions
-
-It can be explicitly stated on the remote control page or in help documentation:
-
-> Mobile Web remote control is suitable for foreground real-time operations. When switching apps, locking the screen, or changing networks, the mobile browser may pause the connection; ZCode will automatically restore to the most recent workspace and task when you return to the page. For a more stable experience, try to keep the page open in the foreground during remote control, and allow the screen to stay on.
-
-This is more consistent with the real boundaries of mobile Web than promising "no disconnections," and also reduces user misunderstandings.
-
-## P0 Implementation Status
-
-The first batch of P0 stability optimizations have been implemented:
-
-1. Mobile terminal transport added `reconnecting` / `suspended` states.
-2. Paired socket close no longer triggers a full page reload; it switches to in-place reconnection and triggers bootstrap after re-pairing.
-3. `/remote` listens for `visibilitychange` / `pagehide` / `pageshow` / `online` / `freeze` / `resume`; heartbeats are paused when the page hides, and the terminal socket is rebuilt when the foreground or network recovers.
-4. Diagnostic logs only record secure metadata: state transitions, close code/reason/wasClean, visibility, online, hidden duration, and pair status; QR URL, hash, passHash, or business payload content are not recorded.
-5. Automated tests cover paired close not reloading, hidden suspended, visible/pageshow/online recovery.
-
-Wake Lock, relay connection generation, payload priority, and full request replay have not yet been implemented; these require UI switches or relay/app payload protocol extensions and should be advanced independently per P1/P2.
+Not implemented: Wake Lock, relay connection generation, payload priority, full request replay. They need UI
+switches or relay/app payload protocol extensions and are advanced independently as P1/P2.

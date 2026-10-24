@@ -32,7 +32,7 @@ The framework has seven layers, built from the bottom up:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Key insight**: Each layer depends only on the one below it. Layer 3 and above are completely independent of the underlying transport—Electron IPC, MessagePort, WebSocket, and TCP can all use the same RPC code.
+Each layer depends only on the one below it. Layer 3 and above are independent of the transport: Electron IPC, MessagePort, WebSocket and TCP share the same RPC code.
 
 ## File Structure
 
@@ -288,16 +288,16 @@ ipcClient.registerChannel("localService", myChannel);
 
 ---
 
-## Layer 5: ProxyChannel ⭐
+## Layer 5: ProxyChannel
 
-**This is the framework's killer feature**—expose and consume services with zero boilerplate.
+ProxyChannel exposes and consumes services with zero boilerplate.
 
 ### The Problem
 
 Without ProxyChannel, every service needs a hand-written switch-case mapping:
 
 ```typescript
-// 😩 Repeat this for every service
+// Repeated for every service
 class FileServiceChannel implements IServerChannel {
   call(ctx, command, arg) {
     switch (command) {
@@ -316,11 +316,11 @@ class FileServiceChannel implements IServerChannel {
 ```typescript
 import { ProxyChannel } from "@zcode/rpc";
 
-// ✅ Server: expose in one line
+// Server: expose in one line
 const channel = ProxyChannel.fromService(fileService);
 server.registerChannel("fs", channel);
 
-// ✅ Client: consume in one line
+// Client: consume in one line
 const fs = ProxyChannel.toService<IFileService>(client.getChannel("fs"));
 await fs.readFile("/path"); // Just like calling a local method
 fs.onDidChangeFile((e) => console.log(e)); // Event subscription is just as transparent

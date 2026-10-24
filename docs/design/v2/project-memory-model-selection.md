@@ -1,8 +1,9 @@
-# Project Memory Model Ownership and Single-Turn Extraction Control
+# Project Memory model ownership and single-turn extraction control
 
 ## Conclusion
 
-Project Memory's model selection follows causal ownership, rather than re-reading the mutable Session Selection at the start of background work:
+Project Memory's model selection follows causal ownership instead of re-reading the mutable Session Selection
+when background work starts:
 
 ```text
 Current Turn's Active Model
@@ -15,14 +16,16 @@ Dream
 `--> No product entry points currently; not adjusted this round; decided separately during the overall refactor
 ```
 
-- Semantic Recall service serves the current Turn, so it uses the Active Model already created for that Turn.
+- Semantic Recall serves the current Turn, so it uses the Active Model already created for that Turn.
 - Extraction is produced by a successful Turn, so the Snapshot saves the Active Model of that Turn.
-- Both paths must not re-read Session Selection or mutable Registry at async boundaries to select a model.
-- The model's identity, Provider, Properties, and access bindings remain frozen; a single Memory request can still override `maxOutputTokens`, reasoning, and other call options via `ModelRequest.options`.
+- Neither path may re-read Session Selection or the mutable Registry at async boundaries to choose a model.
+- The model's identity, Provider, Properties and access bindings stay frozen; a single Memory request can still
+  override `maxOutputTokens`, reasoning and other call options via `ModelRequest.options`.
 
 ## Semantic Recall
 
-Semantic Recall remains disabled for now. This round only implements this low-cost model ownership, clearing the way for subsequent removal of Session Selection re-reading:
+Semantic Recall stays disabled for now. Only this low-cost model ownership is implemented, clearing the way
+for later removal of Session Selection re-reading:
 
 ```text
 Turn admission
@@ -36,7 +39,10 @@ Create this Turn's Active Model
              └─ Uses one single invocation of the lowest public reasoning tier (when the model declares this Option)
 ```
 
-The Selector depends on strict JSON Schema output. If the Active Model does not declare this capability, do not automatically search for another model from the Registry. The complete `MEMORY.md` default index downgrade must be completed before Semantic Recall formally opens; during the feature's disabled period, do not add a second Context assembly branch for it.
+The Selector depends on strict JSON Schema output. If the Active Model does not declare this capability, do
+not automatically search the Registry for another model. The complete `MEMORY.md` default index downgrade must
+be completed before Semantic Recall formally opens; while the feature is disabled, do not add a second Context
+assembly branch for it.
 
 Recall expresses low-cost reasoning through request-specific Options:
 
@@ -49,12 +55,18 @@ model.generateText({
 });
 ```
 
-`reasoningLevel.values` is ordered from lowest to highest intensity; Recall directly uses the first item in the current `ModelRequest` and continues through the normal Option Spec Map/Adapter chain. The lowest tier does not require the model to support disabling Reasoning.
-Recall does not guess Provider thinking budgets in Core; the total output budget is inherited from the Active Model, with reasoning and max-output projected through the same Option Map chain. Strict JSON Schema continues to constrain response shapes.
+`reasoningLevel.values` is ordered from lowest to highest intensity; Recall uses the first item directly in the
+current `ModelRequest` and continues through the normal Option Spec Map/Adapter chain. The lowest tier does not
+require the model to support disabling Reasoning. Recall does not guess Provider thinking budgets in Core; the
+total output budget is inherited from the Active Model, with reasoning and max-output projected through the
+same Option Map chain. Strict JSON Schema keeps constraining response shapes.
 
 ## Extraction
 
-The Extraction Scheduler retains its existing bounded semantics: at most one running Snapshot and one latest pending Snapshot. The current implementation already holds a Model created at scheduling time within the Snapshot; switching to save the Turn's Active Model that produced the work does not increase the number of retained models, nor add new resource lifecycles.
+The Extraction Scheduler keeps its bounded semantics: at most one running Snapshot and one latest pending
+Snapshot. The implementation already held a Model created at scheduling time inside the Snapshot; saving the
+Active Model of the producing Turn instead does not increase the number of retained models or add resource
+lifecycles.
 
 ```text
 Successful Turn
@@ -67,9 +79,10 @@ Extraction Snapshot
    `--> latest pending (at most one, overriding earlier pending)
 ```
 
-Extraction continues to attach independent telemetry, `skipTranscript`, and Memory tool permissions to its model requests, but these belong to the Invocation Context and must not be used to recreate or re-select a model.
+Extraction keeps attaching independent telemetry, `skipTranscript` and Memory tool permissions to its model
+requests, but these belong to the Invocation Context and must not be used to recreate or re-select a model.
 
-## Single-Turn Skip Extraction
+## Single-turn skip extraction
 
 CLI/Core adds an optional parameter within the existing single `modelExecution`:
 
@@ -80,14 +93,15 @@ modelExecution: {
 }
 ```
 
-It has the following boundaries:
+Boundaries:
 
-- Only affects successful Turns carrying this parameter.
-- Does not modify Session's `memory.extractionEnabled`.
-- Does not write to Session Selection, message history, or persistent configuration.
-- Does not affect Recall, foreground Memory tool calls, or Dream.
-- Normal Turns do not pass this by default, continuing to follow Session-level Extraction toggles.
-- Off-Peak dispatch explicitly passes `"skip"`, confirming no automatic Memory Extraction runs, avoiding single-use credentials being used again by background work after the main Turn ends.
+- Affects only successful Turns carrying this parameter.
+- Does not modify the Session's `memory.extractionEnabled`.
+- Does not write Session Selection, message history or persistent configuration.
+- Does not affect Recall, foreground Memory tool calls or Dream.
+- Normal Turns do not pass it by default and keep following the Session-level Extraction toggle.
+- Off-Peak dispatch explicitly passes `"skip"`, so no automatic Memory Extraction runs and single-use
+  credentials are not used again by background work after the main Turn ends.
 
 Protocol and call chain:
 
@@ -108,4 +122,7 @@ Turn success
         `-- absent -> schedule per Session-level toggle
 ```
 
-This field shares the existing `modelExecution` single-turn boundary with execution-scoped Selection, request-period access materials, and subagent constraints; it does not enter normal queuable Submission Intents. The current caller is only Off-Peak dispatch, which requires idle start-now, so it will not be lost in the CommandInbox.
+This field shares the existing `modelExecution` single-turn boundary with execution-scoped Selection,
+request-period access materials and subagent constraints; it does not enter normal queueable Submission
+Intents. The current caller is only Off-Peak dispatch, which requires an idle start-now, so it cannot be lost
+in the CommandInbox.

@@ -1,32 +1,14 @@
 # Git Unaccepted Requirements List
 
-Update date: 2026-04-09
-
-## Description
-
-This document lists all requirement items in `requirements-review.md` whose `Acceptance status` is `Not accepted`, for a total of 5 items.
+All requirement items in `requirements-review.md` whose `Acceptance status` is `Not accepted` (5 items).
 
 ## Unaccepted Requirements
 
-### 1. Oversized Diff Handling
-
-Oversized diff gives cropping hint
-
-### 2. Patch Generation Failure Handling
-
-When a patch cannot be generated, show an unavailable hint.
-
-### 3. Empty State Handling - No Changes
-
-Current version at least handles "current source has no changes" empty state
-
-### 4. Empty State Handling - Unable to Preview
-
-Current version at least handles "diff cannot be previewed" empty state
-
-### 5. Cross-Platform Compatibility
-
-Maintain local / remote / multiple operating system compatibility direction
+1. Oversized Diff Handling: an oversized diff gives a cropping hint.
+2. Patch Generation Failure Handling: when a patch cannot be generated, show an unavailable hint.
+3. Empty State Handling - No Changes: the current version at least handles the "current source has no changes" empty state.
+4. Empty State Handling - Unable to Preview: the current version at least handles the "diff cannot be previewed" empty state.
+5. Cross-Platform Compatibility: keep local / remote / multiple operating system compatibility as a direction.
 
 ## Acceptance Progress
 
@@ -34,6 +16,4 @@ Maintain local / remote / multiple operating system compatibility direction
 | -------- | ------------ |
 | 8/13     | 5/13         |
 
----
-
-> Complete requirement list please reference [`requirements-review.md`](./requirements-review.md)
+The complete requirement list is in [`requirements-review.md`](./requirements-review.md).

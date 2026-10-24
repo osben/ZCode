@@ -1,80 +1,80 @@
-# 06 — 交互原型与评审
+# 06 — Interaction Prototype and Review
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：** 无，可立即开始。
+**Blocked by:** none.
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-在 `pnpm dev:web` 里挂一个临时原型页，让用户在正式实现之前判断新交互"好不好用、好不好看"。
+A temporary prototype page mounted in `pnpm dev:web` lets the user judge whether the new interaction is usable and good-looking before formal implementation.
 
-- **做法**：原型直接使用项目真实的设计 token 和基础组件，数据全部写死，可以切换浅色和深色主题、侧栏 264px 宽度、900px 窗口。
-- **用途**：评审结论决定 [10](./10-three-screen-wizard-and-selection.md)～[13](./13-settings-device-cards-and-updates.md) 按什么样子实现。
-- **不合入**：原型代码不合入。
+- **Approach**: the prototype uses the project's real design tokens and base components with all data hard-coded; it can switch light and dark themes, a 264px sidebar width and a 900px window.
+- **Use**: the review conclusion decides how [10](./10-three-screen-wizard-and-selection.md) to [13](./13-settings-device-cards-and-updates.md) are implemented.
+- **Not merged**: the prototype code is not merged.
 
-范围：
+Scope:
 
-- **三屏向导**：选择、连接中、选目录三屏，包含以下状态：
-  - 缺少密码
-  - 安装确认
-  - 认证失败
-  - 拒绝连接
-  - 部署阶段失败
-  - 已在线复用的提示
-- **侧栏**：
-  - 项目行的 5 种状态和详情卡
-  - 收起向导后的侧栏进度行
-- **会话区**：断线横幅和输入框
-- **设置页**：
-  - 设备卡
-  - 未完成的连接
-  - 更新横幅（可选更新和必须更新各一种）
-- **截图对比**：本机的 dev 走查环境仍保留着，可以和走查截图放在一起对比。
+- **Three-screen wizard**: select, connecting and choose-directory screens, with these states:
+  - missing password
+  - install confirmation
+  - authentication failed
+  - connection refused
+  - deployment stage failed
+  - already-online reuse notice
+- **Sidebar**:
+  - the 5 states of a project row and the detail card
+  - the sidebar progress row after the wizard is collapsed
+- **Session area**: disconnect banner and composer
+- **Settings**:
+  - device card
+  - unfinished connection
+  - update banner (one optional update, one required update)
+- **Screenshot comparison**: the local dev walkthrough environment is still kept and can be compared side by side with the walkthrough screenshots.
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] 原型页覆盖上面列出的所有界面和状态。
-- [x] 截图覆盖浅色、深色两种主题，以及侧栏 264px、窗口 900px 两种尺寸，并和走查截图并排对比。截图存放在临时目录，不入库。
-- [x] 用户评审通过。评审结论追加到本票末尾的 `## Comments`。
-- [x] 如果评审改动了已定的交互决策，同步更新对应的事实规格，并在受影响的票里注明。
-- [x] 原型代码不进入任何提交，工作区保持干净。
+- The prototype page covers all screens and states listed above.
+- Screenshots cover light and dark themes and the 264px sidebar and 900px window sizes, compared side by side with the walkthrough screenshots. Screenshots live in a temporary directory and are not committed.
+- User review passed. The review conclusion is appended to `## Comments` at the end of this ticket.
+- If the review changed an already-decided interaction decision, the corresponding fact spec is updated and noted in the affected tickets.
+- Prototype code enters no commit and the working tree stays clean.
 
 ## Comments
 
-### 评审结论（2026-09-27，用户整体通过）
+### Review conclusion (2026-09-27, approved overall by the user)
 
-原型挂在 `pnpm dev:web` 的 `?prototype=remote-ux` 临时入口，覆盖范围内全部界面和状态：侧栏 8 个状态、向导 12 个状态、设置页 4 个状态。截图覆盖深浅主题 × 1440 窗口（侧栏 264px）/ 900px 窗口，共 96 张，另有 24 张与走查截图的并排对比，均放在本机临时目录，不入库。评审后原型代码已删除，未进入任何提交。
+The prototype was mounted at the temporary `?prototype=remote-ux` entry of `pnpm dev:web` and covered all screens and states in scope: 8 sidebar states, 12 wizard states, 4 Settings states. Screenshots covered dark/light themes × 1440 window (sidebar 264px) / 900px window, 96 in total, plus 24 side-by-side comparisons with walkthrough screenshots, all kept in a local temporary directory and not committed. After the review the prototype code was deleted and entered no commit.
 
-**按原型实现**：10～13 的布局、信息层级、间距和语义色以原型为准，要点如下。
+**Implement as the prototype**: layout, information hierarchy, spacing and semantic colors of 10-13 follow the prototype; key points:
 
-- **向导**：顶部三段式进度提示（选择设备 → 连接 → 选择目录）；高度随内容自适应，列表过长时在弹窗内滚动。
-- **选择屏**：一个可搜索列表，按“已保存的设备 / SSH config 中的 Host / WSL 发行版（仅 Windows）/ 运行中的容器”分组；已保存设备右侧显示状态，下方用 chip 列出最近目录；底部是“新建 SSH 连接”和手动输入入口；页脚提示键盘操作。
-- **新建 SSH 表单**：主机单独一行，用户名与端口并排；认证方式用分段按钮；密码框带显示/隐藏；“高级选项”折叠；页脚左“返回列表”，右“连接”。
-- **连接中屏**：标题为设备名加类型标签，下面一行等宽地址；阶段用带连接线的竖向列表，完成项显示耗时，当前项加粗；安装阶段内再列子步骤，上传时显示进度条、已传大小、速度和剩余时间；等待点（密码、安装确认）和错误都直接嵌在对应阶段下面；日志默认折叠，失败时展开，展开后才出现“复制日志”。
-- **选目录屏**：边界说明是一行可关闭的提示；“最近 / 远端记录”两行 chip；路径栏加目录列表，底部显示“将打开 <完整路径>”；页脚左“稍后选择”，右“打开此目录”；标题下方可以直接重命名设备，保存后提示“已保存”。
-- **侧栏**：项目行只有一个状态图标位；在线时显示次要文字色的设备名，不在线时换成语义色短状态胶囊；行尾操作只在悬停或聚焦时出现。详情卡锚定整行、从侧栏右侧弹出，不遮挡行尾操作：标题行右侧是状态标签，下面是原因块、分隔线、设备/连接/路径和操作行。
-- **会话区**：顶部横幅整块使用语义色底；中性状态的标题用主文字色；输入框保留草稿，发送按钮旁写明不能发送的原因。
+- **Wizard**: a three-segment progress hint at the top (select device → connect → choose directory); height adapts to content, and a long list scrolls inside the dialog.
+- **Selection screen**: one searchable list grouped as "saved devices / Hosts in SSH config / WSL distributions (Windows only) / running containers"; a saved device shows its status on the right and lists recent directories as chips below; the bottom has "新建 SSH 连接" (new SSH connection) and a manual entry; the footer hints keyboard operation.
+- **New SSH form**: host on its own row, username and port side by side; authentication as segmented buttons; password field with show/hide; "高级选项" (advanced options) collapsed; footer "返回列表" (back to list) on the left, "连接" (connect) on the right.
+- **Connecting screen**: title is the device name plus a type tag, with a monospace address line below; stages are a vertical list with connecting lines, completed items show duration and the current item is bold; the install stage lists sub-steps, and uploading shows a progress bar, transferred size, speed and remaining time; wait points (password, install confirmation) and errors are embedded directly under the corresponding stage; the log is collapsed by default, expanded on failure, and "复制日志" (copy log) appears only after expanding.
+- **Choose-directory screen**: the boundary note is a one-line dismissible hint; two chip rows "最近 / 远端记录" (recent / remote records); a path bar plus directory list, with "将打开 <完整路径>" (will open <full path>) at the bottom; footer "稍后选择" (choose later) on the left and "打开此目录" (open this directory) on the right; the device can be renamed directly under the title, with "已保存" (saved) after saving.
+- **Sidebar**: a project row has only one status icon slot; online shows the device name in secondary text color, not online swaps in a short semantic-color status pill; row-end actions appear only on hover or focus. The detail card anchors to the whole row, pops out on the sidebar's right and does not cover row-end actions: the title row has the status tag on the right, followed by a reason block, a divider, device/connection/path and an action row.
+- **Session area**: the top banner uses a semantic-color background as a whole; the title of a neutral state uses the primary text color; the composer keeps the draft and states the reason next to the send button when sending is impossible.
 
-**与父规格不同、以本结论为准**
+**Differences from the parent spec; this conclusion prevails**
 
-1. **收起后的进度行**改为两行小卡片：第一行是“正在连接 <设备名>…”和百分比，第二行是当前阶段，下面一条进度条。264px 侧栏放不下单行写法。失败后保留为危险色卡片，写明原因并可点击查看。影响 [10](./10-three-screen-wizard-and-selection.md)。
-2. **认证失败**时在连接中屏就地重新输入密码或私钥口令，和“需要密码”用同一交互；只有需要更换用户名或私钥文件时才回到表单。已同步更新 UX 规格的错误分类表。影响 [11](./11-connecting-and-directory-screens.md)。
-3. **阶段名称**：“确认连接”改为“识别设备”，因为原名像是在等用户确认；去掉“连接就绪”阶段，成功后直接进入选目录屏或按意图打开项目。影响 [11](./11-connecting-and-directory-screens.md)。
-4. **部署失败时的次要操作**文案改为“改用设备直接下载”。已同步更新 UX 规格。影响 [11](./11-connecting-and-directory-screens.md)。
+1. The **collapsed progress row** becomes a two-line small card: the first line "正在连接 <设备名>…" (connecting <device name>…) and a percentage, the second line the current stage, and a progress bar below. A single-line form does not fit the 264px sidebar. After failure it stays as a danger-colored card stating the reason and clickable to view. Affects [10](./10-three-screen-wizard-and-selection.md).
+2. On **authentication failure** the connecting screen re-enters the password or key passphrase in place, with the same interaction as "password required"; only changing the username or private key file returns to the form. The error classification table in the UX spec has been updated. Affects [11](./11-connecting-and-directory-screens.md).
+3. **Stage names**: "确认连接" (confirm connection) is renamed "识别设备" (identify device), because the old name sounds like waiting for the user to confirm; the "连接就绪" (connection ready) stage is removed and success goes straight to the choose-directory screen or opens the project by intent. Affects [11](./11-connecting-and-directory-screens.md).
+4. The secondary action copy on **deployment failure** becomes "改用设备直接下载" (download directly on the device instead). The UX spec has been updated. Affects [11](./11-connecting-and-directory-screens.md).
 
-**现有实现需修正**（原型已按目标样子绘制）
+**Existing implementation to fix** (the prototype already draws the target look)
 
-5. 设备状态标签把状态和恢复进度直接拼在一起，显示成“连接中正在自动恢复连接（2/3）”；应写成“连接中 · 自动恢复 2/3”。影响 [12](./12-sidebar-header-and-menus.md)、[13](./13-settings-device-cards-and-updates.md)。
-6. 项目行需要短恢复文案“自动恢复 2/3”；完整句子只放在详情卡里。影响 [12](./12-sidebar-header-and-menus.md)。
-7. 连接描述目前输出 `DOCKER · …`，应使用正常大小写 `Docker · …`。影响 [12](./12-sidebar-header-and-menus.md)、[13](./13-settings-device-cards-and-updates.md)。
+5. The device status label concatenates state and recovery progress directly, showing "连接中正在自动恢复连接（2/3）"; it should read "连接中 · 自动恢复 2/3". Affects [12](./12-sidebar-header-and-menus.md), [13](./13-settings-device-cards-and-updates.md).
+6. A project row needs the short recovery copy "自动恢复 2/3"; the full sentence belongs only in the detail card. Affects [12](./12-sidebar-header-and-menus.md).
+7. The connection description currently outputs `DOCKER · …`; it should use normal casing `Docker · …`. Affects [12](./12-sidebar-header-and-menus.md), [13](./13-settings-device-cards-and-updates.md).
 
-**确认的视觉取舍**
+**Confirmed visual trade-offs**
 
-8. 设备卡上的主操作（连接、重试、更新远端等）统一用描边按钮，紧急程度由状态标签和卡内横幅表达；设置页只有“新建连接”是实心主按钮。影响 [13](./13-settings-device-cards-and-updates.md)。
-9. **必须更新**：状态标签 + 警告色横幅说明版本和影响 + 卡片右上角的“更新远端”；横幅内不重复放按钮。**可选更新**：中性横幅，带“稍后 / 更新”。影响 [13](./13-settings-device-cards-and-updates.md)。
-10. **其他连接**：卡片第二行标出“当前 · 默认”；展开区只列其余连接，“设为默认 / 删除”常驻显示，不依赖悬停。影响 [13](./13-settings-device-cards-and-updates.md)。
-11. **会话区的两种展示**：连接失败或重连中时，已加载内容以变淡的只读样子保留（仍受“不新增缓存 owner”约束）；主动断开且没有已加载内容时，显示“设备未连接，连接后继续此会话”占位。影响 [08](./08-disconnect-experience-and-in-place-reconnect.md)。
+8. Primary actions on device cards (connect, retry, update remote, etc.) uniformly use outline buttons; urgency is carried by the status label and the in-card banner; only "新建连接" on the Settings page is a solid primary button. Affects [13](./13-settings-device-cards-and-updates.md).
+9. **Required update**: status label + warning-colored banner explaining the version and impact + "更新远端" (update remote) at the card's top right; no button repeated inside the banner. **Optional update**: neutral banner with "稍后 / 更新" (later / update). Affects [13](./13-settings-device-cards-and-updates.md).
+10. **Other connections**: the card's second line marks "当前 · 默认" (current · default); the expanded area lists only the remaining connections, with "设为默认 / 删除" (set as default / delete) always visible and not hover-dependent. Affects [13](./13-settings-device-cards-and-updates.md).
+11. **Two session-area presentations**: on connection failure or reconnecting, already-loaded content is kept as a faded read-only view (still bound by "no new cache owner"); on user-initiated disconnect with no loaded content, show the placeholder "设备未连接，连接后继续此会话" (device not connected; continue this session after connecting). Affects [08](./08-disconnect-experience-and-in-place-reconnect.md).
 
-**原型未覆盖**：英文界面、选择屏的 ↑↓ 键盘导航、WSL 和 Docker 的阶段文案（只画了 SSH），分别由 [11](./11-connecting-and-directory-screens.md)、[14](./14-visual-polish-and-accessibility.md) 处理。
+**Not covered by the prototype**: the English UI, ↑↓ keyboard navigation on the selection screen, and the stage copy of WSL and Docker (only SSH was drawn), handled by [11](./11-connecting-and-directory-screens.md) and [14](./14-visual-polish-and-accessibility.md).

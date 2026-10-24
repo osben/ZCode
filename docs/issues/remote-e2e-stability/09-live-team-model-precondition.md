@@ -1,20 +1,15 @@
-# 真实 Team 模型验证的本机前置未就绪
+# Local Precondition for the Real Team Model Verification Is Not Ready
 
 Status: needs-info
 
-## 当前记录
+## Current Record
 
-- 业务基线 `a13999a28927f629d0c64080a5096cf8b4f23bae`，production 构建。
-- case `conversation-session-r3-live-bigmodel-team.test.ts`，批次
-  `r3-server-20261009234650716-227ddc`，任务 `live-team`。
-- 真实登录材料及 Team 连接选择已导入隔离 HOME；当前 OAuth 合同不复制旧账号 API Key。
-- 在连接 SSH 之前先核验本机模型菜单，未出现该 case 选择的
-  `account:bigmodel-team-coding-plan / GLM-5.3-Flash`。
-  case 明确返回 `BLOCKED_ACCOUNT 本机真实账号的 Team 模型未就绪`。
-- `live-team.json` 的 `localAccountModelUnavailable=true` 记录此控制组失败。
-  本轮没有完成真实 Team 模型请求，不能将它归因为 SSH 回归，也不能用回放替代。
+- Business baseline `a13999a28927f629d0c64080a5096cf8b4f23bae`, production build.
+- Case `conversation-session-r3-live-bigmodel-team.test.ts`, batch `r3-server-20261009234650716-227ddc`, task `live-team`.
+- The real login material and Team connection selection were imported into an isolated HOME; the current OAuth contract does not copy old-account API Keys.
+- Before connecting SSH, the local model menu was checked first, and `account:bigmodel-team-coding-plan / GLM-5.3-Flash` selected by this case did not appear. The case explicitly returned `BLOCKED_ACCOUNT 本机真实账号的 Team 模型未就绪` (the Team model of the real local account is not ready).
+- `localAccountModelUnavailable=true` in `live-team.json` records this control-group failure. This round did not complete a real Team model request, so it cannot be attributed to an SSH regression and cannot be replaced by a replay.
 
-## 待补前置
+## Precondition to Supply
 
-需核验当前真实账号/项目的模型可用性与指定模型是否仍适用，再运行同一真实请求 case。
-本轮真实 API Key 代表 `live-zapi` 已通过；Personal 模型同步、默认值及离线补齐另有通过证据。
+Verify the model availability of the current real account/project and whether the designated model still applies, then run the same real-request case. This round the real API Key representative `live-zapi` passed; Personal model sync, defaults and offline fill-in have separate passing evidence.

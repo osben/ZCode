@@ -14,7 +14,7 @@ event source not generated, and persistent re-delivery are not within the first-
 
 ## Delivery Contract
 
-### Request Headers (2026-09-16)
+### Request headers
 
 Only App `/api/v1/event/report` reuses `buildZCodeSourceHeadersFromContext` complete public headers: User-Agent, HTTP-Referer, X-Title, X-ZCode-App-Version, X-Platform, X-Release-Channel, X-Client-Language, X-Client-Timezone, X-Os-Category, X-Os-Version, X-Device-Mid. Language, timezone and device ID are consistent with this event context; environment source is current endpoint, version/platform from App context. Missing or illegal values follow the normalization rules of the public function.
 
@@ -31,7 +31,7 @@ Reward page web requests do not inject these headers; Website reporting is not w
 
 Acceptance: Complete public headers consistent with payload; login/anonymous, logout and switch account, token rotation, retry re-read credentials, read exception anonymous downgrade; observe App reporting with headers on local Electron, simultaneously reward page initial/refresh requests no longer inject App-exclusive headers and Bridge available.
 
-Validation record: 2026-09-16 related unit tests 9 files 65 items passed; local macOS Electron Rewards regression `desktop-e2e-20260916-043702-139` 3/3 passed, runner exit 0. Isolated HTTP fixture observes App reporting after login/logout, asserts all public headers and optional Bearer format (not output JWT); web first/refresh no App-exclusive headers, Bridge dark/light/theme and language and menu flow unchanged. Root typecheck, desktop typecheck:e2e, lint (47 existing warnings / 0 errors), architecture check passed. No Docker used; did not verify real server signature, Windows/Linux real machine or production deployment.
+Not verified: real server signature, Windows/Linux real machines and production deployment.
 
 One logical event constructs endpoint, complete request body and `event_id` only once; all attempts reuse same values:
 

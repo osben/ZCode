@@ -1,210 +1,345 @@
-# 桌面本地消息 TTFT 分阶段遥测
+# Desktop local message TTFT stage telemetry
 
 Status: ready-for-agent
 
 Issue-Tracker: local-markdown
 
-## Problem Statement
+## Problem statement
 
-用户需要深入分析从点击发送一条消息到客户端收到第一个有效输出之间，经过了哪些链路阶段、每个阶段花了多久，并通过各阶段的 P50、P95 和单条慢消息瀑布图定位瓶颈。
+Users need to analyze, from clicking send to the client receiving the first valid output, which pipeline stages
+the message passes through and how long each takes, and to locate bottlenecks through per-stage P50/P95 and a
+per-slow-message waterfall.
 
-当前整体 TTFT 分散在业务事件和 ARMS RUM 中；发送漏斗记录 ACK 和用户消息显示耗时；CLI OpenTelemetry 记录模型请求 attempt 的首事件、首内容和首文本耗时。这些记录的起止点、采样与适用范围不同，没有构成一条完整、可核对的点击到首输出链路。
-
-尤其是 CLI 受理前等待、执行队列、hooks、上下文准备、压缩以及首内容返回客户端，尚不能作为同一条消息的连续阶段统一统计。现有模型 first_content 还可能接受内容块开始事件，不能直接等同于非空可展示输出。直接相减不同指标的 P95，无法还原某个阶段的 P95。
+Overall TTFT is currently scattered across business events and ARMS RUM; the send funnel records ACK and user
+message display time; CLI OpenTelemetry records first-event, first-content and first-text time of a model request
+attempt. Their start/end points, sampling and scope differ, so no complete, verifiable click-to-first-output chain
+exists. In particular, waiting before CLI acceptance, the execution queue, hooks, context preparation,
+compaction and the first content returning to the client cannot be counted as consecutive stages of one message.
+The existing model first_content may also accept a content-block-start event and so is not equal to non-empty
+displayable output. Subtracting P95s of different metrics cannot recover a stage's P95.
 
 ## Solution
 
-为桌面本地工作区新增专用 TTFT 遥测，复用已有 OpenTelemetry/OTLP 导出能力及 ARMS 接入，提供两种互相关联的观察方式：
+Add dedicated TTFT telemetry for desktop local workspaces, reusing the existing OpenTelemetry/OTLP export and ARMS
+ingestion, with two correlated views:
 
-- 阶段 Metric：查看每个阶段的样本数量、耗时分布、P50 和 P95，并按受控维度筛选和比较。
-- 消息 Trace：使用稳定关联 ID 查看单条发送的阶段树、重试、等待、结果和瀑布图，解释具体慢样本。
+- Stage Metrics: sample count, duration distribution, P50 and P95 per stage, filtered and compared by controlled
+  dimensions.
+- Message Trace: with a stable correlation ID, view the stage tree, retries, waits, outcome and waterfall of one
+  send and explain a specific slow sample.
 
-主 TTFT 从点击发送或 Enter 提交并通过发送门禁时开始，到发起发送的 Renderer 沿实际内容链路收到第一份非空、可展示的正文、思考或工具调用时结束。空事件、心跳和状态通知不构成首输出，不把 telemetry 旁路通知或 React 上屏时刻作为终点。另行观察点击到首正文的耗时。
+Main TTFT starts when a click or Enter submit passes the send gate and ends when the originating Renderer
+receives, along the actual content path, the first non-empty displayable text, reasoning or tool call. Empty
+events, heartbeats and status notices are not first output, and neither a telemetry side-channel notice nor the
+React paint moment is the endpoint. Click-to-first-text is observed separately.
 
 ```mermaid
 flowchart TD
-    A[点击发送或 Enter，通过发送门禁] --> B[Renderer 发送准备]
-    B --> C[命令传递与 CLI 受理]
-    C --> D[等待执行]
-    D --> E[执行与请求准备]
-    E --> F[模型请求与必要重试]
-    F --> G[首有效输出经 CLI 和 Host 返回 Renderer]
-    G --> H[主 TTFT 收口，异步导出]
-    H -. 继续轻量观察 .-> I[首正文到达或整轮结束无正文]
-    E --- E1[hooks、上下文加载、持久化]
-    E --- E2[必要压缩、MCP 和工具准备、请求组装]
-    F --- F1[各 attempt 的等待、失败与重试间隔]
+    A[Click send or Enter, passes the send gate] --> B[Renderer send preparation]
+    B --> C[Command delivery and CLI acceptance]
+    C --> D[Wait for execution]
+    D --> E[Execution and request preparation]
+    E --> F[Model request and necessary retries]
+    F --> G[First valid output returns via CLI and Host to the Renderer]
+    G --> H[Main TTFT closes, async export]
+    H -. keep light observation .-> I[First text arrives or the turn ends with no text]
+    E --- E1[hooks, context loading, persistence]
+    E --- E2[necessary compaction, MCP and tool preparation, request assembly]
+    F --- F1[waits, failures and retry gaps of each attempt]
 ```
 
-图表示需要观测的主要边界；准备和重试可能交错，子操作也可能并行。实现必须按真实时间线记录，不能强行把实际并发或重复操作改成图中的单次串行执行。
+The diagram shows the main boundaries to observe; preparation and retries may interleave and sub-operations may
+run in parallel. The implementation must record the real timeline and not force actual concurrency or repetition
+into the single serial run shown.
 
-## User Stories
+## User stories
 
-1. As a 性能分析人员, I want 查看点击到首有效输出的总耗时, so that 我能判断用户实际等待了多久。
-2. As a 性能分析人员, I want 查看各主阶段的 P50 和 P95, so that 我能识别普遍瓶颈和长尾瓶颈。
-3. As a 性能分析人员, I want 同时查看各分位数的样本数, so that 我不会把小样本波动误判为退化。
-4. As a 性能分析人员, I want 按阶段、模型和 provider 筛选, so that 我能区分本地处理与模型请求相关问题。
-5. As a 性能分析人员, I want 按应用版本和操作系统比较, so that 我能定位发布回归及平台差异。
-6. As a 性能分析人员, I want 分开查看空闲发送和排队发送, so that 正常业务排队不会掩盖实际处理速度。
-7. As a 性能分析人员, I want 同时查看含排队的总 TTFT 和开始执行后的耗时, so that 我能分别评价用户等待和执行效率。
-8. As a 性能分析人员, I want 将队列确认弹窗中的用户等待单独标记, so that 我不会把用户停留误判为系统处理耗时。
-9. As a 性能分析人员, I want 将立即引导输入与可独立归因的普通发送分开, so that 运行中已有输出不会被归因给错误的消息。
-10. As a 故障排查人员, I want 用一次发送的关联 ID 找到瀑布图, so that 我能解释一条具体慢消息。
-11. As a 故障排查人员, I want 查看 Renderer 的发送准备耗时, so that 我能发现发送前的本地处理延迟。
-12. As a 故障排查人员, I want 查看命令传递、CLI 受理及受理前等待, so that 我能定位通信和 admission 竞争。
-13. As a 故障排查人员, I want 查看消息等待开始执行的时间, so that 我能区分队列等待与执行准备。
-14. As a 故障排查人员, I want 展开 hooks、上下文加载和持久化, so that 我能定位具体的请求前准备瓶颈。
-15. As a 故障排查人员, I want 识别首输出之前的上下文压缩, so that 压缩耗时不会被误算成主模型首响应。
-16. As a 故障排查人员, I want 查看 MCP、工具准备和请求组装, so that 我能分析扩展初始化对首响应的影响。
-17. As a 故障排查人员, I want 查看每次模型 attempt 及其重试等待, so that 我能区分一次慢请求与多次失败累积。
-18. As a 故障排查人员, I want 查看首有效输出从 CLI 返回 Renderer 的耗时, so that 我能发现回传链路瓶颈。
-19. As a 故障排查人员, I want 看到并行、缺失及未归因区间, so that 瀑布图不会用虚构的阶段填满总耗时。
-20. As a 性能分析人员, I want 区分首输出为正文、思考或工具调用, so that 不同输出方式的体验可以正确比较。
-21. As a 性能分析人员, I want 另行查看点击到首正文的耗时, so that 我能区分开始有反馈与开始文字回答。
-22. As a 性能分析人员, I want 首输出一到达就完成主记录, so that 我不必等整轮任务结束才观察首响应。
-23. As a 性能分析人员, I want 查看首输出前失败和取消的数量、比例及已等待时长, so that 最差体验不会从统计中消失。
-24. As a 故障排查人员, I want 查到发送开始及已完成阶段的检查点, so that 进程异常退出后仍可能保留排查线索。
-25. As a 性能分析人员, I want 区分未收口、明确中断和明确失败, so that 缺少结束记录不会被错误地解释为超时。
-26. As a 性能分析人员, I want 前后台都继续采集并保留状态变化, so that 慢消息不会因为切换会话而丢失。
-27. As a 性能分析人员, I want 默认查看持续前台样本并识别休眠或暂停, so that 后台调度不会污染正常前台体验统计。
-28. As a 性能分析人员, I want 对灰度启用人群不主动抽样 TTFT 明细, so that 慢样本不会因独立的 Trace 抽样而不可查。
-29. As a 运维人员, I want 在 ARMS 中复用既有接入并获得专用查询和看板配置, so that 无需另建一套诊断产品。
-30. As a 运维人员, I want 控制灰度、事件量、标签基数与保留期, so that 可观测成本可以在扩大覆盖前验证。
-31. As a 用户, I want 遥测网络失败或队列满时不影响发送和接收, so that 诊断功能不会降低正常使用体验。
-32. As a 用户, I want 遥测只包含耗时、状态和必要关联信息, so that 消息正文、文件内容和凭据不会进入该链路。
-33. As a 测试人员, I want 注入已知阶段延迟并检查最终导出的数据, so that 我能证明阶段归因与真实执行一致。
-34. As a 测试人员, I want 验证乱序、重复、早于 ACK 的输出及多会话并发, so that 记录不会错绑或重复计数。
-35. As a 维护人员, I want 新埋点不改变既有业务事件和 RUM 口径, so that 历史看板和其他客户端保持兼容。
+1. Performance analyst: see the total click-to-first-valid-output time to judge how long users actually wait.
+2. Performance analyst: see P50 and P95 per main stage to find common and long-tail bottlenecks.
+3. Performance analyst: see the sample count with each quantile so small-sample noise is not read as regression.
+4. Performance analyst: filter by stage, model and provider to separate local processing from model-request issues.
+5. Performance analyst: compare by app version and OS to find release regressions and platform differences.
+6. Performance analyst: view idle and queued sends separately so normal queueing does not hide processing speed.
+7. Performance analyst: see both click-based total TTFT (with queueing) and time from execution start, to judge
+   user wait and execution efficiency separately.
+8. Performance analyst: mark user wait in the queue confirmation dialog separately so dwell is not read as system
+   processing.
+9. Performance analyst: keep immediate-guide input apart from ordinary sends that can be attributed on their own, so
+   output already running is not attributed to the wrong message.
+10. Troubleshooter: open the waterfall by the correlation ID of one send to explain a specific slow message.
+11. Troubleshooter: see Renderer send-preparation time to find local delay before sending.
+12. Troubleshooter: see command delivery, CLI acceptance and the wait before acceptance to locate communication and
+    admission contention.
+13. Troubleshooter: see how long a message waits to start executing to tell queueing from execution preparation.
+14. Troubleshooter: expand hooks, context loading and persistence to locate the pre-request preparation bottleneck.
+15. Troubleshooter: identify context compaction before first output so compaction time is not counted as the main
+    model's first response.
+16. Troubleshooter: see MCP, tool preparation and request assembly to analyze extension-initialization impact.
+17. Troubleshooter: see each model attempt and its retry wait to distinguish one slow request from accumulated
+    failures.
+18. Troubleshooter: see the time for the first valid output to return from the CLI to the Renderer to find
+    return-path bottlenecks.
+19. Troubleshooter: see parallel, missing and unattributed intervals so the waterfall does not fill the total with
+    invented stages.
+20. Performance analyst: tell whether first output is text, reasoning or a tool call so different output modes
+    compare correctly.
+21. Performance analyst: see click-to-first-text separately to distinguish "started giving feedback" from "started
+    the text answer".
+22. Performance analyst: have the main record complete as soon as first output arrives, without waiting for the
+    whole turn.
+23. Performance analyst: see counts, ratios and waited time of failures and cancellations before first output so the
+    worst experience does not vanish from statistics.
+24. Troubleshooter: find checkpoints of send start and completed stages so clues survive an abnormal process exit.
+25. Performance analyst: distinguish unclosed, explicitly interrupted and explicitly failed so a missing end record
+    is not misread as a timeout.
+26. Performance analyst: keep collecting in foreground and background with state changes kept, so slow messages do
+    not vanish when switching sessions.
+27. Performance analyst: default to continuously-foreground samples and recognize sleep or pause so background
+    scheduling does not pollute normal foreground statistics.
+28. Performance analyst: do not actively sample TTFT detail for the gray population, so slow samples are not lost to
+    independent Trace sampling.
+29. Operator: reuse the existing ARMS ingestion and get dedicated queries and dashboard config, without building a
+    separate diagnostics product.
+30. Operator: control the gray release, event volume, label cardinality and retention so observability cost can be
+    verified before expanding coverage.
+31. User: telemetry network failure or a full queue must not affect sending and receiving.
+32. User: telemetry contains only durations, status and necessary correlation info; message text, file content and
+    credentials never enter the chain.
+33. Tester: inject known stage delays and check the finally exported data to prove stage attribution matches real
+    execution.
+34. Tester: verify reordering, duplicates, output before ACK and multi-session concurrency so records are neither
+    mis-bound nor double-counted.
+35. Maintainer: new telemetry must not change existing business events and RUM definitions so historical dashboards
+    and other clients stay compatible.
 
-## Implementation Decisions
+## Implementation decisions
 
-### 覆盖与兼容边界
+### Coverage and compatibility boundary
 
-- 第一版只为桌面本地工作区的用户发送建立 TTFT 记录。桌面远程工作区、手机和 Web 远控不纳入首版采集；其现有行为必须保持兼容。
-- 桌面保持 desktop-continuous 的实际内容链路，不引入手机 replayable 的 snapshot、gap 或恢复语义。历史 hydration、回放和后台自动任务不得伪造本地用户点击记录。
-- 预留客户端类型、执行环境及阶段来源的扩展位置，不提前实现跨机器测时、远程连接或移动端重连归因。
-- 保留现有业务 completion、RUM TTFT 与发送漏斗事件；新模型不改变旧口径、采样和计数，不要求将全部新阶段双发到业务接口或 RUM。
+- The first version builds TTFT records only for user sends in desktop local workspaces. Desktop remote workspaces,
+  mobile and Web remote control are not collected in v1 and their current behavior must stay compatible.
+- Desktop keeps the desktop-continuous actual content path and introduces no mobile replayable snapshot, gap or
+  recovery semantics. History hydration, replay and background automatic tasks must not fabricate local user
+  click records.
+- Extension points are reserved for client type, execution environment and stage source, but cross-machine timing,
+  remote connections and mobile reconnect attribution are not implemented ahead of time.
+- Existing business completion, RUM TTFT and send-funnel events stay; the new model does not change old
+  definitions, sampling and counts and does not require double-sending all new stages to the business endpoint or
+  RUM.
 
-### 模块职责和接口
+### Module responsibilities and interfaces
 
-- Composer 在真实提交门禁通过后建立一次发送的观测上下文；队列二次确认复用同一次发送，不重置起点。
-- Renderer 的专用观测生命周期负责点击总时钟、客户端前后台状态、实际首内容接收、主记录收口及首正文补充观察。
-- CLI 在既有 admission、排队、执行准备和模型调用边界记录权威阶段事实。Host 保留调度和传输职责，不引入第二份 accepted input queue，也不成为业务生命周期的第二数据源。
-- 若需要将 CLI 阶段事实和观测上下文跨进程传递，通过共享协议的严格类型、运行时 schema 和受控桥接完成；保持旧调用兼容。Main 仅负责受控遥测导出调度，不承载 task、queue 或模型业务状态。
-- 复用现有服务接口、平台注入及 OTLP 导出设施。Renderer 不直接访问 Repo 或 CLI 实现，不把导出网络调用放入发送或输出的阻塞路径。
-- workspaceIdentity 仍表达身份隔离，workspacePath 表达文件执行路径；本地继续允许路径 fallback，不另造本地工作区身份格式。遥测隔离必须覆盖工作区、会话和进程实例，且不导出原始工作区路径。
+- The Composer creates the observation context of one send once the real submit gate passes; queue second
+  confirmation reuses the same send and does not reset the start.
+- The Renderer's dedicated observation lifecycle owns the click master clock, client foreground/background state,
+  actual first-content receipt, main-record closure and the extra first-text observation.
+- The CLI records authoritative stage facts at the existing admission, queueing, execution-preparation and
+  model-call boundaries. The Host keeps scheduling and transport duties, adds no second accepted-input queue and is
+  not a second source of the business lifecycle.
+- Passing CLI stage facts and the observation context across processes uses strict shared-protocol types, a
+  runtime schema and a controlled bridge, staying compatible with old callers. Main only schedules controlled
+  telemetry export and holds no task, queue or model business state.
+- Reuse existing service interfaces, platform injection and OTLP export. The Renderer never touches a Repo or CLI
+  implementation directly and the export network call is not in the blocking path of sending or output.
+- workspaceIdentity still expresses identity isolation and workspacePath the file-execution path; local keeps the
+  path fallback and invents no new local identity format. Telemetry isolation must cover workspace, session and
+  process instance and never exports the raw workspace path.
 
-### 关联、首输出及生命周期
+### Correlation, first output and lifecycle
 
-- 一次发送有稳定观测关联 ID，在发送前准备阶段即可建立，并关联 commandId、inputId、queryId、turnId、逻辑模型调用 ID 和各物理 attempt 的 requestId。
-- V4 中 inputId、queryId 与原发送 commandId 的既有关系用于关联。队列编辑或 send-now 操作命令不能替换原输入归因。requestId 随重试变化，不能作为整次发送的主键。
-- 观测上下文及启用决策在进程间一致传播，不能让 Renderer 与 CLI 独立随机采样而产生碎片。新的 TTFT 记录与已有 Agent Trace 可关联，但不依赖已有 10% Trace 抽样获得完整性，也不改变旧业务 Trace 的父子归属。
-- 首输出只接受沿实际会话内容路径到达发起 Renderer 的非空可展示正文、思考或工具调用。仅有 text_start、reasoning_start、tool_input_start、空 block、状态、心跳或旁路通知均不足以判定。记录 first_output_kind。
-- 不把此前运行轮次、其他会话、其他输入或子任务旁路进展抢先归为本条消息；输出归属必须使用真实输入和执行因果关系验证。无法唯一归因的输入保留明确标记，不伪造独立 TTFT。
-- ACK 不代表开始执行或开始请求；首输出也可能早于 ACK。关联、去重与收口必须接受合法乱序，不能使用固定等待时间来同步业务状态。
-- 主 TTFT 收口后继续轻量观察首正文，首正文晚到时另行产生补充指标；整轮结束仍无正文则标记无正文。主记录已成功收口后，后续错误不得反转其首输出结果。
-- 发送开始和已完成阶段生成异步检查点，不只依赖最终根 Span 结束才导出。不得在首输出后补造尚未完成的准备步骤或重试阶段。
+- One send has a stable observation correlation ID, established as early as the send-preparation stage, linked to
+  commandId, inputId, queryId, turnId, logical model-call ID and the requestId of each physical attempt.
+- The existing V4 relationship of inputId and queryId to the original send commandId is used for correlation.
+  Queue edit or send-now operation commands cannot replace the original input attribution. requestId changes on
+  retry and is never the primary key of a whole send.
+- The observation context and the enablement decision propagate consistently across processes; Renderer and CLI
+  must not sample independently and fragment records. New TTFT records can be correlated with existing Agent
+  Traces but do not depend on the old 10% Trace sampling for completeness and do not change the old business
+  Trace's parent-child ownership.
+- First output accepts only non-empty displayable text, reasoning or a tool call reaching the originating Renderer
+  along the actual session content path. text_start, reasoning_start, tool_input_start alone, empty blocks,
+  status, heartbeat or side-channel notices are not enough; `first_output_kind` is recorded.
+- Earlier turns, other sessions, other inputs or subtask side-channel progress are never attributed to this
+  message; output ownership is verified with real input and execution causality. An input that cannot be uniquely
+  attributed keeps an explicit mark and no independent TTFT is forged.
+- ACK does not mean execution or request started; first output may even precede ACK. Correlation, de-duplication
+  and closure must accept legal reordering and must not use fixed waits to synchronize business state.
+- After the main TTFT closes, first text is lightly observed and a supplementary metric is produced if it arrives
+  late; a turn ending with no text is marked no-text. Later errors never reverse an already successful first
+  output.
+- Send start and completed stages produce async checkpoints and do not depend on the final root Span ending to be
+  exported. Unfinished preparation steps or retry stages are not fabricated after first output.
 
-### 阶段与时间合同
+### Stage and time contract
 
-| 主阶段              | 需要解释的边界                               | 可展开的观察                                                                     |
-| ------------------- | -------------------------------------------- | -------------------------------------------------------------------------------- |
-| Renderer 发送准备   | 提交起点到命令向 Host 分发                   | 真实发生的本地准备；用户二次确认等待另标                                         |
-| 命令传递与 CLI 受理 | 分发到 CLI 权威受理                          | Host 转发、CLI 收到、admission gate 等待、必要受理持久化；ACK 返回另记为往返观察 |
-| 等待执行            | 受理后到该输入开始执行                       | 空闲或排队类型、队列等待；不与 ACK 往返重复累计                                  |
-| 执行与请求准备      | 开始执行到主响应模型请求，并保留实际重复区间 | hooks、上下文加载、持久化、必要压缩、MCP/工具准备和请求组装                      |
-| 模型请求与重试      | 请求准备后到 CLI 形成该输入的首有效输出      | 各 attempt 的失败或输出、重试间隔；内部压缩模型请求与主响应请求分开归因          |
-| 首输出回传          | CLI 产生首有效输出到 Renderer 实际接收       | 真实协议内容经过的发送、Host 转发和客户端接收边界                                |
+| Main stage                          | Boundary to explain                                                                   | Expandable observation                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Renderer send preparation           | Submit start to command dispatch to the Host                                          | Local preparation that really happens; user second-confirmation wait marked separately                                              |
+| Command delivery and CLI acceptance | Dispatch to authoritative CLI acceptance                                              | Host forwarding, CLI receipt, admission-gate wait, necessary acceptance persistence; ACK return observed separately as a round trip |
+| Wait for execution                  | After acceptance until this input starts executing                                    | Idle or queued type, queue wait; not double-counted with the ACK round trip                                                         |
+| Execution and request preparation   | Execution start to the main-response model request, keeping actual repeated intervals | hooks, context loading, persistence, necessary compaction, MCP/tool preparation, request assembly                                   |
+| Model request and retries           | After request preparation until the CLI forms this input's first valid output         | Failure or output of each attempt, retry gaps; internal compaction model requests attributed apart from the main response request   |
+| First-output return                 | CLI produces first valid output until the Renderer actually receives it               | Send, Host forwarding and client receipt boundaries the real protocol content passes                                                |
 
-- 主阶段按真实路径尽可能划分为连续且互不重叠的时间区间；边界必须在实现前和实际挂点核对。允许阶段缺省、重复和子阶段并行，不把未执行的阶段填成零耗时。
-- CLI 收到命令和获得 admission gate 后受理是不同边界；不能仅使用 admittedAt 代替全部受理阶段。
-- CLI 受理后的执行可与 ACK 返回并行。发送到 ACK、用户消息呈现等累计观察不作为可直接相加的串行主阶段。
-- 端到端 TTFT 使用发起 Renderer 的同一时钟。各进程内部使用单调时钟记录 duration；跨进程时间对齐需有实测误差界限，不能直接混用不同进程的单调时钟或未经校验的墙钟。
-- 第一版精度目标是可靠区分几十毫秒、几百毫秒和数秒的慢点，不承诺亚毫秒测量。短阶段采用专门的毫秒级分桶，不能沿用最小 250ms 的旧 TTFT 分桶。
-- 对齐误差超界、负区间、休眠或时钟异常显式记录质量状态。不用钳零掩盖错误，不将不可靠跨进程样本混入精确阶段分布；同进程仍可靠的观察可以独立保留。
-- 明细保留阶段 interval、duration、因果关联与缺失信息。可解释区间的并集与总时长核对，重叠不重复累计，差额展示为未归因或缺失，不强行塞给模型或网络。
-- 模型服务内部排队和推理、DNS/TLS/网络 TTFB 不在缺乏对应事实时细分；SDK 首事件不能冒充网络首字节。
+- Main stages are divided along the real path into consecutive, non-overlapping intervals as far as possible;
+  boundaries must be checked at real hook points before implementation. Stages may be absent, repeated and
+  sub-stages parallel; un-run stages are not zero-filled.
+- CLI receipt of a command and acceptance after obtaining the admission gate are different boundaries; admittedAt
+  alone cannot replace the whole acceptance stage.
+- Execution after CLI acceptance can run in parallel with the ACK return. Cumulative observations such as send to
+  ACK and user-message presentation are not serial main stages that can be added.
+- End-to-end TTFT uses the originating Renderer's clock. Each process records durations with its own monotonic
+  clock; cross-process alignment needs a measured error bound, and monotonic clocks of different processes or
+  unverified wall clocks must not be mixed.
+- The v1 precision goal is to reliably distinguish tens of ms, hundreds of ms and seconds, not sub-millisecond.
+  Short stages use dedicated millisecond buckets, not the old minimum-250 ms TTFT buckets.
+- Out-of-bound alignment error, negative intervals, sleep or clock anomalies are recorded as an explicit quality
+  state. No clamping to zero; unreliable cross-process samples do not enter precise stage distributions; reliable
+  same-process observations may stay independently.
+- Detail keeps stage interval, duration, causal links and missing information. The union of explainable intervals
+  is reconciled against total time, overlap is not double-counted, and the difference shows as unattributed or
+  missing and is not forced onto model or network.
+- Model-service internal queueing and inference and DNS/TLS/network TTFB are not split without supporting facts; an
+  SDK first event cannot pose as network first byte.
 
-### 统计、结果和查询
+### Statistics, outcomes and queries
 
-- 一次独立发送是主 TTFT 统计单位。模型 attempt 和准备子阶段有各自统计单位，查询必须标明，避免将后续工具循环请求混入用户首次响应统计。
-- 空闲发送与排队发送分组；同时给出点击起算总 TTFT、开始执行后到首输出的耗时及队列等待。立即引导输入只进入发送结果或独立分类，不进入普通 TTFT 分位数。
-- 首输出前失败、拒绝、取消等明确结果记录已等待时长和已有阶段，并单独统计数量、比例；无首输出样本不得以 0 或 -1 进入成功 TTFT 分布。
-- 仅有开始或阶段检查点的记录展示为未收口，可能仍在运行或已中断。缺少终态、超过某个查询时间窗口都不足以判定失败；有明确退出或中断证据才给出对应结果。
-- 前后台都继续采集。保存发送时、接收时及期间必要状态变化，才能判断持续前台；仅比较起止状态不足以排除中途切后台。默认体验看板筛选持续前台且计时可靠的样本，诊断看板可查看全部。
-- 支持按阶段、模型/provider、应用版本、操作系统、空闲/排队及前后台状态筛选和分组。采用受控标签和预定义常用组合，不构造全部维度的笛卡尔积；高基数消息、Trace、工作区和用户关联信息不进入 Metric labels。
-- 同一份阶段事实生成 Metric 与 Trace，明确 schema version、应用及 CLI 版本。统计使用有效阶段原始样本或其 Histogram，显示样本数及分桶精度；不相加 P95，也不使用总 P95 减去模型 P95 推导其他阶段。
-- ARMS 交付物包括总 TTFT、各主阶段和准备子阶段 P50/P95、样本数、结果比例、未收口与数据质量视图，以及通过关联 ID 打开的单消息阶段瀑布图或关联查询。实际平台的查询、跳转和瀑布展示能力必须验证，不能仅以本地 Span 已生成视为交付完成。
+- One independent send is the unit of main TTFT. Model attempts and preparation sub-stages have their own units and
+  queries must state them, so later tool-loop requests are not mixed into first-response statistics.
+- Idle and queued sends are grouped; click-based total TTFT, execution-start-to-first-output and queue wait are all
+  given. Immediate-guide input enters only a send outcome or its own category, never ordinary TTFT quantiles.
+- Explicit outcomes such as failure, rejection or cancel before first output record the waited time and existing
+  stages and are counted separately in number and ratio; no-first-output samples never enter the success TTFT
+  distribution as 0 or -1.
+- A record with only a start or stage checkpoints shows as unclosed, possibly still running or interrupted. A
+  missing terminal or exceeding a query window does not suffice to call it failed; explicit exit or interrupt
+  evidence gives the matching outcome.
+- Foreground and background both keep collecting. The state at send, at receipt and necessary changes in between
+  are saved to judge continuous foreground; comparing only start and end state cannot exclude a mid-way switch to
+  background. The default experience dashboard filters continuously-foreground, reliably-timed samples; the
+  diagnostic dashboard can see all.
+- Filtering and grouping by stage, model/provider, app version, OS, idle/queued and foreground/background use
+  controlled labels and predefined common combinations, not a Cartesian product of all dimensions; high-cardinality
+  message, Trace, workspace and user correlation never enter Metric labels.
+- The same stage facts produce Metric and Trace with explicit schema version, app and CLI version. Statistics use
+  raw valid-stage samples or their Histogram with sample count and bucket precision shown; P95s are never added and
+  other stages are never derived as total P95 minus model P95.
+- ARMS deliverables: total TTFT, P50/P95 of main stages and preparation sub-stages, sample counts, outcome ratios,
+  unclosed and data-quality views, and a per-message stage waterfall or correlated query opened by the correlation
+  ID. The actual platform's query, jump and waterfall capability must be verified; locally generated Spans alone
+  are not delivery.
 
-### 导出、灰度与存储
+### Export, gray release and storage
 
-- 新 TTFT 使用专用 OTel Metric 和 Trace 数据模型，复用已有 OTLP 导出器、配置注入及批量上报机制。ARMS RUM 自定义事件与业务 event/report 都不是这套新阶段数据的主要存储路径。
-- 第一阶段只对灰度启用人群全量采集有界的 TTFT 明细及统计，不继承旧 Renderer 的独立随机抽样或旧 CLI 的 10% head sampling。主链路覆盖只延伸到首输出，首正文为轻量补充；不扩张为整轮所有业务 Span 的全量采集。
-- 开始及阶段检查点应能在主记录收口前独立被异步提交。先到终态、后到阶段或重复传输时，以稳定记录身份和阶段身份合并，不能重复计数；检查点不要求为每个 token 或每个循环迭代发事件。
-- 首输出到达立即完成主记录并交给异步 exporter，不要求逐条同步发送网络请求。健康运行下明细以秒到几十秒级可查为目标，聚合指标允许约 5 分钟更新。
-- 队列、阶段记录数量和内存都设边界，导出失败、积压或满队列不能回压发送和输出。发生丢弃或截断时保留可观测的数据质量信号，不能宣称已实现 exactly-once 网络交付或强杀零丢失。
-- 明细保留 7 天、聚合指标至少 30 天为需求目标；上线前核对 ARMS 实际接入、权限、容量、保留配置和费用。已有配置满足目标时沿用，未核验事项必须标注为待上线验证。
-- 遥测仅记录耗时、受控阶段名、结果、版本及必要关联信息；不采 prompt、回复正文、文件内容、原始路径、凭据或请求 Header/Body。复用项目现有隐私和鉴权约束，不假定当前存在统一控制全部 exporter 的隐私总开关。
+- New TTFT uses dedicated OTel Metric and Trace data models, reusing the existing OTLP exporter, configuration
+  injection and batch reporting. ARMS RUM custom events and business event/report are not the primary store of
+  this new stage data.
+- The first phase fully collects bounded TTFT detail and statistics only for the gray population, inheriting
+  neither the old Renderer's independent random sampling nor the old CLI's 10% head sampling. The main chain covers
+  only up to first output with first text a light supplement; it does not widen to full collection of all
+  business Spans of the turn.
+- Start and stage checkpoints can be submitted asynchronously and independently before the main record closes.
+  When a terminal arrives first, stages later, or transmission repeats, records merge by stable record and stage
+  identity without double-counting; no event per token or per loop iteration is required.
+- First-output arrival completes the main record at once and hands it to the async exporter, with no synchronous
+  per-record network request. Under healthy operation detail is queryable within seconds to tens of seconds as a
+  goal; aggregate metrics may update about every 5 minutes.
+- Queue, stage-record count and memory are all bounded; export failure, backlog or a full queue never applies back
+  pressure on sending and output. Drops or truncation keep an observable data-quality signal; exactly-once
+  network delivery or zero loss on force-kill is not claimed.
+- Retention target: detail 7 days, aggregate metrics at least 30 days. Before launch, check actual ARMS ingestion,
+  permissions, capacity, retention configuration and cost. If existing configuration meets the target it is kept;
+  unverified items must be marked as pending launch verification.
+- Telemetry records only duration, controlled stage names, outcome, version and necessary correlation info; no
+  prompt, reply text, file content, raw path, credential or request header/body. Existing project privacy and
+  authentication constraints are reused and no unified privacy master switch over all exporters is assumed.
 
-## Testing Decisions
+## Testing decisions
 
-### 主要测试边界
+### Primary test boundary
 
-以“真实桌面 Composer 发送输入，到最终 OTLP 接收端解码出的 Trace 和 Metric”为最高测试边界。真实经过 Renderer、窗口 Host、CLI 和会话内容回传，使用可控模型回放及本地测试 OTLP 接收器，检查外部可观察的时间线和最终导出合同，而不是断言某个私有函数被调用了几次。
+The highest test boundary is "a real desktop Composer sends input, through to Trace and Metric decoded at the final
+OTLP receiver". It really passes through the Renderer, window Host, CLI and session content return, using
+controllable model replay and a local test OTLP receiver, and checks the externally observable timeline and the
+final export contract rather than asserting how often a private function was called.
 
-优先复用已有 conversation-session E2E、遥测最终出口捕获的测试组织方式，以及现有 OTel HTTP 接收器的 gzip/protobuf 解码和 Trace/Metric 断言。现有 RUM/event-report 捕获器不能直接充当新 OTLP 通道的验收；如需新增测试能力，应在最终 OTLP 导出边界提供一个可复用接收器，而不是在每一层新增测试专用业务接口。
+Prefer the existing conversation-session E2E and telemetry-final-output capture organization, and the existing OTel
+HTTP receiver's gzip/protobuf decoding and Trace/Metric assertions. The existing RUM/event-report capturers cannot
+stand in for acceptance of the new OTLP channel; if new test capability is needed, provide one reusable receiver at
+the final OTLP export boundary instead of adding test-only business interfaces at every layer.
 
-底层只补充真实 E2E 难以稳定制造的时钟、乱序、去重、统计与协议边界测试。沿用既有 telemetry runtime、model-api recorder、supervisor 和 composer send-funnel 测试的注入模式，不为实现细节建立重复测试层。
+Lower layers only add tests for clock, reordering, de-duplication, statistics and protocol boundaries that are hard
+to produce stably in real E2E, following the injection patterns of the existing telemetry runtime, model-api
+recorder, supervisor and composer send-funnel tests.
 
-### 验收场景
+### Acceptance scenarios
 
-| 场景                             | 应观察到的外部结果                                                               |
-| -------------------------------- | -------------------------------------------------------------------------------- |
-| 普通正文首发                     | 一个发送关联、一份主 TTFT、正确阶段和首正文；无需等待整轮 terminal               |
-| 思考或工具先到                   | 正确 first_output_kind；主 TTFT 先收口，首正文后来单独补充；空 start 事件不触发  |
-| 指定阶段注入已知延迟             | 该阶段时长及总 TTFT 按真实顺序变化，其他阶段不吸收该延迟；偏差在已验证误差范围内 |
-| CLI admission 竞争               | 收到命令到权威受理的等待可见，不能隐藏在业务队列或模型耗时中                     |
-| 排队、转正与二次确认             | 原发送关联持续保留；含排队和执行后耗时可区分；用户确认等待单独标记               |
-| 立即引导                         | 不抢占前一输入的输出，不混入普通 TTFT 分位数                                     |
-| hooks、压缩和 MCP 准备           | 真正发生的准备子阶段可见；压缩的内部模型调用不冒充主响应模型请求                 |
-| 重试后首输出                     | 多个 attempt 和等待关联同一次发送；主 TTFT 不因 attempt 数重复计数               |
-| 首输出早于 ACK、阶段乱序或重复   | 主关联和收口正确，晚到合法阶段能合并，无重复 Metric 或重复消息 Trace             |
-| 多会话、多窗口或工作区           | 消息、运行实例和观测上下文不串线；旧轮次与子任务旁路输出不抢占首响应             |
-| 首输出前失败或取消               | 结果计数和已等待时长正确，无虚构成功 TTFT 或零值污染                             |
-| 首输出后失败、无正文结束         | 主 TTFT 保持成功首输出事实；首正文状态独立正确                                   |
-| 进程退出、强杀或缺失终态         | 已导出的检查点可查；无结束证据时保持未收口，不伪造超时或剩余阶段                 |
-| 切后台再返回、机器暂停或时钟异常 | 持续前台判断准确；异常质量样本可筛除，不制造负耗时或强制钳零                     |
-| 并行、重复准备和缺失阶段         | 瀑布图呈现真实 interval；并集对账，不重复相加，不将缺口硬归因                    |
-| 灰度关闭、启用及关联采样         | 关闭时无新采集；启用人群全链路一致，旧 Trace 10% 采样不制造 TTFT 缺段            |
-| exporter 超时、拒绝、满队列      | 发送和输出继续；内存/队列有界，丢弃可观察，正常收口不依赖导出成功                |
-| 最终数据合同                     | 严格 schema、单位、版本、低基数标签和脱敏规则正确，Trace/Metric 可按定义对账     |
-| 旧通道和排除场景                 | 旧业务/RUM 计数不变；远程、手机、回放和自动任务不生成本地用户 TTFT               |
+| Scenario                                             | Expected external result                                                                                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ordinary text first                                  | One send correlation, one main TTFT, correct stages and first text; no wait for the turn terminal                                           |
+| Reasoning or tool first                              | Correct first_output_kind; main TTFT closes first, first text added later; an empty start event does not trigger                            |
+| Known delay injected into a stage                    | That stage's duration and total TTFT change in real order, other stages absorb nothing; deviation within the verified error                 |
+| CLI admission contention                             | The wait from command receipt to authoritative acceptance is visible, not hidden in business queue or model time                            |
+| Queue, promotion and second confirmation             | Original send correlation kept; queue-inclusive and post-execution times distinguishable; confirmation wait marked separately               |
+| Immediate guide                                      | Does not take the previous input's output and is not mixed into ordinary TTFT quantiles                                                     |
+| hooks, compaction and MCP preparation                | Preparation sub-stages that really happen are visible; the internal compaction model call does not pose as the main response request        |
+| First output after retry                             | Several attempts and waits link to one send; main TTFT is not counted per attempt                                                           |
+| First output before ACK, stage reorder or duplicates | Main correlation and closure correct, late legal stages merge, no duplicate Metric or message Trace                                         |
+| Multi-session, multi-window or workspace             | Messages, runtime instances and observation contexts do not cross; old turns and subtask side-channel output do not take the first response |
+| Failure or cancel before first output                | Outcome counts and waited time correct; no fabricated success TTFT or zero pollution                                                        |
+| Failure after first output, end with no text         | Main TTFT keeps the successful first-output fact; first-text status independently correct                                                   |
+| Process exit, force-kill or missing terminal         | Exported checkpoints queryable; without end evidence stays unclosed; no fabricated timeout or remaining stages                              |
+| Background and back, machine pause or clock anomaly  | Continuous-foreground judgment accurate; anomalous-quality samples filterable; no negative duration or forced clamping                      |
+| Parallel, repeated preparation and missing stages    | Waterfall shows real intervals; union reconciles, no double-adding, gaps not forcibly attributed                                            |
+| Gray off, on and correlated sampling                 | Off: no new collection; on: consistent across the chain; old 10% Trace sampling creates no TTFT gaps                                        |
+| exporter timeout, rejection, full queue              | Sending and output continue; memory/queue bounded, drops observable, normal closure does not depend on export success                       |
+| Final data contract                                  | Strict schema, units, version, low-cardinality labels and redaction rules correct; Trace/Metric reconcile by definition                     |
+| Old channels and excluded scenarios                  | Old business/RUM counts unchanged; remote, mobile, replay and automatic tasks produce no local user TTFT                                    |
 
-实现时必须先写适当的测试再写代码；交互链路必须有 E2E。完成类型检查、lint、架构门禁和相关测试，保持 E2E 用例与实现一致。核心验证覆盖 macOS、Windows、Linux，无法完成的平台验证如实列出，不以 mock 成功冒充真机完成。
+Implementation must write appropriate tests before code; interaction chains must have E2E. Complete typecheck,
+lint, the architecture gate and related tests, keeping E2E cases consistent with the implementation. Core
+verification covers macOS, Windows and Linux; platforms that cannot be completed are listed honestly and mock
+success is not passed off as real-machine completion.
 
-发布前另做一次真实桌面运行取证，将用户提交、实际内容接收、阶段记录和最终导出结果对齐；并测量采集带来的消息延迟、主线程负担、内存和事件量。ARMS 环境需验证分位数查询、记录关联、瀑布展示及数据可见时延。平台侧验收和本地测试的完成状态分别记录。
+Before release, do one real desktop run forensics aligning user submit, actual content receipt, stage records and
+final export, and measure the message latency, main-thread load, memory and event volume the collection adds. The
+ARMS environment must verify quantile queries, record correlation, waterfall display and data-visibility latency.
+Platform acceptance and local-test completion are recorded separately.
 
-## Out of Scope
+## Out of scope
 
-- 桌面远程工作区、手机/Web 远控的 TTFT 采集及跨机器时钟同步实现。
-- 为手机新建独立 Host 或 Agent，或改动 continuous/replayable 的业务交付语义。
-- 模型服务内部排队、推理的服务端阶段追踪，以及无事实支撑的 DNS/TLS/网络首字节拆分。
-- React commit、浏览器 paint、首输出真正上屏的性能指标。
-- 立即引导输入的独立普通 TTFT 归因；自动化、闲时任务、后台子任务等非用户点击入口的新增测量。
-- 整轮所有 token、模型调用和工具执行的全量追踪；首输出之后仅补充首正文观察。
-- 在 ZCode 产品内新建诊断页面，或迁移替换现有业务/RUM 埋点。
-- 亚毫秒计时精度、遥测强杀零丢失、未经容量验证的全用户全量上线。
+- TTFT collection and cross-machine clock sync for desktop remote workspaces and mobile/Web remote control.
+- A separate Host or Agent for mobile, or changing the delivery semantics of continuous/replayable.
+- Server-side stage tracing of model-service internal queueing and inference, and DNS/TLS/network-first-byte splits
+  without supporting facts.
+- React commit, browser paint and a first-output on-screen metric.
+- Independent ordinary-TTFT attribution of immediate-guide input; new measurement of non-user-click entries such as
+  automation, off-peak tasks and background subtasks.
+- Full tracing of all tokens, model calls and tool executions of the turn; after first output only first-text
+  observation is added.
+- A new diagnostics page inside ZCode, or migrating/replacing existing business/RUM telemetry.
+- Sub-millisecond timing precision, zero loss on force-kill, and all-user full rollout without capacity
+  verification.
 
-## Further Notes
+## Further notes
 
-- 需求和上述范围由本次讨论确认；本文是待实现 spec，不代表埋点、E2E、ARMS 查询或存储配置已经落地。
-- 交付顺序为 spec 与协议/阶段合同、测试、实现、真实运行验证、ARMS 验收、灰度容量评估。实现前核对现有遥测规范；新增专用合同不得悄然改写旧 ui_action 或 Agent Trace 规范中的边界。
-- 实现评审必须明确记录阶段挂点、时钟对齐方案及误差界限、阶段容量与截断策略、Metric 分桶和标签组合。这些是受本 spec 约束的工程细化项，不应回退为重新访谈已确认的产品范围。
-- 保留期、ARMS 权限和容量仍属待核验的部署条件；不能把文档中存在接入示例当成线上已经配置的证据。
+- Requirements and scope above were confirmed in discussion; this is a to-be-implemented spec and does not mean
+  the telemetry, E2E, ARMS queries or storage configuration have landed.
+- Delivery order: spec and protocol/stage contract, tests, implementation, real-run verification, ARMS acceptance,
+  gray capacity assessment. Check existing telemetry specs before implementing; the new dedicated contract must not
+  quietly rewrite boundaries in the old ui_action or Agent Trace specs.
+- Implementation review must explicitly record stage hook points, the clock-alignment scheme and error bound,
+  stage capacity and truncation policy, Metric buckets and label combinations. These are engineering refinements
+  bound by this spec and not a reason to re-interview confirmed product scope.
+- Retention, ARMS permissions and capacity remain deployment conditions to verify; an ingestion example in a
+  document is not evidence that it is configured online.
 
-## Ticket 01 实现合同（2026-09-14）
+## Ticket 01 implementation contract
 
-Renderer 是一次发送观测的唯一 owner；CLI 只记录有界、无正文的阶段事实，通过实际 continuous 内容帧携带。Main 只验证、批量导出已完成的事实，不保存业务状态。命令的可选 `ttft` 上下文冻结启用决策和关联 ID；旧调用缺省关闭。不会改变 Agent Trace 的上下文或采样。
+The Renderer is the sole owner of the observation of one send; the CLI records only bounded, body-free stage
+facts, carried by the actual continuous content frame. Main only validates and batch-exports completed facts and
+holds no business state. The optional `ttft` context of a command freezes the enablement decision and correlation
+IDs; old callers default to off. Agent Trace context and sampling are not changed.
 
 ```text
 Composer gate → Renderer prepare → command dispatch → CLI received → admitted
@@ -213,22 +348,58 @@ Renderer actual continuous content receipt ← Host passthrough ← content fram
   └→ bounded async OTLP export; continue observing first text
 ```
 
-测试 seam 沿用本 spec 的 Testing Decisions：真实 Composer 到最终 OTLP；仅协议、时钟和重复边界补单测。评审基点为开工 HEAD `5cc3713d3a35a404157b0ac513fba30cce18b08c`。
+The test seam follows the Testing decisions: real Composer to final OTLP; protocol, clock and duplicate boundaries
+get unit tests only. Review baseline: starting HEAD `5cc3713d3a35a404157b0ac513fba30cce18b08c`.
 
-CLI 与 Renderer 使用 `performance.timeOrigin + performance.now()` 表达单调 epoch；命令查询返回进程实例和采样时钟，用 Renderer 往返区间给出 offset 和最大误差，最多 10ms、有效期 60 秒。校准不等待用户发送；传输握手、CLI 检查点和实际内容帧到达时若校准已过期都会重新探测。无可信校准时保留总 TTFT 和同进程 interval，跨进程阶段不进入成功分布，质量记为 missing 而非 clock_invalid。每个 interval 检查顺序和质量，不钳零。
+CLI and Renderer express monotonic epoch time as `performance.timeOrigin + performance.now()`; a command query
+returns the process instance and sampled clock, and the Renderer round-trip interval yields offset and maximum
+error, at most 10 ms, valid for 60 s. Calibration never waits for user sending; it re-probes when the transport
+handshake, a CLI checkpoint or an actual content frame arrives with expired calibration. Without trusted
+calibration, total TTFT and same-process intervals are kept, cross-process stages stay out of the success
+distribution, and quality is recorded `missing`, not `clock_invalid`. Every interval is checked for order and
+quality, without clamping to zero.
 
-灰度配置独立 `localTtftEnabled`，缺省 false；本机验证可显式设置 `ZCODE_LOCAL_TTFT_ENABLED=1`。配置由 Desktop 注入 Renderer，同一次发送携带至 CLI，不独立随机采样。Renderer 最多 128 个在途观测，CLI 分别保留最多 128 个活跃事实和 128 个末态事实、每个最多 6 个主阶段，5 分钟过期明确记为 expired 而非 failed；每批最多 32 条，出口最多 32 批，网络超时 3 秒。毫秒 Histogram 边界为 1、5、10、20、50、100、200、500、1000、2000、5000、10000、30000、60000、300000。
+Gray configuration is the independent `localTtftEnabled` (default false); local verification can set
+`ZCODE_LOCAL_TTFT_ENABLED=1` explicitly. Desktop injects the config into the Renderer, the same send carries it to
+the CLI, and nothing is sampled independently. The Renderer holds at most 128 in-flight observations; the CLI
+keeps at most 128 active facts and 128 terminal facts, each with at most 6 main stages; 5-minute expiry is
+explicitly recorded `expired`, not failed; each batch has at most 32 records, the exporter at most 32 batches,
+network timeout 3 s. Millisecond Histogram boundaries: 1, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000,
+30000, 60000, 300000.
 
-Ticket 01 只支持本地持续前台空闲发送无重试。排队/引导、重试、取消、失败、后台、恢复、关联缺失分别标记，不伪装完整样本。ARMS 平台查询验收单独记录；本地 OTLP 通过不能将平台验收勾选完成。
+Ticket 01 supports only local, continuously foreground, idle sends with no retry. Queue/guide, retry, cancel,
+failure, background, recovery and missing correlation are each marked and never posed as complete samples. ARMS
+platform query acceptance is recorded separately; local OTLP passing cannot tick platform acceptance.
 
-协议兼容：只有 `commands/query` 请求显式携带 `clock:true` 才附带校准响应；旧查询响应、旧 conversation telemetry fact 形状和计数保持不变。CLI 源事件的 executionStartedAt 在 hooks/持久化之前捕获，仅新 TTFT observer 消费。Metrics signal 的独立 endpoint/header 与 Trace 一样私有捕获并从 tool env 剔除。
+Protocol compatibility: only a `commands/query` request that explicitly carries `clock:true` gets a calibration
+response; old query responses, old conversation telemetry fact shapes and counts are unchanged. The CLI source
+event's executionStartedAt is captured before hooks/persistence and consumed only by the new TTFT observer. The
+separate endpoint/header of the Metrics signal is privately captured like Trace and removed from the tool env.
 
-实现与验证入口：[查询合同](local-ttft-queries.md)、[出口证据](local-ttft-evidence.json)。ARMS 本次新样本平台验收与 CLI 全量未通过项见 Ticket 01，不能据本地成功标为整个需求完成。
+Implementation and verification entry points: [query contract](local-ttft-queries.md),
+[output evidence](local-ttft-evidence.json). The new-sample ARMS platform acceptance and the failing full-CLI items
+are in Ticket 01; local success cannot mark the whole requirement complete.
 
-校准的 `clock:true` 请求只接受 null session 探测 key，不查命令账本或 admission gate，也不抢占 Host 的 command query workspace 绑定；普通命令查询继续执行原有工作区隔离校验。
+The calibration `clock:true` request accepts only a null-session probe key, does not look at the command ledger or
+admission gate, and does not take the Host's command-query workspace binding; ordinary command queries keep the
+existing workspace isolation checks.
 
-### Ticket 02 实施补充
+### Ticket 02 supplement
 
-细分合同、统计单位、窗口、时钟质量和灰度资源边界统一见 [查询与诊断合同](local-ttft-queries.md#ticket-02排队准备重试和未收口)。保持原 accepted input 的关联与 CommandInbox owner，Core 通过可选 `observeLocalTurnPreparation` 合同观察真实准备区间；没有观察订阅时不启动准备计时。新增 V4 `localTtftFacts` 检查点走既有 stdio/service，不参与业务投影或首输出判断。`initial` 初始快照仅忽略；`recovery` 明确排除，不能把手机恢复语义带入桌面。桌面 continuous 因订阅缓冲溢出或投影重建产生的 online snapshot 同样无法唯一归因首输出，按独立结果 `resync` 排除，不记为 `recovery`。
+Detailed contract, statistical units, windows, clock quality and gray resource bounds are in the
+[query and diagnostics contract](local-ttft-queries.md#ticket-02-queueing-preparation-retry-and-unclosed). The
+original accepted input's correlation and CommandInbox ownership are kept; Core observes real preparation
+intervals through the optional `observeLocalTurnPreparation` contract, and without an observation subscription no
+preparation timing starts. The new V4 `localTtftFacts` checkpoints go through the existing stdio/service and take
+no part in business projection or first-output judgment. An `initial` snapshot is simply ignored; `recovery` is
+explicitly excluded and mobile recovery semantics must not be brought to desktop. An online snapshot produced on
+desktop continuous by subscription-buffer overflow or projection rebuild also cannot attribute first output
+uniquely and is excluded as the separate outcome `resync`, not recorded as `recovery`.
 
-根首输出结果只收口一次，后到阶段重新计算阶段质量；已输出 Metric 不回写、不重复。整个观察内事件使用稳定 identity，有界出口去重按 observation 整组保留。实际内容帧可以携带多个原输入的事实，以覆盖同一批里旧轮输出与队列转正并存。CLI明确退出按 workspace 收口 interrupted，未收到退出/terminal 的记录仍是 unclosed。实现和平台验收各自记录于 [Ticket 02](../issues/ttft-stage-telemetry/02-queued-retry-and-failure-diagnostics.md)。
+The root first-output result closes only once and late stages recompute stage quality; already exported Metrics are
+neither rewritten nor repeated. Events within an observation use stable identity, and bounded exporter
+de-duplication keeps whole observations as a group. An actual content frame can carry facts of several original
+inputs, covering the case where old-turn output and queue promotion coexist in one batch. An explicit CLI exit
+closes per workspace as interrupted; records with no exit/terminal received stay unclosed. Implementation and
+platform acceptance are each recorded in
+[Ticket 02](../issues/ttft-stage-telemetry/02-queued-retry-and-failure-diagnostics.md).

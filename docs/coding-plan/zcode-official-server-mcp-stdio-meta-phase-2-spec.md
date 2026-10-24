@@ -2,50 +2,35 @@
 
 > Current implementation facts are consolidated in `zcode-official-server-mcp-auth-spec.md`. This document preserves only the historical background of the stdio approach.
 
-- Status: Implemented; current facts have been merged into the unified specification
-- Prerequisite: `zcode-official-server-mcp-client-phase-1-spec.md` (hereafter “phase 1”). This document describes only the additions; everything not mentioned here (trust-validation criteria, identity-header set, credential resolution, in-flight deduplication, and logging constraints) follows phase 1.
-- Driving requirement: The `video-agent-kit` Plugin's `transcribe` / `tts_generate` tools need to call `zcode-server`'s `speech_transcribe` / `speech_synthesize` (group `video_edit`), removing the Volcano Engine key configured by the user.
+- Status: Implemented; current facts merged into the unified specification.
+- Prerequisite: `zcode-official-server-mcp-client-phase-1-spec.md` ("phase 1"). This document describes only the additions; everything not mentioned (trust validation, identity-header set, credential resolution, in-flight deduplication, logging constraints) follows phase 1.
+- Driving requirement: the `video-agent-kit` Plugin's `transcribe` / `tts_generate` tools must call `zcode-server`'s `speech_transcribe` / `speech_synthesize` (group `video_edit`), removing the Volcano Engine key configured by the user.
 
 ## 1. Target
 
-Enable **stdio** Plugin MCP servers to call official Server MCP endpoints as the current user, without persisting credentials,
-putting them in env, or making them invalid when the JWT rotates.
+Let stdio Plugin MCP servers call official Server MCP endpoints as the current user, without persisting credentials, putting them in env, or breaking when the JWT rotates. Phase 1 handled only `type:"http"`, where the host injects identity headers per request in a fetch wrapper (`official-auth.ts`) and credentials never enter a Plugin-controlled process. stdio cannot use that path: its requests are sent by the Plugin's own process.
 
-Phase 1 addressed only `type:"http"`: the host injects identity headers per request in a fetch wrapper (`official-auth.ts`),
-and credentials never enter a process controlled by the Plugin. stdio cannot use that path—its requests are sent by the Plugin's own process.
+## 2. Why the Agent cannot simply use the HTTP official MCP
 
-## 2. Why the Agent Cannot Simply Use the HTTP Official MCP Instead
-
-A natural idea is to leave stdio unchanged and declare another `type:"http"` official MCP in the Plugin, exposing
-`speech_transcribe` / `speech_synthesize` as tools to the Agent and letting the model orchestrate them.
-
-This does not satisfy the requirement, for reasons unrelated to authentication: these tools accept and return audio as `audio_base64`
-(`internal/domain/servermcp/gateway.go`). Once exposed as Agent-visible tools, their inputs and outputs must pass through
-the model context—tens of MiB of base64 for ASR and hundreds of KiB for TTS. Therefore, **the call must happen in a process that can read and write local
-files directly**, namely the Plugin's own stdio server.
-
-For the same reason, this also rules out the variation where a Plugin tool accepts only file paths and the Agent forwards the bytes: the bytes would still pass through the context.
+Declaring a second `type:"http"` official MCP that exposes `speech_transcribe` / `speech_synthesize` to the Agent (letting the model orchestrate) does not work, for reasons unrelated to authentication: these tools take and return audio as `audio_base64` (`internal/domain/servermcp/gateway.go`). As Agent-visible tools their input and output pass through the model context (tens of MiB of base64 for ASR, hundreds of KiB for TTS). The call must happen in a process that reads and writes local files directly: the Plugin's own stdio server. This also rules out a Plugin tool that accepts only file paths with the Agent forwarding bytes, since the bytes would still pass through the context.
 
 ## 3. Scope
 
-### 3.1 In Scope
+### 3.1 In scope
 
-- `McpStdioServerConfig` supports `auth: { type: "zcode_official", provider: "jwt_token" }`;
-- For a stdio server declaring this auth, attach the current identity headers to `params._meta` on **every `tools/call`**;
-- stdio targetOrigin resolution rules and failure semantics;
-- Corresponding Plugin loader parsing, adapter injection, and tests.
+- `McpStdioServerConfig` supports `auth: { type: "zcode_official", provider: "jwt_token" }`.
+- For a stdio server declaring this auth, attach the current identity headers to `params._meta` on every `tools/call`.
+- stdio targetOrigin resolution rules and failure semantics; corresponding Plugin loader parsing, adapter injection and tests.
 
-### 3.2 Out of Scope
+### 3.2 Out of scope
 
-- `sse` form (there is no corresponding channel; it remains rejected);
-- Injecting identity headers into the stdio process **env**: env values are static for the process lifetime, while a Plugin MCP server lives for the entire
-  session, so JWT rotation necessarily causes 401 with no way for the Plugin to recover. This is exactly the problem this design avoids, so this approach is explicitly rejected;
-- Having the host forward the Plugin's entire HTTP request (so credentials never leave the host). This is the more complete
-  direction identified as residual risk 3 in phase 1 §5.1, but it would require the host to forward hundreds of MiB of chunked traffic; the cost does not justify the benefit, so it is deferred;
-- A server-to-client reverse custom request (such as `zcode/officialMcpAuthHeaders`). It would provide fresher credentials (they could be fetched again within one tool call), but the Python SDK's `send_request` is a typed union. Sending a nonstandard method requires dropping to raw JSON-RPC and matching IDs manually, and other MCP hosts all return Method not found. This is not part of Phase 2; see the known gap in §7;
-- Backend changes. No changes are needed on the `zcode-server` side.
+- `sse` (no corresponding channel; remains rejected).
+- Injecting identity headers into the stdio process env: env is static for the process lifetime while a Plugin MCP server lives for the whole session, so JWT rotation would cause 401 with no recovery. Explicitly rejected.
+- Having the host forward the Plugin's whole HTTP request so credentials never leave the host. This is the more complete direction (residual risk 3 in phase 1 §5.1) but needs the host to forward hundreds of MiB of chunked traffic; deferred.
+- A server-to-client reverse custom request (such as `zcode/officialMcpAuthHeaders`): fresher credentials, but the Python SDK's `send_request` is a typed union, a nonstandard method needs raw JSON-RPC with manual ID matching, and other MCP hosts return Method not found. See the known gap in §9.
+- Backend changes: none needed on `zcode-server`.
 
-## 4. Configuration Contract
+## 4. Configuration contract
 
 ```json
 {
@@ -61,46 +46,33 @@ For the same reason, this also rules out the variation where a Plugin tool accep
 }
 ```
 
-- Strict parsing of `auth` fully reuses `parseZCodeOfficialAuth` from phase 1 §4.2: values are exact and case-sensitive, aliases are not accepted, and an invalid shape results in `plugin_mcp_server_disabled`;
-- **stdio has no `url`**, and therefore no “Plugin-declared Origin.” This is a stricter constraint, not a defect; see §5;
-- `oauth` and `zcode_official` appearing together is still a configuration error (stdio does not support oauth in the first place, so the invalid declaration is rejected);
-- `official` provenance is still generated by the host (`pluginId` / `mcpKey` / `source`); values in `.mcp.json` are overridden;
-- The static reserved-header denylist from phase 1 §5.2 does not apply to stdio—it has no `headers` field. stdio `env` is **not** included in the denylist: Plugins passing third-party credentials through env is an existing valid use (for example, a fallback path) and is unrelated to the identity-header injection channel.
+- `auth` parsing fully reuses `parseZCodeOfficialAuth` from phase 1 §4.2: exact case-sensitive values, no aliases, invalid shape gives `plugin_mcp_server_disabled`.
+- stdio has no `url`, hence no "Plugin-declared Origin"; this is a stricter constraint, not a defect (§5).
+- `oauth` together with `zcode_official` is still a configuration error (stdio does not support oauth, so the invalid declaration is rejected).
+- `official` provenance is still generated by the host (`pluginId` / `mcpKey` / `source`); `.mcp.json` values are overridden.
+- The phase 1 §5.2 reserved-header denylist does not apply to stdio (no `headers` field). stdio `env` is not on the denylist: Plugins passing third-party credentials through env is a valid existing use (for example a fallback path) unrelated to the identity-header channel.
 
-## 5. Trust Model: Origin Is No Longer Supplied by Configuration
-
-Phase 1 validates that `URL.origin` equals the runtime ZCode API Origin. Since stdio has no URL, use:
+## 5. Trust model: Origin is not supplied by configuration
 
 ```text
-targetOrigin := resolveRuntimeZCodeEndpointOrigin(env)     # Resolved by the client; reads no Plugin configuration
+targetOrigin := resolveRuntimeZCodeEndpointOrigin(env)     # resolved by the client; reads no Plugin configuration
 ```
 
-The resolution rules match the four existing call sites in `zcode-protocol-entrypoint.ts` (`ZCODE_BASE_URL` is passed as the authoritative value by the host
-through `resolveSpawnEnv`; see commit `9c9d1683`).
+Resolution rules match the four existing call sites in `zcode-protocol-entrypoint.ts` (`ZCODE_BASE_URL` is passed as the authoritative value by the host through `resolveSpawnEnv`; commit `9c9d1683`).
 
-**Why this is stricter than the HTTP path:** with HTTP, the Plugin can set a URL, and validation ensures that it points back to the official Origin.
-With stdio, the Plugin has no way to express an Origin; identity headers can only be resolved as credentials for the current ZCode API Origin.
-Keep the call to `isOfficialMcpOriginTrusted` (the same implementation from `@zcode/shared`). Here it reduces to a tautology—**it must still be called** because it also validates HTTPS and the absence of username/password, and the dev loopback switch
-(`ZCODE_OFFICIAL_MCP_DEV_TRUSTED_ORIGINS`) must remain effective.
+This is stricter than the HTTP path: with HTTP the Plugin sets a URL and validation ensures it points to the official Origin; with stdio the Plugin cannot express an Origin, so identity headers resolve only as credentials for the current ZCode API Origin. The call to `isOfficialMcpOriginTrusted` (same `@zcode/shared` implementation) is kept; it reduces to a tautology but must still be called because it validates HTTPS and the absence of username/password and keeps the dev loopback switch (`ZCODE_OFFICIAL_MCP_DEV_TRUSTED_ORIGINS`) effective.
 
-Host-side second validation remains unchanged (`zcodeAgentService` validates the tuple against the same registry **before** reading credentials):
-the Agent-reported `targetOrigin` is the value it resolved itself; if it does not match, return `official_mcp_origin_untrusted`,
-and `resolveHeaders` is never called.
+Host-side second validation is unchanged: `zcodeAgentService` validates the tuple against the same registry before reading credentials. The Agent-reported `targetOrigin` is the value it resolved itself; on mismatch return `official_mcp_origin_untrusted` and never call `resolveHeaders`.
 
-**New residual risk:** all three residual risks from phase 1 still apply, with one addition—**identity headers enter the Plugin process memory**.
-On the HTTP path, credentials appear only in the Agent process's fetch wrapper, inaccessible to the Plugin; on the stdio path, the Plugin can read the plaintext
-`Authorization` value and use it to contact other addresses. This is the same category as residual risks 2/3 in phase 1 §5.1 (anyone able to run code in the Plugin can already read the same credentials under `~/.zcode`), so this is still positioned as **defense in depth**, not protection against a compromised Plugin.
-The only complete solution is the “host forwards the request” direction from §3.2.
+New residual risk: all three phase 1 residual risks still apply, plus identity headers enter the Plugin process memory. On the HTTP path credentials appear only in the Agent process's fetch wrapper; on stdio the Plugin can read plaintext `Authorization` and use it elsewhere. This is the same category as phase 1 §5.1 residual risks 2/3 (anyone able to run code in the Plugin can already read the same credentials under `~/.zcode`), so it stays positioned as defense in depth, not protection against a compromised Plugin. The only complete solution is the "host forwards the request" direction in §3.2.
 
-## 6. Delivery Channel: Reuse the Existing `_meta` Injection Point
+## 6. Delivery channel: reuse the existing `_meta` injection point
 
-`callTool` in `adapters/src/mcp/index.ts` already sets
-`_meta = mcpRequestMeta(trace, runtimeScope)` (trace_id / session_id / runtime_scope) on every `tools/call`.
-Send identity headers through this same mechanism. Do not add any channel, port, token, or listening surface; the remote-attach scenario continues to work as well.
+`callTool` in `adapters/src/mcp/index.ts` already sets `_meta = mcpRequestMeta(trace, runtimeScope)` (trace_id / session_id / runtime_scope) on every `tools/call`. Identity headers go through the same mechanism: no new channel, port, token or listening surface, and remote-attach keeps working.
 
-### 6.1 Payload Shape
+### 6.1 Payload shape
 
-Use only a namespaced key, not a flat key (unlike the flat-plus-namespaced duplicate representation in `com.zcode/request-context`—identity headers need no compatibility with existing consumers, and fewer appearances mean a smaller exposure surface):
+Only a namespaced key, not a flat key (unlike the flat-plus-namespaced duplicate of `com.zcode/request-context`; identity headers need no compatibility with existing consumers and fewer appearances mean a smaller exposure surface):
 
 ```json
 {
@@ -129,72 +101,61 @@ Failure:
 }
 ```
 
-- The header-key set, Team pair atomicity, and `Bigmodel-Target-Type` values are all produced in one place by `buildOfficialMcpAuthHeaders`, sharing the source used by the HTTP path (phase 1 §6.1);
-- `reason` is an `OfficialMcpAuthFailureReason` enum; do not send free text or route by text;
-- This key appears **only** on requests to stdio servers declaring `zcode_official`. It must not appear in the `_meta` of regular stdio servers—otherwise identity headers would be broadcast to arbitrary third-party Plugins.
+- The header-key set, Team pair atomicity and `Bigmodel-Target-Type` values are produced in one place by `buildOfficialMcpAuthHeaders`, sharing the source used by the HTTP path (phase 1 §6.1).
+- `reason` is an `OfficialMcpAuthFailureReason` enum; no free text, no routing by text.
+- The key appears only on requests to stdio servers declaring `zcode_official`; it must not appear in `_meta` of regular stdio servers, or identity headers would be broadcast to arbitrary third-party Plugins.
 
 ### 6.2 Freshness
 
-`resolveHeaders` is called before dispatching **every** `tools/call`, so each tool call receives freshly resolved credentials.
-The in-flight deduplication and prohibition on time-based caching from phase 1 §6.2.1 continue to apply.
+`resolveHeaders` is called before dispatching every `tools/call`, so each tool call receives freshly resolved credentials. Phase 1 §6.2.1 (in-flight deduplication, no time-based caching) still applies.
 
-**Known window:** during a long-running call (for example, a two-hour video transcription that sends dozens of HTTP requests during one call), the Plugin cannot fetch a new token if the JWT rotates mid-call. Convention: when a Plugin receives 401, **do not retry**; return `official_auth_rejected` to the Agent, which should retry the entire tool call to obtain new headers. Therefore, the Plugin must mark 401 as non-retryable to avoid looping with old headers.
+Known window: during a long-running call (for example a two-hour video transcription sending dozens of HTTP requests) the Plugin cannot fetch a new token if the JWT rotates mid-call. Convention: on 401 the Plugin does not retry; it returns `official_auth_rejected` to the Agent, which retries the whole tool call to obtain new headers. The Plugin must mark 401 non-retryable to avoid looping with old headers.
 
-### 6.3 Failure Semantics: Intentionally Different from the HTTP Path
+### 6.3 Failure semantics: intentionally different from the HTTP path
 
-Phase 1 §6.3.3 requires fail-closed behavior for HTTP. For stdio, instead **send `{ok:false, reason}` as-is** because the two paths have different risk surfaces:
+Phase 1 §6.3.3 requires fail-closed for HTTP. For stdio, `{ok:false, reason}` is sent as is, because the risk surfaces differ: an allowed HTTP request means a real anonymous request reaches the official endpoint, so it must fail closed; a stdio Plugin that receives no headers will not call the official endpoint at all (it uses its own fallback or reports an error), so there is no anonymous request. Giving the Plugin the reason lets it explain "not signed in" versus "no Coding Plan plan" instead of failing inexplicably.
 
-- Allowing an HTTP request through means a real anonymous request reaches the official endpoint; it **must fail closed**;
-- A stdio Plugin that receives no headers **will not call the official endpoint at all** (it will use its own fallback path or report an error directly), so there is no anonymous request. Conversely, giving the reason to the Plugin lets it accurately explain “not signed in” versus “no Coding Plan plan” to the user instead of silently degrading to an inexplicable failure.
+| Case                                        | Payload                                              | Agent side                                    |
+| ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------- |
+| host auth port unavailable (standalone CLI) | `{ok:false, reason:"official_auth_unavailable"}`     | Connection stays healthy; only this key fails |
+| Not signed in / no selected connection      | `{ok:false, reason:"official_auth_unavailable"}`     | Same                                          |
+| Start Plan or no Coding Plan key            | `{ok:false, reason:"official_auth_plan_required"}`   | Same                                          |
+| Host-side second validation mismatch        | `{ok:false, reason:"official_mcp_origin_untrusted"}` | Same; no credentials read                     |
 
-Therefore:
+"The connection stays healthy" differs from the HTTP path, where the connection is marked failed. A stdio server usually hosts many tools unrelated to official MCP (`video-edit` has 30+); marking the whole server failed would harm them. Identity-header availability is a property of each tool call, not the connection.
 
-| Case                                        | Payload                                              | Agent side                                      |
-| ------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------- |
-| host auth port unavailable (standalone CLI) | `{ok:false, reason:"official_auth_unavailable"}`     | Connection remains healthy; only this key fails |
-| Not signed in / no selected connection      | `{ok:false, reason:"official_auth_unavailable"}`     | Same as above                                   |
-| Start Plan or no Coding Plan key            | `{ok:false, reason:"official_auth_plan_required"}`   | Same as above                                   |
-| Host-side second validation does not match  | `{ok:false, reason:"official_mcp_origin_untrusted"}` | Same as above; no credentials are read          |
+### 6.4 OAuth isolation
 
-Note that “the connection remains healthy” differs from the HTTP path, where the connection is marked failed. A stdio server usually also hosts many tools unrelated to official MCP (`video-edit` has 30+); marking the entire server failed because identity headers are unavailable would harm those tools. Identity-header availability is a property of **each tool call**, not of the connection.
-
-### 6.4 OAuth Isolation
-
-The short-circuit from phase 1 §6.3.1 (`resolveAuthorizationCodeOAuthConfig` returns undefined for `zcode_official`)
-naturally applies to stdio (stdio does not use the OAuth branch), but ensure that the existing short-circuit in `isOfficialAuthConfig(config)` is not bypassed by the new stdio branch.
+The phase 1 §6.3.1 short-circuit (`resolveAuthorizationCodeOAuthConfig` returns undefined for `zcode_official`) naturally applies to stdio (which does not use the OAuth branch); the existing short-circuit in `isOfficialAuthConfig(config)` must not be bypassed by the new stdio branch.
 
 ### 6.5 Logging
 
-Continue to follow phase 1 §5.2 and `official-auth.ts:summarizeIdentityHeaders`: log only header **names**,
-`Bigmodel-Target-Type`, whether the pair is present, and the failure classification. **Never** log header values, JWTs, or Coding Plan keys, and do not
-write the full `_meta` into any log (`describeJsonRpc` currently records only structural fields, not `params.arguments`;
-new fields must not break this constraint).
+Follow phase 1 §5.2 and `official-auth.ts:summarizeIdentityHeaders`: log only header names, `Bigmodel-Target-Type`, whether the pair is present and the failure classification. Never log header values, JWTs or Coding Plan keys, and never write the full `_meta` to a log (`describeJsonRpc` currently records only structural fields, not `params.arguments`; new fields must not break this).
 
-## 7. Implementation Locations
+## 7. Implementation locations
 
-| Responsibility                                       | File                                                                                                                                                            |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| stdio config type                                    | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts` (`McpStdioServerConfig` adds `auth?` / `official?`)                                              |
-| Plugin loader parsing                                | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts` (`officialAuth && type !== "http"` changes to reject only `sse`; stdio branch includes auth + provenance) |
-| Identity-header resolution and injection             | `apps/zcode-cli/packages/adapters/src/mcp/index.ts` (`callTool` `_meta` injection point; extend `mcpRequestMeta` arguments)                                     |
-| Credential resolution / identity-header construction | Reuse `packages/services/src/official-mcp/officialMcpCredentials.ts`; no changes needed                                                                         |
-| Trust validation                                     | Reuse `packages/shared/src/official-mcp-auth.ts`; no changes needed                                                                                             |
-| Host-side second validation                          | Reuse `packages/services/src/zcode-agent/zcodeAgentService.ts`; no changes needed                                                                               |
+| Responsibility                              | File                                                                                                                                                            |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| stdio config type                           | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts` (`McpStdioServerConfig` adds `auth?` / `official?`)                                              |
+| Plugin loader parsing                       | `apps/zcode-cli/packages/adapters/src/plugins/mcp.ts` (`officialAuth && type !== "http"` changes to reject only `sse`; stdio branch includes auth + provenance) |
+| Identity-header resolution and injection    | `apps/zcode-cli/packages/adapters/src/mcp/index.ts` (`callTool` `_meta` injection point; extend `mcpRequestMeta` arguments)                                     |
+| Credential resolution / header construction | Reuse `packages/services/src/official-mcp/officialMcpCredentials.ts`; unchanged                                                                                 |
+| Trust validation                            | Reuse `packages/shared/src/official-mcp-auth.ts`; unchanged                                                                                                     |
+| Host-side second validation                 | Reuse `packages/services/src/zcode-agent/zcodeAgentService.ts`; unchanged                                                                                       |
 
-No changes are needed to `SANITIZED_RUNTIME_ENV_KEYS`: identity headers are not added to env, so there is no new subprocess exposure surface.
+`SANITIZED_RUNTIME_ENV_KEYS` needs no change: identity headers are not added to env, so no new subprocess exposure surface.
 
-## 8. Acceptance Criteria
+## 8. Acceptance criteria
 
-- A stdio Plugin MCP declaring `auth` loads successfully; `official` provenance is generated by the host and cannot be forged through `.mcp.json`;
-- `sse` + `zcode_official` continues to be rejected as `plugin_mcp_server_disabled`;
-- On every `tools/call` to this server, `_meta["com.zcode/official-mcp-auth"].headers` contains the header set specified in phase 1 §6.1; org/project appear as a pair for the Team scenario;
-- If `resolveHeaders` fails, send `{ok:false, reason:<enum>}` without a `headers` key; do not mark the connection failed;
-- The key does not appear in the `_meta` of regular stdio servers;
-- No header values appear in logs;
-- `pnpm lint`, `pnpm typecheck`, and `pnpm test` pass; no changes to `packages/ui`.
+- A stdio Plugin MCP declaring `auth` loads successfully; `official` provenance is host-generated and cannot be forged via `.mcp.json`.
+- `sse` + `zcode_official` is still rejected as `plugin_mcp_server_disabled`.
+- Every `tools/call` to this server carries `_meta["com.zcode/official-mcp-auth"].headers` with the phase 1 §6.1 header set; org/project as a pair for Team.
+- If `resolveHeaders` fails, send `{ok:false, reason:<enum>}` without a `headers` key and do not mark the connection failed.
+- The key does not appear in `_meta` of regular stdio servers; no header values appear in logs.
+- `pnpm lint`, `pnpm typecheck` and `pnpm test` pass; no changes to `packages/ui`.
 
-## 9. Known Gaps
+## 9. Known gaps
 
-1. The single long-running-call window in §6.2. A complete solution requires reverse custom requests or host-side forwarding from §3.2; this phase covers the gap with “do not retry 401 + retry at the Agent layer”;
-2. Identity headers enter the Plugin process (§5 new residual risk). Treat this as defense in depth; mitigation relies on server-side entitlement and quota checks;
-3. `_meta` is sent with **all** tool calls to this server, not only the tools that actually need it. Narrowing this requires a tool allowlist in config; the benefit is currently too small because narrowing granularity within the same process does not change the exposure surface.
+1. The single long-running-call window in §6.2. A complete solution needs reverse custom requests or host-side forwarding (§3.2); this phase covers it with "do not retry 401 + retry at the Agent layer".
+2. Identity headers enter the Plugin process (§5 new residual risk); defense in depth, mitigated by server-side entitlement and quota checks.
+3. `_meta` is sent with all tool calls to this server, not only those that need it. Narrowing needs a tool allowlist in config; the benefit is small because narrowing within the same process does not change the exposure surface.

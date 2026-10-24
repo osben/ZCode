@@ -2,9 +2,14 @@
 
 ## Objectives
 
-Z.AI and BigModel Desktop login no longer use `zcode://oauth/callback` as the sole completion path. The app uses the short-lived OAuth flow already available on the ZCode backend, polling flow status after authorization in the browser; deep links are retained as a compatibility path. The `provider` in the polling interface uses `zai` or `bigmodel`, which share the flow lifecycle, but `ready` credential fields are differentiated by provider. After BigModel creates the flow, the app changes the callback in the authorization address to the official old redirect page
-`https://zcode.z.ai/app/oauth/login` (the corresponding test site for test environments); the redirect page continues to pass `authCode/state`
-to `zcode://oauth/callback`; the polling flow in the Host is retained simultaneously.
+Z.AI and BigModel Desktop login no longer rely on `zcode://oauth/callback` as the only completion
+path. The app uses the short-lived OAuth flow of the ZCode backend and polls the flow status after
+the user authorizes in the browser; the deep link stays as a compatibility path. The polling
+interface `provider` is `zai` or `bigmodel`; both share the flow lifecycle, while the `ready`
+credential fields differ by provider. After BigModel creates the flow, the app rewrites the callback
+in the authorization URL to the official old redirect page `https://zcode.z.ai/app/oauth/login`
+(the matching test site in test environments). That page keeps passing `authCode/state` to
+`zcode://oauth/callback`, and the Host polling flow stays active at the same time.
 
 ## Timeline
 
@@ -34,10 +39,13 @@ ZCode Website /app/oauth/login -----> zcode://oauth/callback -----> Desktop deep
 Desktop Host ---------------- GET /oauth/cli/poll/:id --------------+
 ```
 
-When the Desktop constructs the official redirect address, it carries the compile-time `app_version`. The website only enables the no-auto-deep-link polling bridge for strictly greater than `3.9.1`
-valid versions; `3.9.1`, lower versions, missing, or illegal versions continue to use the original auto deep link, avoiding old app versions stuck in the login intermediate state due to lacking polling completion capability.
+The Desktop adds the compile-time `app_version` to the official redirect address. The website
+enables the no-auto-deep-link polling bridge only for valid versions strictly greater than `3.9.1`;
+`3.9.1`, lower, missing or invalid versions keep the original auto deep link, so old app versions
+that cannot complete via polling do not get stuck in the login intermediate state.
 
-When rapidly initiating consecutive logins, the later request owns the flow; an earlier but later-returned init response is treated as stale and must not overwrite the new flow:
+When logins start in quick succession, the later request owns the flow; an earlier init response
+that returns late is stale and must not overwrite the new flow:
 
 ```text
 App                  init A                  init B                  Host pending
@@ -49,41 +57,62 @@ App                  init A                  init B                  Host pendin
  |                         |                   |------------------------>| flow B
 ```
 
-## Contracts and Boundaries
+## Contracts and boundaries
 
-- The app generates a 32-byte random `poll_token` for each login, sending only through `Authorization: Bearer`,
-  not written to logs, settings, or URLs.
-- The `flow_id`, `expires_at`, and `poll_interval_sec` returned by `init` are saved only in Host memory.
-- The app only accepts HTTPS `authorize_url`, future `expires_at`, and `poll_interval_sec` of at least 1 second and less than the remaining flow lifetime; abnormal server responses terminate directly without opening external addresses.
-- The root resident layer queries the pending flow in the Host; no network requests are made when there is no pending flow.
-- Only `zai` and `bigmodel` use polling; extended providers still follow the original deep link process, not starting Root empty polling.
-- BigModel's browser callback uses the official `/app/oauth/login?redirect=zcode://oauth/callback`, and must not directly display
-  the success or failure pages of `/oauth/cli/callback/bigmodel`; changing the callback address does not cancel Host polling.
-- `pending` continues to query at the server interval; `ready` atomically writes once and ends; `failed`, expiration, cancellation, or
-  business errors end the current flow.
-- Unknown poll status, field type errors, or provider-missing tokens fail as protocol errors, not throwing JS type exceptions.
-- `OAuthService` is the sole owner of login completion. Deep link and polling results are processed serially by arrival order to the service,
-  with validation, token exchange/normalization, and persistence all within the same completion boundary. After the first path succeeds, the later path does not validate or exchange; when the first path fails, the already-arrived other path continues to process independently and cannot reuse the failed Promise.
-- When another completion path is waiting, failures must wait for its result; another success ignores prior failures. Deep link alone failing
-  does not cancel valid polling; polling's terminal errors end the flow only when no candidates are available or all candidates fail.
-- The callback's `channel_id`, `utm_source`, `utm_campaign` are handled separately from the login result; callbacks from the current flow still save
-  parameters; after polling succeeds first, callbacks from the same state within the original 30-second dedup window still save attribution, but do not parse authorization codes or request tokens. Error states, cancellations, or callbacks replaced by new flows must not be written. Existing authorize URL parameters,
-  `app_version`, redirect, and state passing rules remain unchanged.
-- Only results still belonging to the current pending flow can be persisted; cancellations, login switches, and old HTTP results (including 4xx)
-  must not clear new flows or overwrite completed logins.
-- Old local pending flows are canceled before new logins start; user cancellation also invalidates not-yet-returned init responses. Since the backend has no
-  cancel interface, cancellation only stops App queries; backend flows expire by TTL.
-- Web `/remote`, shared-host attachment, session/task realtime, and replayable recovery chains are unchanged.
+- The app generates a 32-byte random `poll_token` per login and sends it only via
+  `Authorization: Bearer`; it is never written to logs, settings or URLs.
+- `flow_id`, `expires_at` and `poll_interval_sec` returned by `init` live only in Host memory.
+- The app accepts only an HTTPS `authorize_url`, a future `expires_at`, and a `poll_interval_sec`
+  of at least 1 second and less than the remaining flow lifetime. An abnormal server response ends
+  the flow without opening any external address.
+- The resident root layer queries the pending flow in the Host; with no pending flow no network
+  request is made.
+- Only `zai` and `bigmodel` poll; extension providers keep the original deep-link process and do not
+  start empty Root polling.
+- The BigModel browser callback uses the official `/app/oauth/login?redirect=zcode://oauth/callback`
+  and must not display the success or failure pages of `/oauth/cli/callback/bigmodel`. Changing the
+  callback address does not cancel Host polling.
+- `pending` keeps polling at the server interval; `ready` writes atomically once and ends;
+  `failed`, expiration, cancellation or business errors end the current flow.
+- Unknown poll status, field type errors or a missing provider token fail as protocol errors, not
+  JS type exceptions.
+- `OAuthService` is the sole owner of login completion. Deep-link and polling results are processed
+  serially in arrival order; validation, token exchange/normalization and persistence all sit in the
+  same completion boundary. After the first path succeeds the later path neither validates nor
+  exchanges; when the first path fails, an already-arrived other path is processed independently
+  and cannot reuse the failed Promise.
+- When another completion path is pending, a failure waits for its result; another success ignores
+  earlier failures. A deep-link failure alone does not cancel valid polling; a terminal polling
+  error ends the flow only when no candidate is left or all candidates failed.
+- `channel_id`, `utm_source` and `utm_campaign` are handled separately from the login result:
+  callbacks of the current flow still save the parameters; after polling succeeds first, callbacks
+  of the same state inside the original 30-second dedup window still save attribution but do not
+  parse authorization codes or request tokens. Error states, cancellations and callbacks replaced by
+  a new flow must not be written. Existing authorize URL parameters, `app_version`, redirect and
+  state-passing rules are unchanged.
+- Only results that still belong to the current pending flow may be persisted; cancellations, login
+  switches and old HTTP results (including 4xx) must not clear a new flow or overwrite a completed
+  login.
+- An old local pending flow is canceled before a new login starts; user cancellation also
+  invalidates init responses that have not returned. The backend has no cancel interface, so
+  cancellation only stops App queries and backend flows expire by TTL.
+- Web `/remote`, shared-host attachment, session/task realtime and replayable recovery chains are
+  unchanged.
 
-## Acceptance Scenarios
+## Acceptance scenarios
 
-- When Z.AI or BigModel deep link has not returned, polling `ready` can still complete login and refresh existing Coding Plans.
-- When deep link completes first, polling stops; when polling completes first, late deep links are ignored.
-- No persistence on user cancellation, starting new logins, flow `failed`, or after flow expiration.
-- When rapidly starting two flows, the later-flow remains valid; late old init/poll must not overwrite it.
-- BigModel uses the original official redirect page to maintain deep link compatibility, while simultaneously retaining polling flow.
+- While the Z.AI or BigModel deep link has not returned, polling `ready` still completes login and
+  refreshes existing Coding Plans.
+- When the deep link completes first, polling stops; when polling completes first, a late deep link
+  is ignored.
+- Nothing is persisted on user cancellation, on starting a new login, on flow `failed` or after
+  flow expiration.
+- When two flows start in quick succession the later flow stays valid; a late old init/poll must
+  not overwrite it.
+- BigModel uses the original official redirect page for deep-link compatibility while keeping the
+  polling flow.
 
-### Dual-Path Race Regression
+### Dual-path race regression
 
 ```text
 Callback / poll response -> Host completion queue -> Validation and exchange -> Save once
@@ -91,17 +120,25 @@ Callback / poll response -> Host completion queue -> Validation and exchange -> 
                           └─ Failure -> Next candidate independently validates and exchanges
 ```
 
-- Both arrival orders covered: first success, first failure then another success, both failure.
-- Later candidates cannot start parsing authorization codes or normalizing tokens before the first candidate completes.
-- Attribution parameters during callback wait and after polling success must all be retained; old flow parameters must not overwrite new flows.
-- Service-layer controlled Promises verify micro-timing; Desktop E2E verifies failure fallback UI success and no login failure prompts through real Host HTTP and preload callbacks. Mobile remote control has not added new OAuth entries or modified continuous/replayable chains.
+- Cover both arrival orders: first success, first failure then another success, both failures.
+- A later candidate cannot start parsing authorization codes or normalizing tokens before the first
+  candidate completes.
+- Attribution parameters received while a callback waits and after polling success are retained;
+  old-flow parameters must not overwrite a new flow.
+- Service-layer controlled Promises verify the micro-timing; Desktop E2E verifies, through real Host
+  HTTP and preload callbacks, that the failure fallback UI succeeds with no login failure prompt.
+  Mobile remote control adds no OAuth entry and does not change continuous/replayable chains.
 
-### Callback Cancellation and Error Ownership
+### Callback cancellation and error ownership
 
-- When received callbacks become invalid due to cancellation or new flows, return `null`; the Root silently ignores, without updating users, success states, or error prompts.
-- When both paths fail, each caller receives the original error from their own path; waiting for the backup path cannot overwrite the first path's diagnostic information.
-- The 30-second dedup window after success is judged by callback arrival time to the service. Callbacks received during pending or within the window
-  do not lose attribution by queuing past the window; callbacks received new after the window are still rejected. Cancellation and new-flow isolation take priority over this rule.
+- A received callback invalidated by cancellation or a new flow returns `null`; Root ignores it
+  silently, without updating users, success state or error prompts.
+- When both paths fail, each caller receives the original error of its own path; waiting for the
+  backup path cannot overwrite the first path's diagnostics.
+- The 30-second post-success dedup window is judged by callback arrival time at the service.
+  Callbacks received while pending or inside the window do not lose attribution by queuing past the
+  window; callbacks newly received after the window are still rejected. Cancellation and new-flow
+  isolation take priority over this rule.
 
 ```text
 Callback received within window -> Enqueue -> Wait over 30 seconds -> Still save attribution

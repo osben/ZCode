@@ -1,33 +1,32 @@
-# Share 独立构建与 CUA 依赖边界
+# Share Standalone Build and CUA Dependency Boundary
 
-## 状态
+## Status
 
-- 状态：已实现
-- 范围：Share 静态落地页的构建依赖
-- 不改变：Share API、OAuth 协议、Desktop 导入、手机 `/remote`、完整 Web 入口
+- Status: implemented.
+- Scope: build dependencies of the Share static landing page.
+- Unchanged: Share API, OAuth protocol, Desktop import, phone `/remote`, the full Web entry.
 
-## 当前问题
+## Background
 
-历史版本的 `build:web-share` 曾通过 `packages/web/src/main.tsx` 构建完整 Web 应用。
-当前已切换为独立的 `@zcode/web-share` 入口；Share 仅复用 `@zcode/share-ui`、协议类型、
-认证/Share API 客户端和只读 presentation，不再进入完整 Web 的 CUA 依赖闭包。
+Historically `build:web-share` built the full Web app through `packages/web/src/main.tsx`. It now uses a
+standalone `@zcode/web-share` entry; Share reuses only `@zcode/share-ui`, protocol types, the auth/Share API
+clients and read-only presentation, and no longer enters the CUA dependency closure of the full Web.
 
 ```text
-历史：@zcode/web -> @zcode/client / @zcode/ui -> @zcode/services -> @zcode/zcode-cua
-当前：@zcode/web-share -> @zcode/share-ui / @zcode/shared
-      @zcode/web       -> @zcode/client / @zcode/ui -> @zcode/services -> @zcode/zcode-cua
+history: @zcode/web -> @zcode/client / @zcode/ui -> @zcode/services -> @zcode/zcode-cua
+now:     @zcode/web-share -> @zcode/share-ui / @zcode/shared
+         @zcode/web       -> @zcode/client / @zcode/ui -> @zcode/services -> @zcode/zcode-cua
 ```
 
-## 目标边界
+## Boundary
 
-- `@zcode/web-share` 只包含 Share 路由、Preview API、OAuth callback 和只读时间线。
-- Share 构建不声明、解析或下载 `@zcode/services` 与 `@zcode/zcode-cua`。
-- `@zcode/share-ui` 提供 Share 所需的只读 presentation 入口；Desktop/Remote 继续使用完整
-  `@zcode/ui`。
-- Share 与完整 Web 共用协议类型和已确认的只读展示实现，不共用运行态 service。
-- Remote v4 构建从 workspace 内的 `packages/zcode-cua` 构建 CUA，不涉及私有 Git 与凭据。
+- `@zcode/web-share` contains only the Share route, Preview API, OAuth callback and the read-only timeline.
+- The Share build does not declare, resolve or download `@zcode/services` and `@zcode/zcode-cua`.
+- `@zcode/share-ui` provides the read-only presentation entry Share needs; Desktop/Remote keep using the full `@zcode/ui`.
+- Share and the full Web share protocol types and confirmed read-only presentation implementations, not runtime services.
+- The Remote v4 build builds CUA from `packages/zcode-cua` inside the workspace, with no private Git or credentials.
 
-## 构建链路
+## Build chain
 
 ```text
 Dockerfile.web-share
@@ -36,13 +35,13 @@ Dockerfile.web-share
   -> nginx static image
 ```
 
-`.npmrc` 为 `node-linker=hoisted`，`--filter` 不裁剪 lockfile 平铺；CUA 并入 monorepo 后 lockfile
-中已无 Git 来源，Share 镜像无需 git、BuildKit secret 或 Jenkins 凭据，也不需要 `packages/zcode-cua`。
+`.npmrc` is `node-linker=hoisted`, so `--filter` does not trim the lockfile layout; since CUA joined the
+monorepo the lockfile has no Git sources, so the Share image needs no git, BuildKit secret or Jenkins
+credential, and no `packages/zcode-cua`.
 
-## 验收
+## Acceptance
 
-- Share 镜像构建命令不包含 CUA secret。
-- Share 构建不访问任何 Git 仓库。
-- `/cn/share`、`/share`、callback、mock fixture 和资源路径保持可用。
-- 完整 Web 和 Remote v4 的构建依赖边界不变。
-- Share 页面不创建 Host、Agent、service 或 remote session。
+- The Share image build command contains no CUA secret and does not access any Git repository.
+- `/cn/share`, `/share`, callback, mock fixtures and asset paths stay available.
+- Build dependency boundaries of the full Web and Remote v4 are unchanged.
+- The Share page creates no Host, Agent, service or remote session.

@@ -6,5 +6,3 @@ Current debugging entries in the `Help` menu include:
 
 - `Toggle Developer Tools`
 - `Resource Manager` (see `docs/electron/resource-manager.md`)
-
-With this change, developers can access the relevant tools from one fixed location when investigating issues.

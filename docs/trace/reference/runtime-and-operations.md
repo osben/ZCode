@@ -1,67 +1,52 @@
-# Runtime、隐私、性能与 ARMS 参考
+# Runtime, Privacy, Performance and ARMS Reference
 
-> 本文定义 CLI Agent Telemetry Runtime 的生命周期、传播、隐私、性能、测试和 ARMS 运维约束。
-> 整体设计与接入方式见 [CLI Agent Telemetry 设计与开发规范](../cli-agent-telemetry.md)；字段定义见
-> [Schema 字典](./schema-reference.md)。
+> Lifecycle, propagation, privacy, performance, test and ARMS operations constraints of the CLI Agent
+> Telemetry Runtime. Overall design and integration: [CLI Agent Telemetry design and development
+> spec](../cli-agent-telemetry.md); fields: [Schema dictionary](./schema-reference.md).
 
-## 1. 进程级 Runtime
+## 1. Process-level Runtime
 
-### 1.1 唯一 Owner
+### 1.1 Single Owner
 
-每个 CLI 进程只有一个 `AgentTelemetryRuntimeOwner`：
+Each CLI process has one `AgentTelemetryRuntimeOwner`:
 
 ```text
 AgentTelemetryRuntimeOwner
-|
 +-- AsyncLocalStorageContextManager
 +-- BasicTracerProvider
 |   +-- ParentBasedSampler(TraceIdRatioBasedSampler=10%)
 |   +-- BatchSpanProcessor
 |   `-- OTLPTraceExporter
-+-- MeterProvider
-|   +-- PeriodicMetricReader
-|   `-- OTLPMetricExporter
++-- MeterProvider (PeriodicMetricReader, OTLPMetricExporter)
 +-- AgentExecutionTelemetryRuntime
 +-- ModelApiTelemetryStatusSink
 `-- many lightweight Writers shared by Sessions
 ```
 
-Session 借用 Owner 的 `agentExecution/modelExecution/statusSink`，不创建独立 Provider、Exporter、
-队列或 Timer。Session 关闭时：
+A Session borrows the Owner's `agentExecution/modelExecution/statusSink` and creates no Provider,
+Exporter, queue or Timer of its own. On Session close:
 
 ```text
 abandonSession(sessionId)
-    +-- 该 Session 未结束 Writer -> abandoned(session_shutdown)
-    `-- 清理 Model Status Sink 索引
-
-flush(timeout=1.5s)
-    `-- 尽力刷新共享 Owner，不关闭它
+    +-- the Session's unfinished Writers -> abandoned(session_shutdown)
+    `-- clean the Model Status Sink index
+flush(timeout=1.5s)    best-effort flush of the shared Owner, does not close it
 ```
 
-只有最外层进程入口在 CLI/TUI/Protocol Agent 退出时调用 `shutdown()`。Shutdown 先停止状态记录，
-再把剩余 Writer 收口为 `abandoned(process_shutdown)`，然后有界关闭 Trace 和 Metric Provider。
+Only the outermost process entry (CLI/TUI/Protocol Agent exit) calls `shutdown()`. Shutdown stops status
+recording first, closes remaining Writers as `abandoned(process_shutdown)`, then closes the Trace and
+Metric Providers with a bound.
 
-### 1.2 注入与自初始化
+### 1.2 Injection and self-initialization
 
-两种入口最终使用同一个 Owner 契约：
+Both entries end in the same Owner contract: Desktop/Host injects OTLP config, versions, runtime
+surface, installation ID and identity updates; Standalone CLI reads the same OTLP config from the
+controlled environment; then async `prepareModelTelemetryEnv()` -> `createOwnedAgentTelemetryRuntime()`.
+`createModelTelemetry({ owner })` with an explicit Owner wins over the process-prepared Owner; Endpoint
+config cannot override a caller-injected instance. A Session may only borrow, never replace, the
+process-level Owner.
 
-```text
-Desktop/Host
-    `-- 注入 OTLP 配置、版本、运行面、安装 ID、身份更新
-
-Standalone CLI
-    `-- 从受控环境读取同样的 OTLP 配置
-
-                    v
-prepareModelTelemetryEnv()  异步准备
-                    v
-createOwnedAgentTelemetryRuntime()
-```
-
-`createModelTelemetry({ owner })` 的显式 Owner 优先于进程已准备的 Owner；Endpoint 配置不能覆盖
-调用方注入实例。一个 Session 只能借用，不得替换进程级 Owner。
-
-常用配置：
+Config:
 
 ```text
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
@@ -81,443 +66,288 @@ ZCODE_APP_VERSION
 ZCODE_BUILD_COMMIT_ID
 ```
 
-若只配置公共 `OTEL_EXPORTER_OTLP_ENDPOINT`，Trace 自动追加 `/v1/traces`，Metric 自动追加
-`/v1/metrics`。若只提供 ARMS Trace 专用 URL，当前实现允许 Metric 沿用同一 URL，因为 ARMS 的
-自定义 OTLP HTTP 接入点支持三类信号共用地址。
+With only the shared `OTEL_EXPORTER_OTLP_ENDPOINT`, Trace appends `/v1/traces` and Metric `/v1/metrics`.
+With only an ARMS Trace-specific URL, Metric reuses the same URL (the ARMS custom OTLP HTTP endpoint
+serves all three signals). Headers are runtime Secrets: they go only into Exporter config, never
+Resource, Span, Metric or logs.
 
-Header 是运行时 Secret，只进入 Exporter 配置，不进入 Resource、Span、Metric 或日志。
+### 1.3 Disabled path
 
-### 1.3 Disabled 路径
+With no valid Trace Endpoint, or `ZCODE_MODEL_TELEMETRY_ENABLED` = `0/false/off/disabled`: the OTel
+SDK/Exporter is not dynamically imported; no Provider, queue, Timer or network request is created; a
+shared No-op Writer is returned; No-op `run()` executes the business callback directly and exactly once;
+`--help`, version query and paths with no Agent work bear no SDK init cost.
 
-没有合法 Trace Endpoint，或 `ZCODE_MODEL_TELEMETRY_ENABLED` 为
-`0/false/off/disabled` 时：
+### 1.4 Installation ID and identity update
 
-- 不动态 import OTel SDK/Exporter；
-- 不创建 Provider、队列、Timer 或网络请求；
-- 返回共享 No-op Writer；
-- No-op `run()` 直接且只执行一次业务回调；
-- `--help`、版本查询和无 Agent 工作路径不承担 SDK 初始化成本。
+The Standalone installation ID is stored in `$ZCODE_HOME/v2/telemetry-state.json` or
+`~/.zcode/v2/telemetry-state.json`. Creation uses async file I/O, atomic temp-file Rename, a
+cross-process lock and 5-minute Stale Lock reclamation. If another active process is updating, do not
+wait: this run may omit the anonymous correlation; any read/write failure never blocks the CLI.
 
-### 1.4 安装 ID 与身份更新
+The identity snapshot can be updated through `updateIdentity()` on login, logout and account switch.
+Each new Turn reads the current snapshot once at creation; existing Spans are not rewritten, so identity
+is stable within one execution.
 
-Standalone 安装 ID 保存于：
+## 2. Context, topology and multiple execution surfaces
 
-```text
-$ZCODE_HOME/v2/telemetry-state.json
-或 ~/.zcode/v2/telemetry-state.json
-```
+### 2.1 In-process Context
 
-创建使用异步文件 I/O、临时文件原子 Rename、跨进程锁和 5 分钟 Stale Lock 回收。另一个活跃
-进程正在更新时不等待，本次可以省略匿名关联；任何读写失败都不阻塞 CLI。
+`BaseSpanWriter.run()` activates the current Span via OTel `context.with()`; children find the Parent
+from the active context automatically. The Runtime keeps no second "current Span" AsyncLocalStorage. The
+private `ActiveWriterContext` lives in the same Context as the OTel Span and holds the correlation
+snapshot, Parent Writer and Tool Call ID.
 
-身份快照可在登录、登出和账号切换时通过 `updateIdentity()` 更新。每个新 Turn 创建时读取一次
-当前快照；已经存在的 Span 不回写，保证一次执行内部身份稳定。
+### 2.2 Causation modes
 
-## 2. Context、拓扑与多执行面
+`AgentTurnTraceStart` supports `causationMode=child` (rebuild the Parent Context from the saved
+SpanContext; Child shares the traceId) and `causationMode=linked_root` (default: new Trace from
+`ROOT_CONTEXT`, Link to the saved SpanContext). `DetachedOperationTraceStart` follows `executionKind`:
+Foreground = Child; Queued and Background = Root + Link. A Recovery Link uses `resumed_from`, other
+independent operations `triggered_by`. Explicit Causation rebuild must start from `ROOT_CONTEXT` and not
+inherit execution-time temporary Baggage, Active Span or private Writer State.
 
-### 2.1 进程内 Context
-
-`BaseSpanWriter.run()` 使用 OTel `context.with()` 激活当前 Span：
-
-```text
-parent.run(async () => {
-    child = startChild()       // 自动从 active context 找 Parent
-    return child.run(...)
-})
-```
-
-Runtime 不维护第二套“当前 Span”AsyncLocalStorage。私有 `ActiveWriterContext` 与 OTel Span 放在
-同一个 Context 中，包含 correlation snapshot、Parent Writer 和 Tool Call ID。
-
-### 2.2 Causation 模式
-
-`AgentTurnTraceStart` 支持：
+### 2.3 Subagent and Workflow
 
 ```text
-causationMode=child
-    从保存的 SpanContext 重建 Parent Context
-    Child 与 Parent 共享 traceId
-
-causationMode=linked_root（默认）
-    从 ROOT_CONTEXT 创建新 Trace
-    Link 到保存的 SpanContext
+Foreground Subagent (parent tool awaits):  parent tool -> child agent_turn -> child's own step/call/attempt/tool
+Background Subagent:                       parent tool --Link(spawned_by)--> child agent_turn root
+Workflow / Script Workflow Child:          trigger --Link(spawned_by)--> child agent_turn root
 ```
 
-`DetachedOperationTraceStart` 根据 `executionKind` 决定：Foreground 使用 Child；Queued 和
-Background 使用 Root + Link。Recovery Link 使用 `resumed_from`，其他独立操作使用
-`triggered_by`。
+The Child Runtime receives the same `AgentExecutionTelemetryPort` and the captured Causation, so every
+inner Step, Tool, Call and Attempt gets its own Span (not a Subagent black box). Actor Kind from
+`SessionTaskType`: `subagent_child` -> `subagent`; `workflow_child` / `nested_workflow_child` ->
+`workflow_child`; otherwise `main`.
 
-显式 Causation 重建必须以 `ROOT_CONTEXT` 为基础，不得继承执行阶段的临时 Baggage、Active
-Span 或私有 Writer State。
+### 2.4 Out-of-Turn operations
 
-### 2.3 Subagent 与 Workflow
+`detached_operation` covers title, Goal, Project Memory, Workspace text generation and other work
+outside a Turn. If such an operation calls a model it must run inside its `scope.run()` so the Model
+Call becomes its Child. Project Memory Recall captures Causation at scheduling/prefetch time; Dream,
+Extraction and Title likewise. Operation enum:
+[Schema dictionary](./schema-reference.md#101-operation-catalog).
+
+### 2.5 Multi-surface live facts
 
 ```text
-前台 Subagent（父 Tool await）
-parent tool
-    `-- child agent_turn
-          `-- child 自己的 step/call/attempt/tool
-
-后台 Subagent
-parent tool --Link(spawned_by)--> child agent_turn root
-
-Workflow / Script Workflow Child
-trigger --Link(spawned_by)--> child agent_turn root
+desktop-continuous real execution ---------------------> creates Span
+web-remote-replayable triggering shared-host real run --> creates the same CLI Span
+snapshot / hydration / UI replay ----------------------> creates no Span
 ```
 
-Child Runtime 接收同一个 `AgentExecutionTelemetryPort` 和捕获的 Causation，因此内部所有 Step、
-Tool、Call、Attempt 都会正常分 Span，而不是只留下一个 Subagent 黑盒。
+Trace records the Agent Runtime's real execution, not Renderer replay. When mobile `/remote` uses
+shared-host attachment, the Host carrying the real CLI Runtime still reports; nothing is reported from
+Relay, Main or recovery UI (it would double count). `AgentTelemetryCausation` is an internal strict CLI
+type, not complete W3C cross-process propagation from Desktop/RUM to the Agent; to open that boundary,
+change the `@zcode/protocol` strict Schema and add topology tests.
 
-Actor Kind 从 `SessionTaskType` 归一化：
+## 3. Writers and terminal guarantees
 
-```text
-subagent_child                         -> subagent
-workflow_child / nested_workflow_child -> workflow_child
-其他                                   -> main
-```
+### 3.1 Direct Setter model
 
-### 2.4 Turn 外操作
+No runtime Schema Registry and no Telemetry DTO wrapping of business results: a business fact -> the
+concrete Writer Setter -> normalize/sanitize, write Canonical `zcode.*`, write an Event if needed,
+record a Metric if needed, project a Compatibility Alias if needed. Contracts give compile-time
+interfaces; explicit Keys in Runtime make implementation and queries visible; the Schema dictionary
+explains what code cannot express.
 
-`detached_operation` 覆盖标题、Goal、Project Memory、Workspace 文本生成和其他 Turn 外工作。
-这些操作如果调用模型，必须在它的 `scope.run()` 中执行，使 Model Call 自动成为 Child。
+### 3.2 `run()` exactly-once behavior
 
-Project Memory Recall 在调度/预取时捕获 Causation；Dream、Extraction、Title 等同理。完整 Operation
-枚举见 [Schema 字典](./schema-reference.md#101-operation-目录)。
+`run<T>(() => T): T` supports both sync values and Promises: synchronous throw -> if no terminal,
+`finishUnhandled`, rethrow the original error; returned Promise -> resolve without explicit terminal =>
+`abandoned(missing_terminal)`, reject without terminal => `finishUnhandled`, re-reject; plain value
+without explicit terminal => `abandoned(missing_terminal)`.
 
-### 2.5 多端 Live Fact
-
-```text
-desktop-continuous 真实执行 --------------------> 创建 Span
-web-remote-replayable 触发 shared host 真实执行 ---> 创建同一个 CLI Span
-snapshot / hydration / UI replay --------------> 不创建 Span
-```
-
-Trace 记录 Agent Runtime 的真实执行，不记录 Renderer 回放。手机 `/remote` 使用 shared-host
-attachment 时，数据仍由承载真实 CLI Runtime 的 Host 上报；不能在 Relay、Main 或恢复 UI 中补报，
-否则会重复计数。
-
-当前 `AgentTelemetryCausation` 是 CLI 内部严格类型，不等价于 Desktop/RUM 到 Agent 的完整 W3C
-跨进程传播。未来打通时必须修改 `@zcode/protocol` 严格 Schema 并补拓扑测试。
-
-## 3. Writer 与终态保证
-
-### 3.1 直接 Setter 模型
-
-Writer 不使用运行时 Schema Registry，也不要求业务把结果重新封装成 Telemetry DTO：
-
-```text
-业务事实发生
-    -> 具体 Writer Setter
-         +-- 归一化/脱敏
-         +-- 写 Canonical zcode.*
-         +-- 必要时写 Event
-         +-- 必要时记 Metric
-         `-- 必要时投影 Compatibility Alias
-```
-
-Contracts 提供编译期接口；Runtime 中显式 Key 让实现和查询一眼可见；Schema 字典解释代码无法
-表达的语义。
-
-### 3.2 `run()` 的 exactly-once 行为
-
-`run<T>(() => T): T` 同时支持同步值和 Promise：
-
-```text
-进入 context.with
-    |
-    +-- 业务同步抛错
-    |      -> 未终态则 finishUnhandled -> 重新抛出原错误
-    |
-    +-- 返回 Promise
-    |      +-- resolve：未显式终态 -> abandoned(missing_terminal)
-    |      `-- reject：未终态 -> finishUnhandled -> 重新 reject
-    |
-    `-- 返回普通值
-           -> 未显式终态 -> abandoned(missing_terminal)
-```
-
-Context Manager 理论上不应在业务回调外抛错，但 Runtime 仍防御三种情况：
-
-1. 激活前失败：记录受控 Warning，在 Context 外执行业务一次；
-2. 业务已经返回后 Context teardown 失败：保留业务返回，不重跑；
-3. 业务自身失败：收口 Span 后原样抛出。
-
-内部 `entered/businessReturned/businessValue/businessError` 闩锁保证业务回调不会因 Telemetry 异常
-执行两次。
+Context Manager should not throw outside the business callback, but Runtime defends three cases: (1)
+failure before activation: log a controlled Warning and run the business once outside Context; (2)
+Context teardown failure after the business returned: keep the business return, do not re-run; (3)
+business failure: close the Span then rethrow unchanged. Internal `entered/businessReturned/
+businessValue/businessError` latches guarantee the callback never runs twice because of a Telemetry
+exception.
 
 ### 3.3 Terminal Latch
 
-所有终态方法共享一次性 Latch：
+All terminal methods share a one-shot Latch: `claimTerminal()` sets `ended=true` first, then writes
+outcome / status / metric / `span.end()`. Even if the SDK, Adapter, Metric or `span.end()` throws, the
+Latch does not reopen; later terminal calls are No-ops. When Session/Process reclamation races a normal
+terminal, only the first terminal operation takes effect.
 
-```text
-claimTerminal()
-    先 ended=true
-    再写 outcome / status / metric / span.end()
-```
+### 3.4 Error claiming
 
-即使 SDK、Adapter、Metric 或 `span.end()` 抛错，Latch 也不会重新打开。后续终态调用是 No-op。
-Session/Process 回收与正常终态并发发生时，仅首个终态操作生效。
+The same Error object and its `cause` chain (up to 8 levels) are claimed with a `WeakSet`: a
+ProviderError's body is recorded first at `model_attempt`; the AdapterError(cause=ProviderError)
+bubbling to `model_call` records failed/category/stage but not the body again; step/turn likewise. The
+original object is not held long-term (WeakSet does not extend lifetime). A non-object error that cannot
+be claimed is converted in a controlled way at the nearest Span. The guarantee relies on upper layers
+passing on the same Error or `cause` chain; a Producer that re-creates causally unrelated Error objects
+per layer defeats recognition and is forbidden.
 
-### 3.4 Error 认领
+## 4. Model Status to Trace
 
-同一 Error 对象及其最多 8 层 `cause` 链使用 `WeakSet` 认领：
+The model API layer supplies real request facts through unified Status Events; `ModelApiTelemetryStatusSink`
+manages: `logical_call_started` -> `startCall(logicalCallId, operation, requested target)`;
+`attempt_started` -> `call.startAttempt(requestId, actual target, transport, cause)`; headers / stream /
+usage / error status -> the concrete attempt Setter or marker; `attempt_terminal` -> `attempt.finish*`;
+`logical_call_terminal` -> `call.finish*`.
 
-```text
-ProviderError 在 model_attempt 首次记录正文
-    -> AdapterError(cause=ProviderError) 冒泡到 model_call
-         -> call 记录 failed/category/stage，不再复制正文
-             -> step/turn 同理
-```
-
-原始对象不被长期持有；WeakSet 不延长生命周期。非对象错误无法认领时，在当前最近 Span 做受控
-转换。该保证依赖上层继续传递同一个 Error 或 `cause` 链；如果某个 Producer 为每一层重新创建
-无因果关系的 Error 对象，Runtime 无法识别它们是同一来源，因此 Producer 禁止这样做。
-
-## 4. Model Status 到 Trace
-
-模型 API 封装层通过统一 Status Event 提供真实请求事实，`ModelApiTelemetryStatusSink` 管理：
-
-```text
-logical_call_started
-    -> startCall(logicalCallId, operation, requested target)
-
-attempt_started
-    -> call.startAttempt(requestId, actual target, transport, cause)
-
-headers / stream / usage / error status
-    -> attempt 的具体 Setter / marker
-
-attempt_terminal
-    -> attempt.finish*
-
-logical_call_terminal
-    -> call.finish*
-```
-
-它维护最多 1000 个活跃 Model Call。状态事件入口至多每分钟惰性清理一次；30 分钟无活动的 Call
-和 Attempt 以 `missing_terminal` 收口。这个 TTL 只属于状态索引，不是通用 Span TTL；合法长
-Turn/Command 不会因为持续时间长被自动结束。
-
-模型入口的 `operation` 优先使用调用点显式 Observation；旧 `querySource` 只作为兼容映射。未知
-Query Source 回退到 `tool_internal_model_call`，不会生成自由文本 Operation。
+It keeps at most 1000 active Model Calls. Status event entry lazily sweeps at most once per minute; Calls
+and Attempts idle for 30 minutes close as `missing_terminal`. This TTL belongs only to the status index,
+not a general Span TTL: legitimately long Turns/Commands are never auto-ended for duration. The model
+entry `operation` prefers the call site's explicit Observation; the old `querySource` is only a
+compatibility mapping and an unknown Query Source falls back to `tool_internal_model_call` (never a
+free-text Operation).
 
 ## 5. Compatibility Adapter
 
-Adapter 只接受已经归一化、清洗后的事实：
+The Adapter accepts only already normalized, sanitized facts: Provider Adapter / Writer Setter -> Canonical
+`zcode.*` and `compatibility-adapters.ts` (`gen_ai.*`, `http.response.*`, `server.*`, `process.*`,
+`error.*`). Business call sites are unaware of GenAI or ARMS fields. On an external convention change,
+change the Adapter and exact-mapping tests; Canonical keeps full internal semantics. Canonical is never
+rebuilt from compatibility fields (conversion may lose information).
 
-```text
-Provider Adapter / Writer Setter
-        |
-        +-- Canonical zcode.*
-        |
-        `-- compatibility-adapters.ts
-              +-- gen_ai.*
-              +-- http.response.*
-              +-- server.*
-              +-- process.*
-              `-- error.*
-```
+## 6. Privacy and sanitizing
 
-业务调用点不感知 GenAI 或 ARMS 字段。外部约定变化时，修改 Adapter 和 exact mapping 测试；
-Canonical 仍保持内部语义完整。不能从兼容字段反向重建 Canonical，因为转换可能丢失信息。
+### 6.1 Data classes
 
-## 6. 隐私与脱敏
+| Class                    | Examples                                           | Policy                                           |
+| ------------------------ | -------------------------------------------------- | ------------------------------------------------ |
+| Low-risk runtime facts   | Outcome, Token, HTTP Status, Provider Kind         | Recorded under type/cardinality limits           |
+| Pseudonymous identifiers | Installation, User Subject, Session, Turn, Request | Trace only, bound by access and retention policy |
+| Controlled free text     | Model, Provider Error, Safe Name                   | Sanitize, truncate, test                         |
+| High-privacy content     | Prompt, body, file, command, Header, Body          | Collection forbidden                             |
 
-### 6.1 数据分类
-
-| 类别           | 例子                                               | 策略                               |
-| -------------- | -------------------------------------------------- | ---------------------------------- |
-| 低风险运行事实 | Outcome、Token、HTTP Status、Provider Kind         | 受类型/基数限制后记录              |
-| 假名关联标识   | Installation、User Subject、Session、Turn、Request | 只进入 Trace，受访问和保留策略约束 |
-| 受控自由文本   | Model、Provider Error、Safe Name                   | 清洗、截断、测试                   |
-| 高隐私内容     | Prompt、正文、文件、命令、Header、Body             | 禁止采集                           |
-
-安装 ID 是随机、持久化的产品假名；不是 MAC、硬盘序列号等硬件标识。User Subject ID 当前不在
-CLI 再 Hash，Host 必须只提供允许进入 Telemetry 的稳定主体 ID。二者都可能用于关联用户行为，
-不能称为匿名数据。
+The installation ID is a random persistent product pseudonym (not a MAC or disk serial). User Subject ID
+is currently not re-hashed in the CLI; the Host must supply only a stable subject ID allowed into
+Telemetry. Both can correlate user behavior and must not be called anonymous.
 
 ### 6.2 Provider Endpoint
 
-输入 Base URL 后：
+Rules for an input Base URL: length > 4096 -> omit; non-http/https or parse failure -> omit;
+username/password -> delete; query/fragment -> delete; hostname lowercased; default 80/443 port removed;
+path segment that is email/uuid/long number/long hex/token -> placeholder; ordinary segment at most 128
+chars; route at most 1024 chars. Output: `provider_origin = scheme://host[:port]`,
+`provider_route = sanitized pathname`. Users need not configure a safe template.
+`ProviderEndpointIdentityCache` caches up to 256 entries by `(providerKind, baseURL)` to avoid repeated
+URL parsing and regex sanitizing.
 
-```text
-长度 > 4096                              -> 省略
-非 http/https 或 URL 解析失败             -> 省略
-username/password                         -> 删除
-query/fragment                            -> 删除
-hostname                                  -> 小写
-默认 80/443 port                          -> 规范化删除
-path segment 为 email/uuid/长数字/长 hex/token -> 占位符
-普通 segment                              -> 最多 128 字符
-route                                     -> 最多 1024 字符
-```
+### 6.3 Error message
 
-输出：
+Keep original diagnostics but remove high-risk content: (1) truncate input to 4096 chars first (bounds
+malicious Provider message cost); (2) strip URL Query/credentials and sanitize dynamic Segments; (3)
+clear Authorization, API Key, Token, Password, Secret, Cookie, Session key-values; (4) clear Bearer/Basic,
+common `sk-*`, GitHub Token, AWS Key, Google Key; (5) replace emails, user local paths, Temp paths and
+Windows absolute paths; (6) strip control chars, collapse whitespace; (7) truncate to 2048 chars.
+`provider_error_message` and Lifecycle `error_message` both use this Sanitizer. Error codes only get
+control-char cleanup and a 128-char cap, never re-classified by template.
 
-```text
-provider_origin = scheme://host[:port]
-provider_route  = sanitized pathname
-```
+### 6.4 Tool and Command
 
-不要求用户配置安全模板。`ProviderEndpointIdentityCache` 按 `(providerKind, baseURL)` 缓存最多
-256 项，避免每次请求重复 URL 解析和正则清洗。
+Allowed: Registry Tool Name, command category, Shell Kind, controlled Safe Name, Exit Code, Signal,
+Timeout, Output Bytes, Truncated. Forbidden: Tool arguments, Tool output body, full command, script,
+args, path, cwd, environment variables. Safe Name comes only from the command Registry/Allowlist; a
+truncated command text is not "safe".
 
-### 6.3 Error Message
+### 6.5 Access and retention
 
-Error 处理遵循“尽量保留原始诊断信息，但去掉高风险内容”：
+Code sanitizing is not the only privacy control. The ARMS Workspace still needs least privilege, query
+audit and sensible retention; exports containing user or installation pseudonym IDs must not be shared
+freely. OTLP Header/License Key must not enter screenshots, doc examples or Git.
 
-1. 输入先截到 4096 字符，限制恶意 Provider 消息的 CPU/内存成本；
-2. URL 移除 Query/凭据并清洗动态 Segment；
-3. 清除 Authorization、API Key、Token、Password、Secret、Cookie、Session 等键值；
-4. 清除 Bearer/Basic、常见 `sk-*`、GitHub Token、AWS Key、Google Key；
-5. 替换邮箱、用户本地路径、Temp 路径和 Windows 绝对路径；
-6. 去控制字符、折叠空白；
-7. 最终截到 2048 字符。
+## 7. Performance, capacity and reliability
 
-`provider_error_message` 和 Lifecycle `error_message` 都使用这一 Sanitizer。错误码只做控制字符清理
-和 128 字符截断，不按人为模板重分类。
+### 7.1 Current defaults
 
-### 6.4 Tool 与 Command
+| Item                         | Current value/behavior                            |
+| ---------------------------- | ------------------------------------------------- |
+| Active Writer cap            | 5000 per process                                  |
+| Model Status active Call cap | 1000                                              |
+| Model Status lazy reclaim    | 30 min idle; Sweep at most once per minute        |
+| BSP Queue                    | 2000 Spans                                        |
+| Export Batch                 | 100 Spans                                         |
+| Batch Delay                  | 5 s                                               |
+| Export Timeout               | 3 s                                               |
+| Session Flush                | default 1.5 s                                     |
+| Process Shutdown             | default 1.5 s                                     |
+| Metric Export Interval       | 5 min; best-effort flush still on process exit    |
+| Metric Series cap            | 250 per View                                      |
+| Trace Head Sampling          | Root 10%; child Spans inherit the parent decision |
+| Histogram Min/Max            | Not recorded; Count, Sum and slim Buckets kept    |
+| OTLP compression             | Gzip                                              |
 
-允许：Registry Tool Name、命令类别、Shell Kind、受控 Safe Name、Exit Code、Signal、Timeout、
-Output Bytes、Truncated。
+### 7.2 Hot path
 
-禁止：Tool 参数、Tool 输出正文、完整命令、脚本、参数、路径、cwd、环境变量。Safe Name 只能从
-命令 Registry/Allowlist 生成，不能把命令文本简单截断后当作“安全”。
+Writer creation and Setters handle only small known inputs; no synchronous file or network I/O; no
+traversal of Prompt, Messages, Header, Body or arbitrary large objects; bounded Endpoint sanitizing
+cache; truncate before error regexes; Streaming records only First, Stall Count and Max Idle (no
+per-Chunk Event); Token Metric uses a monotonic Delta of the cumulative value; Trace is exported
+asynchronously by BSP and the business never waits for a Span report.
 
-### 6.5 访问与保留
+### 7.3 Capacity and degradation
 
-代码脱敏不是全部隐私控制。ARMS Workspace 仍需要最小权限、查询审计和合理保留期；包含用户或
-安装假名 ID 的导出结果不能随意分享。OTLP Header/License Key 不得进入截图、文档示例或 Git。
-
-## 7. 性能、容量与可靠性
-
-### 7.1 当前实现默认值
-
-| 项目                        | 当前值/行为                            |
-| --------------------------- | -------------------------------------- |
-| Active Writer 上限          | 每进程 5000                            |
-| Model Status 活跃 Call 上限 | 1000                                   |
-| Model Status 惰性回收       | 30 分钟无活动；至多每分钟 Sweep 一次   |
-| BSP Queue                   | 2000 Span                              |
-| Export Batch                | 100 Span                               |
-| Batch Delay                 | 5 秒                                   |
-| Export Timeout              | 3 秒                                   |
-| Session Flush               | 默认 1.5 秒                            |
-| Process Shutdown            | 默认 1.5 秒                            |
-| Metric Export Interval      | 5 分钟；进程退出时仍 best-effort flush |
-| Metric Series 上限          | 每 View 250                            |
-| Trace Head Sampling         | Root 10%；子 Span 继承父 Span 决策     |
-| Histogram Min/Max           | 不记录；保留 Count、Sum 与精简 Bucket  |
-| OTLP 压缩                   | Gzip                                   |
-
-### 7.2 热路径
-
-- Writer 创建和 Setter 只处理小型已知输入；
-- 没有同步文件或网络 I/O；
-- 不遍历 Prompt、Messages、Header、Body 或任意大对象；
-- Endpoint 清洗有界缓存；
-- 错误正则前先截断；
-- Streaming 只记录 First、Stall Count 和 Max Idle，不逐 Chunk 创建 Event；
-- Token Metric 使用累计值的单调 Delta，避免重复上报；
-- Trace 由 BSP 异步导出，业务不等待每个 Span 上报。
-
-### 7.3 容量和降级
-
-达到 Active Writer 上限时：
-
-```text
-拒绝创建新 Span
-    -> 返回共享 No-op Writer
-    -> zcode.telemetry.creation_drop.count += 1
-    -> onWarning（容量恢复前只报告一次活跃告警）
-    -> 业务继续执行
-```
-
-Runtime 目前远端可观测的 Health Metric 只有 `creation_drop` 和 `abandoned`。BSP Queue Drop、
-Exporter Failure、Shutdown Timeout 的专属 Metric 尚未实现，Dashboard 不应假定它们存在。完全
-断链时远端 Metric 本身也无法送达，仍需“服务数据消失”类告警或 Collector 外部健康检查。
+At the Active Writer cap: refuse to create a new Span -> return the shared No-op Writer ->
+`zcode.telemetry.creation_drop.count += 1` -> `onWarning` (one active warning until capacity recovers)
+-> business continues. The only remotely observable Health Metrics are currently `creation_drop` and
+`abandoned`. Dedicated Metrics for BSP Queue Drop, Exporter Failure and Shutdown Timeout are not
+implemented and Dashboards must not assume them. On a complete outage the remote Metric cannot arrive
+either, so a "service data disappeared" alert or a Collector-side health check is still required.
 
 ### 7.4 Sampling
 
-当前 CLI 直连 ARMS，Root Trace 使用
-`ParentBasedSampler(TraceIdRatioBasedSampler(0.10))` 做确定性的 10% Head Sampling；同一条
-Trace 的子 Span 必须继承父 Span 决策，禁止按 Span 独立抽样形成残缺树。Metric 不跟随 Trace
-采样，准确流量、成功率、Token 和延迟分位数继续由全量 Metric 提供。
+The CLI connects directly to ARMS; Root Traces use deterministic 10% Head Sampling via
+`ParentBasedSampler(TraceIdRatioBasedSampler(0.10))`; child Spans of one Trace must inherit the parent
+decision (never per-Span sampling producing broken trees). Metric does not follow Trace sampling:
+accurate traffic, success rate, Token and latency percentiles keep coming from full Metrics. Head
+Sampling decides at Span start and cannot know final failure or slowness, so the current stage accepts
+sampling error Traces at 10% too, and must not claim failed or slow requests are 100% retained. If
+Collector Tail Sampling is introduced later, restore the client to AlwaysOn and let the Collector decide
+on the complete Trace terminal: keep failed, abandoned, slow Traces and rare Operations first; exact QPS,
+success rate, Token and percentiles still come from Metrics; Root + Link are two independent Traces with
+independent sampling; before the Collector goes live verify capacity, failure retention and Trace-tree
+completeness, and do not stack it on client 10% Head Sampling.
 
-客户端 Head Sampling 在 Span 开始时决策，无法知道最终是否失败或变慢。因此当前阶段接受错误
-Trace 也按 10% 抽样的成本/诊断取舍，不能声称失败、慢请求已 100% 保留。若后续引入 Collector
-Tail Sampling，应把客户端恢复为 AlwaysOn，再由 Collector 按完整 Trace 终态执行：
+### 7.5 Metric volume reduction
 
-- failed、abandoned、慢 Trace 和稀有 Operation 优先保留；
-- 精确 QPS、成功率、Token 和分位数仍取 Metric；
-- Root + Link 是两条独立 Trace，采样结果也独立；
-- Collector 投产前必须验证容量、故障保留率和 Trace 树完整性，不能与客户端 10% Head
-  Sampling 叠加。
+`PeriodicExportingMetricReader` interval is 5 minutes (was 60 s); DELTA temporality unchanged and a normal
+CLI shutdown still triggers a last best-effort flush, so short-lived processes are not necessarily lost.
+Histograms disable `recordMinMax`. Duration/TTFT Histograms use at most 10 slim Buckets covering existing
+SLO turning points; the Attempts Histogram keeps `1/2/3/5/8`. This only lowers observation resolution
+and ARMS point count and does not change Writer, model call, Tool or Session execution.
 
-### 7.5 Metric 降量口径
+## 8. Tests and release gates
 
-- `PeriodicExportingMetricReader` 的周期从 60 秒改为 5 分钟；DELTA temporality 不变，CLI
-  正常 shutdown 仍触发最后一次 best-effort flush，短生命周期进程不会因未满 5 分钟必然丢失。
-- Histogram 关闭 `recordMinMax`，避免每个时序额外写入最小值和最大值；Count、Sum 和 Bucket
-  仍保留。
-- Duration/TTFT Histogram 使用不超过 10 个、覆盖既有 SLO 转折点的精简 Bucket；Attempts
-  Histogram 保留 `1/2/3/5/8`。调整只降低观测分辨率和 ARMS 点数，不改变 Writer、模型调用、
-  Tool 或 Session 的执行路径。
+### 8.1 Unit and behavior tests
 
-## 8. 测试与发布门禁
+At least: each Setter's Canonical Key, type, enum, unit; Compatibility Alias exact/convert/omit; negative
+privacy cases for Endpoint, Error, Tool, Command; exactly-once End, `missing_terminal`, Session/Process
+abandon; completed/failed/cancelled/denied/discarded/backgrounded vs OTel Status; business result and
+execution count unchanged when Telemetry throws at any boundary; Unknown/Absent/False/0; First Event
+dedup, Token Delta, Metric Label Allowlist.
 
-### 8.1 单元与行为测试
+### 8.2 Topology Golden Test
 
-至少验证：
+Memory Exporter verifies: Turn -> Step -> Call -> Attempt; Turn -> Step -> Tool -> Command; Turn ->
+Compaction -> Call -> Attempt; Tool -> Call -> Attempt; Tool -> Foreground Child Agent Turn; Tool --Link-->
+Background Child Agent Turn Root; Trigger --Link--> Detached Operation Root; Retry = one Call + multiple
+Attempts. Also check traceId, parentSpanId, Link SpanContext, traceState, isRemote and Query Projection.
 
-- 每个 Setter 的 Canonical Key、类型、枚举、单位；
-- Compatibility Alias exact/convert/omit；
-- Endpoint、Error、Tool、Command 隐私负向用例；
-- exactly-once End、`missing_terminal`、Session/Process abandon；
-- completed/failed/cancelled/denied/discarded/backgrounded 与 OTel Status；
-- Telemetry 任意边界抛错时业务结果和执行次数不变；
-- Unknown/Absent/False/0；
-- First Event 去重、Token Delta、Metric Label Allowlist。
+### 8.3 Completeness and privacy
 
-### 8.2 拓扑 Golden Test
+At least one call-entry test per Model Operation; every real Provider Attempt enters both OTel and SQLite
+`model_usage`; internal model calls (Read Session Context, Web Fetch, Project Memory, Title) not missed;
+Stream/Non-stream, Retry, Fallback, Cancellation, Compaction covered; Snapshot/Hydration/Replay do not
+backfill; malicious Getter, circular object, oversized Error, Secret, URL Query, file path, email and full
+command must not appear in the OTLP Payload.
 
-Memory Exporter 验证：
+### 8.4 Build and integration
 
-```text
-Turn -> Step -> Call -> Attempt
-Turn -> Step -> Tool -> Command
-Turn -> Compaction -> Call -> Attempt
-Tool -> Call -> Attempt
-Tool -> Foreground Child Agent Turn
-Tool --Link--> Background Child Agent Turn Root
-Trigger --Link--> Detached Operation Root
-Retry = one Call + multiple Attempt
-```
+Disabled verifies SDK, Timer, Network are 0; Standalone CLI and Desktop Packaged Agent send real Canaries;
+the packaged build cache fingerprint includes Endpoint/Header/Service Name build inputs; `service.version`
+equals the bundled CLI version; `zcode.product.version` equals the product installer version;
+`zcode.build.commit_id` locates the build; run related tests, `pnpm typecheck` and `pnpm lint` before
+submitting.
 
-同时核对 traceId、parentSpanId、Link SpanContext、traceState、isRemote 和 Query Projection。
-
-### 8.3 完整性与隐私
-
-- 每个 Model Operation 至少一个调用入口测试；
-- 每个真实 Provider Attempt 同时进入 OTel 和 SQLite `model_usage`；
-- Read Session Context、Web Fetch、Project Memory、Title 等内部模型调用不能漏；
-- Stream/Non-stream、Retry、Fallback、Cancellation、Compaction 全覆盖；
-- Snapshot/Hydration/Replay 不补报；
-- 恶意 Getter、循环对象、超长 Error、Secret、URL Query、文件路径、邮箱、完整命令不能出现在
-  OTLP Payload。
-
-### 8.4 构建与集成
-
-- Disabled 验证 SDK、Timer、Network 为 0；
-- Standalone CLI 与 Desktop Packaged Agent 发送真实 Canary；
-- Packaged 构建缓存指纹包含 Endpoint/Header/Service Name 等构建输入；
-- `service.version` 与 bundle 内 CLI 版本一致；
-- `zcode.product.version` 与产品安装包版本一致；
-- `zcode.build.commit_id` 能定位构建；
-- 提交前执行相关测试、`pnpm typecheck` 和 `pnpm lint`。
-
-主要现有测试：
+Main existing tests (paths relative to `apps/zcode-cli/`):
 
 ```text
 packages/telemetry/tests/agent-trace-runtime.test.ts
@@ -532,186 +362,107 @@ packages/core/tests/tool-agent-telemetry.test.ts
 packages/bootstrap/tests/telemetry-bootstrap.test.ts
 ```
 
-路径均相对于 `apps/zcode-cli/`。
+## 9. ARMS queries, dashboards and metric definitions
 
-## 9. ARMS 查询、大盘与统计口径
+### 9.1 Data location
 
-### 9.1 数据位置
-
-OTLP Trace 进入 ARMS Trace 存储，OTLP Metric 进入指标存储，不需要新建业务“表”。需要建设的
-对象是 Saved Query、Dashboard 和 Alert Rule。
+OTLP Trace goes to ARMS Trace storage, OTLP Metric to metric storage; no business "table" is needed. To
+build: Saved Queries, Dashboards, Alert Rules.
 
 ```text
-OTel 原生字段
-    serviceName / spanName / traceId / duration / statusCode
-
-Resource
-    resources.service.version
-    resources.zcode.product.version
-    resources.zcode.build.commit_id
-    resources.zcode.telemetry.schema_version
-    resources.zcode.runtime.surface
-    resources.zcode.device.installation_id
-
-Span Attribute
-    attributes.zcode.execution.turn_id
-    attributes.zcode.<span_name>.outcome
-    attributes.zcode.model_attempt.provider_origin
+OTel native:  serviceName / spanName / traceId / duration / statusCode
+Resource:     resources.service.version, resources.zcode.product.version, resources.zcode.build.commit_id,
+              resources.zcode.telemetry.schema_version, resources.zcode.runtime.surface,
+              resources.zcode.device.installation_id
+Span Attribute: attributes.zcode.execution.turn_id, attributes.zcode.<span_name>.outcome,
+              attributes.zcode.model_attempt.provider_origin
 ```
 
-不同 ARMS 控制台版本可能使用可视化条件、SPL 或等价查询语法，字段语义不变。
+Different ARMS console versions may use visual conditions, SPL or equivalent syntax; field semantics are
+unchanged.
 
 ### 9.2 Saved Query
 
-公共条件：
+Common condition:
 
 ```text
 serviceName : zcode-cli-agent
 and resources.zcode.telemetry.schema_version : 5
 ```
 
-Turn：
-
-```text
-and spanName : agent_turn
-```
-
-失败 Attempt：
+Turn: `and spanName : agent_turn`. Failed Attempt:
 
 ```text
 and spanName : model_attempt
 and attributes.zcode.model_attempt.outcome : failed
 ```
 
-429：
+429:
 
 ```text
 and spanName : model_attempt
 and attributes.zcode.model_attempt.http_status_code : 429
 ```
 
-按 Provider Error 信息排查：
+Provider Error troubleshooting: the failed-Attempt filter above, then aggregate/display
+`attributes.zcode.model_attempt.{provider_origin, provider_route, http_status_code, provider_error_code,
+provider_error_message, error_code, error_message}`. When the Provider returns no structured error body,
+`provider_error_message` can be empty; network/DNS/Timeout errors are usually in Lifecycle
+`error_message`. Show both columns when troubleshooting rather than hiding the source difference with
+`coalesce`.
+
+Version comparison shows at least `resources.service.version`, `resources.zcode.product.version`,
+`resources.zcode.build.commit_id`, `resources.zcode.telemetry.schema_version`. If ARMS does not support
+`>=` on semantic version strings, do not compare `3.10` and `3.9` lexicographically: use an exact version
+set, Build Commit/release-time slicing, or add a numeric version dimension before ingestion and upgrade
+the Schema.
+
+### 9.3 Recommended Dashboards
+
+- Agent overview: Turn count, completed/failed/cancelled/abandoned; P50/P95/P99; Actor Kind, Launch
+  Surface, Runtime Surface; CLI Version, Product Version, Build Commit.
+- Model Call: logical success rate; Attempt/Call amplification; Retry recovery rate; Operation, Model
+  Role, Call Cause; Attempt-per-Call distribution.
+- Model Attempt: Provider Kind, Origin, Model, Transport, API Operation traffic; physical success rate,
+  P50/P95/P99; First Provider Event, TTFC, TTFT; HTTP Status, Provider Error Code, Failure Stage;
+  Input/Output/Reasoning/Cache Read/Cache Write Token; Stream Stall Count and Max Idle.
+- Tool and Command: Tool Name traffic, success rate, duration; Permission Denied, Output Truncated;
+  Command Category/Safe Name, non-zero Exit Code, Timeout, First Output.
+- Telemetry Health: Creation Drop; Abandoned by Span Name/Reason; service data disappeared; there is no
+  dedicated Export Failure/Queue Drop Metric yet and the gap must be marked explicitly.
+
+### 9.4 Formulas
+
+Per-Span traffic is the Count of the matching `*.duration` Histogram (no duplicate Request Counter).
+Default business success rate: `completed / (completed + failed)`. `cancelled`, `denied`, `discarded`,
+`backgrounded` and `abandoned` are shown separately and never silently put into the failure denominator.
 
 ```text
-and spanName : model_attempt
-and attributes.zcode.model_attempt.outcome : failed
+Retry recovery rate =
+  model_call.duration count where retry_state=recovered
+  / model_call.duration count where retry_state in (recovered, not_recovered)
 
-聚合/展示：
-attributes.zcode.model_attempt.provider_origin
-attributes.zcode.model_attempt.provider_route
-attributes.zcode.model_attempt.http_status_code
-attributes.zcode.model_attempt.provider_error_code
-attributes.zcode.model_attempt.provider_error_message
-attributes.zcode.model_attempt.error_code
-attributes.zcode.model_attempt.error_message
-```
+Attempt amplification = sum(zcode.model.call.attempts) / count(zcode.model.call.attempts)
 
-注意：Provider 没有返回结构化错误正文时，`provider_error_message` 可以为空；网络/DNS/Timeout
-等错误通常在 Lifecycle `error_message`。查询排障时两列都展示，而不是用
-`coalesce` 覆盖来源差异。
-
-版本比较至少展示：
-
-```text
-resources.service.version
-resources.zcode.product.version
-resources.zcode.build.commit_id
-resources.zcode.telemetry.schema_version
-```
-
-ARMS 若不支持语义版本字符串的 `>=`，不要按字典序比较 `3.10` 和 `3.9`。使用精确版本集合、
-Build Commit/发布时间切分，或在数据进入前增加数值化版本维度并升级 Schema。
-
-### 9.3 推荐 Dashboard
-
-#### Agent 总览
-
-- Turn 数、完成/失败/取消/Abandoned；
-- P50/P95/P99；
-- Actor Kind、Launch Surface、Runtime Surface；
-- CLI Version、Product Version、Build Commit。
-
-#### Model Call
-
-- 逻辑成功率；
-- Attempt/Call 放大率；
-- Retry 恢复率；
-- Operation、Model Role、Call Cause；
-- 每 Call 的 Attempt 分布。
-
-#### Model Attempt
-
-- Provider Kind、Origin、Model、Transport、API Operation 流量；
-- 物理成功率、P50/P95/P99；
-- First Provider Event、TTFC、TTFT；
-- HTTP Status、Provider Error Code、Failure Stage；
-- Input/Output/Reasoning/Cache Read/Cache Write Token；
-- Stream Stall Count 与 Max Idle。
-
-#### Tool 与 Command
-
-- Tool Name 流量、成功率、耗时；
-- Permission Denied、Output Truncated；
-- Command Category/Safe Name、非零 Exit Code、Timeout、First Output。
-
-#### Telemetry Health
-
-- Creation Drop；
-- Abandoned 按 Span Name/Reason；
-- 服务数据消失；
-- 当前尚无专属 Export Failure/Queue Drop Metric，应明确标注缺口。
-
-### 9.4 统计公式
-
-各 Span 流量取对应 `*.duration` Histogram 的 Count，不再建立重复的 Request Counter。
-
-默认业务成功率：
-
-```text
-completed / (completed + failed)
-```
-
-`cancelled`、`denied`、`discarded`、`backgrounded` 和 `abandoned` 单独展示，不能偷偷塞进失败分母。
-
-Retry 恢复率：
-
-```text
-model_call.duration count where retry_state=recovered
-/
-model_call.duration count where retry_state in (recovered, not_recovered)
-```
-
-Attempt 放大率：
-
-```text
-sum(zcode.model.call.attempts) / count(zcode.model.call.attempts)
-```
-
-Cache 使用原始 Token：
-
-```text
 cache read token ratio =
-sum(token where token_type=cache_read)
-/
-sum(token where token_type in (input, cache_read))
+  sum(token where token_type=cache_read) / sum(token where token_type in (input, cache_read))
 ```
 
-具体 Provider 的 Token 定义可能不同，Dashboard 必须保留 Provider/Model 筛选，不能把所有厂商的
-Cache 语义无说明地合并成一个“命中率”。
+Token definitions differ per Provider, so Dashboards must keep Provider/Model filters and not merge all
+vendors' Cache semantics into one unexplained "hit rate". Accurate traffic, success rate, Token and
+latency percentiles prefer Metrics; Trace is for error messages, Endpoint, ID correlation and sample
+drill-down.
 
-准确流量、成功率、Token 和延迟分位数优先用 Metric；Trace 用于错误消息、Endpoint、ID 关联和
-具体样本下钻。
-
-## 10. 版本与 Schema 演进
+## 10. Versions and Schema evolution
 
 ```text
-service.version                  CLI Telemetry 生产者版本
-zcode.product.version            Desktop/产品版本
-zcode.telemetry.schema_version   数据契约版本
-zcode.build.commit_id            精确构建身份
+service.version                  CLI Telemetry producer version
+zcode.product.version            Desktop/product version
+zcode.telemetry.schema_version   data contract version
+zcode.build.commit_id            exact build identity
 ```
 
-破坏 Attribute Key/类型/单位、Outcome 含义、Parent/Link 拓扑或 Metric 统计分母时升级 Schema
-Version。新增可选字段或兼容 Alias 通常不要求升级，但必须更新字段字典、Golden Test 和大盘。
-
-历史设计和迁移方案只用于追溯，不能作为新报表或实现依据。
+Upgrade Schema Version when breaking an Attribute Key/type/unit, Outcome meaning, Parent/Link topology or
+Metric denominator. Adding an optional field or compatibility Alias usually does not, but the field
+dictionary, Golden Tests and dashboards must be updated. Historical designs and migration plans are for
+traceability only, never a basis for new reports or implementation.

@@ -1,70 +1,41 @@
-# 目录权限收回后仍挂回为可用远程会话
+# Directory Reattached as a Usable Remote Session after Its Permission Was Revoked
 
 Status: done
 
-## 预期
+## Expectation
 
-桌面 SSH 指南的“单个目录失效”要求：目录不存在、变成文件或当前账号无访问权限时，仅该项目
-失败并提示目录不可用；设备与其他项目仍可恢复。不自动重建目录或删除历史。
+The "single directory invalid" requirement of the desktop SSH guide: when a directory does not exist, becomes a file, or the current account has no access, only that project fails with a "directory unavailable" hint; the device and other projects remain recoverable. The directory is not recreated and history is not deleted automatically.
 
-## 当前证据
+## Evidence at the Time
 
-- 业务基线：`a13999a28927f629d0c64080a5096cf8b4f23bae`，服务器构建，独立 Linux SSH 目标。
-- case：`conversation-session-ssh-remote-directory-resilience.test.ts`，`R3_DIRECTORY_FAILURE_CASE=denied`。
-- 批次：`r3-server-20261009170002590-cabde7`，任务 `directory-denied`。
-- 步骤：同设备打开 A/B/C，保存真实 A/B 对话；切回 B，主动断开；将 A 权限改为 `000`；重连 B。
-- 结果：B/C 已恢复，A 的 `remoteSessionId` 仍为非空，未按“目录不可用”保留断开状态。
-  原始断言在验证 A 不可用时失败，未放宽断言。
-- 静态依据：`prepareRemoteWorkspaceIdentity` 只调用远端 `FileService.stat` 并检查类型为 directory。
-  Linux 对目录自身的 stat 成功并不证明当前账号可以遍历或读取其内容，因此该检查无法覆盖叶目录
-  权限被撤销的情况。
+- Business baseline: `a13999a28927f629d0c64080a5096cf8b4f23bae`, server build, independent Linux SSH target.
+- Case: `conversation-session-ssh-remote-directory-resilience.test.ts`, `R3_DIRECTORY_FAILURE_CASE=denied`.
+- Batch: `r3-server-20261009170002590-cabde7`, task `directory-denied`.
+- Steps: open A/B/C on the same device, save real A/B conversations; switch back to B, disconnect manually; change A's permission to `000`; reconnect B.
+- Result: B/C recovered, A's `remoteSessionId` was still non-empty and the disconnected state was not kept as "directory unavailable". The original assertion failed when verifying A unavailable, and was not relaxed.
+- Static basis: `prepareRemoteWorkspaceIdentity` only calls remote `FileService.stat` and checks that the type is directory. On Linux a successful stat of a directory itself does not prove the current account can traverse or read its content, so this check cannot cover a leaf directory whose permission was revoked.
 
-## 运行身份复核（2026-10-10）
+## Runtime Identity Re-check (2026-10-10)
 
-- 批次 `r3-server-20261009221305938-a3e800`，任务 `directory-denied`。
-- `directory-resilience.json` 记录 SSH 用户 UID 为 1000，Core `/proc/<pid>/status` 的 real / effective /
-  saved / filesystem UID 均为 1000；非 root 运行。
-- 同一 SSH 用户对 A 的 `test -r` / `test -x` 为 `INACCESSIBLE`，`ls` 为 `READ_DENIED`。
-- 重连 B 后，A 的 `remoteSessionId` 仍非空，第二个独立目标复跑也得到相同行为。
-  B 保持原激活路径，A 没有以目录不可用状态隔离。实际拒绝与 session 挂回的记录在同一
-  case 的 artifact 中，排除了测试账号特权造成的误判。
+- Batch `r3-server-20261009221305938-a3e800`, task `directory-denied`.
+- `directory-resilience.json` records the SSH user UID as 1000, and the Core `/proc/<pid>/status` real / effective / saved / filesystem UID are all 1000; running as non-root.
+- The same SSH user gets `INACCESSIBLE` from `test -r` / `test -x` on A and `READ_DENIED` from `ls`.
+- After reconnecting B, A's `remoteSessionId` was still non-empty, and a second independent target re-run gave the same behavior. B kept its original active path, and A was not isolated as directory unavailable. The actual denial and the session reattach are recorded in the artifact of the same case, ruling out a misjudgment due to test-account privileges.
 
-## 原回归轮次的待处理项
+## Root-Cause Fix (2026-10-10)
 
-业务修复需检查目录可访问性与恢复门禁的关系，不能仅以目录自身 `stat` 成功认定可用。
-本任务不修改业务。失败断言保持原样，后续可用相同独立故障 case 复验。
+The sections above keep the evidence of the original regression batch. The fix is based on `5516284630ccff3552f37466266de270af661188`, whose related business code equals the original test baseline.
 
-本轮按要求只记录，未修改业务逻辑。权限恢复已由 case 的 finally 完成；所有故障均发生在
-该 case 的独立目标中。
+The Host's `prepareRemoteWorkspaceIdentity` now uses the existing remote `FileService.readdir` to read `directory/.`. Readable directory metadata does not mean accessible directory content; the trailing `/.` also requires the target directory to be traversable, so an empty directory with read-only permission `0400` is not let through by an ordinary `readdir(directory)`. The identity is bound only if the check succeeds, and the check path does not change the original project identity. The error keeps mapping to the original directory-unavailable error and fails only that project; no RPC is added, no Server update is required, and the directory need not be writable.
 
-## 根因修复（2026-10-10）
+Regression covers manual/automatic recovery under real `000`, `0400`, `0100` permissions, isolation of other projects on the same device, retry after restoring permission, and a `0500` directory that can be read and traversed but not written. Before the fix 6 permission-recovery assertions failed; after the fix the targeted unit tests (32) pass, including protection for the real File RPC and late results after cancel.
 
-上述段落保留原回归批次的证据。修复基于 `5516284630ccff3552f37466266de270af661188`，
-该版本的相关业务代码与原测试基线相同。
+Final verification:
 
-Host 的 `prepareRemoteWorkspaceIdentity` 改用已有远端 `FileService.readdir` 读取 `目录/.`。
-目录元信息可读不代表目录内容可访问；末尾 `/.` 同时要求目标目录可遍历，避免只读权限
-`0400` 的空目录被普通 `readdir(目录)` 放行。检查成功才绑定身份，检查路径不改变原项目身份。
-错误继续映射为原目录不可用错误，只使该项目失败；不新增 RPC、不要求更新 Server、不要求目录可写。
+- `pnpm test:unit:affected --base 5516284630ccff3552f37466266de270af661188`: 405 Vitest files, 4911 cases and 28 Node audit cases pass.
+- Root type check, E2E type check, lint, architecture check, fixture check and changed-file format check pass; lint keeps 81 pre-existing warnings.
+- macOS Electron → independent Linux SSH container, `R3_DIRECTORY_FAILURE_CASE=denied`: `desktop-e2e-20261010-directory-fix-denied-serial` passes 1/1. Non-root UID 1000 really cannot read/traverse A; A is kept and its session is empty, B/C get new sessions; the directory-unavailable hint, in-place retry after restoring permission, original-task continued chat and sentinel retention all pass. `directory-resilience.json`, screenshots, run log and source/build digests are kept under that run's `.e2e-artifacts`.
+- The previous round `desktop-e2e-20261010-directory-fix-denied`, run in parallel with the affected unit tests, timed out waiting for Server ready at first install and had not entered the permission fault; the log also recorded a local `ps` start timeout. The failure evidence is kept; after the unit tests ended it was re-run alone with the same fix build, a new HOME and a new SSH target and passed, and the first round is neither recorded as a pass nor deleted.
+- The first round's build is recorded as `fresh-stable`; the single re-run reused the build, with the raw record `unverified-reused-build`. It was additionally cross-checked that all 5286 artifact digests of the two rounds are identical and the source digests of the modules admitted in the first round match the current fix files; the result is saved as `source-reuse-verification.json` of the re-run artifact, and the original build status was not rewritten.
 
-回归覆盖真实 `000`、`0400`、`0100` 权限下的手动/自动恢复、同设备其他项目隔离、恢复权限后重试，
-以及可读取和遍历但不可写的 `0500` 目录。修复前 6 项权限恢复断言失败；修复后定向单测 32 项通过，
-包含真实 File RPC 与取消后迟到结果的保护。
-
-最终验证：
-
-- `pnpm test:unit:affected --base 5516284630ccff3552f37466266de270af661188`：405 个 Vitest 文件、4911 项用例及 28 项 Node 审计通过。
-- 根类型检查、E2E 类型检查、lint、架构检查、fixture 检查和改动文件格式检查通过；lint 保留 81 条既有警告。
-- macOS Electron → 独立 Linux SSH 容器，`R3_DIRECTORY_FAILURE_CASE=denied`：
-  `desktop-e2e-20261010-directory-fix-denied-serial` 1/1 通过。非 root UID 1000 实际无法读取/遍历 A；
-  A 保留且 session 为空，B/C 获得新 session；目录不可用提示、恢复权限后原地重试、原任务续聊与哨兵保留均通过。
-  `directory-resilience.json`、截图、运行日志和源码/构建摘要保存在该 run 的 `.e2e-artifacts` 下。
-- 前一轮 `desktop-e2e-20261010-directory-fix-denied` 在与受影响单测并行时，首装等待 Server ready 超时，
-  尚未进入权限故障；日志同时记录本机 `ps` 启动超时。保留失败证据，待单测结束后使用同一修复构建、
-  新 HOME 和新 SSH 目标单独复跑通过，不将首轮记为通过或删掉。
-- 首轮构建记录为 `fresh-stable`；单独复跑沿用构建，原始记录为 `unverified-reused-build`。
-  已额外交叉核验两轮全部 5286 个产物摘要一致，且首轮准入模块的源码摘要与当前修复文件一致；
-  校验结果保存为复跑 artifact 的 `source-reuse-verification.json`，未改写原始构建状态。
-
-本轮完整 E2E 只复跑失败的权限变体；删除/变文件由原完整 E2E 记录和本轮真实文件系统/RPC 单测对照。
-未重新验证原生 Windows、手机 relay 整链路或 Linux 桌面宿主；未做人工转正或 CI 准入。
+This round re-ran only the failing permission variant of the full E2E; delete / become-file are compared with the original full E2E record and this round's real file system / RPC unit tests. Native Windows, the whole mobile relay chain and a Linux desktop host were not re-verified; no manual promotion or CI admission was done.

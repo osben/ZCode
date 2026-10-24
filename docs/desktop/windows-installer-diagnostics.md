@@ -1,74 +1,112 @@
-# Windows 安装器诊断规范
+# Windows installer diagnostics spec
 
-## 目标
+## Goal
 
-对本版本之后生成的 managed 更新，用户能在安装器详情和文件日志中看到可定位的阶段与进程，且静默更新仍记录同一组阶段事件。安装器使用 `.zcode-install-manifest` 判断上一版本卸载器能力，而不是依赖数字版本号：缺失 manifest 时按旧卸载器的全量删除风险处理，存在 manifest 时按新卸载器的选择性清理处理。
+For managed updates generated after this version, users can see locatable phases and processes in the installer
+details and the file log, and a silent update still records the same set of phase events. The installer uses
+`.zcode-install-manifest` to judge the previous version uninstaller's capability instead of relying on a numeric
+version: a missing manifest is treated as the full-delete risk of the old uninstaller, and a present manifest as
+the selective cleanup of the new uninstaller.
 
-## 阶段事件
+## Phase events
 
-安装器启动后按顺序记录：
+After the installer starts, record in order:
 
-1. `installer-process-started`：记录安装器进程 PID 与角色（`outer` 或 `elevated-inner`）。
-2. `installer-initialized`：记录安装模式（`interactive` 或 `silent`）。
-3. `install-started`：进入 electron-builder 安装段。
-4. `cleanup-started` / `cleanup-completed`：调用上一版本卸载器并处理其返回结果。
-5. `extract-started` / `extract-completed`：开始/完成应用文件解压；两者之间的 NSIS `File` 条目会逐项显示在详情区。
-6. `shortcuts-started` / `shortcuts-completed`：处理开始菜单和桌面快捷方式。
-7. `install-finalization-started`：进入项目自定义收尾（快捷方式失效目标修复、启动目标设置）。
-8. `install-completed`：安装段成功返回。
+1. `installer-process-started`: records the installer process PID and role (`outer` or `elevated-inner`).
+2. `installer-initialized`: records the install mode (`interactive` or `silent`).
+3. `install-started`: entering the electron-builder install section.
+4. `cleanup-started` / `cleanup-completed`: calling the previous version's uninstaller and handling its result.
+5. `extract-started` / `extract-completed`: start/finish of app file extraction; the NSIS `File` entries between
+   them show one by one in the details area.
+6. `shortcuts-started` / `shortcuts-completed`: handling Start menu and desktop shortcuts.
+7. `install-finalization-started`: entering the project's custom finalization (repair of invalid shortcut
+   targets, setting the launch target).
+8. `install-completed`: the install section returned successfully.
 
 ```text
 NSIS .onInit
    │
-   ├─ 初始化日志路径并写入 installer-process-started(pid)
-   └─ 判断静默/交互模式并写入 installer-initialized
+   ├─ initialize log path and write installer-process-started(pid)
+   └─ decide silent/interactive mode and write installer-initialized
           │
           └─ install-started
                   ├─ cleanup-started → cleanup-completed
-                  ├─ extract-started → File 条目 → extract-completed
+                  ├─ extract-started → File entries → extract-completed
                   ├─ shortcuts-started → shortcuts-completed
-                  └─ customInstall：install-finalization-started → install-completed
+                  └─ customInstall: install-finalization-started → install-completed
 ```
 
-交互式安装器始终显示 NSIS Details 区域，并在安装段开始时把 electron-builder 默认的 `SetDetailsPrint none` 改为 `listonly`。因此解压期间的每个 NSIS `File` 条目会持续出现在详情区；阶段事件同时写入详情区和日志文件。进程启动和初始化事件发生在 `.onInit`，详情控件尚未创建时不承诺回填到页面，只以文件日志为准。
+The interactive installer always shows the NSIS Details area and, at the start of the install section, changes
+electron-builder's default `SetDetailsPrint none` to `listonly`, so every NSIS `File` entry keeps appearing in
+the details area during extraction; phase events are written both to the details area and the log file. The
+process-start and initialization events occur in `.onInit` when the details control does not exist yet, so they
+are not promised to be back-filled into the page and the file log is authoritative for them.
 
-旧卸载器由 electron-builder 作为独立进程运行，外层详情区先显示 cleanup 开始/完成，进程返回后再回放本次卸载器日志中的逐条记录；原始日志仍保留在 `%TEMP%\\ZCode-uninstaller.log`，用于核对实际尝试删除了哪些文件。历史版本卸载器仍可能只显示原生重试文案。
+The old uninstaller runs as a separate process under electron-builder; the outer details area first shows
+cleanup start/completion, then after the process returns replays the per-item records of this uninstaller run's
+log; the raw log stays in `%TEMP%\ZCode-uninstaller.log` to check which files were actually attempted for
+deletion. Historical-version uninstallers may still show only the native retry copy.
 
-## 日志路径与安全边界
+## Log path and safety boundary
 
-- 默认日志：`%TEMP%\ZCode-installer.log`。
-- 外层安装器可通过 `/LOG=<path>` 指定路径，便于支持人员收集日志。
-- UAC 提权内层不接受继承的 `/LOG` 路径，直接尝试写入 `%WINDIR%\Logs\ZCode-installer.log`，避免低权限调用方控制高权限文件路径。当前不承诺把外层 `%TEMP%` 日志复制到 Windir。
-- 每条日志包含 `pid=<十进制 PID>`；日志写入失败只影响诊断，不得阻止安装流程。
-- 正式安装器的内层判据必须接入 electron-builder 使用的 `UAC_IsInnerInstance`；不能默认写成恒假，只在 smoke fixture 中强制模拟内层。测试替换只允许隔离夹具显式定义，正式默认行为必须使用真实 UAC 状态。
+- Default log: `%TEMP%\ZCode-installer.log`.
+- The outer installer can specify a path via `/LOG=<path>`, convenient for support staff to collect logs.
+- The UAC-elevated inner process does not accept an inherited `/LOG` path and directly tries to write
+  `%WINDIR%\Logs\ZCode-installer.log`, so a low-privilege caller cannot control a high-privilege file path.
+  Copying the outer `%TEMP%` log into Windir is not currently promised.
+- Each log line contains `pid=<decimal PID>`; a log write failure only affects diagnostics and must not stop the
+  install flow.
+- The inner-instance criterion of the formal installer must be wired to the `UAC_IsInnerInstance` used by
+  electron-builder; it must not default to constant false, and only the smoke fixture forces a simulated inner
+  instance. A test replacement is allowed only when the isolated fixture defines it explicitly; the formal
+  default behavior must use the real UAC state.
 
-## 卸载器能力判断
+## Uninstaller capability judgment
 
-- 安装器在调用旧卸载器前检查旧 `$INSTDIR\\.zcode-install-manifest`。
-- manifest 存在：上一版本卸载器支持 ownership cleanup，跳过 `.zcode` 目录保护扫描。
-- manifest 缺失：上一版本可能是旧的全量删除卸载器，先扫描安装目录及子目录；发现 `.zcode` 时阻止继续安装。
-- manifest 缺失不等同于某个精确数字版本，可能是历史版本、手动删除清单或安装损坏；统一采用保守路径。
+- Before calling the old uninstaller the installer checks the old `$INSTDIR\.zcode-install-manifest`.
+- manifest present: the previous version's uninstaller supports ownership cleanup, and the `.zcode` directory
+  protection scan is skipped.
+- manifest missing: the previous version may be an old full-delete uninstaller, so scan the install directory
+  and subdirectories first; if `.zcode` is found, block the install.
+- A missing manifest is not equal to one exact numeric version; it may be a historical version, a manually
+  deleted manifest or a damaged install, all taking the conservative path.
 
-## 兼容边界
+## Compatibility boundary
 
-- 只有上一版本已经携带 `.zcode-install-manifest` 时，ownership cleanup 和 `cleanup-failed` 分类才属于本规范的强保证；缺失 manifest 的路径采用旧卸载器兼容和 `.zcode` 保护。
-- 从没有 manifest 的历史版本升级时，允许 electron-builder 原生卸载器重试和原生错误文案；本轮不接管其备份、恢复或全树清理。
-- 交互式 managed 更新若旧卸载器返回非零，可能先显示 electron-builder 的 `appCannotBeClosed` 重试提示，用户取消后再显示本项目的清理错误；静默更新以退出码和日志为准。
-- 清理失败提示使用 `/SD IDOK`：交互模式显示错误框，静默模式自动采用默认确认并返回退出码 `2`，不会等待用户操作。
+- The ownership cleanup and `cleanup-failed` classification are strong guarantees of this spec only when the
+  previous version already carries `.zcode-install-manifest`; the missing-manifest path uses old-uninstaller
+  compatibility and the `.zcode` protection.
+- When upgrading from a historical version without a manifest, electron-builder's native uninstaller retry and
+  native error copy are allowed; this round does not take over its backup, restore or full-tree cleanup.
+- In an interactive managed update, if the old uninstaller returns non-zero, electron-builder's
+  `appCannotBeClosed` retry prompt may show first, and after the user cancels this project's cleanup error
+  shows; a silent update relies on the exit code and the log.
+- The cleanup-failure prompt uses `/SD IDOK`: the interactive mode shows an error box, and the silent mode
+  automatically takes the default confirmation and returns exit code `2`, without waiting for the user.
 
-## 当前未覆盖的诊断
+## Diagnostics not currently covered
 
-- 目录保护扫描的 reparse point/junction 拒绝、访问预算、循环检测和 `.zcode-dev` 识别。
-- electron-builder 解压阶段每个 Copy/Extract 的 Win32 错误码（阶段和文件条目已覆盖）。
+- Rejection of reparse points/junctions by the directory-protection scan, the access budget, loop detection and
+  `.zcode-dev` recognition.
+- The Win32 error code of each Copy/Extract in the electron-builder extraction phase (phases and file entries
+  are covered).
 
-## 静默安装
+## Silent install
 
-静默模式没有可见页面，仍必须在 `.onInit` 记录 `installer-initialized mode=silent`，并在安装段记录开始与完成事件。后续错误分类可据此关联安装器进程和阶段。
+The silent mode has no visible page, but must still record `installer-initialized mode=silent` in `.onInit` and
+record the start and completion events in the install section. Later error classification can correlate the
+installer process and phase through them.
 
-## 验收
+## Acceptance
 
-- 编译顺序：`installer.nsh` 加载时只声明依赖扩展插件的日志初始化宏；electron-builder 注册插件目录后，由 `customHeader` 展开函数，`.onInit` 的 `preInit` 仍调用同一函数。不得依赖异步生成 header 时 `!addplugindir` 与自定义 include 的完成顺序。
-- 编译回归必须在自定义 include 之后注册 NSIS 扩展插件目录，使用真实 `UAC_IsInnerInstance`，同时覆盖安装器与卸载器；普通 smoke 不再把外层判断替换为恒假，只有提权内层隔离场景保留显式模拟。
-- Windows NSIS smoke fixture 能编译并运行交互/静默安装。
-- 日志包含上述阶段且 PID 为正整数；`/LOG` 覆盖默认路径。
-- 提权内层测试证明调用方提供的日志路径不会被修改。
+- Compile order: when `installer.nsh` loads it only declares the log initialization macro that depends on the
+  extension plugin; after electron-builder registers the plugin directory, `customHeader` expands the function,
+  and the `preInit` of `.onInit` still calls the same function. It must not rely on the completion order of
+  `!addplugindir` and the custom include when the header is generated asynchronously.
+- The compile regression must register the NSIS extension plugin directory after the custom include, use the
+  real `UAC_IsInnerInstance`, and cover both installer and uninstaller; the ordinary smoke no longer replaces the
+  outer judgment with constant false, and only the elevated-inner isolation scenario keeps an explicit
+  simulation.
+- The Windows NSIS smoke fixture can compile and run interactive/silent installs.
+- The log contains the above phases with a positive-integer PID; `/LOG` overrides the default path.
+- The elevated-inner test proves a caller-supplied log path is not modified.

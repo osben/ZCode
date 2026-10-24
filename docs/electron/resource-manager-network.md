@@ -36,7 +36,7 @@ Host connects only to the local CLI registry already present in this process; a 
 
 Code-scan entry points: ResourceManagerApp, openResourceManager, registerHostProcess, ZCodeAgentProcessManager, createMcpTransportFetch, and ZCodeProtocolNdjsonConnection. Follow direct callers through to Host/CLI; do not expand the review to every statically reachable feature. Desktop is not currently a managed module under architecture-policy, so passing the architecture gate does not replace runtime evidence.
 
-Add network aliases, node entry points, and window-lifecycle invariants to the feature graph. No product scope remains pending decision; the user explicitly pruned bodies, remote traffic, and raw sockets, while theme/platform coverage uses representative cases.
+The feature graph carries the network aliases, node entry points and window-lifecycle invariants. Bodies, remote traffic and raw sockets are explicitly out of scope; theme/platform coverage uses representative cases.
 
 ## Acceptance Cases and Evidence
 
@@ -50,13 +50,11 @@ Add network aliases, node entry points, and window-lifecycle invariants to the f
 | NET-06 | High event volume, clear, switch tabs | Bounded memory; clear works; Network tab does not poll CPU; light/dark themes and English/Chinese work | Unit tests + desktop E2E |
 | NET-07 | Another onBeforeRequest observer is active while network collection is toggled | Existing observer remains; listener failure does not block requests | Dispatcher regression (run security-check diagnostic regression separately in official build) |
 
-Write the regressions above before implementation; desktop E2E uses a local HTTP service and does not depend on a real model or the public internet. Before release, run root typecheck/lint, CLI typecheck/lint, affected unit tests, and Resource Manager E2E; accurately list any unrun cross-OS checks in the commit description.
+Desktop E2E uses a local HTTP service and does not depend on a real model or the public internet. Before release, run root typecheck/lint, CLI typecheck/lint, affected unit tests, and Resource Manager E2E; list any unrun cross-OS checks in the commit description.
 
-## Implementation Verification (2026-09-28)
+## Known Limitations
 
-- macOS arm64, Node 24.14.0, Electron 41.0.3: 13 affected root unit-test files / 95 cases passed; 4 CLI files / 45 cases passed.
-- Verified Host CONNECT, CLI forward proxy, and noProxy against a real local upstream/proxy; original responses/routes were unchanged and CONNECT was not recorded twice. MCP direct and proxy requests were both absent from the list. SSE, native WebSocket, and ws-library handshakes each produced only one metadata entry.
-- Desktop E2E passed: actual Main/Renderer requests, external-session exclusion, cross-tab collection, filtering, clearing, and reopening without history; dark English/light Chinese screenshots were manually inspected. Run record: `desktop-e2e-20260928-030204-914`, executed after rebuilding the App/CLI from current source.
-- `pnpm typecheck`, root `pnpm lint`, CLI `typecheck`, and `architecture:check --changed` passed. New feature-graph seeds parse and no dangling edges were added (the original graph already had 4).
-- Standalone CLI `lint` still reports existing `max-lines` violations, including large debug, contracts, adapters, and bootstrap files not exempted in the standalone subproject configuration; root lint has no new errors from this change. An additional check found existing rootDir/type errors in desktop `tsconfig.main.json`; the network module had no errors.
-- Windows/Linux hardware testing and enterprise proxy custom-CA integration were not performed; existing proxy/CA implementation was reused and existing policy unit tests passed. Existing SSE/WS connections are not backfilled; diagnostics may be dropped under stdio backpressure, and the business protocol is not throttled.
+- Existing SSE/WS connections are not backfilled.
+- Diagnostic batches may be dropped under stdio backpressure; the business protocol is never throttled.
+- Windows/Linux hardware and enterprise proxy custom-CA integration are not covered by tests; the existing proxy/CA implementation is reused.
+- Desktop `tsconfig.main.json` has pre-existing rootDir/type errors unrelated to the network module; the standalone CLI `lint` reports pre-existing `max-lines` violations in large debug, contracts, adapters and bootstrap files.

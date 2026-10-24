@@ -1,25 +1,23 @@
 # Git Worktree List/Create/Remove Primitive Design
 
-Updated: 2026-10-13
-
 ## Document Positioning
 
-This document extends [Git architecture](./architecture.md) and the [Git service foundation summary](./service-foundation.md) with four low-level operations:
+Extends [Git architecture](./architecture.md) and the [Git service foundation summary](./service-foundation.md) with four low-level operations:
 
-- `listWorktrees`：List current repository's all worktrees（main worktree + linked worktrees）
-- `createWorktree`：在指定 directory based on benchmark branch create new branch's linked worktree
-- `removeWorktree`: Remove one linked worktree of the repository（added 2026-10-13）
-- `pruneWorktrees`: Prune stale administrative records pointing at removed directories（added 2026-10-13）
+- `listWorktrees`: list all worktrees of the current repository (main worktree + linked worktrees).
+- `createWorktree`: create a linked worktree with a new branch at a given directory from a base branch.
+- `removeWorktree`: remove one linked worktree of the repository.
+- `pruneWorktrees`: prune stale administrative records pointing at removed directories.
 
-上层产品 background 见 `docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md`。本文只定义 Git underlying contract，不 expand Command Center / composer UI 细节。
+Product background: `docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md`. This document defines only the underlying Git contract, not Command Center / composer UI details.
 
 ## Boundaries and Invariants
 
-- Worktree operations are regular Git business capabilities, follow `UI -> IGitService (RPC) -> GitService -> GitCliRepo -> Git CLI` chain；UI永远 not directly call Git CLI or Repo。
-- Command execution position follows workspace environment的 Host（本地 / 远端 / Web 一致）；浏览器 path not视为本地 path。
-- Input/output 中的 path 均为 absolute path；`workspacePath` 是定位 repository 的入口，worktree 目录本身可以成为新的 workspace 并走 existing 打开/去重流程。
-- Excluded from this stage：branch deletion, sparse checkout, reusable worktree pools, remote path-template policy. Target path computation (Worktree location settings) belongs to the layer above； the service receives only the final absolute path。
-- `removeWorktree` makes no product-level "is this the current workspace / does it have open tabs" decision — that guard belongs to the UI layer； the service enforces Git semantics only (main worktree refusal, dirty check, locked check)。
+- Worktree operations are regular Git business capabilities on the chain `UI -> IGitService (RPC) -> GitService -> GitCliRepo -> Git CLI`; UI never calls the Git CLI or Repo directly.
+- Command execution position follows the Host of the workspace environment (local / remote / Web alike); a browser path is not treated as a local path.
+- All input/output paths are absolute. `workspacePath` locates the repository; a worktree directory itself may become a new workspace through the existing open/dedupe flow.
+- Excluded from this stage: branch deletion, sparse checkout, reusable worktree pools, remote path-template policy. Target path computation (Worktree location settings) belongs to the layer above; the service receives only the final absolute path.
+- `removeWorktree` makes no product-level decision such as "is this the current workspace / does it have open tabs"; that guard belongs to the UI layer. The service enforces Git semantics only (main worktree refusal, dirty check, locked check).
 
 ## listWorktrees
 
@@ -37,7 +35,7 @@ interface GitRepositoryRequest {
 git worktree list --porcelain -z
 ```
 
-在 `resolveRepository` 得到的 `repoRoot` 下执行，沿用默认 command timeout 与 output upper limit。
+Runs in the `repoRoot` from `resolveRepository`, with the default command timeout and output limit.
 
 ### Output
 
@@ -49,26 +47,26 @@ interface GitWorktreeListResult {
 }
 
 interface GitWorktreeEntry {
-  path: string; // absolute path，来自 porcelain 的 worktree 行
+  path: string; // absolute path, from the porcelain worktree line
   headCommitHash: string | null;
-  branchName: string | null; // refs/heads/<name> 的 short name；detached / bare 为 null
-  isMain: boolean; // main worktree（porcelain 首个 entry）
+  branchName: string | null; // short name of refs/heads/<name>; null for detached / bare
+  isMain: boolean; // main worktree (first porcelain entry)
   isBare: boolean;
   isDetached: boolean;
-  isCurrent: boolean; // entry.path === 当前 workspace 所在 worktree 的 repoRoot
+  isCurrent: boolean; // entry.path === repoRoot of the worktree that contains the current workspace
 }
 ```
 
 ### Parsing Rules
 
-- NUL 分隔 attributes record；record 以 `worktree` / `HEAD` / `branch` / `bare` / `detached` 开头；`locked` / `prunable` 带 optional cause parameter，本 stage ignores。path field 按 byte boundary reading，不做 C-quote decode or blank裁剪。
-- bare 条目没有 `HEAD` / `branch` 行，`headCommitHash` 与 `branchName` 置 null。
-- `isMain` 取首个条目（Git document guarantee main worktree 列在最前）。
-- `isCurrent` 通过与 `git rev-parse --show-toplevel` 结果 comparison得出；两个 path 都来自 Git 自身 output，规范化 slash 后直接 comparison。
+- NUL-separated attribute records; a record starts with `worktree` / `HEAD` / `branch` / `bare` / `detached`. `locked` / `prunable` carry an optional cause parameter, ignored at this stage. The path field is read on byte boundaries, with no C-quote decoding or whitespace trimming.
+- A bare entry has no `HEAD` / `branch` line; `headCommitHash` and `branchName` are null.
+- `isMain` is the first entry (Git documents that the main worktree is listed first).
+- `isCurrent` compares against the result of `git rev-parse --show-toplevel`; both paths come from Git's own output, so after slash normalization they compare directly.
 
 ### Non-Repository Behavior
 
-`isGitAvailable=false` 或 `isRepository=false` 时返回 structure 化空 result（`worktrees: []`），不 throw exception，与 `listLocalBranches` 的 degradation way 一致。
+When `isGitAvailable=false` or `isRepository=false`, a structured empty result (`worktrees: []`) is returned without throwing, the same degradation as `listLocalBranches`.
 
 ## createWorktree
 
@@ -76,57 +74,57 @@ interface GitWorktreeEntry {
 
 ```ts
 interface GitCreateWorktreeRequest extends GitRepositoryRequest {
-  branchName: string; // 在新 worktree 中创建/检出的 branch
-  baseBranch?: string; // 新 branch 的起点；缺省 HEAD。Only when branch 不存在时 use
-  targetPath: string; // New worktree 的 absolute directory path；must 不存在
+  branchName: string; // branch created/checked out in the new worktree
+  baseBranch?: string; // start point of the new branch; default HEAD. Used only when the branch does not exist
+  targetPath: string; // absolute directory path of the new worktree; must not exist
 }
 ```
 
 ### Command
 
-- Branch 不存在（`git show-ref --verify --quiet refs/heads/<branchName>` detection）：
-  - 有 base：`git worktree add -b <branchName> -- <targetPath> <baseBranch>`
-  - 无 base：`git worktree add -b <branchName> -- <targetPath>`
-- Branch 已经存在：`git worktree add -- <targetPath> <branchName>`（直接 checkout 已有 branch；此时 `baseBranch` 被 ignore）。This path使「branch 被 other worktree 占用」能被 Git 原生 error capture 并 classify。
+- Branch does not exist (detected with `git show-ref --verify --quiet refs/heads/<branchName>`):
+  - With base: `git worktree add -b <branchName> -- <targetPath> <baseBranch>`
+  - Without base: `git worktree add -b <branchName> -- <targetPath>`
+- Branch already exists: `git worktree add -- <targetPath> <branchName>` (checks out the existing branch; `baseBranch` is ignored). This path lets Git's native error report "branch used by another worktree" and be classified.
 
-`--` used to terminate option parsing，prevent external input 以 `-` 开头被 parse 为 option。
+`--` ends option parsing so external input starting with `-` is not parsed as an option.
 
 ### Output
 
 ```ts
 interface GitWorktreeCreateResult {
   ok: boolean;
-  worktreePath: string | null; // success 时为 targetPath
+  worktreePath: string | null; // targetPath on success
   branchName: string | null;
   issues: GitWorktreeMutationIssue[];
 }
 ```
 
-failure 不 throw exception（timeout / output over limit 等 infrastructure error除外），统一返回 structure issue，供 composer 在 field 旁展示。
+Failures do not throw (except infrastructure errors such as timeout / output over limit); structured issues are returned for the composer to show beside the field.
 
 ### Error Classification
 
-| code                       | Trigger condition                                                                                                             |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `git-unavailable`          | Environment 中找不到可用的 Git binary                                                                                         |
-| `not-a-repository`         | workspace 不在 Git repository 内                                                                                              |
-| `invalid-branch-name`      | Branch name empty or not passed `git check-ref-format --branch`（reuse branch switching verification）                        |
-| `target-path-invalid`      | targetPath empty or not absolute path                                                                                         |
-| `target-path-exists`       | targetPath 已存在。note：Git allows 在已存在的空 directory 创建 worktree，确定性拒绝由 service 层前置 check 保证              |
-| `branch-already-exists`    | stderr 含 `a branch named ... already exists`（concurrent create same name branch 等）                                        |
-| `branch-in-other-worktree` | stderr 含 `is already used by worktree at`（reuse existing classification wording；含 branch 被 main worktree occupy 的情况） |
-| `target-branch-not-found`  | stderr 含 `invalid reference:`（baseBranch 不存在）                                                                           |
-| `unknown`                  | 其它 Git 失败                                                                                                                 |
+| code                       | Trigger condition                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git-unavailable`          | No usable Git binary in the environment                                                                                                              |
+| `not-a-repository`         | Workspace is not inside a Git repository                                                                                                             |
+| `invalid-branch-name`      | Branch name empty or fails `git check-ref-format --branch` (reuses branch switching validation)                                                      |
+| `target-path-invalid`      | targetPath empty or not absolute                                                                                                                     |
+| `target-path-exists`       | targetPath already exists. Git allows creating a worktree in an existing empty directory; the deterministic refusal comes from the service pre-check |
+| `branch-already-exists`    | stderr contains `a branch named ... already exists` (for example a concurrent creator of the same branch)                                            |
+| `branch-in-other-worktree` | stderr contains `is already used by worktree at` (reuses the existing classification wording; includes a branch occupied by the main worktree)       |
+| `target-branch-not-found`  | stderr contains `invalid reference:` (baseBranch does not exist)                                                                                     |
+| `unknown`                  | Any other Git failure                                                                                                                                |
 
-`invalid-branch-name` / `branch-already-exists` / `target-branch-not-found` / `branch-in-other-worktree` / `unknown` 与 `GitBranchMutationIssueCode` 复用同一字面量；worktree 新增 `target-path-*` / `not-a-repository` / `git-unavailable`。
+`invalid-branch-name` / `branch-already-exists` / `target-branch-not-found` / `branch-in-other-worktree` / `unknown` share literals with `GitBranchMutationIssueCode`; worktree adds `target-path-*` / `not-a-repository` / `git-unavailable`.
 
 ### Invariants
 
-- 前置 check 顺序：repository available → branch name → targetPath non-empty absolute → branch name format → targetPath 不存在 → 探测 branch 存在性 → execute command。
-- 命令 failure 时 stderr 经过 classifier mapping；timeout / output over limit 走 `ensureGitCommandSucceeded` throw exception，不吞并为 `unknown`。
-- Git 在 mkdir 之前创建 branch ref，因此 `worktree add -b` 可能在 directory 创建失败（如 EACCES）后留下半成品 branch。Rollback 规则：本次调用前 branch 不存在（`branchAlreadyExists=false`）、命令失败后 branch 已存在、且 classifier 结果不含 `branch-already-exists`（排除并发创建者的 branch）时，且 branch tip 仍等于本次调用的起点（`baseBranch` 或 `HEAD`，说明没有其他创建者在其上提交）时，执行 compare-and-delete：`git update-ref -d refs/heads/<branchName> <observedTip>`（不使用 `branch -d`，因为 branch 不要求已合并；tip 已移动则保留 branch 并记录 warn）。
-- Rollback 自身失败（包括探测或 `update-ref -d` 抛出的 infrastructure error）只记录 warn，不覆盖原始失败的 `issues`，也不改变返回值。
-- 本次调用前 branch 已存在时（直接 checkout 已有 branch）不回滚，即使命令失败。
+- Pre-check order: repository available → branch name → targetPath non-empty absolute → branch name format → targetPath does not exist → probe branch existence → run command.
+- On command failure stderr goes through the classifier; timeout / output over limit throw through `ensureGitCommandSucceeded` and are not swallowed into `unknown`.
+- Git creates the branch ref before mkdir, so `worktree add -b` may leave a half-made branch after directory creation fails (for example EACCES). Rollback rule: when the branch did not exist before the call (`branchAlreadyExists=false`), the branch exists after the command fails, the classifier result does not contain `branch-already-exists` (excluding a concurrent creator's branch), and the branch tip still equals this call's start point (`baseBranch` or `HEAD`, meaning nobody committed on it), run compare-and-delete: `git update-ref -d refs/heads/<branchName> <observedTip>` (not `branch -d`, since the branch need not be merged; if the tip has moved, keep the branch and log `warn`).
+- A rollback failure (including an infrastructure error from the probe or `update-ref -d`) only logs `warn`; it does not overwrite the original failure's `issues` or change the return value.
+- When the branch already existed before the call (checking out an existing branch), no rollback happens even if the command fails.
 
 ## removeWorktree
 
@@ -148,7 +146,7 @@ git worktree remove -- <targetPath>          # force unset/false
 git worktree remove -f -f -- <targetPath>    # force true
 ```
 
-Executed in the `repoRoot` produced by `resolveRepository`。`--` ends option parsing。
+Runs in the `repoRoot` from `resolveRepository`. `--` ends option parsing.
 
 ### Output
 
@@ -159,22 +157,22 @@ interface GitWorktreeRemoveResult {
 }
 ```
 
-Failures do not throw（except infrastructure errors）；they return structured issues。
+Failures do not throw (except infrastructure errors); structured issues are returned.
 
 ### Error classification (new literals)
 
-| code                 | Trigger condition                                                                                                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `worktree-not-found` | No linked entry with `entry.path === targetPath` in the pre-checked `listWorktrees` (porcelain)；also covers the main worktree（identified by `isMain`，refused the same way） |
-| `worktree-dirty`     | stderr contains `contains modified or untracked files`（dirty refusal without force）                                                                                          |
-| `worktree-locked`    | stderr contains `is locked`（locked/prunable reasons were ignored before, but remove is still refused by Git）                                                                 |
-| everything else      | Reuses the existing `GitWorktreeMutationIssueCode`（`git-unavailable` / `not-a-repository` / `target-path-invalid` / `unknown`）                                               |
+| code                 | Trigger condition                                                                                                                                                             |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `worktree-not-found` | No linked entry with `entry.path === targetPath` in the pre-checked `listWorktrees` (porcelain); also covers the main worktree (identified by `isMain`, refused the same way) |
+| `worktree-dirty`     | stderr contains `contains modified or untracked files` (dirty refusal without force)                                                                                          |
+| `worktree-locked`    | stderr contains `is locked` (locked/prunable reasons are ignored by listing, but remove is still refused by Git)                                                              |
+| everything else      | Reuses the existing `GitWorktreeMutationIssueCode` (`git-unavailable` / `not-a-repository` / `target-path-invalid` / `unknown`)                                               |
 
 ### Invariants
 
-- Validation order: repository available → targetPath non-empty absolute → porcelain probe confirms a linked non-main worktree of this repository → run the command。
-- Removal completes through the single `git worktree remove` command（administrative records and directory together）；no manual `rm -rf`，no partial cleanup on Git failure。
-- The branch itself is not deleted；`removeWorktree` affects only the working directory and the worktree administrative records。
+- Validation order: repository available → targetPath non-empty absolute → porcelain probe confirms a linked non-main worktree of this repository → run the command.
+- Removal completes through the single `git worktree remove` command (administrative records and directory together); no manual `rm -rf`, no partial cleanup on Git failure.
+- The branch itself is not deleted; `removeWorktree` affects only the working directory and the worktree administrative records.
 
 ## pruneWorktrees
 
@@ -192,14 +190,14 @@ interface GitRepositoryRequest {
 git worktree prune --verbose --expire now
 ```
 
-Executed in `repoRoot`。`--expire now` keeps the outcome deterministic（nothing stays back "not yet expired"）；`--verbose` prints one line per pruned record，used only for the count。
+Runs in `repoRoot`. `--expire now` keeps the outcome deterministic (nothing stays back "not yet expired"); `--verbose` prints one line per pruned record, used only for the count.
 
 ### Output
 
 ```ts
 interface GitWorktreePruneResult {
   ok: boolean;
-  /** Number of stale administrative records reported by `git worktree prune --verbose`；parse failure counts as 0. */
+  /** Number of stale administrative records reported by `git worktree prune --verbose`; parse failure counts as 0. */
   prunedCount: number;
   issues: GitWorktreeMutationIssue[];
 }
@@ -207,8 +205,8 @@ interface GitWorktreePruneResult {
 
 ### Invariants
 
-- Prune removes only stale records whose directory no longer exists；it never touches existing worktree directories or branches。
-- Output lines are counted only；the raw stderr wording is not surfaced to the layer above。
+- Prune removes only stale records whose directory no longer exists; it never touches existing worktree directories or branches.
+- Output lines are only counted; the raw stderr wording is not surfaced to the layer above.
 
 ## ensureWorktreeExclusion (inside placement)
 
@@ -269,7 +267,7 @@ UI executeWorktreeCreation ──create ok──▶ GitService.createWorktree
 
 ## Test Requirements
 
-- `listWorktrees`：Only main worktree → single entry；after real `createWorktree` 创建关联 worktree → two entries with correct path/branch；detached worktree 的 `branchName=null`；contain spaces、non-ASCII characters及line break 的 worktree path原样保留；non-repository path → empty result。
-- `createWorktree`：成功创建 directory 与 branch 且 HEAD 指向新 branch、起点为 baseBranch；branch 被 other worktree 占用 → `branch-in-other-worktree`；targetPath 已存在 → `target-path-exists`；非法 branch 名 → `invalid-branch-name`；create 失败且 branch 为本次创建时 → 该 branch 被回滚（不存在），branch 已存在时不触发回滚。
-- `removeWorktree`: after creating a linked worktree and removing it → directory and record gone，`listWorktrees` back to a single entry；main worktree path → `worktree-not-found`；path outside the repository → `worktree-not-found`；uncommitted changes without force → `worktree-dirty`，with force → success；non-repository → `not-a-repository`。
-- `pruneWorktrees`: after deleting a created worktree directory by hand, prune → `prunedCount >= 1` and `listWorktrees` no longer lists it；clean repository → `prunedCount = 0`，`ok = true`。
+- `listWorktrees`: only the main worktree → single entry; after a real `createWorktree` creates a linked worktree → two entries with correct path/branch; a detached worktree has `branchName=null`; worktree paths containing spaces, non-ASCII characters and line breaks are preserved as is; a non-repository path → empty result.
+- `createWorktree`: success creates the directory and branch, HEAD points to the new branch, and the start point is baseBranch; branch occupied by another worktree → `branch-in-other-worktree`; targetPath exists → `target-path-exists`; illegal branch name → `invalid-branch-name`; creation fails and the branch was created by this call → the branch is rolled back (does not exist); no rollback when the branch already existed.
+- `removeWorktree`: after creating a linked worktree and removing it → directory and record gone, `listWorktrees` back to a single entry; main worktree path → `worktree-not-found`; path outside the repository → `worktree-not-found`; uncommitted changes without force → `worktree-dirty`, with force → success; non-repository → `not-a-repository`.
+- `pruneWorktrees`: after deleting a created worktree directory by hand, prune → `prunedCount >= 1` and `listWorktrees` no longer lists it; clean repository → `prunedCount = 0`, `ok = true`.

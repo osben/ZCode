@@ -1,9 +1,6 @@
 # CUA Dev node_repl SDK Runtime Asset Closed Loop
 
-## Objectives
-
-CUA no longer has an independent MCP launcher. Desktop Dev only needs to seed the CUA SDK, Skills, and on-demand docs, reusing the shared `node_repl` MCP (with only one tool, `js`) shared by Browser Use and Computer Use. Native Helper, frame registry, kill switch, input hold, and `possibly_sent` are still maintained by the shared-host
-`CuaControlPort`; the mobile side can only attach to an existing host.
+CUA has no independent MCP launcher. Desktop Dev only seeds the CUA SDK, Skills and on-demand docs and reuses the shared `node_repl` MCP (one tool, `js`) shared by Browser Use and Computer Use. The native Helper, frame registry, kill switch, input hold and `possibly_sent` are still maintained by the shared-host `CuaControlPort`; the mobile side can only attach to an existing host.
 
 ```text
 pnpm dev:desktop
@@ -19,40 +16,37 @@ pnpm dev:desktop
                               -> CuaControlPort -> BrokerClient -> Helper
 ```
 
-Without a broker/permissions, the SDK returns explicit unavailable; no independent MCP/Helper is started on the relay, mobile side, or per-session. Desktop uses `desktop-continuous`, mobile uses `web-remote-replayable`.
+Without a broker/permissions the SDK returns an explicit unavailable; no independent MCP/Helper is started on the relay, mobile side or per session. Desktop uses `desktop-continuous`, mobile uses `web-remote-replayable`.
 
-## Asset and State Boundaries
+## Asset and state boundaries
 
-| Fact                         | Authoritative Owner          | Artifact/Verification                                                                  |
+| Fact                         | Authoritative owner          | Artifact/verification                                                                  |
 | ---------------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
 | CUA SDK                      | `@zcode/zcode-cua-plugin`    | `scripts/computer-use-client.mjs` + `scripts/check-sdk.mjs`                            |
-| CUA Documentation and Skills | producer plugin              | `docs/computer-use.md`, `skills/computer-use/SKILL.md`                                 |
+| CUA documentation and Skills | producer plugin              | `docs/computer-use.md`, `skills/computer-use/SKILL.md`                                 |
 | node_repl MCP                | `@zcode/browser-use-plugin`  | `dist/mcp/server.js` + `scripts/computer-use-client.mjs` (shared host runtime)         |
 | CUA runtime/session/frame    | shared-host `CuaControlPort` | `createComputerUseRuntime()`; isolated by `workspaceKey`/`remoteSessionId`/`sessionId` |
 | native capability            | CUA Helper + TCC             | broker token, frame freshness, kill switch, input cleanup                              |
 
-## Constraints That Must Be Maintained
+## Constraints
 
-- Model tool projections for new sessions only include `mcp__node_repl__js`; old `mcp__computer-use__*` configurations and the deleted
-  `js_reset` / `js_add_node_module_dir` are discarded during bootstrap; historical transcripts are read-only replay only.
-- Each Worker re-bootstraps the SDK on every call, but does not destroy the shared-host CUA runtime or frame state.
-- node_repl bridge requests must carry `workspaceIdentity`, `workspacePath`, `workspaceKey`,
-  `sessionId`, `remoteSessionId`, `turnId`, `traceId`, `clientMode`, `deliveryKind`; subagents
-  fail closed at the bridge entry.
-- Broker credentials are only injected into trusted shared node_repl; the plugin host no longer accepts old CUA argv socket entries.
+- Model tool projections for new sessions include only `mcp__node_repl__js`. Old `mcp__computer-use__*` configurations and the deleted `js_reset` / `js_add_node_module_dir` are discarded during bootstrap; historical transcripts are read-only replay only.
+- Each Worker re-bootstraps the SDK on every call but does not destroy the shared-host CUA runtime or frame state.
+- node_repl bridge requests carry `workspaceIdentity`, `workspacePath`, `workspaceKey`, `sessionId`, `remoteSessionId`, `turnId`, `traceId`, `clientMode`, `deliveryKind`; subagents fail closed at the bridge entry.
+- Broker credentials are injected only into the trusted shared node_repl; the plugin host no longer accepts old CUA argv socket entries.
 
-## Acceptance Cases
+## Acceptance cases
 
 | Case                   | Verification                                                                                            |
 | ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| SDK 30-method contract | Producer manifest/schema and SDK method union correspond one-to-one                                     |
+| SDK 30-method contract | Producer manifest/schema and SDK method union correspond one to one                                     |
 | Worker rebuild         | Multiple `node_repl js` calls can re-bootstrap; CUA runtime/session state persists                      |
-| Image results          | The SDK sends CUA image blocks through the generic `nodeRepl.emitImage`, does not turn base64 into text |
-| No broker/permissions  | Returns unavailable/permission error, no independent MCP/Helper started                                 |
-| Remote boundaries      | Desktop continuous and web remote replayable share attachment, do not put CUA state into relay/snapshot |
+| Image results          | The SDK sends CUA image blocks through the generic `nodeRepl.emitImage`; base64 is not turned into text |
+| No broker/permissions  | Returns unavailable/permission error; no independent MCP/Helper started                                 |
+| Remote boundaries      | Desktop continuous and web remote replayable share attachment; CUA state is not put into relay/snapshot |
 | History records        | Old `mcp__computer-use__*` are viewable but cannot be re-executed or re-injected                        |
 
-## Related Implementations
+## Related implementations
 
 - `apps/zcode-cli/packages/browser-use-plugin/src/cua-bridge.ts`
 - `apps/zcode-cli/packages/browser-use-plugin/src/mcp/cua-broker.ts`

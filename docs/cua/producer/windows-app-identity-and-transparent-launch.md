@@ -1,48 +1,60 @@
-# Windows 应用身份与透明拉起
+# Windows app identity and transparent launch
 
 ## Status
 
-当前事实文档 + 实施 spec。取代 `docs/open-application-activation-contract.md`（激活不再是一个独立的模型面能力，语义并入 `get_app_state`）。
+Current-facts document + implementation spec. Replaces `docs/open-application-activation-contract.md`
+(activation is no longer a standalone model-facing capability; its semantics move into `get_app_state`).
 
-目标：**删除 `open_application` 工具**，让 `get_app_state(app_ref={name})` 在 Windows 上自洽 —— 能按应用名找到已在运行的应用；找不到就先拉起，需要像素而窗口看不见时就把它弄可见。工具面净减一，不新增任何工具或参数。
+Goal: **delete the `open_application` tool** so that `get_app_state(app_ref={name})` is self-sufficient on
+Windows: it finds an already-running app by name; launches it first if not found; and, when pixels are needed
+but the window is not visible, makes it visible. Net tool surface minus one; no new tool or parameter.
 
-范围声明：本文档不覆盖 Linux（cua 当前不需要支持 Linux）。macOS 侧 `open_application` 已于 2026-09-11 从工具面移除，本次是把同一收缩推到 Windows，并补上 Windows 缺失的拉起能力。
+Scope: this doc does not cover Linux (cua does not currently need to support Linux). On macOS
+`open_application` was removed from the tool surface on 2026-09-11; this pushes the same contraction to
+Windows and adds the launch capability Windows lacked.
 
 ---
 
-## 一、现状（2026-09-14 真机实测，Windows 11 26200）
+## 1. Current state (2026-09-14 real-machine measurements, Windows 11 26200)
 
-所有结论均为本机实测，不是静态阅读推断。
+All conclusions are measured on a real machine, not inferred from static reading.
 
-### 1.1 Windows 走的是独立代码路径
+### 1.1 Windows takes a separate code path
 
-`selectPlatformAxSource`（`src/broker/server/platformAxSource.ts:109`）在 win32 分支用 `createAxWinReadOnlySource`（`src/native/win.ts`，413 行），**不经过 `nativeAxSource.ts`**。因此 macOS 那套透明拉起控制流（`nativeAxSource.ts:1676-1751`）在 Windows 上从不执行。
+`selectPlatformAxSource` (`src/broker/server/platformAxSource.ts:109`) uses `createAxWinReadOnlySource`
+(`src/native/win.ts`, 413 lines) in the win32 branch and **does not go through `nativeAxSource.ts`**, so the
+macOS transparent-launch control flow (`nativeAxSource.ts:1676-1751`) never runs on Windows.
 
-| 能力 | macOS | Windows |
-| --- | --- | --- |
-| `captureApp` 实现 | `nativeAxSource.ts` | `src/native/win.ts` |
-| 透明后台拉起 | 有（`openApplicationInBackgroundAsync`，`ax_macos.mm:8883`） | **无导出** |
-| 名字 → canonical 身份 | `resolveApplicationBundleId`（LaunchServices，`macosApplicationResolver.ts:106`） | 只有一张 5 条硬编码表（下 1.2） |
-| 拉起后等 AX 树长稳 | `settleFreshlyLaunchedTree` | **无** |
-| `window_id` 参与 capture | 有 | 有（`win.ts:313`，且校验回传 window_id 一致） |
+| Capability                              | macOS                                                                            | Windows                                                    |
+| --------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `captureApp` implementation             | `nativeAxSource.ts`                                                              | `src/native/win.ts`                                        |
+| Transparent background launch           | yes (`openApplicationInBackgroundAsync`, `ax_macos.mm:8883`)                     | **no export**                                              |
+| Name -> canonical identity              | `resolveApplicationBundleId` (LaunchServices, `macosApplicationResolver.ts:106`) | only a hard-coded 5-entry table (1.2)                      |
+| Wait for AX tree to settle after launch | `settleFreshlyLaunchedTree`                                                      | **none**                                                   |
+| `window_id` takes part in capture       | yes                                                                              | yes (`win.ts:313`, and the returned window_id is verified) |
 
-### 1.2 "按名字启动"目前只是一张计算器别名表
+### 1.2 "Launch by name" is only a Calculator alias table
 
-`windowsSystemSurface.ts:34`：
+`windowsSystemSurface.ts:34`:
 
 ```ts
 const WINDOWS_PACKAGED_APP_ALIASES = new Map<string, string>([
-  ["calculator", CALC], ["windows calculator", CALC],
-  ["calc", CALC], ["calc.exe", CALC], ["计算器", CALC],
+  ["calculator", CALC],
+  ["windows calculator", CALC],
+  ["calc", CALC],
+  ["calc.exe", CALC],
+  ["计算器", CALC],
 ]);
 ```
 
-表外的名字退到 `openRunner([name])` → `spawn("记事本")` → ENOENT → `open_application failed: could not launch "记事本"`。
-**`{name:"计算器"}` 能用不是设计，是这张表里恰好有它。**
+Names outside the table fall to `openRunner([name])` -> `spawn("记事本")` -> ENOENT ->
+`open_application failed: could not launch "记事本"`. `{name:"计算器"}` working is not design; the table
+happens to contain it.
 
-### 1.3 `app.name` 是窗口标题，不是应用名
+### 1.3 `app.name` is the window title, not the app name
 
-`BuildAppInfoFromHwnd`（`ax_win.cc:1294`）把 `WindowTitleW(hwnd)` 填进 `name`。实测 `listApplications()`：
+`BuildAppInfoFromHwnd` (`ax_win.cc:1294`) fills `name` with `WindowTitleW(hwnd)`. Measured
+`listApplications()`:
 
 ```
 {"pid":2888, "name":"无标题 - Notepad",   "bundle_id":"...\\Notepad.exe",              "aumid":null}
@@ -50,19 +62,19 @@ const WINDOWS_PACKAGED_APP_ALIASES = new Map<string, string>([
 {"pid":13036,"name":"agent-cli changelog - agent-cli Docs - Google Chrome", ...}
 ```
 
-`win.ts:118 windowsNameMatches` 是**大小写无关子串**匹配。三条具体行为：
+`win.ts:118 windowsNameMatches` is a **case-insensitive substring** match:
 
-| `app_ref.name` | 结果 | 原因 |
-| --- | --- | --- |
-| `"计算器"` | ✅ 命中 | 计算器窗口标题恰好等于应用名 |
-| `"记事本"` | ❌ `capture_app: could not be resolved` | 标题是 `无标题 - Notepad`，不含"记事本" |
-| `"设置"` | ⚠️ 静默选错 | 同时命中两条（见 1.4），`win.ts:188` 取 `active` 或第一个，**不抛歧义错** |
+| `app_ref.name` | Result                               | Reason                                                                                   |
+| -------------- | ------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `"计算器"`     | hit                                  | the Calculator window title happens to equal the app name                                |
+| `"记事本"`     | `capture_app: could not be resolved` | title is `无标题 - Notepad`, does not contain "记事本"                                   |
+| `"设置"`       | silently wrong                       | hits two entries (1.4); `win.ts:188` takes `active` or the first, **no ambiguity error** |
 
-子串语义本身也危险：`{name:"cli"}` 会命中 `◐ agent-cli` 这个终端窗口。
+Substring semantics are itself dangerous: `{name:"cli"}` hits the terminal window `◐ agent-cli`.
 
-### 1.4 一个 UWP 应用产出两条记录，且都是 cloaked
+### 1.4 One UWP app yields two records, both cloaked
 
-实测"设置"：
+Measured for "设置":
 
 ```
 applicationInfo(348)   name=设置 bundle_id=...\SystemSettings.exe        aumid=null
@@ -72,321 +84,463 @@ applicationInfo(14556) name=设置 bundle_id=...\ApplicationFrameHost.exe  aumid
 applicationInfoByAumid(设置).pid = 14556
 ```
 
-DWM 实测两个 HWND 都是 `cloaked=2`（DWM_CLOAKED_SHELL，挂起态）、`visible=True`、`iconic=False`。
+DWM shows both HWNDs as `cloaked=2` (DWM_CLOAKED_SHELL, suspended), `visible=True`, `iconic=False`.
 
-- `EnumerateUserHwndsForPid`（`ax_win.cc:2223` 经 `listWindows`）**不过滤 cloaked**；`screenCaptureProbeWindows`（`ax_win.cc:2267`）过滤。两者口径不一致。
-- `PickPrimaryHwndForPid`（`ax_win.cc:929-952`）取"面积最大的非最小化窗口" —— cloaked 窗口不是 iconic，照样参选。所以共享宿主 pid 时**报出哪个身份由那一刻的窗口几何决定**。实测佐证：同一个 pid 14556，上一轮会话报"计算器"，本轮报"设置"（计算器已被杀）。
+- `EnumerateUserHwndsForPid` (`ax_win.cc:2223` via `listWindows`) **does not filter cloaked**;
+  `screenCaptureProbeWindows` (`ax_win.cc:2267`) does. The two disagree.
+- `PickPrimaryHwndForPid` (`ax_win.cc:929-952`) picks the "largest non-minimized window"; a cloaked window is
+  not iconic and still competes. With a shared host pid, **which identity gets reported is decided by window
+  geometry at that moment**. Evidence: the same pid 14556 reported "计算器" in the previous session and "设置"
+  in this one (Calculator had been killed).
 
-### 1.5 AUMID 通道的"拉起"与"绑定"不对称
+### 1.5 The AUMID channel is asymmetric between launch and binding
 
-`ax_win.cc:2185` 的注释写"broker 仍必须用 `applicationInfoByAumid` 从 HWND 属性完成最终身份绑定"。实测这句对 packaged **desktop** app 是错的：
+The comment at `ax_win.cc:2185` says "the broker must still complete the final identity binding via
+`applicationInfoByAumid` from HWND properties". Measured, that is wrong for packaged **desktop** apps:
 
 ```
-applicationInfoByAumid(Microsoft.WindowsNotepad_...!App)  => null   （记事本正在运行）
-applicationInfoByAumid(windows.immersivecontrolpanel_...) => pid 14556  ✅
+applicationInfoByAumid(Microsoft.WindowsNotepad_...!App)  => null   (Notepad is running)
+applicationInfoByAumid(windows.immersivecontrolpanel_...) => pid 14556  ok
 
 activateApplicationByAumid(Microsoft.Paint_...!App) => pid 1936
-  FOREGROUND_CHANGED = false                       ← 冷启动未抢焦点
+  FOREGROUND_CHANGED = false                       <- cold start did not steal focus
   applicationInfoByAumid(Microsoft.Paint_...!App)  => null
   applicationInfo(1936)  => name="无标题 - 画图" bundle_id=...\mspaint.exe
   listWindows(1936)      => [{window_id:1313674, focused:false}]
 ```
 
-根因：`PKEY_AppUserModel_ID` 只有 `ApplicationFrameHost` 托管的 UWP 窗口才有。新版记事本/画图是 packaged desktop app，窗口上没有这个属性。
+Root cause: `PKEY_AppUserModel_ID` exists only on UWP windows hosted by `ApplicationFrameHost`. New Notepad /
+Paint are packaged desktop apps and have no such property on their window.
 
-**结论：绑定必须 pid 优先、AUMID 兜底**，两者各自覆盖一半：
+**Conclusion: binding must be pid first, AUMID as fallback;** each covers half:
 
-| 应用形态 | 激活返回的 pid | 该 pid 有可见窗口 | AUMID 绑定 | 应采用 |
-| --- | --- | --- | --- | --- |
-| packaged desktop（画图/记事本） | 应用自身 | ✅ | ❌ null | **pid** |
-| UWP（设置/计算器） | 真实进程（如 348） | 窗口 cloaked / 非可视帧 | ✅ 宿主 pid | **AUMID** |
+| App form                         | pid returned by activation | That pid has a visible window     | AUMID binding | Use       |
+| -------------------------------- | -------------------------- | --------------------------------- | ------------- | --------- |
+| packaged desktop (Paint/Notepad) | the app itself             | yes                               | null          | **pid**   |
+| UWP (Settings/Calculator)        | real process (e.g. 348)    | window cloaked / non-visual frame | host pid      | **AUMID** |
 
-### 1.6 已安装应用注册表：`shell:AppsFolder`
+### 1.6 Installed-app registry: `shell:AppsFolder`
 
-实测 134 条，`Name` + `System.AppUserModel.ID` + `System.Link.TargetParsingPath` 齐全：
+Measured 134 entries, each with `Name` + `System.AppUserModel.ID` + `System.Link.TargetParsingPath`:
 
 ```
-计算器        aumid=Microsoft.WindowsCalculator_8wekyb3d8bbwe!App    target=(无)
+计算器        aumid=Microsoft.WindowsCalculator_8wekyb3d8bbwe!App    target=(none)
 Google Chrome aumid=Chrome                target=C:\Program Files\Google\Chrome\Application\chrome.exe
 微信          aumid=D:\Weixin\Weixin.exe  target=D:\Weixin\Weixin.exe
 CC Switch     aumid=com.ccswitch.desktop  target=...\cc-switch.exe
 ```
 
-`IsValidAppUserModelId`（`ax_win.cc:821`）要求**恰好一个 `!`**，所以 `Chrome` / `com.ccswitch.desktop` / `Microsoft.AutoGenerated.{GUID}` 全被现有 AUMID 通道拒绝 —— 今天只有 38/134 可达。
+`IsValidAppUserModelId` (`ax_win.cc:821`) requires **exactly one `!`**, so `Chrome` /
+`com.ccswitch.desktop` / `Microsoft.AutoGenerated.{GUID}` are all rejected by the existing AUMID channel;
+today only 38/134 are reachable.
 
-按"合法 AUMID 或 `.exe` 目标"分类：
+Classified by "valid AUMID or `.exe` target":
 
-| 分类 | 条数 | 拉起方式 |
-| --- | --- | --- |
-| 合法 AUMID | 38 | `ActivateApplication(AO_NONE)` |
-| `.exe` 目标 | 75 | `CreateProcess(target)` |
-| 不可拉起（`.url` / `.msc` / `.html` / shell CLSID） | 21 | 拒绝 |
+| Class                                                    | Count | Launch method                  |
+| -------------------------------------------------------- | ----- | ------------------------------ |
+| valid AUMID                                              | 38    | `ActivateApplication(AO_NONE)` |
+| `.exe` target                                            | 75    | `CreateProcess(target)`        |
+| not launchable (`.url` / `.msc` / `.html` / shell CLSID) | 21    | reject                         |
 
-**113/134（84%）可拉起**，被拒的 21 条全是文档链接、管理控制台、shell 命名空间项 —— 本来就不该当应用拉起。
+**113/134 (84%) are launchable;** the 21 rejected are doc links, admin consoles and shell-namespace items that
+should not launch as apps anyway. Enumeration cost (PowerShell COM automation, two property reads per entry;
+native is faster): 386 / 281 / 280 ms.
 
-枚举耗时（PowerShell COM 自动化，含每条两次属性读，原生更快）：386 / 281 / 280 ms。
+### 1.7 Focus semantics: the two paths differ and Win32 cannot block it
 
-### 1.7 焦点语义：两条路不同，且 Win32 拦不住
+| Path                                                           | Measured                                                                  | Note                                                                |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `ActivateApplication(AO_NONE)`                                 | **does not steal focus** (two independent measurements, incl. cold start) | equals macOS `activates=NO`                                         |
+| `CreateProcess` / `spawn`                                      | **steals focus** (`FOREGROUND_CHANGED=true`, new window `focused:true`)   |                                                                     |
+| `CreateProcess` + `STARTF_USESHOWWINDOW` + `SW_SHOWNOACTIVATE` | **still steals focus**                                                    | charmap calls `SetForegroundWindow` itself; nCmdShow is only a hint |
+| `ShowWindow(SW_SHOWNOACTIVATE)` to un-minimize                 | **steals focus** (`focused=true`, foreground 32324->25792)                | restoring a minimized window cannot avoid a focus shift             |
+| `PreventActivation` / `IsFocusStealPrevented`                  | honest no-op (`ax_win.cc:3345-3357`, "Windows has no equivalent")         | no usable suppression mechanism                                     |
 
-| 路径 | 实测 | 备注 |
-| --- | --- | --- |
-| `ActivateApplication(AO_NONE)` | **不抢焦点**（两次独立测量，含冷启动） | 等价 macOS `activates=NO` |
-| `CreateProcess` / `spawn` | **抢焦点**（`FOREGROUND_CHANGED=true`，新窗口 `focused:true`） | |
-| `CreateProcess` + `STARTF_USESHOWWINDOW` + `SW_SHOWNOACTIVATE` | **仍抢焦点** | charmap 自己调 `SetForegroundWindow`，nCmdShow 只是提示 |
-| `ShowWindow(SW_SHOWNOACTIVATE)` 取消最小化 | **抢焦点**（`focused=true`，前台 32324→25792） | 恢复最小化窗口无法避免焦点转移 |
-| `PreventActivation` / `IsFocusStealPrevented` | 诚实 no-op（`ax_win.cc:3345-3357`，"Windows has no equivalent"） | 无可用抑制机制 |
+**Decision: accept that the Win32 branch steals focus.** No more suppression attempts. The tool description
+must say so honestly and must not claim "background launch".
 
-**决策：接受 Win32 分支抢焦点。** 不再尝试抑制。工具描述必须如实告知，不得宣称"后台拉起"。
+### 1.8 Observation capability matrix: `get_app_state` in four target states
 
-### 1.8 观察能力矩阵：`get_app_state` 在四种目标状态下的实测表现
+"Does observation need activation" is not yes/no: two of four states do, at very different costs.
 
-"观察需不需要激活"不是一个是非题 —— 四种状态里两种需要，且两种的代价完全不同。
+| Target state                             | UIA tree           | Window screenshot    | Needs                        | Focus cost                     |
+| ---------------------------------------- | ------------------ | -------------------- | ---------------------------- | ------------------------------ |
+| not running                              | n/a                | n/a                  | launch                       | packaged **no**; Win32 **yes** |
+| running, window normal (may be occluded) | 229 elements       | 112,795 B            | **nothing**                  | none                           |
+| running, UWP suspended (`cloaked=2`)     | **1 element only** | stale frame 20,478 B | `ActivateApplication(AUMID)` | **no**                         |
+| running, minimized (`iconic=True`)       | full               | `invalid_target`     | un-minimize                  | **always**                     |
 
-| 目标状态 | UIA 树 | 窗口截图 | 需要什么 | 焦点代价 |
-| --- | --- | --- | --- | --- |
-| 未运行 | — | — | 拉起 | packaged **不抢**；Win32 **抢** |
-| 运行中，窗口正常（可被其他窗口遮挡） | ✅ 229 元素 | ✅ 112,795 B | **无** | — |
-| 运行中，UWP 挂起（`cloaked=2`） | ❌ **仅 1 元素** | 残帧 20,478 B | `ActivateApplication(AUMID)` | **不抢** |
-| 运行中，最小化（`iconic=True`） | ✅ 完整 | ❌ `invalid_target` | 取消最小化 | **必然抢** |
-
-关键实测：
+Key measurements:
 
 ```
-# 后台拉起、从未获得焦点的窗口 —— 观察完全正常
-listWindows → focused:false ; captureApp → 229 元素 ; PNG → 112,795 B ; 焦点全程未动
+# background-launched window that never had focus: observation fully works
+listWindows -> focused:false ; captureApp -> 229 elements ; PNG -> 112,795 B ; focus never moved
 
-# 挂起的 UWP 被 AUMID 唤醒（无焦点代价）
-激活前: cloaked=2 focused=false elements=1
-激活后: cloaked=0 focused=false elements=129   FOREGROUND_STOLEN=false
+# suspended UWP woken by AUMID (no focus cost)
+before: cloaked=2 focused=false elements=1
+after:  cloaked=0 focused=false elements=129   FOREGROUND_STOLEN=false
 
-# 最小化窗口：树完好，UIA 写入仍生效
-最小化后 elements=61（与最小化前一致，element ref 稳定）
-setValue(最小化中) = {"ok":true} ; readElement.value = "minimized-uia-write-ok"
+# minimized window: tree intact, UIA writes still work
+after minimize elements=61 (same as before, element refs stable)
+setValue(while minimized) = {"ok":true} ; readElement.value = "minimized-uia-write-ok"
 ```
 
-**因此 Windows.Graphics.Capture 不要求前台，也不受遮挡影响** —— `ValidateWindowTarget`（`screen_capture_win.cc:267-269`）只拒 `IsIconic || !IsWindowVisible`，没有前台判据。
+**Windows.Graphics.Capture therefore needs neither foreground nor non-occlusion:** `ValidateWindowTarget`
+(`screen_capture_win.cc:267-269`) rejects only `IsIconic || !IsWindowVisible`, with no foreground criterion.
 
-### 1.9 缺陷：最小化的应用今天完全无法观察
+### 1.9 Defect: a minimized app cannot be observed at all today
 
-`win.ts:370-377` 把截图的 `invalid_target` 升级成整体抛错：
+`win.ts:370-377` escalates a screenshot `invalid_target` into a whole-call throw:
 
 ```
 capture_app: the verified Windows capture target is unavailable (invalid_target);
 re-observe before acting.
 ```
 
-于是最小化的应用 `get_app_state` **整体失败**，尽管它的 UIA 树完好且可写。而这句提示模型永远走不通：再观察一次结果完全一样。今天唯一的逃生口是 `open_application(activate=true)` —— `ActivateApplication(pid)`（`ax_win.cc:3228`）里有 `if (IsIconic(target)) ShowWindow(target, SW_RESTORE); SetForegroundWindow(target);`。
+So `get_app_state` for a minimized app **fails entirely** although its UIA tree is intact and writable, and
+the hint is a dead end: observing again gives the same result. Today's only escape is
+`open_application(activate=true)`: `ActivateApplication(pid)` (`ax_win.cc:3228`) has
+`if (IsIconic(target)) ShowWindow(target, SW_RESTORE); SetForegroundWindow(target);`.
 
-本 spec 的修法不是"降级"也不是"加工具"，而是让观察路径**为完成被请求的观察做必要的最小动作**（2.2）：树够用就不动窗口，模型明确要像素时才恢复它。这与同一条路径已经会拉起未运行应用是同一个原则。
+The fix is neither "degrade" nor "add a tool": let the observation path take **the minimal action needed to
+complete the requested observation** (2.2): if the tree suffices do not touch the window; restore it only
+when the model explicitly asks for pixels. This is the same principle by which this path already launches a
+non-running app.
 
-注意 `ActivateApplication(AUMID)` **不能**恢复最小化窗口（实测重新激活后 `iconic` 仍为 True，截图仍 `invalid_target`）—— 它只解除 UWP 挂起。两件事必须分开对待。
+`ActivateApplication(AUMID)` **cannot** restore a minimized window (measured: `iconic` stays True after
+re-activation, screenshot still `invalid_target`); it only lifts UWP suspension. The two must be handled
+separately.
 
-### 1.10 raw 输入已经自带激活
+### 1.10 Raw input already activates by itself
 
-`activateConcreteWindow`（`electronInputHandlers.ts:951-979`）在派发窗口级 raw 输入前会调用 `adapter.activateWindow(pid, bundleId, windowId)`，原子完成 raise + focus + activate + verify，失败则 `action_sent=false` fail-closed。
+`activateConcreteWindow` (`electronInputHandlers.ts:951-979`) calls `adapter.activateWindow(pid, bundleId,
+windowId)` before dispatching window-level raw input, atomically doing raise + focus + activate + verify and
+failing closed with `action_sent=false`.
 
-因此"删掉激活会让 Windows raw 键鼠没法用"是站不住的 —— **raw 输入自己会把目标窗口抬到前台**。加上 UIA 元素动作不需要前台（1.8 实测最小化窗口 `setValue` 仍 `ok:true`），模型面真正缺激活的场景只剩一个：**需要一个自己看不见的窗口的像素**。
+So "removing activation breaks Windows raw keyboard/mouse" does not hold: **raw input lifts the target window
+to the foreground itself.** UIA element actions need no foreground (1.8: `setValue` on a minimized window
+still `ok:true`), so the only model-facing scenario that lacks activation is **needing pixels of a window that
+cannot see itself**.
 
-`activateWindow(pid, expectedCanonicalBundleId, windowId)` 这条链已全部存在：`ax_win.cc:3258` 导出 → `nodeAutomationAdapter.ts:238` 包装 → `electronNativeBackendTypes.ts:380` 类型。缺的只是一个模型可见的工具。
+The `activateWindow(pid, expectedCanonicalBundleId, windowId)` chain already exists: `ax_win.cc:3258` export
+-> `nodeAutomationAdapter.ts:238` wrapper -> `electronNativeBackendTypes.ts:380` type. Only a model-visible
+tool is missing.
 
 ---
 
-## 二、设计
+## 2. Design
 
-### 2.1 原生新增（`src/native/ax_win.cc`）
+### 2.1 Native additions (`src/native/ax_win.cc`)
 
-已链接的 `shobjidl.h` / `propsys.h` / `propkey.h` 足够，**这块不需要 WinRT**（WinRT 本身已经在构建里 —— `screen_capture_win.cc` 用 `Windows.Graphics.Capture`；只是 AppsFolder 用不上它）；`shell:AppsFolder` 解析名在 `ApplicationIconPngForPid`（`ax_win.cc:3056`）已经用过。
+The already-linked `shobjidl.h` / `propsys.h` / `propkey.h` suffice; **no WinRT is needed here** (WinRT is
+already in the build for `Windows.Graphics.Capture` in `screen_capture_win.cc`, AppsFolder just does not need
+it). The `shell:AppsFolder` parsing name is already used in `ApplicationIconPngForPid` (`ax_win.cc:3056`).
 
 ```ts
-// 已安装应用清单。来源 shell:AppsFolder，读 PKEY_ItemNameDisplay +
-// PKEY_AppUserModel_ID + PKEY_Link_TargetParsingPath。
+// Installed app list. Source shell:AppsFolder, reading PKEY_ItemNameDisplay +
+// PKEY_AppUserModel_ID + PKEY_Link_TargetParsingPath.
 listInstalledApplications(): {
   name: string;
-  aumid: string | null;        // 仅当通过 IsValidAppUserModelId 时非 null
-  target_path: string | null;  // 仅当以 .exe 结尾时非 null
+  aumid: string | null;        // non-null only when it passes IsValidAppUserModelId
+  target_path: string | null;  // non-null only when it ends with .exe
 }[]
 
-// 按身份拉起。aumid 非空走 ActivateApplication(AO_NONE)（不抢焦点）；
-// 否则 CreateProcess(target_path)（会抢焦点，见 1.7）。返回 pid 或 null。
+// Launch by identity. Non-null aumid uses ActivateApplication(AO_NONE) (does not steal focus);
+// otherwise CreateProcess(target_path) (steals focus, see 1.7). Returns pid or null.
 launchApplicationAsync(aumid: string | null, targetPath: string | null): Promise<number | null>
 ```
 
-`BuildAppInfoFromHwnd`（`ax_win.cc:1293`）补 `window_id`：HWND 已在手，转换照抄 `BuildWindowFromHwnd`（`ax_win.cc:1328`）。这样 `listApplications` / `applicationInfo` 报出的身份带着"它是从哪个窗口读出来的"，`captureApp` 不必再独立重跑一遍面积启发式。
+`BuildAppInfoFromHwnd` (`ax_win.cc:1293`) gains `window_id`: the HWND is in hand and the conversion copies
+`BuildWindowFromHwnd` (`ax_win.cc:1328`). Identities reported by `listApplications` / `applicationInfo` thus
+carry which window they were read from, and `captureApp` need not re-run the area heuristic.
 
-`PickPrimaryHwndForPid` 排除 cloaked 窗口 —— 与 `screenCaptureProbeWindows` 对齐口径。理由：cloaked 窗口在屏幕上没有像素，把它选成主窗口等于给模型一棵它看不见也点不到的树。`listWindows` 保留 cloaked 窗口但每条补 `cloaked: boolean`（调用方需要知道窗口存在但被挂起）。
+`PickPrimaryHwndForPid` excludes cloaked windows, aligning with `screenCaptureProbeWindows`: a cloaked window
+has no pixels on screen, and selecting it as primary hands the model a tree it can neither see nor click.
+`listWindows` keeps cloaked windows but adds `cloaked: boolean` to each (callers need to know the window
+exists but is suspended).
 
-`listApplications` 改为**按身份**而非按 pid 产出：一个 pid 托管多个不同 AUMID 时产出多条。风险评估已下调 —— `src/native/win.ts:188` 的 Windows `resolvePid` 在多命中时取 `active` 或第一个、**不抛歧义错**，因此 pid 重复是可容忍的（会抛歧义错的是 macOS 的 `nativeAxSource.ts:1374`，不在这条路上）。128 条切片保留。
+`listApplications` now produces entries **by identity**, not by pid: a pid hosting several distinct AUMIDs
+yields several entries. Risk is downgraded: the Windows `resolvePid` at `src/native/win.ts:188` takes `active`
+or the first on multiple hits and **raises no ambiguity error**, so duplicate pids are tolerable (the
+ambiguity error is macOS `nativeAxSource.ts:1374`, not on this path). The 128-entry slice is kept.
 
-### 2.2 JS（`src/native/win.ts`）
+### 2.2 JS (`src/native/win.ts`)
 
-`resolvePid` → `resolveTarget(appRef): { pid: number; windowId?: number } | null`，名字解析改成两层：
+`resolvePid` -> `resolveTarget(appRef): { pid: number; windowId?: number } | null`; name resolution has two
+layers:
 
-1. **已安装应用名精确匹配**（大小写无关，权威）→ 得到 `{aumid, target_path}`，再据此找活进程：
-   - `aumid` 合法 → `applicationInfoByAumid(aumid)` → pid + window_id
-   - 否则 → 在 `listApplications()` 里按 `bundle_id === target_path` 匹配
-2. **窗口标题子串匹配**（沿用今天的语义，保留 `{name:"Notepad"}` 这类既有用法）
-3. 两层都空、但第 1 层查到了已安装应用 → 进入拉起
-4. 第 2 层多命中 → **抛歧义错并列出候选**（与 macOS 对齐，取代今天的静默择一）
+1. **Exact match of the installed-app name** (case-insensitive, authoritative) gives `{aumid, target_path}`,
+   then find the live process:
+   - valid `aumid` -> `applicationInfoByAumid(aumid)` -> pid + window_id
+   - otherwise -> in `listApplications()` match `bundle_id === target_path`
+2. **Window-title substring match** (today's semantics, keeping existing uses like `{name:"Notepad"}`)
+3. Both layers empty but layer 1 found an installed app -> launch
+4. Layer 2 with multiple hits -> **raise an ambiguity error listing candidates** (aligned with macOS,
+   replacing today's silent pick)
 
-`captureApp` 的前置步骤从"没进程就拉起"扩展为**"把目标变成可观察的"**，覆盖 1.8 的三种非正常状态：
+The `captureApp` preamble grows from "launch if no process" to **"make the target observable"**, covering the
+three non-normal states of 1.8:
 
 ```
 resolveTarget(appRef)
-  ├─ null（没有活进程）
-  │    → listInstalledApplications() 精确匹配 name
-  │        命中 → launchApplicationAsync(aumid, target_path)
-  │                 → 绑定：pid 有非 cloaked 窗口 ? 用 pid
+  ├─ null (no live process)
+  │    → listInstalledApplications() exact match on name
+  │        hit → launchApplicationAsync(aumid, target_path)
+  │                 → bind: pid has a non-cloaked window ? use pid
   │                        : aumid ? applicationInfoByAumid(aumid)
-  │                        : 按 target_path 在活进程里重解
-  │                 → settleFreshlyLaunchedTree（移植 macOS 版本，见下）
-  │        未命中 → 抛错，文案只给真能走的路
+  │                        : re-resolve among live processes by target_path
+  │                 → settleFreshlyLaunchedTree (ported from macOS, see below)
+  │        miss → throw, text names only paths that really work
   │
-  ├─ 命中但主窗口 cloaked（UWP 挂起）且有 aumid
-  │    → activateApplicationByAumid(aumid) 唤醒 → 重读
-  │      免费：实测不抢焦点，树从 1 元素长到 129
+  ├─ hit but primary window cloaked (UWP suspended) and has aumid
+  │    → activateApplicationByAumid(aumid) wake → re-read
+  │      free: measured no focus steal, tree grows from 1 to 129 elements
   │
-  └─ 命中但主窗口 iconic（最小化）
-       ├─ include_screenshot=false（默认）→ 什么都不做，返回完整树
-       └─ include_screenshot=true         → 恢复窗口（会抢焦点）后再截图
+  └─ hit but primary window iconic (minimized)
+       ├─ include_screenshot=false (default) → do nothing, return the full tree
+       └─ include_screenshot=true         → restore the window (steals focus) then screenshot
 ```
 
-最后一条是本 spec 唯一把"激活"留下的地方，而它不需要新工具、也不需要新参数：**`include_screenshot` 就是焦点开关**。
+The last branch is the only place this spec keeps "activation", and it needs no new tool or parameter:
+**`include_screenshot` is the focus switch.**
 
-`include_screenshot` 是模型可见的、`default(false)` 的既有参数（`schemas/observation.ts:45`），工具描述本来就写着"只在需要视觉时才设 true"。所以"模型显式要像素"这件事已经有表达方式，而一个最小化的窗口**物理上**无法在不恢复的前提下产出像素（`ValidateWindowTarget` 拒 `IsIconic`，`screen_capture_win.cc:268`）。于是触发条件是精确且自洽的：
+`include_screenshot` is an existing model-visible `default(false)` parameter (`schemas/observation.ts:45`)
+whose description already says "set true only when vision is needed". "The model explicitly wants pixels"
+therefore already has an expression, and a minimized window **physically** cannot produce pixels without
+being restored (`ValidateWindowTarget` rejects `IsIconic`, `screen_capture_win.cc:268`). The trigger is thus
+exact and self-consistent:
 
-| 情况 | 是否动窗口 | 焦点代价 |
-| --- | --- | --- |
-| 窗口正常（含被完全遮挡） | 否 | 无 |
-| 窗口 iconic，`include_screenshot=false` | 否，只回树 | 无 |
-| 窗口 iconic，`include_screenshot=true` | 恢复 | **有** |
-| UWP 挂起 cloaked | AUMID 唤醒 | 无 |
+| Case                                      | Touch the window | Focus cost |
+| ----------------------------------------- | ---------------- | ---------- |
+| window normal (even fully occluded)       | no               | none       |
+| window iconic, `include_screenshot=false` | no, tree only    | none       |
+| window iconic, `include_screenshot=true`  | restore          | **yes**    |
+| UWP suspended cloaked                     | AUMID wake       | none       |
 
-也就是说**默认路径永不抢焦点**，抢焦点只发生在模型明确说"我要看画面"、而那画面确实拿不到的时候。
+So **the default path never steals focus;** it happens only when the model says "I want to see the picture"
+and the picture is truly unobtainable.
 
-顺带修掉 1.9 那个缺陷：`invalid_target` 在窗口 iconic 时不再抛错 —— 要么已经恢复成功、要么走 `include_screenshot=false` 的纯树路径。其余 `invalid_target` / `target_changed`（窗口真的变了或消失）保持抛错语义不变，那是身份漂移，必须 fail-closed。
+This also fixes the 1.9 defect: `invalid_target` no longer throws when the window is iconic; either restore
+already succeeded or the `include_screenshot=false` tree-only path applies. Other `invalid_target` /
+`target_changed` (the window really changed or vanished) keep throw semantics: that is identity drift and must
+fail closed.
 
-恢复动作要在 broker 侧留日志（对齐既有的 `[cua-captureapp-launch]`，加 `[cua-captureapp-restore]`）：这是一次用户可见的桌面变化，必须可追溯。模型面**不新增**输出字段 —— 截图成功本身就说明窗口被弄可见了，行为写在工具描述里即可。
+The restore must be logged on the broker side (aligned with the existing `[cua-captureapp-launch]`, adding
+`[cua-captureapp-restore]`): it is a user-visible desktop change and must be traceable. The model surface
+**adds no** output field: screenshot success itself implies the window was made visible, and the behavior is
+documented in the tool description.
 
-`settleFreshlyLaunchedTree` 必须移植。macOS 那次的根因（`nativeAxSource.ts:1731`）在 Windows 同样成立：刚拉起的应用 AX 树还在长，模型在第一个 cell 记下的元素索引，到下一个 cell 就指向别的节点。实测画图窗口在激活后约 3.5s 内出现。
+`settleFreshlyLaunchedTree` must be ported. The macOS root cause (`nativeAxSource.ts:1731`) holds on Windows
+too: a freshly launched app's AX tree is still growing, and element indexes noted in the model's first cell
+point to other nodes by the next cell. Measured: the Paint window appears about 3.5s after activation.
 
-拉起器 pid ≠ GUI pid 的情况沿用既有机制：`processExecutablePath(launcherPid)` 拿 canonical 路径后在活进程里重解（`electronNativeBackend.ts:1683-1700` 已有这套逻辑，搬到 win.ts）。
+When the launcher pid differs from the GUI pid, keep the existing mechanism: get the canonical path via
+`processExecutablePath(launcherPid)` and re-resolve among live processes (the logic already exists at
+`electronNativeBackend.ts:1683-1700`; move it to win.ts).
 
-`AppsFolder` 枚举结果在 Helper 生命周期内缓存；**名字 miss 时重枚举一次再判失败**，这样新装的应用不需要重启 Helper。
+The `AppsFolder` enumeration is cached for the Helper's lifetime; **on a name miss re-enumerate once before
+failing**, so newly installed apps need no Helper restart.
 
-### 2.3 工具面：删除 `open_application`
+### 2.3 Tool surface: delete `open_application`
 
-工具本身消失，不是平台收缩。连带删除：
+The tool disappears (not a platform contraction). Deleted along with it:
 
-| 删除对象 | 位置 |
-| --- | --- |
-| 工具定义（约 183 行） | `src/tools/observation.ts:1038-1220` |
-| 注册 / tier / 策略 / legacy 映射 | `manifest.ts:138`、`tier-table.ts`、`action-policy.ts`、`legacyToolMap.ts:26` |
-| 入参 schema | `src/tools/schemas/openApplicationAppArg.ts`、`schemas/index.ts`、`schemas/jsonSchemas.ts` |
-| broker 方法与 handler | `broker/types.ts` 的方法名、`broker-client.ts` 的两处特例、`electronNativeBackend.ts` 的 handler（688 行）+ 只服务它的 helper（`resolveAppByPid` / `rollbackFreshApplication` / `discoverFreshApplicationForRollback` / `settleActivatedAppByPid` / `positiveWindowId` / `activateMacFilePanelSurface`，共 378 行）+ `broker_info` 能力标志 |
-| Windows 启动机械 | `windowsSystemSurface.ts` 的 `openApplication`、计算器别名表、`openRunner` / `WindowsAumidActivator` 全套（173 → 44 行）；连带 `nodeSystemSurface` 的 `windowsOpenRunner` / `windowsActivateApplicationByAumid` 选项与 `helperMain` / `windowsDevHelperMain` 的注入点 |
-| 平台收缩机制（删空后成为死代码） | `src/tools/platform-surface.ts` 全文 + `tools/index.ts:61-62`、`manifest.ts:241-242`、`computer-use-runtime.ts:111-167` |
-| 激活契约文档 | `docs/open-application-activation-contract.md`（激活不再是独立契约，语义并入 `get_app_state`） |
-| `prevent_activation` 拒绝分支 | `electronNativeBackend.ts:1386-1389`。它守的是模型显式请求激活这件事，而该请求不再存在；且该门在 Windows 恒不生效（`IsFocusStealPrevented()` 写死 false，`ax_win.cc:3353`），留着就是死代码 |
+| Deleted                                            | Location                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool definition (about 183 lines)                  | `src/tools/observation.ts:1038-1220`                                                                                                                                                                                                                                                                                                                                                |
+| Registration / tier / policy / legacy map          | `manifest.ts:138`, `tier-table.ts`, `action-policy.ts`, `legacyToolMap.ts:26`                                                                                                                                                                                                                                                                                                       |
+| Argument schema                                    | `src/tools/schemas/openApplicationAppArg.ts`, `schemas/index.ts`, `schemas/jsonSchemas.ts`                                                                                                                                                                                                                                                                                          |
+| Broker method and handler                          | method name in `broker/types.ts`, two special cases in `broker-client.ts`, the handler in `electronNativeBackend.ts` (688 lines) + helpers serving only it (`resolveAppByPid` / `rollbackFreshApplication` / `discoverFreshApplicationForRollback` / `settleActivatedAppByPid` / `positiveWindowId` / `activateMacFilePanelSurface`, 378 lines) + the `broker_info` capability flag |
+| Windows launch machinery                           | `openApplication` in `windowsSystemSurface.ts`, the Calculator alias table, the whole `openRunner` / `WindowsAumidActivator` (173 -> 44 lines); with it the `windowsOpenRunner` / `windowsActivateApplicationByAumid` options of `nodeSystemSurface` and the injection points in `helperMain` / `windowsDevHelperMain`                                                              |
+| Platform-contraction mechanism (dead once emptied) | all of `src/tools/platform-surface.ts` + `tools/index.ts:61-62`, `manifest.ts:241-242`, `computer-use-runtime.ts:111-167`                                                                                                                                                                                                                                                           |
+| Activation contract doc                            | `docs/open-application-activation-contract.md`                                                                                                                                                                                                                                                                                                                                      |
+| `prevent_activation` rejection branch              | `electronNativeBackend.ts:1386-1389`. It guarded the model's explicit activation request, which no longer exists; and on Windows the gate never fires (`IsFocusStealPrevented()` hard-coded false, `ax_win.cc:3353`), so it is dead code                                                                                                                                            |
 
-**一处 spec 写错了，按事实纠正**：`adapter.openApplication`（适配器层的启动能力）**必须保留**。
-`reopenWindowlessApp`（darwin 专属）在 `capture_app` 内部用它把 macOS 的无窗口应用重新开出来 ——
-那正是"观察路径做完成观察所必需的最小动作"的既有先例。所以删的是**工具**与**broker 方法**，
-不是这个能力。`NodeSystemSurface.openApplication` 因此改为**可选**：macOS 实现它，Windows 不再
-实现（Windows 的拉起走原生 `launchApplicationAsync`，整条路在 `src/native/win.ts` 的 `captureApp`
-里，不经系统面），`nodeAutomationAdapter` 按系统面是否具备该能力条件暴露。
-`settleApplicationWindow` 与 `hasOnscreenWindow` 同理保留 —— 它们在 handler 之外还有调用方。
+**One spec error corrected by fact:** `adapter.openApplication` (the adapter-layer launch capability) **must be
+kept.** `reopenWindowlessApp` (darwin only) uses it inside `capture_app` to reopen a windowless macOS app,
+which is the existing precedent for "the observation path takes the minimal action required to complete the
+observation". What is deleted is the **tool** and the **broker method**, not the capability.
+`NodeSystemSurface.openApplication` therefore becomes **optional**: macOS implements it, Windows no longer
+does (Windows launches via native `launchApplicationAsync`, the whole path in `captureApp` in
+`src/native/win.ts`, not through the system surface), and `nodeAutomationAdapter` exposes it conditionally on
+the system surface providing it. `settleApplicationWindow` and `hasOnscreenWindow` are kept for the same
+reason (callers outside the handler).
 
-**激活不再是一个能力，而是 `get_app_state` 为完成观察所做的最小动作。** 把"激活"拆开看，三件事各归各位：
+**Activation is no longer a capability but the minimal action `get_app_state` takes to complete an
+observation.** Split apart, the three things each have a home:
 
-| 能力 | 归属 | 焦点代价 |
-| --- | --- | --- |
-| 唤醒挂起 UWP | `get_app_state` 内部自动（2.2） | **无** |
-| 抬到前台（供 raw 输入） | raw 输入派发时自己做（1.10 `activateConcreteWindow`） | 有，但本就是 raw 输入的既有语义 |
-| 恢复最小化窗口（供取像素） | `get_app_state` + `include_screenshot=true`（2.2） | 有，由模型显式触发 |
+| Capability                            | Owner                                                         | Focus cost                                      |
+| ------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------- |
+| Wake suspended UWP                    | automatic inside `get_app_state` (2.2)                        | **none**                                        |
+| Raise to foreground (for raw input)   | raw input does it at dispatch (1.10 `activateConcreteWindow`) | yes, but that is raw input's existing semantics |
+| Restore minimized window (for pixels) | `get_app_state` + `include_screenshot=true` (2.2)             | yes, explicitly triggered by the model          |
 
-三件事没有一件需要独立工具。曾考虑新增窄工具 `activate_window`，已否决：它只会有一个使用场景（取一个看不见的窗口的像素），而那个场景本就是 `get_app_state` 自己的职责；多一个工具并没有减少模型要理解的东西，只是把 `open_application` 换了个名字。
+None needs a standalone tool. A narrow `activate_window` tool was considered and rejected: it would have one
+use (pixels of a window that cannot be seen), which is already `get_app_state`'s job; another tool does not
+reduce what the model must understand, it just renames `open_application`.
 
-`file-url-window-verification`（`src/lib/`）随 `urls` 参数一起失去调用方（仅 `electronNativeBackend.ts:63` 与 `observation.ts:63` 引用），一并删除。
+`file-url-window-verification` (`src/lib/`) loses its callers with the `urls` parameter (only
+`electronNativeBackend.ts:63` and `observation.ts:63` reference it) and is deleted too.
 
-### 2.4 模型面契约变化
+### 2.4 Model-facing contract changes
 
-`app_ref.name` 的语义从"窗口标题子串"扩展为"已安装应用显示名（精确）或窗口标题（子串）"，描述需重写。
+`app_ref.name` semantics widen from "window-title substring" to "installed-app display name (exact) or window
+title (substring)"; the description must be rewritten.
 
-`window_id` 的描述**保持不动**（现在写的是 macOS 存档面板专用、不要猜占位值如 1）—— 窗口解析全部留在 broker 内部，模型不需要也不应该为 Windows 观察提供它。
+The `window_id` description **stays** (currently: macOS save-panel only, do not guess placeholder values like
+1): window resolution stays inside the broker; the model neither needs nor should supply it for Windows
+observation.
 
-`get_app_state` 描述需如实写明三件事：目标未运行时会被拉起（packaged 后台拉起，其余会取得前台焦点）；目标挂起时会被唤醒（无焦点代价）；目标最小化且 `include_screenshot=true` 时**会恢复窗口并因此取得焦点**，只要树够用就保持默认 `include_screenshot=false` 以避免打扰用户。
+The `get_app_state` description must state three things honestly: a non-running target is launched (packaged
+launches in the background, others take the foreground focus); a suspended target is woken (no focus cost); a
+minimized target with `include_screenshot=true` **restores the window and therefore takes focus**; keep the
+default `include_screenshot=false` whenever the tree suffices to avoid disturbing the user.
 
-工具总数从 15 减到 14（`open_application` 出，无新增）。`manifest.ts` 里 "canonical 15-tool surface" 与 "Source: `tool_manifest.py`，verbatim" 两处注释都要改 —— 这次是有意与上游 Python manifest 分叉，注释不改就是假话。`APP_ASSOCIATION_MODE_BY_TOOL` 同步删条目（drift gate 会强制这一步）。
+The tool count goes 15 -> 14 (`open_application` out, nothing added). The comments "canonical 15-tool
+surface" and "Source: `tool_manifest.py`, verbatim" in `manifest.ts` must change: this is a deliberate
+divergence from the upstream Python manifest, and leaving them would be false. `APP_ASSOCIATION_MODE_BY_TOOL`
+drops the entry in step (the drift gate enforces this).
 
-工具面上因此**没有任何新东西要模型学**：`get_app_state` 的参数一个没变，行为变成"为了给你要的东西，做必要的最小动作"。
-
----
-
-## 三、测试计划（先写测试）
-
-新增：
-
-- `test/native/windows-installed-app-resolution.test.ts` —— AppID 三形状分类、`.url`/`.msc` 被拒、名字精确匹配优先于标题子串、miss 后重枚举一次。
-- `test/native/windows-transparent-launch.test.ts` —— 未运行→拉起→绑定→settle 全链路；packaged 走 pid 绑定、UWP 走 AUMID 兜底（1.5 的两行表逐条钉住）；拉起器 pid ≠ GUI pid 的重解。
-- `test/native/windows-name-ambiguity.test.ts` —— 标题子串多命中抛歧义错并列候选（取代静默择一）。
-- `test/native/windows-observability-states.test.ts` —— 1.8 的四状态矩阵逐行钉住：正常窗口（含被完全遮挡）不做任何激活即可出树与像素；cloaked → AUMID 唤醒后重读；iconic + `include_screenshot=false` → 只回树、**不动窗口**；iconic + `include_screenshot=true` → 恢复后截图成功；窗口真的消失/漂移时 `invalid_target` / `target_changed` **仍抛错**。
-- cloaked：`PickPrimaryHwndForPid` 不选 cloaked；`listWindows` 仍报出但带 `cloaked:true`。
-- 拉起路径必须拒绝卸载程序（名字或目标路径含 `uninstall` / `卸载`）。
-
-改写 / 删除（约 3,200 行）：
-
-| 文件 | 行数 | 处置 |
-| --- | --- | --- |
-| `test/windows-open-application-identity.test.ts` | 771 | 删除；身份语义断言迁入新的 transparent-launch 套件 |
-| `test/open-application-new-instance.test.ts` | 584 | 删除（`new_instance` 随工具消失） |
-| `test/open-application-identity-conjunction.test.ts` | 474 | 删除 |
-| `test/open-application-args.test.ts` | 423 | 删除 |
-| `test/open-application-error-taxonomy.test.ts` | 268 | 删除；错误分类断言迁入 `get_app_state` |
-| `test/broker/windowsSystemSurface.test.ts` | 201 | 精简（去掉 openApplication 与别名表） |
-| `test/get-app-state-transparent-launch.test.ts` | 205 | 扩写：加 Windows 分支 |
-| `test/native/windows-app-ref-resolution.test.ts` | 278 | 改写 `resolveTarget` |
-| `test/tool-platform-surface.test.ts` | 47 | 删除（`open_application` 是唯一条目，机制随之成为死代码） |
-| `test/resolve-opened-app-active-settle.test.ts` | 237 | 删除（`settleActivatedAppByPid` 一并删除，原生激活自带前台校验循环） |
-| `test/manifest.test.ts` / `tier-table` / `schemas-*` / `skill-tool-signatures` / `tool-return-shape.parity` | — | 同步工具计数与签名（15 → 14） |
-
-E2E：`docs/cua-act-verify-windows-scenarios.md` 需要一条"按中文应用名冷启动并观察"的用例（今天 `{name:"记事本"}` 必然失败）。
-
----
-
-## 四、分阶段
-
-| 阶段 | 内容 | 可独立验证 |
-| --- | --- | --- |
-| A | 原生：`listInstalledApplications` + `launchApplicationAsync` + `window_id` + cloaked 口径 | ✅ 纯新增导出，不改既有行为 |
-| B | `win.ts`：`resolveTarget` + 透明拉起 + iconic 恢复 + settle + 歧义抛错 | ✅ `get_app_state({name})` 端到端 |
-| C | 删除 `open_application` 全部面 + 平台收缩机制 + 契约文档 | ✅ 净删除 |
-
-C 依赖 B（先有替代能力再删旧工具），B 依赖 A。B 里的 iconic 恢复不含新增原生代码 —— `activateWindow` / `activateApplication` 两条都已存在且都含 `IsIconic → SW_RESTORE`（`ax_win.cc:3300` / `3228`）。
+**Nothing new for the model to learn:** no `get_app_state` parameter changed; the behavior becomes "take the
+minimal action necessary to give you what you asked for".
 
 ---
 
-## 五、未验证项与风险
+## 3. Test plan (tests first)
 
-- Win32 拉起的焦点抢夺只在 charmap 上测过（n=1）。不同应用对 nCmdShow 的尊重程度不同，可能有应用确实不抢焦点。**这不改变设计**（我们已接受抢焦点），只影响文案严谨度。
-- `launchApplicationAsync` 对 `.exe` 目标带参数的场景未设计（AppsFolder 的 `TargetParsingPath` 不含快捷方式参数）。带参启动的应用可能行为不同。
-- `listInstalledApplications` 的 134 条里含卸载程序（"卸载微信"）。精确名匹配可缓解，但模型若真传了这个名字就会执行卸载程序。**需要在解析层显式拒绝**：名字或目标路径命中 `uninstall` / `卸载` 时不允许拉起。这是本设计里唯一的新增危险面，必须有测试。
-- AppsFolder 枚举在应用极多的机器上的耗时未测（本机 134 条 / 280ms）。
-- 按身份产出 `listApplications` 后，128 条切片可能更容易被打满。
-- 最小化窗口上 `setValue` 生效已实测，但同一轮里前台确实发生了变化（最小化本身会把前台交给下一个窗口，`setValue` 是否额外抢焦点无法从这次 n=1 的测量里分离）。这不影响 2.2 的设计，但"操作最小化应用完全无副作用"这句不能写进模型面文案。
-- ~~`include_screenshot=true` 触发的"恢复最小化 → 截图成功"端到端未做真机验证~~ —— 阶段 B 已补：charmap 最小化后 `screenshot=false` 返回 27 元素且窗口保持最小化、焦点未动；`screenshot=true` 恢复窗口并返回 38,140B 截图（焦点被抢，已接受）。
-- 恢复窗口这个副作用在模型面没有独立的输出字段，只有截图成功这一间接信号 + broker 日志。这是为了不扩大工具面的有意取舍；若之后发现模型会因此误判用户桌面状态，再考虑在观察 payload 里补一个字段。
-- **已知不对称（阶段 B 实现选择）**：「已安装显示名」这一层需要一次异步枚举，只在 `captureApp` 里参与；`list_windows` / `application_info` 仍只有窗口标题子串那一层。于是 `list_windows({name:"记事本"})` 仍解析不到，而 `get_app_state({name:"记事本"})` 能。没有回退（旧实现两者都不行），但口径不齐 —— 要抹平需要把 `AxReadOnlySource.listWindows` 改成异步，那是 broker 全平台的契约改动，不在本 spec 范围。
-- **`cloaked` / `minimized` 到不了模型面**：它们是原生事实，`adaptSnapshot` 映射成 broker 的 `AxRawWindow` 时并不携带。模型因此无法从 `list_windows` 看出某个窗口"存在但没有像素"。要补需要动 `AxRawWindow`（跨平台契约），本阶段没做。
-- 旧 addon（不报 `window_id`）下窗口状态检查整段跳过：`makeObservable` 拿不到 `window_id` 时不猜，把窗口选择留给原生 `PickPrimaryHwndForPid`（那比 `listWindows` 的 EnumWindows z-order 首个可靠 —— 后者正是它注释里 136x39 shell 辅助窗口问题的来源）。代价是那种 addon 上 cloaked / minimized 两条救法都不生效，属 additive ABI 的既有降级语义。
+New:
 
-- **eval harness 未随本次删除更新（后续工作）**：`evals/zcode-gui-eval/src/evaluators/` 下 16 个文件共约 104 处引用 `open_application`，其中 `cua-open-application-tasks.mjs` 与 `zcode-agent-open-application-tasks.mjs` 整体为它而写。跨仓 drift mirror（`evals/zcode-gui-eval/tool-manifest.json`）已同步，`zge validate --all --definition-only` 仍 37 通过 / 0 失败，CI 可见的门是绿的；破裂只会出现在 macOS 真机 lane。**这些用例在本次删除之前就已失效**：它们被 `process.platform !== "darwin"` 门控只在 macOS 运行，而 mac 面早在 2026-09-11 就排除了 `open_application`。整理它需要 macOS 真机，无法在 Windows 上验证 —— 盲改一个跑不起来的 harness 比留着它更糟。
-- `test/macos-background-application-open.test.ts` 是**裁剪**而非删除：15 个用例驱动已删除的 broker 方法，另外 3 个直接驱动 `adapter.openApplication`（保留能力的 completion-backed ABI 覆盖），后者留下。
-- SKILL.md 的 14KB 上限（常驻预载预算）几乎打满：加入两条 Windows 焦点例外后是 14,322 / 14,336。为腾出空间压缩了一处与新段落重复的旧句。下次往 SKILL 里加东西前先量尺寸。（2026-09-16 更新：rebase 到 `dbae0665` 后上游自己压掉了一些，现为 14,275 / 14,336，余量 61 字节。）
+- `test/native/windows-installed-app-resolution.test.ts`: three AppID shapes classified, `.url`/`.msc`
+  rejected, exact name match beats title substring, re-enumerate once after a miss.
+- `test/native/windows-transparent-launch.test.ts`: not running -> launch -> bind -> settle end to end;
+  packaged binds by pid, UWP falls back to AUMID (both rows of the 1.5 table pinned); launcher pid != GUI pid
+  re-resolution.
+- `test/native/windows-name-ambiguity.test.ts`: multiple title-substring hits raise an ambiguity error listing
+  candidates (replacing the silent pick).
+- `test/native/windows-observability-states.test.ts`: the 1.8 four-state matrix row by row: a normal window
+  (even fully occluded) yields tree and pixels with no activation; cloaked -> AUMID wake then re-read; iconic +
+  `include_screenshot=false` -> tree only, **window untouched**; iconic + `include_screenshot=true` -> restore
+  then screenshot succeeds; when the window truly vanishes/drifts `invalid_target` / `target_changed` **still
+  throw**.
+- cloaked: `PickPrimaryHwndForPid` does not pick cloaked; `listWindows` still reports it with `cloaked:true`.
+- The launch path must refuse uninstallers (name or target path containing `uninstall` / `卸载`).
 
-- **已知限制，且经决定不修：`list_apps` 会把共享宿主后面的 UWP 应用整个藏起来。** 成因是 `ListApplications` 按 pid 去重（`seenPids.insert(pid)`），而所有 UWP 共用 ApplicationFrameHost 那一个 pid，于是只冒出一条，名字取 EnumWindows z 序最上面那个窗口的标题。2026-09-16 实测：计算器与设置同时醒着挂在 pid 19076 上时，`list_apps` 仍是 7 条、AFH 条目名为「计算器」，而**「设置」在 list_apps 里根本不存在**。同根现象：`application_info({pid})` 在 AFH 上报的是面积最大那个窗口的名字与 AUMID。
+Rewrite / delete (about 3,200 lines):
 
-  不修的理由不是"影响小"，而是**会导致误操作的那一半已经 fail-closed 了**：`{pid:宿主}` 不再静默返回另一个应用的树，观察期唤醒也不再激活错的 AUMID，而且那条报错直接把宿主的窗口清单带给调用方。剩下的纯粹是**发现不全**。真修法是让共享宿主**按窗口出条目**（每条带自己的 `window_id` 与 AUMID 身份）而不是按 pid 出一条，但那是改 `list_apps` 这个核心方法的对外形状：大量测试钉着它的结构，`app_ref.pid` 的"一个应用一个 pid"心智模型也会跟着松动，收益（发现完整性）配不上这个风险面。
+| File                                                                                                        | Lines | Disposition                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------ |
+| `test/windows-open-application-identity.test.ts`                                                            | 771   | delete; identity assertions move into the new transparent-launch suite                                 |
+| `test/open-application-new-instance.test.ts`                                                                | 584   | delete (`new_instance` goes with the tool)                                                             |
+| `test/open-application-identity-conjunction.test.ts`                                                        | 474   | delete                                                                                                 |
+| `test/open-application-args.test.ts`                                                                        | 423   | delete                                                                                                 |
+| `test/open-application-error-taxonomy.test.ts`                                                              | 268   | delete; error taxonomy assertions move to `get_app_state`                                              |
+| `test/broker/windowsSystemSurface.test.ts`                                                                  | 201   | trim (drop openApplication and the alias table)                                                        |
+| `test/get-app-state-transparent-launch.test.ts`                                                             | 205   | extend with a Windows branch                                                                           |
+| `test/native/windows-app-ref-resolution.test.ts`                                                            | 278   | rewrite for `resolveTarget`                                                                            |
+| `test/tool-platform-surface.test.ts`                                                                        | 47    | delete (`open_application` is its only entry; the mechanism becomes dead)                              |
+| `test/resolve-opened-app-active-settle.test.ts`                                                             | 237   | delete (`settleActivatedAppByPid` deleted; native activation has its own foreground verification loop) |
+| `test/manifest.test.ts` / `tier-table` / `schemas-*` / `skill-tool-signatures` / `tool-return-shape.parity` | n/a   | sync tool count and signatures (15 -> 14)                                                              |
 
-  留在原地的具体后果只有两条，都不会造成误操作：模型被问"现在开着哪些应用"时会漏报同宿主的 UWP；`application_info({pid})` 在 AFH 上报错应用名。**绕路**：按应用名绑定（主路，可用），或从共享宿主那条报错里拿 `window_id`。
+E2E: `docs/cua-act-verify-windows-scenarios.md` needs a case "cold-launch and observe by Chinese app name"
+(today `{name:"记事本"}` must fail).
 
-- **全量失败基线从未被逐条 triage 过，所以"N = N"只能当回归闸门，不能当健康证明。** 本仓在 Windows 上长期有约 50 条失败，一直被概括为"macOS / PiP 契约在 Windows 上必然红"。2026-09-16 逐条查其中一条，发现 `test/windowsDevHelperMain.test.ts > runs the source Windows Helper against the real native addon` 不是平台差异，而是**测试自己双重坏掉、从来没通过过**：一是 `fork` 时没带 `ZCODE_CUA_DEV_MODE=1`（源码 Helper 这个组合根在 native 加载点自查 peer 原语，Windows 还没有，不显式 opt-in 必然拒启 —— 产品行为正确）；二是启动握手先发 `transport_ready` 再发 `ready`，而它用 `once()` 要求第一条就是 `ready`。代价是"dev 模式 Helper 能对着真实 addon 起来"这个信号一直是空的。已修（基线随之 52 → 51）。**推论**：剩下 51 条里可能还藏着真问题，判回归时"新增失败 = 0"是可信的，但不要把这个数字当成"其余都是平台差异"。
+---
+
+## 4. Phases
+
+| Phase | Content                                                                                          | Independently verifiable                            |
+| ----- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| A     | Native: `listInstalledApplications` + `launchApplicationAsync` + `window_id` + cloaked criterion | yes: pure new exports, no existing behavior changed |
+| B     | `win.ts`: `resolveTarget` + transparent launch + iconic restore + settle + ambiguity error       | yes: `get_app_state({name})` end to end             |
+| C     | Delete all `open_application` surfaces + platform-contraction mechanism + contract doc           | yes: pure deletion                                  |
+
+C depends on B (replacement before deleting the old tool), B on A. The iconic restore in B adds no native
+code: `activateWindow` / `activateApplication` both exist and both contain `IsIconic -> SW_RESTORE`
+(`ax_win.cc:3300` / `3228`).
+
+---
+
+## 5. Unverified items and risks
+
+- Win32 launch focus-stealing was measured only on charmap (n=1). Apps honor nCmdShow differently and some may
+  not steal focus. This does not change the design (focus stealing is accepted); it only affects copy rigor.
+- `launchApplicationAsync` for `.exe` targets with arguments is not designed (AppsFolder `TargetParsingPath`
+  carries no shortcut arguments); apps launched with arguments may behave differently.
+- The 134 `listInstalledApplications` entries include uninstallers ("卸载微信"). Exact name match mitigates but
+  a model passing that name would run the uninstaller. **The resolution layer must explicitly refuse** names or
+  target paths hitting `uninstall` / `卸载`. This is the only new dangerous surface in the design and must have
+  a test.
+- AppsFolder enumeration time on machines with very many apps is unmeasured (134 entries / 280ms here).
+- After producing `listApplications` by identity, the 128-entry slice may fill up more easily.
+- `setValue` on a minimized window works (measured), but the foreground did change in the same round
+  (minimizing hands the foreground to the next window; whether `setValue` steals focus additionally cannot be
+  separated from this n=1 measurement). This does not affect 2.2, but "operating a minimized app has no side
+  effects" must not be written into model-facing copy.
+- The "restore minimized -> screenshot succeeds" end-to-end triggered by `include_screenshot=true` was
+  verified in Phase B: after minimizing charmap, `screenshot=false` returns 27 elements with the window kept
+  minimized and focus untouched; `screenshot=true` restores the window and returns a 38,140 B screenshot
+  (focus stolen, accepted).
+- The restore side effect has no standalone model-facing output field, only the indirect signal of screenshot
+  success + the broker log. This is a deliberate trade-off to not widen the tool surface; add a field to the
+  observation payload only if models are found to misjudge the user's desktop state because of it.
+- **Known asymmetry (Phase B implementation choice):** the "installed display name" layer needs one async
+  enumeration and participates only in `captureApp`; `list_windows` / `application_info` still have only the
+  window-title substring layer. So `list_windows({name:"记事本"})` still does not resolve while
+  `get_app_state({name:"记事本"})` does. No regression (the old implementation failed both) but the criteria
+  do not match; aligning them needs `AxReadOnlySource.listWindows` to become async, a broker-wide
+  cross-platform contract change out of this spec's scope.
+- **`cloaked` / `minimized` do not reach the model surface:** they are native facts that `adaptSnapshot` does
+  not carry when mapping to the broker's `AxRawWindow`. The model cannot tell from `list_windows` that a
+  window "exists but has no pixels". Fixing it needs `AxRawWindow` (a cross-platform contract) and was not
+  done in this phase.
+- With an old addon (no `window_id`) the window-state check is skipped entirely: when `makeObservable` has no
+  `window_id` it does not guess, leaving window selection to native `PickPrimaryHwndForPid` (more reliable
+  than the first EnumWindows z-order entry of `listWindows`, which is the source of the 136x39 shell helper
+  window problem noted in its comment). The cost: on such an addon neither the cloaked nor the minimized rescue
+  works, which is the existing degradation semantics of an additive ABI.
+- **Eval harness not updated with this deletion (follow-up):** 16 files under
+  `evals/zcode-gui-eval/src/evaluators/` have about 104 references to `open_application`;
+  `cua-open-application-tasks.mjs` and `zcode-agent-open-application-tasks.mjs` exist entirely for it. The
+  cross-repo drift mirror (`evals/zcode-gui-eval/tool-manifest.json`) is synced and
+  `zge validate --all --definition-only` still passes 37 / 0 failures, so the CI-visible gate is green; the
+  breakage appears only in the macOS real-machine lane. **These cases were already broken before this
+  deletion:** they are gated by `process.platform !== "darwin"` and run only on macOS, while the mac surface
+  has excluded `open_application` since 2026-09-11. Cleaning it needs a real macOS machine and cannot be
+  verified on Windows; blindly editing a harness that cannot run is worse than leaving it.
+- `test/macos-background-application-open.test.ts` is **trimmed**, not deleted: 15 cases drive the deleted
+  broker method and are removed; 3 drive `adapter.openApplication` directly (completion-backed ABI coverage of
+  the kept capability) and stay.
+- The SKILL.md 14KB cap (resident preload budget) is nearly full: after adding two Windows focus exceptions it
+  is 14,322 / 14,336; one old sentence duplicating a new paragraph was condensed. Measure size before adding
+  anything to the SKILL. (Updated 2026-09-16: after rebasing on `dbae0665` upstream compressed some, now
+  14,275 / 14,336, 61 bytes of headroom.)
+- **Known limitation, decided not to fix: `list_apps` hides UWP apps behind a shared host.** `ListApplications`
+  de-duplicates by pid (`seenPids.insert(pid)`) and all UWP apps share the single ApplicationFrameHost pid, so
+  only one entry appears, named after the top window in EnumWindows z-order. Measured 2026-09-16: with
+  Calculator and Settings both awake on pid 19076, `list_apps` still returned 7 entries, the AFH entry was
+  named "计算器", and **"设置" did not exist in `list_apps` at all**. Same root: `application_info({pid})` on
+  AFH reports the name and AUMID of the largest window.
+
+  The reason is not "small impact" but that **the half that causes misoperation is already fail-closed:**
+  `{pid:host}` no longer silently returns another app's tree, observation-time wake no longer activates the
+  wrong AUMID, and that error carries the host's window list to the caller. What remains is purely
+  **incomplete discovery**. The real fix is to have a shared host produce **per-window entries** (each with
+  its own `window_id` and AUMID identity) rather than one per pid, but that changes the outward shape of the
+  core `list_apps` method: many tests pin its structure and the "one app, one pid" mental model of
+  `app_ref.pid` would loosen; the gain (discovery completeness) does not justify that risk surface.
+
+  The only two remaining consequences cause no misoperation: asked "which apps are open now" the model misses
+  UWP apps on the same host, and `application_info({pid})` on AFH reports the wrong app name. **Workaround:**
+  bind by app name (main path, works), or take the `window_id` from the shared-host error.
+
+- **The full failure baseline was never triaged item by item, so "N = N" is a regression gate, not proof of
+  health.** The repo has had about 50 failures on Windows, generally summarized as "macOS / PiP contracts must
+  be red on Windows". On 2026-09-16 triaging one of them,
+  `test/windowsDevHelperMain.test.ts > runs the source Windows Helper against the real native addon`, turned
+  out not to be a platform difference but a test **broken twice over that never passed**: (1) `fork` did not
+  pass `ZCODE_CUA_DEV_MODE=1` (the source Helper composition root self-checks peer primitives at the native
+  load point, Windows lacks them yet, so refusing to start without explicit opt-in is correct product
+  behavior); (2) the startup handshake sends `transport_ready` then `ready` while the test used `once()`
+  expecting `ready` first. So the signal "a dev-mode Helper can start against the real addon" was empty. Fixed
+  (baseline 52 -> 51). **Implication:** the remaining 51 may hide real problems; "new failures = 0" is
+  trustworthy for judging regressions, but do not read the number as "the rest are all platform differences".

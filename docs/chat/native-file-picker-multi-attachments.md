@@ -1,26 +1,24 @@
 # Native file picker multi-attachment spec
 
-## 背景
+The chat composer attachment model supports multiple attachments, and Web file input and drag-and-drop can add several files at once. The desktop native file picker, however, returns a single local path through `selectFile()`, so the attachment button added one file at a time.
 
-聊天输入框附件模型已经支持多个附件，Web 文件输入和拖拽入口也能一次添加多个文件；但桌面端原生文件选择器只通过 `selectFile()` 返回单个本地路径，导致点击附件按钮时每次只能添加一个文件。
+## Goals
 
-## 目标
+- The desktop composer's native file picker selects multiple files at once.
+- The existing attachment cap `MAX_CHAT_ATTACHMENTS = 8` stays; when selections exceed the remaining slots, the existing truncation and hint behavior applies.
+- `selectFile()` keeps its single-file semantics for single-file scenarios such as SSH private keys.
+- Web, mobile remote and drag-and-drop attachment entry behavior is unchanged.
 
-- 桌面端聊天输入框的原生文件选择器支持一次选择多个文件。
-- 继续沿用现有附件上限 `MAX_CHAT_ATTACHMENTS = 8`，超过剩余槽位时保留现有截断和提示行为。
-- 保留 `selectFile()` 的单文件语义，供 SSH 私钥等单文件选择场景继续使用。
-- Web、手机远控和拖拽附件入口行为不变。
+## Design
 
-## 方案
+- The platform layer adds `selectFiles(): Promise<string[]>`, which only means "select multiple local absolute paths the agent can access".
+- The Desktop main process adds a matching IPC handler; Electron `showOpenDialog` uses `["openFile", "multiSelections"]` and returns an empty array on cancel.
+- Desktop preload / renderer platform expose `selectFiles()`.
+- When `canSelectFilePath` is true the composer prefers `selectFiles()`; if an older host lacks it, fall back to `selectFile()`.
+- Each returned path reuses the existing `createChatComposerPathAttachment` and `addPreparedAttachments`; no new attachment model.
 
-- 平台层新增 `selectFiles(): Promise<string[]>`，只表达“选择多个可被 agent 访问的本地绝对路径”。
-- Desktop main 进程新增对应 IPC handler，Electron `showOpenDialog` 使用 `["openFile", "multiSelections"]`，取消时返回空数组。
-- Desktop preload / renderer platform 暴露 `selectFiles()`。
-- 聊天输入框在 `canSelectFilePath` 为 true 时优先调用 `selectFiles()`；若旧宿主没有该方法，则 fallback 到 `selectFile()`。
-- 每个返回路径复用现有 `createChatComposerPathAttachment` 和 `addPreparedAttachments`，避免新增附件模型。
+## Non-goals
 
-## 非目标
-
-- 不改变远程连接表单、私钥选择、目录选择等单文件/单目录 picker。
-- 不改变 Web 端 `<input type="file" multiple>` 或拖拽附件解析逻辑。
-- 不提高附件数量上限。
+- Single-file / single-directory pickers (remote connection form, private key, directory selection) are unchanged.
+- Web `<input type="file" multiple>` and drag-and-drop attachment parsing are unchanged.
+- The attachment cap is not raised.

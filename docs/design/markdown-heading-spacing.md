@@ -1,6 +1,7 @@
-# Markdown Heading Spacing
+# Markdown heading spacing
 
-Markdown headings are rendered in `MessageResponse` within `packages/ui/src/components/ai-elements/message.tsx`.
+Markdown headings render in `MessageResponse` in `packages/ui/src/components/ai-elements/message.tsx`.
 
-- `h1` through `h6` all use uniform top spacing `mt-6`.
-- `h1` through `h6` all use uniform bottom spacing `mb-4`, providing a clearer visual separation between headings and subsequent body text.
+- `h1` through `h6` all use the same top spacing `mt-6`.
+- `h1` through `h6` all use the same bottom spacing `mb-4`, separating headings from following body text more
+  clearly.

@@ -1,41 +1,21 @@
 # Git Requirements Review and Acceptance Checklist
 
-Update date: 2026-04-09
-
 ## Document Description
 
-This document is used to organize current results of Git integration development.
+Review of the Git integration against `docs/git/requirements.md` and the landed code. Two statuses are recorded:
 
-Review baseline comes from:
+- `Implementation status`: `Completed` (implemented, main functional chain runs) or `Not completed` (inconsistent with requirements, or not landed).
+- `Acceptance status`: `Accepted` or `Not accepted`. Acceptance is completed manually by the user: `Accepted` when the user confirms, `Not accepted` otherwise (with the problem noted in remarks).
 
-- `docs/git/requirements.md`
-- Current landed code implementation
+## Scope of the Integration
 
-This document only records two statuses:
+- Git UI is connected to the real `IGitService`.
+- `Not staged` / `Staged` / `All branch changes` use real repository data.
+- `Previous round changes` keeps the ZCode task per-turn snapshot chain.
+- The Git pane loads single-file diffs on demand.
+- The top Git entry and the Git pane share the same Git status.
 
-- `Implementation status`
-  - `Completed`: code has been implemented, main functional chain can run
-  - `Not completed`: current implementation inconsistent with requirements, or not landed yet
-- `Acceptance status`
-  - Currently uniformly recorded as `Not accepted`
-  - Acceptance needs to be completed manually by user
-  - After user accepts successfully, update to `Accepted`
-
-## Scope of This Integration
-
-Core work completed in this integration:
-
-- Git UI connected to real `IGitService`
-- `Not staged` / `Staged` / `All branch changes` switched to real repository data
-- `Previous round changes` retains ZCode task per-turn snapshot chain
-- Git pane supports real single file diff on-demand loading
-- Top Git entry and Git pane share same Git status
-
-Current overall judgment:
-
-- Git UI and real service main chain has been connected
-- Functionality has entered "manual acceptance" stage
-- Still a small number of requirement items deviate from original `requirements.md`, need subsequent confirmation
+The Git UI to real service main chain is connected and in manual acceptance. A few items still deviate from the original `requirements.md` and need confirmation.
 
 ## Requirement List
 
@@ -75,17 +55,6 @@ Current overall judgment:
 
 ## Current Conclusion
 
-Conclusions as follows:
-
-1. Git UI and real service main access has been completed.
-2. Current function main chain basically runs, has manual acceptance conditions.
-3. Current all requirement items' `Acceptance status` is uniformly `Not accepted`, waiting for user manual confirmation.
-4. After user confirms item by item, update statuses in this file according to acceptance results.
-
-## Post-Acceptance Update Rules
-
-Subsequently can update as follows:
-
-- User confirms passed: change corresponding entry's `Acceptance status` to `Accepted`
-- User confirms not passed: keep `Not accepted`, supplement problem in remarks
-- If user requires implementation adjustment: first modify code, then update corresponding entry's `Implementation status` and remarks
+1. Git UI and the real service main chain are complete and the main chain runs.
+2. The 5 items marked `Not accepted` in the table await manual confirmation (see [`unverified-requirements.md`](./unverified-requirements.md)); the rest are `Accepted`.
+3. After the user confirms an item, update its status in this file; when the user requires an implementation adjustment, modify code first, then update the item's `Implementation status` and remarks.

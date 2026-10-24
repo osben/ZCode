@@ -1,18 +1,23 @@
-# Secondary Confirmation Dialog Primary Button Specification
+# Secondary confirmation dialog primary button
 
 ## Background
 
-Secondary confirmation dialogs protect user actions about to be executed. Previously, different business units rendered confirmation buttons as primary, warning, or destructive, causing "confirm and continue" buttons to jump between colors across dialogs even when semantically identical.
+Secondary confirmation dialogs protect user actions about to run. Different business units used to render the
+confirm button as primary, warning or destructive, so a semantically identical "confirm and continue" button
+changed color between dialogs.
 
 ## Specification
 
-- Confirmation buttons in secondary confirmation dialogs uniformly use the primary button style.
-- Cancellation buttons continue to use the secondary button style, keeping the operation hierarchy clear.
-- Risk semantics such as delete, stop, leave, or refresh broken links are expressed through titles, descriptions, and button text, not distinguished by confirmation button color.
-- `ConfirmDialogRequest` does not provide button color or variant configuration; callers must not override the confirmation button style through dialog requests.
-- Confirmation dialogs independently using `AlertDialogAction` should also keep the confirmation button as primary, unless a future design specification explicitly introduces a new confirmation button semantic level.
+- The confirm button in a secondary confirmation dialog always uses the primary button style.
+- The cancel button keeps the secondary button style, keeping the action hierarchy clear.
+- Risk semantics such as delete, stop, leave or refresh broken links are expressed through title,
+  description and button text, not through confirm-button color.
+- `ConfirmDialogRequest` provides no button color or variant configuration; callers must not override the
+  confirm button style through dialog requests.
+- Confirmation dialogs that use `AlertDialogAction` independently also keep the confirm button primary, unless
+  a future design spec explicitly introduces a new confirm-button semantic level.
 
-## Current Impact Scope
+## Impact scope
 
-- The global `ConfirmDialogHost` confirmation button.
+- The global `ConfirmDialogHost` confirm button.
 - Independent `AlertDialogAction` used by business-specific confirmation dialogs.

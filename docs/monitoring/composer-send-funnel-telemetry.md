@@ -1,10 +1,22 @@
 # Composer Send Funnel Telemetry (ARMS: send_input_focus / send_click / send_result)
 
-**Status**: **Implemented**, merged via MR !2000 - three events and `send_result` end-to-end timing scope landed in the same MR (new `sendFunnelArmsTelemetry.ts`; supervisor's `awaitSendRender()` / `notifyUserInputRendered()` and `resolveSendAckSettlement()`'s `awaitRender` branch; `SessionPane` render signal effect; unit test in `v4ComposerSendFunnelTelemetry.test.ts` "Wait for Render" section). Timing scope changed from "ACK accepted" to "user message rendered to conversation history"; desktop real machine end-to-end verified ~230 ms (ACK segment 55 ~ 100 ms); **not yet released**, online percentiles to be reviewed after online launch.
+**Status**: **Implemented** (MR !2000): three events and the `send_result` end-to-end timing scope (new
+`sendFunnelArmsTelemetry.ts`; supervisor `awaitSendRender()` / `notifyUserInputRendered()` and the
+`resolveSendAckSettlement()` `awaitRender` branch; `SessionPane` render-signal effect; unit tests in the "Await
+Render" section of `v4ComposerSendFunnelTelemetry.test.ts`). The timing scope is "user message rendered to
+conversation history", not "ACK accepted"; desktop real-machine end-to-end is about 230 ms (ACK segment 55-100
+ms). Not yet released.
 
-**Observation**: After two weeks online, check two things per §5.4. 1) Calibrate the 30 s `render_timeout` threshold - real machine p50 is only 230 ms, 30 s is likely too wide, but need online tail evidence to narrow. 2) Check the proportion of `send_cost_ms − ack_cost_ms` (projection reflow + render segment) on low-config devices vs real machine; if this segment inflates significantly, optimization focus is on rendering rather than network.
+**Open follow-up (after two weeks online, per §5.4)**: (1) calibrate the 30 s `render_timeout` threshold: real
+machine p50 is only 230 ms, so 30 s is likely too wide, but online tail evidence is needed to narrow it; (2)
+compare the share of `send_cost_ms - ack_cost_ms` (projection reflow + render segment) on low-end devices vs the
+real machine; if it inflates, optimization focus is rendering, not network.
 
-**Known Gap**: composer slash command path not yet integrated - `dispatchSlashCommand()` missing `telemetrySeed`; existing sessions' `/compact``, `/goal`, and `emptyGoal`/`unsupportedGoal`local synchronous rejection only report`send_click`without falling through to`send_result`. When ARMS calculates success rate by `send_click_id`, this subset enters as denominator as abandonment; to be excluded separately; fix to follow up.
+**Known gap**: the composer slash-command path is not integrated: `dispatchSlashCommand()` lacks
+`telemetrySeed`; `/compact`, `/goal` and the local synchronous rejections `emptyGoal`/`unsupportedGoal` of
+existing sessions report only `send_click` and never reach `send_result`. When ARMS computes success rate by
+`send_click_id`, this subset counts in the denominator as abandonment and must be excluded separately; the fix is
+a follow-up.
 
 **Reporting Channel**: **Only Alibaba Cloud ARMS RUM custom events** (`platform.reportArmsCustomEvent`). Does not go through self-developed `/event/report`.
 
@@ -192,7 +204,7 @@ Putting duration in `value` not `properties` is core reason for choosing ARMS ch
 
 `attachment_not_ready` and §5.2 "attachment not ready no `send_click`" not contradictory: former is click time `hasUnreadyAttachments` already true, button disabled, never entered `submit()` body; latter is click time attachment appears ready, `send_click` already reported, then `prepareForSend()` fails. Latter not finalizing leaves dangling `send_click` polluting success denominator.
 
-**`noop`归口**: `CommandAck.status` has `noop` (command deemed no-op by Host). Not separate `reason_code`, unified as `failed` — from "did message send" user perspective it didn't; original value retained in `ack_status=noop`, drill down when needed.
+**`noop` handling**: `CommandAck.status` has `noop` (command deemed no-op by Host). Not separate `reason_code`, unified as `failed` — from "did message send" user perspective it didn't; original value retained in `ack_status=noop`, drill down when needed.
 
 **Non-finalizing ACK**: `ack.reasonCode === "guard.heldQueueConfirmationStale"` is queue second confirm signal, means "wait user decision then reuse same seed to resend", not terminal. Must **not** call `settleSendResult()`, also **must not** register awaiting render — once finalized, first-wins would eat subsequent real outcome. This check precedes `ack.status` (this ACK's status itself non-`accepted`).
 
@@ -253,7 +265,7 @@ Three events all synchronous fire-and-forget, not through `enqueueReport` serial
 
 Per AGENTS.md, write tests first then implement.
 
-- `packages/ui/test/v4ComposerSendFunnelTelemetry.test.ts`: Assert objects are **ARMS payload** (`name` / `group` / `value` / `properties`), covering — real focus reports / `recordComposerFocus` remains zero report, `send_click` and `send_result` `send_click_id` pairing, `send_trigger` two values, nine failure `reason_code`, `send_click_id` dedup first-wins, `value` = `send_cost_ms` and queue confirm scope, background tasks no report, reporter not installed silent, dispose silent, and `resolveSendAckSettlement()` ACK mapping (including `noop`归口 and queue second confirm no finalize).
+- `packages/ui/test/v4ComposerSendFunnelTelemetry.test.ts`: Assert objects are **ARMS payload** (`name` / `group` / `value` / `properties`), covering — real focus reports / `recordComposerFocus` remains zero report, `send_click` and `send_result` `send_click_id` pairing, `send_trigger` two values, nine failure `reason_code`, `send_click_id` dedup first-wins, `value` = `send_cost_ms` and queue confirm scope, background tasks no report, reporter not installed silent, dispose silent, and `resolveSendAckSettlement()` ACK mapping (including `noop` handling and queue second confirm no finalize).
 - **Await Render Dedicated** (core guard for new scope):
   - ACK `accepted` does **not immediately** report `send_result`;
   - Only reports after matching render signal received, and `value` / `send_cost_ms` = **end-to-end** duration (render timestamp − `sendTime`), `ack_cost_ms` = ACK segment;

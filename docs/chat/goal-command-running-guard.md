@@ -1,14 +1,14 @@
-# Running 时的 Goal Command（当前事实）
+# Goal Command While Running (current state)
 
-`/goal` 使用 V4 `sendGoalCommand`。它既保留用户可见的原始命令文本，也在 CLI 内更新 goal 状态；UI 不再绕过输入 admission 直接调用旧 `session/goal`。
+`/goal` uses V4 `sendGoalCommand`. It keeps the user-visible original command text and updates goal state inside the CLI; the UI no longer bypasses input admission by calling the old `session/goal` directly.
 
-## 裁决
+## Rules
 
-- session ready 时，`sendGoalCommand` 可以立即执行。
-- active turn 存在时，命令以独立的 `sendGoalCommand` 身份进入 CLI runtime queue，不拒绝、不插队、不打断当前 turn。
-- held queue 时遵循 `inputRouting.mode = choice`，由用户明确选择保留或清空既有队列后发送。
-- 命令只有在 CLI 判定可消费时才执行；UI 不根据 assistant 行结束、verification marker 或本地 timer 推测 ready。
-- Goal pause/resume、stop barrier 与自动续跑均由 CLI reducer/command handler 裁决。
+- When the session is ready, `sendGoalCommand` executes immediately.
+- With an active turn, the command enters the CLI runtime queue under its own `sendGoalCommand` identity. It is not rejected, does not jump the queue and does not interrupt the current turn.
+- With a held queue, `inputRouting.mode = choice` applies: the user explicitly chooses to keep or clear the existing queue before sending.
+- The command executes only when the CLI decides it can be consumed. The UI does not infer readiness from assistant row end, a verification marker or a local timer.
+- Goal pause/resume, the stop barrier and automatic continuation are decided by the CLI reducer/command handler.
 
 ```text
 /goal input
@@ -20,4 +20,4 @@
   -> desktop and mobile converge
 ```
 
-当前实现入口：`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/goal-compact.ts`。
+Entry point: `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/goal-compact.ts`.

@@ -1,9 +1,23 @@
-# Post-Update Release Notes
+# Post-update release notes
 
-发布日志由 infra 通过 API 直接编辑 runner 共享目录中的 `latest.yml`，并保留 electron-updater 兼容的 `releaseName` / `releaseNotes`。z-code CI 不再生成单版本 `changelogs/vX.Y.Z*.md`、不读取根目录 `CHANGELOG.md` 注入日志，也不生成独立的 `latest-en.yml`；approve 放行后先校验共享目录中的清单，校验通过后才上传。
+Release notes are edited by infra directly through an API on the `latest.yml` in the runner shared directory,
+keeping the electron-updater-compatible `releaseName` / `releaseNotes`. z-code CI no longer generates
+per-version `changelogs/vX.Y.Z*.md`, no longer injects notes from the root `CHANGELOG.md`, and no longer
+generates a separate `latest-en.yml`; after approval the manifest in the shared directory is validated first and
+uploaded only after validation passes.
 
-自动更新下载完成后，main 进程会把当前版本说明持久化到 `pendingPostUpdateReleaseNotes`，并把同一份 payload 随 `update-downloaded` 状态广播给 renderer。左上角更新按钮 hover 时按当前 UI 语言选择 `releaseNotesByLocale` 中的 Markdown 展示；若旧 feed 没有多语言字段，则回退到默认 `releaseNotes`。如果用户尚未安装就重启应用，且 pending 版本仍高于当前应用版本，main 会用这份 payload 恢复待安装状态，但不会提前把它作为安装后的说明发给 renderer 确认。
+After an auto-update download completes, the main process persists the current version's notes into
+`pendingPostUpdateReleaseNotes` and broadcasts the same payload to the renderer with the `update-downloaded`
+state. Hovering the top-left update button shows the Markdown from `releaseNotesByLocale` chosen by the current
+UI language; if the old feed has no multi-language field, it falls back to the default `releaseNotes`. If the
+user restarts the app before installing and the pending version is still higher than the current app version,
+main restores the pending-install state from this payload but does not send it early to the renderer as
+post-install notes to acknowledge.
 
-若用户未通过本次自动更新链路安装（例如官网安装包跳级升级），磁盘里可能仍残留**更低版本**的待展示说明；启动时若 semver 判定该版本低于当前 `app.getVersion()`，会丢弃该 pending，避免弹出旧版更新日志。
+If the user did not install through this auto-update chain (for example a jump upgrade from a website
+installer), the disk may still hold notes of a **lower version** awaiting display; at startup, if semver judges
+that version lower than the current `app.getVersion()`, the pending item is dropped so an old version's notes are
+not popped up.
 
-当前 Root 收到安装后待展示说明时会静默 ack，避免弹窗打断用户。Markdown 渲染沿用现有消息渲染能力。
+The current Root silently acknowledges post-install pending notes it receives, so no popup interrupts the user.
+Markdown rendering reuses the existing message rendering capability.

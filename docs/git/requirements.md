@@ -2,67 +2,60 @@
 
 ## Document Positioning
 
-This document describes the product requirement baseline of current version Git UI, based on already confirmed existing design, not discussing underlying service, RPC or Git CLI implementation details.
+Product requirement baseline of the current Git UI, based on confirmed design. It does not discuss underlying service, RPC or Git CLI implementation.
 
 ## Current Design Baseline
 
-Current version Git capability positioning is "lightweight change review panel", priority to solve user's problem of quickly seeing what changed in current workspace inside ZCode.
+Git capability is a "lightweight change review panel": quickly see what changed in the current workspace inside ZCode.
 
-Focus of this version:
+This version provides:
 
-- Provide clear Git entry and change hint at top
-- Provide lightweight Git operation menu at top (commit / push / create branch)
-- View changes from different sources inside right shared pane
-- Browse files and diff in lightweight, single column, low burden way
+- A clear Git entry and change hint at the top.
+- A lightweight Git operation menu at the top (commit / push / create branch).
+- Change viewing from different sources inside the right shared pane.
+- Lightweight, single-column, low-burden browsing of files and diff.
 
-This version does not pursue complete Git workbench experience.
+It does not pursue a complete Git workbench.
 
 ## Product Goals
 
-- Let user perceive whether changes exist without leaving current workspace
-- Let user quickly view file changes from different sources in current workspace
-- Let Git UI share right pane with existing Browser / Code Viewer, avoid introducing new main layout complexity
-- Maintain dual theme, internationalization, local / remote / multiple operating system compatibility direction
+- Users notice whether changes exist without leaving the current workspace.
+- Users quickly view file changes from different sources in the current workspace.
+- Git UI shares the right pane with Browser / Code Viewer, adding no main-layout complexity.
+- Keep dual-theme, internationalization and local / remote / multi-OS compatibility.
 
 ## Non-Goals
 
-- Do not make complete Source Control IDE
-- Do not make repository summary large panel, do not display repo root, branch, ahead/behind etc. info blocks
-- Do not make bottom commit area, identity hint area, batch operation area
-- Do not make stage/unstage/discard, pull/fetch, rebase, stash, merge editor, history graph
-- Do not make GitHub / GitLab remote collaboration view
+- No complete Source Control IDE.
+- No repository summary panel (repo root, branch, ahead/behind info blocks).
+- No bottom commit area, identity hint area or batch operation area.
+- No stage/unstage/discard, pull/fetch, rebase, stash, merge editor or history graph.
+- No GitHub / GitLab remote collaboration view.
 
 ## Core User Scenarios
 
-### Scenario 1: I want to know if there are changes in current workspace
+### Scenario 1: Know whether the current workspace has changes
 
-User does not need to open Git pane first.
+The user does not need to open the Git pane first.
 
-Expected:
+- The top toolbar shows a Git entry.
+- When `+/-` change statistics are detected, the entry shows the Git icon and a `+/-` summary.
 
-- Top toolbar shows Git entry
-- When `+/-` change statistics are detected, entry directly shows Git icon and `+/-` summary
-- User knows current workspace has changes through this entry
+### Scenario 2: Quickly browse a class of changes
 
-### Scenario 2: I want to quickly browse a class of changes
+The user clicks the top Git entry and views changes in the right pane.
 
-User clicks top Git entry, then views changes in right pane.
+- Can switch `Not staged`, `Staged`, `All branch changes`, `Previous round changes`.
+- Files appear in a single-column list.
+- A file can be expanded to show its inline diff.
 
-Expected:
+### Scenario 3: Filter changes by directory
 
-- Can switch `Not staged`, `Staged`, `All branch changes`, `Previous round changes`
-- Can view files in single column file list
-- Can expand a file to directly see inline diff
+The user clicks "Show file tree" in the Git pane.
 
-### Scenario 3: I want to filter changes by directory
-
-User clicks "Show file tree" in Git pane.
-
-Expected:
-
-- Right side pops out directory sidebar
-- Sidebar only shows directory levels, not files
-- After directory selected, main area file list synchronously filters
+- A directory sidebar appears on the right.
+- The sidebar shows directory levels only, not files.
+- After a directory is selected, the main file list filters synchronously.
 
 ## Function Scope
 
@@ -70,56 +63,45 @@ Expected:
 
 #### 1.1 Entry Position
 
-Git entry is located in `WorkspaceHeader` top toolbar, same interaction group as Terminal / Browser entries.
+The Git entry is in the `WorkspaceHeader` top toolbar, in the same interaction group as the Terminal / Browser entries.
 
 #### 1.2 Display Rules
 
-- When current workspace has no change statistics to display, entry is displayed as ordinary Git icon button
-- When current workspace exists `+/-` change statistics, entry displays as integrated capsule button "Git icon + +/-"
-- This change statistics does not depend on whether Git pane is already opened
+- With no change statistics to display, the entry is an ordinary Git icon button.
+- With `+/-` change statistics, the entry is an integrated capsule button "Git icon + +/-".
+- The statistics do not depend on whether the Git pane is open.
 
 #### 1.3 Interaction Rules
 
-- Click opens or closes Git view in right shared pane
-- Click again closes
-- Open state has clear selected state
+- Click opens or closes the Git view in the right shared pane; the open state has a clear selected state.
 
 #### 1.4 Top Git Operation Menu
 
-- Add "commit or push" capsule entry at left of terminal switch button in `WorkspaceHeader` top toolbar
-- Main button executes `commit` preferentially according to current Git status, executes `push` when no uncommitted changes but pushable commits exist
-- Right side of entry no longer provides three dots / dropdown menu, avoiding splitting commit and push entries into two parallel paths
-- `commit` opens independent commit popup, defaults to staging and committing all uncommitted changes within current workspace scope together
-- Commit popup additionally provides `commit and push`, after successful commit immediately reuses same Git service to push current branch
-- `push` opens independent push popup, executes real `git push`; when current branch has not established upstream, automatically adds `--set-upstream` on first push
-- Failure of a commit / push mutation started from a popup must never be lost: while the mutation is in flight, dismissing the popup must not discard the pending failure
-- The same holds when the popup disappears because its host unmounts mid-mutation (the dialog vanishes without a dismissal event): the failure must still surface as a toast
-- If such a mutation fails after the popup has been dismissed, show the failure as an error toast using the same error text as the inline popup error; exactly one surface (inline popup error or toast) presents the failure
+- A "commit or push" capsule entry sits left of the terminal switch button in the `WorkspaceHeader` top toolbar.
+- The main button runs `commit` first according to the current Git status, and `push` when there are no uncommitted changes but pushable commits exist.
+- The entry has no three-dots / dropdown menu, so commit and push do not split into two parallel paths.
+- `commit` opens an independent commit popup; by default it stages and commits all uncommitted changes within the current workspace scope together.
+- The commit popup also provides `commit and push`: after a successful commit it reuses the same Git service to push the current branch.
+- `push` opens an independent push popup and runs a real `git push`; when the current branch has no upstream, the first push adds `--set-upstream`.
+- A failure of a commit / push mutation started from a popup must never be lost: while the mutation is in flight, dismissing the popup must not discard the pending failure.
+- The same holds when the popup disappears because its host unmounts mid-mutation (the dialog vanishes without a dismissal event): the failure must still surface as a toast.
+- If such a mutation fails after the popup has been dismissed, show an error toast with the same error text as the inline popup error; exactly one surface (inline popup error or toast) presents the failure.
 
 ### 2. Git Pane
 
 #### 2.1 Layout Positioning
 
-Git pane reuses existing right shared pane, shares same slot with browser / code-viewer.
+The Git pane reuses the right shared pane and shares the slot with browser / code-viewer.
 
 #### 2.2 Current Structure
 
-Current version uses lightweight layout, divided into three layers:
+Lightweight layout in three layers:
 
-- Top title bar
-  - Git title
-  - UI placeholder marker
-  - Close button
-- Toolbar
-  - Left source switch dropdown
-  - Right "Show file tree / Hide file tree" button
-- Main content area
-  - Default displays single column file list
-  - After opening file tree, right side displays directory sidebar
+- Top title bar: Git title, UI placeholder marker, close button.
+- Toolbar: left source switch dropdown; right "Show file tree / Hide file tree" button.
+- Main content area: single-column file list by default; after opening the file tree, a directory sidebar on the right.
 
-#### 2.3 Content Explicitly Not in Current Design
-
-Current version does not include following areas:
+#### 2.3 Content Explicitly Not in the Current Design
 
 - Repository summary header
 - Left multi-group status tree
@@ -132,8 +114,6 @@ Current version does not include following areas:
 
 #### 3.1 Supported Sources
 
-Current version supports following sources:
-
 - `Not staged`
 - `Staged`
 - `All branch changes`
@@ -141,139 +121,94 @@ Current version supports following sources:
 
 #### 3.2 Interaction Requirements
 
-- Source switch completed through dropdown selection
-- After switch, file list, directory filter and diff content synchronously switch to corresponding dataset
-- Currently selected source simultaneously affects statistics source used by top Git entry
+- Source switching is a dropdown selection.
+- After switching, the file list, directory filter and diff content switch synchronously to the corresponding dataset.
+- The selected source also drives the statistics used by the top Git entry.
 
 #### 3.3 Read-only Constraint
 
-Current version is designed as "change browsing":
-
-- `Previous round changes` is read-only view
-- Other sources currently also only bear viewing responsibility, do not promise real Git write operations
+This is "change browsing": `Previous round changes` is a read-only view; the other sources only bear viewing responsibility and do not promise real Git write operations.
 
 ### 4. File List and Diff
 
 #### 4.1 File List
 
-Current version defaults to flat single column list, not default tree file area.
+A flat single-column list by default, not a tree file area. List item requirements:
 
-List item requirements:
-
-- Directly display workspace relative full path
-- Display `+/-` statistic of that file
-- Non `Not staged` items can display status badge, e.g. `Untracked`, `Conflicted`, `Staged`
-- Supports expand/collapse
+- Show the workspace-relative full path.
+- Show the file's `+/-` statistic.
+- Non-`Not staged` items can show a status badge, for example `Untracked`, `Conflicted`, `Staged`.
+- Support expand/collapse.
 
 #### 4.2 Expanded State
 
-After file expanded:
-
-- No longer repeatedly display full path and `+/-` statistic
-- Directly enter diff content
+An expanded file no longer repeats the full path and `+/-` statistic; it goes straight to the diff content.
 
 #### 4.3 Diff
 
-Current version supports:
+Diff is supported for `Not staged`, `Staged`, `All branch changes` and `Previous round changes`.
 
-- `Not staged` diff
-- `Staged` diff
-- `All branch changes` diff
-- `Previous round changes` diff
+Degradation:
 
-Degradation requirements:
-
-- Binary file gives non-previewable hint
-- Oversized diff gives cropping hint
-- Patch generation failure gives unavailable hint
+- Binary file: non-previewable hint.
+- Oversized diff: cropping hint.
+- Patch generation failure: unavailable hint.
 
 ### 5. File Tree Sidebar
 
 #### 5.1 Trigger Method
 
-After clicking "Show file tree" button in toolbar, Git pane right side expands directory sidebar.
+Clicking "Show file tree" in the toolbar expands a directory sidebar on the right of the Git pane.
 
 #### 5.2 Display Rules
 
-- Sidebar only shows directory hierarchy
-- Does not display files in sidebar
-- Supports directory collapse/expand
-- Supports "All directories" entry
+- Shows the directory hierarchy only, not files.
+- Supports directory collapse/expand.
+- Supports an "All directories" entry.
 
 #### 5.3 Filter Rules
 
-- After selecting a directory, main area only displays file changes under that directory
-- After switching back to "All directories", restores complete file list
+- After selecting a directory, the main area shows only file changes under that directory.
+- Switching back to "All directories" restores the complete file list.
 
 ### 6. Data Source Requirements
 
-#### 6.1 Sources Allowed in Current Version
+#### 6.1 Sources Allowed in the Current Version
 
-Current version allows mixed use of mock data and existing session data:
+Mock data may be mixed with existing session data:
 
-- `Not staged` / `Staged` / `All branch changes`: allows frontend mock first
-- `Previous round changes`: preferentially reuses current task per-turn file snapshot and summary
+- `Not staged` / `Staged` / `All branch changes`: frontend mock allowed first.
+- `Previous round changes`: preferentially reuses the current task's per-turn file snapshot and summary.
 
-#### 6.2 Not Required in Current Version
+#### 6.2 Not Required in the Current Version
 
-Current version does not require already connected:
-
-- Real `git status`
-- Real branch comparison
-- Real file tree service
-- Real commit identity reading
+Real `git status`, real branch comparison, a real file tree service and real commit identity reading are not required to be connected.
 
 ### 7. Write Operation Scope
 
-Current version only opens 3 lightweight write operations in top menu:
+Only 3 lightweight write operations in the top menu: `commit`, `push`, `create branch`.
 
-- `commit`
-- `push`
-- `create branch`
-
-This version still does not require:
-
-- Stage single file
-- Stage multi-select files
-- Unstage
-- Discard
-- GitHub / GitLab PR creation
-
-That is, write operation boundary of this version is "top single action", not complete Source Control panel.
+Not required: staging a single file, staging multiple selected files, unstage, discard, GitHub / GitLab PR creation. The write boundary is a "top single action", not a complete Source Control panel.
 
 ### 8. Empty States and Errors
 
-Current version needs to handle at least:
+At least handle:
 
-- Current source has no changes
-- Current selected directory has no files
-- Diff cannot be previewed
+- The current source has no changes.
+- The selected directory has no files.
+- The diff cannot be previewed.
 
-Following more complete error states can be supplemented in real service access stage:
-
-- Git not installed
-- Current workspace not inside Git repository
-- Git repository corrupted
-- Git command timeout or execution failure
-- Remote connection disconnected
+More complete error states may be added at the real service access stage: Git not installed; workspace not inside a Git repository; Git repository corrupted; Git command timeout or execution failure; remote connection disconnected.
 
 ### 9. Log Requirements
 
-Since Git pane is high interaction area, current version UI layer needs to retain logs.
+The Git pane is a high-interaction area, so the UI layer logs at least: open/close Git pane, switch change source, expand/collapse file, open/close file tree, select directory.
 
-At least record:
+### 10. Extension Direction
 
-- Open/close Git pane
-- Switch change source
-- Expand/collapse file
-- Open/close file tree
-- Select directory
+Without changing the UI baseline, extend in stages:
 
-### 10. Subsequent Extension Direction
-
-Without changing current UI baseline, subsequent can extend in stages:
-
-1. Connect real `IGitService`
-2. Let `Not staged` / `Staged` / `All branch changes` switch to real repository data
-3. Then evaluate whether to restore commit area, identity hint area and batch operation area
-4. Finally expand real stage / unstage / discard / commit capabilities
+1. Connect the real `IGitService`.
+2. Switch `Not staged` / `Staged` / `All branch changes` to real repository data.
+3. Evaluate restoring the commit area, identity hint area and batch operation area.
+4. Expand real stage / unstage / discard / commit capabilities.

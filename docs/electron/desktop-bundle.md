@@ -1,6 +1,6 @@
 # Desktop Packaging Parameters
 
-`pnpm bundle:desktop` now accepts parameters for the target operating system and CPU architecture, allowing desktop packages to be built for different platforms.
+`pnpm bundle:desktop` accepts parameters for the target operating system and CPU architecture, allowing desktop packages to be built for different platforms.
 
 ## Desktop stdio Agent Bytecode Experiment
 
@@ -15,7 +15,7 @@ The desktop build script owns the build and bytecode formats; the existing Agent
 still owns entry-point selection. The Dev launcher passes the option to the Host through
 `ZCODE_DESKTOP_AGENT_BYTECODE=1`; it affects only the workspace CLI bundle inside Electron, not an explicitly specified Agent command, the native Agent under SSH/WSL,
 or the production packaging flow. This variable is not a CLI product feature parameter. See the full contract in
-[Agent Server spec](../../apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md)。
+[Agent Server spec](../../apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md).
 
 ```text
 Dev build → regular zcode.cjs → compile with matching Electron Node → bytecode + loader
@@ -73,9 +73,9 @@ If passing CLI parameters is inconvenient, you can use environment variables ins
 
 ```bash
 ZCODE_TARGET_OS=linux ZCODE_TARGET_ARCH=x64 pnpm bundle:desktop
-
-Production release packaging no longer injects a configurable generic update feed. The new client uses the server-side manifest provider at runtime; `electron-builder`'s generic `publish.url` is retained only as a local placeholder. The actual update-check endpoint is supplied by the default endpoint or overridden by `ZCODE_UPDATE_FEED_URL`.
 ```
+
+Production release packaging does not inject a configurable generic update feed. The client uses the server-side manifest provider at runtime; `electron-builder`'s generic `publish.url` is kept only as a local placeholder. The update-check endpoint is the default endpoint or the value of `ZCODE_UPDATE_FEED_URL`.
 
 ## Dry Run
 
@@ -102,9 +102,7 @@ ZCODE_SKIP_PREPARE=1 ZCODE_SKIP_BUILD=1 pnpm bundle:desktop
 
 ## Production Artifact Security Requirements
 
-- `packages/desktop/scripts/run-production-build.mjs` must explicitly set
-  `NODE_ENV=production`。
-  `NODE_ENV=production` into `tsup` and `vite build`.
+- `packages/desktop/scripts/run-production-build.mjs` must explicitly set `NODE_ENV=production` and pass it into `tsup` and `vite build`.
 - Before a production build starts, clean `out/main`, `out/host`, `out/preload`, `out/renderer`, and the dev-ready
   markers, but preserve `out/metadata`. `tsup` does not automatically delete old chunks, so historical unminified artifacts could otherwise be
   included in the installer again by `electron-builder`'s `out/**/*`.

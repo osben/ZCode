@@ -1,38 +1,36 @@
-# WSL 远程 workspace realtime 边界修复
+# WSL remote workspace realtime boundary fix
 
-> **状态：历史故障记录，边界结论仍有效。** 文中的 `sendPrompt`/dynamic stream 是修复发生时的旧入口；
-> 当前 conversation 主链路已迁移到 V4 command/topic，但普通 WSL/server 桌面连接仍不得注册
-> 手机 replayable 使用的 `relay_bridge`。
+> **Status: historical fault record; the boundary conclusion still holds.** The `sendPrompt`/dynamic stream
+> mentioned here are the old entry points at the time of the fix; the current conversation main chain has
+> moved to V4 command/topic, but an ordinary WSL/server desktop connection must still not register the
+> `relay_bridge` that mobile replayable uses.
 
-## 背景
+## Background
 
-桌面端普通 WSL remote workspace 应继续走 `desktop-continuous` 主链路。
-手机远控 replayable 附着链路，以及现有 SSH / Docker / Bot remote runtime 的 relay 行为，先保持不变，避免扩大回归面。
+An ordinary desktop WSL remote workspace should keep using the `desktop-continuous` main chain. The mobile
+remote-control replayable attachment chain, and the relay behavior of existing SSH / Docker / Bot remote
+runtimes, stay unchanged first to avoid widening the regression surface.
 
-## 问题
+## Problem
 
-当前用户反馈集中在普通 WSL remote workspace。
-之前主进程会把这条桌面链路也注册成 `relay_bridge`。
+User reports concentrated on ordinary WSL remote workspaces. The main process used to register this desktop
+chain as a `relay_bridge` too, which caused:
 
-这会导致：
+1. The remote host subscribed to the remote `onDynamicStreamEvent` additionally on `sendPrompt`
+2. Every stream event was mirrored into `task_stream_mirror_batch`
+3. The desktop host does not need this replayable mirror, yet the host bridge still deduplicated by `eventId` and held the cache
+4. WSL traffic is higher, so host memory grew quickly within a short time; Windows/WSL swap and VHDX grew fast too, showing as "memory leak + disk usage surge"
 
-1. 远程 host 在 `sendPrompt` 时额外订阅远端 `onDynamicStreamEvent`
-2. 每条流事件都镜像成 `task_stream_mirror_batch`
-3. 桌面 host 自身并不需要消费这条 replayable mirror，但 host bridge 仍会按 `eventId`
-   去重并持有缓存
-4. WSL 场景下流量更高，短时间内就会造成 host 内存膨胀；Windows/WSL swap 与 VHDX
-   也会跟着快速放大，表现为“内存泄露 + 硬盘占用暴涨”
+## Fix boundary
 
-## 本次修复边界
+- Ordinary desktop WSL Remote Host: does not register `relay_bridge`
+- SSH / Docker ordinary remote workspaces: keep the existing `relay_bridge` behavior
+- Bot remote runtime / mobile replayable attachment chain: keep using `relay_bridge`
+- The host-side realtime bridge's `eventId` dedup cache gets a fixed cap as a general defense, so an abnormal path cannot again grow memory linearly
 
-- 普通桌面 WSL Remote Host：不注册 `relay_bridge`
-- SSH / Docker 普通 remote workspace：保持现有 `relay_bridge` 行为不变
-- Bot remote runtime / 手机 replayable 附着链路：继续使用 `relay_bridge`
-- host 侧 realtime bridge 的 `eventId` 去重缓存增加固定上限，作为通用防御，避免异常路径再次线性占用内存
+## Verification points
 
-## 验证点
-
-- 桌面端打开普通 WSL workspace 时，不再创建 `relay_bridge` host
-- SSH remote workspace 仍保留原有 `relay_bridge` 注册
-- Bot remote runtime 仍保留 `relay_bridge`，不影响手机远控和 bot 链路
-- host bridge 在超过去重窗口后允许旧 `eventId` 被重新接受，但常驻内存保持有界
+- Opening an ordinary WSL workspace on desktop no longer creates a `relay_bridge` host
+- An SSH remote workspace still keeps the original `relay_bridge` registration
+- Bot remote runtime still keeps `relay_bridge`, so mobile remote control and the bot chain are unaffected
+- After the dedup window is exceeded the host bridge may accept an old `eventId` again, but resident memory stays bounded

@@ -1,72 +1,58 @@
 # Mobile Remote Control Task Home Page Redesign
 
-> **Status: Implemented.** The current code entry points are `packages/ui/src/WebRemoteControlMobileShell.tsx`,
-> `WebRemoteControlMobileTaskHome.tsx` and `hooks/useWebRemoteControlTaskOpen.ts`; the "recommended/implementation order"
-> below preserves design history and does not represent pending implementation status.
+> **Status: implemented.** Code entry points: `packages/ui/src/WebRemoteControlMobileShell.tsx`,
+> `WebRemoteControlMobileTaskHome.tsx` and `hooks/useWebRemoteControlTaskOpen.ts`.
 >
-> The current remote control path uses external relay `data.payload` app payloads. Interactions involving the task home page and workspace switching described in this document remain valid; old relay tokens, HTTP bootstrap, and `bridgeToken/wsUrl` assumptions are deprecated and no longer serve as implementation references.
+> The remote control path uses external relay `data.payload` app payloads. The task home page and workspace
+> switching interactions below remain valid; old relay tokens, HTTP bootstrap and `bridgeToken/wsUrl`
+> assumptions are deprecated.
 
-See [Web Remote Control Overview](./web-remote-control-architecture.md) for product and architecture overview. This document records the interaction contract between the mobile home page and the chat page; timelines, themes, and wide-screen lists are navigated uniformly from the overview.
+See [Web Remote Control Overview](./web-remote-control-architecture.md) for product and architecture. This
+document records the interaction contract between the mobile home page and the chat page; timelines, themes
+and wide-screen lists are navigated from the overview.
 
-## Background (Before Redesign)
+Full history: `git show b8876e8b:docs/web-remote-control/mobile-task-home-design.md`
 
-Before the redesign, the mobile Web remote control reused the desktop `WorkspaceSidebar` and chat area:
+## Background
 
-1. On small screens, the mobile page was converted to a top-bottom structure by `WorkspaceShellLayout`.
-2. The upper half is still a cropped version of the desktop sidebar, including workspace, task entries, and some desktop sidebar capabilities.
-3. The lower half reuses the desktop chat area.
-
-This structure quickly reuses existing logic, but is not suitable for the new mobile information architecture. The new goal is to make the mobile client two明确 pages:
-
-1. Home page: workspaces and task lists on the current device.
-2. Chat page: the chat interface after selecting a task, continuing to reuse desktop chat components.
-
-The core change is: the mobile client no longer reuses the desktop task list UI, but task clicking, cross-workspace switching, mobile view state reporting, and other business logic continue to reuse the existing desktop remote control path.
+Mobile Web remote control used to reuse the desktop `WorkspaceSidebar` and chat area: on small screens
+`WorkspaceShellLayout` stacked a cropped desktop sidebar over the desktop chat area. That is quick to build but
+does not fit the mobile information architecture. The mobile client is now two explicit pages: a home page
+(workspaces and task lists of the current device) and a chat page (after selecting a task, still reusing
+desktop chat components). Task clicking, cross-workspace switching and mobile view state reporting still reuse
+the desktop remote control path.
 
 ## Goals
 
-1. The mobile remote control home page displays workspace cards, which can be expanded to show tasks under that workspace.
-2. After clicking a task, enter the chat page, which continues to reuse the existing header and V4 session chat surface.
-3. Task click logic reuses the existing Web remote control logic:
-   - Same workspace task: directly select the task and report mobile view state.
-   - Cross-workspace task: request a new workspace bridge, then enter the corresponding task.
-4. The QR code initial state no longer automatically enters the chat page.
-5. If the QR code entry carries an initial task, the home page automatically expands the workspace card belonging to that task and displays the corresponding task row as selected.
-6. Maintain desktop and mobile selection state separation; mobile operations do not reverse-switch the desktop's current tab/task.
-7. Comply with the identity isolation rule `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
+1. The home page shows workspace cards that expand to the workspace's tasks.
+2. Clicking a task enters the chat page, reusing the existing header and the V4 session chat surface.
+3. Task click logic reuses the Web remote control logic: same-workspace task -> select it and report mobile
+   view state; cross-workspace task -> request a new workspace bridge, then enter the task.
+4. The QR code initial state no longer enters the chat page automatically.
+5. If the QR entry carries an initial task, the home page expands the owning workspace card and marks the task row selected.
+6. Desktop and mobile selection states stay separate; mobile operations do not switch the desktop's current tab/task.
+7. Identity isolation: `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
 
-## Non-Goals
+## Non-goals (first version)
 
-The first version does not:
+Creating workspaces on mobile; creating new SSH / WSL / Docker remote sessions on mobile; managing workspaces
+outside desktop windows; several mobile devices controlling one desktop window; redoing chat components, the
+ZCode runtime or the main relay protocol path; the desktop automatically switching to the task selected on mobile.
 
-1. Create workspaces on the mobile client.
-2. Create new SSH / WSL / Docker remote sessions on the mobile client.
-3. Manage workspaces outside desktop windows on the mobile client.
-4. Multiple mobile devices simultaneously controlling the same desktop window.
-5. Redo chat components, ZCode runtime, or the main relay protocol path.
-6. Have the desktop automatically switch to the task selected on the mobile client.
+## Workspace-level "New Task" entry (2026-05-02)
 
-## 2026-05-02 Supplement: Workspace-Level New Task Entry
+Each workspace card on the task home page has a "New Task" button on its right:
 
-To complete the mobile operational closed loop, add a "New Task" button on the right side of each workspace card on the task home page, with the following behavior:
+1. Same workspace: call `startDraft(workspacePath, workspaceIdentity)` to enter draft mode; report
+   `updateMobileViewState(workspaceKey)` (without taskId) so the old task is not still highlighted; enter the chat page.
+2. Cross-workspace: `switchWorkspace(workspaceKey, { mobileNavigationIntent: "chat" })` without `taskId`; the
+   target Root starts with `initialTaskId=undefined` and enters that workspace's draft mode.
+3. The Web remote control `switcher` gains an optional `startDraft(workspaceKey, { mobileNavigationIntent })`
+   capability; implementations without it fall back to `switchWorkspace + updateMobileViewState`.
 
-1. Same workspace:
-   - Call `startDraft(workspacePath, workspaceIdentity)` to enter draft mode.
-   - Report `updateMobileViewState(workspaceKey)` (without taskId), avoiding continued highlighting of the old task.
-   - Enter the chat page.
-2. Cross-workspace:
-   - Use `switchWorkspace(workspaceKey, { mobileNavigationIntent: "chat" })`, without passing `taskId`.
-   - The target Root starts with `initialTaskId=undefined`, entering the draft mode of that workspace.
-3. The Web remote control `switcher` adds the optional `startDraft(workspaceKey, { mobileNavigationIntent })` capability,
-   facilitating unified mobile client calls; implementations that do not support this capability can still fall back to `switchWorkspace + updateMobileViewState`.
+## Solution
 
-This supplement maintains the existing identity isolation rule: `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
-
-## Recommended Solution
-
-Use a mobile-specific shell, rather than continuing to modify `WorkspaceSidebar`.
-
-It is recommended to add a layer of mobile remote control UI:
+Use a mobile-specific shell instead of continuing to modify `WorkspaceSidebar`:
 
 ```text
 WebRemoteControlMobileShell
@@ -76,79 +62,55 @@ WebRemoteControlMobileShell
   └── chat: existing chat header + V4 session chat surface
 ```
 
-The desktop and wide-screen Web remote control continue to use the existing desktop layout of `WorkspaceShellLayout`. Only when `webRemoteControlWorkspaceSwitcher` and the small-screen breakpoint are met does the two-page mobile shell activate.
+Desktop and wide-screen Web remote control keep the existing `WorkspaceShellLayout` desktop layout. The
+two-page mobile shell activates only when `webRemoteControlWorkspaceSwitcher` and the small-screen breakpoint
+are both met. Benefits: the home page UI is designed for mobile without the sidebar's history; the chat page
+reuses existing chat capabilities; task clicking, workspace bridge and mobile view state are extracted into a
+shared hook; later home page evolution (search, status filter, device login state) does not pollute the desktop sidebar.
 
-Benefits:
+## Page model
 
-1. The home page UI can be designed entirely for the mobile experience, without being limited by the desktop sidebar's historical structure.
-2. The chat page still reuses existing chat capabilities, reducing risk.
-3. Task clicking, workspace bridge, and mobile view state do not re-invent the wheel; they are just extracted as a shared hook.
-4. If the mobile home page continues to evolve later, e.g., search, status filtering, device login state, it will not pollute the desktop sidebar.
+<a id="首页"></a>
 
-## Page Model
+### Home page
 
-### Home Page
+Browses the workspaces and tasks currently open in the desktop window.
 
-The home page is used to browse the workspaces and tasks currently opened in the desktop window.
+1. Top brand and device status: `ZCode Remote Control` plus connection status (no device-name protocol field in the first version).
+2. Closable notice area: the current session's projects, tasks and sessions can be viewed on this device; after the QR code expires, return to the desktop to reconnect.
+3. Workspace task area: title (workspaces and tasks on the current device), subtitle (total workspace/task count), actions collapse all and refresh.
+4. Workspace card: name, path, weak label (local / remote in the first version), last update time (the maximum
+   `updatedAt` of its tasks; not shown when it has no tasks), task count, expand/collapse button.
+5. Task row: title, provider CLI, update time, status pill, unread/running/error indicators; the selected task uses the selected style.
 
-Information structure:
+Pinned section (2026-05-28): the top of the home page has a global pinned section. The desktop renderer's task
+snapshot sync reads the sqlite lists `kind: "pinned"` and `kind: "timeline"`; the home page splits out the
+pinned section by `pinned === true` and passes the rest to the normal workspace/timeline lists. Pinned tasks no
+longer repeat in normal workspace cards or timeline lists, but active-task validation and selection state must
+match both the pinned section and the normal grouping.
 
-1. Top brand and device status:
-   - `ZCode Remote Control`
-   - The first version displays connection status, without adding a device name protocol field
-2. Closable notice area:
-   - Explains that the current session's projects, tasks, and sessions can be viewed on this device
-   - After the QR code expires, return to the desktop to reconnect
-3. Workspace task area:
-   - Title: Workspaces and tasks on the current device
-   - Subtitle: total workspace/task count
-   - Actions: collapse all, refresh
-4. Workspace card:
-   - Workspace name
-   - Workspace path
-   - Weak labels: local / SSH remote / Docker / WSL, the first version can use local / remote
-   - Last update time, derived from the maximum `updatedAt` of tasks under that workspace; not displayed when there are no tasks
-   - Task count
-   - Expand/collapse button
-5. Task row:
-   - Task title
-   - Provider CLI
-   - Update time
-   - Status pill
-   - Unread, running, error, and other status indicators
-   - The currently selected task uses the selected style
+The home page owns its own scroll area and does not depend on the desktop sidebar's scroll container.
 
-2026-05-28 supplement: Add a global pinned section at the top of the mobile home page. The desktop renderer synchronizes task snapshots simultaneously reading
-`kind: "pinned"` and `kind: "timeline"` sqlite lists; after the mobile home page receives unified task targets,
-it first splits out the pinned section by `pinned === true`, then passes the unpinned tasks to the normal workspace/timeline lists. Pinned tasks
-no longer appear repeatedly in normal workspace cards or timeline lists, but the active task validation and selection state must match both
-the pinned section and the normal grouping simultaneously.
+### Chat page
 
-The home page owns its own scroll area and cannot depend on the desktop sidebar's scroll container.
+Reuses the existing workspace main content: a mobile-simplified chat header at the top; a home-page entry; the
+body keeps the Root-injected V4 chat content (carried by `packages/ui/src/v4/SessionPane.tsx`); terminal,
+browser and side pane display rules follow the existing remote control strategy (not extended proactively).
 
-### Chat Page
+### Chat page interaction overlay boundaries
 
-The chat page reuses the existing workspace main content:
+The chat page reuses desktop session components with the same overlay hierarchy and interaction modes; mobile
+only tightens overlay sizes. Under `web-remote-replayable` with a coarse-pointer mobile viewport:
 
-1. Keep a mobile-simplified chat header at the top.
-2. Add a home page entry.
-3. The main body continues to use the Root-injected V4 chat content (ultimately carried by `packages/ui/src/v4/SessionPane.tsx` for sessions).
-4. Mobile display rules for terminal, browser, and side pane follow the existing remote control strategy; the first version does not proactively extend.
-
-### Chat Page Interaction Overlay Boundaries
-
-The mobile remote control chat page reuses desktop session components and maintains consistent overlay hierarchy and interaction modes with the desktop; the mobile client only tightens
-overlay sizes to avoid introducing another model selection behavior for narrow viewports.
-Under `web-remote-replayable` with a coarse-pointer mobile viewport, interaction overlays must satisfy:
-
-1. The interactable content after opening is fully located within the current visible viewport; the left and right must not be clipped by the page root node.
-2. Model selection continues to use the provider first-level menu and model second-level menu consistent with the desktop; the mobile client's model second-level menu
-   uses a narrower width as the upper bound, and automatically shrinks to the viewport edge via Radix's available width in the current direction; when shrinking, cancel the
-   minimum width lower bound of shared menus; long model names are truncated within menu items, without changing first-level and second-level content to a single-column long list.
-3. Branch selection and Todo collapsed preview within the right status panel prefer to open vertically, flipped by Radix between top/bottom; do not pin them to the left of the status panel.
-4. A single overlay width must not exceed `calc(100vw - 2rem)`; long model names, branch names, and Chinese/English text are handled by internal truncation or scrolling within the overlay, without causing horizontal scrolling at the page level.
-
-Current and post-fix presentation boundaries:
+1. After opening, interactable content lies fully inside the visible viewport; left and right are not clipped by the page root.
+2. Model selection keeps the desktop provider first-level menu and model second-level menu; the mobile model
+   submenu uses a narrower width cap and shrinks to the viewport edge via Radix's available width in the
+   current direction (drop the shared menu's minimum-width lower bound when shrinking); long model names
+   truncate inside menu items, and the two levels never collapse into a single-column long list.
+3. Branch selection and the Todo collapsed preview in the right status panel prefer to open vertically,
+   flipped by Radix between top/bottom; not pinned to the left of the status panel.
+4. A single overlay is at most `calc(100vw - 2rem)` wide; long model names, branch names and mixed-language
+   text truncate or scroll inside the overlay, without page-level horizontal scrolling.
 
 ```text
 Current (mobile)
@@ -156,38 +118,35 @@ provider root menu -> desktop-width model submenu -> viewport clip
 status panel row    -> forced left popover             -> viewport clip
 
 Post-fix (mobile)
-provider root menu -> narrow model submenu (maintaining second-level interaction)
+provider root menu -> narrow model submenu (keeps second-level interaction)
                    -> min(desired width, Radix available width) -> viewport edge
 status panel row    -> bottom/top popover                       -> viewport collision handling
 
 Desktop / wide-screen Web
-provider root menu -> desktop-width model submenu (maintaining current state)
-status panel row    -> left popover (maintaining current state)
+provider root menu -> desktop-width model submenu (unchanged)
+status panel row    -> left popover (unchanged)
 ```
 
-This boundary belongs only to renderer presentation; it does not change mobile shell navigation, task/session projection,
+This is renderer presentation only; it does not change mobile shell navigation, task/session projection,
 `CommandInbox`, owner/lease, relay, or `desktop-continuous` / `web-remote-replayable` delivery semantics.
 
-## QR Code Initial State
+## QR code initial state
 
-In the current chain, the desktop main returns the workspace/task at the time of QR code initiation through `initialViewState`.
-
-New behavior:
+The desktop main returns the workspace/task at QR initiation through `initialViewState`.
 
 1. Bootstrap still selects `mobileViewState -> initialViewState -> first workspace`.
-2. The web still opens the corresponding workspace bridge, ensuring the current Root/App has an available workspace service.
-3. The mobile shell initial page is fixed as `home`.
-4. The home page expands the corresponding workspace card based on `activeWorkspaceKey`.
-5. The home page marks the corresponding task row as selected based on `activeTaskId`.
-6. Does not automatically enter the chat page.
+2. The web opens the corresponding workspace bridge so the current Root/App has an available workspace service.
+3. The mobile shell's initial page is fixed to `home`.
+4. The home page expands the workspace card by `activeWorkspaceKey` and marks the task row selected by `activeTaskId`.
+5. It does not enter the chat page automatically.
 
-`initialTaskId` at this stage only expresses "home page selection state" and cannot trigger `onNavigateToChat`, nor can it reuse the task click opening flow.
+`initialTaskId` here only expresses "home page selection state"; it cannot trigger `onNavigateToChat` or reuse
+the task click opening flow. So after scanning, the user first sees an overview of all workspaces/tasks and
+knows under which workspace the QR task lives.
 
-This way, after scanning the QR code, the user first sees an overview of all workspaces/tasks on the current device, while also knowing clearly under which workspace the task corresponding to the desktop QR code resides.
+## Task click flow
 
-## Task Click Flow
-
-Task opening logic is extracted from the existing `WebRemoteControlTaskIndex` to form a shared hook:
+Task opening logic is extracted from the existing `WebRemoteControlTaskIndex` into a shared hook:
 
 ```text
 useWebRemoteControlTaskOpen
@@ -206,7 +165,7 @@ useWebRemoteControlTaskOpen
     error
 ```
 
-Entering the chat page after a cross-workspace requires a one-time navigation intent that cannot be deduced from `initialTaskId`:
+Entering the chat page after a cross-workspace switch needs a one-time navigation intent that cannot be deduced from `initialTaskId`:
 
 ```ts
 type WebRemoteControlMobileNavigationIntent = "chat";
@@ -224,43 +183,40 @@ interface WebRemoteControlMobileShellProps {
 
 Rules:
 
-1. The second parameter of `WebRemoteControlWorkspaceSwitcherApi.switchWorkspace()` is extended to `WebRemoteControlWorkspaceSwitchOptions`; when old calls do not pass `mobileNavigationIntent`, the behavior is unchanged.
-2. The web entry point temporarily stores `mobileNavigationIntent` as a pending intent in memory before calling `openWorkspaceBridge()`.
-3. When rendering Root/MobileShell for the new bridge, pass the pending intent as `initialNavigationIntent`; the MobileShell consumes and clears it after the first mount.
-4. The pending intent is not written to the URL, not written to `mobileViewState`, and not passed to the desktop main; it only solves the page landing after the current browser page's cross-Root remount.
-5. The QR code initial `initialTaskId` does not set a pending intent, therefore only expands the home page card and selects the task row.
+1. The second parameter of `WebRemoteControlWorkspaceSwitcherApi.switchWorkspace()` is extended to
+   `WebRemoteControlWorkspaceSwitchOptions`; old calls without `mobileNavigationIntent` behave as before.
+2. The web entry stores `mobileNavigationIntent` in memory as a pending intent before calling `openWorkspaceBridge()`.
+3. When rendering Root/MobileShell for the new bridge, the pending intent is passed as `initialNavigationIntent`; MobileShell consumes and clears it after first mount.
+4. The pending intent is not written to the URL or `mobileViewState` and not passed to desktop main; it only solves the page landing after a cross-Root remount.
+5. The QR initial `initialTaskId` sets no pending intent, so it only expands the card and selects the row.
 
-Same workspace task:
+Same-workspace task:
 
-1. Calculate `taskWorkspaceKey`.
-2. Determine whether it equals the current `activeWorkspaceKey`.
-3. If the task in the home page snapshot has `unreadAt`, explicitly call `setTaskUnread(..., false)` through the current Web remote control bridge's
-   `switcher.markTaskRead(task)`; this action must not depend on whether the mobile Root
-   internal task query cache has already been hydrated.
-4. Call `onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity)`.
-5. Call `switcher.updateMobileViewState(taskWorkspaceKey, task.taskId)`.
-6. Switch the mobile shell to the `chat` page.
+1. Compute `taskWorkspaceKey` and check it equals the current `activeWorkspaceKey`.
+2. If the home snapshot task has `unreadAt`, explicitly call `setTaskUnread(..., false)` through the current
+   bridge's `switcher.markTaskRead(task)`; this must not depend on whether the mobile Root's task query cache is hydrated.
+3. Call `onSelectTask(task.workspacePath, task.taskId, task.workspaceIdentity)`, then
+   `switcher.updateMobileViewState(taskWorkspaceKey, task.taskId)`, then switch the shell to `chat`.
 
 Cross-workspace task:
 
 1. Set the switching state.
-2. Call `switcher.switchWorkspace(taskWorkspaceKey, { taskId: task.taskId,
-mobileNavigationIntent: "chat", markTaskReadExpectedUnreadAt: task.unreadAt })`.
+2. Call `switcher.switchWorkspace(taskWorkspaceKey, { taskId: task.taskId, mobileNavigationIntent: "chat", markTaskReadExpectedUnreadAt: task.unreadAt })`.
 3. After the Web end connects to the target workspace's shared-host bridge, use the target bridge's
-   `workspacePath/workspaceIdentity` and the `unreadAt` from the home page snapshot to call
-   `setTaskUnread(..., false, expectedUnreadAt)`; failure only logs, do not block the task from opening.
-4. After the new bridge rendering completes, the Root receives `initialTaskId` and selects the task.
-5. The MobileShell consumes the one-time navigation intent carried by this user click flow, entering the `chat` page.
-6. On failure, log `logger.error` and stay on the home page displaying the error.
+   `workspacePath/workspaceIdentity` and the home snapshot's `unreadAt` to call
+   `setTaskUnread(..., false, expectedUnreadAt)`; failure only logs and does not block opening the task.
+4. After the new bridge renders, the Root receives `initialTaskId` and selects the task.
+5. MobileShell consumes the one-time navigation intent carried by this click flow and enters `chat`.
+6. On failure, `logger.error` and stay on the home page showing the error.
 
-Note: The QR code initial task only affects the home page selection state and does not call this click flow.
+The QR initial task only affects home selection state and does not call this flow.
 
-### Unread Clear Boundaries After Mobile Opens a Task
+### Unread clear boundary after mobile opens a task
 
-The blue dot on the mobile task home page comes from the desktop renderer's pushed `WebRemoteControlTaskTarget.unreadAt` snapshot; the mobile
-Root's task query cache is another data surface hydrated asynchronously by the current bridge. When clicking a task, do not use whether the query cache
-hits `unreadAt` as the precondition for clearing unread anymore, otherwise the same task that is already active, cold cache, or cross-Root
-remount will skip persistence.
+The blue dot on the mobile home page comes from the desktop renderer's pushed
+`WebRemoteControlTaskTarget.unreadAt` snapshot; the mobile Root's task query cache is a separate, asynchronously
+hydrated data surface. On a task click, whether the query cache hits `unreadAt` is not a precondition for
+clearing unread (otherwise an already-active task, a cold cache or a cross-Root remount would skip persistence).
 
 ```text
 mobile home snapshot task.unreadAt
@@ -275,67 +231,40 @@ mobile home snapshot task.unreadAt
 desktop task selection -> existing query-cache optimistic clear (unchanged)
 ```
 
-Constraints:
+1. Only a home page click with an explicit `unreadAt` in the snapshot triggers a write; read tasks produce no mutation.
+2. Same workspace uses the current bridge service; cross-workspace waits for the target bridge before using the target service; main/relay never hold or modify task business state.
+3. The target parameter passes `workspaceIdentity`; path execution semantics keep using `workspacePath`.
+4. A failed mark-as-read must not block navigation; after returning to the home page the authoritative tasks-index snapshot decides whether the blue dot returns.
+5. Desktop `desktop-continuous` `useWorkspaceTaskNavigation`, query-cache overlay, sorting and `lastActivityAt` stay unchanged; this action exists only in the mobile Web remote control switcher.
+6. Mobile read-only confirms the notification of this home snapshot: the repository compares the current
+   `unreadAt` with `expectedUnreadAt` inside one atomic write boundary; clear when equal, otherwise return the
+   current meta and emit no change event, so a late old click cannot override a later background-completion or error unread.
 
-1. Only the home page click and when the snapshot explicitly has `unreadAt` trigger writes; read tasks do not produce meaningless mutations.
-2. Same workspace uses the current bridge service; cross-workspace must wait for the target bridge to be established before using the target service;
-   do not allow main/relay to hold or modify task business state.
-3. The target parameter must pass through `workspaceIdentity`; the path execution semantics continue to use `workspacePath`.
-4. Failed marking as read must not block navigation. After returning to the home page, the authoritative tasks-index snapshot determines whether the blue dot is restored.
-5. The desktop `desktop-continuous` `useWorkspaceTaskNavigation`, query-cache overlay, sorting, and
-   `lastActivityAt` logic remains unchanged; this action only exists in the mobile Web remote control switcher.
-6. Mobile read-only confirms the notification corresponding to this home page snapshot: the repository must compare the current
-   `unreadAt` with `expectedUnreadAt` within the same atomic write boundary. Clear when equal; when not equal, return the current meta and emit no change event; prevent late
-   old clicks from overriding subsequently generated background completion or error unread.
+## Component split
 
-## Component Splitting
+1. `packages/ui/src/WebRemoteControlMobileShell.tsx`: the two-page shell; manages `home/chat` state and return
+   to home; consumes the one-time `mobileNavigationIntent`; holds the switching overlay.
+2. `packages/ui/src/WebRemoteControlMobileTaskHome.tsx`: renders the home page; loads workspace/task snapshots;
+   manages card expansion; initializes expansion and selection from the active workspace/task.
+3. `packages/ui/src/hooks/useWebRemoteControlTaskOpen.ts`: task opening logic extracted from
+   `WebRemoteControlTaskIndex`; reusable by the mobile home and the old task index.
+4. `packages/ui/src/lib/webRemoteControlTaskIndex.ts`: keeps and extends grouping, sorting and default expansion key calculation.
+5. `packages/ui/src/app-shell/WorkspaceShellLayout.tsx`: renders `WebRemoteControlMobileShell` under the mobile
+   remote control breakpoint; removes the mobile dependency on the top sidebar height drag; desktop remote
+   control layout unchanged.
 
-It is recommended to add or adjust the following UI files:
+## Data model
 
-1. `packages/ui/src/WebRemoteControlMobileShell.tsx`
-   - Mobile remote control two-page shell.
-   - Manages `home/chat` page state.
-   - Manages return to home.
-   - Consumes the one-time `mobileNavigationIntent` from cross-workspace clicks.
-   - Holds the switching overlay.
-2. `packages/ui/src/WebRemoteControlMobileTaskHome.tsx`
-   - Renders the home page.
-   - Loads workspace/task snapshots.
-   - Manages workspace card expansion state.
-   - Initializes expansion and selection based on the active workspace/task.
-3. `packages/ui/src/hooks/useWebRemoteControlTaskOpen.ts`
-   - Extracts the task opening logic from the existing `WebRemoteControlTaskIndex`.
-   - Reusable by the mobile home page and the old task index.
-4. `packages/ui/src/lib/webRemoteControlTaskIndex.ts`
-   - Preserves and extends grouping, sorting, and default expansion key calculation.
-5. `packages/ui/src/app-shell/WorkspaceShellLayout.tsx`
-   - Renders `WebRemoteControlMobileShell` under the mobile remote control breakpoint.
-   - Removes the mobile remote control's dependency on the top sidebar height drag.
-   - The desktop remote control layout remains as-is.
+`WebRemoteControlTaskTarget` already carries the fields the home page needs: `taskId`, `title`,
+`workspacePath`, `workspaceIdentity`, `remoteSessionId`, `workspaceLabel`, `workspaceKind`, `createdAt`,
+`updatedAt`, `provider`, `unreadAt`, `pinned`.
 
-## Data Model Supplements
+Derived display fields: the first version adds no `deviceLabel` protocol field (it shows connection status; a
+real device name would extend `WebRemoteControlWindowBootstrapResult` / `WebRemoteControlWorkspaceListResult`
+with an optional `deviceLabel` and keep connection status text as fallback); the workspace card's last update
+time adds no `workspaceUpdatedAt` field and is derived as the maximum task `updatedAt` after grouping.
 
-The current `WebRemoteControlTaskTarget` already contains the basic fields needed for the home page:
-
-1. `taskId`
-2. `title`
-3. `workspacePath`
-4. `workspaceIdentity`
-5. `remoteSessionId`
-6. `workspaceLabel`
-7. `workspaceKind`
-8. `createdAt`
-9. `updatedAt`
-10. `provider`
-11. `unreadAt`
-12. `pinned`
-
-Home page derived display fields:
-
-1. The top device area in the first version does not add a `deviceLabel` protocol field; it only displays the current remote control connection status. If a real device name is displayed later, explicitly extend `WebRemoteControlWindowBootstrapResult` / `WebRemoteControlWorkspaceListResult` with an optional `deviceLabel`, and provide connection status text as a fallback.
-2. The workspace card's last update time does not add a `workspaceUpdatedAt` protocol field; the mobile home page derives the maximum `updatedAt` of tasks in that group after grouping by workspace. Workspaces without tasks do not display the update time.
-
-To support the status pill in the screenshots, it is recommended to add an optional display field:
+Optional display fields for the status pill:
 
 ```ts
 displayStatus?: "idle" | "running" | "completed" | "error";
@@ -347,69 +276,64 @@ hasBackgroundWork?: boolean;
 workflowActivity?: SessionWorkflowActivity;
 ```
 
-Field sources are layered by authority level; multiple caches must not be treated as peer facts:
+`displayStatus` sources are layered by authority; multiple caches are not peer facts:
 
-1. When the task row carries sessions-index activity sidecar, the real-time `phase` is the sole authority for the current display state:
-   - `prewarming` / `running` → `running`
-   - `completedSuccess` / `completedInterrupted` → `completed`
-   - `error` → `error`
-   - `draft` does not produce a persistent task row; if compatible data unexpectedly brings `draft`, do not treat it as a terminal state; continue to the next fallback
-2. When there is no sessions-index activity, read the current renderer's task runtime cache:
-   - `creating` / `queued` / `streaming` / `waiting_permission` / `waiting_user_input` etc. live status → `running`
-   - `failed` → `error`
-   - `completed` → `completed`
-3. When the runtime cache also has no explicit state, read the tasks-index persistent terminal state:
-   - `completed` → `completed`
-   - `error` → `error`
-4. A standalone persistent `status=running` only means the old process may not have ended normally; it does not prove that the current host is still running; fall back to
-   `idle`.
+1. When the task row carries the sessions-index activity sidecar, the real-time `phase` is the sole authority:
+   `prewarming` / `running` -> `running`; `completedSuccess` / `completedInterrupted` -> `completed`; `error` ->
+   `error`; `draft` produces no persistent task row (if compatible data brings `draft`, do not treat it as a terminal state, continue to the next fallback).
+2. Without sessions-index activity, read the renderer's task runtime cache: live statuses (`creating` /
+   `queued` / `streaming` / `waiting_permission` / `waiting_user_input` ...) -> `running`; `failed` -> `error`; `completed` -> `completed`.
+3. Without an explicit runtime state, read the tasks-index persistent terminal state: `completed` -> `completed`; `error` -> `error`.
+4. A standalone persistent `status=running` only means the old process may not have ended normally and does not
+   prove the host is still running; fall back to `idle`.
 
-This priority must cover all conflict directions, not just fix `running`:
+The priority covers all conflict directions:
 
-| sessions-index activity                     | Old runtime / persistent cache   | Mobile display                                          |
-| ------------------------------------------- | -------------------------------- | ------------------------------------------------------- |
-| `prewarming` / `running`                    | `completed` / `failed` / `error` | `running`                                               |
-| `completedSuccess` / `completedInterrupted` | live / `failed` / `running`      | `completed`                                             |
-| `error`                                     | live / `completed` / `running`   | `error`                                                 |
-| Missing or compatible `draft`               | Any                              | Maintain current runtime → persistent terminal fallback |
+- sessions-index `prewarming` / `running` over old `completed` / `failed` / `error` -> `running`.
+- `completedSuccess` / `completedInterrupted` over live / `failed` / `running` -> `completed`.
+- `error` over live / `completed` / `running` -> `error`.
+- Missing or compatible `draft`, any old state -> keep the current runtime -> persistent terminal fallback.
 
-Therefore, new sessions-index frames can both advance old `completed/error` cache to `running` and收口 old live cache to
-`completed/error`. The mobile home page does not independently merge these sources.
+So new sessions-index frames can advance an old `completed/error` cache to `running` and settle an old live
+cache to `completed/error`; the mobile home page does not merge these sources itself.
 
 Aggregation boundaries:
 
-1. `displayStatus` is calculated by the desktop renderer when constructing `WebRemoteControlTaskTarget` snapshots;
-   `buildWebRemoteControlTaskTargets()` first reads the sessions-index activity carried by task rows, then falls back to Zustand task runtime state and `ZCodeTaskMeta.status` in the above order.
-2. The mobile home page only consumes `WebRemoteControlTaskTarget.displayStatus` and must not directly read ZCode runtime, Repo, Service, or persistence implementations.
-3. The sync chain remains the renderer `syncWebRemoteControlTasks()` -> desktop main -> relay -> mobile bootstrap/listWorkspaces; no new mobile-side status query entry points are added.
-4. Changes to sessions-index activity or compatible task runtime state must trigger a rebuild and sync the task snapshot, avoiding
-   `running` / `completed` / `error` pills lagging until the next task list refresh.
-5. This field is only used for the mobile home page display and does not change the true state source of the ZCode runtime. When old data is missing, the mobile frontend falls back to `idle`.
+1. `displayStatus` is computed by the desktop renderer when building `WebRemoteControlTaskTarget` snapshots;
+   `buildWebRemoteControlTaskTargets()` reads task-row sessions-index activity first, then falls back to
+   Zustand task runtime state and `ZCodeTaskMeta.status` in the order above.
+2. The mobile home page only consumes `WebRemoteControlTaskTarget.displayStatus` and never reads ZCode runtime, Repo, Service or persistence implementations.
+3. The sync chain stays renderer `syncWebRemoteControlTasks()` -> desktop main -> relay -> mobile bootstrap/listWorkspaces; no new mobile-side status query entry.
+4. Changes to sessions-index activity or compatible task runtime state must rebuild and sync the task snapshot so the pills do not lag until the next list refresh.
+5. The field is for mobile home display only and does not change the true state source of the ZCode runtime; when old data is missing the mobile frontend falls back to `idle`.
 
-### Home Page Snapshot Push Deduplication Boundaries
+### Home page snapshot push dedup boundary
 
-The Desktop main only performs transport deduplication on the renderer-constructed `WebRemoteControlWorkspaceListResult` and does not own or re-interpret task business state. The deduplication signature must cover fields that the mobile home page needs to adopt immediately but only change at lifecycle nodes or user operations:
+Desktop main only dedups transport of the renderer-built `WebRemoteControlWorkspaceListResult` and neither owns
+nor re-interprets task business state. The dedup signature must cover fields the home page must adopt at once
+but that change only at lifecycle nodes or user operations:
 
-1. Tasks: `title`, `unreadAt`, `displayStatus`, `pinned`, `archived`, `remoteSessionId`;
-2. Workspace connection status: `kind`, `connectionState`, `remoteSessionId`, `lastConnectionError`;
-3. Stable identity fields for tasks/workspaces continue to participate in the signature, ensuring that additions, deletions, and cross-workspace membership changes are visible.
+1. Tasks: `title`, `unreadAt`, `displayStatus`, `pinned`, `archived`, `remoteSessionId`.
+2. Workspace connection state: `kind`, `connectionState`, `remoteSessionId`, `lastConnectionError`.
+3. Stable identity fields of tasks/workspaces keep participating, so additions, deletions and cross-workspace membership changes are visible.
 
-Fields are normalized to the mobile client's display semantics: missing `displayStatus` is equivalent to `idle`, missing `connectionState` is equivalent to
-`connected`, missing optional strings are equivalent to empty strings, missing boolean memberships are equivalent to `false`. Any of the above effective value changes must
-send a new `workspace-list-updated`.
+Fields normalize to mobile display semantics: missing `displayStatus` = `idle`, missing `connectionState` =
+`connected`, missing optional strings = empty string, missing boolean memberships = `false`. Any change of
+these effective values must send a new `workspace-list-updated`.
 
-`updatedAt` comes from sessions-index `lastActivityAt` and changes frequently during streaming text and tool events. This round does not add it to the
-immediate push signature; if real-time refresh of relative times and time sorting is needed, a throttle/merge strategy must be designed separately; each streaming event must not push
-the entire task home page snapshot.
+`updatedAt` comes from sessions-index `lastActivityAt` and changes often during streaming text and tool events.
+It is not in the immediate push signature; real-time refresh of relative times and time sorting needs a
+separate throttle/merge design, and each streaming event must not push the whole task home snapshot.
 
 ```text
 Low-frequency display/connection field changes --> main snapshot signature changes --> workspace-list-updated --> mobile immediate adoption
-High-frequency updatedAt changes ---------------> This round does not trigger full-table immediate push (retaining subsequent throttle/merge boundaries)
+High-frequency updatedAt changes ---------------> not a full-table immediate push (throttle/merge boundary kept for later)
 ```
 
-### Status Projection Impact Boundaries
+### Status projection boundary
 
-This fix belongs to presentation / state-source precedence and does not change session commands, runtime, persistence, or recovery protocols.
+The status precedence is presentation / state-source precedence only and does not change session commands,
+runtime, persistence or recovery protocols.
 
 ```text
 sessions-index phase (real-time activity) ───────────────┐
@@ -417,161 +341,104 @@ sessions-index phase (real-time activity) ────────────�
 renderer runtime cache (fallback only when activity is missing) ┤       └─> relay payload --> mobile status pill
 tasks-index terminal status (last fallback) ───────────────┘
 
-desktop task list -- sessions-index continuous projection (maintaining existing path)
-mobile /remote ----- renderer task snapshot + replayable delivery (only correcting payload fields)
+desktop task list -- sessions-index continuous projection (existing path kept)
+mobile /remote ----- renderer task snapshot + replayable delivery (only payload fields corrected)
 ```
 
 Must preserve:
 
-1. Relay, desktop main, and shared-host attachment still only pass through, without holding task/session business state.
-2. The snapshot/gap, owner, and queue semantics of desktop `desktop-continuous` and mobile `web-remote-replayable` remain unchanged.
-3. The tasks-index continues to own persistent rows/membership; sessions-index activity only owns real-time phases.
-4. `workspaceIdentity?.trim() || workspacePath`, `remoteSessionId`, and pinned/archived membership are unaffected by status merging.
-5. The mobile client's running-first sorting continues to consume the final `displayStatus`; stale caches no longer erroneously pin terminal rows to the top or push back true running rows to normal time sorting.
+1. Relay, desktop main and shared-host attachment only pass through and hold no task/session business state.
+2. Snapshot/gap, owner and queue semantics of desktop `desktop-continuous` and mobile `web-remote-replayable` are unchanged.
+3. tasks-index keeps owning persistent rows/membership; sessions-index activity owns only real-time phases.
+4. `workspaceIdentity?.trim() || workspacePath`, `remoteSessionId` and pinned/archived membership are unaffected by status merging.
+5. Mobile running-first sorting keeps consuming the final `displayStatus`; stale caches no longer wrongly pin terminal rows to the top or push true running rows back to time sorting.
 
-Focused regression covers all phase and conflict cache combinations; no conversation E2Es are added this round because there are no new interactions,
-commands, or delivery behaviors, and runtime NDJSON has proven that sessions-index consistently publishes correct phases in the error window; the defect lies in
-pure renderer target projection.
+Focused regression covers all phase and conflict-cache combinations; no conversation E2E was added because
+there is no new interaction, command or delivery behavior (runtime NDJSON showed sessions-index publishes the
+correct phases in the error window; the defect was in pure renderer target projection).
 
-To support the pinned section, `WebRemoteControlTaskTarget` adds an optional field:
+`WebRemoteControlTaskTarget` adds an optional field for the pinned section:
 
 ```ts
 pinned?: boolean;
 ```
 
-Field source:
+1. The Desktop renderer reads tasks in `Root` via `useGlobalTaskList({ kind: "pinned" })` and `useGlobalTaskList({ kind: "timeline" })`.
+2. `buildWebRemoteControlTaskTargets()` marks `pinned: true` for pinned query results; timeline results are not marked.
+3. The mobile home page consumes this field only for sectioning and never reads task repos, sqlite, ZCode services or runtime directly.
+4. `workspace_task_list_changed` carries incremental task meta events (title, time, status), not pinned/archived
+   membership changes; frontend cache updates must preserve existing list membership so a status refresh does not move pinned tasks out of the pinned section.
 
-1. The Desktop renderer reads tasks in the `Root` through `useGlobalTaskList({ kind: "pinned" })` and
-   `useGlobalTaskList({ kind: "timeline" })`.
-2. `buildWebRemoteControlTaskTargets()` marks `pinned: true` for pinned query results; timeline query results are not marked.
-3. The Mobile home page only consumes this display field for sectioning; it does not directly read task repos, sqlite, ZCode services, or runtime.
-4. `workspace_task_list_changed` carries incremental events of task meta, which only indicates title, time, status, and other metadata changes, not
-   pinned/archived membership changes. Frontend cache updates must preserve existing list归属, avoiding status refreshes moving pinned tasks out of the pinned section.
+## State and routing
 
-## State and Routing
-
-The first version does not need to introduce real URL routing; React state can be used internally within the mobile shell:
+The first version has no real URL routing; React state inside the mobile shell is used:
 
 ```text
 currentMobilePage: "home" | "chat"
 ```
 
-Entering chat:
+Entering chat: the user clicks a task; selection succeeds; set `currentMobilePage = "chat"`; if the history
+state is not `{ zcodeMobilePage: "chat" }`, push one chat history state.
 
-1. The user clicks a task.
-2. Task selection succeeds.
-3. Set `currentMobilePage = "chat"`.
-4. If the current history state is not `{ zcodeMobilePage: "chat" }`, add a layer of chat history state.
-
-Returning to the home page:
-
-1. Click the header back button.
-2. If the current history state is `{ zcodeMobilePage: "chat" }`, call `history.back()`, and `popstate` returns to home.
-3. If there is no current chat history state, directly set `currentMobilePage = "home"` as a fallback.
-4. Retain the selection state of the current active task.
+Returning home: click the header back button; if the history state is `{ zcodeMobilePage: "chat" }`, call
+`history.back()` and let `popstate` return to home; with no chat history state set `currentMobilePage = "home"`
+directly as fallback; keep the active task's selection.
 
 Browser back key:
 
-1. The mobile shell does not write history when initially entering `home`, preserving the original history stack of the QR code entry.
-2. Only when the user clicks a task from `home` and successfully enters `chat` is a single `history.pushState({ zcodeMobilePage: "chat" }, "")` called.
-3. If already at this `chat` state, do not push repeatedly, avoiding stacking history from multiple clicks on the same task.
-4. When `popstate` hits `{ zcodeMobilePage: "chat" }`, set `currentMobilePage = "chat"`; when returning from chat by clicking the back button, use `history.back()` to go back to home, rather than directly changing the state.
-5. When `popstate` returns to a non-`zcodeMobilePage` state, set `currentMobilePage = "home"`, and allow the browser's subsequent default back behavior.
-6. After a successful cross-workspace task click and remounting the Root, still add a layer of `chat` state according to the "user clicks to enter chat" rule; this state comes from the click flow's one-time `mobileNavigationIntent`; the QR code initial `initialTaskId` does not add this layer of state.
-7. Remove the `popstate` listener when the mobile shell unmounts.
+1. The shell writes no history when first entering `home`, preserving the QR entry's original history stack.
+2. Only when the user clicks a task from `home` and successfully enters `chat` is `history.pushState({ zcodeMobilePage: "chat" }, "")` called once.
+3. If already at this `chat` state, do not push again (avoids stacking history from repeated clicks on the same task).
+4. `popstate` hitting `{ zcodeMobilePage: "chat" }` sets `currentMobilePage = "chat"`; returning from chat via the back button uses `history.back()` rather than changing state directly.
+5. `popstate` to a non-`zcodeMobilePage` state sets `currentMobilePage = "home"` and allows the browser's following default back behavior.
+6. After a successful cross-workspace click and Root remount, still push one `chat` state per "user clicks to enter chat", sourced from the click flow's one-time `mobileNavigationIntent`; the QR initial `initialTaskId` adds no such state.
+7. Remove the `popstate` listener when the shell unmounts.
 
-Do not put workspace/task state into the URL to avoid coupling with the QR code entry and paired state.
+Do not put workspace/task state in the URL, to avoid coupling with the QR entry and paired state.
 
-## Style Rules
+## Style rules
 
-UI must comply with the root directory `DESIGN.md`:
-
-1. Use semantic tokens, e.g., `bg-background`, `bg-card`, `border-card-border`, `text-foreground-subtle`.
-2. Use `rounded-lg` for cards; do not use overly large border radii.
-3. The home page is a business tool interface; keep it compact, clear, and scannable; do not make it a marketing page.
-4. Support light, dark, Zai light, Zai dark.
-5. Support Chinese and English text lengths; do not rely on fixed English short phrases.
-6. Use existing `Button` components and lucide icons for buttons.
-7. Home page scrolling, card height, and task row height must be stable; expand/collapse must not cause uncontrollable horizontal overflow.
+UI follows the root `DESIGN.md`: semantic tokens (`bg-background`, `bg-card`, `border-card-border`,
+`text-foreground-subtle`); `rounded-lg` cards, no oversized radii; the home page is a compact, scannable
+business tool interface, not a marketing page; light, dark, Zai light and Zai dark; Chinese and English text
+lengths; existing `Button` components and lucide icons; stable home scrolling, card height and task row height,
+with no uncontrolled horizontal overflow on expand/collapse.
 
 ## Logging
 
-Logs are needed for debugging interactive issues, not guessing state.
+The UI layer uses `import { logger } from "@/logger.js";`. Log points: home snapshot load failure (`error`);
+mobile view state update failure after a same-workspace task click (`error`); cross-workspace switch start
+(`info`); cross-workspace switch failure (`error`); QR initial state cannot match workspace/task (`warn`).
+High-frequency rendering and ordinary hover do not log.
 
-The UI layer uniformly uses:
+## Verification
 
-```ts
-import { logger } from "@/logger.js";
-```
+Run `pnpm typecheck` and `pnpm lint`. Test entry points:
 
-Recommended log points:
+1. `packages/ui/test/webRemoteControlMobileTaskHome.test.ts`: workspaces grouped by desktop return order;
+   default expansion of `activeWorkspaceKey`; `activeTaskId` task shows selected; collapse all collapses every card.
+2. `packages/ui/test/useWebRemoteControlTaskOpen.test.ts`: same-workspace task calls `onSelectTask` and
+   `updateMobileViewState`; cross-workspace calls `switchWorkspace` with `{ taskId, mobileNavigationIntent: "chat" }`;
+   on switch failure the error is kept and the switching state cleared.
+3. `packages/ui/test/workspaceShellRemoteMobileLayout.test.ts`: mobile shell under the mobile breakpoint,
+   existing shell/sidebar otherwise; QR initial task only expands the card and selects the row without entering
+   chat; a user task click adds one history state and browser back returns home; after a cross-workspace click
+   and Root remount the one-time `mobileNavigationIntent` is consumed to enter chat and then cleared.
+4. `packages/shared/test/webRemoteControl.test.ts`: schema/type compatibility for `displayStatus`.
+5. `packages/ui/test/webRemoteControlTaskIndex.test.ts`: `buildWebRemoteControlTaskTargets()` computes
+   `displayStatus` by sessions-index activity -> task runtime -> `ZCodeTaskMeta.status`; covers live-phase vs
+   stale runtime/persisted conflicts in the running, completed and error directions; with missing or
+   compatible `draft` activity keeps the runtime/persisted fallback and persistent `running` still creates no fake running.
+6. `packages/desktop/test/webRemoteControlManagerExternalRelay.test.ts`: changing only `title`, `unreadAt`,
+   `displayStatus`, `pinned`, `archived` or `remoteSessionId` of the same task must push
+   `workspace-list-updated`; changing only `connectionState`, `remoteSessionId` or `lastConnectionError` of the
+   same workspace must push; an identical effective snapshot is still deduplicated; a high-frequency
+   `updatedAt` change alone is outside the immediate push contract.
 
-1. Home page loading workspace/task snapshot failure: `error`.
-2. Mobile view state update failure after clicking a same-workspace task: `error`.
-3. Cross-workspace task switching begins: `info`.
-4. Cross-workspace task switching failure: `error`.
-5. QR code initial state cannot match workspace/task: `warn`.
+## Risks
 
-High-frequency rendering and normal hovers do not log.
-
-## Implementation and Regression Tests
-
-Must execute:
-
-```bash
-pnpm typecheck
-pnpm lint
-```
-
-Current test entry points:
-
-1. `packages/ui/test/webRemoteControlMobileTaskHome.test.ts`
-   - Workspaces grouped by desktop return order.
-   - Default expansion of `activeWorkspaceKey`.
-   - `activeTaskId` corresponding task displays as selected.
-   - After clicking collapse all, all workspace cards are collapsed.
-2. `packages/ui/test/useWebRemoteControlTaskOpen.test.ts`
-   - Same workspace task calls `onSelectTask` and `updateMobileViewState`.
-   - Cross-workspace task calls `switchWorkspace` with `{ taskId, mobileNavigationIntent: "chat" }`.
-   - On switching failure, retain the error and clear the switching state.
-3. `packages/ui/test/workspaceShellRemoteMobileLayout.test.ts`
-   - Renders the mobile shell under the mobile remote control breakpoint.
-   - Non-mobile breakpoints continue to render the existing shell/sidebar.
-   - The QR code initial task only expands the home page card and selects the task row; does not enter chat.
-   - When the user clicks a task to enter chat, only adds a layer of history state; browser back returns to home.
-   - After a cross-workspace click and remounting the Root, consume the one-time `mobileNavigationIntent` to enter chat, and clear it after consumption.
-4. `packages/shared/test/webRemoteControl.test.ts`
-   - If adding `displayStatus`, add schema/type compatibility tests.
-5. `packages/ui/test/webRemoteControlTaskIndex.test.ts`
-   - `buildWebRemoteControlTaskTargets()` calculates `displayStatus` by the priority of sessions-index activity -> task runtime ->
-     `ZCodeTaskMeta.status`.
-   - Covers conflicts between live phases and stale runtime/persisted cache in the running, completed, and error directions.
-   - When activity is missing or is a compatible `draft`, maintain the original runtime/persisted fallback; persistent `running` must still not create fake
-     running.
-6. `packages/desktop/test/webRemoteControlManagerExternalRelay.test.ts`
-   - Only changing `title`, `unreadAt`, `displayStatus`, `pinned`, `archived`, or
-     `remoteSessionId` for the same task must push `workspace-list-updated`.
-   - Only changing `connectionState`, `remoteSessionId`, or `lastConnectionError` for the same workspace must push;
-     identical effective field snapshots must still be deduplicated.
-   - Changing high-frequency `updatedAt` alone does not belong to this round's immediate push contract.
-
-## Historical Implementation Order
-
-It is recommended to implement in the following order:
-
-1. Extract `useWebRemoteControlTaskOpen`, maintaining the existing `WebRemoteControlTaskIndex` behavior unchanged.
-2. Add the mobile home page component, using existing task target fields to complete workspace cards and task rows.
-3. Add the mobile shell and integrate it under the small-screen remote control mode.
-4. Adjust the QR code initial state: stay on the home page by default, only expand and select the corresponding task.
-5. Add the `displayStatus` field and status pills.
-6. Remove or bypass the mobile remote control's old sidebar top-drag collapse logic.
-7. Add tests, execute `pnpm typecheck` and `pnpm lint`.
-8. Update the current mobile client UI description in `docs/web-remote-control/web-remote-control-architecture.md`.
-
-## Risk Points
-
-1. Cross-workspace task clicks recreate the bridge; the new Root's first frame state must be well-coordinated with the mobile shell page state to avoid flashing the home page before entering chat.
-2. The QR code initial state still needs to open the workspace bridge; otherwise, the chat page cannot reuse existing services; but the UI should not automatically jump to chat.
-3. Remote workspaces must always use `workspaceIdentity` as the key; `workspacePath` alone is not sufficient.
-4. `WorkspaceShellLayout` has a lot of existing remote control mobile layout history; carefully preserve the desktop remote control behavior when integrating the mobile shell.
-5. If real URL routing is added later, avoid mixing short-term `remoteControlToken` with internal task page state.
+1. A cross-workspace task click recreates the bridge; the new Root's first-frame state must coordinate with the shell page state to avoid flashing the home page before chat.
+2. The QR initial state still needs to open the workspace bridge (otherwise the chat page cannot reuse existing services), but the UI must not jump to chat automatically.
+3. Remote workspaces must always use `workspaceIdentity` as key; `workspacePath` alone is not enough.
+4. `WorkspaceShellLayout` has a lot of remote control mobile layout history; preserve desktop remote control behavior when integrating the mobile shell.
+5. If real URL routing is added later, avoid mixing the short-lived `remoteControlToken` with internal task page state.

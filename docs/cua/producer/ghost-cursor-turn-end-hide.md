@@ -1,36 +1,44 @@
-# Ghost cursor：对话轮次结束时主动隐藏
+# Ghost cursor: hide on conversation turn end
 
-## 问题
+## Problem
 
-ghost cursor 只靠 20s 活动租约（`kPointerActivityLeaseMs`）到期后淡出。对话已经结束、
-目标 app 也被用户挪走时，光标在租约期内仍停在最后一次动作的位置，看起来像残留的鬼影，
-与「Agent 已经不在操作电脑」的事实不符。
+The ghost cursor faded out only after the 20s activity lease (`kPointerActivityLeaseMs`) expired. When the
+conversation had ended and the user moved the target app away, the cursor still sat at the last action's
+position during the lease, looking like a leftover ghost and contradicting "the Agent is no longer operating
+the computer".
 
-## 决策
+## Decision
 
-复用宿主已经在发的 PiP 会话生命周期事件，不新增协议：
+Reuse the PiP session lifecycle events the host already sends; no new protocol:
 
-- 宿主（`packages/services/src/cua-permission-broker/cuaPipSessionService.ts`）在每轮对话
-  开始/结束时发 `turn-started` / `turn-ended`，会话关闭时发 `session-closed`；Helper 内的
-  PiP 会话协调器（`createPipSessionCoordinator`）先更新会话状态，再调用副作用。
-- Helper 用 `withGhostCursorTurnEndHide` 包装这组副作用：`turnEnded` / `sessionClosed`
-  照常转发给 PiP 调度器，之后若**没有任何会话处于 running**，调用 native `ghostHide()`。
-- `ghostHide()` 是会话级隐藏：清空目标、停止计时器、`orderOut` overlay，但不关闭 enabled
-  开关；下一次 CUA 动作经正常反馈路径恢复显示，无需额外信号。
+- The host (`packages/services/src/cua-permission-broker/cuaPipSessionService.ts`) sends `turn-started` /
+  `turn-ended` at each turn start/end and `session-closed` on session close; the Helper's PiP session
+  coordinator (`createPipSessionCoordinator`) updates session state first, then calls the side effects.
+- The Helper wraps those side effects with `withGhostCursorTurnEndHide`: `turnEnded` / `sessionClosed` are
+  forwarded to the PiP scheduler as before, then, if **no session is running**, native `ghostHide()` is
+  called.
+- `ghostHide()` is a session-level hide: clear the target, stop timers, `orderOut` the overlay, but do not
+  turn off the enabled switch; the next CUA action restores display through the normal feedback path, with no
+  extra signal.
 
-### 多会话
+### Multiple sessions
 
-多个对话同时使用 CUA 时，只有最后一个仍在运行的轮次结束才隐藏，避免 A 对话结束把仍在
-操作的 B 对话的光标藏掉。判据取协调器快照（`snapshot().sessions` 中 `status === "running"`）；
-协调器在调用 `turnEnded` 前已把该会话置为终态，因此快照反映的是结束之后的状态。
+When several conversations use CUA at once, only the end of the last still-running turn hides the cursor, so
+conversation A ending does not hide the cursor of a still-operating conversation B. The criterion is the
+coordinator snapshot (`status === "running"` in `snapshot().sessions`); the coordinator has already put the
+session in a terminal state before calling `turnEnded`, so the snapshot reflects the post-end state.
 
-### 不做的事
+### Not done
 
-- 不缩短 20s 活动租约：租约服务于轮次内 cell 之间的思考间隙，缩短会让同一轮内光标闪烁。
-- 不在 `turn-started` 时主动显示：没有动作时显示光标没有意义，首个动作自然会显示。
+- The 20s activity lease is not shortened: it serves thinking gaps between cells within a turn, and
+  shortening it would make the cursor flicker within one turn.
+- No proactive show on `turn-started`: showing the cursor without an action is meaningless; the first action
+  shows it naturally.
 
-## 验证
+## Verification
 
-- 单测：`withGhostCursorTurnEndHide` 在最后一个运行中的轮次结束、或会话关闭时调用一次
-  `hideGhost`；仍有其他会话运行时不调用；原副作用始终被转发且先于隐藏执行。
-- 真机：一轮对话操作完 Maps 后结束，光标立即消失；下一轮首个动作光标重新出现。
+- Unit: `withGhostCursorTurnEndHide` calls `hideGhost` once when the last running turn ends or the session
+  closes; it does not call it while other sessions run; the original side effects are always forwarded and
+  run before the hide.
+- Real machine: after a conversation operating Maps ends the cursor disappears immediately; the first action
+  of the next turn shows it again.

@@ -1,17 +1,15 @@
 # Release Changelog Body Bullets
 
-Update date: 2026-05-08
-
-`npm run release` uses `release-it` to generate version changelog. Release configuration migrates to `.release-it.mjs`, because `@release-it/conventional-changelog` `writerOpts.transform` and template require JavaScript functions, JSON configuration cannot express.
+`npm run release` uses `release-it` to generate the version changelog. The configuration lives in `.release-it.mjs` because `@release-it/conventional-changelog` `writerOpts.transform` and the template need JavaScript functions, which JSON configuration cannot express.
 
 Generation rules:
 
-- commit header continues to be grouped by Conventional Commits, e.g. `feat` enters `Features`, `fix` enters `Bug Fixes`
-- independent bullets in commit body such as `- xxx`、`* xxx`、`+ xxx` will be appended under that commit entry
-- non-bullet paragraphs do not enter changelog
-- `BREAKING CHANGE` / `BREAKING-CHANGE` are still handled by conventional changelog notes mechanism, not output as normal body bullet
+- The commit header is grouped by Conventional Commits: `feat` enters `Features`, `fix` enters `Bug Fixes`.
+- Independent bullets in the commit body (`- xxx`, `* xxx`, `+ xxx`) are appended under that commit entry.
+- Non-bullet paragraphs do not enter the changelog.
+- `BREAKING CHANGE` / `BREAKING-CHANGE` are handled by the conventional changelog notes mechanism and are not output as normal body bullets.
 
-Examples:
+Example:
 
 ```text
 fix(web-remote): harden mobile reconnect flow
@@ -20,7 +18,7 @@ fix(web-remote): harden mobile reconnect flow
 - extend workspace reconnect timeout
 ```
 
-Will generate:
+Generates:
 
 <!-- prettier-ignore -->
 ```md
@@ -29,4 +27,4 @@ Will generate:
   * extend workspace reconnect timeout
 ```
 
-Related implementation: `scripts/release-it/changelog-writer.mjs`.
+Implementation: `scripts/release-it/changelog-writer.mjs`.

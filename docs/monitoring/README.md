@@ -31,9 +31,5 @@ The CLI Agent OpenTelemetry execution chain has been independently moved to
 - [Session First Open ARMS Telemetry](./session-open-telemetry.md)
 - [Automated Task / Off-Peak Task Message Telemetry](./automation-message-telemetry.md)
 
-## Engineering Quality
-
-- [E2E Metrics Bitable Dashboard](./e2e-metrics-bitable-dashboard.md)
-
 All documentation in this directory is responsible for its own monitoring channel or product feature, and must not redefine the CLI Agent Trace Span, Attribute, Event, Metric, privacy, or statistical scope. Related changes must be uniformly updated
 [`docs/trace/cli-agent-telemetry.md`](../trace/cli-agent-telemetry.md).

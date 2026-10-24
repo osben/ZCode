@@ -2,18 +2,15 @@
 
 ## Background
 
-The pinned task list previously followed the current window's `workspaceTabs` queries entirely. This chain works fine in the startup path of "restore workspace tabs first, then render the sidebar", but if persistent restoration to a task view is later supported — for example, directly entering the pinned/timeline view — UI tabs may not yet be created, and the pinned query would lack workspace scope.
-
-Additionally, remote workspaces without a `remoteSessionId` must not be mixed into the pinned query scope. Otherwise, subsequent service resolution may fall to local services, causing cross-reading of same-path remote and local tasks.
+The pinned task list used to follow the current window's `workspaceTabs` queries entirely. That works when workspace tabs are restored before the sidebar renders, but if restoration directly into a task view (pinned/timeline) is supported later, UI tabs may not exist yet and the pinned query would lack workspace scope. Remote workspaces without a `remoteSessionId` must not be mixed into the pinned query scope either, or service resolution may fall to local services and cross-read same-path remote and local tasks.
 
 ## Current Strategy
 
-- `workspaceTabs` remains the UI state of currently opened workspaces in the window.
-- Pinned queries use `useLocalWorkspaceScopes` to obtain the query scope.
-- Pinned queries only against currently opened local workspace tabs in the window.
-- When there is no local workspace tab, no fallback to `lastWorkspaceSession` is performed; the query scope is empty.
-- Remote workspaces do not participate in this fallback scope; remote pinned queries wait for remote session establishment and follow the corresponding remote service chain.
+1. `workspaceTabs` remains the UI state of currently opened workspaces in the window.
+2. Pinned queries get their scope from `useLocalWorkspaceScopes` and cover only currently opened local workspace tabs.
+3. With no local workspace tab there is no fallback to `lastWorkspaceSession`; the query scope is empty.
+4. Remote workspaces do not participate in this scope; remote pinned queries wait for the remote session and follow the corresponding remote service chain.
 
 ## Boundaries
 
-This adjustment only changes the local scope source for pinned task queries, not whether real workspace tabs are restored on app startup. If a remote pinned view restore is added in the future, the remote query scope must be connected separately after remote session ready; it cannot fall back through local scope.
+Only the local scope source of pinned queries changes, not whether workspace tabs are restored at startup. If a remote pinned-view restore is added, the remote query scope must be connected separately after the remote session is ready and must not fall back through local scope.

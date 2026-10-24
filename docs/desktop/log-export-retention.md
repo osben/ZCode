@@ -32,10 +32,10 @@ Skipped file names:
 
 ## Excluded Agent Runtime and Certificate State
 
-Agent workspace configuration and application CA certificate state are skipped at the
-`~/.zcode/v2` top level before traversal. These directories are runtime state rather than
-diagnostic logs; they may contain sensitive provider configuration, certificate material,
-or large generated files that should not be present in support bundles.
+Agent workspace configuration and application CA certificate state are skipped at the `~/.zcode/v2` top level
+before traversal. These directories are runtime state rather than diagnostic logs; they may contain sensitive
+provider configuration, certificate material, or large generated files that should not be present in support
+bundles.
 
 Skipped directories:
 

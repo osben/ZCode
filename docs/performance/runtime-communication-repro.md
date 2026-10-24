@@ -2,11 +2,13 @@
 
 ## Background
 
-The renderer CPU issue under investigation is suspected to happen while a task is actively communicating, not only when opening a long persisted history. Static database fixtures are useful for cold render and scroll baselines, but they do not exercise provider SSE, app-agent protocol fanout, subagent continuation, tool updates, or React updates during an active turn.
+The renderer CPU issue under investigation is suspected to occur while a task is actively communicating,
+not only when opening a long persisted history. Static database fixtures are useful for cold render and
+scroll baselines but do not exercise provider SSE, app-agent protocol fanout, subagent continuation, tool
+updates or React updates during an active turn. This suite builds repeatable environments; root-cause
+profiling and fixes are a separate phase.
 
-This reproduction suite keeps the first phase focused on building repeatable environments. Root-cause profiling and fixes are a separate phase.
-
-## Communication Chain
+## Communication chain
 
 ```text
 Provider replay SSE
@@ -18,82 +20,58 @@ Provider replay SSE
   -> React render / layout / paint
 ```
 
-For four-pane reproduction, the chain fans out per visible pane:
+All cases use desktop `desktop-continuous` and must not be used to infer mobile `/remote`
+`web-remote-replayable` snapshot or gap-recovery behavior.
 
-```text
-pane A prompt -> parent Agent tool -> child subagent stream -> parent final stream -> pane A render
-pane B prompt -> parent Agent tool -> child subagent stream -> parent final stream -> pane B render
-pane C prompt -> parent Agent tool -> child subagent stream -> parent final stream -> pane C render
-pane D prompt -> parent Agent tool -> child subagent stream -> parent final stream -> pane D render
-```
+## Case set
 
-All cases in this document use desktop `desktop-continuous`. They must not be used to infer mobile `/remote` `web-remote-replayable` snapshot or gap-recovery behavior.
+| ID                          | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Setup                                                                                                   | Action                                                                 | Evidence                                                                           |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| PERF01                      | Isolate one visible pane under high-frequency stream traffic.                                                                                                                                                                                                                                                                                                                                                                                                   | One v4 pane, one session, synthetic recorded-stream fixture with many text/reasoning/tool-input chunks. | Send one prompt and keep the stream open long enough for CPU sampling. | Network artifact with chunk timeline, optional CDP profile, UI remains responsive. |
+| PERF02 (retired 2026-10-16) | Reproduced visible four-pane runtime fanout with tools and subagents (four prompts each triggering an `Agent` tool, a streamed child subagent response, then a streamed parent final response, all panes reaching final markers). Retired because the split entry was removed and users can no longer create a four-pane layout; its spec, fixture and the `openV4SplitFromSidebar` helper are deleted. Only the baseline below is kept as historical evidence. | Four v4 panes in one workbench, each bound to a different session.                                      | -                                                                      | -                                                                                  |
 
-## Case Set
+## Recording and profiling
 
-| ID | Purpose | Setup | Action | Evidence |
-| --- | --- | --- | --- | --- |
-| PERF01 | Isolate one visible pane under high-frequency stream traffic. | One v4 pane, one session, synthetic recorded-stream fixture with many text/reasoning/tool-input chunks. | Send one prompt and keep the stream open long enough for CPU sampling. | Network artifact with chunk timeline, optional CDP profile, UI remains responsive. |
-| PERF02（2026-10-16 退役） | Reproduce visible four-pane runtime fanout with tools and subagents. 分屏入口下线后用户无法再创建四 pane 布局，spec、fixture 与 `openV4SplitFromSidebar` helper 已删除；下文命令与结论仅作历史记录。 | Four v4 panes in one workbench, each bound to a different session. | Send four prompts that each trigger an `Agent` tool, a child subagent streamed response, then a streamed parent final response. | Electron window recording, replay artifact with multiple overlapping `/messages` streams, all panes reach final markers. |
+Phase 1 records user-visible evidence: WDIO drives the path, the in-app Electron window recorder
+captures a video artifact, and the DeepSeek replay server writes request and response chunk timelines.
+Recording requires `ffmpeg` on `PATH`, or `ZCODE_E2E_FFMPEG_PATH` pointing at a compatible binary. A run
+without video but with a renderer CPU profile sets `ZCODE_E2E_PROFILE_ONLY=1` and
+`ZCODE_E2E_PROFILE_STREAMING=1` (with `ZCODE_E2E_MANUAL_REVIEW=1` and
+`E2E_PROVIDER_REPLAY_FIXTURE_PATH` for the replay fixtures).
 
-## Recording And Profiling
+Phase 2 adds profiler evidence once a case reliably reproduces high CPU: start an Electron/Chromium
+performance profile during overlapping streams; compare active pane render cost, hidden shell fanout,
+protocol event batching and tool/subagent update frequency. High-volume protocol or streaming
+diagnostics stay at `debug`; no production `info` logs for per-chunk traces.
 
-Phase 1 records user-visible reproduction evidence:
+## 2026-07-08 local baseline (PERF02 with profile-only, historical)
 
-- WDIO drives the four-pane path.
-- The in-app Electron window recorder captures a video artifact.
-- The DeepSeek replay server writes request and response chunk timelines.
-- The recording path requires `ffmpeg` on `PATH`, or `ZCODE_E2E_FFMPEG_PATH`
-  pointing at a compatible binary.
-
-Run PERF02 with:
-
-```bash
-E2E_PROVIDER_REPLAY_FIXTURE_PATH=packages/desktop/test/e2e/fixtures/upstream/common.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-runtime-communication-performance.json \
-ZCODE_E2E_MANUAL_REVIEW=1 \
-pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/conversation-session/manual-review/pending/conversation-session-runtime-communication-performance.test.ts'
-```
-
-Run the same case without video recording but with a renderer CPU profile:
-
-```bash
-E2E_PROVIDER_REPLAY_FIXTURE_PATH=packages/desktop/test/e2e/fixtures/upstream/common.json,packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-runtime-communication-performance.json \
-ZCODE_E2E_PROFILE_ONLY=1 \
-ZCODE_E2E_PROFILE_STREAMING=1 \
-ZCODE_E2E_MANUAL_REVIEW=1 \
-pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/conversation-session/manual-review/pending/conversation-session-runtime-communication-performance.test.ts'
-```
-
-Phase 2 adds profiler evidence after PERF02 reliably reproduces high CPU:
-
-- Start an Electron/Chromium performance profile during the overlapping child/final streams.
-- Compare active pane render cost, hidden shell fanout, protocol event batching, and tool/subagent update frequency.
-- Keep logging high-volume protocol or streaming diagnostics at `debug`; do not add production `info` logs for per-chunk traces.
-
-## 2026-07-08 Local Baseline
-
-PERF02 was run with `ZCODE_E2E_PROFILE_ONLY=1` and `ZCODE_E2E_PROFILE_STREAMING=1`.
-
-- Artifact dir: `packages/desktop/.e2e-artifacts/runtime-perf-20260708105637`
-- Case duration: `99552ms`
-- Visible renderer tab CPU mean / peak: `2.59%` / `3.87%`
-- Total Electron CPU mean / p95 / peak: `4.19%` / `5.96%` / `6.85%`
-- Visible renderer working set: `254MB` at start, `424MB` peak, `391MB` near end
-- Renderer V8 profile duration: `97455ms`, with about `82318ms` idle, `10320ms` unattributed program time, and `399ms` GC self time
+- Artifact dir: `packages/desktop/.e2e-artifacts/runtime-perf-20260708105637`; case duration `99552ms`.
+- Visible renderer tab CPU mean / peak: `2.59%` / `3.87%`; total Electron CPU mean / p95 / peak:
+  `4.19%` / `5.96%` / `6.85%`.
+- Visible renderer working set: `254MB` at start, `424MB` peak, `391MB` near end.
+- Renderer V8 profile duration `97455ms`: about `82318ms` idle, `10320ms` unattributed program time,
+  `399ms` GC self time.
 
 Mapped renderer self-time hotspots:
 
-- `packages/ui/src/components/ai-elements/reasoning.tsx`: reasoning content auto-follow scroll and mask updates, especially `scrollToReasoningBottom`
-- `packages/ui/src/v4/ConversationTimeline.tsx`: bottom anchoring layout effect and scroll handling during streaming height changes
-- React DOM commit/render work triggered by streaming updates
-- `packages/rpc/src/serialization.ts`: small but visible deserialize cost for protocol frames
+- `packages/ui/src/components/ai-elements/reasoning.tsx`: reasoning content auto-follow scroll and mask
+  updates, especially `scrollToReasoningBottom`.
+- `packages/ui/src/v4/ConversationTimeline.tsx`: bottom anchoring layout effect and scroll handling
+  during streaming height changes.
+- React DOM commit/render work triggered by streaming updates.
+- `packages/rpc/src/serialization.ts`: small but visible deserialize cost for protocol frames.
 
-This baseline does not show a renderer process pegging CPU under deterministic replay; the current bottleneck shape is repeated streaming-driven React commit/layout work plus renderer memory growth. A follow-up high-CPU reproduction should either increase chunk concurrency/frequency or run against the live provider scenario where the original CPU spike was observed.
+The baseline does not show a renderer process pegging CPU under deterministic replay; the bottleneck
+shape is repeated streaming-driven React commit/layout work plus renderer memory growth. A follow-up
+high-CPU reproduction should either increase chunk concurrency/frequency or run against the live
+provider scenario where the original CPU spike was observed.
 
 ## Boundaries
 
-- Desktop local `desktop-continuous` only.
-- No direct SQLite fixture injection for PERF02.
+- Desktop local `desktop-continuous` only; no direct SQLite fixture injection.
 - No separate mobile replayable or remote-host runtime is created.
-- Four-pane layout uses existing v4 pane split behavior and the `MAX_WORKBENCH_PANES = 4` boundary.
-- Provider traffic is synthetic replay; the goal is deterministic communication pressure, not live model quality.
+- The four-pane layout of the historical case used the existing v4 pane split behavior and the
+  `MAX_WORKBENCH_PANES = 4` boundary.
+- Provider traffic is synthetic replay; the goal is deterministic communication pressure, not live
+  model quality.
