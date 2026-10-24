@@ -1,25 +1,34 @@
 # Slash Command Skill Suggestions
 
-## 背景
+## Background
 
-用户习惯在聊天输入框里输入 `/` 搜索可用能力。Skill 目前只在 `$` 触发面板中展示，导致用户进入 `/` 菜单时看不到已启用技能，误以为技能不可用。
+Users are used to typing `/` in the chat input to search for available capabilities. Skills were shown only in
+the `$` trigger panel, so users entering the `/` menu could not see enabled skills and mistook them for
+unavailable.
 
-## 产品语义
+## Product Semantics
 
-- `/` 面板继续作为能力发现入口，展示 slash commands、skills、subagents 三类结果。
-- 从 `/` 面板选择 skill 时，插入内容仍使用现有 `$skill` mention 语义；不要新增 `/skill` 命令协议，也不要让 agent 侧误把 skill 当作 custom slash command。
-- Skill 列表复用 `$` 面板的启用状态、provider 过滤、同名折叠和本地化描述，避免两个入口展示不一致。
-- 空 query 时按 commands、skills、subagents 的分组顺序展示；有 query 时每组内复用现有模糊搜索，全局键盘默认选中仍按统一评分选择最佳项。
+- The `/` panel remains the capability discovery entry, showing slash commands, skills and subagents.
+- Selecting a skill from the `/` panel still inserts the existing `$skill` mention semantics; no `/skill`
+  command protocol is added, and the agent side must not mistake a skill for a custom slash command.
+- The Skill list reuses the `$` panel's enabled state, provider filtering, same-name folding and localized
+  descriptions, so the two entries do not show inconsistently.
+- With an empty query it shows groups in order commands, skills, subagents; with a query each group reuses the
+  existing fuzzy search, and the global keyboard default selection still picks the best item by unified scoring.
 
-## 边界
+## Boundary
 
-- 本改动只影响 UI composer 建议面板和 mention 序列化，不修改 `@zcode/protocol`、session stream、task queue、snapshot 或远控 replayable/continuous 语义。
-- 桌面和 Web 远控都通过现有 shared skill store 读取 skills；远程 workspace 继续由既有 `workspaceIdentity` 绑定逻辑隔离。
-- 如果 skill store 未加载或报错，`/` 面板只在技能分组显示加载/错误状态，不阻塞 commands 和 subagents。
+- This change affects only the UI composer suggestion panel and mention serialization; it does not modify
+  `@zcode/protocol`, session stream, task queue, snapshot or remote replayable/continuous semantics.
+- Desktop and Web remote both read skills through the existing shared skill store; a remote workspace keeps
+  being isolated by the existing `workspaceIdentity` binding.
+- If the skill store is not loaded or errors, the `/` panel shows loading/error state only in the skills group
+  and does not block commands and subagents.
 
-## 验收
+## Acceptance
 
-- 输入 `/` 能看到启用技能分组。
-- 输入 `/code` 能匹配 `code-review` 这类 skill。
-- 选择 skill 后输入框中生成现有 skill mention markdown，发送路径等价于从 `$` 面板选择该 skill。
-- `/` 面板仍能展示 `/goal`、`/compact`、`/init`、custom command 和 subagent。
+- Typing `/` shows the enabled skills group.
+- Typing `/code` matches skills such as `code-review`.
+- After selecting a skill the input generates the existing skill mention markdown, and the send path is
+  equivalent to selecting that skill from the `$` panel.
+- The `/` panel still shows `/goal`, `/compact`, `/init`, custom commands and subagents.

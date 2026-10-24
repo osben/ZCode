@@ -1,87 +1,48 @@
-# BUG-GWT-012: Сырой ICU-plural шаблон в диалоге guard переключения ветки
+# BUG-GWT-012: raw ICU plural template in the branch-switch guard dialog
 
 - Status: FIXED (fix wave 2, 2026-10-18: unit + live confirmed in RT2; marker removed)
+- Severity: S4 (cosmetic/text; guard semantics intact: task list and cancel work)
+- Cases: B6
+- Environment: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (branch `qa/git-worktree-20261017`), isolated QA instance (production build)
 
-- Severity: S4 (косметика/текст; семантика guard не нарушена — список задач и cancel работают)
-- Кейсы: B6
-- Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)
+## Repro
 
-## Воспроизведение с нуля
-
-1. Фикстура R1 (basic): репозиторий с коммитами на `main` (QA-PROMPT §4).
-2. QA-приложение: открыть проект `basic`, запустить живую сессию с сообщением, дающим running-задачу на 10+ секунд (например «Run these six commands…» — 5-6 отдельных bash-вызовов).
-3. Через ~3 секунды после старта задачи: status panel → branch switcher → выбрать `release`.
-4. Появляется guard-диалог «Switch branch?» — читать текст описания под заголовком.
-5. Или без UI, минимальная проверка механизма (то, что делает рендерер):
+1. Fixture R1 (basic): repo with commits on `main` (QA-PROMPT §4).
+2. QA app: open project `basic`, start a live session whose message yields a running task for 10+ s (for example "Run these six commands…" with 5-6 separate bash calls).
+3. About 3 s after the task starts: status panel -> branch switcher -> pick `release`.
+4. The guard dialog "Switch branch?" appears; read the description under the title.
+5. Minimal mechanism check (what the renderer does):
 
 ```ts
 import { createIntl } from "@/i18n/createIntl.js";
 import enUS from "@/i18n/locales/en-US.js";
-// → "…for {count, plural, one {# running task} other {# running tasks}}:" — plural не рендерится
+// -> "...for {count, plural, one {# running task} other {# running tasks}}:" - the plural is not rendered
 createIntl("en-US", { "en-US": enUS }).formatMessage(
   { id: "branchSwitchGuard.description" },
   { count: 1, branch: "release" },
 );
 ```
 
-## Ожидание
+## Expected
 
-Спека `specs/composer-branch-switcher-semantics.md` §2: guard — это confirm-диалог, перечисляющий затронутые активные задачи с осмысленным текстом количества («Switching the branch changes the working tree for N running task(s): …»), т.е. число и слово должны быть отрендерены, а не выведены как шаблон.
+`specs/composer-branch-switcher-semantics.md` §2: the guard is a confirm dialog listing the affected active tasks with meaningful count text ("Switching the branch changes the working tree for N running task(s): ..."); the number and word must be rendered, not output as a template.
 
-## Факт
+## Actual
 
-- В описании диалога виден сырой ICU-шаблон: «Switching to release changes the working tree for {count, plural, one {# running task} other {# running tasks}}:» — `{branch}` подставляется, `{count, plural, …}` НЕ рендерится ни в одной локали.
-- 2/2 воспроизведения в кейсе B6 (диалог при running-задаче checkout-сессии).
-- Git до/после: `main`, без изменений (switch отменён через Cancel — guard работает).
-- Ошибок в логах приложения нет.
+- The dialog description shows the raw ICU template: "Switching to release changes the working tree for {count, plural, one {# running task} other {# running tasks}}:". `{branch}` is substituted; `{count, plural, …}` is NOT rendered in any locale.
+- 2/2 reproductions in case B6 (dialog with a running task of a checkout session).
+- Git before/after: `main`, unchanged (switch cancelled via Cancel; the guard works). No log errors.
 
-## Доказательства
+## Cause (confirmed on all layers)
 
-- `$QA_ROOT/evidence/B6-2-guard-dialog.png` — диалог с сырым `{count, plural, …}` в тексте.
-- `$QA_ROOT/evidence/B6-3-guard-both-running.png`, `$QA_ROOT/evidence/B6-4-guard-worktree-excluded.png` — то же в других сценах кейса B6.
-- `$QA_ROOT/cases/B6.md` — полная запись кейса (PASS по guard + BUG raw-plural).
-- Красный тест: `packages/ui/test/branchSwitchGuardI18n.test.ts` → «BUG-GWT-012: …» (вывод ниже).
+- `packages/ui/src/v4/composer/branchSwitchGuard.tsx:144-150`: the description is formatted via `intl.formatMessage({ id: "branchSwitchGuard.description" }, { count, branch })`.
+- `packages/ui/src/i18n/createIntl.ts:28-37,60-62`: after lookup, `formatMessage` only does naive `replaceAll("{key}", value)`. ICU syntax `{count, plural, one {…} other {…}}` is not parsed; the template has no literal `{count}` token, so the whole fragment stays in the output while `{branch}` is substituted.
+- `en-US.ts:5193-5194` (also `zh-CN.ts:4887`, `uk-UA.ts:4884`): the message has an inline ICU plural, but the project's intl layer supports plurals only through `formatPlural` (`createIntl.ts:63-74`), which expects separate catalog keys `id.one`/`id.few`/`id.many`/`id.other` (convention of all other plural messages, for example `sessionManager.count.sessions`, `chat.codeComments`).
 
-## Причина
+## Fix direction
 
-- Подтверждено (механизм, без вложенного plural — это один plural верхнего уровня рядом с простым плейсхолдером `{branch}`):
-  - `packages/ui/src/v4/composer/branchSwitchGuard.tsx:144-150` — описание диалога форматируется через `intl.formatMessage({ id: "branchSwitchGuard.description" }, { count, branch })`.
-  - `packages/ui/src/i18n/createIntl.ts:28-37,60-62` — `formatMessage` после lookup делает только наивную подстановку `replaceAll("{key}", value)`; ICU-синтаксис `{count, plural, one {…} other {…}}` этой функцией не разбирается вообще: в шаблоне нет литерального токена `{count}`, поэтому весь фрагмент `{count, plural, …}` остаётся в выводе как есть. `{branch}` при этом подставляется — что и наблюдается.
-  - `packages/ui/src/i18n/locales/en-US.ts:5193-5194` (а также `zh-CN.ts:4887`, `uk-UA.ts:4884`) — сообщение `branchSwitchGuard.description` записано с инлайн-ICU-plural, тогда как intl-слой проекта plurals поддерживает только через отдельный API `formatPlural` (`createIntl.ts:63-74`), который ждёт в каталоге отдельные ключи `id.one`/`id.few`/`id.many`/`id.other` (конвенция, используемая всеми остальными plural-сообщениями, например `sessionManager.count.sessions`, `chat.codeComments`). Т.е. сообщение написано в формате, который движок не умеет, и передано в API, который его не обрабатывает.
-- Гипотеза: — (причина подтверждена на всех слоях: каталог → intl-движок → вызов в компоненте; воспроизведено юнит-тестом с реальным `createIntl` + реальным каталогом en-US).
+UI/i18n only, no new dependencies: follow the project convention. Split into a simple prefix with `{branch}` (`formatMessage`, for example `branchSwitchGuard.descriptionPrefix` = "Switching to {branch} changes the working tree for") plus a plural family for the count (`formatPlural` with keys `branchSwitchGuard.taskCount.one/.few/.many/.other` = "{count} running task(s)") in all three catalogs, assembled in `branchSwitchGuard.tsx` (134-158).
 
-## Предлагаемое исправление
+## Test
 
-Слой UI/i18n, без новых зависимостей: привести `branchSwitchGuard.description` к конвенции проекта — разбить на простой префикс с `{branch}` (`formatMessage`, например `branchSwitchGuard.descriptionPrefix` = "Switching to {branch} changes the working tree for") + plural-семейство для количества (`formatPlural` с ключами `branchSwitchGuard.taskCount.one/.few/.many/.other` = "{count} running task(s)") во всех трёх каталогах, и собрать их в `branchSwitchGuard.tsx` (134-158). После фикса снять `it.fails` с теста — он станет красным ровно на момент появления фикса.
-
-## Тест
-
-`packages/ui/test/branchSwitchGuardI18n.test.ts`, unit (jsdom + @testing-library/react; реальные `ZCodeIntlProvider` и каталог en-US — проверяется именно production-путь форматирования; замоканы только task-list hook, toast и диалоговые примитивы; без sleep/таймаутов):
-
-`it.fails("BUG-GWT-012: guard dialog renders the localized plural instead of the raw ICU template")` — открывает guard-диалог с одной running-задачей (count = 1, branch = "release") и проверяет, что текст диалога содержит подставленную ветку `release`, НЕ содержит сырого `{count, plural` и содержит осмысленное «1 running task».
-
-Красный прогон без маркера (`"$QA_ROOT/bin/real-run.sh" "$NODE_BIN" scripts/run-vitest.mjs run packages/ui/test/branchSwitchGuardI18n.test.ts`):
-
-```
- ❯ unit packages/ui/test/branchSwitchGuardI18n.test.ts (1 test | 1 failed) 15ms
-     × renders the localized plural count instead of the raw ICU template 14ms
-
- FAIL  unit packages/ui/test/branchSwitchGuardI18n.test.ts > branch switch guard dialog i18n > renders the localized plural count instead of the raw ICU template
-AssertionError: expected 'Switch branch?Switching to release ch…' not to contain '{count, plural'
-
-Expected: "{count, plural"
-Received: "Switch branch?Switching to release changes the working tree for {count, plural, one {# running task} other {# running tasks}}:Reply with OK onlyCancelSwitch branch"
-
- ❯ packages/ui/test/branchSwitchGuardI18n.test.ts:94:22
-    92|     expect(text).toContain("release");
-    93|     // The count must be rendered as localized text, not leaked as a r…
-    94|     expect(text).not.toContain("{count, plural");
-      |                      ^
-    95|     expect(text).toContain("1 running task");
-    96|   });
-
- Test Files  1 failed (1)
-      Tests  1 failed (1)
-```
-
-С маркером `it.fails`: `Tests  1 expected fail (1)` — зелёный; станет красным, когда баг починят (тогда маркер снять).
+`packages/ui/test/branchSwitchGuardI18n.test.ts`, unit (jsdom + @testing-library/react; real `ZCodeIntlProvider` and the en-US catalog so the production formatting path is exercised; only the task-list hook, toast and dialog primitives are mocked; no sleeps). Name: `BUG-GWT-012: guard dialog renders the localized plural instead of the raw ICU template`. It opens the guard with one running task (count = 1, branch = "release") and asserts the text contains `release`, does not contain `{count, plural`, and contains "1 running task". Was `it.fails`; marker removed after the fix.

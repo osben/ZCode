@@ -1,25 +1,30 @@
-# Slash Command 和官方插件描述汉化
+# Slash Command and Official Plugin Description Localization
 
-## 背景
+## Background
 
-`/` 面板会把 ZCode Agent 的可见 slash command 和已启用 skill 合并展示。内置 command 的描述来自协议命令表，官方插件附带的 command、skill 和 MCP 工具描述来自插件包自身的元数据与 MCP server 注册信息。
+The `/` panel merges the ZCode Agent's visible slash commands and enabled skills. Built-in command
+descriptions come from the protocol command table; descriptions of official-plugin commands, skills and MCP
+tools come from the plugin package's own metadata and MCP server registration.
 
-## 目标
+## Goals
 
-- 中文 UI 中，内置 `/compact`、`/goal` 的描述必须显示中文。
-- 官方插件附带的 command frontmatter `description` 必须是中文。
-- 官方插件附带的 skill frontmatter `description` 必须是中文。
-- 官方插件附带的 MCP tool `title`、`description` 和参数 `describe(...)` 必须是中文，避免工具列表继续出现英文说明。
+- In the Chinese UI, the built-in `/compact` and `/goal` descriptions show in Chinese.
+- Command frontmatter `description`, skill frontmatter `description`, and MCP tool `title`, `description`
+  and parameter `describe(...)` of official plugins are written in Chinese, so the tool list shows no
+  English explanations.
 
-## 边界
+## Boundaries
 
-- 用户自定义 command、用户/工作区 skill、第三方插件的原始描述不自动翻译，继续展示作者提供的文案。
-- 内置 command 仍保留协议层的兼容字段；UI 展示时按当前 locale 覆盖稳定内置命令的描述。
-- 官方插件当前没有 per-locale manifest/frontmatter 协议，因此官方资源的展示描述直接写为中文。
+- User-defined commands, user/workspace skills and third-party plugin descriptions are not auto-translated
+  and keep the author's text.
+- Built-in commands keep the protocol layer's compatibility fields; the UI overrides stable built-in
+  command descriptions by the current locale.
+- Official plugins have no per-locale manifest/frontmatter protocol, so the display descriptions of
+  official resources are written directly in Chinese.
 
-## 验收
+## Acceptance
 
-- 中文 `/` 面板中 `/compact` 和 `/goal` 不再显示英文描述。
-- 官方插件的 `android-dev`、`ios-dev`、`control-browser`、`docx`、`pdf`、`skill-creator` 技能描述为中文。
-- 官方插件 `android-dev`、`ios-dev` command 描述为中文。
-- Android Emulator 和 iOS Simulator MCP 工具标题、说明、参数说明为中文。
+- In the Chinese `/` panel, `/compact` and `/goal` no longer show English descriptions.
+- Skill descriptions of the official plugins `android-dev`, `ios-dev`, `control-browser`, `docx`, `pdf`,
+  `skill-creator` are Chinese; command descriptions of `android-dev` and `ios-dev` are Chinese.
+- Android Emulator and iOS Simulator MCP tool titles, descriptions and parameter descriptions are Chinese.

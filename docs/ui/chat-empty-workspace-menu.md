@@ -1,6 +1,6 @@
 # Chat Empty Workspace Menu
 
-> **当前状态**：本文描述 V4 空草稿与 workspace quick switcher 的当前行为。
+> Current state: this document describes the current behavior of the V4 empty draft and the workspace quick switcher.
 
 The empty chat state title is `Start a new task in {workspace}`.
 The workspace selector now sits in the composer context row above `ConversationComposer`, next to the Git branch switcher.

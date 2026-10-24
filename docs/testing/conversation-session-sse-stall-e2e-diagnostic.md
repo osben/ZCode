@@ -1,10 +1,10 @@
 # Conversation Session SSE Stall E2E Diagnostic
 
-## 目标与边界
+## Goal and boundary
 
-本文定义一组 Desktop 真实链路诊断 E2E，用本地 replay provider 在不同 SSE 语义边界停止下发 event，观察 idle timeout、自动恢复、UI 投影、网络请求和工具副作用。
+Defines a set of Desktop real-chain diagnostic E2E cases that use a local replay provider to stop emitting events at different SSE semantic boundaries and observe idle timeout, automatic recovery, UI projection, network requests and tool side effects.
 
-运行链路不是 adapter/core 单测，而是：
+The run chain is not an adapter/core unit test but:
 
 ```text
 Desktop renderer (desktop-continuous)
@@ -24,54 +24,54 @@ second request:                          provider request -> success SSE
                          runtime event -> Host -> renderer -> V4 timeline
 ```
 
-本轮只验证 desktop local 的 `desktop-continuous` 主链路，不修改 mobile `/remote` 的 `web-remote-replayable` gap/snapshot 恢复边界，也不新增 relay/main 业务状态。remote workspace、queue/Stop 竞争、重启恢复、重试耗尽和有副作用工具均不与本诊断矩阵叉乘。
+This round verifies only the desktop local `desktop-continuous` main chain; it does not change the mobile `/remote` `web-remote-replayable` gap/snapshot recovery boundary and adds no relay/main business state. Remote workspace, queue/Stop races, restart recovery, retry exhaustion and side-effecting tools are not crossed with this diagnostic matrix.
 
-## 为什么是 diagnostic
+## Why it is a diagnostic
 
-顶层 `S02/S03/S06` 的最终产品合同仍是 `decision-needed`：例如 partial text 最终应保留、折叠还是标错，重试耗尽后是 failed 还是 interrupted，按钮和 queue 如何处理，尚未定案。因此本 spec 放在 `manual-review/pending`：
+The final product contract of the top-level `S02/S03/S06` is still `decision-needed`: e.g. whether a partial text should finally be kept, collapsed or marked as an error, whether retry exhaustion is failed or interrupted, and how buttons and the queue are handled, are undecided. So this spec sits in `manual-review/pending`:
 
-- 硬断言只覆盖已经确认或安全所必需的不变量；
-- 未定案的 UI/终态只采样，不把当前实现误写成产品合同；
-- 跑出的事实回填本文“实测结果”，供后续产品裁决；
-- 不把 pending diagnostic 计为顶层 fault `covered`。
+- Hard assertions cover only invariants that are confirmed or required for safety.
+- Undecided UI/terminal states are only sampled, so the current implementation is not mistaken for the product contract.
+- The facts observed are filled back into the "Measured results" below for later product rulings.
+- A pending diagnostic is not counted as top-level fault `covered`.
 
-已确认的 `S02-R1` 继续成立：reasoning-only 可重试断流或 idle timeout 应丢弃不完整 reasoning tail，从安全锚点以新的 assistant identity 恢复，不改变 queue、Stop 或交付边界。
+The confirmed `S02-R1` still holds: a retryable reasoning-only stream break or idle timeout should discard the incomplete reasoning tail and recover from a safe anchor with a new assistant identity, without changing the queue, Stop or delivery boundary.
 
-## 中断点矩阵
+## Cut-point matrix
 
-| Case      | 首次 SSE 截止位置                                                                           | 语义边界                                            | 硬断言                                                                                                                       | 诊断采样                                                         |
-| --------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| SSE-ST-01 | 仅 `message_start`                                                                          | retry-safe prelude                                  | 最终成功；主请求恰好 2 次；无工具调用                                                                                        | stall 时 `canStop/runtimeStatus/timeline`；收口后的 row/timeline |
-| SSE-ST-02 | thinking block 内，已有 `thinking_delta`                                                    | reasoning-only visible boundary                     | 最终成功；主请求恰好 2 次；不完整 reasoning 不进入恢复请求历史；无工具调用                                                   | thinking marker 在运行态是否可见、恢复后如何投影                 |
-| SSE-ST-03 | text block 内，已有 `text_delta`                                                            | user-visible text boundary                          | partial marker 曾在 live UI 出现；stall 必须有界退出；若发生恢复则最终成功；无工具调用                                       | partial 在恢复后保留/折叠/移除的当前行为                         |
-| SSE-ST-04 | tool block 内，`input_json_delta` 是未闭合 JSON                                             | tool 尚未 commit                                    | stall 必须有界退出；未执行该工具；若发生恢复则请求不含未完成 tool call                                                       | 未闭合 tool block 是否进入 UI/store                              |
-| SSE-ST-05 | tool block 已 `content_block_stop`，但没有 `message_delta/message_stop`                     | committed tool block / uncommitted message boundary | `content_block_stop` 后工具执行一次；恢复请求携带成功 `tool_result`；同一 toolCallId 不重复执行                              | complete tool block 在恢复后的 UI/runtime 投影                   |
-| SSE-ST-06 | 首条流已正常结束且只读 `Read` 已成功执行；下一次模型 continuation 在 `message_start` 后停发 | post-tool continuation boundary                     | 工具只执行一次；三条主请求依次为 tool call、stalled continuation、recovered continuation；后两条都携带同一成功 `tool_result` | 工具完成后 stall 的 loading/runtime 投影                         |
+| Case      | First SSE cutoff position                                                                                                                               | Semantic boundary                                   | Hard assertions                                                                                                                                                                   | Diagnostic sampling                                                                                |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| SSE-ST-01 | Only `message_start`                                                                                                                                    | retry-safe prelude                                  | Finally succeeds; exactly 2 main requests; no tool call                                                                                                                           | `canStop/runtimeStatus/timeline` during the stall; row/timeline after closing                      |
+| SSE-ST-02 | Inside the thinking block, a `thinking_delta` already received                                                                                          | reasoning-only visible boundary                     | Finally succeeds; exactly 2 main requests; the incomplete reasoning does not enter the recovery request history; no tool call                                                     | Whether the thinking marker is visible in the running state and how it is projected after recovery |
+| SSE-ST-03 | Inside the text block, a `text_delta` already received                                                                                                  | user-visible text boundary                          | The partial marker once appeared in the live UI; the stall must exit within a bound; if recovery occurs it finally succeeds; no tool call                                         | Whether the partial is kept/collapsed/removed after recovery in the current behavior               |
+| SSE-ST-04 | Inside the tool block, `input_json_delta` is unclosed JSON                                                                                              | tool not yet committed                              | The stall must exit within a bound; that tool is not executed; if recovery occurs the request contains no incomplete tool call                                                    | Whether the unclosed tool block enters the UI/store                                                |
+| SSE-ST-05 | The tool block has `content_block_stop` but no `message_delta/message_stop`                                                                             | committed tool block / uncommitted message boundary | After `content_block_stop` the tool executes once; the recovery request carries the successful `tool_result`; the same toolCallId is not executed twice                           | UI/runtime projection of the complete tool block after recovery                                    |
+| SSE-ST-06 | The first stream ended normally and the read-only `Read` already executed successfully; the next model continuation stops sending after `message_start` | post-tool continuation boundary                     | The tool executes once; the three main requests in order are tool call, stalled continuation, recovered continuation; the latter two both carry the same successful `tool_result` | loading/runtime projection of a stall after the tool completes                                     |
 
-每个 stalled 响应都在 cutoff 后安排一个晚于 E2E idle timeout 的哨兵 event。客户端应先因 idle timeout 取消该 attempt；下一条 fixture 立即返回唯一完成 marker。E2E worker 只为本 spec 把模型流 idle timeout 缩短到 `1000ms`，不进入生产配置，也不扩散到其他 worker。
+Every stalled response schedules a sentinel event later than the E2E idle timeout after the cutoff. The client should first cancel that attempt because of the idle timeout; the next fixture immediately returns a unique completion marker. The E2E worker shortens the model stream idle timeout to `1000ms` for this spec only, not in production configuration and not spread to other workers.
 
-## 证据与判定
+## Evidence and judgement
 
-每个 case 必须同时采集：
+Each case must collect at the same time:
 
-| 层            | 证据                                                                          |
-| ------------- | ----------------------------------------------------------------------------- |
-| UI            | cutoff marker、`canStop`、timeline 文本、row 数；恢复完成 marker 与 idle 状态 |
-| Network       | 主请求序列、`fixtureId/status` 与恢复请求的消息历史                           |
-| Runtime/store | `runtimeStatus/state/activeInputId` 在 stall 与完成后的快照                   |
-| Tool          | DOM/store 中 toolCallId 数量；provider 实际收到的 `tool_result` 与 `isError`  |
+| Layer         | Evidence                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| UI            | cutoff marker, `canStop`, timeline text, row count; the recovery-completion marker and idle state |
+| Network       | main request sequence, `fixtureId/status` and the message history of the recovery request         |
+| Runtime/store | snapshots of `runtimeStatus/state/activeInputId` during the stall and after completion            |
+| Tool          | the toolCallId count in DOM/store; the `tool_result` and `isError` the provider actually received |
 
-失败判据是：没有触发真实恢复 provider request、恢复后无法完成、恢复请求被旧 partial 污染、未提交工具被执行、已提交工具没有执行、已成功执行的工具被重复执行，或工具结果没有成为恢复锚点。当前 UI 如何展示 discarded partial、最终是否显示 interrupted history，只记录事实，不据此让 diagnostic 失败。
+Failure criteria: no real recovery provider request was triggered, recovery cannot complete, the recovery request is polluted by an old partial, an uncommitted tool was executed, a committed tool was not executed, a successfully executed tool was executed again, or the tool result did not become the recovery anchor. How the current UI shows a discarded partial and whether it finally shows interrupted history is only recorded as a fact and does not fail the diagnostic.
 
-replay capture 只在 response handler 正常结束时回填 `responseEvents`。本组 stalled attempt 会先被客户端 idle watchdog abort，因此 capture 中该条记录保持 `pending` 且 `responseEventCount=0`；这不代表 cutoff event 没有到达。cutoff 是否到达由 fixtureId、live UI cutoff marker、runtime streaming 状态及 Agent streaming 日志交叉证明，随后出现的新 provider request 证明 watchdog 已取消旧 attempt 并进入恢复。
+Replay capture backfills `responseEvents` only when the response handler ends normally. The stalled attempts here are first aborted by the client idle watchdog, so that record in the capture stays `pending` with `responseEventCount=0`; this does not mean the cutoff event did not arrive. Whether the cutoff arrived is proven jointly by the fixtureId, the live UI cutoff marker, the runtime streaming state and the Agent streaming log, and the new provider request that follows proves the watchdog cancelled the old attempt and entered recovery.
 
-## Fixture 与 spec
+## Fixture and spec
 
-- provider fixture：`packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-sse-stall-diagnostic.json`
-- case manifest：`packages/desktop/test/e2e/fixtures/cases/conversation-session/conversation-session-sse-stall-diagnostic.json`
-- pending spec：`packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-sse-stall-diagnostic.test.ts`
+- provider fixture: `packages/desktop/test/e2e/fixtures/upstream/conversation-session/conversation-session-sse-stall-diagnostic.json`
+- case manifest: `packages/desktop/test/e2e/fixtures/cases/conversation-session/conversation-session-sse-stall-diagnostic.json`
+- pending spec: `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-sse-stall-diagnostic.test.ts`
 
-运行命令：
+Run command:
 
 ```bash
 desktop_dir="$PWD/packages/desktop"
@@ -80,19 +80,19 @@ E2E_PROVIDER_REPLAY_FIXTURE_PATH="$desktop_dir/test/e2e/fixtures/upstream/common
   --spec ./test/e2e/conversation-session/manual-review/pending/conversation-session-sse-stall-diagnostic.test.ts
 ```
 
-## 实测结果
+## Measured results
 
-2026-08-27 在 macOS 上完成真实 WDIO 运行，6/6 通过。测试 worker 的 base idle timeout 为 `1000ms`，每个 stalled fixture 的哨兵 event 在 `5000ms`；六个 case 都在哨兵到达前进入恢复并最终回到 idle。本轮 watchdog 到恢复请求/terminal 的观测时间约为 `0.9s~2.8s`，差异包含事件切点、runtime 调度和 retry backoff，不应当解释为生产 SLA。
+A real WDIO run on macOS on 2026-08-27 passed 6/6. The test worker's base idle timeout was `1000ms` and each stalled fixture's sentinel event was at `5000ms`; all six cases entered recovery before the sentinel arrived and finally returned to idle. The observed time from the watchdog to the recovery request/terminal was about `0.9s~2.8s`; the spread includes the event cut point, runtime scheduling and retry backoff and must not be read as a production SLA.
 
-| Case      | 当前实现实测事实                                                                                                                                                             |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SSE-ST-01 | 仅收到 `message_start` 时 UI 保持 streaming/可 Stop；idle timeout 后从 user 安全锚点发起第 2 次模型请求并成功，最终回到 idle。                                               |
-| SSE-ST-02 | thinking partial 在 live UI 可见；恢复请求不携带该不完整 reasoning，完成后 partial 不再显示，第 2 次模型请求成功。                                                           |
-| SSE-ST-03 | text partial 在 live UI 可见；当前实现仍自动发起第 2 次模型请求并成功，完成后 partial 不再显示。该丢弃行为仍是产品待裁决项。                                                 |
-| SSE-ST-04 | 未闭合 `input_json_delta` 不提交、不执行 `Read`，恢复请求也不携带该 tool call；第 2 次模型请求成功。                                                                         |
-| SSE-ST-05 | 收到 tool `content_block_stop` 后，即使 assistant 没有 `message_delta/message_stop`，`Read` 仍立即执行且成功；idle timeout 后第 2 次请求携带成功 `tool_result`，未重复执行。 |
-| SSE-ST-06 | 第一条模型流正常提交并成功执行 `Read`；携带成功 `tool_result` 的第 2 次 continuation 卡住后，只重试模型 continuation 为第 3 次请求，工具未重复执行。                         |
+| Case      | Facts measured on the current implementation                                                                                                                                                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SSE-ST-01 | With only `message_start` received the UI stays streaming/Stoppable; after the idle timeout a 2nd model request is issued from the user's safe anchor and succeeds, finally returning to idle.                                                                  |
+| SSE-ST-02 | The thinking partial is visible in the live UI; the recovery request does not carry that incomplete reasoning, the partial is no longer shown after completion, and the 2nd model request succeeds.                                                             |
+| SSE-ST-03 | The text partial is visible in the live UI; the current implementation still issues a 2nd model request automatically and it succeeds, and the partial is no longer shown after completion. This discarding behavior is still a product item awaiting a ruling. |
+| SSE-ST-04 | The unclosed `input_json_delta` is not committed, `Read` is not executed, and the recovery request does not carry that tool call; the 2nd model request succeeds.                                                                                               |
+| SSE-ST-05 | After the tool `content_block_stop` is received, even without `message_delta/message_stop`, `Read` still executes at once and succeeds; after the idle timeout the 2nd request carries the successful `tool_result` and it is not executed again.               |
+| SSE-ST-06 | The first model stream committed normally and `Read` executed successfully; after the 2nd continuation carrying the successful `tool_result` hung, only the model continuation was retried as the 3rd request and the tool was not executed again.              |
 
-所有切点的 stall 快照均为 `canStop=true/state=streaming`，完成后均为 `canStop=false/state=idle`。SSE-ST-05 的 Agent 日志进一步证明 `content_block_stop` 是实际工具提交边界：同一 toolCallId 只出现一次 `tool.call.started/completed`，随后成功结果成为 stream recovery anchor。
+At every cut point the stall snapshot is `canStop=true/state=streaming` and after completion `canStop=false/state=idle`. The Agent log of SSE-ST-05 further proves that `content_block_stop` is the actual tool-commit boundary: the same toolCallId appears only once as `tool.call.started/completed`, and the successful result then becomes the stream recovery anchor.
 
-生产默认 base idle timeout 是 `600000ms`，第一次 recovery request 的 idle timeout 为 `630000ms`，之后每次增加 `30000ms`。本 E2E 只缩短当前 worker 的 base 值，验证的是状态机与副作用边界，不代表线上会在 1 秒后恢复。
+The production default base idle timeout is `600000ms`, the idle timeout of the first recovery request is `630000ms`, and it increases by `30000ms` each time afterwards. This E2E only shortens the base value of the current worker, verifying the state machine and the side-effect boundary, and does not mean production recovers after 1 second.

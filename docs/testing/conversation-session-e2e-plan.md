@@ -1,139 +1,134 @@
 # Conversation Session E2E Plan
 
-目标：把 `docs/conversation-session-case-catalog.md` 里的会话区状态枚举落成 WDIO E2E，并把线上桌面端验证与 Docker replay 验证分层。测试必须从用户路径进入：API Key 登录、配置 DeepSeek provider、切换 `deepseek-v4-flash`，再操作会话区。
+Goal: turn the conversation-area state enumeration in `docs/conversation-session-case-catalog.md` into WDIO E2E, and layer the live desktop verification apart from the Docker replay verification. Tests must enter through the user path: API Key login, configure the DeepSeek provider, switch to `deepseek-v4-flash`, then operate the conversation area.
 
-逐条覆盖状态见：[conversation-session-e2e-coverage-matrix.md](./conversation-session-e2e-coverage-matrix.md)。该矩阵只把有明确 setup/action/assert 的条目标记为自动化覆盖，避免把“场景路径经过了某状态”误判为“case 已验证”。
+Per-case coverage status: [conversation-session-e2e-coverage-matrix.md](./conversation-session-e2e-coverage-matrix.md). That matrix marks an entry as automated coverage only when it has an explicit setup/action/assert, so "the scenario path passed through some state" is not mistaken for "the case is verified".
 
-Goal 相关组合已经从主路径里单独拆出更细的专项矩阵：[conversation-session-goal-specific-coverage-matrix.md](./conversation-session-goal-specific-coverage-matrix.md)。主矩阵里的 `H` 只表示 goal 基础协议，不能替代 queue、compact、fork/edit、session/model、环境异常这些 goal 组合验证。
+The goal-related combinations have been split from the main path into a finer dedicated matrix: [conversation-session-goal-specific-coverage-matrix.md](./conversation-session-goal-specific-coverage-matrix.md). `H` in the main matrix denotes only the basic goal protocol and cannot replace the goal combinations with queue, compact, fork/edit, session/model and environment anomalies.
 
-## 当前口径纠偏
+## Current reporting basis
 
-当前不能只说“测试全过所以会话区没问题”。准确口径是：已写出的 WDIO spec 可以按各自命令统计通过率，形式化 case catalog 仍必须按覆盖矩阵逐条统计。
+"All tests pass so the conversation area is fine" cannot be claimed. The accurate basis: the written WDIO specs can report a pass rate by their own commands, while the formal case catalog must still be counted case by case against the coverage matrix.
 
-截至当前矩阵，A-J 共 153 条且均已 accepted；其中 104 条有自动化证据，49 条仍是 missing accepted case，当前 failing probe 和 undefined case 均为 0。也就是说，“某次测试命令全通过”只代表那批 spec 通过；描述形式化矩阵时必须同时报告 accepted、covered、partial 和 missing，不能把 pending legacy 证据或单批运行结果扩大成 formal gate 已闭环。
+As of the matrix at that time, A-J has 153 cases, all accepted; 104 have automation evidence, 49 are still missing accepted cases, and the failing probe and undefined cases are 0. So "a test command all passed" only means that batch of specs passed; describing the formal matrix must report accepted, covered, partial and missing together, and pending legacy evidence or a single-batch run must not be widened into "the formal gate is closed".
 
-F09、G11、G12 的产品语义已于 2026-07-05 裁决，不再属于 undefined；尚未落成稳定自动化的条目继续以 `missing` 保留在覆盖矩阵中。
+The product semantics of F09, G11 and G12 were ruled on 2026-07-05 and are no longer undefined; entries that have not yet become stable automation stay as `missing` in the coverage matrix.
 
-外部环境故障不计入 A-J 主路径统计，单独在 [conversation-session-environment-fault-catalog.md](./conversation-session-environment-fault-catalog.md) 里跟踪。目前该 catalog 有 40 条产品 fault row 和 4 条测试基础设施 case；其中 3 条是 `F09/G11/G12` 的环境视角别名，已随源 case 裁决为 accepted/missing，去重后新增的 37 条外部故障产品 case 仍为 `decision-needed`，不能直接写成稳定通过断言。
+External environment faults are not counted in the A-J main-path statistics and are tracked separately in [conversation-session-environment-fault-catalog.md](./conversation-session-environment-fault-catalog.md). That catalog currently has 40 product fault rows and 4 test-infrastructure cases; 3 of them are environment-view aliases of `F09/G11/G12` and were ruled accepted/missing with their source cases; after de-duplication the 37 newly added external-fault product cases remain `decision-needed` and cannot be written directly as stable passing assertions.
 
-## 分层
+## Layers
 
-| 层                     | 用途                                 | 运行方式                                                                                                         |
-| ---------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| desktop capture        | 连接线上 DeepSeek，验证真实桌面链路  | `E2E_PROVIDER_HTTP_MODE=capture E2E_PROVIDER_API_KEY=... pnpm --filter @zcode/desktop test:e2e -- --spec <spec>` |
-| desktop replay         | 本地快速认证，使用已录制 SSE fixture | `pnpm --filter @zcode/desktop test:e2e -- --spec <spec>`                                                         |
-| docker replay-isolated | 隔离网络后的最终可复现认证           | `E2E_NETWORK_MODE=replay-isolated E2E_SPEC=<spec> bash scripts/test-desktop-e2e-container.sh`                    |
+| Layer                  | Purpose                                                 | How to run                                                                                                       |
+| ---------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| desktop capture        | Connect to live DeepSeek, verify the real desktop chain | `E2E_PROVIDER_HTTP_MODE=capture E2E_PROVIDER_API_KEY=... pnpm --filter @zcode/desktop test:e2e -- --spec <spec>` |
+| desktop replay         | Fast local certification with recorded SSE fixtures     | `pnpm --filter @zcode/desktop test:e2e -- --spec <spec>`                                                         |
+| docker replay-isolated | Final reproducible certification in an isolated network | `E2E_NETWORK_MODE=replay-isolated E2E_SPEC=<spec> bash scripts/test-desktop-e2e-container.sh`                    |
 
-当前先放大桌面端 case，Docker 只作为阶段性认证，不阻塞 case 编写。
+For now expand the desktop cases first; Docker is only a staged certification and does not block case writing.
 
-## Manual Review 流转
+## Manual Review flow
 
-conversation 主路径 spec 先统一放在 `packages/desktop/test/e2e/conversation-session/manual-review/pending/`。这些 case 用来自动执行复杂用户路径、生成 UI / network / log / session artifact，再由人确认产品预期；它们不参与默认 conversation 质量门禁。
+Conversation main-path specs first sit uniformly in `packages/desktop/test/e2e/conversation-session/manual-review/pending/`. These cases execute complex user paths automatically and generate UI / network / log / session artifacts, then a human confirms the product expectation; they take no part in the default conversation quality gate.
 
-流转规则：
+Flow rules:
 
-1. 新枚举或尚未人工确认的 case 进入 `manual-review/pending/`。
-2. 人工 review 时只要求 case 能跑到观察点并留下证据，不用把所有预期写死成断言。
-3. 产品预期确认后，补充确定性断言和需要的 `data-testid` / 协议 / 日志 / 抓包 / snapshot 校验。
-4. 断言稳定后，把 spec 移回 `packages/desktop/test/e2e/conversation-session/`，并同步更新 [conversation-session-e2e-coverage-matrix.md](./conversation-session-e2e-coverage-matrix.md)。
+1. A newly enumerated case, or one not yet confirmed by a human, enters `manual-review/pending/`.
+2. Human review only requires that the case reach the observation point and leave evidence; not every expectation has to be hard-coded as an assertion.
+3. After the product expectation is confirmed, add deterministic assertions and the needed `data-testid` / protocol / log / capture / snapshot checks.
+4. Once assertions are stable, move the spec back to `packages/desktop/test/e2e/conversation-session/` and update [conversation-session-e2e-coverage-matrix.md](./conversation-session-e2e-coverage-matrix.md) in sync.
 
-WDIO 默认全量 E2E 会排除 `manual-review`；显式传入 `manual-review` spec 或设置 `ZCODE_E2E_MANUAL_REVIEW=1` 时才运行这些人工 review case。`ZCODE_E2E_MANUAL_REVIEW=1` 且没有显式 `--spec` 时，默认只运行 `manual-review/**/*.test.ts`。
+The default full WDIO E2E excludes `manual-review`; these human-review cases run only when a `manual-review` spec is passed explicitly or `ZCODE_E2E_MANUAL_REVIEW=1` is set. With `ZCODE_E2E_MANUAL_REVIEW=1` and no explicit `--spec`, only `manual-review/**/*.test.ts` runs by default.
 
-## Spec 拆分
+## Spec split
 
-下表中的短文件名混合记录默认 conversation-session 目录下的正式 spec，以及
-`manual-review/pending/` 下尚待确认的候选 spec。人工确认并升格后，文件会回到默认
-conversation-session 目录，并在覆盖矩阵里更新为正式路径。
+The short file names in the table below mix the formal specs in the default conversation-session directory with candidate specs still to be confirmed under `manual-review/pending/`. After human confirmation and promotion, a file returns to the default conversation-session directory and the coverage matrix is updated to the formal path.
 
-| Spec                                                       | Catalog 覆盖                              | 当前优先级 | 说明                                                                                                                                               |
-| ---------------------------------------------------------- | ----------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `conversation-session-first-send.test.ts`                  | A01、C01、C03                             | P0         | 首发建 session、完成后下一轮                                                                                                                       |
-| `conversation-session-prewarming-queue.test.ts`            | A02                                       | P0         | 首轮请求已发出但首个 SSE event 尚未返回时继续发普通文本，必须进入 queue，不能打断首轮                                                              |
-| `conversation-session-running-queue.test.ts`               | A03-A08                                   | P0         | running 中普通文本、`/goal`、`/compact` 按各自 command kind 入队，不启动并行 compact                                                              |
-| `conversation-session-running-actions.test.ts`             | A09、A10、E06 running 分支、K02、K03、K10 | P0         | running 中 stable assistant fork 仍按目标稳定性裁决；最后一轮 real user query 可 edit 并抢占当前 turn，历史 query 不显示 edit；历史 assistant 回复不显示 retry |
-| `conversation-session-stop-held-queue.test.ts`             | B02-B04、B06                              | P0         | stop 后 held queue 保留、不自动消费；继续输入仍追加队尾                                                                                            |
-| `conversation-session-stop-empty.test.ts`                  | B01、B05                                  | P0         | stop 后 queue=0 进入 interrupted completed，后续普通文本立即下一轮                                                                                 |
-| `conversation-session-queue-operations.test.ts`            | B09-B11                                   | P0         | held queue 编辑、重排、删除只影响 queue 本身，不触发消费                                                                                           |
-| `conversation-session-compact-manual-queue.test.ts`        | F01、F03、F08、C08、C09                   | P0         | 手动 compact 与 held queue 共存；stop 后 held queue 不自动消费，compact 成功后也不自动消费；success completed 的 held queue 下继续输入只追加       |
-| `conversation-session-compact-actions.test.ts`             | F04-F07、H05、K05、E06 compacting 分支    | P0         | compacting 中普通输入和 `/goal` 入队、重复 `/compact` reject、stop compact、fork 禁止                                                              |
-| `conversation-session-interrupted-actions.test.ts`         | D02、E02、E03                             | P0         | interrupted 后允许 edit；被 stop 的 assistant partial 不提供可用 fork 入口；held queue 保留在父 session 且不自动消费                              |
-| `conversation-session-edit.test.ts`                        | D01、D03-D08、D10                         | P1         | edit 最新 real user query 重跑、queue 保留、running 中普通文本和 `/goal` 入队、running latest edit 抢占重跑、assistant 不可 edit、interrupted 后 edit rerun 不触发 turnIndex 解析错误 |
-| `conversation-session-fork.test.ts`                        | E01、E04、E06 running 分支、K06 user 分支 | P1         | completed success 下 assistant fork；user 不提供 fork；running 中禁止 fork                                                                         |
-| `conversation-session-tool-actions.test.ts`                | D09、E05、K06 tool 分支、K07 tool 分支    | P1         | 用真实 Read tool block 断言 tool call block 内不暴露 edit/fork 入口                                                                                |
-| `conversation-session-goal.test.ts`                        | H01-H04、H06、B07                         | P1         | goal 设置/更新、running 与 held queue 中入队；H02 从 verifier 自然完成后的 completed target 更新，不用 stop 收尾态造数；goal continuation/验证窗口不产生独立 `validating` lock |
-| `conversation-session-goal-queue.test.ts`                  | Goal 专项 G1                              | P1         | 多个 queued goal、text/goal/compact 混合、goal 队列项编辑/删除/重排、立即引导 goal 消费顺序                                                        |
-| `conversation-session-goal-session-model.test.ts`          | Goal 专项 G0/G1/G3/G4                     | P1         | queued goal 消费使用最新模型/思考深度；goal running/queued goal 切换 session 不串；新草稿只断言不继承历史 goal/queue；goal running 中历史 assistant fork 禁用 |
-| `conversation-session-goal-run-cases.test.ts`              | Goal 人工判定组合                         | P1         | manual-review live probe：请求 capture 只作为证据；已有 goal 更新接受新 goal 进入 queue 或 target；已有 paused target 下普通输入未形成 running 窗口、manual/auto compact 与 goal controls 恢复等采集只记录 outcome |
-| `conversation-session-turn-steer-probe.test.ts`            | M01-M05                                   | P1         | `manual-review/pending` 候选在 queue 行为下保留首轮 running/tool 窗口里 text、`/goal`、`/compact` 的硬断言证据；不参与默认 conversation gate |
-| `conversation-session-model-switch-queue.test.ts`          | 模型切换交叉：queue / held queue          | P1         | running 中 queued text 消费前切模型；stop 后 held queue 切模型再“立即发送”，均以网络请求断言消费时模型/思考深度                                    |
-| `conversation-session-model-switch-compact.test.ts`        | 模型切换交叉：manual compact              | P1         | completed 后切 secondary 再 `/compact`，断言 summary 使用 secondary 模型；summary 思考档按 compact 链路默认 high 口径观测                         |
-| `conversation-session-model-switch-auto-compact.test.ts`   | 模型切换交叉：auto / guard compact        | P1         | 已迁移 V4 helper 与 stream-first 断言；N05 confirm/cancel 当前稳定暴露“无 guard 弹窗、直接切模型”的产品缺口；N06 只有真实触发 marker 时断言不中断，健康 no-op 时只证明 pendingAction 正常继续 |
-| `conversation-session-model-switch-tool-edit-fork.test.ts` | 模型切换交叉：tool / edit / fork          | P1         | tool prompt 窗口切模型先做可执行探针；completed 后切模型再 edit/fork 后续请求，断言使用 secondary 配置                                             |
-| `conversation-session-config-and-multisession.test.ts`     | J01-J04                                   | P1         | 多 session 并发、active session 可见消息隔离                                                                                                       |
-| `conversation-session-model-config.test.ts`                | I01-I05、J05                              | P1         | 已打开并通过：断言 session 级模型/思考深度恢复、新建继承、queue 消费使用当前 session 配置、inactive session 不被 active 草稿污染                   |
-| `conversation-session-compact-interrupted.test.ts`         | F02                                       | P1         | completed interrupted 下仍允许手动 compact                                                                                                         |
-| `conversation-session-compact-auto.test.ts`                | G01-G04、G08-G10                          | P2         | manual-review live probe：触发 auto compact 时断言其前置于 pendingAction；未达到 needsCompact 时记录 no-op 并证明 pendingAction 正常继续            |
-| `conversation-session-compact-auto-actions.test.ts`        | G05-G07                                   | P2         | auto compact 进入 `started` 时覆盖长任务窗口里普通文本和 `/goal` 入队、重复 `/compact` reject；健康 no-op `skipped` 时只断言 marker 与 pendingAction |
+| Spec                                                       | Catalog coverage                              | Current priority | Description                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------- | --------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `conversation-session-first-send.test.ts`                  | A01, C01, C03                                 | P0               | First send creates a session, next turn after completion                                                                                                                                                                                                                                                               |
+| `conversation-session-prewarming-queue.test.ts`            | A02                                           | P0               | When the first-turn request has been sent but the first SSE event has not returned, further ordinary text must enter the queue and must not interrupt the first turn                                                                                                                                                   |
+| `conversation-session-running-queue.test.ts`               | A03-A08                                       | P0               | While running, ordinary text, `/goal`, `/compact` are queued by their own command kind and no parallel compact starts                                                                                                                                                                                                  |
+| `conversation-session-running-actions.test.ts`             | A09, A10, E06 running branch, K02, K03, K10   | P0               | While running, stable assistant fork is still judged by target stability; the last real-user query can be edited and preempts the current turn, historical queries show no edit; historical assistant replies show no retry                                                                                            |
+| `conversation-session-stop-held-queue.test.ts`             | B02-B04, B06                                  | P0               | After stop the held queue is kept and not auto-consumed; further input is still appended to the tail                                                                                                                                                                                                                   |
+| `conversation-session-stop-empty.test.ts`                  | B01, B05                                      | P0               | After stop with queue=0 enters interrupted completed, later ordinary text immediately starts the next turn                                                                                                                                                                                                             |
+| `conversation-session-queue-operations.test.ts`            | B09-B11                                       | P0               | Held-queue edit, reorder, delete affect only the queue itself and do not trigger consumption                                                                                                                                                                                                                           |
+| `conversation-session-compact-manual-queue.test.ts`        | F01, F03, F08, C08, C09                       | P0               | Manual compact coexists with a held queue; after stop the held queue is not auto-consumed and after compact success it is not auto-consumed either; with a held queue under success completed further input is only appended                                                                                           |
+| `conversation-session-compact-actions.test.ts`             | F04-F07, H05, K05, E06 compacting branch      | P0               | During compacting, ordinary input and `/goal` are queued, duplicate `/compact` rejected, stop compact, fork forbidden                                                                                                                                                                                                  |
+| `conversation-session-interrupted-actions.test.ts`         | D02, E02, E03                                 | P0               | After interrupted, edit is allowed; a stopped assistant partial offers no usable fork entry; the held queue is kept in the parent session and not auto-consumed                                                                                                                                                        |
+| `conversation-session-edit.test.ts`                        | D01, D03-D08, D10                             | P1               | Edit the latest real-user query and rerun, queue kept, ordinary text and `/goal` queued while running, running latest-edit preempts the rerun, assistant cannot be edited, edit rerun after interrupted raises no turnIndex parse error                                                                                |
+| `conversation-session-fork.test.ts`                        | E01, E04, E06 running branch, K06 user branch | P1               | assistant fork under completed success; user offers no fork; fork forbidden while running                                                                                                                                                                                                                              |
+| `conversation-session-tool-actions.test.ts`                | D09, E05, K06 tool branch, K07 tool branch    | P1               | Use a real Read tool block to assert that the tool call block exposes no edit/fork entry                                                                                                                                                                                                                               |
+| `conversation-session-goal.test.ts`                        | H01-H04, H06, B07                             | P1               | goal set/update, queued while running and in a held queue; H02 updates a completed target after the verifier finishes naturally, without fabricating data from a stop terminal state; the goal continuation/verification window creates no standalone `validating` lock                                                |
+| `conversation-session-goal-queue.test.ts`                  | Goal specific G1                              | P1               | Multiple queued goals, mixed text/goal/compact, goal queue item edit/delete/reorder, consumption order of an immediate guide goal                                                                                                                                                                                      |
+| `conversation-session-goal-session-model.test.ts`          | Goal specific G0/G1/G3/G4                     | P1               | Queued goal consumption uses the latest model/thinking depth; a running or queued goal does not leak across session switches; a new draft asserts only that it inherits no historical goal/queue; fork of a historical assistant is disabled while a goal runs                                                         |
+| `conversation-session-goal-run-cases.test.ts`              | Goal manual-judgement combinations            | P1               | manual-review live probe: request capture is evidence only; updating an existing goal accepts the new goal entering the queue or the target; collection such as an ordinary input under an existing paused target not forming a running window, manual/auto compact and goal-control recovery only records the outcome |
+| `conversation-session-turn-steer-probe.test.ts`            | M01-M05                                       | P1               | `manual-review/pending` candidate keeping the hard-assertion evidence of text, `/goal`, `/compact` in the first-turn running/tool window under queue behavior; takes no part in the default conversation gate                                                                                                          |
+| `conversation-session-model-switch-queue.test.ts`          | Model switch cross: queue / held queue        | P1               | Switch model before a queued text is consumed while running; switch model with a held queue after stop then "send now"; both assert the model/thinking depth at consumption by network requests                                                                                                                        |
+| `conversation-session-model-switch-compact.test.ts`        | Model switch cross: manual compact            | P1               | After completed, switch to secondary then `/compact`, asserting the summary uses the secondary model; the summary's thinking level is observed by the compact chain's default-high basis                                                                                                                               |
+| `conversation-session-model-switch-auto-compact.test.ts`   | Model switch cross: auto / guard compact      | P1               | Migrated to the V4 helper and stream-first assertions; N05 confirm/cancel currently stably exposes a product gap of "no guard dialog, direct model switch"; N06 asserts non-interruption only when a real trigger marker exists, and on a healthy no-op only proves that the pendingAction continues normally          |
+| `conversation-session-model-switch-tool-edit-fork.test.ts` | Model switch cross: tool / edit / fork        | P1               | The tool-prompt-window model switch is an executable probe first; after completed, switch model then edit/fork and assert later requests use the secondary configuration                                                                                                                                               |
+| `conversation-session-config-and-multisession.test.ts`     | J01-J04                                       | P1               | Multi-session concurrency, active-session visible-message isolation                                                                                                                                                                                                                                                    |
+| `conversation-session-model-config.test.ts`                | I01-I05, J05                                  | P1               | Opened and passing: asserts session-level model/thinking depth restore, new-session inheritance, queue consumption using the current session configuration, an inactive session not polluted by the active draft                                                                                                       |
+| `conversation-session-compact-interrupted.test.ts`         | F02                                           | P1               | Manual compact is still allowed under completed interrupted                                                                                                                                                                                                                                                            |
+| `conversation-session-compact-auto.test.ts`                | G01-G04, G08-G10                              | P2               | manual-review live probe: when auto compact triggers, assert it precedes the pendingAction; when needsCompact is not reached record a no-op and prove the pendingAction continues normally                                                                                                                             |
+| `conversation-session-compact-auto-actions.test.ts`        | G05-G07                                       | P2               | When auto compact enters `started`, cover ordinary text and `/goal` queued during the long-task window, duplicate `/compact` rejected; on a healthy no-op `skipped` assert only the marker and the pendingAction                                                                                                       |
 
-2026-07-15 compact transport 迁移说明：
+Compact transport migration note (2026-07-15):
 
-- `conversation-session-compact.test.ts`、`conversation-session-model-switch-compact.test.ts`
-  当前仍断言 compact 为 non-stream；
-- `conversation-session-model-switch-auto-compact.test.ts` 已改用 V4 helper，并把可达的正常 success
-  收紧为唯一 streaming SSE 腿；实跑 N06 健康 no-op 通过，N05 confirm/cancel 因产品缺少 guard 弹窗失败，
-  该失败发生在 compact transport 之前；
-- 前两者在改成“正常 success 为唯一 streaming 腿”的断言并复跑前，不计入 compact transport 覆盖或
-  转正准入；MG 因 N05 产品缺口同样不作为 transport 证据；
-- stream failure 后的 non-stream fallback 顺序由正式 `conversation-session-compact-stream-fallback.test.ts`
-  单独证明，不在上述正常 success case 中兼容两种 transport。
+- `conversation-session-compact.test.ts` and `conversation-session-model-switch-compact.test.ts` still assert compact as non-stream.
+- `conversation-session-model-switch-auto-compact.test.ts` now uses the V4 helper and tightens the reachable normal success to a single streaming SSE leg; the N06 healthy no-op passed in a real run, while N05 confirm/cancel failed because the product lacks a guard dialog, a failure that happens before the compact transport.
+- Until the first two are changed to the assertion "normal success is the only streaming leg" and rerun, they do not count as compact transport coverage or promotion admission; MG likewise is not transport evidence because of the N05 product gap.
+- The order of non-stream fallback after a stream failure is proven separately by the formal `conversation-session-compact-stream-fallback.test.ts` and is not tolerated as either transport in the normal success cases above.
 
-## 最小断言合同
+## Minimum assertion contract
 
-每条 case 至少包含：
+Every case contains at least:
 
-- UI：使用 `data-testid` 和 `data-*` 断言，不用截图作为通过条件。
-- Error Banner：正向 / 非故障 case 默认必须断言没有 `ChatViewErrorBanner` / `ChatErrorBanner`；只有 case 明确声明 fault、negative、error recovery 或 provider/network failure 时才允许出现，并且必须断言错误来源、可 dismiss 状态和后续 queue / action 状态。
-- Network：DeepSeek capture/replay 里能证明是否发起模型请求，以及请求顺序。
-- Runtime DOM projection：`chat-view` 的 `data-session-id`、`data-state`、`data-queue-count`。
-- Queue：`chat-queue-item-*` 的内容、kind、status、顺序。
-- Message：`chat-user-message-*`、`chat-assistant-message-*` 的 message id、role、文本。
+- UI: assert with `data-testid` and `data-*`; a screenshot is not a pass condition.
+- Error Banner: positive / non-fault cases must by default assert there is no `ChatViewErrorBanner` / `ChatErrorBanner`; it may appear only when the case explicitly declares fault, negative, error recovery or provider/network failure, and then the error source, dismiss state and the subsequent queue / action state must be asserted.
+- Network: DeepSeek capture/replay can prove whether a model request was made and the request order.
+- Runtime DOM projection: `chat-view`'s `data-session-id`, `data-state`, `data-queue-count`.
+- Queue: content, kind, status and order of `chat-queue-item-*`.
+- Message: message id, role and text of `chat-user-message-*`, `chat-assistant-message-*`.
 
-## 当前已落地的断言与候选合同
+## Currently landed assertions and candidate contracts
 
-- `conversation-session-turn-steer-probe.test.ts` 曾于 2026-06-24 转入默认 conversation E2E，V4 迁移后已重新降级到 `manual-review/pending`。当前文件名仍会命中 WDIO 的 guide seed，因此 spec 前置通过设置页切回 `queue`，以硬断言保留 M01-M05 的候选执行证据；这些证据不代表当前 V4 版本已完成人工 review、formal replay 或 Docker admission。M06 guide/steer 语义继续由 pending `conversation-session-running-guide-steer.test.ts` 提供相邻历史证据。
-- running 中普通输入、`/goal` 和 `/compact` 必须按各自 command kind 进入同一权威 queue；`/compact` 显示 queued toast 和维护命令项，不作为普通 user message，也不能绕过 queue 启动并行 compact。
-- prewarming 是首轮请求已发出但模型首个 SSE event 尚未返回的窗口；该窗口继续发普通文本必须进入 renderer queue，不能打断首轮，也不能提前发出第二次模型请求。
-- 首发或下一轮刚进入 streaming 时，`activeInputId` 是 session 正在消费输入的 owner 标记；自动 drain 必须同时检查 runtime busy、`activeInputId` 和 streaming assistant 占位，避免触发 `A prompt is already running for this session`。
-- stop 后存在 queue 时，queue 进入 held 状态，默认不自动消费；只有队列项“立即发送/继续队列”会显式请求 stop 后 drain。
-- stop 后 runtime 已完成且清掉 `activeInputId` 时，允许用户发 `/compact`；不能被 stale composer `streaming` 状态误判为仍在 running。
-- 手动 compact 如果历史不足，terminal marker 可以是 `skipped`；成功路径 E2E 需要先构造至少两轮已完成历史，再断言 `started -> completed`。
-- fork 入口对 ZCode agent provider 开放，但只允许稳定 `completed(success)` assistant message；被 stop 的 interrupted partial 不提供可用 fork 入口。fork 后切换到派生 session，父 session queue 不复制。
-- user query edit 是显式重跑动作；stop 后 held queue 存在时仍应立即重跑，queue 保留且不自动 drain；assistant/tool 不暴露 edit 入口。
-- tool call 预期渲染为 assistant message 内部的 `TID_CHAT_TOOL_CALL_BLOCK`，不是独立 message；tool 负向能力断言只检查 tool block 内没有 edit/fork 入口，assistant message 自身的 fork 入口按 assistant 规则另行判断。
-- edit 重跑 running 中，后续普通文本和 `/goal` 都只能进入 queue，不能抢占当前重跑 turn。
-- held queue 不是稳定 completed assistant fork/edit 的禁用理由；同 session 正在 compacting 时禁止 fork/edit，running 时 latest real user query edit 走 stop barrier，历史 user query 不提供 edit，历史 assistant 回复不提供 retry；被 stop 的 interrupted assistant partial 也不能 fork。
-- `/goal` 在 completed 下设置或更新 session goal，并继续启动 goal continuation；同 session running 或 stop 后 held queue 存在时，`/goal` 只作为 `goal` 队列项追加，不能抢占当前 turn，也不能绕过 held queue 自动发起请求。
-- `/goal` continuation 被 Stop 取消后，UI runtime 必须退出 streaming，且 `activeInputId` 必须清空；当前 E2E 只断言目标内容保留，不把 target `active/paused` 写死。
-- goal continuation/验证窗口不应该暴露独立 `validating` 产品状态来锁住用户操作；UI `chat-view` 的 target status 在该窗口仍按目标本身状态表达，例如 `active`。
-- compacting 是同 session 的长任务状态，不允许 fork 或再次 `/compact`；但普通文本和 `/goal` 可以进入 queue。手动 stop compact 后 marker 进入 `interrupted`，queue 保留，且默认不自动消费。
-- 多 session 是真实并发：A running 时切到 B/C 并发送 prompt，B/C 必须能分别进入 running；inactive session 的 streaming event 不允许覆盖当前 active session 的 `chat-view`、可见消息或 sidebar selection。
-- 模型和思考深度是 session 级配置：切到历史 session 时工具栏必须恢复该 session 的 model/thought；新建 session 继承用户上一次选择；queue 真正消费时必须使用当前 session 最新配置，且其他 session 的配置变化不能污染 inactive running session。
-- 模型切换是横向交叉维度：除基础 session 配置外，已补 queue auto-drain、held queue send-now、manual compact、auto compact、model switch context guard compact、tool prompt、edit rerun、fork 后续请求的 E2E probe；其中 N05 guard compact 当前是明确 failing probe（V4 没有弹窗），不能表述为可执行通过；tool prompt、auto compact pendingAction 和 guard compact 之后是否完成目标模型切换仍待确定性 replay 收口。
-- DeepSeek replay fixture 支持按最后一条 user message 匹配；stop-held 的“立即发送队列项”另有优先 fixture，避免历史里的慢流式标记让回放误走 90 秒慢流。
-- 自动 compact replay 使用低 context window 的 spec 级模型配置触发 `needsCompact`；fixture 用 `maxMatches` 表达“前两次 compact summary 失败、第三次成功”的请求序列。`manual-review/pending` 的 live auto compact case 不强行制造低窗口，未触发 marker 时只记录 no-op 路径。
-- edit 重跑前的自动 compact 必须作为系统前缀维护步骤出现：在 replay/确定性低窗口 case 中网络请求顺序必须是 compact summary 请求先于 edit 后用户 query 的主模型请求；`manual-review/pending` live probe 若未捕获对应请求 body，则以 UI/session 完成和 marker/artifact 记录为准。
-- Goal manual-review 组合的线上请求 capture 不是唯一通过条件：已有 goal 更新时，新 `/goal` 可以先进入 queue 或直接成为 target；已有 paused target 后的普通输入可能先保留为 queue 而不形成 running 窗口；manual/auto compact 相关场景里，seed 造数消息可能因线上流量迟迟不 idle 而被 stop，compact marker/outcome 只做短窗口观察，compact 前后或 compact 窗口中 composer 若仍未恢复输入，只记录 compact marker、queue 和 chat snapshot；completed goal 后控件恢复采集也只把 goal 请求命中作为证据，不把抓包 miss 或造数/元素等待超时作为产品失败。
+- `conversation-session-turn-steer-probe.test.ts` moved into the default conversation E2E on 2026-06-24 and was demoted back to `manual-review/pending` after the V4 migration. The current file name still hits WDIO's guide seed, so the spec first switches back to `queue` via the settings page and keeps the candidate execution evidence of M01-M05 as hard assertions; this evidence does not mean the current V4 version has completed human review, formal replay or Docker admission. The M06 guide/steer semantics are still provided by the pending `conversation-session-running-guide-steer.test.ts` as adjacent historical evidence.
+- Ordinary input, `/goal` and `/compact` while running must enter the same authoritative queue by their own command kind; `/compact` shows a queued toast and a maintenance command item, is not an ordinary user message, and cannot bypass the queue to start a parallel compact.
+- Prewarming is the window where the first-turn request has been sent but the model's first SSE event has not returned; further ordinary text in that window must enter the renderer queue, must not interrupt the first turn, and must not send a second model request early.
+- When a first send or next turn has just entered streaming, `activeInputId` is the owner mark of the input the session is consuming; auto drain must check runtime busy, `activeInputId` and the streaming assistant placeholder together, to avoid triggering `A prompt is already running for this session`.
+- When a queue exists after stop, the queue enters the held state and is not auto-consumed by default; only the queue item's "send now / continue queue" explicitly requests a post-stop drain.
+- When the runtime has completed after stop and cleared `activeInputId`, the user may send `/compact`; it must not be misjudged as still running by a stale composer `streaming` state.
+- If history is insufficient for a manual compact, the terminal marker may be `skipped`; a success-path E2E must first build at least two completed rounds of history and then assert `started -> completed`.
+- The fork entry is open for the ZCode agent provider but allows only a stable `completed(success)` assistant message; a stopped interrupted partial offers no usable fork entry. After fork it switches to the derived session and the parent session queue is not copied.
+- User-query edit is an explicit rerun action; with a held queue after stop it should still rerun immediately, the queue is kept and not auto-drained; assistant/tool expose no edit entry.
+- A tool call is expected to render as `TID_CHAT_TOOL_CALL_BLOCK` inside the assistant message, not as a separate message; the tool negative-capability assertion only checks that the tool block has no edit/fork entry, and the assistant message's own fork entry is judged separately by the assistant rules.
+- While an edit rerun is running, later ordinary text and `/goal` can only enter the queue and cannot preempt the current rerun turn.
+- A held queue is not a reason to disable fork/edit of a stable completed assistant; while the same session is compacting, fork/edit are forbidden; while running, the latest real-user query edit goes through the stop barrier, a historical user query offers no edit, a historical assistant reply offers no retry; a stopped interrupted assistant partial cannot be forked either.
+- `/goal` under completed sets or updates the session goal and keeps starting the goal continuation; when the same session is running or a held queue exists after stop, `/goal` is only appended as a `goal` queue item, cannot preempt the current turn and cannot bypass the held queue to start a request automatically.
+- After a `/goal` continuation is cancelled by Stop, the UI runtime must leave streaming and `activeInputId` must be cleared; the current E2E only asserts the goal content is kept and does not hard-code target `active/paused`.
+- The goal continuation/verification window should not expose a standalone `validating` product state that locks user operations; the UI `chat-view` target status in that window still expresses the target's own state, e.g. `active`.
+- Compacting is a long-task state of the same session and forbids fork or another `/compact`; ordinary text and `/goal` may enter the queue. After a manual stop of compact the marker becomes `interrupted`, the queue is kept and not auto-consumed by default.
+- Multiple sessions are truly concurrent: while A runs, switching to B/C and sending a prompt must let B/C each enter running; a streaming event of an inactive session must not overwrite the active session's `chat-view`, visible messages or sidebar selection.
+- Model and thinking depth are session-level configuration: switching to a historical session must make the toolbar restore that session's model/thought; a new session inherits the user's last selection; real queue consumption must use the current session's latest configuration, and another session's configuration change must not pollute an inactive running session.
+- Model switching is a horizontal cross dimension: beyond the basic session configuration, E2E probes have been added for queue auto-drain, held-queue send-now, manual compact, auto compact, model-switch context-guard compact, tool prompt, edit rerun and post-fork requests; N05 guard compact is currently an explicit failing probe (V4 has no dialog) and must not be described as executable-passing; whether the tool prompt, auto compact pendingAction and the target model switch after a guard compact complete still awaits deterministic replay.
+- The DeepSeek replay fixture supports matching by the last user message; the stop-held "send queue item now" also has a priority fixture so that a slow-stream marker in history does not make replay take the 90-second slow stream.
+- Auto compact replay uses a spec-level model configuration with a low context window to trigger `needsCompact`; the fixture expresses the request sequence "the first two compact summaries fail, the third succeeds" with `maxMatches`. The live auto compact case in `manual-review/pending` does not force a low window and, when the marker is not triggered, records only the no-op path.
+- An auto compact before an edit rerun must appear as a system-prefix maintenance step: in a replay / deterministic low-window case the network request order must be the compact summary request before the main-model request of the post-edit user query; if a `manual-review/pending` live probe does not capture the matching request body, it relies on UI/session completion and the marker/artifact record.
+- The live request capture of Goal manual-review combinations is not the only pass condition: when an existing goal is updated the new `/goal` may first enter the queue or become the target directly; an ordinary input after an existing paused target may first be kept as a queue without forming a running window; in manual/auto-compact scenarios the seeded message may be stopped because live traffic keeps it from idle, the compact marker/outcome is observed only in a short window, and if the composer has not yet restored input before/after compact or during the compact window only the compact marker, queue and chat snapshot are recorded; control-recovery collection after a completed goal also uses only the goal request hit as evidence, and a capture miss or a seeding/element wait timeout is not a product failure.
 
-## 当前未定义项
+## Currently undefined items
 
-- F09：手动 compact failed 后 session 是 `completed(success)`、`completed(interrupted)`、`error`，还是保持 completed 并只标 failed marker。
-- G11：自动 compact 连续 3 次失败后，pendingAction 是丢弃、入队并暂停，还是继续无压缩执行。
-- G12：自动 compact 被 stop 后，pendingAction 是丢弃、入队并暂停，还是保持待执行。
+(Per the statement above, F09, G11, G12 were ruled on 2026-07-05; the list below is the original undefined wording kept as stated.)
 
-## 已知限制
+- F09: after a manual compact fails, is the session `completed(success)`, `completed(interrupted)`, `error`, or does it stay completed with only a failed marker.
+- G11: after auto compact fails 3 times in a row, is the pendingAction dropped, queued and paused, or does it continue without compaction.
+- G12: after auto compact is stopped, is the pendingAction dropped, queued and paused, or kept pending.
 
-- 线上 capture 需要真实 `E2E_PROVIDER_API_KEY`；没有 key 时只能跑 replay 认证。
-- 自动 compact 3 次 retry 已有 replay 覆盖；429/503、断网、磁盘满、app/agent 关闭恢复这类环境 case 已进入外部故障 catalog，但必须先确认产品预期，再用 mock/replay 构造稳定断言。
-- Undefined case 先不写自动化：F09、G11、G12。
-- 已确认的产品协议说 Stop 后没有独立 paused 产品态，但当前 agent core 仍会把 active goal target 标记为 `paused`；这需要单独决策后再收紧 E2E 断言。
-- 文件变更摘要 toggle / rewind 需要稳定的 tool-writing replay fixture；现有 DeepSeek 文本 fixture 不能可靠产出 `fileChanges`，暂不纳入第一批桌面回放认证。
+## Known limitations
+
+- Live capture needs a real `E2E_PROVIDER_API_KEY`; without a key only replay certification can run.
+- The 3 retries of auto compact already have replay coverage; environment cases such as 429/503, network off, disk full and app/agent close recovery have entered the external-fault catalog, but the product expectation must be confirmed first and then stable assertions built with mock/replay.
+- Undefined cases are not automated for now: F09, G11, G12.
+- The confirmed product protocol says there is no standalone paused product state after Stop, but the current agent core still marks an active goal target as `paused`; this needs a separate decision before the E2E assertion is tightened.
+- The file-change summary toggle / rewind needs a stable tool-writing replay fixture; the existing DeepSeek text fixture cannot reliably produce `fileChanges`, so it is not in the first batch of desktop replay certification.

@@ -1,96 +1,54 @@
-# BUG-GWT-010: факт executionWorktree не персистится в tasks-index — после рестарта у сессий закрытых воркспейсов пропадает маркер worktree и классификация Environment=Worktree
+# BUG-GWT-010: the executionWorktree fact is not persisted in tasks-index; after a restart sessions of closed workspaces lose the worktree marker and the Environment=Worktree classification
 
 - Status: FIXED (fix wave 2, 2026-10-18: unit + live confirmed in RT2; marker removed)
+- Severity: S3 (marker/classification wrong until the workspace is reopened; workaround: open the workspace; sessions, history and git unaffected)
+- Cases: F7, I1
+- Environment: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (branch `qa/git-worktree-20261017`), isolated QA instance (production build)
 
-- Severity: S3 (данные классификации/маркера неверны до повторного открытия воркспейса; обход — открыть воркспейс; сессии, история и git не затронуты)
-- Кейсы: F7, I1
-- Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)
+## Repro
 
-## Воспроизведение с нуля
+1. Fixture R1 (`basic`) per QA-PROMPT §4; QA app started per §2.7, project `basic` open.
+2. Create a worktree session: Command Center -> "New task in worktree" (or the Worktree toggle in the composer) -> send a message; wait for ready. The sidebar shows the worktree marker (svg aria `Worktree session · <dir>`); Settings -> Sessions: Branch=`zcode/<name>`, Environment=Worktree.
+3. Make sure the worktree's workspace (or the parent workspace listing the session) is closed afterwards (tab closed; that workspace's host not running).
+4. Fully restart the QA app (QA-PROMPT §9, then §2.7).
+5. Without opening that workspace: the sidebar (Group) shows no worktree marker; Settings -> Sessions shows Branch=`—`, Environment=Local (the Environment=Local filter now includes the session, the Worktree filter does not).
+6. Reopen the workspace: the host starts, sessions-index is cold-seeded from the session store (`execution_directory`), and marker plus Branch/Environment return.
 
-1. Фикстура R1 (`basic`) по QA-PROMPT §4; QA-приложение запущено по §2.7, проект `basic` открыт.
-2. Создать worktree-сессию: Command Center → «New task in worktree» (или переключатель Worktree в композере) → отправить сообщение. Дождаться ready: в сайдбаре у сессии есть маркер worktree (svg aria `Worktree session · <dir>`); Settings → Sessions: Branch=`zcode/<name>`, Environment=Worktree.
-3. Убедиться, что воркспейс воркtree'а (или родительский воркспейс, под которым листится сессия) после этого закрыт (вкладка закрыта; host этого воркспейса не запущен).
-4. Полностью перезапустить QA-приложение (QA-PROMPT §9, затем §2.7).
-5. После старта, не открывая этот воркспейс:
-   - сайдбар (Group): у worktree-сессии нет маркера worktree;
-   - Settings → Sessions: Branch=`—`, Environment=Local (фильтр Environment=Local теперь включает эту сессию, фильтр Worktree — не включает).
-6. Открыть воркспейс ещё раз → host стартует, sessions-index холодно сеется из session-store (`execution_directory`) → маркер и Branch/Environment возвращаются.
-
-Проверка персистентности в песочнице (можно, это QA-sandbox база):
+Persistence check in the sandbox DB:
 
 ```bash
 sqlite3 "$QA_ROOT/home/.zcode/v2/tasks-index.sqlite" \
   "SELECT task_id, meta_json LIKE '%executionWorktree%' FROM tasks ORDER BY created_at"
-# ни у одной worktree-сессии ключа executionWorktree в meta_json нет (0)
+# no worktree session has the executionWorktree key in meta_json (0)
 ```
 
-## Ожидание
+## Expected
 
-- `specs/worktree-icon-visibility.md` Decisions 3-5: маркер сайдбара рендерится из факта сессии `task.executionWorktree` (healthy/missing — единственные состояния); факт принадлежит сессии, а не текущей живости host'а.
-- `specs/manage-sessions-table.md` §3 (Environment-фильтр client-side по presence `executionWorktree`) и §4 cols 7-8 (Branch=`executionWorktree.branchName`, Environment=`Worktree` по presence): классификация обязана отражать факт сессии; после рестарта без открытия воркспейса она деградирует до Local/`—`.
-- Контракт строки это предполагает: `WindowHostControllerTaskRow.meta.executionWorktree` (`packages/shared/src/zcode-protocol-v4/controller.ts:105`), а `ZCodeTaskMeta.executionWorktree` заявлен как «Mirrors the sessions-index sessionSummary field» (`packages/shared/src/zcode-task-types-core.ts:367-372`) — т.е. persisted-мета должна нести этот факт, как это делают соседние зеркала (`sideChatCount`, `cronAutomationId`).
+- `specs/worktree-icon-visibility.md` Decisions 3-5: the sidebar marker renders from the session fact `task.executionWorktree` (healthy/missing are the only states); the fact belongs to the session, not to host liveness.
+- `specs/manage-sessions-table.md` §3 (client-side Environment filter by presence of `executionWorktree`) and §4 cols 7-8 (Branch=`executionWorktree.branchName`, Environment=`Worktree` by presence): classification must reflect the session fact; after a restart without opening the workspace it degrades to Local/`-`.
+- The row contract implies it: `WindowHostControllerTaskRow.meta.executionWorktree` (`packages/shared/src/zcode-protocol-v4/controller.ts:105`), and `ZCodeTaskMeta.executionWorktree` is declared as "Mirrors the sessions-index sessionSummary field" (`packages/shared/src/zcode-task-types-core.ts:367-372`), so persisted meta must carry the fact like the sibling mirrors (`sideChatCount`, `cronAutomationId`).
 
-## Факт
+## Actual
 
-- F7: после рестарта (шаг F5) сессия кейса C9 (воркспейс `detached`, worktree `zcode-grumpy-cookie`, папка на диске есть, ветка @5632c228) потеряла маркер в сайдбаре; Settings→Sessions показал её Environment=Local, Branch=`—`. Восстановление доказано: `qa-open detached` → маркер и Branch=zcode/grumpy-cookie, Environment=Worktree вернулись.
-- Sqlite-факт (F7): в `meta_json` НИ ОДНОЙ worktree-сессии нет ключа `executionWorktree` (проверена и строка C3) — факт не пишется вообще, а не «теряется при перезаписи».
-- I1 (полный перезапуск): сразу после старта маркер «Worktree session» был только у сессии заново открытого воркспейса `detached`; после `qa-open basic` маркеры вернулись у всех 10 basic worktree-сессий. Потерь сессий нет (16/16), git не изменился — дефект чисто классификации отображения.
-- Git до/после: не изменён кейсами (см. `cases/F7.md`, `cases/I1.md`). Ошибок в логах нет.
+- F7: after restart the session of case C9 (workspace `detached`, worktree `zcode-grumpy-cookie`, folder on disk, branch @5632c228) lost its sidebar marker; Settings -> Sessions showed Environment=Local, Branch=`—`. Recovery proven: `qa-open detached` restores marker, Branch=zcode/grumpy-cookie, Environment=Worktree.
+- SQLite (F7): NO worktree session has the `executionWorktree` key in `meta_json`: the fact is never written, not "lost on overwrite".
+- I1 (full restart): right after start only the freshly reopened `detached` workspace's session had the marker; after `qa-open basic` markers returned for all 10 basic worktree sessions. No sessions lost (16/16), git unchanged: a display-classification defect only.
 
-## Доказательства
+## Cause (confirmed, four links)
 
-- `$QA_ROOT/cases/F7.md` — дефект-наблюдение (root code-confirmed) + sqlite-проверка.
-- `$QA_ROOT/cases/I1.md` — повторное подтверждение на полном перезапуске (не новая регрессия рестарта).
-- Скриншоты: `$QA_ROOT/evidence/F7-1-sessions-settings.png`, `$QA_ROOT/evidence/F7-2-env-all-table.png` (включая восстановленную строку C9), `$QA_ROOT/evidence/I1-1-after-restart.png`.
-- Красный тест: `packages/services/test/taskIndexWorktreeFact.test.ts` (вывод ниже).
+1. The live fact exists only on the sessions-index channel: the CLI publishes `executionWorktree` in summaries (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts:1285` `resolveIndexMeta`; `sessions-index-projection.ts:119`); Desktop receives it via `WindowHostSessionsIndexObserver` -> `sessionOverlay()` (`packages/services/src/window-controller/windowHostControllerService.ts:103`) -> live projection row (`windowHostControllerProjection.ts:174`: `executionWorktree` comes ONLY from `overlay`, never from `membership.meta`).
+2. `listTaskList` merges the fact only from the live projection: `windowHostControllerService.ts:613-617` (search path, `projected.executionWorktree`) and `:669-672` (list path, `row.executionWorktree`); the persisted part (`normalized`/`row.meta` from tasks-index) supplies none. `refreshSource` `:452-453` documents the design: "Live facts remain in Host memory only"; the overlay comes from `sourceLiveOverlays` (`:453`) and is empty for a workspace without a running host.
+3. Nothing writes the fact: the only `meta_json` writer is `TaskIndexRepo.syncTaskMeta` -> `serializeMetaJson` (`packages/services/src/session/taskIndexRepo.ts:1626`, `:266-268`); all callers build meta without it (`buildMetaFromSnapshot` in `zcodeTaskIndexSyncer.ts:1838-1888`, call `:1704`; `zcodeTaskServiceAdapter.ts:1525`). The snapshot source has no such field: `zcodeSessionStateSnapshotSchema` (`packages/shared/src/zcode-protocol/index.ts:1362-1382`) and `ZCodeAgentCreateSessionParams` (`packages/services/src/zcode-agent/zcodeAgent.ts:223-239`) lack `executionWorktree`.
+4. Even a manual write would not be read: `rowToMeta` parses `meta_json` via `zcodeTaskMetaSchema` (`taskIndexRepo.ts:213`; `packages/shared/src/validation.ts:1703-1777`), which has no `executionWorktree`/`executionWorktreeMissing`; zod strips unknown keys. The TS interface declares the field (`zcode-task-types-core.ts:372`) but the runtime persistence contract was not extended.
 
-## Причина
+## Fix direction (no protocol change)
 
-- Подтверждено (полная трассировка, файл:строка):
-  1. Живой факт существует только в канале sessions-index: CLI публикует `executionWorktree` в summaries (`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts:1285` — `resolveIndexMeta`; `sessions-index-projection.ts:119`); Desktop получает его через `WindowHostSessionsIndexObserver` → `sessionOverlay()` (`packages/services/src/window-controller/windowHostControllerService.ts:103`) → строка live-проекции (`packages/services/src/window-controller/windowHostControllerProjection.ts:174` — `executionWorktree` берётся ТОЛЬКО из `overlay`, никогда из `membership.meta`).
-  2. `listTaskList` мержит факт только из live-проекции: `windowHostControllerService.ts:613-617` (search-путь, `projected.executionWorktree`) и `:669-672` (list-путь, `row.executionWorktree`); persisted-часть строки (`normalized`/`row.meta` из tasks-index) факт не поставляет. `refreshSource` `:452-453` прямо комментирует дизайн: «Live facts remain in Host memory only», overlay подставляется из `sourceLiveOverlays` (`:453`) — для воркспейса без запущенного host'а (закрытый воркспейс после рестарта) он пуст.
-  3. Запись факта не происходит нигде: единственный writer `meta_json` — `TaskIndexRepo.syncTaskMeta` → `serializeMetaJson` (`packages/services/src/session/taskIndexRepo.ts:1626`, `:266-268`); все вызывающие строят meta без факта — `buildMetaFromSnapshot` (`packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts:1838-1888`, вызов `:1704`) и `zcodeTaskServiceAdapter.ts:1525`: `rg executionWorktree packages/services/src/session packages/services/src/zcode-agent/zcodeTaskIndexSyncer.ts` — 0 вхождений. Источник снапшота физически не содержит поля: `zcodeSessionStateSnapshotSchema` (`packages/shared/src/zcode-protocol/index.ts:1362-1382`) и `ZCodeAgentCreateSessionParams` (`packages/services/src/zcode-agent/zcodeAgent.ts:223-239`) без `executionWorktree` — у desktop-стороны нет канала, по которому факт попал бы в persisted meta.
-  4. Даже ручная запись не помогла бы чтению: `rowToMeta` парсит `meta_json` через `zcodeTaskMetaSchema` (`taskIndexRepo.ts:213`; `packages/shared/src/validation.ts:1703-1777`) — полей `executionWorktree`/`executionWorktreeMissing` в схеме нет, zod по умолчанию strip-ает неизвестные ключи. TS-интерфейс `ZCodeTaskMeta` поле объявляет (`zcode-task-types-core.ts:372`), но runtime-контракт персистентности не расширен.
-- Гипотеза: — (причина подтверждена код-трассировкой до всех четырёх звеньев и красным тестом; слой будущего фикса — за владельцем).
+Make the fact a persistent tasks-index property modeled on `cronAutomationId`/`offPeakTaskId` (`meta_json` is the source of truth, preserve-on-absent on later runtime syncs):
 
-## Предлагаемое исправление
+1. `packages/shared/src/validation.ts`: add `executionWorktree` (reuse `zcodeExecutionWorktreeSchema`) and `executionWorktreeMissing` to `zcodeTaskMetaSchema`; `rowToMeta` returns them via the `parsed.data` spread.
+2. Write the fact at the Host boundary when it is known: when sessions-index summaries arrive (where `sessionOverlay` is built / in the syncer at `syncTaskMeta`), so the existing v4 sessions-index is the channel.
+3. In the merge, read the fact as a fallback from persisted meta when the overlay is absent: `windowHostControllerProjection.ts` `buildSourceRows` (spread from `membership.meta`) and/or `windowHostControllerService.ts:613-617,669-672`.
 
-Направление (без изменения протокола): сделать факт персистентным свойством tasks-index по образцу `cronAutomationId`/`offPeakTaskId` (meta_json — источник истины, preserve-on-absent при последующих runtime-синках):
+## Test
 
-1. `packages/shared/src/validation.ts`: добавить `executionWorktree` (reuse `zcodeExecutionWorktreeSchema`) и `executionWorktreeMissing` в `zcodeTaskMetaSchema`; `rowToMeta` уже вернёт их через spread `parsed.data`.
-2. Писать факт на Host-границе в момент, когда он уже известен: при получении sessions-index summaries (там, где строится `sessionOverlay` / в syncer'е при `syncTaskMeta`) — т.е. каналом становится существующий v4 sessions-index, отдельного протокольного поля не требуется.
-3. В мердже читать факт как fallback из persisted meta, когда overlay отсутствует: `windowHostControllerProjection.ts` `buildSourceRows` (spread из `membership.meta`) и/или `windowHostControllerService.ts:613-617,669-672`.
-
-Слой: `packages/services` (+ shared validation). Тест ниже не привязан к способу — проверяет итоговый контракт холодного чтения.
-
-## Тест
-
-`packages/services/test/taskIndexWorktreeFact.test.ts` — services-уровень, без UI: реальный `TaskIndexRepo` во временной sqlite + `createWindowHostControllerRuntime`; live-фаза доставляет факт через sessions-index snapshot frame (единственный существующий сегодня канал), затем «рестарт»: свежий repo + свежий runtime без agent-сервиса (закрытый воркспейс), и холодный `listTaskList` обязан вернуть `executionWorktree`. Без sleep, самодостаточен, мокается только RPC-поверхность agent-сервиса.
-
-`it.fails("BUG-GWT-010: cold listTaskList after a restart keeps the worktree session fact")`.
-
-Красный прогон без маркера (`"$QA_ROOT/bin/real-run.sh" "$NODE_BIN" scripts/run-vitest.mjs run packages/services/test/taskIndexWorktreeFact.test.ts`):
-
-```
- FAIL  unit packages/services/test/taskIndexWorktreeFact.test.ts > task index executionWorktree fact across restart (BUG-GWT-010) > cold listTaskList after a restart keeps the worktree session fact
-AssertionError: expected undefined to deeply equal { …(2) }
-
-- Expected:
-{
-  "branchName": "zcode/brave-otter",
-  "path": "/work/demo-worktree/.worktrees/zcode-brave-otter",
-}
-
-+ Received:
-undefined
-
- ❯ packages/services/test/taskIndexWorktreeFact.test.ts:188:46
-
- Test Files  1 failed (1)
-      Tests  1 failed (1)
-```
-
-(падение ровно на холодном ассерте: live-фаза прошла — строка одна, факт из live-overlay присутствовал; подтверждает, что красный — это баг, а не setup)
-
-С маркером `it.fails`: `Tests  1 expected fail (1)` — зелёный; станет красным, когда баг починят (тогда маркер снять).
+`packages/services/test/taskIndexWorktreeFact.test.ts` (services level, no UI): real `TaskIndexRepo` on temp sqlite + `createWindowHostControllerRuntime`; the live phase delivers the fact via a sessions-index snapshot frame, then "restart": fresh repo + fresh runtime without an agent service (closed workspace); the cold `listTaskList` must return `executionWorktree`. No sleeps, only the agent-service RPC surface is mocked. Test name: `BUG-GWT-010: cold listTaskList after a restart keeps the worktree session fact` (was `it.fails`; red without marker at the cold assertion `expected undefined to deeply equal {...}`).

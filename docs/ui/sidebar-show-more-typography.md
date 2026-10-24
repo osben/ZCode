@@ -1,15 +1,30 @@
-# 侧栏“显示更多”文字
+# Sidebar "Show More" Typography
 
-2026-09-15：项目侧栏的分页入口与任务标题、空态“暂无任务”使用相同的 `text-ui-base` 字号，随界面字号设置缩放。默认文字颜色与空态一致，使用 `text-foreground-subtlest`；hover 和键盘 focus-visible 时使用 `text-foreground`，背景保持透明。
+2026-09-15: the project sidebar's pagination entry uses the same `text-ui-base` size as task titles and the
+empty-state "暂无任务" (No tasks), so it scales with the UI font-size setting. Default color matches the
+empty state, `text-foreground-subtlest`; on hover and keyboard focus-visible it uses `text-foreground`,
+with a transparent background.
 
-由现有 `ProjectTaskRows` 渲染入口，保留文字缩进和分页点击行为；普通列表每次增加 5 条，置顶列表沿用原展开/收起。只调整展示 token，不新增状态、IO、协议或迁移。桌面与手机 Web 共用此组件及主题 token，continuous/replayable 传输边界不变。
+Rendered by the existing `ProjectTaskRows` entry, keeping text indent and the pagination click behavior:
+the ordinary list adds 5 rows each time, the pinned list keeps its original expand/collapse. Only display
+tokens change: no new state, IO, protocol or migration. Desktop and mobile Web share the component and
+theme tokens; the continuous/replayable transport boundary is unchanged.
 
-## 验收
+## Acceptance
 
-`VP-MORE-01`（accepted/pending）：隔离 HOME 的真实 Electron renderer 准备 6 条任务及空项目，比较入口、任务标题与“暂无任务”的 computed font-size，比较入口与空态的默认颜色；明暗主题、1200/390px、14/18px 界面字号均保持一致。真实鼠标 hover、键盘 focus-visible 有提亮反馈，点击从 5 条展开到 6 条并隐藏入口。保存截图和样式采样，不请求 provider；窄屏模拟不代表手机 shared-host 或 Windows/Linux 实机验证。
+`VP-MORE-01` (accepted/pending): an isolated-HOME real Electron renderer prepares 6 tasks plus an empty
+project, compares the computed font-size of the entry, the task title and "暂无任务", and the default color
+of the entry vs the empty state; both themes, 1200/390px and 14/18px UI font sizes stay consistent. Real
+mouse hover and keyboard focus-visible brighten the entry, and clicking expands from 5 to 6 rows and hides
+the entry. Screenshots and style samples are saved; no provider request. A narrow-screen emulation does not
+stand for mobile shared-host or Windows/Linux real-machine verification.
 
-## 验证结果
+## Verification Outcome
 
-修复前 Electron 实测入口 12px、标题和空态 14px，默认颜色也不一致；用例在字号断言失败。修复后 `desktop-e2e-20260915123224650-p53861-1395a2f25af8019d` 1/1 通过，8 组 computed style、hover/focus、5→6 分页均通过，截图与 `show-more-styles.json` 留存在该运行目录。保持 pending。
-
-`typecheck`、`typecheck:e2e`、格式检查通过；lint 为 47 个既有 warnings、0 errors。HEAD 增量架构检查 0 违规；默认分支检查仍有既有 `root/resolveConversationWorkspaceTarget.ts` unmanaged-new-file，非本次引入。
+Before the fix, Electron measured the entry at 12px vs title and empty state 14px, with mismatched default
+colors, and the case failed the font-size assertion. After the fix,
+`desktop-e2e-20260915123224650-p53861-1395a2f25af8019d` passed 1/1 (8 computed-style groups, hover/focus,
+5->6 pagination), with screenshots and `show-more-styles.json` kept in that run directory; the case stays
+pending. `typecheck`, `typecheck:e2e` and the format check passed; lint had existing warnings only; HEAD
+incremental architecture check 0 violations (the existing `root/resolveConversationWorkspaceTarget.ts`
+unmanaged-new-file on the default-branch check is not introduced here).

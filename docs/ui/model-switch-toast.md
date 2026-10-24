@@ -1,23 +1,30 @@
-# 模型切换 Toast
+# Model Switch Toast
 
-## 展示契约
+## Display Contract
 
-- 已存在的会话中，手动选择不同模型时立即展示顶部居中的默认 Toast（文案表示“已从 A 切换至 B”，所选模型于下次发送生效）；自动回退完成时展示同一文案。两种情况都不等待发送。
-- 中文文案：`已从 {fromModel} 切换至 {toModel}`。
-- 英文文案：`Switched from {fromModel} to {toModel}`。
-- `fromModel` 与 `toModel` 沿用现有供应商/模型标签格式化规则。
-- Toast 只反馈切换结果，不追加性能影响说明；草稿重选相同模型等既有抑制规则保持不变。
+- In an existing session, manually choosing a different model immediately shows a top-centered default Toast
+  (text means "switched from A to B", the chosen model effective on the next send); an automatic fallback
+  completion shows the same text. Neither waits for a send.
+- Chinese text: `已从 {fromModel} 切换至 {toModel}`. English text: `Switched from {fromModel} to {toModel}`.
+- `fromModel` and `toModel` keep the existing provider/model label formatting rules.
+- The Toast only reports the switch result and adds no performance-impact note; the existing suppression rules
+  such as re-selecting the same model in a draft are unchanged.
 
-## 手动选择即时提示（ISSUE-035，2026-10-22）
+## Manual Selection Immediate Notice (ISSUE-035, 2026-10-22)
 
-- 已有 Session 中手动选择模型（菜单或快捷键）且目标与当前模型不同，立即展示同一条切换 Toast。来源模型取选择前 Composer 显示的模型。
-- 新建草稿（尚无 Session）选择模型不展示，保持不变。
-- 发送不再重复提示：当前代码中没有发送时的第二条切换提示。realtime 切换事件只来自自动回退（`origin: registryFallback`），其目标不是用户刚选的模型，因此不需要抑制记录。
-- 若未来新增发送时的切换提示，必须复用 SessionPane 的同一个 `showModelChangeNotice` 入口，并在那里去重，不能另起一条通知路径。
+- A manual model selection (menu or shortcut) in an existing Session to a model different from the current one
+  immediately shows the same switch Toast. The source model is the model the Composer displayed before the
+  selection.
+- Choosing a model in a new draft (no Session yet) shows nothing, unchanged.
+- Sending no longer repeats the notice: the current code has no second switch notice at send time. The realtime
+  switch event comes only from automatic fallback (`origin: registryFallback`), and its target is not the model
+  the user just chose, so no suppression record is needed.
+- If a send-time switch notice is added in the future, it must reuse SessionPane's same `showModelChangeNotice`
+  entry and de-duplicate there, never starting another notification path.
 
-| ID   | 操作                              | 必须观察                                        |
-| ---- | --------------------------------- | ----------------------------------------------- |
-| MT01 | 已有 Session 选择不同模型         | 立即展示一条切换 Toast；Composer 仍显示所选模型 |
-| MT02 | MT01 后发送并被接纳               | 仍只有 MT01 的一条 Toast                        |
-| MT03 | MT01 后，自动回退切换到另一个模型 | 回退切换照常提示                                |
-| MT04 | 新建草稿选择模型                  | 不展示 Toast                                    |
+| ID   | Action                                                   | Must observe                                                            |
+| ---- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
+| MT01 | Choose a different model in an existing Session          | One switch Toast immediately; the Composer still shows the chosen model |
+| MT02 | Send after MT01 and it is admitted                       | Still only the one Toast from MT01                                      |
+| MT03 | After MT01, automatic fallback switches to another model | The fallback switch is notified as usual                                |
+| MT04 | Choose a model in a new draft                            | No Toast                                                                |

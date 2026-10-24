@@ -1,11 +1,11 @@
-# 默认主题
+# Default Theme
 
-## 当前策略
+## Current policy
 
-- 应用首次启动且本地没有 `zcode-theme` 持久化值时，默认主题为 `dark`。
-- 一旦用户主动切换主题，后续仍然优先读取本地保存值，不会被默认值覆盖。
+- On first app launch with no persisted local `zcode-theme` value, the default theme is `dark`.
+- Once the user switches the theme explicitly, the locally saved value is read first afterwards and is not overwritten by the default.
 
-## 实现位置
+## Implementation
 
-- Zustand store 默认值：`packages/ui/src/store/index.ts`
-- 旧 `useTheme()` hook 兜底值：`packages/ui/src/useTheme.ts`
+- Zustand store default: `packages/ui/src/store/index.ts`
+- Fallback of the old `useTheme()` hook: `packages/ui/src/useTheme.ts`

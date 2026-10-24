@@ -1,13 +1,18 @@
 # Task Empty Result State
 
-## 背景
+## Background
 
-Task 已经创建但没有任何可见消息时，旧界面会退回到近似空白的聊天区。用户仍能看到输入区的 mode 胶囊，例如 `Plan`，容易误解为“计划面板有状态但内容没渲染”。
+When a task has been created but has no visible message, the old UI fell back to a nearly blank chat area.
+The mode pill in the input area (e.g. `Plan`) was still visible, which users misread as "the plan panel has
+state but its content failed to render".
 
-## 规范
+## Spec
 
-- 新建草稿仍展示原有欢迎空态。
-- 历史 task 在 `creating` / `restoring` / `submitting` 阶段仍展示 loading。
-- 已绑定 task、消息为空、没有可见错误、且不在恢复阶段时，聊天区展示轻量空结果提示。
-- 空结果提示只说明本轮没有生成可展示内容，不把 mode 胶囊解释成 plan 内容。
-- 文案必须走 i18n，样式使用设计系统语义 token，兼容桌面、Web、手机窄屏、浅色和深色主题。
+- A new draft still shows the original welcome empty state.
+- A historical task in the `creating` / `restoring` / `submitting` phase still shows loading.
+- For a bound task with empty messages, no visible error and not in a restore phase, the chat area shows a
+  lightweight empty-result hint.
+- The hint only says this turn produced no displayable content; it does not explain the mode pill as plan
+  content.
+- Copy goes through i18n; styles use design-system semantic tokens, compatible with desktop, Web, narrow
+  mobile screens, and light and dark themes.

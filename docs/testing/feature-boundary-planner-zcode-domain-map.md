@@ -1,64 +1,59 @@
 # Feature Boundary Planner ZCode Domain Map
 
-## 背景
+## Background
 
-`feature-boundary-planner` 从 conversation 专项 skill 泛化为 ZCode 通用功能边界澄清入口后，主流程保留了
-formal-proof、case catalog 和用户剪枝方法，但核心是先问清功能边界。后续用户提出“切换模型”
-“手机模式”“队列功能”“渲染性能”“持久化数据更新”“监控埋点”“数据跟踪”等问题时，skill 需要先把可能交叉的
-产品状态列出来，再引导用户逐步剪枝，而不是只套 conversation 默认维度。
+`feature-boundary-planner` was generalized from a conversation-specific skill into a general ZCode feature-boundary clarification entry. The main flow keeps formal-proof, the case catalog and user pruning, but its core is clarifying the feature boundary first. When a user raises "switch model", "mobile mode", "queue", "rendering performance", "persisted data update", "monitoring telemetry" or "data tracking", the skill must first list the product states that may cross and then guide the user to prune step by step, not just apply the default conversation dimensions.
 
-## 目标
+## Goals
 
-- 在 skill 内增加一份 ZCode 能力域和交叉轴参考，帮助使用者从自然语言需求定位相关文档、代码和状态所有者。
-- 让矩阵枚举覆盖桌面端、Web 端、手机远控、远程 workspace、model/provider、queue、persistence、telemetry、
-  rendering performance、permission/tool/MCP、theme/locale 等真实产品交叉点。
-- 保持 `SKILL.md` 精简，把详细 domain map 放入 `references/`，按需加载。
-- 保留用户剪枝机制：skill 只能提出候选语义和影响面，不能替用户静默决定产品行为。
+- Add a ZCode capability-domain and crossing-axis reference inside the skill, so natural-language requests can be located to related docs, code and state owners.
+- Make matrix enumeration cover real product crossings: desktop, Web, mobile remote control, remote workspace, model/provider, queue, persistence, telemetry, rendering performance, permission/tool/MCP, theme/locale.
+- Keep `SKILL.md` lean; put the detailed domain map in `references/`, loaded on demand.
+- Keep user pruning: the skill may propose candidate semantics and impact only, and never silently decides product behavior for the user.
 
-## 主要事实源
+## Primary fact sources
 
-| 能力域                         | 代表文档                                                                                                                                              | 代表代码入口                                                                                                                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 架构与消息流                   | `docs/architecture/zcode-code-architecture-overview.md`, `docs/architecture/message-flow.md`                                                          | `packages/shared`, `packages/services`, `packages/desktop`, `packages/ui`, `apps/zcode-cli`                                                                                    |
-| Conversation 状态空间          | `docs/zcode-protocol.md`, `docs/conversation-product-state-space.md`, `docs/testing/conversation-session-*.md`                                        | `packages/formal-proof`, `packages/ui/src/v4/conversationProjectionStore.ts`, `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`                                       |
-| 模型与 Provider                | `docs/working-memory/provider-refactor/design/`                                                                                                       | `packages/provider`, `packages/provider-node`, `packages/services/src/provider-runtime`, `packages/ui/src/settings`                                                            |
-| 手机远控与 replayable          | `docs/web-remote-control/*.md`, `docs/zcode-protocol.md`                                                                                              | `packages/shared/src/zcode-protocol-v4/`, `packages/ui/src/v4/agentConversationTransport.ts`, `packages/desktop/src/main/webRemoteControlManager.ts`                           |
-| Queue / command                | `docs/ui/chat-message-queue.md`, `docs/zcode-protocol.md`                                                                                             | `packages/shared/src/zcode-protocol-v4/command.ts`, `packages/ui/src/v4/SessionPane.tsx`, `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/queue.ts` |
-| Persistence / identity         | `docs/task/task-sqlite-index.md`, `docs/task/task-snapshot-on-demand.md`, `docs/remote-workspace-session-unified-settings.md`                         | `packages/services/src/session/taskIndexRepo.ts`, `packages/ui/src/store/tabWorkspaceIdentity.ts`, `packages/shared/src/workspaceSessionRestore.ts`                            |
-| Rendering performance          | `docs/chat/message-render-performance.md`, `docs/performance/streaming-tool-input-backpressure.md`, `docs/performance/renderer-production-logging.md` | `packages/ui/src/v4/ConversationTimeline.tsx`, `packages/ui/src/v4/ConversationRowView.tsx`, `packages/ui/src/v4/conversationProjectionStore.ts`                               |
-| Monitoring / telemetry / usage | `docs/monitoring/performance-telemetry-catalog.md`, `docs/monitoring/business-monitoring.md`, `docs/usage-stats-app-coding-plan-split.md`             | `packages/ui/src/lib/appTelemetry.ts`, `packages/ui/src/lib/uiPerfArmsTelemetry.ts`, `packages/services/src/telemetry`, `packages/services/src/usage-stats`                    |
-| Permission / tool / MCP        | `docs/permission-project-approval.md`, `docs/mcp-platform-boundary.md`, `docs/agent-tool-call-renderer.md`                                            | `packages/shared/src/zcode-protocol-v4/`, `packages/shared/src/mcp.ts`, `packages/ui/src/v4/V4InteractionDialogs.tsx`, `packages/ui/src/ToolCallBlocks*`                       |
-| Theme / locale / mobile shell  | `docs/ui/zai-themes.md`, `docs/ui/default-theme.md`, `docs/web-remote-control/mobile-theme-control.md`                                                | `packages/ui/src/i18n`, `packages/ui/src/useTheme.ts`, `packages/ui/src/WebRemoteControlMobileShell.tsx`, `packages/shared/src/protocol.ts`                                    |
+| Capability domain                    | Representative docs                                                                                                                                   | Representative code entries                                                                                                                                                    |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Architecture and message flow        | `docs/architecture/zcode-code-architecture-overview.md`, `docs/architecture/message-flow.md`                                                          | `packages/shared`, `packages/services`, `packages/desktop`, `packages/ui`, `apps/zcode-cli`                                                                                    |
+| Conversation state space             | `docs/zcode-protocol.md`, `docs/conversation-product-state-space.md`, `docs/testing/conversation-session-*.md`                                        | `packages/formal-proof`, `packages/ui/src/v4/conversationProjectionStore.ts`, `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`                                       |
+| Model and Provider                   | `docs/working-memory/provider-refactor/design/`                                                                                                       | `packages/provider`, `packages/provider-node`, `packages/services/src/provider-runtime`, `packages/ui/src/settings`                                                            |
+| Mobile remote control and replayable | `docs/web-remote-control/*.md`, `docs/zcode-protocol.md`                                                                                              | `packages/shared/src/zcode-protocol-v4/`, `packages/ui/src/v4/agentConversationTransport.ts`, `packages/desktop/src/main/webRemoteControlManager.ts`                           |
+| Queue / command                      | `docs/ui/chat-message-queue.md`, `docs/zcode-protocol.md`                                                                                             | `packages/shared/src/zcode-protocol-v4/command.ts`, `packages/ui/src/v4/SessionPane.tsx`, `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/queue.ts` |
+| Persistence / identity               | `docs/task/task-sqlite-index.md`, `docs/task/task-snapshot-on-demand.md`, `docs/remote-workspace-session-unified-settings.md`                         | `packages/services/src/session/taskIndexRepo.ts`, `packages/ui/src/store/tabWorkspaceIdentity.ts`, `packages/shared/src/workspaceSessionRestore.ts`                            |
+| Rendering performance                | `docs/chat/message-render-performance.md`, `docs/performance/streaming-tool-input-backpressure.md`, `docs/performance/renderer-production-logging.md` | `packages/ui/src/v4/ConversationTimeline.tsx`, `packages/ui/src/v4/ConversationRowView.tsx`, `packages/ui/src/v4/conversationProjectionStore.ts`                               |
+| Monitoring / telemetry / usage       | `docs/monitoring/performance-telemetry-catalog.md`, `docs/monitoring/business-monitoring.md`, `docs/usage-stats-app-coding-plan-split.md`             | `packages/ui/src/lib/appTelemetry.ts`, `packages/ui/src/lib/uiPerfArmsTelemetry.ts`, `packages/services/src/telemetry`, `packages/services/src/usage-stats`                    |
+| Permission / tool / MCP              | `docs/permission-project-approval.md`, `docs/mcp-platform-boundary.md`, `docs/agent-tool-call-renderer.md`                                            | `packages/shared/src/zcode-protocol-v4/`, `packages/shared/src/mcp.ts`, `packages/ui/src/v4/V4InteractionDialogs.tsx`, `packages/ui/src/ToolCallBlocks*`                       |
+| Theme / locale / mobile shell        | `docs/ui/zai-themes.md`, `docs/ui/default-theme.md`, `docs/web-remote-control/mobile-theme-control.md`                                                | `packages/ui/src/i18n`, `packages/ui/src/useTheme.ts`, `packages/ui/src/WebRemoteControlMobileShell.tsx`, `packages/shared/src/protocol.ts`                                    |
 
-## Skill 行为要求
+## Skill behavior requirements
 
-1. 当用户给出 ZCode 功能或 bug-prone interaction 时，先把需求映射到 1-4 个能力域，读相应源文档，再看代码。
-2. 对每个能力域记录状态所有者：UI local state、Zustand store、host service、desktop main、relay、agent runtime、SQLite /
-   session file、remote host 或 backend API。
-3. 维度提取必须包含端类型和交付语义：桌面 `desktop-continuous` 与手机 `web-remote-replayable` 不能互相代替。
-4. 涉及 workspace 级状态时必须区分 `workspaceIdentity`、`workspacePath` 与 `workspaceKey = workspaceIdentity?.trim() || workspacePath`。
-5. 先枚举候选交叉组合，再用 guard、不变量、等价类和代表 case 剪枝；被剪掉的组合必须写明 invariant。
-6. `undefined` case 必须转成给用户的小批量问题，包含候选答案和影响面。
-7. accepted case 必须说明 setup、action、assertion 和证据层，至少包含一个非 UI 证据层。
+1. Given a ZCode feature or bug-prone interaction, first map the request to 1-4 capability domains, read the corresponding source docs, then the code.
+2. For each domain record the state owner: UI local state, Zustand store, host service, desktop main, relay, agent runtime, SQLite / session file, remote host or backend API.
+3. Dimension extraction must include client type and delivery semantics: desktop `desktop-continuous` and mobile `web-remote-replayable` cannot stand in for each other.
+4. Workspace-level state must distinguish `workspaceIdentity`, `workspacePath` and `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
+5. Enumerate candidate crossing combinations first, then prune with guards, invariants, equivalence classes and representative cases; every pruned combination states its invariant.
+6. An `undefined` case becomes a small-batch question to the user, with candidate answers and impact.
+7. An accepted case states setup, action, assertion and evidence layer, with at least one non-UI evidence layer.
 
-## 高风险交叉轴
+## High-risk crossing axes
 
-| 交叉轴                                                                  | 为什么必须显式考虑                                                                                                               |
-| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 模型切换 x task 切换 / 新建 / 发送 / fork / edit / queue                | 模型事实源跨 toolbar、workspace default、task config、task meta、draft session、provider registry 和 runtime `defaultModelRef`。 |
-| 模型/provider x 远程 workspace                                          | 本地 app-global provider registry 与远端 runtime 执行事实源不同，重连和 runtime restart 会暴露旧状态。                           |
-| 手机远控 x queue / permission / elicitation / stop                      | 手机端依赖 replayable mirror、snapshot watermark、owner command 和 host command queue，不能按桌面本地 queue 推断。               |
-| replayable snapshot x 持久化数据                                        | `ZCodeTaskSnapshot.runtime` 是响应态运行时补充，不写回 session JSON；task index 只负责列表元数据。                               |
-| queue x stop / compact / goal / edit / fork                             | queue 是未来用户意图，不能被 compact、edit、fork 隐式改写；stop 后 autoDrain 语义需要明确。                                      |
-| rendering performance x streaming tool input / background task / replay | 大工具输入、Markdown、Mermaid、后台任务和 replayable gap 会放大 store 写入、解析和 React render 成本。                           |
-| telemetry x message stream / tool step / privacy / volume               | 高频 step/chunk 级事件会放大 ARMS 或日志量；用户内容、credential、hash 和原始 payload 不能进入不该进入的通道。                   |
-| theme / locale x desktop / mobile / persisted settings                  | 桌面和手机远控主题本地偏好互不耦合；locale 可能影响命令、菜单、toast、截图断言和测试文案。                                       |
-| workspace identity x cache / task list / skill/plugin/MCP load          | 远程 workspace 不能只按 path 做隔离；缓存、队列、配置、任务列表和远程历史都要用 identity fallback 规则。                         |
-| tool/MCP/permission x mobile remote                                     | MCP 平台能力通过 `IPlatformService` 和 shared-host attachment 走；permission options 必须透传 agent response，不能由 UI 猜。     |
+| Axis                                                                    | Why it must be explicit                                                                                                                                               |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model switch x task switch / create / send / fork / edit / queue        | The model fact source spans toolbar, workspace default, task config, task meta, draft session, provider registry and runtime `defaultModelRef`.                       |
+| Model/provider x remote workspace                                       | The local app-global provider registry and the remote runtime execution source differ; reconnect and runtime restart expose stale state.                              |
+| Mobile remote x queue / permission / elicitation / stop                 | Mobile relies on the replayable mirror, snapshot watermark, owner command and host command queue; it cannot be inferred from the desktop local queue.                 |
+| Replayable snapshot x persisted data                                    | `ZCodeTaskSnapshot.runtime` is a response-state runtime supplement and is not written back to session JSON; the task index owns list metadata only.                   |
+| Queue x stop / compact / goal / edit / fork                             | The queue is future user intent and must not be silently rewritten by compact, edit or fork; the autoDrain semantics after stop must be explicit.                     |
+| Rendering performance x streaming tool input / background task / replay | Large tool input, Markdown, Mermaid, background tasks and replayable gaps amplify store writes, parsing and React render cost.                                        |
+| Telemetry x message stream / tool step / privacy / volume               | High-frequency step/chunk events amplify ARMS or log volume; user content, credentials, hashes and raw payloads must not enter channels they should not.              |
+| Theme / locale x desktop / mobile / persisted settings                  | Desktop and mobile remote theme preferences are not coupled locally; locale may affect commands, menus, toasts, screenshot assertions and test copy.                  |
+| Workspace identity x cache / task list / skill/plugin/MCP load          | Remote workspaces cannot be isolated by path alone; caches, queues, config, task lists and remote history all use the identity fallback rule.                         |
+| Tool/MCP/permission x mobile remote                                     | MCP platform capability goes through `IPlatformService` and shared-host attachment; permission options pass through the agent response and are not guessed by the UI. |
 
-## 验收
+## Acceptance
 
-- `feature-boundary-planner` 的 `SKILL.md` 指向新的 domain map reference，并在流程中要求先澄清功能边界，再做能力域映射。
-- reference 文件覆盖上述能力域、事实源、状态所有者和高风险交叉轴。
-- case planning template 能容纳 domain scope、state owners、高风险交叉和证据层。
-- 运行 skill validation、`pnpm typecheck` 和 `pnpm lint`。
+- `SKILL.md` of `feature-boundary-planner` points to the new domain-map reference and requires clarifying the feature boundary first, then capability-domain mapping.
+- The reference file covers the capability domains, fact sources, state owners and high-risk crossing axes above.
+- The case planning template accommodates domain scope, state owners, high-risk crossings and evidence layers.
+- Run skill validation, `pnpm typecheck` and `pnpm lint`.

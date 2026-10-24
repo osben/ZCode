@@ -1,14 +1,14 @@
 # Conversation Session Goal Manual Review E2E
 
-## 背景
+## Background
 
-这是一组特殊时期的人工判定型 E2E。目标不是把产品预期立即固化成严格断言，而是先把 goal 相关路径自动跑出来，生成截图、UI 状态、queue 状态、compact marker、工具调用块和 DeepSeek 抓包，方便人工 review 行为是否符合预期。
+A set of human-judged E2E cases for a special period. The goal is not to fix product expectations as strict assertions immediately, but to run the goal-related paths automatically first and generate screenshots, UI state, queue state, compact markers, tool-call blocks and DeepSeek captures, so a human can review whether the behavior meets expectations.
 
-这类用例不能替代正式回归测试。人工确认后，稳定路径需要再沉淀成普通 E2E，并补上 UI、协议、日志、文件、网络层断言。
+These cases cannot replace formal regression tests. After human confirmation, the stable paths must be settled into ordinary E2E with UI, protocol, log, file and network-layer assertions added.
 
-## 运行方式
+## How to run
 
-默认全量 desktop E2E 不会执行 manual review spec。需要显式打开：
+The default full desktop E2E does not run manual review specs. Turn it on explicitly:
 
 ```bash
 ZCODE_E2E_MANUAL_REVIEW=1 \
@@ -17,98 +17,100 @@ pnpm exec wdio run wdio.conf.ts \
   --spec ./test/e2e/conversation-session/conversation-session-goal-run-cases.test.ts
 ```
 
-manual review 模式强制使用真实 DeepSeek v4 flash capture 链路，不走 replay fixture。运行后产物在：
+Manual review mode forces the real DeepSeek v4 flash capture chain and does not use replay fixtures. Output goes to:
 
 ```text
 packages/desktop/.e2e-artifacts/<run-id>/manual-review/goal-run-cases/
 ```
 
-每个 case 会生成：
+Each case generates:
 
-- `steps.ndjson`：每一步的结构化记录。
-- `summary.md`：人工 review 摘要。
-- `*.png`：关键步骤截图。
-- 顶层 DeepSeek capture 文件：`E2E_PROVIDER_CAPTURE_PATH` 指向的网络抓包。
+- `steps.ndjson`: a structured record of every step.
+- `summary.md`: the human review summary.
+- `*.png`: screenshots of key steps.
+- The top-level DeepSeek capture file: the network capture that `E2E_PROVIDER_CAPTURE_PATH` points at.
 
-抓包代理默认把 CA 和 capture 文件放在 `packages/desktop/.e2e-network-capture/`。这个目录不能放进 `.e2e-home`，因为 WDIO 每个 session 启动前都会清空 `.e2e-home` 来保证测试隔离；如果 CA 被 reset 删除，agent 子进程读取 `httpProxyCaCertPath` 时会直接报 `ENOENT`。
+The capture proxy puts the CA and capture file in `packages/desktop/.e2e-network-capture/` by default. This directory must not be placed inside `.e2e-home`, because WDIO clears `.e2e-home` before each session starts to keep tests isolated; if the CA is deleted by the reset, the agent child process reading `httpProxyCaCertPath` fails directly with `ENOENT`.
 
-capture 模式只需要抓真实 DeepSeek provider 请求。默认 `NO_PROXY` 会绕过 `localhost`、`js.stripe.com`、`zcode.z.ai` 和 `cdn.zcode-ai.com`，避免 app 启动期 telemetry/CDN 请求进入 MITM 代理后产生无关证书告警。
+Capture mode only needs to capture real DeepSeek provider requests. The default `NO_PROXY` bypasses `localhost`, `js.stripe.com`, `zcode.z.ai` and `cdn.zcode-ai.com`, so telemetry/CDN requests at app startup do not enter the MITM proxy and raise unrelated certificate warnings.
 
-## 预设启动态
+## Preset startup state
 
-manual review case 不应把时间花在重复登录和设置模型上。WDIO `beforeSession` 会重置 `.e2e-home` 后直接预设：
+Manual review cases should not spend time on repeated login and model setup. WDIO `beforeSession` resets `.e2e-home` and then presets directly:
 
-- `setting.json`：写入 `providerFamilyDomain=zai`、`providerFamilyDomainMigrated=true` 和 `modelProviderFamilyModes.zai=apiKey`，避免欢迎页再次要求登录。
-- `credentials.json`：写入 e2e 专用占位 token，只用于通过本地启动守卫。
-- `model-providers.json` 与 CLI `config.json`：写入 `e2e-upstream/deepseek-v4-flash`。
-- capture 模式下的 `httpProxy`、`httpProxyCaCertPath`：通过设置页代理语义注入 agent 子进程，确保真实 DeepSeek 请求进入抓包代理。
+- `setting.json`: writes `providerFamilyDomain=zai`, `providerFamilyDomainMigrated=true` and `modelProviderFamilyModes.zai=apiKey`, so the welcome page does not ask for login again.
+- `credentials.json`: writes an e2e-only placeholder token, used only to pass the local startup guard.
+- `model-providers.json` and the CLI `config.json`: write `e2e-upstream/deepseek-v4-flash`.
+- In capture mode `httpProxy` and `httpProxyCaCertPath`: injected into the agent child process via the settings-page proxy semantics, so real DeepSeek requests enter the capture proxy.
 
-`prepareConversationE2E()` 先尝试直接进入默认工作区；只有预设缺失时才回退到 UI API Key 登录。DeepSeek helper 检测到预设 provider 已可用时，也会跳过设置页，只在工具栏当前模型不一致时做一次 UI 校正。
+`prepareConversationE2E()` first tries to enter the default workspace directly; only when the preset is missing does it fall back to UI API Key login. When the DeepSeek helper detects that the preset provider is already usable it also skips the settings page and corrects the UI once only if the toolbar's current model differs.
 
-## 只读工具调用要求
+## Read-only tool call requirement
 
-goal prompt 必须要求 agent 使用只读工具，避免只返回纯文本。当前 manual review prompt 要求至少尝试：
+The goal prompt must require the agent to use read-only tools so that it does not return plain text only. The current manual review prompt requires trying at least:
 
-- `Glob`：查找项目文件。
-- `Grep`：搜索 goal / conversation-session 相关内容。
-- `Read`：读取匹配文件。
+- `Glob`: find project files.
+- `Grep`: search for goal / conversation-session related content.
+- `Read`: read matched files.
 
-prompt 同时明确禁止 `Edit`、`Write`、删除、移动、安装、提交等副作用操作。测试不会把“工具调用内容完全正确”写死为断言，但会记录 UI 上出现的 tool call block，供人工判断。
+The prompt also explicitly forbids side-effect operations such as `Edit`, `Write`, delete, move, install and commit. The test does not hard-code "the tool-call content is fully correct" as an assertion, but records the tool call blocks that appear in the UI for human judgement.
 
-## 当前覆盖的运行路径
+## Currently covered run paths
 
-- completed + 无 goal + `/goal`
-- completed + 已有 goal + `/goal`
-- running + 无 goal + `/goal`
-- running + 已有 goal + `/goal`
+- completed + no goal + `/goal`
+- completed + existing goal + `/goal`
+- running + no goal + `/goal`
+- running + existing goal + `/goal`
 - goal running + stop
 - interrupted held queue + `/goal`
-- held queue 中 goal 编辑、删除、重排
+- goal edit, delete, reorder in a held queue
 - manual compacting + `/goal`
 - auto compact before queued goal
 - session switch + goal
 
-其中 manual compact 场景只要求跑出 `/compact` 操作后的 marker / streaming / queue 可观察证据，不在 manual review 阶段断言压缩一定成功。真实 DeepSeek + 极小 context window 下，manual compact 可能与 auto compact 交错，marker 可能是 `started`、`failed` 或被 auto compact 接管，这些都先交给人工 review。
+The manual compact scenario only requires observable marker / streaming / queue evidence after the `/compact` operation and does not assert that compaction must succeed in the manual review phase. With real DeepSeek and a tiny context window manual compact may interleave with auto compact, and the marker may be `started`, `failed` or taken over by auto compact; these are left to human review first.
 
-## 待人工复现 Prompt
+## Prompts to reproduce by hand
 
-这些 prompt 先作为人工复现输入沉淀下来，不进入自动验证统计，也不代表已经有 WDIO 断言。后续确认观察点和产品预期后，再决定是否转成稳定 E2E。
+These prompts are kept as manual reproduction inputs. They do not enter the automated verification statistics and do not mean a WDIO assertion exists. After the observation points and product expectation are confirmed, decide whether to convert them to stable E2E.
 
-### MR-GOAL-PROMPT-01 长目标自动续跑后恢复 timeline
+### MR-GOAL-PROMPT-01 Restoring the timeline after a long goal auto-continues
 
-目标：复现 goal 自动续跑多轮后，前台恢复/刷新时 UI 一次性补渲染历史 `goalVerificationTimeline`，视觉上像多个 verifier 堆在一起的场景。
+Goal: reproduce the scenario where, after a goal auto-continues for several rounds, the UI backfills the historical `goalVerificationTimeline` in one go upon foreground restore/refresh, which visually looks like several verifiers stacked together.
 
-输入：
+Input:
 
 ```text
 /goal 帮我写一个10万字论文，解释AI存在的意义，直接开始输出，不用写到文件里
 ```
 
-人工操作：
+(The prompt reads, in English: "write me a 100,000-character paper explaining the meaning of AI's existence, start outputting directly, do not write to a file".)
 
-1. 新建一个本地 desktop task。
-2. 发送上面的 `/goal` prompt。
-3. 等它跑到第 2、3 轮以后，不要 stop。
-4. 在某一轮 assistant 正文输出结束、进入 verifier 附近时，把 UI 切走：切到别的 task、切到别的 workspace，或关闭窗口再重新打开。
-5. 等约 60 秒，让后台继续完成几轮 `turn -> verifier -> continuation`。
-6. 再回到原 task，观察 goal verifier timeline 是否按轮次、顺序和时间关系显示清楚。
+Manual steps:
 
-可选日志观察：
+1. Create a local desktop task.
+2. Send the `/goal` prompt above.
+3. Wait until it passes round 2 or 3; do not stop.
+4. When an assistant body has just finished and it is near the verifier, switch the UI away: to another task, to another workspace, or close the window and reopen it.
+5. Wait about 60 seconds so that the background keeps completing a few rounds of `turn -> verifier -> continuation`.
+6. Return to the original task and observe whether the goal verifier timeline shows rounds, order and time relations clearly.
+
+Optional log observation:
 
 ```bash
 tail -f ~/.zcode/cli/log/zcode-$(date +%F).jsonl | rg "target\\.continuation|target\\.completion_verification|turn\\.started|turn\\.completed"
 ```
 
-人工观察点：
+Observation points:
 
-- CLI 层是否仍是串行的 `turn -> verifier -> continuation`，而不是多个 verifier 并发启动。
-- verifier 是否返回 `passed:false` 并继续下一轮，这属于当前 goal 逻辑的正常行为。
-- 前台恢复后，UI 是否把历史 synthetic divider 批量补进消息流。
-- timeline 文案里的 iteration 是否重复、跳号或顺序不清，例如出现两个相同的 `Iteration 6`。
-- 如果视觉上像“验证都推到一起”，需要区分是 runtime 真并发，还是 snapshot/live 合并时的恢复展示问题。
+- Whether the CLI layer is still the serial `turn -> verifier -> continuation` and not several verifiers starting concurrently.
+- Whether the verifier returns `passed:false` and continues to the next round, which is normal behavior of the current goal logic.
+- After foreground restore, whether the UI backfills historical synthetic dividers into the message stream in a batch.
+- Whether the iteration in the timeline text is repeated, skipped or out of order, e.g. two identical `Iteration 6`.
+- If it looks visually like "the verifications are all pushed together", distinguish whether the runtime was really concurrent or it is a restore-display problem when merging snapshot/live.
 
-## 注意
+## Notes
 
-- 这组用例会真实访问 DeepSeek，上游限流、余额、网络、证书都会影响结果。
-- 截图只作为人工证据，不作为自动判断依据。
-- 用例为了方便 review 会主动 stop 一些长运行 goal，避免真实模型调用失控。
+- These cases really access DeepSeek; upstream rate limits, balance, network and certificates all affect the result.
+- Screenshots are human evidence only and not the basis of automatic judgement.
+- To ease review the cases actively stop some long-running goals, to keep real model calls from running away.

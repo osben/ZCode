@@ -1,31 +1,30 @@
-# 我的反馈详情编号展示
+# My Feedback Detail Issue Number
 
-## 背景
+## Background
 
-用户在“问题反馈 / 我的反馈”里打开单条反馈后，需要把该反馈的 issue 编号发给研发、产品或客服定位问题。当前详情页只展示标题、状态、提交时间和处理进度，用户无法直接看到或复制编号。
+After opening a single item in "Feedback / My Feedback", users need to send the issue number to engineering, product or support to locate the problem. The detail page used to show only the title, status, submit time and processing progress, so users could neither see nor copy the number.
 
-## 目标
+## Goals
 
-- 在“我的反馈”详情页顶部展示当前反馈的编号。
-- 编号旁提供复制按钮，点击后复制纯编号值，便于粘贴到聊天、文档或后台检索框。
-- 交互保持桌面端和手机 Web 端一致，不依赖桌面专有 API。
+- Show the number of the current feedback at the top of the "My Feedback" detail page.
+- Provide a copy button next to the number that copies the plain number value, for pasting into chat, documents or backend search boxes.
+- Keep the interaction identical on desktop and mobile Web, with no dependence on desktop-only APIs.
 
-## 设计
+## Design
 
-- 编号来源使用 `FeedbackTicketDetail.id`，不新增反馈服务协议字段。
-- 显示文案为 `Issue #<id>`；其中 `<id>` 使用等宽字体，避免长编号阅读困难。
-- 复制按钮放在编号同一行，使用 `Button` 的 `ghost` + `icon-sm` 尺寸和 `CopyIcon`，符合 `DESIGN.md` 对紧凑工具按钮的要求。
-- 复制内容只包含 `<id>`，不包含 `Issue #` 前缀。
-- 复制成功后按钮的可访问标签短暂切换为“已复制”；复制失败时通过 `packages/ui/src/logger.ts` 记录 warn，不直接调用 `console` 或 `window.zcode`。
+- The number comes from `FeedbackTicketDetail.id`; no new field is added to the feedback service protocol.
+- The display text is `Issue #<id>`, with `<id>` in a monospace font so long numbers stay readable.
+- The copy button sits on the same row as the number, using `Button` with `ghost` + `icon-sm` size and `CopyIcon`, as `DESIGN.md` requires for compact tool buttons.
+- The copied content contains only `<id>`, without the `Issue #` prefix.
+- After a successful copy the button's accessible label briefly switches to "已复制" (copied); on copy failure a warn is logged through `packages/ui/src/logger.ts`, without calling `console` or `window.zcode` directly.
 
-## 兼容性
+## Compatibility
 
-- 浏览器剪贴板使用 `navigator.clipboard.writeText`，桌面 Electron、Web 和手机远控都走同一 Web API。
-- 剪贴板不可用或写入失败时不阻断详情页渲染，只记录可诊断日志。
-- 该改动不涉及 `clientMode`、`deliveryKind`、task realtime、snapshot、queue 或远控恢复链路。
+- The browser clipboard uses `navigator.clipboard.writeText`; desktop Electron, Web and mobile remote control all use the same Web API.
+- When the clipboard is unavailable or the write fails, detail rendering is not blocked and only a diagnosable log is recorded.
+- The change does not touch `clientMode`, `deliveryKind`, task realtime, snapshot, queue or the remote-control recovery chain.
 
-## 验证
+## Verification
 
-- 单测覆盖详情页渲染编号和复制按钮标签。
-- 运行 `pnpm typecheck`。
-- 运行 `pnpm lint`。
+- A unit test covers the detail page rendering the number and the copy button label.
+- Run `pnpm typecheck` and `pnpm lint`.

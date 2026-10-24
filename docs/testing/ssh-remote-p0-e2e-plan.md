@@ -1,10 +1,10 @@
-# SSH Remote P0 E2E 规格
+# SSH Remote P0 E2E Spec
 
-> **2026-09-07 新一轮完整回归**：范围、材料与隔离以 [R3 合并后自动化方案](r3-remote-automation-plan.md) 为执行入口，逐项合同见 [R3A 矩阵](r3-remote-automation-case-matrix.md)。下文历史“单服务器/不含手机”剪枝不限制新方案；旧 `zcode-server.cjs` PID helper、legacy manifest 代理断言和显式 Provider 同步表述需按现行 R3/Provisioning 改造后才能复用。已有 formal/pending 状态不代表新基线运行通过。
+> The 2026-09-07 full regression uses [R3 merged automation plan](r3-remote-automation-plan.md) as its entry point and the [R3A matrix](r3-remote-automation-case-matrix.md) for per-case contracts. The "single server / no mobile" pruning below does not limit the new plan. The legacy `zcode-server.cjs` PID helper, legacy manifest proxy assertions and explicit Provider sync wording must be reworked to the current R3/Provisioning model before reuse. Existing formal/pending status does not mean the new baseline passed.
 
-## 定义
+## Definition
 
-SSH P0 不是单个 case，而是“用户能连接、开发、对话并在常见生命周期后继续工作”的核心 case 集合。
+SSH P0 is not a single case. It is the core set of cases for "a user can connect, develop, chat and keep working after common lifecycle events".
 
 ```text
 Ubuntu 24.04 + password SSH
@@ -22,156 +22,145 @@ Ubuntu 24.04 + password SSH
                                                +--> workspace B logical session
 ```
 
-每个 case 必须有自己的 setup、action 和 assertion；不能因为长链路经过某个状态，就宣称该状态已覆盖。
+Every case has its own setup, action and assertion. A long flow passing through a state does not make that state covered.
 
-## 用户确认与环境边界
+## Confirmed environment boundary
 
-2026-08-10 用户确认第一阶段只使用一台现有服务器：Ubuntu 24.04、root、password SSH。凭据由运行环境注入，文档、spec、fixture、artifact 和错误消息不得保存密码。
+The user confirmed (2026-08-10) that phase one uses one existing server: Ubuntu 24.04, root, password SSH. Credentials are injected by the runtime environment. Docs, specs, fixtures, artifacts and error messages must not store the password.
 
-| 维度               | 第一阶段包含                                                                            | 第一阶段剪枝                                                |
-| ------------------ | --------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| target             | 单台 Ubuntu 24.04 SSH server                                                            | 多服务器、同路径不同 host identity                          |
-| auth               | password                                                                                | SSH config alias、private key、passphrase、agent forwarding |
-| workspace          | 同 target 下多个绝对路径                                                                | 其它 SSH target、3 个以上 workspace 的规模组合              |
-| client             | Desktop `desktop-continuous`                                                            | 手机 `web-remote-replayable`、Bot、跨窗口                   |
-| user capability    | connect、directory、file、terminal、Git、task、restart/reconnect                        | tool/MCP、附件、queue、stop、permission、Goal、compact      |
-| internal lifecycle | App 冷启动自动重连、SSH Source 断线和手动重试、OS service/detached 两种 daemon 启动能力 | renderer reload；由独立 `R1-RELOAD-01` 覆盖                 |
+| Dimension          | Phase one includes                                                                                          | Phase one prunes                                              |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| target             | One Ubuntu 24.04 SSH server                                                                                 | Multiple servers, same path under different host identities   |
+| auth               | password                                                                                                    | SSH config alias, private key, passphrase, agent forwarding   |
+| workspace          | Multiple absolute paths under one target                                                                    | Other SSH targets, 3+ workspace scale combinations            |
+| client             | Desktop `desktop-continuous`                                                                                | Mobile `web-remote-replayable`, Bot, cross-window             |
+| user capability    | connect, directory, file, terminal, Git, task, restart/reconnect                                            | tool/MCP, attachments, queue, stop, permission, Goal, compact |
+| internal lifecycle | App cold-start auto reconnect, SSH Source disconnect and manual retry, OS service and detached daemon start | renderer reload (covered by the separate `R1-RELOAD-01`)      |
 
-## P0 Case 集合
+## P0 case set
 
-### A. 连接与认证
+### A. Connection and authentication
 
-| Case ID        | Setup                                                                                        | Action                                                                                                            | Assertions                                                                                                                                                                                                                | 状态                                                                                           |
-| -------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| SSH-P0-CONN-01 | 本地 E2E workspace ready；目标服务器可达                                                     | 从 composer workspace 菜单打开 SSH 向导，使用 password 连接并选择远端目录                                         | 部署/握手/目录 RPC 成功；tab 的 path、`workspaceIdentity`、`remoteSessionId` 正确；只有一个 Window Host；tab/store/log 不保存 secret                                                                                      | formal                                                                                         |
-| SSH-P0-CONN-02 | 目标服务器可达                                                                               | 使用错误 password 连接，看到失败后改用正确 password 重试                                                          | 错误可见且不含 secret；失败不提交 workspace tab，不留下可用 logical session/Agent；重试后连接成功                                                                                                                         | formal                                                                                         |
-| SSH-P0-CONN-03 | 目标服务器可达；本地测试代理对首个 TCP connection 保持 pending、后续 connection 透传真实 SSH | 使用旧 password 发起连接，在 pending 阶段点击“取消连接”；随后对同一 host/port/username 使用正确 password 立即重试 | 首连接关闭且无 logical session/远端写入；重试使用新 request/credential 进入目录选择并打开 workspace；Host PID 不变；不影响 WSL/Docker/Server 取消语义                                                                     | pending (`manual-review/pending/conversation-session-ssh-remote-cancel-retry.test.ts`)         |
-| SSH-P0-CONN-04 | 目标服务器可达；设置页配置本地 HTTP 代理；远程资源测试 CDN 只允许经该代理返回                | 选择“本地下载后上传”并连接 SSH workspace                                                                          | proxy 捕获首装必发的 Source Server descriptor 请求；fake CDN 域名无法直连；部署/握手和 workspace 打开成功；Host PID 不变。Source Server archive 的同端口路由由 `sourceServerReleaseResolver.test.ts` 强制 cache miss 覆盖 | pending (`manual-review/pending/conversation-session-ssh-remote-local-download-proxy.test.ts`) |
-| SSH-P0-CONN-05 | Ubuntu/minimal/container SSH target 无可访问 user service manager                            | 使用 password 连接、确认安装并打开 workspace                                                                      | 自动 detached fallback；daemon ready、`serviceRegistered=false`；Desktop 断开不主动停止 daemon；远端环境重启后重连会重新拉起；错误/日志不把 Node warning 当根因                                                           | pending                                                                                        |
-| SSH-P0-CONN-08 | 本地含损坏的同步凭据，SSH target 可达                                                        | 连接失败后恢复凭据，保留失效默认模型并重试                                                                        | 首次错误和连接日志含安全 source-read-failed；不含凭据；无脏 tab；重试成功且默认偏好未改写                                                                                                                                 | pending（manual-review/pending/conversation-session-ssh-provisioning-failure.test.ts）         |
+| Case ID        | Setup                                                                                                                 | Action                                                                                                                                                           | Assertions                                                                                                                                                                                                                                                                                                               | Status                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| SSH-P0-CONN-01 | Local E2E workspace ready; target server reachable                                                                    | Open the SSH wizard from the composer workspace menu, connect with password, pick a remote directory                                                             | Deploy/handshake/directory RPC succeed; tab `path`, `workspaceIdentity`, `remoteSessionId` correct; exactly one Window Host; tab/store/log hold no secret                                                                                                                                                                | formal                                                                                         |
+| SSH-P0-CONN-02 | Target server reachable                                                                                               | Connect with a wrong password, see the failure, retry with the correct password                                                                                  | Error visible and free of secrets; failure commits no workspace tab and leaves no usable logical session/Agent; retry succeeds                                                                                                                                                                                           | formal                                                                                         |
+| SSH-P0-CONN-03 | Target reachable; local test proxy keeps the first TCP connection pending and passes later connections through to SSH | Connect with the old password, click "取消连接" (cancel connection) during pending, then immediately retry the same host/port/username with the correct password | First connection closes with no logical session or remote write; retry uses a new request/credential, reaches directory selection and opens the workspace; Host PID unchanged; WSL/Docker/Server cancel semantics unaffected                                                                                             | pending (`manual-review/pending/conversation-session-ssh-remote-cancel-retry.test.ts`)         |
+| SSH-P0-CONN-04 | Target reachable; local HTTP proxy configured in settings; remote-resource test CDN only reachable through that proxy | Choose "download locally then upload" and connect an SSH workspace                                                                                               | Proxy captures the Source Server descriptor request that first install must send; the fake CDN host cannot be reached directly; deploy/handshake and workspace open succeed; Host PID unchanged. Same-port routing of the Source Server archive is covered by forced cache miss in `sourceServerReleaseResolver.test.ts` | pending (`manual-review/pending/conversation-session-ssh-remote-local-download-proxy.test.ts`) |
+| SSH-P0-CONN-05 | Ubuntu/minimal/container SSH target without an accessible user service manager                                        | Connect with password, confirm install, open the workspace                                                                                                       | Automatic detached fallback; daemon ready, `serviceRegistered=false`; Desktop disconnect does not stop the daemon; reconnect after remote environment restart relaunches it; errors/logs do not blame a Node warning                                                                                                     | pending                                                                                        |
+| SSH-P0-CONN-08 | Local synced credentials are corrupt; SSH target reachable                                                            | Connect and fail, restore credentials, keep the invalid default model, retry                                                                                     | First error and connection log carry a safe source-read-failed message without credentials; no dirty tab; retry succeeds and the default preference is not rewritten                                                                                                                                                     | pending (`manual-review/pending/conversation-session-ssh-provisioning-failure.test.ts`)        |
 
-### B. 远端开发基础能力
+### B. Remote development basics
 
-测试数据只放在由 case 创建的 `/root/.zcode-e2e/ssh-p0-*` 隔离目录；setup/cleanup 通过测试控制连接完成，不修改隔离目录外的用户文件。
+Test data lives only under case-created `/root/.zcode-e2e/ssh-p0-*` isolated directories. Setup/cleanup goes through a test control connection and never touches user files outside them.
 
-| Case ID       | Setup                                        | Action                                                               | Assertions                                                                                   | 状态   |
-| ------------- | -------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------ |
-| SSH-P0-DEV-01 | 远端隔离目录含唯一 marker 文件               | 连接该目录，展开 file tree 并打开文件；Terminal 新增文件后刷新文件树 | 列表和预览来自远端；新文件可见；本地同路径不参与；path 执行语义正确                          | formal |
-| SSH-P0-DEV-02 | 已连接远端隔离 workspace                     | 打开 Terminal，执行 `pwd`、Ubuntu/system marker 和文件写入命令       | 输出来自远端 Ubuntu；cwd 等于 remote `workspacePath`；写入只落远端；控制连接复核远端文件     | formal |
-| SSH-P0-DEV-03 | 远端隔离目录是带 baseline commit 的 Git repo | 修改远端文件并打开 Git pane/status                                   | Git pane 显示远端 repo 的 tracked/untracked 变化；控制连接复核修改 marker；不创建测试 commit | formal |
+| Case ID       | Setup                                                          | Action                                                                                           | Assertions                                                                                                                                             | Status |
+| ------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| SSH-P0-DEV-01 | Remote isolated directory with a unique marker file            | Connect it, expand the file tree and open a file; create a file in Terminal and refresh the tree | List and preview come from the remote; the new file is visible; the same local path plays no part; path execution semantics correct                    | formal |
+| SSH-P0-DEV-02 | Remote isolated workspace connected                            | Open Terminal and run `pwd`, an Ubuntu/system marker command and a file write                    | Output comes from remote Ubuntu; cwd equals the remote `workspacePath`; writes land only on the remote; control connection re-verifies the remote file | formal |
+| SSH-P0-DEV-03 | Remote isolated directory is a Git repo with a baseline commit | Modify a remote file and open the Git pane/status                                                | Git pane shows the remote repo's tracked/untracked changes; control connection re-verifies the modified marker; no test commit is created              | formal |
 
-### C. Task、请求与多 Workspace
+### C. Task, request and multi-workspace
 
-| Case ID        | Setup                                                                                                | Action                                                | Assertions                                                                                                                                                  | 状态                                                                                                      |
-| -------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| SSH-P0-TASK-01 | case-local provider replay 通过测试专用 SSH reverse tunnel 对远端 Agent 可达；同 target 两个目录存在 | workspace A/B 各自新建 task 并首发；依次切回 A/B 续发 | task row 在正确 workspace；running→idle 无 error；四个请求和回复可见；A2 只带 A 历史、B2 只带 B 历史；identity/session 独立；Window Host PID 不变           | formal                                                                                                    |
-| SSH-P0-TASK-02 | A/B 已连接且各有已完成 task                                                                          | 关闭 workspace A，再切回 B 继续发送；随后重新打开 A   | A 关闭只释放自己的 attachment/session；B task、请求、回复继续工作；重新打开 A 复用共享 Host 且不覆盖 B                                                      | pending (`manual-review/pending/conversation-session-ssh-remote-task-lifecycle.test.ts`)                  |
-| SSH-P0-TASK-03 | A 已连接且有已完成 task；case-local replay 的续发响应延迟 15s                                        | 续发进入 streaming 后打开并关闭设置页；等待任务完成   | 续发期间侧栏 task 行转圈；设置页开关不新建第二条 sessions-index 订阅（同 attachment 同 topic 会被 CLI 静默替换）；任务完成后侧栏 running 消失、与聊天区一致 | pending (`manual-review/pending/conversation-session-ssh-remote-settings-overlay-sidebar-status.test.ts`) |
+| Case ID        | Setup                                                                                                                          | Action                                                                                               | Assertions                                                                                                                                                                                                                                                                 | Status                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| SSH-P0-TASK-01 | Case-local provider replay reachable by the remote Agent through a test-only SSH reverse tunnel; two directories on one target | Create and send a first prompt in each of workspace A/B, then switch back to A/B and send follow-ups | Task rows sit in the right workspace; running to idle without error; four requests and replies visible; A2 carries only A history, B2 only B history; identity/session independent; Window Host PID unchanged                                                              | formal                                                                                                    |
+| SSH-P0-TASK-02 | A/B connected, each with a finished task                                                                                       | Close workspace A, switch back to B and send; then reopen A                                          | Closing A releases only its own attachment/session; B's task, requests and replies keep working; reopening A reuses the shared Host and does not overwrite B                                                                                                               | pending (`manual-review/pending/conversation-session-ssh-remote-task-lifecycle.test.ts`)                  |
+| SSH-P0-TASK-03 | A connected with a finished task; case-local replay delays the follow-up response by 15s                                       | After the follow-up starts streaming, open and close the settings page; wait for completion          | The sidebar task row spins during the follow-up; toggling settings does not create a second sessions-index subscription (the same attachment and topic would be silently replaced by the CLI); after completion the sidebar running state clears and matches the chat area | pending (`manual-review/pending/conversation-session-ssh-remote-settings-overlay-sidebar-status.test.ts`) |
 
-### D. 持久化、断线与恢复
+### D. Persistence, disconnect and recovery
 
-| Case ID        | Setup                                                                                                     | Action                                                                                                 | Assertions                                                                                                                                                                           | 状态                                                                                     |
-| -------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| SSH-P0-LIFE-01 | A/B 有历史 task；默认 Profile 凭据可静默取得；Server 最近 7 天连接过；显式断开后保留工作区历史全部 failed | 完整重启 Electron/Main/Host；不点击手动重连，等待主窗口 Host 在 10 秒单节点预算内自动重连并继续原 task | 稳定 Source/identity/path 无 secret；failed 历史不阻断 A/B 自动获得新 `remoteSessionId`；恢复 task/history；续发命中原 task；不重复 workspace/daemon；启动阶段每个 Server 只尝试一次 | pending (`manual-review/pending/conversation-session-ssh-remote-cold-reconnect.test.ts`) |
-| SSH-P0-LIFE-02 | A/B 共享同一 SSH Host 且在线                                                                              | 只终止本 case 启动的远端 `zcode-server`，不操作 `sshd`；随后对 A 点击重连                              | A/B 同时 disconnected，本地 workspace 不受影响；只建立一次新 SSH Host；A/B 分别获得新 `remoteSessionId` 并恢复；task/file 路由不串                                                   | pending (`manual-review/pending/conversation-session-ssh-remote-server-fault.test.ts`)   |
+| Case ID        | Setup                                                                                                                                                                           | Action                                                                                                                                                                                 | Assertions                                                                                                                                                                                                                                       | Status                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| SSH-P0-LIFE-01 | A/B have history tasks; default Profile credentials obtainable silently; Server connected within the last 7 days; after explicit disconnect the workspace history is all failed | Fully restart Electron/Main/Host; without clicking manual reconnect, wait for the main-window Host to auto-reconnect within the 10 s single-node budget and continue the original task | Stable Source/identity/path with no secret; failed history does not block A/B from getting a new `remoteSessionId`; task/history restored; follow-up hits the original task; no duplicate workspace/daemon; at startup each Server is tried once | pending (`manual-review/pending/conversation-session-ssh-remote-cold-reconnect.test.ts`) |
+| SSH-P0-LIFE-02 | A/B share one online SSH Host                                                                                                                                                   | Kill only the `zcode-server` started by this case (never `sshd`), then click reconnect on A                                                                                            | A/B both disconnected, local workspaces unaffected; exactly one new SSH Host is established; A/B each get a new `remoteSessionId` and recover; task/file routing does not cross                                                                  | pending (`manual-review/pending/conversation-session-ssh-remote-server-fault.test.ts`)   |
 
-## 共享不变量
+## Shared invariants
 
-| 不变量                                  | P0 证明                                                                                                  |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| 每个 BrowserWindow 只有一个 Host        | 所有 case 前后 Process Monitor 只存在同一个 Window Host PID；App 冷启动除外，冷启动后只能有一个新 Host   |
-| 同 target workspace 共用 SSH connection | A/B 不重复部署/握手；远端只有一个对应 `zcode-server`；logical session 独立                               |
-| identity 与 path 不混用                 | 隔离/key 使用 `workspaceIdentity?.trim() \|\| workspacePath`；file/git/terminal cwd 使用 `workspacePath` |
-| 远端执行、本地 app-global               | file/git/terminal/Agent 来自远端；setting/credential/provider 来自本地并显式同步                         |
-| desktop continuous 不扩散 replayable    | P0 不建立手机 attachment，不断言 replayable gap/snapshot                                                 |
-| secret 不持久化、不进证据               | password 只来自 `ZCODE_E2E_SSH_PASSWORD`；tab、settings、fixture、capture、日志和失败文本均不包含密码    |
+| Invariant                                      | P0 proof                                                                                                                                            |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One Host per BrowserWindow                     | Before and after every case Process Monitor shows the same single Window Host PID; app cold start excepted, after which exactly one new Host exists |
+| Same-target workspaces share an SSH connection | A/B do not redeploy/re-handshake; one matching remote `zcode-server`; logical sessions independent                                                  |
+| identity and path are never mixed              | Isolation/keys use `workspaceIdentity?.trim() \|\| workspacePath`; file/git/terminal cwd uses `workspacePath`                                       |
+| Remote execution, local app-global             | file/git/terminal/Agent come from the remote; setting/credential/provider come from local and sync explicitly                                       |
+| desktop continuous does not leak replayable    | P0 builds no mobile attachment and asserts no replayable gap/snapshot                                                                               |
+| Secrets are neither persisted nor in evidence  | password comes only from `ZCODE_E2E_SSH_PASSWORD`; tabs, settings, fixtures, captures, logs and failure text never contain it                       |
 
-2026-08-19 用户确认 SSH cancel/retry 的状态剪枝：只接受“最后一个 SSH pending waiter 取消”作为新增
-底层 abort 语义；共享 waiter、online SSH cache 继续使用现有契约用例；WSL、Docker、Server 保持原 transport
-生命周期，不与 SSH 做笛卡尔积。SSH-P0-CONN-03 使用首连接阻塞/后续透传的同端口 TCP 代理固定 pending
-窗口，避免用 sleep 或错误密码响应速度制造时序。该 case 不发送 prompt，provider request policy 为 none。
+SSH cancel/retry state pruning (user confirmed 2026-08-19): only "the last SSH pending waiter cancels" is accepted as the new underlying abort semantic. Shared waiters and the online SSH cache keep using the existing contract cases. WSL, Docker and Server keep their original transport lifecycle and are not crossed with SSH. SSH-P0-CONN-03 fixes the pending window with a same-port TCP proxy that blocks the first connection and passes later ones through, instead of sleeps or wrong-password timing. The case sends no prompt; provider request policy is none.
 
-## Fixture 与运行约束
+## Fixture and run constraints
 
-- 必需环境变量：`ZCODE_E2E_SSH_HOST`、`ZCODE_E2E_SSH_PORT`、`ZCODE_E2E_SSH_USERNAME`、`ZCODE_E2E_SSH_PASSWORD`。
-- 默认 formal 全量发现只有在 `ZCODE_E2E_SSH_HOST`、`ZCODE_E2E_SSH_USERNAME`、
-  `ZCODE_E2E_SSH_PASSWORD` 均存在时才纳入真实 SSH spec；端口继续允许默认 22。缺少凭据
-  时默认套件应排除这些环境型 case，不能把“环境未配置”统计成产品失败。显式定向运行 SSH
-  spec 仍保持 fail-closed，并报告缺少的变量，方便环境维护者验证配置。
-- workspace 路径使用 `ZCODE_E2E_SSH_WORKSPACE_PATHS`；conversation 默认 `/root,/home`，开发基础能力使用 case-local `/root/.zcode-e2e/ssh-p0-*`。
-- provider case 使用 case-local OpenAI-compatible replay fixture；reverse tunnel 只传递测试 provider 流量，产品 SSH 连接仍通过真实 UI 建立。
-- 远端 fixture 必须带本次 run 唯一前缀并在 `finally` 清理。断线 case 只能终止由当前窗口连接启动的 `zcode-server`，禁止修改 `sshd`、系统网络或其它用户进程。
-- 所有 spec 先放在 `manual-review/pending`，未经人工审阅不晋升 formal。
-- `SSH-P0-CONN-04` 的代理/CDN 必须完全由 case 本地进程提供，不访问真实发布 CDN；测试目标 URL
-  在直连路径不可解析，只有代理 mock 能返回 manifest，以机械证明没有 silent direct fallback。
+- Required env vars: `ZCODE_E2E_SSH_HOST`, `ZCODE_E2E_SSH_PORT`, `ZCODE_E2E_SSH_USERNAME`, `ZCODE_E2E_SSH_PASSWORD`.
+- Default formal full discovery includes the real SSH specs only when `ZCODE_E2E_SSH_HOST`, `ZCODE_E2E_SSH_USERNAME` and `ZCODE_E2E_SSH_PASSWORD` all exist; the port still defaults to 22. Without credentials the default suite excludes these environment-bound cases and must not count "environment not configured" as a product failure. Explicit targeted runs of SSH specs stay fail-closed and report the missing variables.
+- Workspace paths use `ZCODE_E2E_SSH_WORKSPACE_PATHS`; conversation cases default to `/root,/home`, development-basics cases use case-local `/root/.zcode-e2e/ssh-p0-*`.
+- Provider cases use a case-local OpenAI-compatible replay fixture. The reverse tunnel carries only test provider traffic; the product SSH connection is still established through the real UI.
+- Remote fixtures carry a unique per-run prefix and are cleaned in `finally`. Disconnect cases may only kill the `zcode-server` started by the current window's connection; never modify `sshd`, system networking or other users' processes.
+- All specs start in `manual-review/pending` and are not promoted to formal without human review.
+- The proxy/CDN of `SSH-P0-CONN-04` must be provided entirely by case-local processes and never reach the real release CDN. The target URL is unresolvable on the direct path and only the proxy mock can return the manifest, which mechanically proves there is no silent direct fallback.
 
-## 运行证据
+## Run evidence
 
-- `SSH-P0-TASK-01`：2026-08-10 在 Ubuntu 24.04 上按 `/root,/tmp` 完成 formal 默认 replay（1 passing，artifact `desktop-e2e-20260810-074921-918`）与显式 case-local replay（1 passing，artifact `desktop-e2e-20260810-075053-683`）。
-- `SSH-P0-CONN-01/02`：2026-08-10 在同一 Ubuntu 24.04 上完成 formal 默认 replay，1 passing，artifact `desktop-e2e-20260810-073137-368`。
-- `SSH-P0-DEV-01/02/03`：2026-08-10 在 case-local `/tmp` repo 上完成 formal 默认 replay，1 passing，artifact `desktop-e2e-20260810-073248-576`。
-- `SSH-P0-TASK-02`、`SSH-P0-LIFE-01/02/03` 在实际运行通过前保持 `pending`；不得用 unit/integration 证据替代真实 SSH Electron E2E 状态。
-- `SSH-P0-TASK-03`（2026-09-04 新增）：来源于 3.11.1 WSL 用户反馈——远程 workspace 运行中打开设置页后侧栏永久转圈；根因与单元证据见 `docs/wsl-task-status-inconsistency.md` T3。fixture 合同检查已通过（`pnpm --filter @zcode/desktop e2e:fixture:check`），真实 SSH 运行通过前保持 `pending`。
+- `SSH-P0-TASK-01`: 2026-08-10 on Ubuntu 24.04 with `/root,/tmp`, formal default replay (1 passing, artifact `desktop-e2e-20260810-074921-918`) and explicit case-local replay (1 passing, artifact `desktop-e2e-20260810-075053-683`).
+- `SSH-P0-CONN-01/02`: 2026-08-10 same host, formal default replay, 1 passing, artifact `desktop-e2e-20260810-073137-368`.
+- `SSH-P0-DEV-01/02/03`: 2026-08-10 on a case-local `/tmp` repo, formal default replay, 1 passing, artifact `desktop-e2e-20260810-073248-576`.
+- `SSH-P0-TASK-02` and `SSH-P0-LIFE-01/02/03` stay `pending` until actually run; unit/integration evidence does not replace real SSH Electron E2E status.
+- `SSH-P0-TASK-03` (added 2026-09-04): from a 3.11.1 WSL user report, where opening settings while a remote workspace runs leaves the sidebar spinning forever; root cause and unit evidence are in `docs/wsl-task-status-inconsistency.md` T3. The fixture contract check passed (`pnpm --filter @zcode/desktop e2e:fixture:check`); stays `pending` until a real SSH run passes.
 
-## Lifecycle pending 实现
+## Lifecycle pending implementation
 
-以下 pending spec 已按同一套 Ubuntu password SSH + reverse-tunnel replay harness 编写，尚未声称
-formal/covered；必须在真实 SSH 环境完成 capture/replay 与人工审阅后再 promotion：
+These pending specs use the same Ubuntu password SSH + reverse-tunnel replay harness and are not claimed formal/covered. They need capture/replay on a real SSH environment and human review before promotion:
 
-- `conversation-session-ssh-remote-task-lifecycle.test.ts`：关闭 A、验证 B 续发，再重新打开 A。
-- `conversation-session-ssh-remote-cold-reconnect.test.ts`：`browser.reloadSession()` 冷重启后不触发任何手动重连，等待主窗口 Host 单次自动重连并恢复 A/B；交互凭据负例归 R3-REMOTE-05。
-- `conversation-session-ssh-remote-server-fault.test.ts`：只终止本次连接新建且记录的 `zcode-server` PID，验证 A/B 断连和按组重连；不会调用 `sshd`、`wsl --terminate` 或 `wsl --shutdown`。
-- `conversation-session-ssh-remote-cancel-retry.test.ts`：首连接保持 pending，确认停止后同 target 立即以正确 password 重试；不发送 provider 请求。
+- `conversation-session-ssh-remote-task-lifecycle.test.ts`: close A, verify B follow-up, reopen A.
+- `conversation-session-ssh-remote-cold-reconnect.test.ts`: after a `browser.reloadSession()` cold restart, no manual reconnect is triggered; wait for the main-window Host's single auto reconnect and recover A/B. Interactive-credential negative cases belong to R3-REMOTE-05.
+- `conversation-session-ssh-remote-server-fault.test.ts`: kill only the `zcode-server` PID created and recorded by this connection; verify A/B disconnect and grouped reconnect. It never calls `sshd`, `wsl --terminate` or `wsl --shutdown`.
+- `conversation-session-ssh-remote-cancel-retry.test.ts`: first connection stays pending; after confirmed stop, immediately retry the same target with the correct password. No provider request.
 
-上述四条 pending spec 在 R3 下统一以握手返回的稳定
-`remote:server:<sourceServerId>:<workspacePath>` 作为 controller identity。旧
-`buildRemoteWorkspaceIdentity(sshTarget)` 只允许作为 Host 内部 legacy route hint，禁止作为 Renderer/E2E
-期望值。测试必须先完成握手，再从权威 tab snapshot 读取并校验稳定 identity。
+Under R3 all four use the handshake-returned stable `remote:server:<sourceServerId>:<workspacePath>` as controller identity. The old `buildRemoteWorkspaceIdentity(sshTarget)` is only a Host-internal legacy route hint and must not be a Renderer/E2E expected value. Tests complete the handshake first, then read and verify the stable identity from the authoritative tab snapshot.
 
-四个 case 的 case-local replay fixture 和 manifest 已建立，fixture check 通过；真实运行前仍需确认
-provider stream、SSH server PID 归属、断连事件和重连分组行为。
+Case-local replay fixtures and manifests for the four cases exist and the fixture check passes. Before real runs, confirm the provider stream, SSH server PID ownership, disconnect events and reconnect grouping behavior.
 
-## SSH 项目入口编排（2026-09-13 自 `docs/archive/remote-r3/ssh-project-entry-helper.md` 并入）
+## SSH project entry orchestration (merged 2026-09-13 from `docs/archive/remote-r3/ssh-project-entry-helper.md`)
 
-SSH 项目用例遵循[当前三屏向导](../architecture/remote-device-connection-ux-spec.md)：
-无目录入口连接成功后直接选择目录；已有项目保留目录意图，连接/安装/升级完成后回到原项目。
-不得等待远程 conversation ready，也不以向导关闭代替项目 ready。
+SSH project cases follow the [current three-screen wizard](../architecture/remote-device-connection-ux-spec.md): an entry without a directory goes straight to directory selection after connecting; an existing project keeps its directory intent and returns to the original project after connect/install/upgrade. Cases must not wait for remote conversation ready, and wizard close does not stand for project ready.
 
 ```text
-统一选择 / 配置 → 连接（凭据、安装或升级等待）
-  → 目录选择或原项目 → 校验 workspaceIdentity / remoteSessionId
-  → 选择用例指定模型与思考档位 → 首发
+unified select / configure -> connect (credentials, install or upgrade wait)
+  -> directory selection or original project -> verify workspaceIdentity / remoteSessionId
+  -> select the case's model and thinking level -> first send
 ```
 
-约束：
+Constraints:
 
-- 设备卡查找限定在可见 SSH 弹窗内；侧栏可能包含相同的 host/port，不能按全页面第一个 section 定位。
-- 只处理用例授权的安装及身份确认；持续运行说明为非阻断提示，不作为确认等待，失败和其它确认应明确报告。
-- `browser.execute` 的参数显式序列化传入，不能引用 Node 模块常量。
-- helper 超时报告最后一次 UI 观测，不能把超时前创建的空字符串当作诊断。
-- 切换到 lifecycle 自定义模型后必须显式选择思考档位（`disabled`）；产品不为新模型补默认档位，未选时发送键保持禁用。
-- 测试编排不修改业务连接、命令重放、desktop continuous 或 mobile replayable 语义。
+- Device-card lookup is scoped to the visible SSH dialog; the sidebar may contain the same host/port, so never pick the first section on the page.
+- Handle only the installs and identity confirmations the case authorizes. The persistent-run note is a non-blocking hint, not a confirmation wait. Failures and other confirmations are reported explicitly.
+- `browser.execute` arguments are serialized explicitly and must not reference Node module constants.
+- A helper timeout reports the last UI observation and not an empty string created before the timeout.
+- After switching to the lifecycle custom model, select the thinking level (`disabled`) explicitly; the product does not add a default level for new models, and the send key stays disabled until one is selected.
+- Test orchestration does not change business connection, command replay, desktop continuous or mobile replayable semantics.
 
-验证入口：`packages/desktop/test/sshDirectoryFlow.test.ts` 的独立浏览器上下文探针，以及
-`conversation-session/manual-review/pending/conversation-session-r3-ack-loss.test.ts` 的真实 SSH 路径；helper 实现在 `packages/desktop/test/e2e/helpers/ssh-remote-p0.ts`。
+Verification entries: the isolated browser-context probe in `packages/desktop/test/sshDirectoryFlow.test.ts`, and the real SSH path of `conversation-session/manual-review/pending/conversation-session-r3-ack-loss.test.ts`. The helper lives in `packages/desktop/test/e2e/helpers/ssh-remote-p0.ts`.
 
-### RDUX-04 向导回归
+<a id="rdux-04-向导回归"></a>
 
-准备、动作、断言与运行证据见[会话 case 目录](../conversation-session-case-catalog.md#rdux-04-向导回归)；测试路径与 pending 状态见[覆盖矩阵](conversation-session-e2e-coverage-matrix.md#rdux-04-向导回归)。
+### RDUX-04 wizard regression
 
-### RDUX-10 三屏向导验收
+Setup, actions, assertions and run evidence: [conversation case catalog](../conversation-session-case-catalog.md#rdux-04-向导回归). Test paths and pending status: [coverage matrix](conversation-session-e2e-coverage-matrix.md#rdux-04-向导回归).
 
-准备、动作、断言与运行证据见[会话 case 目录](../conversation-session-case-catalog.md#rdux-10-三屏向导验收)；测试路径与 pending 状态见[覆盖矩阵](conversation-session-e2e-coverage-matrix.md#rdux-10-三屏向导验收)。
+<a id="rdux-10-三屏向导验收"></a>
 
-### RDUX-11 连接中与目录屏验收（accepted）
+### RDUX-10 three-screen wizard acceptance
 
-| Case       | Setup / Action / Assertions                                                                                                                                                     | 自动化                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| RDUX-11-01 | 独立用户首装 → 阶段内安装确认显示发布版本、远端 home 下的实际安装位置和真实包大小；第一阶段无遮挡；连接后展示首次持续运行介绍，明确确认后继续；版本 3 不重复展示                | `manual-review/pending/conversation-session-ssh-remote-three-screen.test.ts`，Pending        |
-| RDUX-11-02 | 错误密码 → 当前连接阶段内补密码 → 原目标成功；错误详情与日志可见，不回到配置表单                                                                                                | `conversation-session-ssh-remote-connection-p0.test.ts`，沿用 SSH-P0-CONN-01/02              |
-| RDUX-11-03 | TCP 拒绝连接 → 分类原因、重试与返回配置；日志自动展开                                                                                                                           | `manual-review/pending/conversation-session-remote-connection-log-contract.test.ts`，Pending |
-| RDUX-11-04 | 目录显示完整路径与名称保存反馈；首次介绍点击「知道了」才记已读 3，第二项目及重启不重复；最近/远端 chip 导航和读取失败由向导 DOM 回归覆盖；连接/目录屏浅色深色 × 1440/900px 截图 | 三屏 pending spec + `remoteConnectionDirectoryNavigation.test.ts`                            |
+Setup, actions, assertions and run evidence: [conversation case catalog](../conversation-session-case-catalog.md#rdux-10-三屏向导验收). Test paths and pending status: [coverage matrix](conversation-session-e2e-coverage-matrix.md#rdux-10-三屏向导验收).
 
-本票沿用已确认的向导 UI / Source Server 服务 / SSH E2E 边界。桌面 continuous 与手机 replayable 不改变 owner 或恢复协议；新只读任务清单不写入远端持久化 status 格式，旧远端不支持时明确显示清单不可用。
+### RDUX-11 connecting and directory screen acceptance (accepted)
 
-2026-09-29 RDUX-11 最终真实 SSH 证据：`desktop-e2e-20260928171512189-p86116-9ec1bbe80ceb67aa`，上述 4 个 spec 通过，首装 4 次点击/1 次输入。安装和目录两屏包含浅色/深色 × 1440/900px 截图；Pending 状态不变。只读安装信息及任务清单的范围扩展已于同日经用户确认，父规格同步完成。
+| Case       | Setup / Action / Assertions                                                                                                                                                                                                                                                                                                                       | Automation                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| RDUX-11-01 | Independent user first install: the in-stage install confirmation shows the release version, the actual install location under the remote home and the real package size; the first stage is unobstructed; after connecting, the first persistent-run intro appears and continues only on explicit confirmation; version 3 is not shown again     | `manual-review/pending/conversation-session-ssh-remote-three-screen.test.ts`, Pending        |
+| RDUX-11-02 | Wrong password: supply the password within the current connection stage, original target succeeds; error details and log visible, no return to the config form                                                                                                                                                                                    | `conversation-session-ssh-remote-connection-p0.test.ts`, reuses SSH-P0-CONN-01/02            |
+| RDUX-11-03 | TCP connection refused: classified reason, retry and back-to-config; log auto-expands                                                                                                                                                                                                                                                             | `manual-review/pending/conversation-session-remote-connection-log-contract.test.ts`, Pending |
+| RDUX-11-04 | Directory shows the full path and name-save feedback; the first intro is marked read (3) only on clicking 「知道了」 ("Got it"), not repeated for a second project or after restart; recent/remote chip navigation and read failures are covered by the wizard DOM regression; connection/directory screens screenshotted light/dark x 1440/900px | Three-screen pending spec + `remoteConnectionDirectoryNavigation.test.ts`                    |
+
+This ticket keeps the confirmed wizard UI / Source Server service / SSH E2E boundary. Desktop continuous and mobile replayable do not change owner or recovery protocol. The new read-only task list is not written to the remote persisted status format; an old remote that does not support it explicitly shows the list as unavailable.
+
+Final real-SSH evidence for RDUX-11 (2026-09-29): `desktop-e2e-20260928171512189-p86116-9ec1bbe80ceb67aa`, the 4 specs above pass, first install took 4 clicks and 1 input. The install and directory screens include light/dark x 1440/900px screenshots; Pending status is unchanged. The scope extension (read-only install info and task list) was confirmed by the user the same day and the parent spec is synced.

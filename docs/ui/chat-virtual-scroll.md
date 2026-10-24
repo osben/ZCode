@@ -1,75 +1,73 @@
 # Chat Virtual Scroll
 
-> **V4 当前事实**：滚动视口、虚拟化、底部跟随与 renderer-local 滚动记忆由
-> `packages/ui/src/v4/ConversationTimeline.tsx` 持有；消息事实仍来自
-> `packages/shared/src/zcode-protocol-v4/` 与 `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`。
+> V4 current state: the scroll viewport, virtualization, bottom following and renderer-local scroll memory are owned by `packages/ui/src/v4/ConversationTimeline.tsx`; message facts still come from `packages/shared/src/zcode-protocol-v4/` and `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`.
 
-## 目标
+## Goal
 
-长对话只渲染当前视口附近的消息轮次，降低 renderer 在长会话中的 DOM 数量和 React 更新成本。
+A long conversation renders only the message turns near the current viewport, reducing the renderer's DOM count and React update cost in long sessions.
 
-## 渲染策略
+## Rendering strategy
 
-- `ConversationTimeline` 以 `ConversationTurnRenderUnit` 为虚拟滚动单位，而不是单条 projection row。
-- 每个虚拟 row 对应一轮 user + assistant/tool 输出，避免 retry、fork、文件变更摘要和当前轮 loading 被拆散。
-- 使用项目已有的 `@tanstack/react-virtual`，动态高度通过 `measureElement` 回写。
-- 对话搜索先按 projection rows 建索引，再通过 virtualizer 定位并在已挂载 DOM 中高亮。
+- `ConversationTimeline` uses `ConversationTurnRenderUnit` as the virtual-scroll unit rather than a single projection row.
+- Each virtual row corresponds to one turn of user + assistant/tool output, so retry, fork, file-change summary and the current turn's loading are not split apart.
+- Uses the project's existing `@tanstack/react-virtual`, with dynamic heights written back through `measureElement`.
+- Conversation search first indexes by projection rows, then locates through the virtualizer and highlights in the already-mounted DOM.
 
-## resize 中的底部跟随
+## Bottom following during resize
 
-`ConversationTimeline` 是唯一滚动 owner，沿用 `followingRef` 和已有用户意图裁决。用户上滚立即解除跟随；滚回底部或点击回底恢复跟随；搜索、轮次定位、会话滚动记忆及历史前插继续保持原契约，不提供强制吸底开关。
+`ConversationTimeline` is the only scroll owner and keeps `followingRef` and the existing user-intent decision. A user scrolling up releases following at once; scrolling back to the bottom or clicking back-to-bottom resumes it; search, turn positioning, session scroll memory and history prepend keep their original contract, and there is no forced-pinning switch.
 
-- 跟随状态下，视口或内容列宽度变化引起的重排采用绘制前批处理：读取行高 → 更新 virtualizer 缓存 → 同步提交 React 占位高度和位置 → 再确认跟随权 → 吸底。不等待宽度稳定计时器，不将旧占位高度下的中间落点留到下一帧。
-- 库的 observer 可能已更新缓存但仍排队等待 React 提交，因此批处理必须明确触发布局提交；不能依赖无差量的重复测量触发 render。同步提交仅在 ResizeObserver 回调内执行，批处理期间其他内容 effect 不抢先吸底。
-- 离底时保持原宽度变化保护：resize 期间暂停逐行滚动补偿，不强制吸底；稳定后恢复正常测高补偿。本文不新增按句子保持屏幕坐标的阅读锚定。
-- 每次批处理前后检查最新用户意图，resize 中上滚、搜索或会话切换不能被后续测高抢回滚动权。观察器监听视口和内容列，在同步提交前暂时取消内容列及父消息层蒙层的尺寸观察，下一帧恢复订阅，避免自身高度写入触发循环通知，同时持续覆盖 CSS 宽度过渡；测高与吸底本身不延后，不重复订阅虚拟行。消息内容变高继续走原有测高与内容提交逻辑。批处理只测已挂载行，不轮询或全量渲染历史。
-- 桌面和手机 Web 共用此逻辑；空草稿保留顶部安全布局，不修改消息协议及 continuous/replayable 边界。
+- While following, reflow caused by viewport or content-column width changes uses pre-paint batching: read row heights -> update the virtualizer cache -> synchronously commit React placeholder heights and positions -> confirm the following right again -> pin to the bottom. It does not wait for a width-stable timer and does not leave an intermediate landing under the old placeholder heights to the next frame.
+- The library observer may have updated the cache while still queueing the React commit, so the batch must trigger the layout commit explicitly and cannot rely on a repeated measurement without a delta to trigger a render. The synchronous commit runs only inside the ResizeObserver callback, and other content effects do not pin first during the batch.
+- When away from the bottom the original width-change protection holds: per-row scroll compensation is paused during resize and no pinning is forced; normal measurement compensation resumes once stable. No sentence-level screen-coordinate reading anchor is added.
+- The latest user intent is checked before and after each batch; an upward scroll, search or session switch during resize cannot be taken back by later measurement. The observer watches the viewport and the content column, temporarily cancels size observation of the content column and its parent message-layer mask before the synchronous commit and resubscribes on the next frame, so its own height writes do not trigger a notification loop while still covering CSS width transitions; measurement and pinning themselves are not deferred, and virtual rows are not subscribed twice. A message content getting taller keeps using the original measurement and content commit logic. The batch measures only mounted rows and does not poll or render the whole history.
+- Desktop and mobile Web share this logic; an empty draft keeps the top-safe layout; the message protocol and the continuous/replayable boundary are not modified.
 
 ```text
-尺寸变化 → ConversationTimeline 检查跟随权
-  跟随 → 批量测高 → 同步提交布局 → 再检查跟随权 → 吸底
-  离底 → 原有宽度变化与阅读位置保护
-用户上滚 / 搜索定位 → 解除跟随（优先于布局回调）
-回到底部 → 恢复跟随
+size change -> ConversationTimeline checks the following right
+  following -> batch measure -> sync commit layout -> check following right again -> pin to bottom
+  away from bottom -> original width-change and reading-position protection
+user scrolls up / search positioning -> release following (takes priority over layout callbacks)
+back to bottom -> resume following
 ```
 
-验收：连续缩窄/放大时跟随落点与列表占位高度正确；resize 中上滚后保持离底；点击回底可重新跟随。原会话记忆、搜索定位和历史前插回归通过。运行时记录绘制前实际行底部与占位高度误差、离底距离，并检查可见画面，允许 1px 亚像素取整误差；不得以停止拖动后的落点代替过程验证。
+Acceptance: during repeated narrowing/widening the following landing and list placeholder height are correct; scrolling up during resize stays away from the bottom; clicking back-to-bottom follows again. The original session memory, search positioning and history prepend regressions pass. At runtime the pre-paint actual row bottom against the placeholder height error and the distance from the bottom are recorded and the visible frame is checked, allowing 1px sub-pixel rounding error; the landing after the drag stops cannot stand in for in-process verification.
 
-浏览器回归：`node --test packages/ui/test/browser/manual-review/pending/conversation-timeline-resize.test.mjs`。覆盖真实 timeline、消息组件和虚拟列表的桌面/手机紧凑布局、深浅主题、内容列独立宽度过渡；数据为确定性 fixture，手机远控传输不属于该测试覆盖范围。桌面实际会话继续由 `conversation-session-v4-scroll.test.ts` 覆盖流式输出与滚动记忆。
+Browser regression: `node --test packages/ui/test/browser/manual-review/pending/conversation-timeline-resize.test.mjs`. It covers the real timeline, message components and virtual list in desktop/mobile compact layouts, light/dark themes and an independent content-column width transition; data is a deterministic fixture, and mobile remote-control transport is outside this test. Real desktop sessions are still covered by `conversation-session-v4-scroll.test.ts` for streaming output and scroll memory.
 
-## 滚动边界
+## Scroll boundary
 
-- 旧的 `useChatAutoFollow` 多 flag 自动吸底状态机已删除；当前只保留一个小的 bottom-lock 状态和普通手动滚动容器。
-- `ConversationTimeline` 使用一个小的 bottom-lock 状态：没有滚动记忆的新会话默认启用，消息追加、markdown/tool 详情撑高和 ResizeObserver 变化会继续写入最新底部 `scrollTop`。
-- 右下角“滚动到底部”按钮只由当前滚动条位置控制：滚动容器不在底部时显示，到达底部时隐藏；用户手动滚回底部附近或点击按钮滚到底部都会重新启用 bottom-lock，避免生成中内容继续变高时错过锁底。按钮所在底部浮层使用 `background` token 的向上渐变遮罩，避免压住末尾消息时产生生硬边界。
-- 当消息内容短到没有纵向滚动条时，视口没有可保留的历史阅读位置，ChatView 会把它视为 bottom-lock 可开启状态；这样后续流式内容撑出滚动条时仍能继续吸底。
-- 正常对话态下，composer 通过 `bottomDock` 渲染在 timeline 的同一个滚动视口内，并使用 `sticky bottom-0` 吸附；“回到底部”按钮锚定在 dock 上方。
-- 会话切换优先读取 renderer-local 的滚动记忆。记忆键由 `workspaceIdentity?.trim() || workspacePath`、`paneId` 与 session/task scope 组成；同一 renderer 的不同 pane 不共享阅读位置，不同桌面窗口或手机 Web renderer 也不共享内存。
-- 若记忆保存时处于 bottom-lock，切回时滚动到**当前**最新底部并继续启用 bottom-lock；否则恢复保存的像素 `scrollTop`，按当前内容高度夹紧到合法范围并保持离底。如果没有记忆，则打开时定位底部并启用 bottom-lock。
-- 恢复先在 layout 阶段写入一次，下一 animation frame 在 virtualizer 首轮测高后再校正一次；若用户已经滚动，第二次校正必须让出写入权。
-- 搜索结果、高亮查找、fork 来源和 turn navigator 跳转都属于定位型滚动，定位后保持离底；该位置可被后续 task 切换记忆。
-- 补全旧历史后继续按新增高度恢复滚动位置，避免视口跳到历史顶部。
-- 对话内容宽度连续变化时，动态行会因文字换行分批重新测高。离底阅读状态必须保持当前 `scrollTop`，禁止 virtualizer 按每条视口上方行逐次补偿而造成上下抖动；吸底状态采用上面的同步测高批处理，每次视口 resize 都按已提交的新高度吸底。宽度稳定后恢复普通动态测高补偿，新消息与流式内容的正常 bottom-lock 不受影响。
-- bottom-lock 不写入 localStorage、relay、main process、host process 或 task runtime；滚动记忆只在当前 renderer 生命周期存在，并由 200 项 LRU 回收。
+- The old multi-flag auto-follow state machine `useChatAutoFollow` was deleted; only one small bottom-lock state and an ordinary manual scroll container remain.
+- `ConversationTimeline` uses one small bottom-lock state: a new session without scroll memory enables it by default, and message appends, markdown/tool detail growth and ResizeObserver changes keep writing the latest bottom `scrollTop`.
+- The bottom-right "scroll to bottom" button is controlled only by the current scrollbar position: shown when the scroll container is not at the bottom and hidden at the bottom; the user scrolling back near the bottom manually or clicking the button re-enables bottom-lock, so the lock is not missed as generating content keeps growing. The bottom overlay holding the button uses an upward gradient mask of the `background` token, avoiding a hard edge when it covers the last message.
+- When the message content is too short for a vertical scrollbar, the viewport has no historical reading position to keep, and ChatView treats it as a state where bottom-lock can be enabled; thus when later streaming content creates a scrollbar it can keep pinning.
+- In the normal conversation state the composer renders in the same scroll viewport as the timeline through `bottomDock`, sticking with `sticky bottom-0`; the "back to bottom" button is anchored above the dock.
+- Session switch reads renderer-local scroll memory first. The memory key is composed of `workspaceIdentity?.trim() || workspacePath`, `paneId` and the session/task scope; different panes of one renderer do not share reading positions, and neither do different desktop windows or mobile Web renderers share memory.
+- If bottom-lock held when the memory was saved, switching back scrolls to the **current** latest bottom and keeps bottom-lock enabled; otherwise the saved pixel `scrollTop` is restored, clamped to the legal range for the current content height and kept away from the bottom. With no memory, opening positions to the bottom and enables bottom-lock.
+- Restore first writes once in the layout phase, then corrects once more in the next animation frame after the virtualizer's first measurement; if the user has already scrolled, the second correction must yield write ownership.
+- Search results, highlight find, fork source and turn navigator jumps are all positioning scrolls and stay away from the bottom afterwards; that position can be remembered by a later task switch.
+- After older history is backfilled, the scroll position is restored by the added height, so the viewport does not jump to the top of history.
+- When the conversation content width keeps changing, dynamic rows are re-measured in batches as text wraps. The away-from-bottom reading state must keep the current `scrollTop`, and the virtualizer must not compensate row by row for each row above the viewport, which would cause up-and-down jitter; the pinned state uses the synchronous measurement batch above, pinning by the committed new heights at every viewport resize. After the width stabilizes ordinary dynamic measurement compensation resumes, and normal bottom-lock for new messages and streaming content is unaffected.
+- bottom-lock is not written to localStorage, relay, main process, host process or task runtime; scroll memory exists only for the current renderer lifetime and is reclaimed by a 200-entry LRU.
 
-## 历史详情懒渲染
+## Lazy rendering of history details
 
-- `AssistantMessage` 的历史区只在展开时调用 `renderHistoryParts`，默认闭合时只保留摘要行。
-- `ToolLayout` 支持 `renderContent`，工具详情只在展开或强制展开时构造，避免闭合工具提前挂载大量 markdown、diff 和子工具 DOM。
-- 历史区和工具区的展开状态按 message/tool key 保存在 renderer 内存中，虚拟滚动导致组件卸载再挂载时不会丢失用户刚展开的细节。
-- 流式输出、被中断和 settling 状态仍会强制展开历史区，保证正在发生的内容不会被隐藏；流式结束后自动回到摘要态。
+- The history area of `AssistantMessage` calls `renderHistoryParts` only when expanded, and keeps only the summary row when closed by default.
+- `ToolLayout` supports `renderContent`; tool details are constructed only when expanded or force-expanded, so closed tools do not mount large markdown, diff and sub-tool DOM early.
+- The expansion state of history and tool areas is kept in renderer memory by message/tool key, so details the user just expanded are not lost when virtual scrolling unmounts and remounts the component.
+- Streaming, interrupted and settling states still force the history area open, so content in progress is not hidden; after streaming ends it returns to the summary state automatically.
 
-## 渲染缓存与 memo 边界
+## Render cache and memo boundary
 
-- 已完成 markdown 消息固定走 `Streamdown` static 模式；只有真实流式动画进入 streaming/block 路径，避免虚拟滚动和历史懒渲染反复重挂载完成态消息时触发 Streamdown 内部更新循环。
-- `DiffViewer`、edit inline diff、`ToolLayout`、`ToolCallBlock`、`AssistantMessage`、`ChatMessage` 和 turn group 边界使用 `memo`，减少历史消息在父组件更新时的重复 commit。
-- turn group 内传给单条消息的 retry、文件切换、feedback、fork 回调通过 `useCallback` 稳定，避免 memo 被 map 里的 inline function 抵消。
-- diff 只稳定 options 和 viewer 输入，不缓存实际 DOM；主题、字号、换行和行号设置变化时仍会正常重渲染。
+- Completed markdown messages always use `Streamdown` static mode; only a real streaming animation enters the streaming/block path, avoiding an internal Streamdown update loop when virtual scroll and lazy history rendering repeatedly remount completed messages.
+- `DiffViewer`, edit inline diff, `ToolLayout`, `ToolCallBlock`, `AssistantMessage`, `ChatMessage` and the turn group boundary use `memo`, reducing repeated commits of history messages when the parent updates.
+- The retry, file-switch, feedback and fork callbacks passed to a single message inside the turn group are stabilized with `useCallback`, so memo is not defeated by inline functions in map.
+- Diff only stabilizes options and viewer input and does not cache the actual DOM; theme, font size, wrapping and line-number setting changes still re-render normally.
 
-## 远控边界
+## Remote-control boundary
 
-本改动只影响 UI 层渲染，不改变 ZCode task 消息流、snapshot、queue 或恢复语义：
+This change only affects UI-layer rendering and does not change the ZCode task message stream, snapshot, queue or recovery semantics:
 
-- 桌面端 `desktop-continuous` 仍保持 direct continuous 主链路。
-- 手机远控 `web-remote-replayable` 仍通过 replayable snapshot/gap 恢复边界展示消息。
-- 远控全量历史仍由显式加载控制，不因虚拟滚动重新触发隐式全量快照传输。
+- Desktop `desktop-continuous` keeps the direct continuous main chain.
+- Mobile remote control `web-remote-replayable` still shows messages through the replayable snapshot/gap recovery boundary.
+- Full remote history is still controlled by explicit loading and virtual scrolling does not re-trigger implicit full-snapshot transfers.

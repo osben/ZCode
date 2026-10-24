@@ -1,18 +1,25 @@
 # Web Remote Control Mobile Task Timeline
 
-> **状态：已废弃（2026-10 合并 staging 时确认）。** 虚拟项目重构后，手机 home 与桌面共用 `ProjectSidebar`
-> （见 `docs/superpowers/specs/2026-09-09-virtual-project-design.md` §6.0.3 与偏差记录 D64），
-> 本文描述的手机专属任务首页、桌面→手机任务快照及相关代码均已删除。下文仅作历史背景，不作为实现依据。
+> **Status: deprecated (confirmed on the 2026-10 staging merge).** After the virtual project refactor the
+> mobile home shares `ProjectSidebar` with desktop (see
+> `docs/superpowers/specs/2026-09-09-virtual-project-design.md` section 6.0.3 and deviation record D64);
+> the mobile-specific task home, the desktop-to-mobile task snapshot and the related code are deleted. The
+> text below is historical background only, not an implementation basis.
 
-移动端远控任务首页的普通列表支持两种组织方式，通过“全部任务”行右侧的分段控件“最近 | 工作区”切换（偏好写入本机）：
+The ordinary list of the mobile remote task home had two organizations, switched by a segmented control
+"Recent | Workspace" right of the "All tasks" row (preference stored locally):
 
-- 最近（默认）：跨工作区平铺任务，按桌面时间线分组（今天 / 昨天 / 本周 / 更早等），日期分组直接作为同级分区，不再嵌套在“最近”之下。
-- 工作区：保留工作区分组、展开/收起、断开远程工作区重连入口。
+- Recent (default): cross-workspace flat tasks grouped by the desktop timeline (today / yesterday / this
+  week / earlier), with date groups as sibling sections.
+- Workspace: workspace grouping, expand/collapse, reconnect entry for disconnected remote workspaces.
 
-两种视图只影响普通列表；上方仅保留“已置顶”分区，置顶任务不会在普通列表重复出现；运行和待处理状态留在任务行内，不再独立分区，也不提供状态筛选（规则见[手机任务首页](../web-remote-control/mobile-task-home-design.md#首页)）。
-
-时间线任务行必须保留工作区标识，避免不同工作区里的同名任务混淆；工作区视图的行省略工作区名。断开的远程工作区任务在时间线里同样不可直接打开，交互规则与工作区分组模式保持一致。
-
-排序方式（更新时间 / 创建时间）位于页头“更多”菜单。排序逻辑集中在 `packages/ui/src/lib/webRemoteControlMobileTaskHome.ts`，默认按 `updatedAt` 倒序；切换为创建时间时按 `createdAt` 倒序，并继续用另一时间字段和 `taskId` 做稳定兜底排序。
-
-本次停留期间，已有任务的顺序和日期桶保持稳定，状态与时间文案采用新快照；新任务插入所属分组首位，新分组追加在末尾。成功刷新、返回首页、切换组织方式或排序时重新整理。工作区标题聚合本组非置顶任务的运行中/待处理数量，详情和例外见任务首页规格。
+Both views affected only the ordinary list; only the "Pinned" section stayed above (pinned tasks not
+repeated in the ordinary list); running and pending states stayed in the task row, with no separate
+section and no status filter (rules: [mobile task home](../web-remote-control/mobile-task-home-design.md#首页)).
+Timeline rows kept the workspace label; rows of disconnected remote workspaces were not directly openable.
+Sort (updated / created time) sat in the header "More" menu with logic in
+`packages/ui/src/lib/webRemoteControlMobileTaskHome.ts`, default `updatedAt` descending, with the other
+time field and `taskId` as stable tie-breakers. During a stay, existing task order and date buckets stayed
+stable while status and time text took new snapshots; new tasks were inserted first in their group and new
+groups appended at the end, with regrouping on successful refresh, returning home, or changing
+organization/sort.

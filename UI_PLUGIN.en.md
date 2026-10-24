@@ -1,8 +1,6 @@
 # UI Plugin: Capabilities, Development, Debugging, and Examples
 
-[简体中文](UI_PLUGIN.md) | English
-
-Start with Excalidraw to see how UI Plugins let the Agent and the user edit and save the same content. This guide covers capabilities implemented in the current source, supported APIs, installation and debugging, and five examples. Follow these links to get started:
+Start with Excalidraw to see how UI Plugins let the Agent and the user edit and save the same content. This guide covers the capabilities implemented in the current source, supported APIs, installation and debugging, and five examples:
 
 - [Try the Excalidraw demo](#featured-example-excalidraw)
 - [Explore Gen UI examples, interfaces, and use cases](#gen-ui-interactive-answers-generated-on-demand)
@@ -15,7 +13,7 @@ This guide focuses on testing plugins with the host in the main repository. Plug
 
 ## What UI Plugins Can Do
 
-A UI Plugin adds an interactive page to an ordinary plugin. The Agent can call tools to create or modify content, while users work directly with canvases, forms, or file lists and send selections or results back to the conversation. The page communicates with the host through MCP Apps; the plugin's MCP server manages application data.
+A UI Plugin adds an interactive page to an ordinary plugin. The Agent calls tools to create or modify content; users work directly with canvases, forms, or file lists and send selections or results back to the conversation. The page talks to the host through MCP Apps; the plugin's MCP server owns application data.
 
 Registration, installation, enabling, and updates follow the ordinary plugin workflow. Pages use the official `@modelcontextprotocol/ext-apps` SDK. They do not need a separate ZCode Plugin SDK or a development guide plugin. The current plugin repository pins the page SDK to `2.0.0` and the MCP server SDK to `1.29.0`. Check the SDK major version when reading upstream examples; the repository lockfile determines the installed versions.
 
@@ -33,27 +31,27 @@ Interactive pages currently run in **local workspaces in ZCode Desktop**. Web, m
 
 ## Featured Example: Excalidraw
 
-Excalidraw demonstrates a drawing workflow that stays editable: the Agent creates a draft, the user adjusts the layout, and the Agent makes further changes to a selection. The canvas remains a document rather than a single generated image.
+Excalidraw shows an editable drawing workflow: the Agent creates a draft, the user adjusts the layout, and the Agent edits a selection. The canvas stays a document, not a generated image.
 
 ### Visual Walkthrough: From Canvas to Conversation
 
-These screenshots show a differential-equation learning example in the English UI: create a canvas, reference a selection, and ask a follow-up with that context.
+A differential-equation learning example in the English UI: create a canvas, reference a selection, ask a follow-up with that context.
 
 **1. Turn a question into an editable canvas**
 
-Ask, "Draw a differential equation for me. I am learning and want to understand it quickly." The Agent draws the concepts, solution steps, and slope field on an Excalidraw canvas. The explanation and canvas appear side by side; shapes and text remain editable, and the document can be saved and exported.
+Ask, "Draw a differential equation for me. I am learning and want to understand it quickly." The Agent draws the concepts, solution steps, and slope field on a canvas shown beside the explanation; shapes and text stay editable, and the document can be saved and exported.
 
 ![Conversation beside an Excalidraw canvas explaining differential equations with concept comparisons, a slope field, and solution steps](docs/images/ui-plugins/excalidraw-canvas-en.png)
 
 **2. Reference a selection to focus the conversation**
 
-Select the slope-field elements, open the context menu, and choose **Reference selection in chat**. The plugin adds information about those elements to the conversation context so the user can discuss a specific part of the diagram.
+Select the slope-field elements, open the context menu, and choose **Reference selection in chat**. The plugin adds those elements to the conversation context.
 
 <img src="docs/images/ui-plugins/excalidraw-reference-selection-en.png" alt="Excalidraw context menu offering to reference the 101 selected slope-field elements in the conversation" width="520" />
 
 **3. Ask a follow-up with the selected context**
 
-Once **Plugin context** appears in the composer, type "What does the direction of the arrows mean?" and send the message. Referencing a selection first adds pending context; when the user sends the question, the Agent receives both the question and the selection information to identify the relevant part of the canvas.
+Once **Plugin context** appears in the composer, type "What does the direction of the arrows mean?" and send. Referencing a selection only adds pending context; on send, the Agent receives the question together with the selection information.
 
 <img src="docs/images/ui-plugins/excalidraw-context-question-en.png" alt="Message composer with plugin context and the pending question: What does the direction of the arrows mean?" width="720" />
 
@@ -104,11 +102,11 @@ Each document currently supports up to 5,000 elements and 6 MiB. The editor and 
 
 ## Gen UI: Interactive Answers Generated on Demand
 
-Gen UI (generative UI) lets the Agent create an HTML / JavaScript page for the current question and embed it directly in the conversation. Move sliders, switch conditions, select items, and observe the results, then ask a follow-up with the current parameters. Each page is generated on demand without first creating and installing a plugin for it.
+Gen UI (generative UI) lets the Agent create an HTML / JavaScript page for the current question and embed it in the conversation. Users move sliders, switch conditions, select items, and ask a follow-up with the current parameters. Each page is generated on demand; no plugin is created or installed.
 
 ### Gen UI in Pictures
 
-These screenshots show a generated capability demo in Chinese. Its tabs and content illustrate how a page can be built; they are not fixed application screens. Click an image to view it at full size.
+A generated capability demo in Chinese. Its tabs and content illustrate what a page can do; they are not fixed application screens. Click an image to enlarge it.
 
 | Components and content                                                                                                                                                                                   | Controls and calculations                                                                                                                                                                                |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -171,7 +169,7 @@ The desktop host supplies the Agent with a dedicated output directory for the cu
 | Page capabilities | Gen UI state, follow-up, and Tweak interfaces                                                  | MCP Apps APIs plus plugin MCP tools and resources, within host support              |
 | Data ownership    | The host manages generated files and session page state                                        | The plugin server manages application files or databases; the page manages its view |
 
-The Excalidraw screenshots above show a **UI Plugin**. Use **Gen UI** for a page with adjustable parameters generated around the current question. Develop a UI Plugin to distribute a reusable tool with server operations and document management. Both may expose `window.zcode`, but their methods and state structures differ and are not interchangeable. See [Development and Debugging](#development-and-debugging) and the [Page API Reference](#page-api-reference) for UI Plugin details.
+The Excalidraw screenshots show a **UI Plugin**. Use **Gen UI** for a page with adjustable parameters generated around the current question; develop a UI Plugin to distribute a reusable tool with server operations and document management. Both may expose `window.zcode`, but their methods and state structures differ and are not interchangeable. UI Plugin details: [Development and Debugging](#development-and-debugging) and [Page API Reference](#page-api-reference).
 
 Implementation and page examples: [Gen UI contract](packages/ui/src/gen-ui/CONTRACT.md), [page API examples](apps/zcode-cli/packages/visualize-plugin/skills/visualize/references/api.md), and [Tweak guide](apps/zcode-cli/packages/visualize-plugin/skills/visualize/tweak.md). The desktop integration entry is `node packages/desktop/scripts/gen-ui-e2e.mjs`.
 
@@ -458,4 +456,4 @@ See the [MCP Apps API](https://apps.extensions.modelcontextprotocol.io/api/) and
 | API limits, sampling parameters, and alias types | [MCP Apps contract](packages/shared/src/mcp-apps/contract.ts), [sampling.ts](packages/shared/src/mcp-apps/sampling.ts), [aliasApi.ts](packages/desktop/src/renderer/src/plugin-sandbox/aliasApi.ts) |
 | Desktop integration tests                        | [mcp-apps-host-e2e.mjs](packages/desktop/scripts/mcp-apps-host-e2e.mjs)                                                                                                                             |
 
-The five plugins' application source lives in the separate `zcode-plugins` repository, which also provides a root `UI_PLUGIN.en.md`. This repository owns the host and does not copy plugin products into its tree. When host APIs change, update the capability and API tables in both repositories and both languages.
+The five plugins' application source lives in the separate `zcode-plugins` repository, which also provides a root `UI_PLUGIN.en.md`. This repository owns the host and does not copy plugin products into its tree. When host APIs change, update the capability and API tables in both repositories and in both `UI_PLUGIN.md` and `UI_PLUGIN.en.md` here.

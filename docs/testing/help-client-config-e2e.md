@@ -1,125 +1,153 @@
-# 帮助配置验证与 E2E 覆盖
+# Help Config Validation and E2E Coverage
 
-> Todo103：本文保留 staging 的既定行为与历史验收记录；历史通过数不计为本次通过。
-> 本次整合证据另记在 todo103-staging-integration-ledger.md，未改变 Provider/Selection 边界。
+> Todo103: this file keeps the established staging behavior and the historical acceptance record; historical pass counts do not count as passes for the current integration.
+> Current integration evidence is recorded separately in todo103-staging-integration-ledger.md; the Provider/Selection boundary is unchanged.
 
 ## Feature Summary
 
-Todo103 复验修正：`setApplicationLocale` 是 Main 原生菜单状态，不等同于 Renderer
-语言设置。当前正式用例先在隔离配置写入英文并重载，再运行英文 UI 断言；结束恢复
-原设置。否则中文系统下会把已有 Help/反馈入口误判为缺失。无需修改产品语言机制。
+Todo103 retest correction: `setApplicationLocale` is Main native-menu state, not the Renderer
+language setting. The formal case first writes English into the isolated config and reloads, then
+runs the English UI assertions, and restores the original setting at the end. Otherwise, on a
+Chinese system, the existing Help/feedback entries would be misjudged as missing. No change to the
+product language mechanism is needed.
 
-| 项目 | 决定 |
-| --- | --- |
-| 目的 / 模式 | 验证 client/configs 迁移，implementation-handoff |
-| 层级 | option-source、validation、commit-effect、persistence |
-| 既定语义 | 沿用 settings-community-link-config.md 和本任务用户已确认的迁移规则 |
-| 范围外 | 工单提交、Agent/session、owner、continuous/replayable、服务器修改 |
+| Item                  | Decision                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
+| Purpose / mode        | Verify the client/configs migration, implementation-handoff                                           |
+| Layers                | option-source, validation, commit-effect, persistence                                                 |
+| Established semantics | Follows settings-community-link-config.md and the migration rules confirmed by the user for this task |
+| Out of scope          | Ticket submission, Agent/session, owner, continuous/replayable, server changes                        |
 
 ## UI Surface Matrix
 
-| 场景 / 入口 | 共享实现 / owner | 默认与校验 | 提交落点 | 模式差异 / 隔离 |
-| --- | --- | --- | --- | --- |
-| 问号菜单社群 | WorkspaceHelpMenuButton → platform → desktopHelpConfig | 当前语言远端→内置 | shell.openExternal | Desktop / Web 平台分别打开；不改会话 |
-| 原生菜单 / 命令面板反馈 | desktopCommandHandlers → helpAppConfig | false→内置弹窗；true→远端或内置地址 | OpenFeedbackDialog / shell | Web 平台始终打开地址 |
-| Windows caption / 命令候选社群可见性 | canOpenCommunity | 同语言无远端及默认值则 false | 只读 | 不把显示状态当成已打开链接 |
-| 问号菜单问题上报 | helpMenuActions / feedbackStore | 不读取反馈开关 | 内置 Dialog | 与平台反馈模式保持独立 |
-| 浏览器配置读取 | resolveWebHelpConfig / readHelpConfig | envelope、同语言默认值 | fetch + 内存 Map | Web 省略 platform；无远控 Host 新增 |
+| Scenario / entry                                         | Shared implementation / owner                            | Default and validation                                       | Commit target              | Mode difference / isolation                                 |
+| -------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ | -------------------------- | ----------------------------------------------------------- |
+| Question-mark menu community                             | WorkspaceHelpMenuButton -> platform -> desktopHelpConfig | current-language remote -> built-in                          | shell.openExternal         | Desktop / Web platforms open separately; sessions untouched |
+| Native menu / command palette feedback                   | desktopCommandHandlers -> helpAppConfig                  | false -> built-in dialog; true -> remote or built-in address | OpenFeedbackDialog / shell | Web platform always opens the address                       |
+| Windows caption / command candidate community visibility | canOpenCommunity                                         | false when the same language has no remote and no default    | read-only                  | Display state is not treated as an opened link              |
+| Question-mark menu issue report                          | helpMenuActions / feedbackStore                          | does not read the feedback switch                            | built-in Dialog            | independent of the platform feedback mode                   |
+| Browser config read                                      | resolveWebHelpConfig / readHelpConfig                    | envelope, same-language default                              | fetch + in-memory Map      | Web omits platform; no remote-control Host additions        |
 
-## Shared And Divergent Behavior / State Owners
+## Shared and Divergent Behavior / State Owners
 
-HTTP 和内存缓存规则共用 helpAppConfig；反馈 UI 入口并不共用开关。
-远端 API 是配置权威，内置 JSON 是默认值，Map 只保存 1 小时成功响应；不存在持久化写入。
+HTTP and in-memory cache rules are shared through helpAppConfig; the feedback UI entries do not
+share the switch. The remote API is the config authority, the built-in JSON holds defaults, and the
+Map keeps only successful responses for 1 hour; there are no persistent writes.
 
 ```text
-配置状态 → 用户入口 / 平台动作 → 当前 endpoint 请求 → code=0 校验
+config state -> user entry / platform action -> request to current endpoint -> code=0 validation
                                       |
-                     内存成功缓存 ←---+---→ 逐字段 / 同语言回退
+                     in-memory success cache <-+-> per-field / same-language fallback
                                       |
-                       外链调用 / 内置弹窗 / 不可用
+                       external link call / built-in dialog / unavailable
 ```
 
 ## Feature Relationships / Must-Preserve Invariants
 
-- must-inspect：reader → Desktop/Web，均不能请求旧 CDN，不能缓存失败，不能跨 endpoint 污染。
-- should-inspect：菜单语言、实际外链、内置弹窗出现；不能用“外链调用数暂时为零”冒充弹窗成功。
-- invariant-only：task、remote attachment、continuous/replayable 不在该请求链路内。
-- evidence-only：原 HC-01 使用 net.fetch mock，只证明请求选项，不证明真实 HTTP 传输或磁盘缓存行为。
+- must-inspect: reader -> Desktop/Web; neither may request the old CDN, cache failures, or pollute
+  across endpoints.
+- should-inspect: menu language, actual external link, built-in dialog appearance; "external link
+  call count is zero for now" must not pass as dialog success.
+- invariant-only: task, remote attachment, continuous/replayable are not on this request path.
+- evidence-only: the original HC-01 used a net.fetch mock, which only proves request options, not
+  real HTTP transport or disk cache behavior.
 
 ## Codegraph Evidence / Graph Drift / Graph Delta
 
-当前工具未提供 codegraph 索引查询；按确定的文件 seeds 用 rg 检查直接调用，深度 2。
-seeds：helpAppConfig、desktopHelpConfig、desktopCommandHandlers、communityUrl、WorkspaceHelpMenuButton。
-图谱尚无帮助配置能力，本次增加已确认的能力 seed，不推断其他业务依赖。
-漂移候选：问号菜单目前始终展示社群项，Windows caption 和命令面板才有可见性 gate；
-测试明确区分平台可用性与问号菜单，避免声称已验证所有入口隐藏。
+The current tooling offers no codegraph index query; direct callers were checked with rg from fixed
+file seeds, depth 2. Seeds: helpAppConfig, desktopHelpConfig, desktopCommandHandlers, communityUrl,
+WorkspaceHelpMenuButton. The graph has no help-config capability yet; the confirmed capability seed
+is added, with no inferred business dependencies.
+Drift candidate: the question-mark menu always shows the community item, while only the Windows
+caption and command palette have a visibility gate. Tests distinguish platform availability from the
+question-mark menu explicitly and do not claim every entry hiding was verified.
 
 ## Clarification / Boundary Decisions / Dimensions
 
-用户已确认迁移规则并授权完成验证；不重新询问既定语义。
-维度为 zh-CN/en-US、远端全量/部分/失败、同一/不同 endpoint、首次/重复请求、Desktop/Web。
-工作区身份、模型、主题不影响纯配置结果，剪枝全量笛卡尔积；桌面以真实入口点击验证代表路径。
-TTL 精确到期、请求未完成时切换 endpoint 保留在可控时钟单测，不把 E2E 等待 1 小时作为验证。
-本轮仅进行本机验证；浏览器窄屏配置集成不是完整手机远控验收。
+The user confirmed the migration rules and authorized completing the verification; established
+semantics are not re-asked.
+Dimensions: zh-CN/en-US, remote full/partial/failure, same/different endpoint, first/repeated
+request, Desktop/Web. Workspace identity, model and theme do not affect pure config results, so the
+full Cartesian product is pruned; desktop verifies a representative path with real entry clicks.
+Exact TTL expiry and switching endpoint while a request is in flight stay in controllable-clock unit
+tests; the E2E does not wait 1 hour.
+This round is local-machine verification only; browser narrow-screen config integration is not a
+full mobile remote-control acceptance.
 
 ## Accepted Cases / Coverage Matrix
 
-| ID | Setup | Action | 必须断言 | 证据层 |
-| --- | --- | --- | --- | --- |
-| HC-01 | 本地 HTTP fixture 完整中英文配置 | 真实问号菜单点击社群；调用中英文可用性并再次点击 | 正确语言外链、实际请求路径/参数/次数，重复读取命中内存 | UI + network |
-| HC-02 | 远端只含中文、fixture 提供英文内置默认值 | 英文平台社群动作 | 使用英文默认值；绝不进入中文远端 | runtime + filesystem |
-| HC-03 | 远端 false、本地 true；另一个 endpoint 远端 true | 平台反馈动作 | false 出现真实内置 Dialog，外链未调用；true 打开远端地址 | UI + runtime |
-| HC-04 | 503 / 业务错误 / 无效 JSON | 平台可用性与社群；恢复同 endpoint 的成功响应 | 默认可用、失败不缓存、恢复后新地址；无值时平台不可用 | HTTP + runtime |
-| HC-05 | Chromium 窄屏加载实际 Web resolver bundle，HTTP fixture 可变 | zh/en、并发、重载浏览器页面 | 同语言结果、无 platform、请求合并；重载重新请求而不走 HTTP cache | browser + HTTP |
+| ID    | Setup                                                                           | Action                                                                                      | Must assert                                                                                                           | Evidence layer       |
+| ----- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| HC-01 | Local HTTP fixture with full zh/en config                                       | Click community in the real question-mark menu; call zh/en availability and click again     | Correct-language external link, actual request path/params/count; repeated reads hit memory                           | UI + network         |
+| HC-02 | Remote has only zh; fixture provides English built-in defaults                  | English platform community action                                                           | Uses the English default; never enters the Chinese remote                                                             | runtime + filesystem |
+| HC-03 | Remote false, local true; another endpoint remote true                          | Platform feedback action                                                                    | false shows the real built-in Dialog and does not call the external link; true opens the remote address               | UI + runtime         |
+| HC-04 | 503 / business error / invalid JSON                                             | Platform availability and community; recover with a success response from the same endpoint | Default stays available, failure is not cached, new address after recovery; with no value the platform is unavailable | HTTP + runtime       |
+| HC-05 | Chromium narrow screen loads the real Web resolver bundle, mutable HTTP fixture | zh/en, concurrency, reload the browser page                                                 | Same-language result, no platform, requests coalesced; reload re-requests instead of using the HTTP cache             | browser + HTTP       |
 
 ## E2E Handoff Notes
 
-- 用户在本机 8/8 通过后明确授权转正；正式路径为 `packages/desktop/test/e2e/help-client-config.test.ts`，默认 desktop E2E 收集。
-- fixture 使用 case-local JSON；模型请求策略 none，全部帮助请求为 synthetic，注明 syntheticReason。
-- 本地 HTTP server 只监听 loopback；每 case 独立 origin，恢复 settings 和临时默认配置文件。
-- 现有 e2e:fixture:check / e2e:promote 只实现 conversation/plugins 域，不能直接处理 settings。
-  本例使用本地 fixture 合同检查与 WDIO；不迁入 conversation 来绕过域限制。
-- 按用户要求停止 Docker 验证，仅采用本机结果；Windows/Linux 实机和手机实机未验证。
+- After 8/8 passed locally the user explicitly authorized promotion; the formal path is
+  `packages/desktop/test/e2e/help-client-config.test.ts`, collected by the default desktop E2E.
+- Fixtures are case-local JSON; model request policy is none, all help requests are synthetic with
+  `syntheticReason`.
+- The local HTTP server listens on loopback only; each case has its own origin and restores settings
+  and temporary default config files.
+- The existing e2e:fixture:check / e2e:promote only implement the conversation/plugins domains and
+  cannot handle settings. This case uses a local fixture contract check and WDIO; it is not moved
+  into conversation to bypass the domain limit.
+- Per the user's request Docker verification was stopped and only local results are used;
+  Windows/Linux real machines and real phones are unverified.
 
 ## Unresolved Questions / Planning Handoff
 
-产品语义无新增待决；问号菜单无配置时的显示问题记录为既有漂移，不在此次纯迁移验证中修改 UI。
-本文件同时承担 impact brief、catalog、matrix、剪枝记录；实际运行证据如下。
+No new product-semantics questions. The question-mark menu display with no config is recorded as
+existing drift and is not changed by this pure migration verification.
+This file doubles as impact brief, catalog, matrix and pruning record.
 
-## 验证记录（2026-09-04）
+## Verification Record (2026-09-04)
 
-- macOS 首轮 8/8 passed：`desktop-e2e-20260904061809303-p54917-66703063e8ddebb5`，包含真实 HTTP 和 390×844 Chromium 浏览器窗口。
-- 正式接口按 darwin-arm64、win32-x64、linux-x64、Web 省略 platform 分别请求，全部 HTTP 200 / code 0，均含三个帮助字段。此证据不是 Windows/Linux UI 实机验证。
-- 原 settings/manual-review 路径没有被默认 WDIO exclude 覆盖，现已移到现有 auth/config `manual-review/pending`，避免候选用例意外进入默认 suite。
-- `e2e:fixture:check` 对新路径明确返回 unsupported domain；不改工具规则、不伪造 provider fixture。自校验确认 manifest 的 8 个 synthetic 场景均有原因，所有文件存在、canonical spec 为 `./test/e2e/help-client-config.test.ts`，provider policy 为 none。
+- macOS first round 8/8 passed (real HTTP and a 390x844 Chromium browser window).
+- The official API was requested for darwin-arm64, win32-x64, linux-x64 and Web (platform omitted):
+  all HTTP 200 / code 0, all with the three help fields. This is not real Windows/Linux UI
+  verification.
+- The old settings/manual-review path was not covered by the default WDIO exclude, so it was moved
+  to the existing auth/config `manual-review/pending` to keep candidate cases out of the default
+  suite.
+- `e2e:fixture:check` returns "unsupported domain" for the new path; tool rules were not changed and
+  no provider fixture was faked. Self-check confirmed all 8 synthetic scenarios of the manifest have
+  reasons, all files exist, the canonical spec is `./test/e2e/help-client-config.test.ts`, and the
+  provider policy is none.
+- After moving to a supported candidate directory, the common-provider-fixture rerun passed 8/8;
+  provider capture records were 0.
+- Help-config unit tests 36/36 passed (shared reader, remote config, Web resolver, desktop
+  commands).
+- `pnpm --filter @zcode/desktop typecheck:e2e`, `pnpm typecheck`, `pnpm lint` all passed (lint: 41
+  existing warnings, 0 errors).
 
-- 迁移到受支持的候选目录后，限定 common provider fixture 重跑 8/8 passed：
-  `desktop-e2e-20260904062010268-p58126-9129778db7899df8`。provider capture 的 records 为 0。
-- 帮助配置相关单元测试 36/36 passed（shared reader、remote config、Web resolver、desktop commands）。
-- `pnpm --filter @zcode/desktop typecheck:e2e`、`pnpm typecheck`、`pnpm lint` 全部通过；
-  lint 41 个既有 warning、0 error。
-
-### 重跑正式用例
+### Rerun the formal case
 
 ```bash
 E2E_PROVIDER_REPLAY_FIXTURE_PATH=packages/desktop/test/e2e/fixtures/upstream/common.json \
 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/help-client-config.test.ts
 ```
 
-先完成 typecheck 再构建/运行 Electron，避免二者同时写 out/host。
-按用户要求不走 Docker；本轮容器尝试已终止，未计入通过结果。
+Finish typecheck before building/running Electron so the two do not write out/host at the same time.
+Docker is not used; the container attempt this round was terminated and does not count.
 
-### 转正记录
+### Promotion record
 
-2026-09-04 用户明确要求通过后转正。promotion dry run 拒绝 auth/config 路径，
-因为脚本只支持 conversation-session；沿用本域既有做法直接迁移到根目录正式路径、
-修正 helper import，保留现有 canonical manifest 与 case-local fixture。
-不新增 conversation provider fixture，不加入 Docker preset。
+On 2026-09-04 the user asked to promote after passing. The promotion dry run rejected the
+auth/config path because the script supports only conversation-session; following the domain's
+existing practice the case was moved directly to the root formal path with the helper import fixed,
+keeping the existing canonical manifest and case-local fixture. No conversation provider fixture and
+no Docker preset were added.
 
-转正后本机验证：
+After promotion, local verification:
 
-- 正式路径默认 replay：8/8 passed，artifact `desktop-e2e-20260904063506750-p72944-12b19ddcc35e5a3d`。
-- 正式路径仅 common fixture replay：8/8 passed，artifact `desktop-e2e-20260904063636183-p75423-66532649b7413591`。
-- 两轮均未设置 `ZCODE_E2E_MANUAL_REVIEW`，正式 spec 被 desktop WDIO 正常执行。
-- `typecheck:e2e`、`pnpm typecheck`、`pnpm lint` 通过（41 个既有 warning，0 error）；格式与 diff 检查通过。
-- manifest 校验确认正式路径存在、8 个 synthetic 场景均注明原因、file fixture 存在、provider policy 为 none。
+- Formal path default replay: 8/8 passed.
+- Formal path common-fixture-only replay: 8/8 passed.
+- Neither round set `ZCODE_E2E_MANUAL_REVIEW`; the formal spec ran normally in desktop WDIO.
+- `typecheck:e2e`, `pnpm typecheck`, `pnpm lint` passed (41 existing warnings, 0 errors); format and
+  diff checks passed.
+- Manifest check confirmed the formal path exists, the 8 synthetic scenarios carry reasons, the file
+  fixture exists, and the provider policy is none.

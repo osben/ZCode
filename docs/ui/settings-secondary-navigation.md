@@ -1,10 +1,14 @@
-# 设置二级页返回导航
+# Settings Secondary Page Back Navigation
 
-## 契约
+## Contract
 
-- 设置页的二级页面统一使用 `SettingsBackButton`，尺寸固定为 `size="lg"`（32px 高），左侧使用 16px `ArrowLeft`。
-- 组件固定使用 `variant="ghost"`；业务页面不得覆盖 `size`、`variant` 或另行添加返回按钮专属颜色、间距和 hover 样式。
-- 覆盖 Memory、插件、命令、钩子、子智能体与 MCP 二级页。
-- 文案由各业务模块的国际化资源提供，中文统一为“返回”，英文统一为“Back”；组件不拼接项目、记忆、命令等业务名称。
-- 顶层“返回工作区”、列表分页与表单内部步骤导航不属于二级页返回导航。
-- 自动化、闲时任务、模型购买流程“上一步”和模型升级方案“返回”不在本次范围内，保留各自实现。
+- Secondary pages of Settings use `SettingsBackButton` uniformly: fixed `size="lg"` (32px high) with a 16px
+  `ArrowLeft` on the left.
+- The component fixes `variant="ghost"`; business pages must not override `size`, `variant` or add
+  back-button-specific color, spacing and hover styles.
+- Covers the Memory, plugin, command, hook, subagent and MCP secondary pages.
+- Copy comes from each business module's i18n resources: Chinese is "返回" (Back), English `Back`; the
+  component does not concatenate business names such as project, memory or command.
+- The top-level "Back to workspace", list pagination and in-form step navigation are not secondary-page
+  back navigation. Automations, idle-time tasks, the "previous step" of the model purchase flow and the
+  "back" of the model upgrade plan are out of scope and keep their own implementations.

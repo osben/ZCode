@@ -1,15 +1,18 @@
-# 插件导入入口暂时隐藏
+# Plugin Import Entry Temporarily Hidden
 
-## 背景
+## Background
 
-插件导入能力已经有前端弹窗和引导步骤的基础实现，但当前插件导入仍需要 Agent 侧补齐支持后才能稳定开放。
+The plugin import capability has a basic implementation of the frontend dialog and onboarding step, but it
+still needs Agent-side support before it can be opened stably.
 
-## 当前行为
+## Current Behavior
 
-- 设置 - 插件管理：暂时隐藏“从外部 Agent 导入插件”按钮。
-- 引导 - 数据迁移向导：暂时隐藏插件导入步骤。
-- Skills、MCP 服务器、命令导入步骤保持可见，迁移汇总不再统计插件导入选择。
+- Settings - plugin management: the "Import plugins from external Agent" button is temporarily hidden.
+- Onboarding - data migration wizard: the plugin import step is temporarily hidden.
+- The Skills, MCP servers and Commands import steps stay visible; the migration summary no longer counts the
+  plugin import selection.
 
-## 恢复条件
+## Restore Condition
 
-Agent 侧完成插件导入支持后，可以恢复插件管理入口与数据迁移向导中的插件导入步骤，并重新纳入迁移任务汇总。
+Once the Agent side supports plugin import, the plugin management entry and the plugin import step of the data
+migration wizard can be restored and counted again in the migration task summary.

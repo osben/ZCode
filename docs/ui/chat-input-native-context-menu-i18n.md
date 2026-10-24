@@ -1,30 +1,30 @@
-# 桌面端输入框右键菜单国际化 Spec
+# Desktop Input Context Menu i18n Spec
 
-## 背景
+## Background
 
-桌面端输入框的右键菜单由 Electron 主进程监听 `context-menu` 事件后动态弹出。菜单项目前只设置了 Electron `role`，没有设置 `label`，因此文案由 Electron/操作系统默认语言决定，可能与 ZCode 当前应用语言不一致。
+The desktop input right-click menu is popped up dynamically by the Electron main process on the `context-menu` event. Menu items set only the Electron `role` and no `label`, so the text depends on the Electron/OS default language and may not match the current ZCode app language.
 
-## 目标
+## Goals
 
-- 桌面端可编辑文本输入框的右键菜单（撤销、重做、剪切、复制、粘贴、删除、全选）使用当前应用 locale 的文案。
-- 保留 Electron `role` 和 `editFlags`，不改变原生编辑行为及禁用状态。
-- 应用切换语言后，下一次打开右键菜单立即使用新语言，不需要重启窗口。
+- The right-click menu of desktop editable text inputs (Undo, Redo, Cut, Copy, Paste, Delete, Select all) uses the text of the current app locale.
+- Keep the Electron `role` and `editFlags`; native edit behavior and disabled states are unchanged.
+- After the app language is switched, the next opening of the right-click menu uses the new language immediately, with no window restart.
 
-## 非目标与边界
+## Non-goals and boundaries
 
-- 不修改手机 Web/远程 Web 的浏览器原生右键菜单；该菜单由浏览器控制，应用无法直接注入应用文案。
-- 不把输入框右键菜单改造成 React/DOM 自定义菜单。
-- 不改变选中文本、内置浏览器或终端的其他右键菜单。
+- The browser's native right-click menu on mobile Web/remote Web is not changed; the browser controls it and the app cannot inject app copy.
+- The input right-click menu is not rebuilt as a React/DOM custom menu.
+- Other right-click menus (selected text, embedded browser, terminal) are unchanged.
 
-## 实现约束
+## Implementation constraints
 
-- 菜单标签复用 `packages/shared/src/desktopMenu.ts` 的桌面菜单 locale 表。
-- 右键菜单创建时通过 locale getter 读取最新应用语言，而不是在窗口创建时固化语言。
-- `Delete` 补充独立的桌面菜单 message id，确保右键菜单中的全部操作都有中英文文案。
+- Menu labels reuse the desktop menu locale table in `packages/shared/src/desktopMenu.ts`.
+- The right-click menu reads the latest app language through a locale getter when it is created, rather than freezing the language at window creation.
+- `Delete` gets its own desktop menu message id so every action in the right-click menu has Chinese and English text.
 
-## 验收标准
+## Acceptance
 
-1. `zh-CN` 下编辑输入框右键菜单显示：撤销、重做、剪切、复制、粘贴、删除、全选。
-2. `en-US` 下显示：Undo、Redo、Cut、Copy、Paste、Delete、Select all。
-3. 各菜单项的 `role` 与 `enabled` 状态保持现有 `ContextMenuParams.editFlags` 结果。
-4. locale getter 在弹出菜单时读取，因此切换语言后无需重建 BrowserWindow。
+1. Under `zh-CN` the editable input right-click menu shows: 撤销, 重做, 剪切, 复制, 粘贴, 删除, 全选.
+2. Under `en-US` it shows: Undo, Redo, Cut, Copy, Paste, Delete, Select all.
+3. The `role` and `enabled` state of each item keep the existing `ContextMenuParams.editFlags` result.
+4. The locale getter is read when the menu pops up, so switching language needs no BrowserWindow rebuild.

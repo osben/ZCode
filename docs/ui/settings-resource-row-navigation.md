@@ -1,27 +1,38 @@
-# Settings 资源列表行导航
+# Settings Resource List Row Navigation
 
-## 范围
+## Scope
 
-Settings 中 Commands、Subagents、MCP Servers、Hooks 四类资源列表统一使用整行作为编辑入口，不再展示独立的编辑图标按钮。Memory 的项目行和文件行以及 Skills 的详情入口同样遵循列表下钻交互。
+The four resource lists Commands, Subagents, MCP Servers and Hooks in Settings use the whole row as the edit
+entry and no longer show a separate edit icon button. The project rows and file rows of Memory and the detail
+entry of Skills follow the same list drill-down interaction.
 
-## 交互约束
+## Interaction Constraints
 
-- 仅 ZCode 管理且可编辑的资源行可打开编辑页；内置、插件托管和兼容来源保持只读。
-- 鼠标点击可编辑行的非操作区域时打开对应编辑页。
-- 可编辑行可聚焦，并支持 `Enter`、`Space` 打开编辑页。
-- 行内开关、删除、授权、模型选择等控件保持独立操作，点击或键盘操作不得触发行导航。
-- 可编辑行显式使用 `cursor-default` 保持普通箭头光标，并统一使用 `hover:bg-hover` 反馈；只读行不伪装成可点击入口。
-- 桌面端与手机 Web 端使用同一套行交互，不依赖 hover 才能发现入口。
-- 所有可下钻的 Memory 项目行和文件行使用与其他资源行一致的普通箭头光标。
-- Memory 的项目主区域和文件行使用 `div[role="button"][tabindex="0"]`，并复用资源行的 Enter / Space 键盘激活逻辑；项目行右侧 File Tree 保持独立 Button。
+1. Only ZCode-managed editable resource rows can open the edit page; built-in, plugin-managed and compatibility
+   sources stay read-only.
+2. Clicking a non-action area of an editable row with the mouse opens the matching edit page. An editable row is
+   focusable and opens the edit page with `Enter` and `Space`.
+3. In-row switches, delete, authorization, model selection and similar controls stay independent; their click
+   or keyboard operation must not trigger row navigation.
+4. An editable row explicitly uses `cursor-default` to keep an ordinary arrow cursor and uniformly
+   `hover:bg-hover` feedback; a read-only row does not pose as a clickable entry.
+5. Desktop and mobile Web use the same row interaction and do not rely on hover to discover the entry.
+6. All drillable Memory project rows and file rows use the same ordinary arrow cursor as other resource rows.
+   The main project area and file rows of Memory use `div[role="button"][tabindex="0"]` and reuse the resource
+   row's Enter / Space keyboard activation; the File Tree on the right of a project row stays an independent
+   Button.
 
-## 编辑页删除入口
+## Delete Entry on the Edit Page
 
-- Command、Subagent、MCP Server、Hook 的现有资源编辑页统一在表单底部展示删除入口，创建页不展示。
-- 删除入口参考 Subagent：左侧使用 `Button variant="link" size="lg"`、`px-0 text-destructive hover:text-destructive` 和 `Trash2 size-3.5`；Save、Cancel 操作组保持右对齐。
-- 列表行不再重复展示删除按钮。删除仍经过各资源既有确认弹窗，成功后返回列表。
+- The existing edit pages of Command, Subagent, MCP Server and Hook uniformly show a delete entry at the bottom
+  of the form; the create page does not.
+- The delete entry follows Subagent: on the left `Button variant="link" size="lg"` with
+  `px-0 text-destructive hover:text-destructive` and `Trash2 size-3.5`; the Save, Cancel group stays
+  right-aligned.
+- List rows no longer repeat a delete button. Delete still goes through each resource's existing confirm
+  dialog and returns to the list on success.
 
-## Subagent 行信息
+## Subagent Row Info
 
-- Subagent 已按 User、Plugin、Built-in 分组，行内不再重复展示作用域标签。
-- 行内继续展示模型（非内置项）、工具、描述、路径和对应操作。
+Subagents are already grouped as User, Plugin, Built-in, so rows no longer repeat a scope label. Rows keep
+showing the model (non-built-in items), tools, description, path and the matching actions.

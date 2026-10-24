@@ -1,28 +1,38 @@
 # Workspace Header Structure
 
-更新 `packages/ui` 工作区 header 为左右分区结构：
+The `packages/ui` workspace header has a left/right split:
 
-- 左侧：任务名称、项目名称、编辑器快捷按钮、更多菜单
-- 右侧：编辑器快捷按钮、终端切换按钮、侧边面板切换按钮
+- Left: task name, project name, editor shortcut button, more menu.
+- Right: editor shortcut button, terminal toggle button, side pane toggle button.
 
-设计约束：
+Design constraints:
 
-- 任务名作为主标题，项目名作为次级信息
-- 终端和浏览器入口改为 icon-only，视觉对齐侧边栏折叠/展开按钮
-- 编辑器快捷按钮显示最近一次选中的编辑器图标，主按钮直接打开当前 workspace，箭头按钮下拉切换并持久化选择；文件管理器入口继续保留在更多菜单
-- Workspace header 不展示 status panel 切换按钮；status panel 的展开 / 收起由面板自身的收起按钮和 mini 摘要行承担
-- 新建任务草稿态（`activeTaskId === null`）不展示完整 Workspace header；草稿态主输入区继续独占顶部注意力，只在桌面端轻量标题栏右上角保留帮助入口和 Terminal 切换入口，直到首发创建出稳定 task 后再恢复 header、workspace 上下文和 task 菜单
-- 草稿态 Terminal 入口复用会话态同一按钮、快捷键提示、选中态和切换行为；macOS/普通桌面放在帮助入口旁，Windows/Linux 放在自绘合并菜单旁。手机 Web 远控不增加该桌面标题栏入口
-- 侧边面板切换按钮只保留图标，不展示 Git `+added -removed` 变更摘要；Git 变更摘要和提交 / 推送入口统一收敛到 Chat status panel 的 Git Tools
-- 更多菜单集中提供文件管理器、路径、任务与链路 ID 的复制能力，便于排查问题
-- “Open provider config” 菜单项使用纯文本文案，复用右上角当前选中的外接应用，不单独维护 editor 状态
-- Remote 窗口行为暂不在此处覆盖（本轮仅本地桌面窗口）
+1. The task name is the main title; the project name is secondary information.
+2. Terminal and browser entries are icon-only, visually aligned with the sidebar collapse/expand button.
+3. The editor shortcut button shows the icon of the last selected editor; the main button opens the
+   current workspace directly, the arrow button drops down to switch and persist the choice. The file
+   manager entry stays in the more menu.
+4. The header has no status panel toggle; expanding/collapsing the status panel is done by the panel's
+   own collapse button and mini summary row.
+5. A new-task draft (`activeTaskId === null`) does not show the full Workspace header; the main input
+   keeps the top attention, and only the lightweight desktop title bar keeps a help entry and a Terminal
+   toggle at the top right, until the first send creates a stable task and restores the header, workspace
+   context and task menu.
+6. The draft-state Terminal entry reuses the session-state button, shortcut hint, selected state and
+   toggle behavior; on macOS/ordinary desktop it sits next to the help entry, on Windows/Linux next to the
+   custom-drawn merged menu. Mobile Web remote control adds no such desktop title bar entry.
+7. The side pane toggle button is icon-only and shows no Git `+added -removed` summary; the Git summary
+   and commit / push entries live in the Git Tools of the Chat status panel.
+8. The more menu centralizes copy of file manager, path, task and trace IDs to help troubleshooting.
+9. The "Open provider config" item is plain text and reuses the external app currently selected at the
+   top right; it keeps no editor state of its own.
+10. Remote window behavior is not covered here (local desktop window only).
 
-当前菜单项：
+Current menu items:
 
 - macOS: Open in Finder
 - Windows: Open in File Explorer
-- 其它平台: Open in File Manager
+- Other platforms: Open in File Manager
 - Copy path
 - Copy task ID
 - Copy trace ID
