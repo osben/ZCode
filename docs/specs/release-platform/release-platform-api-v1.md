@@ -1,38 +1,36 @@
-# ZCode 打包平台 API 与契约 v1
+# ZCode Packaging Platform API and Contract v1
 
-- 状态：Proposed
-- 版本：`release-platform.v1`
-- 日期：2026-08-18
-- 适用范围：z-code 构建 worker、打包平台 control plane、审批 UI、发布服务
+- Status: Proposed
+- Version: `release-platform.v1`
+- Date: 2026-08-18
+- Applies to: z-code build workers, the packaging platform control plane, the approval UI, the publishing service
 
-## 1. 目标与非目标
+## 1. Goals and Non-goals
 
-目标是把 z-code 变成可替换的构建 worker，并让打包平台成为 release candidate 的唯一状态源。
+Goal: make z-code a replaceable build worker and the packaging platform the single source of state for release candidates. The contract does not prescribe PostgreSQL, queues, object storage or a web framework; it defines only the cross-system observable and retryable boundary.
 
-本契约不规定平台使用 PostgreSQL、队列、对象存储或具体 Web 框架；只规定跨系统可观察和可重试的边界。
+Non-goals: changing the Electron auto-update protocol into a new client protocol; requiring the platform to take over release-it version calculation in the first version; letting workers write the stable feed directly.
 
-非目标：不把 Electron 自动更新协议改成新的客户端协议；不要求第一版平台接管 release-it 的版本计算；不允许 worker 直接写稳定 feed。
-
-## 2. 资源模型
+## 2. Resource Model
 
 ### 2.1 ReleaseCandidate
 
-完整 JSON Schema 位于 [`release-candidate.v1.schema.json`](./release-candidate.v1.schema.json)。关键字段：
+Full JSON Schema: [`release-candidate.v1.schema.json`](./release-candidate.v1.schema.json). Key fields:
 
-| 字段 | 语义 |
-| --- | --- |
-| `candidateId` | 平台生成的不可变候选身份，格式 `cand_...` |
-| `source` | repository、完整 commit、SemVer version、可选 ref |
-| `state` | 平台状态机当前状态 |
-| `platforms` | 每个 OS/arch 的 artifact 和基础更新元数据 |
-| `provenance` | builder、镜像、工具版本和 signer |
-| `createdAt` / `expiresAt` | 候选保留周期 |
+| Field                     | Meaning                                                              |
+| ------------------------- | -------------------------------------------------------------------- |
+| `candidateId`             | Platform-generated immutable candidate identity, format `cand_...`   |
+| `source`                  | repository, full commit, SemVer version, optional ref                |
+| `state`                   | Current state of the platform state machine                          |
+| `platforms`               | Per OS/arch artifacts and base update metadata                       |
+| `provenance`              | builder, image, tool versions and signer                             |
+| `createdAt` / `expiresAt` | Candidate retention period                                           |
 
-候选制品的事实来源是对象存储中的 `objectKey` 和 digest，不是 runner 路径、GitLab artifact URL 或工作区共享目录。
+The source of truth for candidate artifacts is the object-storage `objectKey` and digest, not a runner path, a GitLab artifact URL or a shared workspace directory.
 
-### 2.2 NotesDraft 与 Approval
+### 2.2 NotesDraft and Approval
 
-日志独立于候选制品版本化：
+Notes are versioned independently of candidate artifacts:
 
 ```json
 {
@@ -48,15 +46,13 @@
 }
 ```
 
-`approvedBy` 和 `approvedAt` 必须由平台根据当前认证身份写入，不能信任 worker 在请求体中自报。
-
-日志被修改时必须生成新的 `revision`；旧 revision 不得原地覆盖。
-
-`revision` 的计算固定为：先将每个 locale 的 Markdown 统一为 UTF-8、LF 换行并去除首尾空白，再按 locale key 的字典序组成对象，使用 RFC 8785 JSON Canonicalization Scheme 序列化，最后计算 SHA-256 hex，格式为 `sha256:<64-hex>`。这样不同语言运行时不会因为 JSON key 顺序产生不同 revision。
+1. `approvedBy` and `approvedAt` are written by the platform from the current authenticated identity; a worker's self-reported request-body values are not trusted.
+2. Modifying notes produces a new `revision`; an old revision is never overwritten in place.
+3. `revision` is computed as: normalize each locale's Markdown to UTF-8 with LF line endings and trim leading/trailing whitespace; build an object keyed by locale in lexicographic order; serialize with RFC 8785 JSON Canonicalization Scheme; take SHA-256 hex, formatted `sha256:<64-hex>`. Different language runtimes then cannot produce different revisions from JSON key order.
 
 ### 2.3 Publication
 
-发布是候选制品和审批 revision 的一次绑定：
+A publication binds one candidate's artifacts to one approved revision:
 
 ```json
 {
@@ -68,9 +64,9 @@
 }
 ```
 
-平台生成包含 `releaseNotesByLocale` 的最终 `latest.yml`，写入正式对象路径后才推进为 `published`；不得生成独立 locale 更新清单。
+The platform generates the final `latest.yml` containing `releaseNotesByLocale`, writes it to the official object path, and only then advances to `published`. It must not generate a separate per-locale update manifest.
 
-## 3. 状态机
+## 3. State Machine
 
 ```text
 created -> building -> ready -> approval_pending -> approved -> publishing -> published
@@ -79,25 +75,23 @@ created -> building -> ready -> approval_pending -> approved -> publishing -> pu
         build_failed    cancelled      rejected   publish_failed_retryable
 ```
 
-状态迁移约束：
+| Current state              | Allowed transitions                       | Triggered by          |
+| -------------------------- | ----------------------------------------- | --------------------- |
+| `created`                  | `building`, `cancelled`                   | platform scheduler    |
+| `building`                 | `ready`, `build_failed`, `cancelled`      | build worker callback |
+| `ready`                    | `approval_pending`, `cancelled`           | platform              |
+| `approval_pending`         | `approved`, `rejected`                    | approval API          |
+| `approved`                 | `publishing`, `cancelled`                 | platform              |
+| `publishing`               | `published`, `publish_failed_retryable`   | publisher             |
+| `publish_failed_retryable` | `publishing`, `cancelled`                 | retry API             |
 
-| 当前状态 | 允许迁移 | 触发者 |
-| --- | --- | --- |
-| `created` | `building`, `cancelled` | platform scheduler |
-| `building` | `ready`, `build_failed`, `cancelled` | build worker callback |
-| `ready` | `approval_pending`, `cancelled` | platform |
-| `approval_pending` | `approved`, `rejected` | approval API |
-| `approved` | `publishing`, `cancelled` | platform |
-| `publishing` | `published`, `publish_failed_retryable` | publisher |
-| `publish_failed_retryable` | `publishing`, `cancelled` | retry API |
-
-重复请求必须返回当前资源，不得重复创建候选、发布任务或对象。
+A repeated request returns the current resource and never creates a duplicate candidate, publish task or object.
 
 ## 4. API
 
-Base URL：`/v1`。所有响应必须包含 `requestId`；写操作必须支持 `Idempotency-Key`。
+Base URL: `/v1`. Every response includes `requestId`; every write supports `Idempotency-Key`.
 
-### 4.1 创建候选版本
+### 4.1 Create candidate
 
 ```http
 POST /v1/release-candidates
@@ -105,8 +99,6 @@ Idempotency-Key: <client-generated-key>
 Authorization: Bearer <service-token>
 Content-Type: application/json
 ```
-
-请求：
 
 ```json
 {
@@ -127,16 +119,14 @@ Content-Type: application/json
 }
 ```
 
-成功返回 `201` 和 `ReleaseCandidate`。同一 `Idempotency-Key` 重试返回同一 `candidateId`。
+Returns `201` and `ReleaseCandidate`. Retrying the same `Idempotency-Key` returns the same `candidateId`.
 
-### 4.2 创建构建任务
+### 4.2 Create build
 
 ```http
 POST /v1/release-candidates/{candidateId}/builds
 Idempotency-Key: <candidateId>:<os>:<arch>:<attempt>
 ```
-
-请求：
 
 ```json
 {
@@ -146,7 +136,7 @@ Idempotency-Key: <candidateId>:<os>:<arch>:<attempt>
 }
 ```
 
-响应 `202`：
+Response `202`:
 
 ```json
 {
@@ -161,32 +151,30 @@ Idempotency-Key: <candidateId>:<os>:<arch>:<attempt>
 }
 ```
 
-制品通过预签名 URL/短期凭据上传，不经过 control plane 的应用服务器。
+Artifacts upload via presigned URLs or short-lived credentials, not through the control plane's application server.
 
-### 4.3 完成构建
+### 4.3 Complete build
 
 ```http
 POST /v1/release-candidates/{candidateId}/builds/{buildId}/complete
 Idempotency-Key: <buildId>:complete
 ```
 
-请求体为该平台的 manifest 子集和 provenance。平台必须在接受前检查：
+The body is the platform's manifest subset and provenance. Before accepting, the platform checks:
 
-1. 所有 `objectKey` 位于该 candidate 的前缀下；
-2. 对象存在、大小一致、SHA-256/SHA-512 一致；
-3. platform/arch 与 build request 一致；
-4. base update metadata 的 version、path、files digest 与 artifact 一致。
+1. all `objectKey` values are under the candidate's prefix;
+2. objects exist with matching size and SHA-256/SHA-512;
+3. platform/arch match the build request;
+4. base update metadata version, path and files digest match the artifacts.
 
-成功返回 `200`，build 为 `succeeded`；校验失败返回 `422`，候选进入 `build_failed` 或保留为可重试状态。
+Success returns `200` and the build is `succeeded`; validation failure returns `422` and the candidate moves to `build_failed` or stays retryable.
 
-### 4.4 提交日志草稿
+### 4.4 Submit notes draft
 
 ```http
 POST /v1/release-candidates/{candidateId}/notes
 Idempotency-Key: <candidateId>:notes:<revision>
 ```
-
-请求：
 
 ```json
 {
@@ -198,17 +186,15 @@ Idempotency-Key: <candidateId>:notes:<revision>
 }
 ```
 
-平台验证 revision 后创建 `notesDraftId`，并将候选置为 `approval_pending`。同一 revision 幂等。
+The platform validates the revision, creates a `notesDraftId` and sets the candidate to `approval_pending`. Idempotent per revision.
 
-### 4.5 审批日志
+### 4.5 Approve notes
 
 ```http
 POST /v1/release-candidates/{candidateId}/approvals
 Idempotency-Key: <candidateId>:approve:<revision>
 If-Match: <candidate-etag>
 ```
-
-请求：
 
 ```json
 {
@@ -217,16 +203,14 @@ If-Match: <candidate-etag>
 }
 ```
 
-`decision` 允许 `approve` 或 `reject`。审批人由认证 token 确定；审批接口不接受调用方自定义 `approvedBy`。
+`decision` is `approve` or `reject`. The approver comes from the authenticated token; the endpoint does not accept a caller-supplied `approvedBy`.
 
-### 4.6 发布
+### 4.6 Publish
 
 ```http
 POST /v1/release-candidates/{candidateId}/publications
 Idempotency-Key: <candidateId>:publish:<notesRevision>:<channel>
 ```
-
-请求：
 
 ```json
 {
@@ -235,11 +219,9 @@ Idempotency-Key: <candidateId>:publish:<notesRevision>:<channel>
 }
 ```
 
-平台必须在进入 `publishing` 前确认：候选为 `approved`、revision 匹配、所有目标平台为 `ready`，并且没有正在进行的同 channel publication。
+Before entering `publishing` the platform confirms: the candidate is `approved`, the revision matches, all target platforms are `ready`, and no publication for the same channel is in progress. Returns `202` and `publicationId`. Official YAML generation, upload and release API calls belong to that publication; on failure it returns `publish_failed_retryable` and never falls back to rebuilding.
 
-返回 `202` 和 `publicationId`。正式 YAML 的生成、上传、release API 调用均属于该 publication；失败时返回 `publish_failed_retryable`，不得回退为重新构建。
-
-### 4.7 查询和重试
+### 4.7 Query and retry
 
 ```http
 GET  /v1/release-candidates/{candidateId}
@@ -247,11 +229,11 @@ GET  /v1/release-candidates/{candidateId}/events
 POST /v1/release-candidates/{candidateId}/retry
 ```
 
-`retry` 只允许针对 `build_failed` 或 `publish_failed_retryable`，并且必须产生新的 attempt，不修改已有 artifact digest。
+`retry` is allowed only for `build_failed` or `publish_failed_retryable`, must produce a new attempt, and never changes existing artifact digests.
 
-## 5. 错误契约
+## 5. Error Contract
 
-所有 4xx/5xx 返回：
+Every 4xx/5xx returns:
 
 ```json
 {
@@ -265,23 +247,11 @@ POST /v1/release-candidates/{candidateId}/retry
 }
 ```
 
-最低错误码：
+Minimum error codes: `INVALID_SCHEMA`, `CANDIDATE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `IDEMPOTENCY_CONFLICT`, `ARTIFACT_NOT_FOUND`, `ARTIFACT_DIGEST_MISMATCH`, `UPDATE_METADATA_MISMATCH`, `NOTES_REVISION_MISMATCH`, `APPROVAL_REQUIRED`, `PUBLICATION_IN_PROGRESS`, `PUBLISH_FAILED_RETRYABLE`.
 
-- `INVALID_SCHEMA`
-- `CANDIDATE_NOT_FOUND`
-- `INVALID_STATE_TRANSITION`
-- `IDEMPOTENCY_CONFLICT`
-- `ARTIFACT_NOT_FOUND`
-- `ARTIFACT_DIGEST_MISMATCH`
-- `UPDATE_METADATA_MISMATCH`
-- `NOTES_REVISION_MISMATCH`
-- `APPROVAL_REQUIRED`
-- `PUBLICATION_IN_PROGRESS`
-- `PUBLISH_FAILED_RETRYABLE`
+## 6. Event Contract
 
-## 6. 事件契约
-
-平台对外发送 CloudEvents 1.0 风格事件，事件只表达状态变化，不携带大文件：
+The platform emits CloudEvents 1.0 style events. Events express state changes only and carry no large files:
 
 ```json
 {
@@ -300,37 +270,30 @@ POST /v1/release-candidates/{candidateId}/retry
 }
 ```
 
-最低事件类型：
+Minimum event types: `zcode.release.candidate.created.v1`, `zcode.release.build.state_changed.v1`, `zcode.release.notes.approval_changed.v1`, `zcode.release.publication.state_changed.v1`. Consumers deduplicate by `id` and treat the query API as the final source of truth.
 
-- `zcode.release.candidate.created.v1`
-- `zcode.release.build.state_changed.v1`
-- `zcode.release.notes.approval_changed.v1`
-- `zcode.release.publication.state_changed.v1`
+## 7. Authentication and Security
 
-事件消费者必须按 `id` 去重，并以查询 API 为最终事实来源。
+- Workers use OIDC workload identity or short-lived service tokens; long-lived OSS keys are not put in GitLab variables.
+- API scopes distinguish at least `candidate:create`, `build:complete`, `notes:submit`, `publish:create`, `release:promote`.
+- Presigned upload URLs have an expiry, a candidate prefix and a single-object limit.
+- The platform server recomputes/reads object digests; a digest submitted by the worker alone is not trusted.
+- Before publishing, keep a full audit record: initiator, approver, candidateId, notes revision, publicationId, object digests.
 
-## 7. 鉴权与安全
+## 8. Migration Boundary
 
-- worker 使用 OIDC workload identity 或短期 service token；不把 OSS 长期密钥写入 GitLab variables。
-- API scope 至少区分 `candidate:create`、`build:complete`、`notes:submit`、`publish:create`、`release:promote`。
-- 预签名上传 URL 必须有过期时间、candidate 前缀和单对象限制。
-- 平台服务端重新计算/读取对象 digest，不能信任 worker 只提交的摘要。
-- 发布前保留完整审计记录：发起人、审批人、candidateId、notes revision、publicationId、对象 digest。
+1. The existing GitLab worker generates the v1 manifest and uploads the shared directory as candidate objects.
+2. Introduce a platform adapter: `create candidate -> build complete -> notes submit -> publish`.
+3. The platform takes over approval and final YAML generation; z-code `release:approve` stays only as a compatibility path.
+4. The platform takes over OSS/CDN/release API credentials and gray/stable state.
+5. Delete z-code's internal official-publish scripts, keeping only the local manifest/YAML validation tools.
 
-## 8. 迁移边界
+## 9. Contract Acceptance Cases
 
-1. 先让现有 GitLab worker 生成 v1 manifest，并把共享目录上传为候选对象。
-2. 引入 platform adapter：`create candidate -> build complete -> notes submit -> publish`。
-3. 平台接管审批和最终 YAML 生成；z-code 的 `release:approve` 只保留兼容路径。
-4. 平台接管 OSS/CDN/release API 凭据和 gray/stable 状态。
-5. 删除 z-code 内部的正式发布脚本，仅保留本地 manifest/YAML 校验工具。
-
-## 9. 契约验收用例
-
-- 同一 `Idempotency-Key` 重试不会创建第二个 candidate/build/publication。
-- manifest 中任意 artifact digest 错误时，build 不进入 `ready`。
-- notes revision 与 candidate 不匹配时，审批和发布都返回 `NOTES_REVISION_MISMATCH`。
-- 未审批 candidate 调用 publish 返回 `APPROVAL_REQUIRED`，不写正式对象。
-- publish 失败后 retry 不重新构建，且 artifact digest 不变。
-- 事件重复投递不会造成重复状态迁移。
-- worker token 不能调用 `release:promote`。
+- Retrying the same `Idempotency-Key` never creates a second candidate/build/publication.
+- Any wrong artifact digest in the manifest keeps the build out of `ready`.
+- A notes revision that does not match the candidate makes both approval and publish return `NOTES_REVISION_MISMATCH`.
+- Publish on an unapproved candidate returns `APPROVAL_REQUIRED` and writes no official object.
+- Retry after a publish failure does not rebuild and keeps artifact digests unchanged.
+- Duplicate event delivery causes no duplicate state transition.
+- A worker token cannot call `release:promote`.

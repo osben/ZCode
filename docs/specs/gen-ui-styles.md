@@ -1,83 +1,41 @@
-# Gen UI 统一样式
+# Gen UI Unified Styles
 
-## 目标与边界
+## Goal and Scope
 
-以 DESIGN.md 为目标规范，App 原生组件为尺寸和状态参照。仅修改 Gen UI 的
-主题投影和 visualize 基础资源；不修改 App 原生组件或第三方 MCP App 标准投影。
-既有片段类名继续可用，独立 HTML 导出与内联共用基础 CSS。
+DESIGN.md is the target spec; App native components are the reference for sizes and states. Only the Gen UI theme projection and the visualize base assets change; App native components and third-party MCP App standard projection are untouched. Existing fragment class names keep working, and standalone HTML export shares the base CSS with inline rendering.
 
-## 样式契约
+## Style Contract
 
-- 正文、按钮、表单使用宿主正文档位；h1/h2/h3–h6 使用正文 +4/+2/+0；
-  辅助文字 -2，tooltip -1，行内代码 -2。图表作者标签可保留内容可读性下限。
-- 圆角使用独立 sm/md/lg/xl token（默认 4/6/8/12px），不按比例推导。
-  card/widget 从 xl 开始，嵌套逐级 lg/md/sm；普通 wrapper 不增加层级。
-  控件在 xl 或无圆角父容器中用 lg，在 lg 中用 md，在 md/sm 中用 sm。
-- card 使用 card/card-border；控件 primary 使用 App primary，链接和图表 accent
-  独立保留品牌色。普通按钮选中使用 selected 表面，不改成品牌色。
-- btn 默认为 outline；primary/secondary/ghost 分别使用对应语义颜色。
-  默认最小高 28px，xs/sm/lg 最小高为 20/24/32px；disabled opacity 为 0.5。
-  尺寸变体使用紧凑行高 1，高度允许随字号及内容增长；文字边界必须留在按钮
-  内部，不能以固定高度裁掉放大后的文字。回归覆盖 14/18px 字号、相邻按钮
-  边界及可见焦点轮廓。
-- 普通 input/select 高 36px；紧凑 sm/xs 为 28/24px。使用 input 背景、
-  input-border/hover/focused 和 focused 背景，placeholder 使用三级前景。
-  Textarea 最小 64px、padding 8px，保留原生垂直调整能力。
-- Checkbox 16px、支持 checked/indeterminate；Switch 32×18px、thumb 16px。
-  半选 hover 保持 primary 背景和对比标记，不套用未选中 hover。
-  独立导出缺少宿主 focused token 时使用 ring 边框，保证焦点区别于 hover。
-  Range 保留现有原生行为和几何，统一颜色及 disabled；不引入新的 Slider 实现。
-- 保留键盘可见焦点、原生 select 展开行为、coarse-pointer 的 44px 目标和
-  editable field 最小 16px 防缩放规则。菜单完全同构不在本次范围。
+- Body text, buttons and forms use the host body size. h1/h2/h3–h6 use body +4/+2/+0; helper text -2, tooltip -1, inline code -2. Chart author labels may keep a readability floor.
+- Radius uses independent sm/md/lg/xl tokens (default 4/6/8/12px), not derived by ratio. card/widget start at xl and nested ones step down lg/md/sm; plain wrappers add no level. Controls use lg inside xl or radius-less parents, md inside lg, sm inside md/sm.
+- card uses card/card-border. Control primary uses App primary; links and chart accent keep the brand color independently. A selected plain button uses the selected surface, not the brand color.
+- btn defaults to outline; primary/secondary/ghost use their semantic colors. Default min-height 28px; xs/sm/lg 20/24/32px; disabled opacity 0.5. Size variants use compact line-height 1 and height may grow with font size and content; text must stay inside the button and never be clipped by a fixed height. Regression covers 14/18px font sizes, adjacent button boundaries and a visible focus outline.
+- Plain input/select are 36px high; compact sm/xs 28/24px. Use input background, input-border/hover/focused and focused background; placeholder uses the tertiary foreground. Textarea min-height 64px, padding 8px, native vertical resize kept.
+- Checkbox 16px with checked/indeterminate; Switch 32×18px, thumb 16px. Indeterminate hover keeps the primary background and contrast mark rather than the unchecked hover. Standalone export without the host focused token uses a ring border so focus differs from hover. Range keeps native behavior and geometry with unified color and disabled state; no new Slider implementation.
+- Keep visible keyboard focus, native select expansion, 44px coarse-pointer targets and the 16px minimum for editable fields (anti-zoom). Fully isomorphic menus are out of scope.
 
-## 唯一来源与主题同步
+## Single Source and Theme Sync
 
 ```text
-App styles.css → Gen UI 专用变量映射 → 既有 HostContext → guest 根 CSS 变量
+App styles.css → Gen UI variable mapping → existing HostContext → guest root CSS variables
                                                    ↓
-                                      visualize.css → 作者 HTML 控件
-独立导出：同一 visualize.css → light/dark 默认值
+                                      visualize.css → author HTML controls
+Standalone export: same visualize.css → light/dark defaults
 ```
 
-字号/圆角使用 MCP 标准变量；专用颜色使用 `zcode/genUiStyles` HostContext 扩展，
-由 shared schema 验证为 Gen UI CSS 变量键和字符串值。SDK 的标准变量对象为严格
-枚举，不允许向其中塞入自定义键。新增变量仅位于 Gen UI 投影。主题/字体切换复用现有
-根属性观察和 HostContext 路径，不增加缓存、timer 或状态来源。不修改尺寸协议、
-沙箱注册、workspace identity、desktop continuous 或手机 replayable 链路；
-手机当前无 Gen UI sandbox 时保留不支持状态，窄屏与触摸规则在内容层继续有效。
+Font size and radius use the MCP standard variables. Dedicated colors use the `zcode/genUiStyles` HostContext extension, validated by the shared schema as Gen UI CSS variable keys with string values. The SDK's standard variable object is a strict enum; no custom keys go into it. New variables live only in the Gen UI projection. Theme/font switches reuse the existing root attribute observation and HostContext path; no cache, timer or extra state source. Size protocol, sandbox registration, workspace identity, desktop continuous and mobile replayable paths are unchanged. Mobile without a Gen UI sandbox keeps the unsupported state; narrow-screen and touch rules still apply in content.
 
-## 验证
+## Expanded Preview
 
-### 展开预览的圆角裁切
+1. Loading state shows a spinning loading icon (hidden from assistive tech) and the text "正在加载…" (English: Loading…) in text-ui-base. Offline and error states show no loading icon.
+2. The expanded toolbar shows the existing DialogTitle on the left when the content has a title; a missing title is for accessibility only and does not show "交互视图" (Interactive view). The title is single-line ellipsis with a full `title`, keeps the Dialog `aria-labelledby` link, and right-side action buttons stay reachable. App native components and the inline toolbar are unchanged.
+3. Expanded content is a top-layer popover, so the outer Dialog's overflow-hidden cannot clip it. The Gen UI preview anchor inherits the Dialog's left/right/bottom radii via the existing host layer, which syncs radius and applies its own overflow-hidden. The top meets the toolbar and stays square; with the Tweak panel open the bottom meets the panel and stays square. Closing the panel restores the bottom radius without rebuilding the webview. App native Dialog and shared host layer are unchanged.
 
-加载态显示旋转 loading 图标和“正在加载…”（英文 Loading…），文字使用
-text-ui-base，图标对辅助技术隐藏。离线、错误等状态不显示加载图标。
-展开工具栏左侧显示现有 DialogTitle，有内容标题时显示，缺省标题仅供无障碍
-使用，不显示“交互视图”。标题单行省略并提供完整 title，保留 Dialog 的 aria-labelledby
-关联；右侧操作按钮保持可达，不修改 App 原生组件或内联工具栏。
+## Verification
 
-展开内容使用 top-layer popover，外层 Dialog 的 overflow-hidden 无法裁切它。
-Gen UI 预览锚点必须继承 Dialog 的左右下圆角，由既有承载层同步圆角并自行
-overflow-hidden；顶部与工具栏相接，保持直角。Tweak 面板显示时，内容底部
-与面板相接，也保持直角。关闭面板恢复底部圆角，不重建 webview。
-回归在真实 Electron 中检查承载层的四角、裁切及面板开关后的实例保留。
-App 原生 Dialog 和共享承载层行为不变。
+- Mapping unit tests: dedicated control tokens, full font-size/radius set, font changes, missing-item fallback; standard MCP projection unchanged.
+- Real Electron regression: light/dark themes, 390/1100px, computed style after font change; nested wrappers do not change radius levels; button variants, input focus/hover/disabled, checkbox checked/indeterminate, switch, native select and textarea; standalone export default styles; host-layer four corners, clipping and instance retention across panel toggles.
+- Existing Gen UI E2E: expand/collapse, copy, interaction state, height measurement and scrolling still hold.
+- architecture, typecheck, lint, asset hash consistency and focused unit tests.
 
-- 映射单测：专用控件 token、完整字号/圆角、字体变化、缺项 fallback；标准 MCP
-  投影保持不变。
-- 真实 Electron 回归：深浅主题、390/1100px、字体变更后的 computed style；
-  嵌套 wrapper 不改变圆角层级；按钮变体、input focus/hover/disabled、checkbox
-  checked/indeterminate、switch、原生 select 与 textarea；独立导出默认样式。
-- 既有 Gen UI E2E 检查放大/收起、复制、交互状态、测高和滚动仍成立。
-- architecture、typecheck、lint、资源 hash 一致性与 focused unit tests。
-
-macOS 为本次运行环境，Windows/Linux 的原生 select 菜单外观仍由系统决定，
-需在对应平台补充视觉验收。
-
-## 本次验证证据
-
-主题/协议/装配/资源单测共 16 条；独立导出 vendor 测试 3 条。真实 Electron
-回归覆盖上述主题、字号、宽度及控件状态；焦点样式通过活动 iframe 的 CDP
-强制伪类验证，触摸样式通过独立导出 iframe 的触摸模拟验证，不等于真机验收。
-现有放大、复制、测高、状态保留和离线导出回归沿用同一测试运行。
-不包含 Windows/Linux 实机、手机 Web Gen UI 支持或登录账户生产验证。
+Evidence: 16 theme/protocol/assembly/asset unit tests and 3 standalone-export vendor tests; focus styles verified via CDP forced pseudo-classes in the active iframe and touch styles via touch emulation in the standalone export iframe, not real devices. Limitations: verified on macOS only; native select menu appearance on Windows/Linux is system-decided and needs visual acceptance on those platforms; no Windows/Linux machines, mobile Web Gen UI support or signed-in production validation.

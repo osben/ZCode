@@ -1,14 +1,10 @@
 # Gen UI vendor assets
 
-## Поведение
+## Behavior
 
-Vendored-файлы Gen UI являются фиксированным снимком: их байты должны оставаться
-неизменными при checkout на любой поддерживаемой ОС. SHA-256 каждого файла
-проверяется по `assets/vendor/manifest.json` до копирования в runtime assets.
-Git не должен автоматически преобразовывать окончания строк в этом каталоге.
+Gen UI vendored files are a fixed snapshot: their bytes stay unchanged on checkout on any supported OS. The SHA-256 of each file is checked against `assets/vendor/manifest.json` before copying into runtime assets. Git must not convert line endings in this directory.
 
-## Приёмка
+## Acceptance
 
-- Windows checkout сохраняет исходные байты файлов `assets/vendor/`.
-- Проверка хешей в `packages/desktop/scripts/gen-ui-runtime-assets.mjs` проходит
-  для vendored-файлов без изменения manifest.
+- A Windows checkout preserves the original bytes of `assets/vendor/` files.
+- The hash check in `packages/desktop/scripts/gen-ui-runtime-assets.mjs` passes for the vendored files without changing the manifest.
