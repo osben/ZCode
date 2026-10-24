@@ -1,126 +1,136 @@
-# Todo 126：GLM 视觉标展示、Flash PDF 与 Coding Plan API Turbo 默认配置
+# Todo 126: GLM Vision Badge, Flash PDF and Coding Plan API Turbo Defaults
 
-> 状态：2026-09-11 按整批 Goal 授权实施，局部验证/review 通过；整批最终验收待执行，未发布线上配置。
+> Status (2026-09-11): implemented under the whole-batch Goal authorization; local verification/review passed; whole-batch
+> final acceptance was pending; online config not published.
 >
-> 日期：2026-09-11
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-126-glm-flash-pdf-and-coding-plan-turbo-defaults.md`
 
-## 2026-09-12 补充：普通 API 的 Turbo 默认禁用
+## 2026-09-12 Supplement: Turbo Disabled by Default on Ordinary APIs
 
-用户要求 Z.AI API / BigModel API 的 Turbo 默认禁用。当前 `GLM-5-Turbo` 已为 false，补齐 `zai-standard-api`、`bigmodel-standard-api` 的 `GLM-5V-Turbo` 精确模板规则为 false，并递增 Built-in revision。仅改变默认启停，不删除模型、不改变能力或个人覆盖；不改 Coding Plan、Account 或第三方。复用现有规则解析，无 UI、协议和迁移改动，不自动发布在线配置。
+The user asked for Z.AI API / BigModel API Turbo to be disabled by default. `GLM-5-Turbo` was already false; the exact
+template rules `GLM-5V-Turbo` of `zai-standard-api` and `bigmodel-standard-api` are added as false and the Built-in
+revision incremented. Only the default enable state changes: no model deleted, no capability or personal override change,
+nothing for Coding Plan, Account or third parties. Existing rule resolution is reused with no UI, protocol or migration
+change; online config is not published.
 
-验证：用真实 Built-in Source 检查两模板的两个 Turbo 均关闭、5.3/Flash 仍开启、个人显式开启仍优先，以及无模板第三方默认不变。
+Verification: real Built-in Source shows both Turbo models off on both templates, 5.3/Flash still on, a personal explicit
+enable still wins, and third parties without templates keep their defaults. Result: revision 22 -> 23, only two
+`GLM-5V-Turbo.enabled` entries changed; the new cases first reproduced both defaults as true, and after the fix config /
+integrity / Release 34 items pass; typecheck passes, lint 0 errors / 42 existing warnings, architecture 0 violations. No UI
+or execution code change, no extra interaction E2E, nothing pushed or published.
 
-实施结果：revision 22→23，仅修改两处 `GLM-5V-Turbo.enabled`。新增用例先复现两处默认 true，修复后配置/完整性/Release 共 34 项通过；typecheck 通过、lint 0 errors / 42 既有 warnings、架构 0 violations。未改 UI/执行代码，无额外交互 E2E；未推送或发布在线配置。
+## 1. Background and Final Rulings
 
-## 1. 背景与最终裁决
+While checking model settings the user raised Flash PDF, the GLM vision badge and the plan Turbo defaults. They were
+reproduced through the real Built-in Node Source / rule resolution, not just JSON reading:
 
-用户检查模型设置时提出 Flash PDF、GLM 视觉标与套餐 Turbo 默认值问题。已通过当前内置配置的真实 Node Source／规则解析复现，而非仅阅读 JSON：
+- GLM-5.3-Flash image and video are on in the general model rule, but PDF was on only in the Anthropic Messages
+  model+API rule and false under Chat Completions and Responses.
+- The `zai-api` and `bigmodel-api` Coding Plan API templates had no default-off rule for GLM-5-Turbo; existing instances or
+  a manually added model inherited the general `enabled: true`.
+- GLM-4.7's general rule turns vision off and the official plan site's all-model vision rule turns it on; **the user
+  confirmed this behavior is fine and it is unchanged.**
+- GLM-5.3's general rule turns vision off and the official plan endpoint turns it on. Latest user confirmation: Coding Plan
+  GLM-5.3 image input comes from a server-side bridge, not native model vision; the difference from Flash is that only
+  Flash has native vision. So **a hardcoded frontend display exception is allowed: hide the vision badge for Coding Plan
+  GLM-5.3 in the model settings page and model selection menu, with the underlying capability config unchanged.** This
+  replaces the earlier "no hardcoded vision badge" constraint.
 
-- GLM-5.3-Flash 图片、视频已在通用模型规则中开启，但 PDF 只在 Anthropic Messages 的模型＋API 规则中开启，Chat Completions 与 Responses 下为 false。
-- `zai-api`、`bigmodel-api` 两个 Coding Plan API 模板没有 GLM-5-Turbo 默认关闭规则。已有实例保留或手动添加该模型时，继承通用 `enabled: true`。
-- GLM-4.7 通用规则关闭视觉，官方套餐站点的全模型视觉规则再将其开启。**用户确认这个行为没问题，不改。**
-- GLM-5.3 通用规则关闭视觉，官方套餐端点开启。用户最新确认：Coding Plan GLM-5.3 的图片输入能力来自服务端桥接，不代表模型原生视觉；这里 GLM-5.3 与 Flash 的区别是目前只有 Flash 有原生视觉。因此**允许前端硬编码展示例外，在模型设置页和模型选择菜单隐藏 Coding Plan GLM-5.3 的视觉标，底层能力配置保持不变**。此裁决替代此前“不硬编码视觉标”的约束。
+Nothing else (other model capabilities, defaults or UI) is changed.
 
-本 Todo 包含下面三项已确认修改，不能顺手改变其他模型能力、默认值或 UI。
+## 2. GLM-5.3-Flash: PDF On by Default for All Access
 
-## 2. GLM-5.3-Flash：所有接入默认开启 PDF
-
-修改 `config/provider/zcode-builtin.json`：
-
-1. 在现有 GLM-5.3-Flash 通用 `modelRules` 成员的 `config.properties.inputFormat` 中增加 `supportsPdf: true`，与已有图片、视频能力并列。
-2. 删除现有 `modelApiRules` 中仅负责为 GLM-5.3-Flash 的 `anthropic-messages` 开启 PDF 的专用规则，不保留重复声明。
-3. 沿用现有 Flash 模型匹配表达式及大小写／前后缀规则，不重新设计模型别名匹配。
-
-修改后的含义：
+In `config/provider/zcode-builtin.json`: add `supportsPdf: true` to `config.properties.inputFormat` of the existing
+GLM-5.3-Flash general `modelRules` member (alongside image and video); delete the `modelApiRules` rule that only enabled
+PDF for GLM-5.3-Flash under `anthropic-messages` (no duplicate declaration); keep the existing Flash match expression and
+case/prefix/suffix rules.
 
 ```text
-GLM-5.3-Flash 通用模型规则
-  supportsImage: true
-  supportsVideo: true
-  supportsPdf: true
-          |
-  官方及第三方接入、三种现有 API 格式共用
+GLM-5.3-Flash general model rule: supportsImage / supportsVideo / supportsPdf true -> shared by official and third-party access, all three API formats
 ```
 
-- 用户明确要求包含第三方；不新增端点白名单，不局限某个模板。
-- 覆盖 Anthropic Messages、OpenAI Chat Completions、OpenAI Responses 三种现有 API 格式。
-- 不扩大到普通 GLM-5.3、GLM-4.7 或其他型号；不修改图片、视频及其他能力。
-- 个人显式配置仍按现有覆盖规则优先，不能清除用户手动关闭 PDF 的设置或强制重置手动配置。
-- 本次调整推荐能力声明，不授权改造 PDF 附件编码、读取限制或 Adapter。
+Third parties are explicitly included (no endpoint allowlist, no template restriction); covers Anthropic Messages, OpenAI
+Chat Completions and OpenAI Responses; no extension to ordinary GLM-5.3, GLM-4.7 or other models; no change to image,
+video or other capabilities. A personal explicit config still wins by existing override rules (a user's manual PDF off or
+manual config mode is not cleared). This adjusts the recommended capability declaration and does not authorize reworking
+PDF attachment encoding, read limits or the Adapter.
 
-## 3. Coding Plan API：GLM-5-Turbo 默认关闭
+## 3. Coding Plan API: GLM-5-Turbo Default Off
 
-在同一文件的 `templateModelRules` 中，为两个模板各增加一条精确规则：
+Add one exact rule per template in `templateModelRules` of the same file:
 
 ```typescript
-{
-  templateId: "zai-api",
-  modelId: "GLM-5-Turbo",
-  config: { enabled: false },
-}
-{
-  templateId: "bigmodel-api",
-  modelId: "GLM-5-Turbo",
-  config: { enabled: false },
-}
+{ templateId: "zai-api", modelId: "GLM-5-Turbo", config: { enabled: false } }
+{ templateId: "bigmodel-api", modelId: "GLM-5-Turbo", config: { enabled: false } }
 ```
 
-- 对应 Z.AI Coding Plan API、BigModel Coding Plan API 两个手动 Key 模板。
-- 只改变默认值，不从模型名单删除或向名单新增模型，不修改模型 ID，不禁止用户手动开启。
-- 个人显式启用或禁用仍按现有优先级生效；不迁移、不删除个人覆盖。
-- 不改变账号登录的个人、团队、Start、闲时 Provider；不改变普通 API 模板或第三方接入的默认值。
-- 不把模板默认关闭扩大为通用 Turbo 关闭规则，也不改 Account 精确规则。
+For the Z.AI Coding Plan API and BigModel Coding Plan API manual-Key templates. Only the default changes (no model removed
+from or added to the list, no model ID change, user can still enable it manually); personal explicit enable/disable keeps
+its priority and nothing is migrated or deleted; account-login personal/team/Start/off-peak Providers, ordinary API
+templates and third-party defaults are unchanged; not widened into a generic Turbo-off rule and no Account exact-rule change.
 
-## 4. Coding Plan GLM-5.3：隐藏视觉标
+## 4. Coding Plan GLM-5.3: Hide the Vision Badge
 
-> 2026-09-12 补充裁决：[Todo137](todo-137-start-plan-glm53-vision-badge.md) 将体验套餐 Start Plan 纳入相同展示范围，下文保留原实施范围。
+> 2026-09-12 supplement: [Todo137](todo-137-start-plan-glm53-vision-badge.md) adds the Start Plan to the same display
+> scope; the original scope is kept below.
 
-- 产品背景：服务端桥接允许 GLM-5.3 处理图片，但模型不是原生视觉；本次仅纠正徽标传达的含义，不撤销已有图片使用能力。
-- 展示范围：模型设置页的模型列表，以及模型选择菜单中对应模型的视觉标。检查共用选择器的入口，不能只修设置页或只修主聊天框；桌面与手机 Web 展示保持一致。
-- Provider 范围：Z.ai／BigModel 的个人、团队 Coding Plan 账号连接，以及手动 Coding Plan API Key 供应商。
-- 只匹配上述范围内的 GLM-5.3；GLM-5.3-Flash 保留视觉标，其他供应商和模型不受影响。
-- 按产品要求做前端展示特例，两个页面复用同一展示判断，不改通用能力事实；不要把 `supportsImage` 改为 false，也不要为了隐藏标识过滤整个模型。
-- 图片上传、输入格式配置、附件支持、服务端桥接及实际模型请求全部保持原样。不新增能力 Schema、协议字段或数据迁移，不借此重构原生能力与桥接能力体系。
+- Background: the server bridge lets GLM-5.3 process images but the model is not natively vision; this only corrects what
+  the badge conveys and does not revoke existing image use.
+- Display scope: the model list of the model settings page and the vision badge of the corresponding model in the model
+  selection menu; the shared selector entries are checked (not only settings or only the main chat box); desktop and phone
+  Web stay consistent.
+- Provider scope: Z.ai / BigModel personal and team Coding Plan account connections, and manual Coding Plan API Key
+  Providers. Only GLM-5.3 in that scope matches; GLM-5.3-Flash keeps the badge; other Providers/models are unaffected.
+- A frontend display exception as required: both pages reuse one display judgment; the general capability fact is not
+  changed (do not set `supportsImage` false and do not filter out the whole model to hide the badge). Image upload, input
+  format config, attachment support, the server bridge and actual model requests stay as-is; no capability schema,
+  protocol field or data migration, and no restructuring of the native vs bridge capability system.
 
-## 5. 发布与实施边界
+## 5. Release and Implementation Boundary
 
 ```text
-内置模型 / API / 站点 / 模板规则
-                 |
-           现有个人覆盖规则
-                 |
-          同一 Resolver 解析
-                 |
-         现有 UI 和执行链读取
+built-in model / API / site / template rules -> existing personal override -> same Resolver -> existing UI and execution chain read it
 ```
 
-- 完成第 2、3 节的内置配置修改后递增 builtin `revision`，沿用现有发布与刷新机制；实施时核对最新 revision，不写死本次排查时的版本号。第 4 节纯前端展示修改本身不需要递增 builtin revision。
-- 不改 `schemaVersion`、Schema、协议、文件布局、数据表或迁移流程。
-- 不修改 GLM-4.7 视觉及官方套餐的全模型视觉站点规则；GLM-5.3 仅允许第 4 节定义的视觉标展示特例，不改其实际能力。
-- 不实施 [Todo125](./todo-125-model-settings-help-copy.md) 的问号和文案，不改模型设置布局。
-- 不自动发布线上配置或推送代码；本次授权仅记录待办。
+After the section 2/3 built-in config changes, increment the builtin `revision` (check the latest revision at
+implementation; do not hardcode the survey-time value) through the existing release and refresh mechanism; the section 4
+frontend display change needs no revision bump. No change to `schemaVersion`, schema, protocol, file layout, tables or
+migration. GLM-4.7 vision and the official plan all-model vision site rule are unchanged; GLM-5.3 gets only the section 4
+badge display exception, not an actual capability change. The [Todo125](./todo-125-model-settings-help-copy.md) question
+marks and copy and the settings layout are not implemented here. No automatic publish of online config or push.
 
-## 6. 实施与验收
+## 6. Verification (all done)
 
-授权实施后，遵循仓库测试先行与架构门禁要求。优先复用 `packages/provider-node/test/` 下已有 builtin 完整性、别名、模板及个人覆盖测试。
+Following test-first and the architecture gates, reusing the builtin integrity, alias, template and personal-override tests
+under `packages/provider-node/test/`: failing cases first (Flash PDF default true for non-Anthropic formats; Turbo default
+false for both plan API templates); real builtin loading and resolution (official/third-party, three API formats, existing
+case and prefix/suffix Flash aliases all give PDF=true while ordinary GLM-5.3 and GLM-4.7 are not widened); personal
+explicit PDF=false still wins and manual config mode is not reset by recommendation updates; Turbo default false on both
+plan templates and still enableable by a personal explicit enable with other models, ordinary API, third parties and
+Account personal/team/Start/off-peak defaults unchanged; GLM-4.7's site vision result and GLM-5.3's actual capability
+config unchanged; display cases (personal/team accounts and manual Coding Plan API Key GLM-5.3 show no vision badge in the
+settings page and selection menu, Flash still shows it, other Providers/models not hit); image input and capability
+editing still work from the original config with browser verification of both display entries (desktop/phone layout,
+themes, i18n; a single component passing is not written as all-end acceptance); stale test expectations and revision
+assertions updated with related regressions, `pnpm typecheck`, `pnpm lint`, architecture check and E2E upkeep batched by
+risk; honest results and unverified scope (rule resolution passing is not a real model endpoint accepting PDF nor all UI
+and platforms verified).
 
-- [ ] 先建立失败用例：Flash 非 Anthropic 格式的 PDF 默认应为 true；两个套餐 API 模板的 Turbo 默认应为 false。
-- [ ] 实际加载 builtin 并解析：官方／第三方、三种 API 格式、现有大小写与前后缀 Flash 别名均得到 PDF=true；普通 GLM-5.3、GLM-4.7 不被扩大。
-- [ ] 验证个人显式 PDF=false 仍优先；手动配置模式不被推荐更新重置。
-- [ ] 两个 Coding Plan API 模板 Turbo 默认 false，个人显式开启后仍可启用；其他模型、普通 API、第三方及 Account 个人／团队／Start／闲时默认行为不变。
-- [ ] GLM-4.7 原有站点视觉结果、GLM-5.3 原有实际能力配置保持不变。
-- [ ] 先补展示用例：个人／团队账号及手动 Coding Plan API Key 的 GLM-5.3，在设置页和模型选择菜单均不显示视觉标；同入口的 Flash 仍显示，其他 Provider／模型不被误伤。
-- [ ] 验证图片输入和能力编辑仍按原配置工作，未因隐藏标识改变实际能力；补两个展示入口的浏览器验证，兼顾桌面／手机布局、主题及国际化，不把单个组件通过写成全端验收通过。
-- [ ] 更新受到最终配置影响的旧测试期望及 revision 断言，完成相关回归、`pnpm typecheck`、`pnpm lint`、架构检查；按仓库要求维护相关 E2E。按三项的风险批量验证，不为每个小改重复整套回归。
-- [ ] 如实记录执行结果及未验证范围。规则解析通过不等于真实模型端点已接受 PDF，也不等于已在所有 UI 和平台完成验证。
+## 7. Result
 
-## 7. 本次落盘结果
+All three implemented: builtin revision 20 -> 21, the Flash general PDF declaration replaces the Messages duplicate; two
+exact Turbo default-false rules for the manual plan templates; the UI shares `shouldShowModelVisionBadge`, wired into the
+settings card and every `buildRegistryModelSelectGroups` consumer entry.
 
-三项已实施：builtin revision 20→21，Flash 通用 PDF 声明替代 Messages 重复声明；两个手动套餐模板新增精确 Turbo 默认 false；UI 共享 shouldShowModelVisionBadge，设置卡片和所有 buildRegistryModelSelectGroups 消费入口均接入。
-
-### 实施证据与复审
-
-- 测试先红：非 Messages Flash PDF、套餐模板 Turbo 和三类套餐视觉标共 5 个失败；修复后 6 文件 96 项单测通过。真实 Node Built-in Source/有序规则覆盖三格式、官方/第三方、前后缀/大小写；正常个人覆盖与 manual-provider-model 都保持 PDF=false。普通 API Turbo 本来已默认 false，已纠正测试初稿的错误假设，没有把它改成 true。
-- 两个浏览器用例通过：390 中文浅色/1200 英文深色，每条均检查个人/团队账号/手动套餐 Key，设置页和真实 ModelConfigSelect 菜单同时隐藏 GLM-5.3 视觉、保留 Flash。底层 supportsImage 仍为 true；上传/编码/请求代码没有修改。截图 `/tmp/zcode-provider-settings-batch/vision-*.png`。
-- 根 typecheck、lint（0 errors / 41 warnings）、架构（0 violations）通过。与旧规则对照 review：GLM-4.7/GLM-5.3 能力及 Account 精确规则、名单均未改；模型选择项的 supportsVisionInput 仅供徽标消费，不参与附件执行校验。
-- 浏览器验证为隔离共享组件，不代表真实手机 Host/Electron 整链路；未请求真实 PDF 服务，未发布线上配置。中文字体限制沿用本批记录，整体终审仍需执行。
+- Tests first failed (5: non-Messages Flash PDF, plan-template Turbo, three kinds of plan vision badge); after the fix 6
+  files / 96 unit tests pass. The real Node Built-in Source / ordered rules cover three formats, official/third-party,
+  prefix/suffix/case; normal personal override and manual-provider-model keep PDF=false. Ordinary API Turbo was already
+  default false (the first test draft's wrong assumption was corrected, not changed to true).
+- Two browser cases pass (390 Chinese light / 1200 English dark), each checking personal/team account / manual plan Key:
+  settings page and the real ModelConfigSelect menu both hide the GLM-5.3 vision badge and keep Flash's; underlying
+  `supportsImage` is still true; upload/encoding/request code unchanged. Screenshots `/tmp/zcode-provider-settings-batch/vision-*.png`.
+- Root typecheck, lint (0 errors / 41 warnings) and architecture (0 violations) pass. Review against the old rules: GLM-4.7
+  / GLM-5.3 capability, Account exact rules and lists unchanged; the selection item's `supportsVisionInput` serves only the
+  badge and takes no part in attachment execution validation.
+- The browser verification is isolated shared components, not real phone Host/Electron whole-chain; no real PDF service
+  request; no online config published. Chinese font limits follow the batch record; overall final review still needed.

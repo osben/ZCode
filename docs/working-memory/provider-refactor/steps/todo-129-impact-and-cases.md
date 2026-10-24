@@ -1,35 +1,45 @@
-# Todo129 实施边界与验收
+# Todo129 Implementation Boundary and Acceptance
 
-旧版对照固定 `790884b1ce`，本轮起点 `b2e2b31ea3`。
+Old-version baseline fixed at `790884b1ce`; this round's starting point `b2e2b31ea3`.
 
-## 已核实的旧口径
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-129-impact-and-cases.md`
 
-- 旧 modelSelectionGroups / providerFamilyRuntimeModel：Team 连接使用同一家 `builtin:*-coding-plan` 模型身份，连接 key 不作为 model_provider。个人与团队恢复同一个旧统计桶。
-- legacyPersonalProviderConfigImporter 将旧 `builtin:zai/bigmodel` 写为固定 `zai-api/bigmodel-api` 实例；只映射这两个精确 ID，不按 templateId 将 UUID 实例归桶。
-- 旧 offPeakTelemetry 固定 `offpeak-idle-plan`；两家新闲时身份都恢复该值。
-- 保留事件编码：发送 custom 编码，实际请求一般为 provider/model，自动化与闲时为纯 model ID。
+## Verified Old Conventions
 
-## 影响面
+- Old modelSelectionGroups / providerFamilyRuntimeModel: a Team connection uses the same family's `builtin:*-coding-plan`
+  model identity and the connection key is not the model_provider; personal and team restore to the same old statistics bucket.
+- legacyPersonalProviderConfigImporter writes old `builtin:zai/bigmodel` as the fixed `zai-api/bigmodel-api` instances;
+  only those two exact IDs map and UUID instances are not bucketed by templateId.
+- Old offPeakTelemetry is fixed `offpeak-idle-plan`; both families' new off-peak identities restore to that value.
+- Event encoding is kept: send uses custom encoding, the actual request is generally provider/model, and automation and
+  off-peak use the plain model ID.
 
-使用 feature-boundary-planner；Codegraph 不可用，采用图中 telemetry / off-peak / purchase-funnel 节点、精确引用搜索和旧代码对照。改变展示归类、首页准入和事件构造，不改事实生产、同步或持久化。
+## Impact
+
+Used feature-boundary-planner; Codegraph unavailable, so the graph's telemetry / off-peak / purchase-funnel nodes, exact
+reference search and old-code comparison were used. It changes display classification, home-page admission and event
+construction, not fact production, sync or persistence.
 
 ```text
-Registry Settings View → 套餐分类 → 首页闲时入口 / 购买漏斗
-实际提交 / 请求事实   → 事件字段构造 → 旧统计 ID → 原有上报渠道
-                          ↑
-                纯映射，不查询或修改账号
+Registry Settings View -> plan classification -> home off-peak entry / purchase funnel
+actual submission / request facts -> event field construction -> old statistics ID -> existing reporting channel
+  (pure mapping, no account query or modification)
 ```
 
-纯映射供事件构造复用，不放全局 transport；事实仍为真实 ID。Step/Completion 映射最终归因（包括子任务和 seed），不改生命周期、usage 或去重。Web 平台 no-op、桌面 continuous、手机 replayable 均不改。报告经测试平台捕获，不向生产采集端发送。
+The pure mapping is reused by event construction (not a global transport); facts stay the real IDs. Step/Completion
+mapping attributes finally (including subtasks and seeds) without changing lifecycle, usage or dedup. Web no-op, desktop
+continuous and phone replayable are unchanged. Reports are captured by the test platform and never sent to the production
+collector.
 
-## 验收矩阵
+## Acceptance Matrix
 
-| 组   | 必须成立                                                                                          |
-| ---- | ------------------------------------------------------------------------------------------------- |
-| 身份 | 个人/Team/Start/闲时两家对称；旧值不变；UUID/未知不猜；模型斜杠冒号百分号不变                     |
-| 事件 | send、请求 step/completion、子任务、压缩、自动化、闲时实际 builder/报告负载符合旧值，其他字段不变 |
-| 套餐 | Team-only entitled=true 属 Coding Plan；false 不算；Start 独立；空 view unknown；开关不是退订     |
-| 漏斗 | BigModel Team 为 MaaS / bigmodel，Z.ai 为 Z_AI / z.ai；上下文冻结、升级单次上报不变               |
-| 首页 | Team-only 可进入创建；灰度关闭、dismiss、明确无 Coding Plan 仍阻止；不绕过表单资格                |
+| Group    | Must hold                                                                                                                           |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Identity | personal/Team/Start/off-peak symmetric for both families; old values unchanged; UUID/unknown not guessed; slash/colon/percent in model unchanged |
+| Event    | send, request step/completion, subtask, compaction, automation and off-peak actual builder/report payloads match old values, other fields unchanged |
+| Plan     | Team-only entitled=true belongs to Coding Plan; false does not count; Start independent; empty view unknown; a switch is not an unsubscription |
+| Funnel   | BigModel Team is MaaS / bigmodel, Z.ai is Z_AI / z.ai; context freeze and one-shot upgrade reporting unchanged                     |
+| Home     | Team-only can enter creation; grayscale off, dismiss and explicitly no Coding Plan still block; the form eligibility is not bypassed |
 
-不测试购买真实扣款、不改报表或历史统计。真实 Electron 合批验证单独记入账本，组件测试不冒充整机验证。
+No real-charge purchase tests and no report or historical statistics changes. Real Electron batch verification is recorded
+separately in the ledger and component tests do not stand in for whole-machine verification.

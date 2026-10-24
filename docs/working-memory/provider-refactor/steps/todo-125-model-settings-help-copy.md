@@ -1,45 +1,46 @@
 # Todo125: Model Settings Help Popovers and Finalized Copy
 
-> In progress on 2026-09-11: write the Chinese and English locale strings verbatim according to section 3; reuse the existing Popover for the nine help entries. Smart-configuration placement follows Todo131; do not add a help icon to the ID.
-
-> Later layout decision (2026-09-11): [Todo131](todo-131-model-settings-smart-config-placement-and-restore.md) moves smart configuration and its question mark to the right of the Model ID container, superseding this document's “remains at the bottom” placement constraint. Help copy and question-mark interaction do not change; no question mark was added to Model ID. Todo131 is pending and does not mean the UI has moved.
-
-> Status: product implementation, focused verification, and review complete; final acceptance of the entire Goal batch remained pending. Implementation was authorized on 2026-09-11.
+> Status: product implementation, focused verification and review complete (implementation authorized 2026-09-11); final
+> acceptance of the entire Goal batch was pending. Smart-configuration placement follows
+> [Todo131](todo-131-model-settings-smart-config-placement-and-restore.md), which moves smart configuration and its
+> question mark to the right of the Model ID container (superseding the "remains at the bottom" constraint here); help
+> copy and question-mark interaction are unchanged and Model ID gets no question mark. Todo131 was pending and does not
+> mean the UI had moved.
 >
-> Date: 2026-09-11
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-125-model-settings-help-copy.md`
 
 ## 1. Background and Implementation Constraints
 
-The user wanted explanations for smart configuration and individual settings in the model-settings page. The existing “Smart configuration” text used a native `title`, which was easy to miss and whose appearance timing was browser-controlled. This Todo adds an explicit question-mark entry for help.
+The model-settings page needed explanations for smart configuration and individual settings. The existing "Smart
+configuration" text used a native `title` (easy to miss, browser-controlled timing). This Todo adds an explicit
+question-mark entry for help.
 
-**Implement the final decisions from this round of item-by-item discussion exactly. Do not improvise, make incidental changes, or redesign. Section 3 is the finalized Chinese copy and must be used verbatim; do not polish it, add/remove warnings, examples, or technical details.** Translate the English version with the same meaning; do not expand promises or restrictions. If the copy conflicts with actual behavior, provide specific evidence and discuss it with the user first; do not silently change copy or business behavior to remove the conflict.
+**Implement the final decisions exactly; section 3 is the finalized Chinese copy and is used verbatim (no polishing, no
+added/removed warnings, examples or technical details).** The English translation keeps the same meaning without expanding
+promises or restrictions. If copy conflicts with actual behavior, give specific evidence and discuss with the user first;
+never silently change copy or behavior.
 
-- Add only the question marks and help popovers. Keep the existing layout, field headings, options, and grouping; smart configuration remains at the existing bottom position.
-- Do not change config values, defaults, smart/manual modes, overlays/inheritance, save/cancel behavior, model capabilities, or model-selection behavior.
-- Do not change schemas, protocols, persistence files, database tables, built-in recommended configuration, refresh, or distribution mechanisms. Copy describes existing features and does not authorize rebuilding them.
-- Do not add confirmation dialogs, extra post-switch warnings, tutorials, examples, links, or other unapproved product elements.
-- The explicit decisions in this Todo supersede earlier sketches and suggestions in the conversation. Discuss out-of-scope needs first; do not use this task to fix unrelated issues.
+- Add only the question marks and help popovers; keep the existing layout, field headings, options and grouping.
+- No change to config values, defaults, smart/manual modes, overlays/inheritance, save/cancel, model capabilities or model
+  selection; no change to schemas, protocols, persistence files, database tables, built-in recommended configuration,
+  refresh or distribution; copy describes existing features.
+- No confirmation dialogs, extra post-switch warnings, tutorials, examples, links or other unapproved elements; out-of-scope
+  needs are discussed first.
 
-## 2. Confirmed Placement and Interaction
+## 2. Placement and Interaction
 
-- Add a question-mark icon after each field or group heading listed in section 3, except Model ID. The `ⓘ` in this document marks where the help entry goes; use a question-mark icon in the UI.
-- When a heading has multiple options beneath it, use one question mark after the heading and explain each option in the same help content; do not add repeated question marks beside individual options.
-- Do not add a question mark or help description to Model ID.
-- On desktop, show the help immediately on pointer hover; do not use the delayed native `title` tooltip. On mobile, show it when the question mark is tapped.
-- Support keyboard focus to view help. Clicking the question mark only opens the help; it must not toggle the adjacent switch/option or submit the form.
-- Use existing design-system and component styles. Support desktop, mobile Web, Chinese/English, and light/dark themes. Do not move existing controls or redesign the form layout.
-- Replace the existing smart-configuration `title` with the new help entry so two different copies are not shown at once.
+- A question-mark icon follows each field or group heading listed in section 3, except Model ID (`ⓘ` marks the position).
+  A heading with several options below it gets one question mark whose content explains each option; no repeated marks per option.
+- No question mark or help description for Model ID.
+- Desktop: shown immediately on pointer hover (not the delayed native `title`); mobile: shown on tap; keyboard focus also
+  shows it. Clicking the mark only opens the help; it must not toggle the adjacent switch/option or submit the form.
+- Existing design-system and component styles; desktop, mobile Web, Chinese/English, light/dark; no moving of controls or
+  form redesign. The existing smart-configuration `title` is replaced by the help entry so two copies never show at once.
 
 ```text
-Existing field/group heading + question mark
-                       |
-              hover / keyboard focus / mobile tap
-                       |
-                show that heading's help
-                       |
-       affects help visibility only; does not change the config draft
-
-At the bottom of the form: existing smart-configuration toggle + existing text + question mark
+existing field/group heading + question mark -> hover / keyboard focus / mobile tap -> that heading's help
+  (affects help visibility only; the config draft is unchanged)
+bottom of the form: existing smart-configuration toggle + existing text + question mark
 ```
 
 ## 3. Final Copy (Use Verbatim in Chinese; English Translation Must Match)
@@ -99,41 +100,46 @@ No question mark.
 
 ## 4. Withdrawn or Clarified Suggestions (Do Not Reintroduce)
 
-- Do not move the smart-configuration toggle; the earlier sketch showing it at the top was corrected.
-- Model ID is the explicit exception to “add a question mark to every heading.”
-- Do not mention file-size, page-count, or other attachment limits under Input Types; do not add clarifications such as “these are ZCode's limits.”
-- Reasoning levels remain ordered low to high. The user explicitly confirmed that the earlier “high to low” wording was a slip; do not reverse display, storage, or highest-level selection logic.
-- Do not say that reasoning-level “names and quantity are customizable.” Do not add examples, conversion diagrams, or extra interface requirements to reasoning parameter mapping.
-- Do not mechanically add “Do not exceed...” or similar warnings to every help item. Keep only the specific sentences approved in section 3.
-- Use “model” consistently, not “model service.” Use Base URL and API format wording consistent with Settings for smart configuration.
-- Do not promise “always the most accurate” or add behavior explanations about disabling/re-enabling smart configuration; this task does not change that behavior.
-- Do not add audio, tool-call, or other options that are not on the current page.
+- The smart-configuration toggle is not moved to the top (an earlier sketch was corrected); Model ID is the explicit
+  exception to "a question mark on every heading".
+- No file-size, page-count or other attachment limits under Input Types and no "these are ZCode's limits" clarifications.
+- Reasoning levels stay ordered low to high (the earlier "high to low" was a slip); display, storage and highest-level
+  selection logic are not reversed. No "names and quantity are customizable" for reasoning levels and no examples,
+  conversion diagrams or extra interface requirements for reasoning parameter mapping.
+- No mechanical "Do not exceed..." on every item (only the sentences approved in section 3); "model" is used consistently,
+  not "model service"; smart configuration uses wording consistent with Settings for Base URL and API format.
+- No promise of "always the most accurate" and no behavior explanation about disabling/re-enabling smart configuration; no
+  audio, tool-call or other options not on the current page.
 
 ## 5. Implementation Entry Points and Acceptance
 
-Use these files as references, verifying the latest baseline when implementing:
+Entries (verify the latest baseline): `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialog.tsx`
+(form headings and footer), `ProviderModelMetadataDialogActions.tsx` (smart-configuration copy and old `title`),
+`ProviderModelSettingsGroups.tsx` (reasoning and advanced settings), `packages/ui/src/ControlHintTooltip.tsx` and existing
+Tooltip/Popover components (reuse; do not change other tooltips globally), `packages/ui/src/i18n/locales/zh-CN.ts`,
+`en-US.ts`. Read `DESIGN.md` first and follow spec-first, test-first and architecture-gate rules.
 
-- `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialog.tsx`: form headings and footer layout.
-- `packages/ui/src/settings/model-provider-section/ProviderModelMetadataDialogActions.tsx`: smart-configuration copy and existing `title`.
-- `packages/ui/src/settings/model-provider-section/ProviderModelSettingsGroups.tsx`: reasoning settings and advanced settings.
-- `packages/ui/src/ControlHintTooltip.tsx` and existing Tooltip/Popover components: reuse current style and components; do not globally change other tooltip behavior.
-- `packages/ui/src/i18n/locales/zh-CN.ts`, `en-US.ts`: finalized copy and equivalent English translation.
+Acceptance: Chinese copy matches section 3 verbatim and English has no omission or added meaning; Model ID has no help
+entry and each of the other nine headings has exactly one (no repeated marks per option, smart-configuration position
+unchanged); E2E verifies immediate desktop hover, keyboard access and mobile tap, popovers close and switching between help
+entries works without duplicate native tooltips; clicking help triggers no toggle, draft change or save and existing form
+edit/save/cancel is unchanged; light/dark, Chinese/English, desktop and mobile sizes show the full text without clipping
+in the dialog scroll area or overflowing the viewport; affected checks, `pnpm typecheck`, `pnpm lint` and relevant E2E
+recorded honestly (unrun is not passing).
 
-After implementation is authorized, read `DESIGN.md` first and follow repository spec-first, test-first, and architecture-gate rules. This Todo is the implementation specification for this item in Working Memory.
+## 6. Delivered Result
 
-- [ ] Check Chinese copy in section 3 verbatim; English has no omissions or added meaning.
-- [ ] Model ID has no help entry; each of the other nine headings has exactly one. Do not repeat question marks for options within a group; smart-configuration position is unchanged.
-- [ ] E2E verifies immediate desktop hover, keyboard access, and mobile tap; popovers close and switching between help entries works without duplicate native tooltips.
-- [ ] Clicking help does not trigger a toggle, modify the draft, or save; existing form edit/save/cancel behavior is unchanged.
-- [ ] Light/dark themes, Chinese/English, desktop, and mobile sizes all show the full text without clipping in the dialog scroll area or overflowing the viewport.
-- [ ] Complete affected checks, `pnpm typecheck`, `pnpm lint`, and the relevant E2E. Record results honestly; unrun checks are not passing.
+Nine question marks (excluding Model ID) were implemented, smart-configuration placement following Todo131. Existing
+Popover/Button and locale files were reused, rendering only the finalized copy with bold, inline code and lists; HTML and
+user input are not accepted. Chinese copy was unit-tested verbatim and English reviewed for equivalent meaning; the old
+native `title` copy was removed. Real Hook/component browser checks verified desktop hover, keyboard focus, mobile tap,
+Escape-to-close and switching help entries; each popover fits the viewport and modifies no draft or settings; 390px Chinese
+light / 1200px English dark passed. Linux lacked Chinese glyph fonts, so **Chinese glyph rendering was not visually
+verified**. No new model capability, config or execution logic; shared-host/message flow unchanged. Root typecheck, lint
+(0 errors / 41 warnings), architecture check (0 violations) and 60 related unit tests passed. Browser interaction was not
+real mobile Host integration; final batch/device limits are in the execution ledger.
 
-## 6. Delivered Result for This Item
-
-Implemented nine question marks, excluding Model ID; smart-configuration placement follows Todo131. Reused existing Popover/Button and locale files, rendering only finalized copy with bolding, inline code, and lists. HTML and user input are not accepted. The Chinese copy was unit-tested verbatim and English was reviewed for equivalent meaning; the old native `title` copy was removed.
-
-Real Hook/component browser checks verified desktop hover, keyboard focus, mobile tap, Escape-to-close, and switching help entries. Each popover was checked to fit in the viewport and not modify a draft or write settings. 390px Chinese light / 1200px English dark passed. Linux lacked Chinese glyph fonts, so **Chinese glyph rendering was not visually verified**. No new model capabilities, config, or execution logic were added; shared-host/message flow is unchanged. Root typecheck, lint (0 errors/41 warnings), architecture check (0 violations), and 60 related unit tests passed. Browser interaction was not real mobile Host integration; final batch/device limits remain in the execution ledger.
-
-# Final Associated Regression Addition
-
-The help button must not be nested inside an input field's label. Associate the heading with the input using `htmlFor`/ID and make the help button a separate control on the same row, so it does not replace the input label or focus target. A group heading for multiple reasoning levels is not a label for one input. This correction does not change help copy, state, or save behavior.
+Final associated regression: the help button must not be nested inside an input's label. The heading is associated with the
+input by `htmlFor`/ID and the help button is a separate control on the same row, so it does not replace the input label or
+focus target; a group heading for multiple reasoning levels is not a label for one input. Help copy, state and save
+behavior are unchanged.

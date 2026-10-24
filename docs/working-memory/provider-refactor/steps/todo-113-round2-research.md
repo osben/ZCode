@@ -1,66 +1,81 @@
-# Todo113 第二轮：官方事实与实施裁决
+# Todo113 Round 2: Official Facts and Implementation Rulings
 
-核对日：2026-09-11。实施基线 revision 21（包含 Todo126），不是最初调查的 revision 19。本轮由用户批量授权执行；第一轮结果不作为第二轮的验收替代。
+Checked 2026-09-11. Implementation baseline revision 21 (includes Todo126), not the revision 19 of the first survey. Run
+under the user's batch authorization; Round 1 results are not a substitute for Round 2 acceptance.
 
-## 结论与范围
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-113-round2-research.md`
 
-按原厂规格补通用配置，聚合网关的容量、协议差异放站点规则；不修改个人配置、历史选择或运行中 Model。原厂退役只移除该模板成员及精确默认规则，保留旧型号通用匹配供个人和第三方使用。新增补漏成员默认关闭，保持现有主力及排序；不因目录补齐改变用户默认选择。
+## Conclusion and Scope
 
-| 型号                     | 官方事实 → 当前缺口 → 实施                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GPT-5.4 / Pro            | 1,050,000 context / 128,000 output；基础版 none/low/medium/high/xhigh，Pro 仅 medium/high/xhigh，原厂 Pro 仅 Responses。[1] 当前落未知配置；分别补原厂、聚合前缀及快照规则，原厂与 OpenRouter 补四款，Zen 原有四款保持关闭。图片/PDF、工具及 Schema 支持沿用对应 API；不扩到其他 5.x 或图像生成变体                                                             |
-| GPT-5.4 Mini / Nano      | 各 400,000 / 128,000；none/low/medium/high/xhigh，图片输入、文本输出。[2] 分别补规则，不能继承基础版容量                                                                                                                                                                                                                                                        |
-| DeepSeek V4.1 Flash      | 原厂 `deepseek-flash`，1M/384K、视觉、可关闭及 low/high/max；原厂旧 V4 Flash 退役别名路由，新公告明确 V4 Pro 继续服务。[3] 原厂保留 Flash/Pro、移除旧 Flash 目录。OpenRouter `deepseek/deepseek-v4.1-flash` 为 1,048,576/384,000，必须用站点覆盖容量，并用其统一 reasoning/结构化输出协议；不改第三方旧 V4 Flash                                                |
-| Qwen3.7 Max              | 北京/国际均提供，1,000,000/131,072，混合思考。默认 ID 等价 2026-05-20，**纯文本**；2026-06-08 快照才增加图片/视频。[4] 补目录、通用规则及精确视觉快照，不把全族改成视觉                                                                                                                                                                                         |
-| Qwen3.7 Plus / Flash     | 均 1,000,000/131,072，文本/图片/视频、混合思考；Plus 支持严格 Schema；Flash 的“结构化输出”不能直接等于 Chat JSON Schema。[5] 分别补配置；OpenRouter Flash 当前输出上限为 65,536，Plus 当前不宣告视频，因此加网关限定而非改原厂能力                                                                                                                              |
-| Qwen3.6 Plus / Flash     | 均 1,000,000/65,536，文本/图片/视频、混合思考；思维链上限不是 maxOutputTokens，不能将 81,920/131,072 填进输出上限。[6] 补北京/国际目录与协议映射；Chat 严格 Schema 不默认打开                                                                                                                                                                                   |
-| Qwen3.8 Omni Flash       | 官方型号页搜索索引列 65,536/16,384，文本/图片/音频/视频输入，仅文本输出，none/minimal/low/medium/high/xhigh/max，无搜索/Schema；北京、新加坡列有配额。[7] 当前页面直接打开重定向旧 Omni 指南，且 Messages 支持未证实。先补可证实的通用及 Chat/Responses 配置和国际 Chat 模板；北京模板默认 Messages，**不为了补目录改整个 Provider 协议**，其目录加入暂挂待确认 |
-| Kimi K2.7 Code Highspeed | 官方明确与普通 Code 是同一个模型，256K，输出加速。Code 不允许关闭 thinking，现有 disabled/enabled 值域错误。[8] 原厂新增高速版（关闭），Code 共用值域收紧为 enabled，K2.6 不变；沿用既有 98,304 输出上限，官方当前 quickstart 仅给默认 32K，未把默认值当硬上限                                                                                                  |
-| Kimi / MiMo 下线         | K2.5 和 moonshot-v1 全系于 8/31 下线；MiMo v2-pro/omni/flash 于 6/30 下线。[9] 仅移除原厂目录及配套精确规则；K3 短别名无明确退役证据，保持原默认关闭                                                                                                                                                                                                            |
-| MiMo UltraSpeed          | 9/8 公告顶部明确内测结束、商业版待开放，下方旧试用文字不作为开放证据。[10] 不新增；原通用 Pro 后缀配置不删除                                                                                                                                                                                                                                                    |
+General config follows vendor specs; aggregator-gateway capacity and protocol differences go in site rules; personal
+config, history selections and running Models are untouched. A vendor retirement removes only that template member and its
+exact default rule, keeping the old model's generic matching for personal and third-party use. Newly filled members are
+disabled by default; mainstream models and their order are kept; a catalog gap fill does not change the user's default selection.
 
-## 聚合逐型号核对
+| Model                    | Official fact -> current gap -> implementation                                                                                                                                                                                                                                                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GPT-5.4 / Pro            | 1,050,000 context / 128,000 output; base none/low/medium/high/xhigh, Pro only medium/high/xhigh, vendor Pro Responses-only [1]. Previously unknown config; add vendor, aggregator-prefix and snapshot rules; vendor and OpenRouter get all four, Zen's existing four stay disabled. Image/PDF, tools and Schema follow the corresponding API; no extension to other 5.x or image-generation variants |
+| GPT-5.4 Mini / Nano      | 400,000 / 128,000 each; none/low/medium/high/xhigh, image input, text output [2]. Separate rules; they must not inherit the base capacity                                                                                                                                                                                                                                |
+| DeepSeek V4.1 Flash      | vendor `deepseek-flash`, 1M/384K, vision, can be turned off, low/high/max; the old vendor V4 Flash is a retired alias route and the new notice states V4 Pro keeps serving [3]. Vendor keeps Flash/Pro and drops the old Flash catalog entry. OpenRouter `deepseek/deepseek-v4.1-flash` is 1,048,576/384,000, so a site override sets capacity and its unified reasoning/structured-output protocol is used; third-party old V4 Flash unchanged |
+| Qwen3.7 Max              | Beijing and international, 1,000,000/131,072, hybrid thinking. The default ID equals the 2026-05-20 snapshot and is **text-only**; the 2026-06-08 snapshot adds image/video [4]. Add catalog, generic rule and exact vision snapshot rules; do not make the whole family vision                                                                                            |
+| Qwen3.7 Plus / Flash     | both 1,000,000/131,072, text/image/video, hybrid thinking; Plus supports strict Schema; Flash's "structured output" does not equal Chat JSON Schema [5]. Separate configs; OpenRouter Flash currently caps output at 65,536 and Plus currently does not advertise video, so gateway-scoped rules rather than changing vendor capability                                      |
+| Qwen3.6 Plus / Flash     | both 1,000,000/65,536, text/image/video, hybrid thinking; the thinking-chain limit is not maxOutputTokens (81,920/131,072 must not become the output cap) [6]. Add Beijing/international catalog and protocol mapping; Chat strict Schema not on by default                                                                                                                  |
+| Qwen3.8 Omni Flash       | the model page search index lists 65,536/16,384, text/image/audio/video input, text-only output, none/minimal/low/medium/high/xhigh/max, no search/Schema; Beijing and Singapore list quotas [7]. The page currently redirects to the old Omni guide and Messages support is unproven. Add verifiable generic and Chat/Responses config and the international Chat template; the Beijing template defaults to Messages and **the Provider protocol is not changed just to add the catalog entry**, so its catalog entry is pending confirmation |
+| Kimi K2.7 Code Highspeed | officially the same model as ordinary Code, 256K, faster output. Code does not allow turning thinking off, so the existing disabled/enabled value range is wrong [8]. Add the vendor high-speed member (disabled), narrow the shared Code value range to enabled, K2.6 unchanged; keep the existing 98,304 output cap (the current quickstart gives only a 32K default, which is not taken as a hard cap) |
+| Kimi / MiMo retirement   | K2.5 and the whole moonshot-v1 line retired 8/31; MiMo v2-pro/omni/flash retired 6/30 [9]. Remove only the vendor catalog entries and paired exact rules; the K3 short alias has no explicit retirement evidence and stays default-disabled                                                                                                                              |
+| MiMo UltraSpeed          | the 9/8 announcement says at the top that the beta ended and the commercial version is pending; the old trial text below is not availability evidence [10]. Not added; the existing generic Pro-suffix config is not deleted                                                                                                                                                |
 
-实际读取 OpenRouter `/api/v1/models` 和 Zen `/zen/v1/models`（均 HTTP 200），同时核对 Zen 端点文档。[11] API 列表证明供给，不证明任意 Key 有权限。
+## Aggregator Check per Model
 
-| 新增/复核对象                          | OpenRouter                                                           | OpenCode Zen                                                                                | 百炼第三方                                                                                                                                                                    |
-| -------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GPT-5.4 四款                           | `openai/gpt-5.4{,-pro,-mini,-nano}` 全部列出；Messages/Chat 网关转换 | 四款已列，Responses                                                                         | 未确认，不猜                                                                                                                                                                  |
-| GPT-6 Astra / Fable5.1                 | `openai/gpt-6-astra`、`anthropic/claude-fable-5.1` 均列出            | 原 ID 均列，分别 Responses / Messages                                                       | 未确认                                                                                                                                                                        |
-| DS V4.1 Flash                          | `deepseek/deepseek-v4.1-flash` 已列                                  | 本次接口及文档未列，不猜 ID                                                                 | 未确认新 Flash，旧 V4 Pro/Flash 不是新版供给证据                                                                                                                              |
-| Qwen3.7 Max/Plus/Flash、3.6 Plus/Flash | 五个 `qwen/` ID 全部列出，保留原成员                                 | API 当前仅列 3.6 Plus；现有 3.7 Max/Plus 没有明确退役证据，保留原关闭成员、不据单次缺失删除 | 原厂双地域核实后补                                                                                                                                                            |
-| Qwen3.8 Omni                           | 未列                                                                 | 未列                                                                                        | 原厂见上，Messages 待确认                                                                                                                                                     |
-| Kimi Code Highspeed                    | 未列                                                                 | 未列                                                                                        | 官方列 `kimi/kimi-k2.7-code-highspeed`，但指南只证实 Chat、图片仅公网 URL，当前北京默认 Messages 且本地附件是 Base64；不把“有型号”写成当前模板已可完整执行，保留适配限制 [12] |
-| MiMo UltraSpeed                        | 未列                                                                 | 未列                                                                                        | 未确认                                                                                                                                                                        |
-| Qwen3.8 Max 快照                       | 列 `qwen/qwen3.8-max-0902`，原无日期 ID 本次未列                     | 未列                                                                                        | 原厂 0902/2026-09-02 别名规则已覆盖；不批量罗列快照。OR 补已核实快照（关闭），原成员无退役证据不删                                                                            |
+OpenRouter `/api/v1/models` and Zen `/zen/v1/models` were actually read (both HTTP 200) and the Zen endpoint docs checked
+[11]. An API listing proves supply, not that any Key has permission.
 
-## 其他主力及边界复审
+| Model / check                          | OpenRouter                                                            | OpenCode Zen                                                                                    | Bailian third-party                                                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GPT-5.4 four models                    | `openai/gpt-5.4{,-pro,-mini,-nano}` all listed; Messages/Chat gateway conversion | all four listed, Responses                                                                 | unconfirmed, not guessed                                                                                                                                             |
+| GPT-6 Astra / Fable 5.1                | `openai/gpt-6-astra`, `anthropic/claude-fable-5.1` both listed        | original IDs both listed, Responses / Messages respectively                                     | unconfirmed                                                                                                                                                          |
+| DS V4.1 Flash                          | `deepseek/deepseek-v4.1-flash` listed                                 | not listed in this API/docs, ID not guessed                                                     | new Flash unconfirmed; old V4 Pro/Flash is not evidence of new-version supply                                                                                        |
+| Qwen3.7 Max/Plus/Flash, 3.6 Plus/Flash | all five `qwen/` IDs listed, existing members kept                    | API lists only 3.6 Plus now; existing 3.7 Max/Plus have no explicit retirement evidence, so the disabled members stay (not deleted for one absence) | added after vendor verification in both regions                                                                                                                      |
+| Qwen3.8 Omni                           | not listed                                                            | not listed                                                                                      | vendor as above, Messages pending                                                                                                                                    |
+| Kimi Code Highspeed                    | not listed                                                            | not listed                                                                                      | officially lists `kimi/kimi-k2.7-code-highspeed`, but the guide only confirms Chat, images only as public URL; the Beijing template defaults to Messages and local attachments are Base64; "model exists" is not written as fully executable in the current template (adaptation limit kept) [12] |
+| MiMo UltraSpeed                        | not listed                                                            | not listed                                                                                      | unconfirmed                                                                                                                                                          |
+| Qwen3.8 Max snapshot                   | lists `qwen/qwen3.8-max-0902`; the undated ID was not listed this time | not listed                                                                                      | vendor 0902/2026-09-02 alias rules already cover it; snapshots are not batch-listed. OR adds the verified snapshot (disabled); the original member has no retirement evidence and is not deleted |
 
-- Fable5.1 官方仍是 1M/128K、始终 Adaptive、low/medium/high/xhigh/max；原厂与两聚合已列，第一轮规则及工具约束继续验证。[13]
-- GPT6 Astra 原厂仍 1,050,000/128,000；工具使用以 Responses 为准，现有原厂/Zen 模板均为 Responses。OpenRouter 的 Messages 是其转换服务，不据原厂限制关掉网关。[14]
-- MiniMax 官方主力仍 M3，xAI 仍 Grok4.6；未找到需新增的同期稳定文本型号，不扩大到音视频生成产品。[15]
-- GLM 四手动模板及账号目录保留 Todo126 的 Flash PDF、GLM5.3 桥接标签及 Turbo 默认裁决；不动账号名单。
-- 新目录不保证旧已保存非法档位继续执行；也不迁移或清空这些选择。容量展示不应以执行校验是否通过为前提，沿用 Todo123。
-- OpenRouter Qwen3.8 Max 0902 提供 minimal/low/medium/high/xhigh，3.6 Plus/Flash 明确支持 Schema；仅站点覆盖，不扩到原厂。发现的 GPT6 Astra Pro 聚合变体涉及 reasoning.mode 的独立语义，本轮不以现有 Astra effort 配置冒充已适配；留待独立确认，不扩大本轮候选。
+## Other Mainstream Models and Boundary Review
+
+- Fable 5.1 is still 1M/128K, always Adaptive, low/medium/high/xhigh/max; vendor and both aggregators list it; the
+  Round 1 rules and tool constraints keep being verified [13].
+- GPT-6 Astra is still 1,050,000/128,000; tool use follows Responses and the existing vendor/Zen templates are Responses.
+  OpenRouter's Messages is its conversion service, and the gateway is not turned off by vendor limits [14].
+- MiniMax mainstream is still M3 and xAI Grok 4.6; no stable same-period text model to add was found; no extension to
+  audio/video generation products [15].
+- The four GLM manual templates and the account catalog keep Todo126's Flash PDF, GLM-5.3 bridge label and Turbo default
+  rulings; the account list is untouched.
+- The new catalog does not guarantee that previously saved invalid levels keep executing, and does not migrate or clear
+  those selections; capacity display does not depend on execution validation passing (Todo123).
+- OpenRouter Qwen3.8 Max 0902 offers minimal/low/medium/high/xhigh and 3.6 Plus/Flash explicitly support Schema, as site
+  overrides only, not extended to the vendor. The GPT-6 Astra Pro aggregator variant involves the separate semantics of
+  `reasoning.mode`; the existing Astra effort config is not passed off as adapted, left for independent confirmation.
 
 ```text
-官方/聚合事实 → Built-in Model / API / Site / 模板默认
-                         ↓
-                  Personal 优先合并
-                         ↓
-             共享 Registry → 所有选模入口
-                         ↓
-                新执行对象读取新配置
-                既有执行对象保持冻结
+official/aggregator facts -> Built-in Model / API / Site / template defaults -> Personal-first merge
+  -> shared Registry -> all selectors -> new execution objects read the new config; existing execution objects stay frozen
 ```
 
-## 实施验收
+## Implementation Acceptance
 
-SDK 区分性测试发现既有漏接：OpenAI Compatible 的 `supportsStructuredOutputs` 未装配，默认 false，导致配置已允许 Schema 的请求被 SDK 降为 JSON object。本轮最小修复：将 Model 的 `supportsJsonSchemaOutput` 在 bind 时冻结并传入 SDK factory；不新增 Provider 特判或协议字段。测试覆盖支持/不支持、原有 Model 冻结及新 Model 配置生效。
+SDK discriminating tests found an existing missed wiring: the OpenAI Compatible `supportsStructuredOutputs` was not
+assembled and defaulted to false, so requests whose config allows Schema were downgraded by the SDK to JSON object. The
+minimal fix freezes the Model's `supportsJsonSchemaOutput` at bind time and passes it to the SDK factory, with no Provider
+special case or protocol field. Tests cover supported/unsupported, existing Model freezing and new-Model config taking
+effect.
 
-先增加缺漏复现测试；配置修改后验证每个新增型号的完整解析、别名/邻近负例、网关差异、精确默认成员及 Personal 优先；真实 SDK 捕获三协议请求中的推理/上限/工具/媒体。最终文件 revision 22，重新跑发布完整性门禁。真实付费端点无凭据的部分不声称通过；桌面/手机共享读取在整批验收记录。
+Gap-reproduction tests first; after the config edit verify each added model's full resolution, alias/neighbor negatives,
+gateway differences, exact default members and Personal priority; real SDK capture of three-protocol requests for
+reasoning / limit / tools / media. Final file revision 22 with the release-integrity gate rerun. Real paid endpoints
+without credentials are not claimed as passed; desktop/phone shared reading is recorded in the whole-batch acceptance.
 
-## 来源（全部官方，核对日同上）
+## Sources (all official, checked on the same day)
 
 [1]: https://developers.openai.com/api/docs/models/gpt-5.4
 [2]: https://developers.openai.com/api/docs/models/gpt-5.4-mini
@@ -78,4 +93,4 @@ SDK 区分性测试发现既有漏接：OpenAI Compatible 的 `supportsStructure
 [14]: https://developers.openai.com/api/docs/models/gpt-6-astra
 [15]: https://docs.x.ai/developers/models
 
-补充逐变体/协议来源：[GPT5.4 Pro](https://developers.openai.com/api/docs/models/gpt-5.4-pro)、[Nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano)、[Qwen3.7 Flash](https://help.aliyun.com/zh/model-studio/qwen3-7-flash)、[Qwen3.6 Flash](https://help.aliyun.com/zh/model-studio/qwen3-6-flash)、[思考模式](https://help.aliyun.com/zh/model-studio/deep-thinking)、[Chat Schema 支持清单](https://help.aliyun.com/en/model-studio/qwen-structured-output)、[Messages 扩展](https://help.aliyun.com/zh/model-studio/anthropic-api-messages)、[Responses](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses)、[Kimi 下线](https://platform.kimi.com/docs/models)、[MiniMax](https://platform.minimax.io/docs/guides/models-intro)、[OpenRouter 模型事实](https://openrouter.ai/api/v1/models)、[OpenRouter Messages](https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-messages)、[OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)。
+Supplementary per-variant / protocol sources: [GPT5.4 Pro](https://developers.openai.com/api/docs/models/gpt-5.4-pro), [Nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano), [Qwen3.7 Flash](https://help.aliyun.com/zh/model-studio/qwen3-7-flash), [Qwen3.6 Flash](https://help.aliyun.com/zh/model-studio/qwen3-6-flash), [Thinking mode](https://help.aliyun.com/zh/model-studio/deep-thinking), [Chat Schema support list](https://help.aliyun.com/en/model-studio/qwen-structured-output), [Messages extension](https://help.aliyun.com/zh/model-studio/anthropic-api-messages), [Responses](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-responses), [Kimi retirement](https://platform.kimi.com/docs/models), [MiniMax](https://platform.minimax.io/docs/guides/models-intro), [OpenRouter model facts](https://openrouter.ai/api/v1/models), [OpenRouter Messages](https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-messages), [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).

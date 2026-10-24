@@ -1,84 +1,108 @@
-# Todo 110：Guide 同选择重新解析，但不触发切模 System 重建
+# Todo 110: Guide Re-resolves the Same Selection Without Triggering a Model-Switch System Rebuild
 
-> 状态：实现、真实 Runtime 请求验证与逐项复审完成；新增桌面 GS/P06 未实跑。2026-09-10。实施/测试证据、逐条边界复审及真实环境限制见 [本批交付复审](./provider-todos-105-113-delivery-review.md)。
+> Status: Completed (2026-09-10): implementation, real-Runtime request verification and per-item review; the new desktop
+> GS/P06 assertions have not been run. Evidence, boundary review and real-environment limits:
+> [delivery review](./provider-todos-105-113-delivery-review.md).
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-110-guide-selection-change-prefix-rebuild.md`
 
-## 目标与最高优先级裁决
+## Ruling
 
-区分两个事实：**执行 Model 重新解析**与**ModelSelection 发生变化**。
+Two facts are separated: **execution Model re-resolution** and **ModelSelection change**.
 
-- Guide 携带 ModelSelection 时，即使选择没有变化，也必须通过当前统一入口重新解析配置、校验并创建执行 Model；相同 Provider、模型和档位不代表配置没有更新。
-- 新解析出的 Model 用于后续请求；不能因为 Selection 相同就复用旧 Model、跳过配置解析，或继续使用旧的执行参数。
-- 只有 Selection 本身发生变化，才触发 Guide 的切模 System 前缀重建。不得把“返回了 Model”“新 Model 对象与旧对象不同”当成切换的判断条件。
-- 本轮只修上述触发条件，不修输出风格冻结问题，不重构 Provider、Selection、账号同步或 Guide 调度架构。
+1. When a Guide carries a ModelSelection, even an unchanged one must re-resolve configuration through the current unified
+   entry, validate it and create the execution Model; the same Provider, model and level do not mean the config is unchanged.
+2. The newly resolved Model serves later requests; an old Model, skipped config resolution or old execution parameters are
+   never reused just because the Selection is equal.
+3. Only a change of the Selection itself triggers the Guide's model-switch System prefix rebuild. "A Model was returned"
+   or "the new Model object differs from the old one" is not the switch condition.
+4. Out of scope: the output-style freeze problem, and any refactor of Provider, Selection, account sync or Guide scheduling.
 
-本文明确取代讨论中“相同选择复用旧 Model，不调用模型工厂”的初稿；不得按该初稿实施。
+This supersedes the draft "reuse the old Model for an equal selection and skip the model factory"; it must not be implemented.
 
-## 当前问题与相关入口
+## Problem and Entries
 
-- `apps/zcode-cli/packages/core/src/runtime/methods/turn-model.ts` 的 `applySubmissionExecutionState()` 收到 Selection 后会创建并返回 Model。已有选择比较只控制 Session 模型选择事件，不阻止返回 Model。
-- `apps/zcode-cli/packages/core/src/runtime/methods/turn-guide-drain.ts` 当前只判断 `if (guideModel)`，随即替换执行 Model 并调用 `rebuildContextPrefix()`；错误在于把获得 Model 与发生切换混为一谈。
-- `apps/zcode-cli/packages/core/src/runtime/methods/turn.ts` 的新 Turn / compact 路径也使用上述公共函数，不能为 Guide 修改公共行为而破坏这些调用。
-- Session 保存的选择与当前 Loop 已绑定的执行模型可能不同：Bot 等入口可以更新 Session。因此，Guide 是否改变本次执行选择，应对比当前 Loop 的实际 Model，而非仅对比可变 Session 值。
-
-## 预期链路
+- `apps/zcode-cli/packages/core/src/runtime/methods/turn-model.ts` `applySubmissionExecutionState()` creates and returns a
+  Model on receiving a Selection; the existing selection comparison only controls the Session model-selection event and
+  does not stop the Model from being returned.
+- `turn-guide-drain.ts` only checked `if (guideModel)` and then replaced the execution Model and called
+  `rebuildContextPrefix()`, conflating getting a Model with a switch.
+- `turn.ts` new-Turn / compact paths use the same public function, which must not break.
+- The Session-saved selection and the Loop's bound execution model may differ (Bot entries can update the Session), so
+  whether a Guide changes the execution selection is compared against the current Loop's actual Model, not the mutable Session value.
 
 ```text
-Guide 在既定的下一次 model-step 边界被消费
-  -> 正常追加 Guide 正文
-  -> 记录切换前的执行选择（来自当前 Loop Model）
-  -> 通过原有统一入口重新解析 / 校验 / 创建 Model
-  -> 更新后续请求使用的执行 Model
-  -> 比较 Guide 选择与切换前的执行选择
-       相同 -> 不触发切模 System 前缀重建
-       不同 -> 沿用现有切模 System 前缀重建
-  -> 正常完成输入归属、模式等其他 Guide 处理
-
-已经发出的模型请求 -> 继续使用原绑定，不被中途改写
+Guide consumed at the next model-step boundary -> append Guide body
+  -> record the pre-switch execution selection (from the current Loop Model)
+  -> re-resolve / validate / create Model via the existing unified entry -> later requests use the new Model
+  -> compare Guide selection with the pre-switch selection: same -> no switch System prefix rebuild; different -> existing rebuild
+  -> normal input ownership, mode and other Guide handling
+requests already sent keep their original binding
 ```
 
-## 实施要求
+## Rules
 
-1. 选择比较涵盖 `providerId`、`modelId`、`options.reasoningLevel`，遵循现有完整 Selection 契约；换 Provider、换模型、只换推理档位均算变化。不按显示名称、对象引用或整份模型配置比较。
-2. 在合适的现有边界分别表达解析所得 `model` 与 `selectionChanged`。可以通过小型返回结果或 Guide 局部计算实现；不要求为了一个布尔事实增加状态服务、缓存或重复持久化字段。
-3. `selectionChanged` 只控制本次切模专属前缀重建，不控制是否重新解析 Model。选择相同但配置更新时，后续实际请求必须使用新 Model 的配置。
-4. 不在公共应用函数开头用“选择相同”提前返回；不以旧 Model 作为 `preparedModel` 绕过本次解析。正常新 Turn 的模型创建及已有 prepared-model 用途不变。
-5. 保留 Session 选择提交、持久化及事件的既有语义；Session 变化事件与当前执行是否需要重建前缀不是同一判断，不能简单用同一个布尔值替换两者。常规 Session / 执行 / Guide 三者选择一致时，不产生虚假模型切换事件。
-6. Guide 的正文、模式更新、query / message 归属、工具限制合并、重复工具检测重置仍正常处理，不能因无需重建前缀而跳过。没有 Selection 的 Guide 沿用原行为。
-7. 真实换模型时继续使用现有工厂校验和切换边界，不偷偷替换为其他模型，不吞掉解析失败。执行级临时绑定、Off-Peak 和既有继承保护不变。
-8. 在修复处留中文注释，解释“配置重新解析不等于选择变化”。沿用统一 Model 下游消费机制，不新增第二套请求参数来源。
-9. 更新现有相关 spec / 功能图中“Guide 总是创建并重建模型上下文”的笼统表述，明确重新解析与前缀重建的不同条件；不修改整个上下文冻结契约。
+1. Selection comparison covers `providerId`, `modelId`, `options.reasoningLevel` per the full Selection contract; a change
+   of Provider, model or level alone counts. Not by display name, object reference or whole model config.
+2. `model` and `selectionChanged` are expressed separately at a suitable existing boundary (small return value or Guide-local
+   computation); no state service, cache or persisted field for one boolean.
+3. `selectionChanged` controls only the switch-specific prefix rebuild, not whether the Model is re-resolved. With the same
+   selection but updated config, later requests must use the new Model's config.
+4. No early return at the top of the public function for "same selection", and no old Model passed as `preparedModel`.
+   Normal new-Turn Model creation and existing prepared-model uses are unchanged.
+5. Session selection commit, persistence and events keep their semantics; the Session-change event and the "rebuild the
+   prefix" decision are different judgments and not replaced by one boolean. When Session / execution / Guide selections
+   agree, no false model-switch event is produced.
+6. Guide body, mode update, query / message ownership, tool-restriction merge and duplicate-tool detection reset are still
+   processed. A Guide without Selection keeps the original behavior.
+7. A real model change keeps using the factory validation and switch boundary, never silently swaps models or swallows
+   resolution failures. Execution-scope temporary binding, Off-Peak and existing inheritance protection are unchanged.
+8. A short comment at the fix explains "config re-resolution does not mean selection change". The unified Model downstream
+   consumption is kept; no second request-parameter source.
+9. Specs / feature graph wording "Guide always creates and rebuilds the model context" is updated to state the different
+   conditions for re-resolution and prefix rebuild; the overall context freeze contract is untouched.
 
-## 明确不做
+## Not Done
 
-- 不修真正切模时，前缀构造器读取最新 output style、而 reminder 仍使用本轮冻结样式的第二个问题。此问题独立保留，不以本 Todo 完成宣称已解决。
-- 不通过删除 reminder、提前更新 reminder 或刷新全部冻结配置来掩盖上述第二个问题。
-- 不改变 Guide admission、FIFO、提交 / 保存时机、桌面 continuous 与手机 replayable 链路，不新增发送前同步屏障。
-- 不顺带修改数据库迁移、Bot 命令、Provider 配置规则或其他辅助调用策略。
+- The second problem (on a real switch the prefix builder reads the latest output style while the reminder still uses
+  the turn's frozen style) stays independent and is not claimed as solved; no deleting/pre-updating of the reminder or
+  refreshing of all frozen config to mask it.
+- No change to Guide admission, FIFO, commit/save timing, desktop continuous / phone replayable chains, no new pre-send
+  sync barrier; no database migration, Bot command, Provider config rule or other auxiliary call policy change.
 
-## 测试与验收
+## Acceptance (all done; tests first, per-batch targeted runs)
 
-先补测试，再实现；按整批组织定向回归和复审，不为每个小项重复全量回归或 Pro 验证。
+- Same full Selection, unchanged config: factory still called, later requests use the re-resolved Model; System not
+  rebuilt; Guide body enters the request.
+- Same full Selection, changed config (observable, e.g. legal output limit change): later actual requests use the new
+  config while the System prefix does not change from switch logic (not just factory-call or object-comparison asserts).
+- Same Selection plus run-mode change: mode applied, prefix not rebuilt; input ownership and other Guide state kept.
+- Provider, model and level each changed: original real switch behavior, new Model used, prefix rebuilt per existing rules.
+- Consecutive Guides A->B, B->B: both resolve, only the first triggers the switch rebuild.
+- Session-saved selection differs from the Loop execution selection: rebuild depends on the Loop; Session save / event
+  keep original commit semantics (the two change judgments are not mixed).
+- No Selection, resolution failure, execution-scope temporary binding, and next-turn same-model paths do not regress.
+- Real Runtime with an offline test model capturing before/after requests: changing output style mid-run then submitting a
+  same-selection Guide shows the body while the System prefix is unchanged (this does not claim the real-switch style
+  freeze problem is fixed).
+- Existing Guide interaction E2E checked, minimal discriminating cases added/updated; desktop/phone share the CLI
+  consumption boundary (single-end passing is not written as all-end on-device passing).
+- Whole-batch targeted tests, `pnpm typecheck`, `pnpm lint`; review of public callers, new-Model downstream use,
+  persistence and out-of-scope freeze semantics.
 
-- [x] 相同完整 Selection、配置不变：模型工厂仍调用，后续使用重新解析所得 Model；不重建 System，Guide 正文正常进入请求。
-- [x] 相同完整 Selection、配置已改变：使用可观察的配置变化（如合法输出上限变化），断言后续实际请求采用新配置，同时 System 前缀不因切模逻辑改变。不能只断言工厂调用或只比较 Model 对象。
-- [x] 相同 Selection 加运行模式变化：模式正常应用，前缀不因切模逻辑重建；输入归属及 Guide 其他状态处理不丢。
-- [x] Provider、模型、推理档位分别变化：保持原有真实切换行为，后续请求使用新 Model，并按现有规则重建前缀。
-- [x] 连续 Guide A→B、B→B：两次均正常解析，只有第一次触发切模前缀重建。
-- [x] Session 保存选择与 Loop 执行选择不同：重建条件依据 Loop，Session 保存 / 事件仍遵循原提交语义，不混用两个变化判断。
-- [x] 没有 Selection、解析失败、执行级临时绑定，以及下一轮继续选相同模型的路径无回退。
-- [x] 用真实 Runtime 与不联网测试模型捕获前后请求：运行中改 output style 后提交相同选择的 Guide，正文出现，System 前缀不因此变化；不据此声称真实切模时的样式冻结问题也已修复。
-- [x] 核对现有 Guide 交互 E2E，补充或更新最小有区分力的用例；保留桌面 / 手机共享 CLI 消费边界，不将单端通过写成全端实机通过。
-- [x] 整批执行相关定向测试、`pnpm typecheck`、`pnpm lint`，复审公共调用、新 Model 下游使用、持久化与不在范围内的冻结语义。
-- [x] 更新实施、验证及剩余限制记录并提交；待测与已通过分开陈述。
+## Result
 
-## 完成标准
-
-同选择的 Guide 能获取更新后的模型配置，后续请求正确使用新 Model，但不误触发切模 System 重建；真实选择变化仍正常切换。相关测试和复审完成，未把输出风格冻结问题混入本次修复或完成声明。
-
-## 实施与复审记录
-
-- 复用 `turn-model` 的完整选择比较，仅在 Guide 中控制重建；比较旧 Loop Model 与新 Model，而非可变 Session 或对象引用。Factory 和 Session 提交逻辑不变，没有提前返回或 prepared-model 旁路。
-- `guide-model-refresh.test.ts` 用真实 Runtime 捕获请求，旧实现 5 个同选择/连续 Guide 场景失败；修复后连同真实 Provider/模型/档位变化、双向 Session/Loop 差异共 9 场景通过。输出上限由 8,000 更新至 16,000，后续请求用新值而 System 保持旧值，Guide 文本/模式/归属正常。
-- 5 文件 186 条定向回归通过（上述测试、旧 Guide 测试、Runtime model lifecycle/selection、完整 tool loop），Core 类型检查通过。
-- 逐条复审：execution scope 分支不变；无选择、解析失败、新 Turn 与 prepared-model 仍走原路径；当前请求不受影响；工具限制、重复工具检测、message/query 更新仍在重建判断之外。没有增加同步/持久化/投影状态，也未触碰第二个输出风格冻结问题。
-- GS/P06 加实际首轮/连续 Guide 请求前缀断言，catalog/matrix 同步。该新增 E2E 断言尚待整批桌面验证，不能沿用旧 formal 标记冒充本次已通过。
+- Reuses `turn-model`'s full selection comparison and controls only the rebuild in Guide, comparing the old Loop Model
+  with the new Model (not the mutable Session or object references). Factory and Session commit logic unchanged; no early
+  return or prepared-model bypass.
+- `guide-model-refresh.test.ts` (real Runtime request capture): 5 same-selection / consecutive-Guide scenarios failed on
+  the old implementation; with the fix 9 scenarios pass (including real Provider/model/level changes and two-way
+  Session/Loop differences). Output limit updated 8,000 -> 16,000: later requests use the new value, System keeps the old
+  value, Guide text/mode/ownership normal.
+- 5 files / 186 targeted regression cases pass (above test, old Guide tests, Runtime model lifecycle/selection, full tool
+  loop); Core typecheck passes.
+- Review: execution-scope branch unchanged; no-selection, resolution-failure, new-Turn and prepared-model paths keep their
+  original route; current request unaffected; tool restriction, duplicate-tool detection and message/query updates remain
+  outside the rebuild judgment. No sync/persistence/projection state added; the second output-style freeze problem untouched.
+- GS/P06 gains real first-turn / consecutive-Guide request prefix assertions with catalog/matrix synced; these new E2E
+  assertions are awaiting whole-batch desktop verification and the old formal mark must not stand in for this run.
