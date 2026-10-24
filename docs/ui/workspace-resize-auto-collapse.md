@@ -1,20 +1,20 @@
 # Workspace Resize Auto Collapse
 
-## 背景
+## Background
 
-Workspace 主界面包含左侧 sidebar、聊天 conversation、底部 terminal 和右侧 side pane。用户缩小桌面窗口时，conversation 是最先被挤压的核心工作区，因此自动收起策略以 `ResizablePanel(id="conversation")` 的实际宽度为判据。
+The Workspace main view contains the left sidebar, the chat conversation, the bottom terminal and the right side pane. When the user shrinks the desktop window, the conversation is the first core area to be squeezed, so the auto-collapse policy keys off the actual width of `ResizablePanel(id="conversation")`.
 
-## 策略
+## Policy
 
-- 只响应用户触发的 `window.resize`，不监听 conversation 自身 `ResizeObserver`，避免用户手动打开面板时被策略立即关回去。
-- 每次窗口 resize 后读取 conversation panel 的实际宽度，不直接使用 `window.innerWidth`。
-- 当右侧 side pane 已打开且 conversation 宽度小于 `480px` 时，自动收起 side pane。
-- 当左侧 sidebar 已打开且 conversation 宽度小于 `360px` 时，自动收起 sidebar。
-- 自动收起只在变窄时触发；窗口放大后不自动恢复，用户通过现有按钮或快捷键手动打开。
-- side pane 自动收起只隐藏容器，不关闭 tab，避免浏览器、Git、预览等面板内容丢失。
+1. React only to user-triggered `window.resize`. Do not observe the conversation panel with `ResizeObserver`, otherwise a panel the user just opened would be closed again immediately.
+2. After each window resize, read the actual width of the conversation panel; do not use `window.innerWidth`.
+3. If the side pane is open and the conversation width is below `480px`, collapse the side pane.
+4. If the sidebar is open and the conversation width is below `360px`, collapse the sidebar.
+5. Auto-collapse fires only when the window narrows. Enlarging the window does not restore anything; the user reopens panels with the existing buttons or shortcuts.
+6. Side pane auto-collapse only hides the container and does not close tabs, so browser, Git and preview content is preserved.
 
-## 兼容边界
+## Compatibility Boundaries
 
-- 桌面端和 Web 桌面端复用同一 conversation panel 监听。
-- 手机远控当前使用独立 overlay / mobile shell，不依赖该桌面分栏策略。
-- 该策略不改变 ZCode session / task realtime 消息流，不涉及 `desktop-continuous` 与 `web-remote-replayable` 的传输边界。
+- Desktop and Web desktop share the same conversation panel listener.
+- Mobile remote control uses a separate overlay / mobile shell and does not depend on this desktop split policy.
+- The policy does not change the ZCode session / task realtime message flow and does not touch the `desktop-continuous` / `web-remote-replayable` transport boundary.
