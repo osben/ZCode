@@ -2678,6 +2678,99 @@ describe("createZCodeTaskIndexSyncer", () => {
     env.configEmitter.dispose();
   });
 
+  // ISSUE-061 (specs/host-shutdown-teardown-logging.md): disposeAll() runs right before the agent
+  // service is disposed, so the best-effort unsubscribe RPCs it sends are rejected with
+  // "ZCode Protocol client disposed". That cancellation is part of an orderly teardown, not a warn.
+  it("does not warn when teardown unsubscribes are rejected by the agent disposal", async () => {
+    const env = setupEnv();
+    const disposedError = new Error("ZCode Protocol client disposed");
+    vi.mocked(env.agent.unsubscribeSessionsIndexV4).mockRejectedValue(disposedError);
+    vi.mocked(env.agent.unsubscribeWorkspaceConfigV4).mockRejectedValue(disposedError);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    try {
+      syncer.ensureWorkspaceSubscription({ workspacePath: "/repo" });
+      await vi.waitFor(() => {
+        expect(env.agent.subscribeSessionsIndexV4).toHaveBeenCalledTimes(1);
+        expect(env.agent.subscribeWorkspaceConfigV4).toHaveBeenCalledTimes(1);
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      syncer.disposeAll();
+      await vi.waitFor(() => {
+        expect(env.agent.unsubscribeSessionsIndexV4).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: INDEX_SUBSCRIPTION_ID }),
+        );
+        expect(env.agent.unsubscribeWorkspaceConfigV4).toHaveBeenCalledWith(
+          expect.objectContaining({ subscriptionId: CONFIG_SUBSCRIPTION_ID }),
+        );
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const teardownWarns = warnSpy.mock.calls
+        .map((call) => call.map(String).join(" "))
+        .filter((message) => message.includes("清理 task index") && message.includes("/repo"));
+      expect(teardownWarns).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+      env.indexEmitter.dispose();
+      env.configEmitter.dispose();
+    }
+  });
+
+  it("still warns when an unsubscribe fails while the syncer is live", async () => {
+    const env = setupEnv();
+    await seedRunningTask(env.repo);
+    const restartEmitter = new Emitter<{ workspaceKey: string }>();
+    (env.agent as { onAgentRuntimeRestarted?: unknown }).onAgentRuntimeRestarted =
+      restartEmitter.event;
+    const resolvers: Array<(result: IndexSubscribeResult) => void> = [];
+    vi.mocked(env.agent.subscribeSessionsIndexV4).mockImplementation(
+      () => new Promise((resolve) => resolvers.push(resolve)),
+    );
+    vi.mocked(env.agent.unsubscribeSessionsIndexV4).mockRejectedValue(
+      new Error("unsubscribe failed"),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const syncer = createZCodeTaskIndexSyncer({
+      agentService: env.agent,
+      taskIndexRepo: env.repo,
+    });
+    try {
+      syncer.ensureWorkspaceSubscription({ workspacePath: "/repo" });
+      await vi.waitFor(() => expect(resolvers).toHaveLength(1));
+      restartEmitter.fire({ workspaceKey: "/repo" });
+      await vi.waitFor(() => expect(resolvers).toHaveLength(2));
+      resolvers[1]!({
+        ack: { subscriptionId: "live-test-2", mode: "snapshot", logEpoch: "epoch-test-2" },
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      // The stale first-generation ACK is unsubscribed on the live path; its failure is a real fault.
+      resolvers[0]!({
+        ack: { subscriptionId: INDEX_SUBSCRIPTION_ID, mode: "snapshot", logEpoch: "epoch-test" },
+      });
+      await vi.waitFor(() =>
+        expect(
+          warnSpy.mock.calls
+            .map((call) => call.map(String).join(" "))
+            .filter(
+              (message) =>
+                message.includes("清理 task index sessions-index") && message.includes("/repo"),
+            ),
+        ).toHaveLength(1),
+      );
+    } finally {
+      syncer.disposeAll();
+      warnSpy.mockRestore();
+      restartEmitter.dispose();
+      env.indexEmitter.dispose();
+      env.configEmitter.dispose();
+    }
+  });
+
   it("staging overflow 自动恢复且不会永久 freeze", async () => {
     const env = setupEnv({
       initialSessions: [summaryOf(seedTarget.sessionId, "running")],

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWindowHostAttachmentRegistry } from "../src/host/windowHostAttachmentRegistry.js";
+import {
+  createWindowHostAttachmentFlowForwarder,
+  createWindowHostAttachmentRegistry,
+} from "../src/host/windowHostAttachmentRegistry.js";
 
 function createPort() {
   let closeListener: (() => void) | null = null;
@@ -375,5 +378,130 @@ describe("WindowHostAttachmentRegistry", () => {
       "desktop-current",
       "local",
     ]);
+  });
+
+  // ISSUE-061 (specs/host-shutdown-teardown-logging.md).
+  it("registry dispose 以 host-shutdown 释放 handle；detach、端口关闭与替换不带该原因", () => {
+    const handles: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
+    const registry = createWindowHostAttachmentRegistry({
+      resolveScope: () => ({ services: "local-services", generation: 1 }),
+      expose: () => {
+        const handle = { dispose: vi.fn() };
+        handles.push(handle);
+        return handle;
+      },
+    });
+    const attach = (attachmentId: string) => {
+      const port = createPort();
+      registry.attach({
+        requestId: `request-${attachmentId}`,
+        attachmentId,
+        clientMode: "desktop-continuous",
+        scope: { kind: "local" },
+        port: port.port,
+      });
+      return port;
+    };
+
+    attach("detached");
+    registry.detach("detached");
+    const closedPort = attach("closed");
+    closedPort.close();
+    attach("replaced");
+    attach("replaced");
+    attach("shutdown");
+    registry.dispose();
+
+    expect(handles.map((handle) => handle.dispose.mock.calls)).toEqual([
+      [[undefined]],
+      [[undefined]],
+      [[undefined]],
+      [["host-shutdown"]],
+      [["host-shutdown"]],
+    ]);
+  });
+});
+
+describe("WindowHostAttachmentFlowForwarder", () => {
+  function createScope() {
+    const calls: string[] = [];
+    const disposedError = new Error("ZCode Protocol client disposed");
+    let releaseSaturated!: () => void;
+    const scope = {
+      setTransportFlowState: vi.fn((state: "saturated" | "drained" | "closed") => {
+        calls.push(`flow:${state}`);
+        if (state === "saturated") {
+          return new Promise<void>((resolve) => (releaseSaturated = resolve));
+        }
+        return Promise.reject(disposedError);
+      }),
+      dispose: vi.fn(async () => {
+        calls.push("dispose");
+      }),
+    };
+    return { scope, calls, releaseSaturated: () => releaseSaturated() };
+  }
+
+  it("host-shutdown close 不自行转发 closed，排在已入队更新之后释放 scope，且不报 warn", async () => {
+    const { scope, calls, releaseSaturated } = createScope();
+    const onForwardError = vi.fn();
+    const forwarder = createWindowHostAttachmentFlowForwarder(scope, onForwardError);
+
+    void forwarder.forward("saturated").catch(() => {});
+    const closed = forwarder.close("host-shutdown");
+    await Promise.resolve();
+    expect(scope.dispose).not.toHaveBeenCalled();
+    releaseSaturated();
+    await closed;
+
+    expect(calls).toEqual(["flow:saturated", "dispose"]);
+    expect(onForwardError).not.toHaveBeenCalled();
+  });
+
+  it("host-shutdown 之后才失败的已入队 SAT/DRN 不报 warn；shutdown 之前的失败照常上报", async () => {
+    const disposedError = new Error("ZCode Protocol client disposed");
+    let rejectDrained!: (error: Error) => void;
+    const scope = {
+      setTransportFlowState: vi.fn((state: "saturated" | "drained" | "closed") =>
+        state === "saturated"
+          ? Promise.reject(new Error("live failure"))
+          : new Promise<void>((_resolve, reject) => (rejectDrained = reject)),
+      ),
+      dispose: vi.fn(async () => {}),
+    };
+    const onForwardError = vi.fn();
+    const forwarder = createWindowHostAttachmentFlowForwarder(scope, onForwardError);
+
+    await forwarder.forward("saturated").catch(() => {});
+    expect(onForwardError).toHaveBeenCalledExactlyOnceWith("saturated", expect.any(Error));
+
+    const drained = forwarder.forward("drained").catch(() => {});
+    await vi.waitFor(() => expect(scope.setTransportFlowState).toHaveBeenCalledTimes(2));
+    const closed = forwarder.close("host-shutdown");
+    rejectDrained(disposedError);
+    await drained;
+    await closed;
+
+    expect(onForwardError).toHaveBeenCalledTimes(1);
+    expect(scope.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("普通 close 先转发 closed 再释放 scope，转发失败仍上报", async () => {
+    const { scope, calls } = createScope();
+    const onForwardError = vi.fn();
+    const forwarder = createWindowHostAttachmentFlowForwarder(scope, onForwardError);
+
+    await forwarder.close();
+
+    expect(calls).toEqual(["flow:closed", "dispose"]);
+    expect(onForwardError).toHaveBeenCalledWith("closed", expect.any(Error));
+  });
+
+  it("没有 connection scope 时 forward 与 close 都是空操作", async () => {
+    const onForwardError = vi.fn();
+    const forwarder = createWindowHostAttachmentFlowForwarder(undefined, onForwardError);
+    await forwarder.forward("saturated");
+    await forwarder.close("host-shutdown");
+    expect(onForwardError).not.toHaveBeenCalled();
   });
 });
