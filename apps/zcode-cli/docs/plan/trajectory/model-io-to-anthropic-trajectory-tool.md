@@ -1,28 +1,28 @@
-# Model-IO 到 Anthropic Messages Trajectory 转换工具
+# Model-IO to Anthropic Messages Trajectory Tool
 
-状态：完成
+Status: complete
 
-## 背景
+## Background
 
-`tools/prompt-trajectory derive` 当前只支持 prompt-trajectory 自己录制的 `trajectory.jsonl`。ZCode CLI 运行时还会在 `~/.zcode/cli/debug` 或 `~/.zcode/cli/rollout` 下输出真实 `model-io-*.jsonl`，其中 request body 可能按上一条 model-io 记录进行 delta 压缩，并包含 `session_title` 等 sidecar 请求。
+`tools/prompt-trajectory derive` supports only the `trajectory.jsonl` that prompt-trajectory records itself. The ZCode CLI runtime also writes real `model-io-*.jsonl` files under `~/.zcode/cli/debug` or `~/.zcode/cli/rollout`. Their request bodies may be delta-compressed against the previous model-io record and include sidecar requests such as `session_title`.
 
-为了审阅整段主会话最终发送给 provider 的 prompt，需要把一个完整 model-io session 转成单个 Anthropic Messages 格式的 request trajectory，而不是把每条 model-io request 分别导出。
+To review the final prompt a whole main session sent to the provider, one complete model-io session must be converted into a single Anthropic Messages request trajectory instead of exporting each model-io request separately.
 
-## 目标
+## Goals
 
-- 新增 prompt-trajectory 可复用命令，从 ZCode `model-io*.jsonl` 生成 Anthropic Messages 格式的 trajectory JSON。
-- 默认只纳入 `querySource === "main_turn"` 的主会话请求，排除 `session_title` 等 sidecar。
-- 转换前先按原始文件顺序展开 model-io delta，再过滤 querySource，避免 sidecar 插入导致主会话误判为非增量。
-- 输出 `anthropic_trajectory.json`，用于直接审阅整段主会话最终 provider-visible messages。
-- 同时复用现有 derive manifest/trajectories 输出，便于检查是否出现 `non-incremental-change` split。
+- A reusable prompt-trajectory command that generates an Anthropic Messages trajectory JSON from ZCode `model-io*.jsonl`.
+- By default include only `querySource === "main_turn"` requests of the main session; exclude sidecars such as `session_title`.
+- Expand model-io deltas in original file order first, then filter by querySource, so inserted sidecars do not make the main session look non-incremental.
+- Output `anthropic_trajectory.json` for direct review of the final provider-visible messages of the whole main session.
+- Reuse the existing derive manifest/trajectories output so `non-incremental-change` splits can be inspected.
 
-## 非目标
+## Non-goals
 
-- 不把 subagent、compact、web_search_tool 等 sidecar 默认合并进主会话 trajectory。
-- 不新增 production runtime 依赖；该能力只属于 `@zcode/prompt-trajectory` 测试工具。
-- 不改动 runtime model-io 记录格式。
+- Do not merge subagent, compact, web_search_tool and other sidecars into the main trajectory by default.
+- No new production runtime dependency; this capability belongs only to the `@zcode/prompt-trajectory` test tool.
+- No change to the runtime model-io record format.
 
-## 命令契约
+## Command contract
 
 ```bash
 pnpm --filter @zcode/prompt-trajectory model-io -- \
@@ -30,83 +30,61 @@ pnpm --filter @zcode/prompt-trajectory model-io -- \
   --out tools/prompt-trajectory/out/<run>
 ```
 
-默认行为：
+Defaults: `--query-source` omitted means `main_turn`; `--input` and `--out` are required.
 
-- `--query-source` 省略时使用 `main_turn`。
-- `--input` 必填。
-- `--out` 必填。
+Output:
 
-输出：
+- `anthropic_trajectory.json`: the Anthropic Messages request body of the first derived trajectory. With no split in the main session this is the whole single trajectory.
+- `manifest.json`: the existing derive manifest.
+- `trajectories/*.openai_request_body.json` and `trajectories/*.anthropic_request_body.json`: the existing per-trajectory debug artifacts.
 
-- `anthropic_trajectory.json`：第一个派生 trajectory 的 Anthropic Messages request body。主会话无 split 时它就是完整单 trajectory。
-- `manifest.json`：沿用现有 derive manifest。
-- `trajectories/*.openai_request_body.json` 与 `trajectories/*.anthropic_request_body.json`：沿用现有 per-trajectory 调试产物。
+### ToolSearch synthesis mode
 
-### ToolSearch 合成模式
-
-`model-io` 和 `derive` 可选 `--ignore-tool-search-changes`，默认关闭，仅用于 provider
-已负责工具变化处理时的离线轨迹合成。顶层 `tools` 本就不参与连续性比较；此开关只放宽
-消息中的 ToolSearch 投影差异，不修改生产请求、日志、缓存策略或会话持久化。
+`model-io` and `derive` accept the optional `--ignore-tool-search-changes` (default off), used only for offline trajectory synthesis when the provider already handles tool changes. The top-level `tools` never take part in continuity comparison; this switch only relaxes ToolSearch projection differences inside messages. It does not change production requests, logs, cache policy or session persistence.
 
 ```text
-原始请求（保持不变） → 比较副本忽略 ToolSearch 投影 → 连续性判定
-                                                ↓
-                        合成片段使用最后真实请求 + 最终回复
+original request (unchanged) -> comparison copy ignores ToolSearch projection -> continuity decision
+                                                |
+                      synthesized segment uses the last real request + final response
 ```
 
-- 比较时忽略真实 `ToolSearch` callID 对应的原生 `tool_result.content` 数组中的
-  `tool_reference` 及两种精确占位文本：`[Tool references removed - tools no longer available]`、
-  `[Tool references removed - tool search not enabled]`。引用增删、恢复和顺序变化不分段。
-- 比较时忽略 user 消息中独立的 ToolSearch 新增、移除、恢复目录 `system-reminder` block；
-  识别 Native／Local 当前文案及旧日志中的连接原因文案，其他 reminder 与用户正文保留。
-  公告独占的消息可在比较副本中省略；回归使用当前公告生成器输出验证识别规则。
-- 比较时忽略成功且含原生引用的 ToolSearch 结果批次后派生的 `Tool loaded.`，每个有效结果
-  最多对应一条提示；支持并行结果及相邻 user 合并形态。普通正文、其他工具输出、失败或
-  无引用结果后的同名文本仍严格比较，导出内容继续保留最后真实请求中的提示。
-- ToolSearch 的 callID、调用名、输入、结果错误状态、普通结果文本，以及其他工具结果、
-  thinking、普通正文、Continue 和 compact 历史变化仍严格比较。不通用忽略所有 tool 消息。
-- 开关只影响比较；导出内容仍使用该片段最后一条真实请求，保留其 tools、引用、公告、
-  占位文本及最终响应，不合并工具 schema、不复活被过滤的历史引用、不伪造调用或结果。
-- manifest 仅在开启时记录 `ignoreToolSearchChanges: true`，默认输出契约不变。合成产物
-  不代表逐轮 wire 相同或缓存已命中；原始 model-io/ledger 继续作为逐轮事实源。
-- 回归覆盖默认严格分段、开启后移除/恢复合并、公告迁移、mixed text/reference 保序、
-  call/result 身份及非 ToolSearch 负例、thinking 补全、delta/sidecar、CLI 两入口与文件输出。
+- When comparing, ignore, inside the native `tool_result.content` array of a real `ToolSearch` callID, the `tool_reference` entries and the two exact placeholder texts `[Tool references removed - tools no longer available]` and `[Tool references removed - tool search not enabled]`. Adding, removing, restoring or reordering references does not split.
+- When comparing, ignore the standalone ToolSearch added/removed/restored catalog `system-reminder` blocks in user messages. Recognize the Native/Local current wording and the connection-reason wording of old logs; other reminders and user text are kept. A message holding only such an announcement may be omitted in the comparison copy; regressions verify the recognition rule with the current announcement generator output.
+- When comparing, ignore the `Tool loaded.` derived after a successful ToolSearch result batch containing native references; each valid result corresponds to at most one such hint; parallel results and adjacent-user-merged shapes are supported. The same text in ordinary text, other tool output, or after failed / reference-less results is still compared strictly; the exported content keeps the hint from the last real request.
+- ToolSearch callID, call name, input, result error status, ordinary result text, other tool results, thinking, ordinary text, Continue and compact history changes are still compared strictly. Not all tool messages are ignored generically.
+- The switch affects only comparison; the exported content still uses the last real request of the segment, keeping its tools, references, announcements, placeholder texts and final response. It does not merge tool schemas, resurrect filtered historical references, or fake calls or results.
+- The manifest records `ignoreToolSearchChanges: true` only when enabled; the default output contract is unchanged. The synthesized artifact does not mean per-turn wire equality or cache hits; the original model-io/ledger stay the per-turn source of truth.
+- Regression coverage: default strict splitting; merging after removal/restoration when enabled; announcement migration; mixed text/reference order; call/result identity and non-ToolSearch negative cases; thinking completion; delta/sidecar; both CLI entries and file output.
 
-## 验收
+## Acceptance
 
-### 连续性判定（2026-09-12）
+### Continuity decision (2026-09-12)
 
-`non-incremental-change` 表示已记录内容发生非增量变化，不表示 runtime 取消或 provider
-缓存未命中。连续性的唯一事实源是展开 delta 后的相邻请求；response 只补充该请求的回复。
+`non-incremental-change` means the recorded content changed in a non-incremental way; it does not mean the runtime cancelled or the provider cache missed. The only continuity fact source is adjacent requests after delta expansion; a response only supplements the reply of its request.
 
 ```text
-原始 model-io → 展开全部 delta → 按 querySource 过滤
-                                      ↓
-上一请求 + response 摘要 ← 下一请求中对应的完整 assistant
-                                      ↓
-连续性比较 → 完整 trajectory / 真实改写处分段
+original model-io -> expand all deltas -> filter by querySource
+                                              |
+previous request + response summary <- complete assistant in the next request
+                                              |
+continuity comparison -> complete trajectory / split at real rewrites
 ```
 
-- model-io response 的 text/toolCalls 是有损摘要，不含 thinking block 的完整结构和签名。
-  下一请求保留上一请求前缀，且紧接的 assistant 去除 thinking/redacted_thinking 后与
-  摘要全文一致时，使用该真实 assistant 补全上一回复，原样保留 thinking 和签名。
-  不从 reasoningText 编造 provider block 或签名；没有后续请求时沿用已有摘要导出。
-- 仅允许上一序列末尾的 user 在原 content block 完整不变的前提下追加 block；其余
-  message 属性必须一致。不得接受原 block 改写、删除、重排、角色变化或非末尾消息扩展。
-- 已经出现在真实请求中的 thinking、签名、正文、tool input/result 和 reminder 均参与
-  严格比较。只在比较时忽略已有 cache_control 漂移，最终产物保留最新请求原值。
-- 保留真实 compact 和历史改写的分段；不改变 runtime、provider 请求、缓存、权限、
-  desktop continuous 或手机 replayable 行为。重新解析历史文件不请求模型、不写会话库。
-- 回归覆盖完整 thinking/签名、redacted thinking、sidecar/delta、末尾 user 追加与负例；
-  真实样本重新导出后逐条比较最新请求和所有已插入 reminder。
+- The text/toolCalls of a model-io response are a lossy summary without the full structure and signature of thinking blocks. When the next request keeps the previous request's prefix and its immediately following assistant, with thinking/redacted_thinking removed, equals the summary text in full, use that real assistant to complete the previous reply, keeping thinking and signature as is. Provider blocks or signatures are never fabricated from reasoningText; with no later request, export with the existing summary.
+- Only the trailing user of the previous sequence may gain blocks, and only if the original content blocks are fully unchanged; all other message attributes must match. No rewrite, deletion, reorder, role change or non-trailing message extension is accepted.
+- Thinking, signatures, text, tool input/result and reminders already present in real requests all take part in strict comparison. Only existing `cache_control` drift is ignored during comparison; the final artifact keeps the latest request's original value.
+- Real compact and history-rewrite splits are kept. No change to runtime, provider requests, cache, permissions, desktop continuous or mobile replayable behavior. Re-parsing historical files does not call the model or write the session database.
+- Regression coverage: full thinking/signature, redacted thinking, sidecar/delta, trailing user append and negative cases; after re-exporting real samples, compare the latest request and every inserted reminder one by one.
 
-- 能读取真实 ZCode model-io JSONL。
-- 能正确展开 `bodyMessagesKind: "delta"` / `bodyMessageOffset` 压缩。
-- `session_title` 请求不会进入默认主 trajectory。
-- main_turn 里 append-only 的 full 续接不会被误判为 `non-incremental-change`。
-- 单测覆盖 delta 展开、sidecar 过滤、Anthropic Messages 输出文件。
+Acceptance:
 
-验证命令：
+- Reads real ZCode model-io JSONL.
+- Expands `bodyMessagesKind: "delta"` / `bodyMessageOffset` compression correctly.
+- `session_title` requests do not enter the default main trajectory.
+- An append-only full continuation inside main_turn is not misjudged as `non-incremental-change`.
+- Unit tests cover delta expansion, sidecar filtering and the Anthropic Messages output file.
+
+Verification:
 
 ```bash
 pnpm --filter @zcode/prompt-trajectory exec node --import tsx --test 'tests/*.test.ts'

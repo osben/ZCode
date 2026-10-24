@@ -1,8 +1,8 @@
-# 01 · 快速开始
+# 01 · Quick start
 
-## 从源码构建
+## Build from source
 
-准备 Git、Node.js 26.11.1 和 pnpm 12.14.0；以仓库根目录的 [mise.toml](../../../../mise.toml) 为准。以下命令在仓库根目录执行：
+Prepare Git, Node.js 26.11.1 and pnpm 12.14.0; the repository root [mise.toml](../../../../mise.toml) is authoritative. Run the following commands from the repository root:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -11,36 +11,36 @@ node apps/zcode-cli/packages/cli/dist/zcode.cjs --version
 node apps/zcode-cli/packages/cli/dist/zcode.cjs doctor --json
 ```
 
-`@zcode/cli...` 包含 CLI 的 workspace 依赖。首次安装会执行仓库的资源准备步骤，需要能访问包和资源下载源。不要把安装脚本被跳过的目录当作完整发行包。
+`@zcode/cli...` includes the CLI's workspace dependencies. The first install runs the repository's asset preparation steps and needs access to the package and asset download sources. Do not treat a directory whose install scripts were skipped as a complete distribution.
 
-需要单文件可执行产物时，在完成构建后执行：
+For a single-file executable, run this after the build:
 
 ```sh
 pnpm --filter @zcode/cli sea --target linux-x64
 ```
 
-目标包括 `darwin-arm64`、`darwin-x64`、`linux-arm64`、`linux-x64`、`win-arm64`、`win-x64`。产物在 `apps/zcode-cli/packages/cli/dist/`；Windows 文件名使用 `zcode-windows-<arch>.exe`。交叉打包不等于目标平台运行验证。
+Targets are `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win-arm64`, `win-x64`. Artifacts are in `apps/zcode-cli/packages/cli/dist/`; Windows file names use `zcode-windows-<arch>.exe`. Cross-packaging is not the same as running on the target platform.
 
-后文以 `zcode` 代表 CLI 命令。使用普通 Node bundle 时，替换为 `node /absolute/path/to/zcode.cjs`，并保留构建生成的相邻资源。SEA 内嵌 Node，不依赖系统 Node 版本；MCP、Hook 或插件启动的外部程序仍须单独安装。
+Below, `zcode` stands for the CLI command. With the plain Node bundle, replace it with `node /absolute/path/to/zcode.cjs` and keep the adjacent assets the build generated. The SEA embeds Node and does not depend on the system Node version; external programs started by MCP, Hooks or plugins must still be installed separately.
 
-## 使用可执行文件
+## Use the executable
 
-macOS/Linux 给可信产物添加执行权限，然后直接使用绝对路径：
+On macOS/Linux, add the execute bit to a trusted artifact and run it by absolute path:
 
 ```sh
 chmod +x /absolute/path/to/zcode-darwin-arm64
 /absolute/path/to/zcode-darwin-arm64 doctor --json
 ```
 
-Windows PowerShell 示例：
+Windows PowerShell example:
 
 ```powershell
 & 'C:\tools\zcode-windows-x64.exe' doctor --json
 ```
 
-不要使用不匹配的系统或 CPU 架构。macOS 若拦截未签名产物，先确认来源，再通过系统设置允许运行；不要对未知文件批量移除安全属性。
+Do not use an artifact for a different OS or CPU architecture. If macOS blocks an unsigned artifact, confirm its source first and then allow it in System Settings; do not bulk-remove security attributes from unknown files.
 
-## 自检与模型设置
+## Self-check and model setup
 
 ```sh
 zcode --version
@@ -50,22 +50,22 @@ zcode plugins list --json
 zcode skills list --json
 ```
 
-`doctor` 用于检查版本、平台、CPU、Node、执行路径和 SEA 状态；它不证明模型凭据、网络或工具调用已经可用。插件清单可以独立查询，不要求先发一次付费模型请求。
+`doctor` checks the version, platform, CPU, Node, executable path and SEA state; it does not prove that model credentials, the network or tool calls work. The plugin list can be queried on its own and does not require a paid model request first.
 
-当前源码的个人模型设置保存在 `~/.zcode/v2/provider_config.json`；运行与扩展设置仍在 `~/.zcode/cli/config.json`。按[配置](03-config.md)建立个人 provider，或在受支持的账号路径上执行 `zcode login`。远程终端可用 `zcode login --no-browser` 显示登录 URL；浏览器回调仍可能要求与 CLI 位于同一机器。
+In the current source, personal model settings are saved in `~/.zcode/v2/provider_config.json`; runtime and extension settings remain in `~/.zcode/cli/config.json`. Set up a personal provider as described in [Configuration](03-config.md), or run `zcode login` on a supported account path. On a remote terminal, `zcode login --no-browser` prints the login URL; the browser callback may still need to be on the same machine as the CLI.
 
-## 第一次非交互调用
+## First non-interactive call
 
 ```sh
 zcode --prompt "只用一句话回复 ready，不调用工具" --cwd /absolute/path/to/project --mode plan --json --no-color
 ```
 
-普通 prompt 成功时返回 `sessionId`、`response` 和相关运行信息。然后在一次性测试目录中验证所需工具，检查真实文件或命令结果。模型回复“成功”不等于工具已执行。
+(The sample prompt asks for a one-sentence reply "ready" without calling tools.) A successful plain prompt returns `sessionId`, `response` and related run information. Then verify the tools you need in a throwaway directory and check real file or command results. A model reply saying "success" does not mean a tool ran.
 
-需要执行命令、修改文件的自动化任务通常显式使用 `--mode yolo`，并由任务容器或操作系统限制可访问范围。`--prompt` 缺省也采用 `yolo`。这不是只读模式，也不是沙箱。批量执行前继续阅读[工具](04-tools.md)和[权限](05-permissions.md)。
+Automation tasks that run commands or modify files usually pass `--mode yolo` explicitly, with the task container or the operating system limiting accessible scope. `--prompt` also defaults to `yolo`. This is neither read-only mode nor a sandbox. Before batch execution, continue with [Tools](04-tools.md) and [Permissions](05-permissions.md).
 
-## 隔离运行环境
+## Isolated run environment
 
-并发任务应使用独立工作目录、用户目录和数据基目录。在子进程环境中同时设置 `HOME`、`USERPROFILE`、`ZCODE_DATA_BASE_DIR` 为本次运行的临时目录；不要修改调用者的全局环境。这样可隔离凭据、个人模型配置、会话、插件和记忆。`ZCODE_STORAGE_DIR` 只控制部分存储路径，不能单独代表完整隔离。
+Concurrent tasks should use separate working directories, user directories and data base directories. In the child process environment set `HOME`, `USERPROFILE` and `ZCODE_DATA_BASE_DIR` together to a temporary directory for this run; do not modify the caller's global environment. This isolates credentials, personal model configuration, sessions, plugins and memory. `ZCODE_STORAGE_DIR` controls only some storage paths and alone does not amount to full isolation.
 
-可复制的跨平台子进程例子见[批量任务](13-automation.md)。配置文件和密钥也须写入该隔离环境；不能依赖开发机原有登录态。
+A copyable cross-platform child process example is in [Batch tasks](13-automation.md). Configuration files and keys must also be written into that isolated environment; do not rely on the development machine's existing login state.

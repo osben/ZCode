@@ -1,22 +1,22 @@
-# 13 · 批量任务与运行记录
+# 13 · Batch tasks and run records
 
-CLI 可以作为任务执行器；数据准备、环境隔离、资源预算和评分由外部启动器负责。现成 benchmark 的容器、超时、补丁提取和评分协议仍须单独适配，不能把一次 prompt 成功当作 benchmark 集成完成。
+The CLI can serve as a task executor; data preparation, environment isolation, resource budgets and scoring are the external launcher's responsibility. The container, timeout, patch extraction and scoring protocol of an existing benchmark must still be adapted separately; one successful prompt does not mean the benchmark integration is complete.
 
-## 每个样本固定哪些条件
+## What to fix per sample
 
-保存构建提交或二进制 SHA-256、CLI 版本与 doctor 输出、平台、模型与 provider 协议、非敏感模型选项、任务输入、工作区提交、扩展清单、工具过滤、权限模式和运行时限。API Key 与登录凭据不要归档。
+Save the build commit or binary SHA-256, the CLI version and doctor output, the platform, the model and provider protocol, non-sensitive model options, the task input, the workspace commit, the extension list, tool filtering, the permission mode and the run limit. Do not archive API keys or login credentials.
 
-每个独立样本使用独立的工作目录、用户目录和数据基目录。只换 sessionId 或只设置 `ZCODE_STORAGE_DIR` 不足以隔离个人配置、插件、记忆和用户指令。允许跨轮复用的实验应显式记录复用关系。
+Each independent sample uses its own working directory, user directory and data base directory. Changing only the sessionId or setting only `ZCODE_STORAGE_DIR` does not isolate personal configuration, plugins, memory and user instructions. Experiments that allow reuse across rounds should record the reuse relationship explicitly.
 
-## 跨平台启动方式
+## Cross-platform launch
 
-以下 Node.js 片段展示参数数组与子进程环境。由调用方传入真实路径和任务文本；不要把模型输出拼接为 shell 命令。示例假定模型配置和运行配置已写入 `runHome` 对应目录，具体格式见[配置](03-config.md)。
+The following Node.js snippet shows the argument array and the child process environment. The caller passes real paths and task text; never splice model output into a shell command. The example assumes the model configuration and runtime configuration were already written into the directory for `runHome`; for the formats see [Configuration](03-config.md).
 
 ```js
 import { spawn } from "node:child_process";
 
-// 这些值由任务启动器提供，不从模型输出中执行。
-const executable = process.argv[2]; // SEA 的绝对路径；Node bundle 则使用 Node 路径
+// These values are supplied by the task launcher and never executed from model output.
+const executable = process.argv[2]; // absolute path of the SEA; for a Node bundle use the Node path
 const workdir = process.argv[3];
 const runHome = process.argv[4];
 const prompt = process.argv[5];
@@ -24,7 +24,7 @@ if (![executable, workdir, runHome, prompt].every(Boolean)) {
   throw new Error("需要 executable、workdir、runHome、prompt");
 }
 
-// 实际任务中从受控的环境变量白名单构造，不继承个人凭据。
+// In real tasks build this from a controlled environment variable allowlist; do not inherit personal credentials.
 const env = {};
 for (const [key, value] of Object.entries(process.env)) {
   if (/^(path|systemroot|windir|comspec|pathext|temp|tmp|tmpdir)$/i.test(key)) {
@@ -34,7 +34,7 @@ for (const [key, value] of Object.entries(process.env)) {
 Object.assign(env, { HOME: runHome, USERPROFILE: runHome, ZCODE_DATA_BASE_DIR: runHome });
 
 const args = [
-  // 使用 Node bundle 时，在这里先加入 zcode.cjs 的绝对路径。
+  // With a Node bundle, first add the absolute path of zcode.cjs here.
   "--prompt",
   prompt,
   "--cwd",
@@ -60,9 +60,9 @@ child.on("close", (code, signal) => {
 });
 ```
 
-这只是启动片段。生产启动器还要持续写入 stdout/stderr 文件、记录开始结束时间、限制磁盘用量，并由容器或进程管理器设置运行时限、终止整个进程树。不能只杀父进程后假设所有 Bash、MCP 和后台任务都结束。按目标系统验证进程树清理。
+(In the snippet, the thrown error string means "executable, workdir, runHome and prompt are required"; the code comments were translated from the Chinese original.) This is only a launch snippet. A production launcher must also keep writing stdout/stderr to files, record start and end times, limit disk usage, and have the container or process manager set the run limit and terminate the whole process tree. Killing only the parent process must not be assumed to end all Bash, MCP and background tasks. Verify process tree cleanup on the target system.
 
-## 如何判定一次运行
+## How to judge a run
 
 ```text
 启动失败 / 被取消 / 超时 → 保存失败证据，不判成功
@@ -70,32 +70,34 @@ child.on("close", (code, signal) => {
 独立评分完成 → 生成样本状态与分数
 ```
 
-保留 `sessionId`、`traceId`、`turnId`、原始退出码、signal 和超时状态。JSON 的 response 是最终回答；stream-json 包含事件和最终 result。二者都不等价于完整 provider 请求/响应，更不自动等价于可训练对话。
+(Start failure / cancelled / timeout: save failure evidence, never judge as success. Normal end: parse the output, check tool errors and task artifacts, score independently. After independent scoring: produce the sample state and score.)
 
-恢复任务应显式使用 `--resume`，并保持同一隔离数据目录；不要让并发样本争用 `--continue` 的“最近会话”。
+Keep `sessionId`, `traceId`, `turnId`, the raw exit code, the signal and the timeout state. The JSON response is the final answer; stream-json contains events and the final result. Neither equals the full provider request/response, and neither is automatically a trainable conversation.
 
-## 训练轨迹与 model-io
+Resume a task explicitly with `--resume` and keep the same isolated data directory; do not let concurrent samples contend for the "most recent session" of `--continue`.
 
-默认 model-io 日志用于诊断，可能使用 full/delta/tail 表达、字段裁剪和按文件大小保留。standalone CLI 不应被假定启用了 App 的完整 model-io 保留选项。生产默认有限保留通常为每个文件 64 MiB、保留最近 3 个会话文件；开发默认上限不同。采集开始前核对当前构建的[保留策略](../../../../docs/model-io-full-retention-setting.md)。
+## Training trajectories and model-io
 
-源码仓库提供独立的测试辅助工具，未打包进生产 SEA。对兼容格式的已有日志，转换命令为：
+The default model-io log is for diagnostics and may use full/delta/tail representation, field trimming and size-based retention. Do not assume the standalone CLI has the App's full model-io retention option enabled. The production default of limited retention is usually 64 MiB per file and the 3 most recent session files; the development defaults differ. Before collection, check the [retention policy](../../../../docs/model-io-full-retention-setting.md) of the current build.
+
+The source repository provides a separate test helper that is not packaged into the production SEA. For existing logs in a compatible format, the conversion command is:
 
 ```sh
 pnpm --filter @zcode/prompt-trajectory model-io -- --input /absolute/path/to/model-io-session.jsonl --out /absolute/path/to/derived
 ```
 
-转换器默认关注主轮次，展开可恢复的增量并按连续片段处理；它无法补回已裁剪、覆盖或缺失的请求。非增量请求也不能直接解释为 provider 缓存未命中。输出格式及记录工具说明见[轨迹工具](../../tools/prompt-trajectory/README.md)。
+By default the converter focuses on the main turns, expands recoverable deltas and processes continuous segments; it cannot restore requests that were trimmed, overwritten or are missing. A non-incremental request also cannot be interpreted directly as a provider cache miss. For the output format and the recording tool, see the [trajectory tool](../../tools/prompt-trajectory/README.md).
 
-本次对当前源码生成的默认日志执行上述命令，得到 `model-io request.body must contain a messages array.`：记录中的 `request.body.messages` 已被裁掉，转换器要求该字段。此路径未通过实际转换验收，不能直接用作训练数据流水线。保留原始日志和错误；不要把内部 `request.messages` 强行填回 provider 请求体来伪造完整记录。默认日志在本次运行中位于隔离数据目录的 `.zcode/cli/rollout/`。
+Running the command above on the default log generated by the current source in this check gave `model-io request.body must contain a messages array.`: `request.body.messages` in the record had been trimmed and the converter requires that field. This path did not pass actual conversion acceptance and cannot be used directly as a training data pipeline. Keep the original log and the error; do not stuff the internal `request.messages` back into the provider request body to fake a complete record. In this run the default log was in `.zcode/cli/rollout/` under the isolated data directory.
 
-同一辅助包的 `record:prompt` 在本次源码基线上也未通过：启动时报 `createModelAdapter requires executionConfig`，尚未发出模型请求。它需要单独修复后再验收，不能作为当前可用的采集命令交付。
+`record:prompt` of the same helper package also failed on this source baseline: at startup it reported `createModelAdapter requires executionConfig` before any model request was sent. It needs a separate fix and acceptance, and cannot be delivered as a currently usable collection command.
 
-需要训练数据时，明确采集层、协议、消息顺序、tool call 与 tool result 对应关系、失败样本策略以及隐私处理。使用受控 provider 记录完整请求/响应，并验证与 CLI 工具事件一致；不要只收集最终答案或让模型转述轨迹。
+When training data is needed, state the collection layer, the protocol, the message order, the correspondence between tool calls and tool results, the failure-sample policy and the privacy handling. Record full requests/responses with a controlled provider and verify they match the CLI tool events; do not collect only the final answer or let the model paraphrase the trajectory.
 
-采集时将[个人模型配置](03-config.md)中的 `api.baseUrl` 指向自己管理的、兼容所选协议的记录服务，再使用普通 CLI 执行任务。记录服务负责转发和保存真实请求/响应；保留流式分片顺序，按 tool call ID 关联调用与结果，并排除鉴权 header。先用一个可检查的工具任务验证记录完整，再运行批量任务。这条流程不依赖上述仓库辅助包。
+For collection, point `api.baseUrl` in the [personal model configuration](03-config.md) at a recording service you manage that is compatible with the selected protocol, then run tasks with the ordinary CLI. The recording service forwards and stores the real requests/responses; keep the streaming chunk order, associate calls and results by tool call ID, and exclude authentication headers. First verify with an inspectable tool task that the record is complete, then run the batch. This flow does not depend on the repository helper package above.
 
-## 验证范围
+## Verification scope
 
-本指南在 2026-10-14 对照当前源码核对。已在 macOS arm64 构建 CLI，并用本地模拟 Chat Completions 服务验证个人 provider 配置、普通 JSON、stream-json、显式会话恢复、Bash 执行、plan 拒绝及同步 Hook 拒绝。还验证了本地插件结构、技能与命令发现、项目 Hook 信任的 review/grant/revoke。模拟服务验证接线与格式，不代表真实模型效果。默认 model-io 日志转换和辅助包 record:prompt 未通过，原因见上文。
+This guide was checked against the current source on 2026-10-14. The CLI was built on macOS arm64, and a local mock Chat Completions service verified the personal provider configuration, plain JSON, stream-json, explicit session resume, Bash execution, plan denial and synchronous Hook denial. The local plugin structure, skill and command discovery, and project Hook trust review/grant/revoke were also verified. The mock service verifies wiring and format and does not represent real model behavior. The default model-io log conversion and the helper package's record:prompt did not pass; the reasons are above.
 
-本次验证在源码工作区执行，未另行构建完整开源导出树。Windows、Linux、全部 SEA 目标、真实 provider、MCP 远程授权和完整 benchmark 评分未在本次文档更新中逐项验收。使用前按目标环境执行最小任务；不要将本指南理解为所有平台与扩展均已实测的声明。
+This verification was run in the source workspace and did not separately build a complete open-source export tree. Windows, Linux, all SEA targets, real providers, MCP remote authorization and full benchmark scoring were not accepted one by one in this documentation update. Run a minimal task in the target environment before use; do not read this guide as a claim that all platforms and extensions were tested.

@@ -1,72 +1,66 @@
 # Glob Tool
 
-## 能力
+## Capability
 
-`Glob` 用于按文件名或路径 glob 模式查找文件。它只回答“哪些文件路径匹配这个模式”，不读取文件内容，也不承担内容搜索职责。
+`Glob` finds files by file name or path glob pattern. It only answers "which file paths match this pattern"; it does not read file content and does not take on content search.
 
-`Glob` 原本按 Explore-only 内置工具设计。当前默认采用
-embedded search 分支，主智能体和 `Explore` child runtime 都不暴露 direct `Glob`；
-仓库路径搜索通过 Bash 中的 `find` function 接管。Windows CMD 或 legacy shell fallback
-无法注入 Bash function 时，才回到 non-embedded/direct 分支并暴露 `Glob`。
+`Glob` was originally designed as an Explore-only built-in tool. The current default is the embedded search branch: neither the main agent nor the `Explore` child runtime exposes a direct `Glob`; repository path search is taken over by the `find` function in Bash. Only when Windows CMD or a legacy shell fallback cannot inject a Bash function does it return to the non-embedded/direct branch and expose `Glob`.
 
-模型提示应明确区分：
+The model prompt must clearly distinguish:
 
-- embedded branch 下，主智能体和 Explore 内找文件名、扩展名、目录结构时应使用 Bash `find`。
-- direct fallback branch 下，主智能体和 Explore 内找文件名、扩展名、目录结构时可以用 `Glob`。
-- 主智能体不应假装当前 provider-visible tool pool 中不存在的 `Glob/Grep` 可用。
+- In the embedded branch, the main agent and Explore use Bash `find` to look for file names, extensions and directory structure.
+- In the direct fallback branch, the main agent and Explore may use `Glob` to look for file names, extensions and directory structure.
+- The main agent must not pretend that `Glob/Grep`, which are absent from the current provider-visible tool pool, are available.
 
-模型可见 description 使用短文案：direct fallback branch 中 `Glob` 的 provider-visible
-description 固定为：
+The model-visible description uses short text; in the direct fallback branch the provider-visible description of `Glob` is fixed to:
 
 `Fast file pattern matching. Supports glob patterns like "**/*.js" or "src/**/*.ts". Returns matching file paths sorted by modification time.`
 
-当前 ZCode 不按 model 动态切换 `Glob` description，所有模型使用同一份短文案。
+ZCode currently does not switch the `Glob` description dynamically per model; all models use the same short text.
 
-开放式多轮搜索不在 `Glob` description 中引导。ZCode 当前按 branch 切换 provider-visible
-search surface：embedded branch 通过 Bash `find` / `grep` 接管；direct fallback branch 才保留
-`Glob`、`Grep`、`Read` 组合完成多轮搜索。
+Open-ended multi-round search is not guided in the `Glob` description. ZCode currently switches the provider-visible search surface by branch: the embedded branch takes over through Bash `find` / `grep`; only the direct fallback branch keeps the `Glob`, `Grep`, `Read` combination for multi-round search.
 
-## 输入
+## Input
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `pattern` | `string` | 是 | `The glob pattern to match files against` |
-| `path` | `string` | 否 | `The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.` |
+| Field     | Type     | Required | Description                                                                                                                                                                                                                                           |
+| --------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pattern` | `string` | yes      | `The glob pattern to match files against`                                                                                                                                                                                                             |
+| `path`    | `string` | no       | `The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.` |
 
-Provider-visible input schema 不添加 `minLength` 等额外限制；运行时路径解析仍由 tool layer 和 `FileSystemPort` 负责。
+The provider-visible input schema adds no extra restrictions such as `minLength`; runtime path resolution is still owned by the tool layer and `FileSystemPort`.
 
-## 输出
+## Output
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `durationMs` | `number` | 搜索耗时。 |
-| `numFiles` | `number` | 返回文件数。 |
-| `filenames` | `string[]` | 匹配文件路径。路径尽量相对 session cwd，节省 token。 |
-| `truncated` | `boolean` | 是否因结果上限截断。 |
+| Field        | Type       | Description                                                                     |
+| ------------ | ---------- | ------------------------------------------------------------------------------- |
+| `durationMs` | `number`   | Search duration.                                                                |
+| `numFiles`   | `number`   | Number of files returned.                                                       |
+| `filenames`  | `string[]` | Matching file paths. Paths are relative to the session cwd where possible, to save tokens. |
+| `truncated`  | `boolean`  | Whether truncated by the result cap.                                            |
 
-## 权限与副作用
+## Permissions and side effects
 
 - `readOnly: true`
 - `destructive: false`
 - `sideEffectScope: "none"`
 - `concurrentSafe: true`
 - `needsApproval: false`
-- 权限规则匹配 `path` 和 `pattern`，deny 优先于 ask。
+- Permission rules match `path` and `pattern`; deny takes priority over ask.
 
-`Glob` 只能通过 `FileSystemPort.searchFiles` 访问文件系统。core handler 不得直接调用 `fs`、`child_process` 或 shell。
+`Glob` may access the filesystem only through `FileSystemPort.searchFiles`. The core handler must not call `fs`, `child_process` or a shell directly.
 
-## 结果预算
+## Result budget
 
-默认最多返回 100 个路径。结果超过模型预算时必须通过 `resultBudget` 截断或进入 artifact/storage。
+At most 100 paths are returned by default. A result over the model budget must be truncated through `resultBudget` or go into artifact/storage.
 
-## 失败路径
+## Failure paths
 
-- `invalid_path`：`path` 为空、不是目录，或被后续 filesystem permission adapter 拒绝。
-- `invalid_pattern`：glob pattern 为空或无法解析。
-- `permission_denied`：路径权限被拒绝。
-- `io_error`：底层文件系统错误。
-- `cancelled`：调用取消时 adapter 应停止遍历。
+- `invalid_path`: `path` is empty, not a directory, or rejected by a later filesystem permission adapter.
+- `invalid_pattern`: the glob pattern is empty or cannot be parsed.
+- `permission_denied`: path permission denied.
+- `io_error`: underlying filesystem error.
+- `cancelled`: the adapter must stop traversing when the call is cancelled.
 
 ## Trace
 
-handler 调用 `FileSystemPort.searchFiles` 时必须传播 `traceId`、`spanId`、`parentSpanId`、`sessionId` 和 `turnId`。
+When the handler calls `FileSystemPort.searchFiles` it must propagate `traceId`, `spanId`, `parentSpanId`, `sessionId` and `turnId`.

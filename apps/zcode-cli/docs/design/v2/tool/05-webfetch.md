@@ -1,255 +1,226 @@
 # WebFetch Tool
 
-## 定位
+## Purpose
 
-`WebFetch` 抓取 URL 内容，转换为 markdown，并用小模型按 prompt 提取结果。
+`WebFetch` fetches URL content, converts it to markdown and extracts the result with a small model according to a prompt.
 
-ZCode v2 第一版实现遵循本文的 L2 runtime 契约：工具本身只表达“抓取并提取网页内容”的意图，实际 HTTP I/O、权限判断、缓存、artifact 写入和二级模型调用都必须通过显式 port 或 service 完成。
+The ZCode v2 first version follows the L2 runtime contract in this document: the tool itself only expresses the intent "fetch and extract web content"; actual HTTP I/O, permission decisions, caching, artifact writes and the secondary model call must all go through explicit ports or services.
 
-实现状态（2026-05-08）：L2a 主线已经落地。`packages/contracts/src/tools/webfetch.ts` 定义运行时和 provider JSON schema，`packages/core/src/tool/handlers/webfetch*.ts` 实现 URL 规范化、host 形态校验、`HttpClientPort` GET、manual safe redirect、HTML/text 提取、内存 fetch cache、lite model prompt 处理、结果预算和网络状态事件。权限层通过 `packages/core/src/permission/service.ts` 使用 `domain:<hostname>` 优先匹配 WebFetch project rule。当前仍未落地跨 session 持久 cache、robots/meta 策略，以及真正的 binary artifact 保存；非 text-like content 目前会返回结构化失败。
+Implementation status (2026-05-08): the L2a mainline has landed. `packages/contracts/src/tools/webfetch.ts` defines the runtime and provider JSON schema; `packages/core/src/tool/handlers/webfetch*.ts` implement URL normalization, host shape validation, `HttpClientPort` GET, manual safe redirect, HTML/text extraction, in-memory fetch cache, lite model prompt processing, result budget and network status events. The permission layer matches WebFetch project rules by `domain:<hostname>` first through `packages/core/src/permission/service.ts`. Still not landed: cross-session persistent cache, robots/meta policy and real binary artifact saving; non-text-like content currently returns a structured failure.
 
-实现状态（2026-06-28 provider-visible 约定）：`WebFetch` 会把用户显式提供的 `http:` URL 规范化为 `https:` 后再发起抓取；`https:` URL 保持原协议。工具结果里的 `url` 保留用户原始输入，`finalUrl` 表示实际请求 URL。安全约束继续由 host 形态校验、权限规则、manual redirect 校验和代理/审计链路负责。
+Implementation status (2026-06-28 provider-visible convention): `WebFetch` normalizes a user-provided `http:` URL to `https:` before fetching; `https:` URLs keep their protocol. The `url` in the tool result keeps the user's original input and `finalUrl` is the URL actually requested. Security constraints stay with host shape validation, permission rules, manual redirect validation and the proxy/audit chain.
 
-实现状态（2026-07-07 修正）：`WebFetch` 主链路移除外部 `domain_info` / WebFetchPreflight 前置校验。此前调用第三方 domain safety service 会在企业网络、代理或安全策略阻断该服务时，让原本可访问的目标 URL 在真实 fetch 前失败。当前契约改为：通过 URL runtime schema、用户/项目 `domain:<hostname>` 权限规则、`HttpClientPort` 统一网络入口、manual safe redirect、egress proxy 响应和网络事件审计承担边界；handler 不再在目标请求前依赖外部域名判定服务。
+Implementation status (2026-07-07 correction): the `WebFetch` main path removes the external `domain_info` / WebFetchPreflight pre-check. Calling a third-party domain safety service made otherwise reachable target URLs fail before the real fetch when enterprise networks, proxies or security policies blocked that service. The current contract: boundaries are carried by the URL runtime schema, user/project `domain:<hostname>` permission rules, the unified `HttpClientPort` network entry, manual safe redirect, egress proxy responses and network event audit; the handler no longer depends on an external domain-classification service before the target request.
 
-实现状态（2026-07-08 安全边界调整）：ZCode 的 `WebFetch` 请求从 agent runtime 所在机器发出，而不是强制经过远端 WebFetch proxy。移除外部 `domain_info` 后，当前只保留 URL 字面量层面的本地/私网目标阻断：普通域名不做本地 DNS lookup preflight，避免公网目标因为本机 DNS 慢或企业网络解析策略在真实 fetch 前失败；字面量 IP、`.localhost` 等本地目标仍在进入 `HttpClientPort` 前阻断。IP 解析和基础 range 判断复用 `ipaddr.js`，ZCode 只保留 WebFetch 专用 public policy、IPv4-mapped IPv6、DNS64 `64:ff9b::/96` 解包、`198.18.0.0/15`、`64:ff9b:1::/48`、`100::/64`、`2001:2::/48`、`2001:10::/28`、`2001:20::/28` 等 URL 字面量安全覆盖。该 guard 不能被 `network.noProxy` / `NO_PROXY` 绕过。
+Implementation status (2026-07-08 security boundary adjustment): ZCode `WebFetch` requests are sent from the machine the agent runtime runs on, not forced through a remote WebFetch proxy. With the external `domain_info` removed, only local/private target blocking at the URL literal level is kept: ordinary domains get no local DNS lookup preflight, so public targets do not fail before the real fetch due to slow local DNS or enterprise resolution policy; literal IPs, `.localhost` and similar local targets are still blocked before entering `HttpClientPort`. IP parsing and basic range checks reuse `ipaddr.js`; ZCode keeps only the WebFetch-specific public policy and URL-literal safety coverage for IPv4-mapped IPv6, DNS64 `64:ff9b::/96` unwrapping, `198.18.0.0/15`, `64:ff9b:1::/48`, `100::/64`, `2001:2::/48`, `2001:10::/28`, `2001:20::/28` and similar. This guard cannot be bypassed by `network.noProxy` / `NO_PROXY`.
 
-## 输入契约
+## Input contract
 
-`WebFetch` 输入是严格对象：
+`WebFetch` input is a strict object:
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `url` | `string` | 是 | 完整合法 URL |
-| `prompt` | `string` | 是 | 对抓取内容要执行的提取或分析指令 |
+| Field    | Type     | Required | Description                                          |
+| -------- | -------- | -------- | ---------------------------------------------------- |
+| `url`    | `string` | yes      | Complete valid URL                                   |
+| `prompt` | `string` | yes      | Extraction or analysis instruction for the fetched content |
 
-设计要求：
+Design requirements:
 
-- URL 必须可由标准 `URL` 解析。
-- 仅支持 `http:` 和 `https:`；`http:` 会在权限和网络请求前规范化为 `https:`，`https:` 保持原协议。
-- URL 长度最大 2000 字符。
-- URL 不能携带 username/password，避免凭据进入日志、权限规则和模型上下文。
-- host 必须先满足公开域名形态：hostname 至少包含两个以 `.` 分隔的片段。该规则会拒绝
-  `localhost` 等 single-label host。
-- 每次真实 GET 前必须执行 URL 字面量 egress guard：拒绝 `.localhost`、loopback、
-  link-local、private、carrier-grade NAT、multicast、unspecified、broadcast、reserved 等
-  非公网字面量 IP。普通域名不再做本地 DNS resolve preflight；IP parse/range 使用
-  `ipaddr.js`，同时对 IPv4-mapped IPv6 和 DNS64 `64:ff9b::/96` 解包后复用 IPv4 public
-  policy；`198.18.0.0/15`、`64:ff9b:1::/48`、`100::/64`、`2001:2::/48`、
-  `2001:10::/28`、`2001:20::/28` 等库标记为 unicast 但不应被
-  WebFetch 访问的特殊段由 ZCode policy 继续阻断。
-- prompt 不能为空，最大 8000 字符。
-- prompt 描述要提取的信息，不能替代权限。
-- 如果有 MCP 提供的认证 web fetch，应优先使用 MCP 工具。
-- GitHub URL 优先建议用 `gh` CLI，因为可能需要认证和结构化 API。
+- The URL must be parseable by the standard `URL`.
+- Only `http:` and `https:` are supported; `http:` is normalized to `https:` before permission and network request, `https:` keeps its protocol.
+- URL length is at most 2000 characters.
+- The URL must not carry username/password, so credentials do not enter logs, permission rules or model context.
+- The host must first satisfy the public domain shape: hostname has at least two `.`-separated segments. This rejects single-label hosts such as `localhost`.
+- Before every real GET a URL-literal egress guard must run: reject `.localhost` and non-public literal IPs (loopback, link-local, private, carrier-grade NAT, multicast, unspecified, broadcast, reserved, etc.). Ordinary domains no longer get a local DNS resolve preflight; IP parsing/range checks use `ipaddr.js`, and IPv4-mapped IPv6 and DNS64 `64:ff9b::/96` are unwrapped and reuse the IPv4 public policy; special ranges that the library marks as unicast but WebFetch must not access (`198.18.0.0/15`, `64:ff9b:1::/48`, `100::/64`, `2001:2::/48`, `2001:10::/28`, `2001:20::/28`, etc.) stay blocked by ZCode policy.
+- `prompt` must not be empty, at most 8000 characters.
+- `prompt` describes the information to extract and cannot replace permission.
+- If an MCP-provided authenticated web fetch exists, prefer the MCP tool.
+- For GitHub URLs prefer the `gh` CLI, since authentication and a structured API may be needed.
 
-## Prompt 约束
+## Prompt constraints
 
-ZCode 为 `WebFetch` 提供完整的 tool prompt 语义，而不是只给模型一行
-“Fetch a URL”。provider-visible tool description 应由短 `description` 加
-`modelInstructions` 组成，投影后至少表达：
+ZCode gives `WebFetch` full tool prompt semantics, not just a one-line "Fetch a URL". The provider-visible tool description is a short `description` plus `modelInstructions`, which after projection must express at least:
 
-- 必须显式警告：`WebFetch WILL FAIL` 于认证或私有 URL；使用前要判断 URL 是否指向
-  Google Docs、Confluence、Jira、GitHub 等认证服务，并优先寻找可认证访问的专用
-  MCP tool。
-- `WebFetch` 会抓取指定 URL，把 HTML 转成 markdown，再用小而快的模型按 `prompt`
-  处理网页内容，并返回模型对页面内容的回答。
-- 需要检索并分析网页内容时使用；输入由 URL 和 prompt 组成，`prompt` 应描述要从页面中
-  提取或分析的信息。
-- 如果 MCP 提供 web fetch tool，应优先用 MCP 版本，因为它可能有更少限制或认证能力。
-- URL 必须是完整合法 URL；`http:` 会按 provider-visible 约定先规范化为 `https:` 后抓取，`https:` 保持原协议。
-- tool 是只读能力，不修改任何文件，但会执行网络 GET，并可能写入 session artifact/cache。
-- 大内容可能被摘要化；同一 URL 结果会进入自清理的 15 分钟、50 MB 内存 cache，重复访问更快。
-- ZCode 只自动跟随同 host/`www.` 级别的安全 redirect；跨 host redirect 不会自动抓取新主机，
-  错误信息必须带出 redirect URL，模型只能在用户意图和权限允许时用新 URL 重新发起请求。
-- GitHub URL 优先考虑 `gh` CLI / GitHub API，例如 `gh pr view`、`gh issue view`、`gh api`，
-  因为它们通常更适合认证、PR、issue 和结构化数据读取。
+- An explicit warning: `WebFetch WILL FAIL` for authenticated or private URLs; before use, judge whether the URL points to an authenticated service such as Google Docs, Confluence, Jira or GitHub, and prefer a dedicated MCP tool with authenticated access.
+- `WebFetch` fetches the given URL, converts HTML to markdown, then processes the page with a small fast model according to `prompt` and returns the model's answer about the page content.
+- Use it when retrieving and analyzing web content; input is a URL plus a prompt, and `prompt` should describe what to extract or analyze from the page.
+- If MCP provides a web fetch tool, prefer the MCP version because it may have fewer restrictions or authentication capability.
+- The URL must be complete and valid; `http:` is normalized to `https:` before fetching per the provider-visible convention, `https:` keeps its protocol.
+- The tool is read-only and modifies no file, but performs a network GET and may write session artifact/cache.
+- Large content may be summarized; results for the same URL enter a self-cleaning 15-minute, 50 MB in-memory cache, making repeat visits faster.
+- ZCode follows only safe redirects at the same host / `www.` level automatically; a cross-host redirect does not auto-fetch the new host, the error message must carry the redirect URL, and the model may re-issue the request with the new URL only when user intent and permission allow.
+- For GitHub URLs consider the `gh` CLI / GitHub API first, for example `gh pr view`, `gh issue view`, `gh api`, because they generally suit authentication, PR, issue and structured data reading better.
 
-## 输出契约
+## Output contract
 
-输出：
+Reference output:
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `bytes` | `number` | 抓取内容大小 |
-| `code` | `number` | HTTP 状态码 |
-| `codeText` | `string` | HTTP 状态文本 |
-| `result` | `string` | prompt 处理后的结果 |
-| `durationMs` | `number` | 抓取和处理耗时 |
-| `url` | `string` | 原始请求 URL |
+| Field        | Type     | Description                        |
+| ------------ | -------- | ---------------------------------- |
+| `bytes`      | `number` | Fetched content size               |
+| `code`       | `number` | HTTP status code                   |
+| `codeText`   | `string` | HTTP status text                   |
+| `result`     | `string` | Result after prompt processing     |
+| `durationMs` | `number` | Fetch and processing time          |
+| `url`        | `string` | Original request URL               |
 
-ZCode 输出结构：
+ZCode output structure:
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `url` | `string` | 原始请求 URL |
-| `finalUrl` | `string` | 实际抓取 URL，包含安全 redirect 后的位置 |
-| `status` | `number` | HTTP 状态码 |
-| `statusText` | `string` | HTTP 状态文本 |
-| `contentType` | `string` | 响应 content type |
-| `bytes` | `number` | 原始响应字节数 |
-| `durationMs` | `number` | 总耗时 |
-| `result` | `string` | prompt 处理后的结果 |
-| `cacheHit` | `boolean` | 是否命中 fetch cache |
-| `redirects` | `array` | 已接受的安全 redirect 链 |
-| `artifactUri` | `string?` | 原始 markdown/text 内容被落盘时的 artifact 引用 |
-| `artifactPath` | `string?` | adapter 返回的本地 artifact 路径，仅用于内部/UI 追踪，不要求模型可见 |
-| `truncated` | `boolean` | 输入二级模型或模型可见结果是否被预算截断 |
+| Field          | Type      | Description                                                                                         |
+| -------------- | --------- | --------------------------------------------------------------------------------------------------- |
+| `url`          | `string`  | Original request URL                                                                                |
+| `finalUrl`     | `string`  | URL actually fetched, including the location after safe redirects                                   |
+| `status`       | `number`  | HTTP status code                                                                                    |
+| `statusText`   | `string`  | HTTP status text                                                                                    |
+| `contentType`  | `string`  | Response content type                                                                               |
+| `bytes`        | `number`  | Raw response bytes                                                                                  |
+| `durationMs`   | `number`  | Total time                                                                                          |
+| `result`       | `string`  | Result after prompt processing                                                                      |
+| `cacheHit`     | `boolean` | Whether the fetch cache was hit                                                                     |
+| `redirects`    | `array`   | Chain of accepted safe redirects                                                                    |
+| `artifactUri`  | `string?` | Artifact reference when the raw markdown/text content was persisted                                 |
+| `artifactPath` | `string?` | Local artifact path returned by the adapter, for internal/UI tracing only, not required to be model-visible |
+| `truncated`    | `boolean` | Whether the input to the secondary model or the model-visible result was truncated by budget        |
 
-模型可见结果只返回 `result`，完整结构进入 tool result event 和内部 output。
+The model-visible result returns only `result`; the full structure goes to the tool result event and internal output.
 
-## 行为语义
+## Behavior semantics
 
-目标核心流程如下；带“后续”的条目不属于当前 L2a 实现：
+Target core flow; items marked "later" are not part of the current L2a implementation:
 
-1. 校验 URL。
-2. 保留 URL 的显式协议和端口，禁止在请求前自动把 HTTP 改写为 HTTPS。
-3. 检查 15 分钟 URL 内容缓存。
-4. 发起 GET 请求，设置 user agent、content length 上限和 3 分钟超时。
-5. HTML 转 markdown，非 HTML 按原文本处理。
-6. 后续：binary content 额外落盘，并在结果末尾提示保存路径；当前非 text-like content 直接失败。
-7. 非预授权或大内容调用小模型处理 prompt。
-8. 后续：预授权 markdown 且长度较小时可直接返回内容；当前始终调用 lite model 执行 prompt。
-9. 缓存抓取结果。
+1. Validate the URL.
+2. Keep the URL's explicit protocol and port; HTTP must not be rewritten to HTTPS automatically before the request.
+3. Check the 15-minute URL content cache.
+4. Issue a GET request with a user agent, a content-length limit and a 3-minute timeout.
+5. Convert HTML to markdown; non-HTML is handled as raw text.
+6. Later: binary content is additionally persisted and the save path is hinted at the end of the result; currently non-text-like content fails directly.
+7. For non-preapproved or large content, call the small model to process the prompt.
+8. Later: preapproved markdown of small length may be returned directly; currently the lite model is always called to execute the prompt.
+9. Cache the fetch result.
 
-资源限制：
+Resource limits:
 
-- URL 最大长度 2000。
-- HTTP 响应最大 10 MB。
-- 主 fetch 超时 3 分钟。
-- same-host redirect 最大 10 次。
-- markdown 输入二级模型前最多 100000 字符。
-- URL cache TTL 15 分钟，总大小 50 MB。
+- URL max length 2000.
+- HTTP response max 10 MB.
+- Main fetch timeout 3 minutes.
+- Same-host redirects at most 10.
+- Markdown fed to the secondary model at most 100000 characters.
+- URL cache TTL 15 minutes, total size 50 MB.
 
-第一版 ZCode 实现采用渐进落地策略。当前代码已经覆盖 L2a 主线，但 L2b 仍是后续工作：
+The ZCode first version lands progressively. Current code covers the L2a mainline, while L2b is future work:
 
-- 已实现 L2a：URL 长度和 prompt 长度 schema、URL 解析、HTTP->HTTPS 规范化、host 形态校验、WebFetch URL 字面量 egress guard、domain 权限 rule、`HttpClientPort` GET、manual redirect 安全、HTML/text 提取、10 MB 响应上限、15 分钟/50 MB 内存 cache、lite model prompt、结果预算、artifact 写入接口、大内容截断、trace 传播和 `network_request_status` 事件。
-- 待实现 L2b：binary artifact、跨 session 持久 cache、robots/meta 策略、更完整 HTML 清洗，以及更细粒度的 path 级网络权限规则。
+- L2a implemented: URL length and prompt length schema, URL parsing, HTTP->HTTPS normalization, host shape validation, WebFetch URL-literal egress guard, domain permission rule, `HttpClientPort` GET, manual redirect safety, HTML/text extraction, 10 MB response limit, 15-minute/50 MB in-memory cache, lite model prompt, result budget, artifact write interface, large-content truncation, trace propagation and `network_request_status` events.
+- L2b pending: binary artifact, cross-session persistent cache, robots/meta policy, more complete HTML cleaning, and finer-grained path-level network permission rules.
 
-## Redirect 策略
+## Redirect policy
 
-WebFetch 不会无条件跟随跨主机 redirect：
+WebFetch does not follow cross-host redirects unconditionally:
 
-- 协议必须相同。
-- port 必须相同。
-- redirect URL 不能带 username/password。
-- host 允许只增删 `www.` 或保持同一 host。
-- 其他 redirect 返回特殊结果，要求模型用新 URL 再调用一次 `WebFetch`。
+- The protocol must be the same.
+- The port must be the same.
+- The redirect URL must not carry username/password.
+- The host may only add or remove `www.`, or stay the same host.
+- Any other redirect returns a special result asking the model to call `WebFetch` again with the new URL.
 
-这样可以避免可信域名 open redirect 被用来绕过用户授权。
+This prevents an open redirect on a trusted domain from being used to bypass user authorization.
 
-## 权限模型
+## Permission model
 
-`WebFetch` 是只读且并发安全，但有网络副作用。
+`WebFetch` is read-only and concurrency-safe but has network side effects.
 
-权限规则内容是 `domain:<hostname>`，其中 hostname 必须标准化为小写并去掉末尾点：
+The permission rule content is `domain:<hostname>`, where hostname is normalized to lowercase with the trailing dot removed:
 
-- 预授权 host/path 可直接 allow。
-- explicit deny 直接 deny。
-- explicit ask 进入 ask。
-- explicit allow 直接 allow。
-- 无规则默认 ask，并建议在 local settings 增加 allow rule。
+- A preapproved host/path may be allowed directly.
+- Explicit deny denies directly.
+- Explicit ask goes to ask.
+- Explicit allow allows directly.
+- No rule defaults to ask, suggesting an allow rule in local settings.
 
-预授权域名只适用于 WebFetch 的 GET 请求，不应共享给 sandbox 网络权限。ZCode 应把这点写进 `NetworkPermissionPolicy`，避免 GET 预授权扩大成任意网络访问。
+Preapproved domains apply only to WebFetch GET requests and must not be shared with sandbox network permission. ZCode writes this into `NetworkPermissionPolicy` so a GET preapproval does not grow into arbitrary network access.
 
-`PermissionService` 在处理 `WebFetch` 时应使用 `domain:<hostname>` 作为 rule subject，而不是完整 URL。用户点 “always allow” 时，建议保存 `domain:<hostname>`，不保存带 path/query 的 URL，除非后续引入 path 级规则。
+`PermissionService` uses `domain:<hostname>` as the rule subject for `WebFetch`, not the full URL. When the user clicks "always allow", `domain:<hostname>` is suggested for saving, not a URL with path/query, unless path-level rules are introduced later.
 
-## 安全和版权约束
+## Safety and copyright constraints
 
-二级模型 prompt 对非预授权域名有额外约束：
+The secondary model prompt carries extra constraints for non-preapproved domains:
 
-- 只基于网页内容回答。
-- 精确引用有长度上限。
-- 不复现歌词。
-- 不输出法律自评。
+- Answer only from the page content.
+- Exact quotes have a length limit.
+- Do not reproduce lyrics.
+- Do not output legal self-assessment.
 
-ZCode 如果支持 WebFetch 摘要，也应把版权和引用限制放在 `WebFetchProcessingPolicy`，而不是散落在 prompt 字符串里。
+If ZCode supports WebFetch summarization, copyright and quote limits should live in a `WebFetchProcessingPolicy`, not be scattered in prompt strings.
 
-## 校验与错误
+## Validation and errors
 
-关键失败路径：
+Key failure paths:
 
-- URL 无效。
-- URL 过长。
-- URL 带 username/password。
-- host 不是公开可解析形态。
-- egress blocked。
-- redirect missing Location。
-- redirect 过多。
-- content length 超限。
-- fetch timeout。
-- 二级模型被取消或失败。
+- Invalid URL.
+- URL too long.
+- URL carries username/password.
+- Host is not a publicly resolvable shape.
+- Egress blocked.
+- Redirect missing Location.
+- Too many redirects.
+- Content length over limit.
+- Fetch timeout.
+- Secondary model cancelled or failed.
 
-错误需要保留 domain、URL、HTTP code、是否 egress blocked 等结构化字段。
+Errors keep structured fields such as domain, URL, HTTP code and whether egress was blocked.
 
-## ZCode 设计结论
+## ZCode design conclusions
 
-`WebFetch` 应拆为：
+`WebFetch` is split into:
 
-- `WebFetchTool`：schema、权限入口、result serialization。
-- `HttpClientPort`：统一网络入口，带超时、代理、证书、重试和审计。
-- `NetworkPermissionPolicy`：domain rule、preapproved list、redirect safety 和 public egress safety；不依赖外部 domain safety service 前置校验。
-- `ContentExtractionService`：HTML to markdown、binary persist、content budget。
-- `ModelSummarizationPort`：二级模型调用，受取消和 token/cost 观测约束。
-- `FetchCache`：带 TTL 和大小预算的缓存。
+- `WebFetchTool`: schema, permission entry, result serialization.
+- `HttpClientPort`: unified network entry with timeout, proxy, certificates, retry and audit.
+- `NetworkPermissionPolicy`: domain rules, preapproved list, redirect safety and public egress safety; it does not depend on an external domain safety service pre-check.
+- `ContentExtractionService`: HTML to markdown, binary persistence, content budget.
+- `ModelSummarizationPort`: secondary model call, subject to cancellation and token/cost observation.
+- `FetchCache`: cache with TTL and size budget.
 
 ### `HttpClientPort`
 
-`HttpClientPort` 是所有非 provider HTTP I/O 的基础 contract。WebFetch 第一版只需要 GET，但 port 设计必须能支持后续 remote config、telemetry 和 MCP HTTP transport 收敛。
+`HttpClientPort` is the base contract for all non-provider HTTP I/O. WebFetch v1 needs only GET, but the port design must support later convergence of remote config, telemetry and MCP HTTP transport.
 
-`WebFetch` 专用 `HttpClientPort` 的网络环境要求：
+Network environment requirements of the WebFetch-specific `HttpClientPort`:
 
-- 显式 `network.httpProxy` 配置优先。
-- 未显式配置时，先读取 `ZCODE_HTTP_PROXY`；再读取 runtime 已封存到
-  `ZCODE_TOOL_ENV_PASSTHROUGH_JSON` 的用户标准代理变量。不得直接继承当前进程里的
-  裸 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`，因为 runtime 初始化会先清理这些变量，
-  只在明确的工具/网络边界恢复。
-  runtime 封存代理变量按小写优先读取（与 undici 的读取顺序一致）：
-  `https_proxy`、`HTTPS_PROXY`、`http_proxy`、`HTTP_PROXY`、`all_proxy`、`ALL_PROXY`。
-- `network.noProxy` 必须同时对 WebFetch 生效；`ZCODE_NO_PROXY` 和 runtime 封存的
-  `no_proxy` / `NO_PROXY` 可作为 fallback，且小写优先。runtime 封存的 `no_proxy`
-  只参与 WebFetch fallback，不绕过显式 `network.httpProxy` / `ZCODE_HTTP_PROXY`。
-  裸标准环境变量不作为继承输入。
-- 自定义 CA 至少支持 `network.caCertFile` 和 `ZCODE_AGENT_CA_CERT`；标准 CA 变量只由 runtime 派生给受控子进程。
-- WebFetch 自己不得重新解析这些环境变量，必须完全复用 `HttpClientPort` 的统一解析逻辑。
-- WebFetch 通过 `HttpClientPort` 使用普通 HTTP 总请求超时，默认 60000ms；该超时不适用于 provider SSE 等长流式请求。
-- WebFetch 请求必须在 tool handler 层执行 URL 字面量 egress policy，再进入 `HttpClientPort`。
-  修复原因：ZCode WebFetch 不强制经过远端 WebFetch proxy；
-  移除外部 `domain_info` 后，只依赖普通 HTTP proxy / noProxy 会让模型驱动的 GET 访问
-  agent runtime 所在机器的本地服务、云 metadata endpoint 或内网地址。当前策略暂不对普通
-  域名做本地 DNS lookup，只阻断 URL 中直接出现的本地/私网目标。
-- URL 字面量 egress guard 必须早于代理/noProxy 解析生效，不能被 `NO_PROXY=127.0.0.1` 等配置绕过。
+- An explicit `network.httpProxy` configuration takes priority.
+- When not explicitly configured, read `ZCODE_HTTP_PROXY` first; then the user's standard proxy variables that the runtime has sealed into `ZCODE_TOOL_ENV_PASSTHROUGH_JSON`. Bare `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` in the current process must not be inherited directly, because runtime initialization clears these variables first and restores them only at explicit tool/network boundaries. Runtime-sealed proxy variables are read lowercase-first (the same order as undici): `https_proxy`, `HTTPS_PROXY`, `http_proxy`, `HTTP_PROXY`, `all_proxy`, `ALL_PROXY`.
+- `network.noProxy` must also apply to WebFetch; `ZCODE_NO_PROXY` and the runtime-sealed `no_proxy` / `NO_PROXY` may serve as fallback, lowercase-first. The runtime-sealed `no_proxy` participates only in the WebFetch fallback and does not bypass an explicit `network.httpProxy` / `ZCODE_HTTP_PROXY`. Bare standard environment variables are not inherited input.
+- Custom CA supports at least `network.caCertFile` and `ZCODE_AGENT_CA_CERT`; standard CA variables are derived by the runtime only for controlled child processes.
+- WebFetch itself must not re-parse these environment variables; it must fully reuse the unified parsing logic of `HttpClientPort`.
+- WebFetch uses the ordinary HTTP total-request timeout through `HttpClientPort`, default 60000 ms; this timeout does not apply to long streaming requests such as provider SSE.
+- The WebFetch request must run the URL-literal egress policy at the tool handler layer before entering `HttpClientPort`. Reason: ZCode WebFetch is not forced through a remote WebFetch proxy; with the external `domain_info` removed, relying only on the ordinary HTTP proxy / noProxy would let a model-driven GET reach local services, cloud metadata endpoints or intranet addresses on the machine of the agent runtime. The current policy does no local DNS lookup for ordinary domains and blocks only local/private targets appearing directly in the URL.
+- The URL-literal egress guard must take effect before proxy/noProxy resolution and cannot be bypassed by configuration such as `NO_PROXY=127.0.0.1`.
 
-请求字段：
+Request fields:
 
-- `url`：完整 URL。
-- `method`：第一版 WebFetch 固定 `GET`。
-- `headers`：由 tool/service 传入，adapter 追加 trace header。
-- `timeoutMs`：外层超时，由 tool contract 和输入共同裁剪。
-- `maxResponseBytes`：响应体硬上限。
-- `redirect`：`manual` 或 `follow`，WebFetch 使用 `manual` 并由 tool service 判断 same-host 安全 redirect。
-- `trace`：必须携带同一 `traceId`。
+- `url`: complete URL.
+- `method`: fixed `GET` in WebFetch v1.
+- `headers`: passed by the tool/service; the adapter appends the trace header.
+- `timeoutMs`: outer timeout, clipped jointly by the tool contract and input.
+- `maxResponseBytes`: hard response body limit.
+- `redirect`: `manual` or `follow`; WebFetch uses `manual` and the tool service judges same-host safe redirects.
+- `trace`: must carry the same `traceId`.
 
-响应字段：
+Response fields:
 
-- `url`、`status`、`statusText`、`headers`、`body`、`bytes`、`durationMs`。
-- `bodyTruncated` 只允许在明确的预览请求里出现；WebFetch 正式抓取超过上限应抛结构化错误，不静默截断。
+- `url`, `status`, `statusText`, `headers`, `body`, `bytes`, `durationMs`.
+- `bodyTruncated` may appear only in an explicit preview request; a formal WebFetch fetch over the limit throws a structured error and does not silently truncate.
 
-已覆盖测试：
+Covered tests:
 
-- `packages/core/tests/webfetch-tool.test.ts` 覆盖显式 HTTP URL 规范化为 HTTPS、HTML 转 markdown 后交给 lite model、模型可见结果只返回 `result`、内存 cache 命中仍按新 prompt 处理、literal local/private IP 拒绝、`.localhost` 拒绝、普通域名不触发 DNS preflight、DNS64 私网字面量映射拒绝、公网 IP 字面量允许、`198.18.0.0/15` / `64:ff9b:1::/48` / `100::/64` / `2001:2::/48` / `2001:10::/28` / `2001:20::/28` 特殊段拒绝、cross-host redirect 拒绝、single-label host 拒绝、网络 pending/complete/error 状态事件。
-- `packages/core/tests/permission-service.test.ts` 覆盖 WebFetch project rule 使用规范化 `domain:<hostname>` 匹配，以及 domain deny 覆盖完整 URL allow。
-- `packages/core/tests/tool-contracts.test.ts` 覆盖 WebFetch tool contract 声明为 `sideEffectScope: network` 且需要审批。
-- `packages/adapters/tests/http.test.ts` 覆盖 `HttpClientPort` trace header、`ZCODE_HTTP_PROXY`、runtime 封存代理、`network.noProxy`、`ZCODE_AGENT_CA_CERT`、标准代理/证书变量过滤、响应大小上限和 unsupported protocol；`packages/adapters/tests/http-response-status.test.ts` 覆盖走代理时上游回 `999` / `204` / `304` 原样带回、不打死进程。
-- `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-webfetch.test.ts`
-  保留桌面会话 `WebFetch` 成功闭环用例，但当前位于 `manual-review/pending`，不能计入正式自动覆盖。
-  fixture 仍位于 `packages/desktop/test/e2e/fixtures/cases/conversation-session/conversation-session-webfetch.json`。
+- `packages/core/tests/webfetch-tool.test.ts` covers explicit HTTP URL normalization to HTTPS, HTML to markdown handed to the lite model, model-visible result returning only `result`, in-memory cache hit still processed with the new prompt, literal local/private IP rejection, `.localhost` rejection, ordinary domains not triggering DNS preflight, DNS64 private-network literal mapping rejection, public IP literal allowed, rejection of the special ranges `198.18.0.0/15` / `64:ff9b:1::/48` / `100::/64` / `2001:2::/48` / `2001:10::/28` / `2001:20::/28`, cross-host redirect rejection, single-label host rejection, network pending/complete/error status events.
+- `packages/core/tests/permission-service.test.ts` covers WebFetch project rules matched by normalized `domain:<hostname>` and a domain deny overriding a full-URL allow.
+- `packages/core/tests/tool-contracts.test.ts` covers the WebFetch tool contract declaring `sideEffectScope: network` and requiring approval.
+- `packages/adapters/tests/http.test.ts` covers `HttpClientPort` trace header, `ZCODE_HTTP_PROXY`, runtime-sealed proxy, `network.noProxy`, `ZCODE_AGENT_CA_CERT`, standard proxy/certificate variable filtering, response size limit and unsupported protocol; `packages/adapters/tests/http-response-status.test.ts` covers upstream `999` / `204` / `304` via proxy returned as is without crashing the process.
+- `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-webfetch.test.ts` keeps the desktop session `WebFetch` success-loop case, but it currently sits in `manual-review/pending` and cannot count as formal automated coverage. The fixture is still at `packages/desktop/test/e2e/fixtures/cases/conversation-session/conversation-session-webfetch.json`.
 
-剩余测试重点：
+Remaining test focus:
 
-- domain rule allow/deny/ask。
-- binary 内容落盘。
-- 大内容截断。
-- abort signal。
-- 预授权域名不扩散到 sandbox 网络权限。
-- egress blocked 的结构化错误字段。
+- domain rule allow/deny/ask.
+- Binary content persistence.
+- Large content truncation.
+- Abort signal.
+- Preapproved domains not spreading to sandbox network permission.
+- Structured error fields for egress blocked.

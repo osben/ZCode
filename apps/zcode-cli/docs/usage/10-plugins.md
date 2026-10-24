@@ -1,8 +1,8 @@
 # 10 · Plugins
 
-插件用于分发技能、自定义命令、Hook 和 MCP 等扩展。CLI 支持安装和市场管理，不再限于本地目录。插件数量、版本和默认启用状态会变化，以清单为准。
+Plugins distribute extensions such as skills, custom commands, Hooks and MCP. The CLI supports installation and marketplace management, not only local directories. The number, versions and default enabled state of plugins change; go by the listing.
 
-## 常用命令
+## Common commands
 
 ```sh
 zcode plugins list --json
@@ -18,11 +18,11 @@ zcode plugins marketplace update example-market
 zcode plugins marketplace remove example-market
 ```
 
-示例市场和插件须先存在。`--scope` 支持 `user` 和 `project`；修改项目启用配置时指定对应工作目录。安装、启用、更新和卸载是不同操作，完成后重新查看清单，并用新进程验证。
+The example marketplace and plugin must exist first. `--scope` supports `user` and `project`; when changing project enablement, specify the matching working directory. Install, enable, update and uninstall are different operations; after completing one, check the listing again and verify with a new process.
 
-`plugins list` 可以独立触发内置插件准备，无需先运行一次模型对话。全局关闭插件、缺少资源或准备失败也可能导致列表为空；先看诊断，不要用付费 prompt 作为初始化步骤。
+`plugins list` can trigger preparation of built-in plugins on its own, without first running a model conversation. Globally disabled plugins, missing assets or failed preparation can also make the list empty; read the diagnostics first and do not use a paid prompt as an initialization step.
 
-## 本地插件
+## Local plugin
 
 ```text
 example-plugin/
@@ -31,7 +31,7 @@ example-plugin/
   commands/hello.md
 ```
 
-manifest 示例：
+Manifest example:
 
 ```json
 {
@@ -43,7 +43,7 @@ manifest 示例：
 }
 ```
 
-技能和命令内容见[Skills](08-skills.md)。运行配置启用本地目录：
+(The sample description means "example skills and commands".) For skill and command content, see [Skills](08-skills.md). Enable the local directory in the runtime configuration:
 
 ```json
 {
@@ -54,7 +54,7 @@ manifest 示例：
 }
 ```
 
-验证：
+Verify:
 
 ```sh
 zcode plugins validate /absolute/path/to/example-plugin --json
@@ -63,10 +63,10 @@ zcode skills list --json
 zcode commands list --json
 ```
 
-插件可携带本地可执行内容。安装前审查其 Hook、MCP 命令、依赖和数据访问范围。validate 只检查结构与诊断，不证明插件安全或所有功能可用。兼容 manifest 中的字段也不一定具有运行时实现；以加载诊断为准。
+A plugin can carry local executable content. Before installing, review its Hooks, MCP commands, dependencies and data access scope. validate only checks structure and diagnostics; it does not prove the plugin is safe or that all functions work. A field in a compatible manifest may not have a runtime implementation either; go by the load diagnostics.
 
-## 数据与复现
+## Data and reproducibility
 
-默认目录为 `~/.zcode/cli/plugins/`：市场索引、安装记录、`cache/` 中的版本内容，以及 `data/` 中的持久数据分别管理。启用态还保存在运行配置中。只复制缓存不能完整恢复安装和启用状态。
+The default directory is `~/.zcode/cli/plugins/`: the marketplace index, install records, the versioned content under `cache/` and the persistent data under `data/` are managed separately. The enabled state is also saved in the runtime configuration. Copying only the cache cannot fully restore the install and enabled state.
 
-插件需要持久写入时使用插件数据目录，不要改插件代码目录。卸载前确认是否保留数据，批量实验固定版本并归档非敏感清单。不要在比较实验中自动更新市场或插件。
+When a plugin needs persistent writes, use the plugin data directory and do not modify the plugin code directory. Before uninstalling, confirm whether to keep the data; batch experiments should pin versions and archive a non-sensitive listing. Do not auto-update marketplaces or plugins during comparison experiments.

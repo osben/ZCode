@@ -1,147 +1,84 @@
 # User Message Provider Request Ordering Plan
 
-> **Status:** Complete for the 2026-06-06 ordering-only scope except the postponed first-turn attachment-vs-userContext ordering TODO. File path is kept for existing references, but the active scope is no longer adjacent user-message merge.
+> **Status:** Complete for the 2026-06-06 ordering-only scope, except the postponed first-turn attachment-vs-userContext ordering TODO. The file path is kept for existing references; the active scope is no longer adjacent user-message merge.
 
 ## Goal
 
-在不改 session store / UI transcript / replay 存储 schema 的前提下，让最终发给 model provider 的 user messages 满足当前已确认的 provider-visible ordering 规则：
+Without changing the session store / UI transcript / replay storage schema, make the user messages sent to the model provider satisfy the confirmed provider-visible ordering rules:
 
-- attachment-like / system-reminder user context 在 request-local projection 中 bubble 到对应 real user prompt 前；
-- 同一真实 user turn 内 ZCode 已支持的 file / image / url prompt attachments 位于真实 prompt 前；首轮 attachment 是否应越过 request-level userContext 进入 prompt 前方，作为 postponed TODO 单独跟进；
-- direct pasted image 如果已经是同一条 real user `content[]` 里的 block，则保持原始 block 顺序，不按 attachment bubble-up 处理；
-- 不做相邻 `role: "user"` messages 的通用合并；该能力保留为 postponed/future phase；
-- provider request 输出前 strip runtime metadata，并只在最后一条非 system message 上 finalize cache-control marker。
+- Attachment-like / system-reminder user context bubbles in the request-local projection to just before its real user prompt.
+- Within one real user turn, the file / image / url prompt attachments ZCode supports sit before the real prompt. Whether the first-turn attachment should pass the request-level userContext to sit before the prompt is a postponed TODO.
+- A direct pasted image that is already a block in the same real user `content[]` keeps its original block order; it is not treated as attachment bubble-up.
+- No generic merge of adjacent `role: "user"` messages; that stays postponed/future.
+- Runtime metadata is stripped before provider request output; the cache-control marker is finalized only on the last non-system message.
 
-## Current Scope
+## Scope
 
-本 plan 负责：
+In scope:
 
-- provider request 前的 user-message ordering/projection；
-- attachment-like runtime user entries 的 request-local bubble-up；
-- same-turn file/image/url prompt attachment 的 provider-visible block 顺序；
-- source-only runtime metadata identity 判定，避免用户 literal `<system-reminder>` 被误判；
-- projection 后 latest non-system message cache-control marker finalization；
-- regular turn、compact summary request、goal completion verifier request 使用同一 provider projection；
-- focused tests、prompt-trajectory E2E 与 repeat stability evidence。
+- User-message ordering/projection before the provider request.
+- Request-local bubble-up of attachment-like runtime user entries.
+- Provider-visible block order of same-turn file/image/url prompt attachments.
+- Source-only runtime metadata identity, so a user's literal `<system-reminder>` is not misclassified.
+- Cache-control marker finalization on the latest non-system message after projection.
+- Regular turns, compact summary requests and goal completion verifier requests use the same provider projection.
+- Focused tests, prompt-trajectory E2E and repeat-stability evidence.
 
-本 plan 不负责：
+Out of scope:
 
-- 相邻 user messages 合并成同一条 `content[]`；
-- 新增 `ContentPart` 或重写 session 持久化 schema；
-- 修改 UI/session transcript 展示顺序；
-- 新增 system-reminder source 文案；
-- ToolSearch/deferred tools、MCP instructions/resources、skill discovery；
-- exact wording，或 ZCode 当前没有 producer 的 attachment 类型。
+- Merging adjacent user messages into one `content[]`.
+- New `ContentPart` or session persistence schema rewrites.
+- UI/session transcript display order.
+- New system-reminder source wording.
+- ToolSearch/deferred tools, MCP instructions/resources, skill discovery.
+- Exact wording, or attachment types ZCode has no producer for.
 
-## Ordering Rules
+## Ordering rules
 
-- attachment-like message 在 request-local projection 中自底向上 bubble，直到遇到 assistant 或 tool-result user boundary。
-- direct pasted image 属于 user message 自身 content block，不是 attachment message；其 block 顺序由原 user content 决定。
-- ZCode 当前没有独立的 attachment message taxonomy；参与排序的 provider-visible producer 是 file / image / url prompt attachments，以及 runtime metadata 标记的 provider-visible synthetic user context。
-- 用户真实 prompt 即使以 `<system-reminder>` 开头，也必须依赖 runtime metadata/source 判定为 real user，不能靠文本 tag heuristic。
+- An attachment-like message bubbles bottom-up in the request-local projection until it meets an assistant or tool-result user boundary.
+- A direct pasted image is a content block of the user message, not an attachment message; its order is decided by the original user content.
+- ZCode has no standalone attachment message taxonomy. The provider-visible producers taking part in ordering are file / image / url prompt attachments and provider-visible synthetic user context marked by runtime metadata.
+- A real user prompt that starts with `<system-reminder>` must be recognized as real user by runtime metadata/source, never by a text-tag heuristic.
 
-## Stability Requirement
+## Stability requirement (P000)
 
-这是 P000 级约束：
+- The projection is pure, deterministic and idempotent.
+- It reads no time, random number, UUID, environment variable or other non-input state.
+- It does not mutate `MessageHistory`, input entries, message content blocks, toolCalls or the cacheControl object.
+- It does not trim, normalize, escape or rewrite existing text.
+- It does not sort alphabetically or by descriptor; only runtime/history order and explicit bubble boundaries reorder.
+- Direct pasted image blocks are not moved by attachment bubble-up.
+- Cache-control is cleaned and reset on the final provider messages: keep the system prompt's own cacheControl, clear old cacheControl on non-system messages, and mark only the last non-system message.
+- Prompt-trajectory evidence must check the exact provider-visible order/shape.
 
-- projection 必须 pure、deterministic、idempotent；
-- 不读取时间、随机数、UUID、环境变量或其他非输入状态；
-- 不 mutate `MessageHistory`、传入 entries、message content blocks、toolCalls 或 cacheControl object；
-- 不 trim、normalize、escape 或重写已有 text；
-- 不按 alphabetic / descriptor order 排序，只按 runtime/history 顺序和明确 bubble boundary 重排；
-- direct pasted image block 不被 attachment bubble-up 逻辑移动；
-- cache-control 在最终 provider messages 上清理并重设：保留 system prompt 自身 cacheControl，清理非 system message 的旧 cacheControl，并只标记最后一条非 system message；
-- prompt-trajectory evidence 必须检查 exact provider-visible order/shape。
+## Phases (all complete unless noted)
 
-## Phases
-
-### Phase A0: Runtime Metadata Prerequisite
-
-**Status:** Completed by system-reminder work.
-
-- [x] `RuntimeMessageMetadata` 只保留 `{ source }`。
-- [x] `RuntimeMessageEntry = { message, metadata? }` 用于 request-local projection。
-- [x] `toRuntimeEntries()` deep clone metadata-bearing entries。
-- [x] `toModelMessages()` 保持 provider-clean，不泄漏 metadata。
-- [x] synthetic notice persistence/hydration 可 roundtrip `metadata.runtimeMessage: { source }`。
-- [x] real user / literal `<system-reminder>` badcase 依赖 source metadata 判断。
-
-### Phase A1: Provider Request Ordering Helper
-
-**Status:** Implemented in current WIP.
-
-- [x] 新增 `buildProviderRequestMessages(...)`。
-- [x] 输入 `RuntimeMessageEntry[]`，输出 provider-clean `ModelInputMessage[]`。
-- [x] attachment-like entries bubble 到 assistant/tool-result boundary 后的 user run 前。
-- [x] 不合并相邻 user messages。
-- [x] metadata/source/descriptor 字段不进入 provider body。
-- [x] `applyCacheControl: true` 时，projection 后最后一条非 system entry 获得 `{ type: "ephemeral" }`；cache-control 不再承载 real_user 身份信号。
-- [x] direct pasted image blocks 在 real user content 内保持原始顺序。
-
-### Phase A2: Request Wiring
-
-**Status:** Implemented in current WIP.
-
-- [x] regular turn 使用 provider projection 后的 messages。
-- [x] compact summary auxiliary request 使用 provider projection 后的 messages。
-- [x] goal completion verifier auxiliary request 使用 provider projection 后的 messages。
-- [x] `ModelRequest` event 与 adapter call 使用同一份 projected messages。
-
-### Phase A3: Same-turn Prompt Attachment Order
-
-**Status:** Implemented in current WIP.
-
-- [x] live turn `buildUserContentFromTurn(...)` 输出 attachment blocks before prompt。
-- [ ] TODO: 首轮 / 无 assistant boundary 时，同一 real user `content[]` 内的 prompt attachment 仍不能越过 request-level userContext；仅调转 `content[]` push order 不能修复该问题，后续需要单独设计 provider-only split 或 request-local content projection。
-- [x] text file/source attachment 继续使用 SR12 synthetic Read reminder text。
-- [x] image attachment 保留 image block，并位于 prompt 前。
-- [x] URL/resource attachment 保留 resource block，并位于 prompt 前。
-- [x] direct pasted image 不纳入 attachment sorting；如果未来 ZCode 支持 paste image 独立入口，应单独建 producer 分支。
-
-### Phase A4: Validation
-
-**Status:** Complete for ordering-only scope.
-
-- [x] Focused tests: `provider-request-messages.test.ts`、`prompt-attachments.test.ts`、`runtime-reminders.test.ts`、`runtime-tool-loop.test.ts`、`runtime-trace.test.ts`、`runtime-compact.test.ts`、`session-history-hydrator.test.ts`。
-- [x] `@zcode/core` typecheck。
-- [x] Touched-file lint gate: provider projection / conversation / turn-loop / compact / verifier / hydrator files passed oxlint.
-- [x] prompt-trajectory E2E for `user-message-provider-request-order` with both OpenAI-compatible and Anthropic Messages snapshots.
-- [x] prompt-trajectory E2E for `user-message-pasted-image-order` verifies pasted inline image placeholder stays after the real prompt text.
-- [x] Review generated request bodies for exact ordering and absence of runtime metadata.
-
-Validation note: package-level `pnpm --filter @zcode/core lint` still fails on pre-existing `max-lines` errors in `src/workflow/lifecycle.ts` and `src/subagent/runner.ts`; touched files pass targeted oxlint.
+- **A0 Runtime metadata prerequisite** (done by system-reminder work): `RuntimeMessageMetadata` keeps only `{ source }`; `RuntimeMessageEntry = { message, metadata? }` is used for request-local projection; `toRuntimeEntries()` deep-clones metadata-bearing entries; `toModelMessages()` stays provider-clean; synthetic notice persistence/hydration roundtrips `metadata.runtimeMessage: { source }`; real user vs literal `<system-reminder>` depends on source metadata.
+- **A1 Provider request ordering helper**: `buildProviderRequestMessages(...)` takes `RuntimeMessageEntry[]` and outputs provider-clean `ModelInputMessage[]`; attachment-like entries bubble to just after the assistant/tool-result boundary, before the user run; adjacent user messages are not merged; metadata/source/descriptor fields never reach the provider body; with `applyCacheControl: true` the last non-system entry gets `{ type: "ephemeral" }` (cache-control no longer carries real_user identity); direct pasted image blocks keep their order.
+- **A2 Request wiring**: regular turns, compact summary auxiliary requests and goal completion verifier auxiliary requests use the projected messages; the `ModelRequest` event and the adapter call use the same projected messages.
+- **A3 Same-turn prompt attachment order**: live turn `buildUserContentFromTurn(...)` outputs attachment blocks before the prompt; text file/source attachments keep the SR12 synthetic Read reminder text; image attachments keep the image block before the prompt; URL/resource attachments keep the resource block before the prompt; direct pasted images are outside attachment sorting (a future standalone paste entry needs its own producer branch). Open TODO: for the first turn / no assistant boundary, prompt attachments in the same real user `content[]` still cannot pass the request-level userContext. Reversing the `content[]` push order cannot fix it; it needs a separate provider-only split or request-local content projection design.
+- **A4 Validation**: focused tests `provider-request-messages`, `prompt-attachments`, `runtime-reminders`, `runtime-tool-loop`, `runtime-trace`, `runtime-compact`, `session-history-hydrator`; `@zcode/core` typecheck; touched-file oxlint; prompt-trajectory E2E `user-message-provider-request-order` (OpenAI-compatible and Anthropic Messages snapshots) and `user-message-pasted-image-order` (pasted inline image placeholder stays after the real prompt text). Package-level `pnpm --filter @zcode/core lint` still fails on pre-existing `max-lines` errors in `src/workflow/lifecycle.ts` and `src/subagent/runner.ts`.
 
 ## Postponed
 
 | Item | Why postponed |
 | --- | --- |
-| Adjacent user-message merge | 暂时移除，避免 provider-visible shape churn 和 cache instability；未来如果重新启用，需要单独 phase、单独 cache-stability E2E 和 Anthropic Messages 请求形态 review。 |
-| First-turn attachment vs request-level userContext ordering | 暂时不改；当前同一 real user `content[]` 内的 file/url/local-image attachment 可以位于真实 prompt 前，但无法越过前置 request-level userContext。仅调转 push order 会变成 `userContext -> prompt -> attachment`，更不对；未来需要独立 provider-only split 或 request-local content projection 方案。 |
-| 完整 attachment taxonomy | 只处理当前 ZCode-supported file/image/url/system-reminder context；其他 attachment 类型等有对应 producer 后再纳入。 |
-| Native session store content[] refactor | 当前目标是 request-local provider projection，不改持久化/UI transcript。 |
+| Adjacent user-message merge | Removed for now to avoid provider-visible shape churn and cache instability; re-enabling needs its own phase, its own cache-stability E2E and an Anthropic Messages request shape review. |
+| First-turn attachment vs request-level userContext ordering | Not changed. File/url/local-image attachments in the same real user `content[]` can sit before the real prompt but cannot pass the leading request-level userContext. Only reversing push order gives `userContext -> prompt -> attachment`, which is worse; needs a provider-only split or request-local content projection. |
+| Full attachment taxonomy | Only ZCode-supported file/image/url/system-reminder context is handled; add other types when a producer exists. |
+| Native session store `content[]` refactor | The goal is request-local provider projection, not persistence/UI transcript changes. |
 
-## Prompt-trajectory Evidence
-
-Current testcase:
+## Prompt-trajectory evidence
 
 ```bash
 pnpm --filter @zcode/prompt-trajectory record -- --fixture testcases/user-message-provider-request-order/fixture.json --out out/user-message-provider-request-order/integration-e2e-final
 pnpm --filter @zcode/prompt-trajectory record -- --fixture testcases/user-message-pasted-image-order/fixture.json --out out/user-message-pasted-image-order-latest
 ```
 
-Expected derived snapshots per trajectory:
+Expected derived snapshots per trajectory: `*.openai_request_body.json`, `*.anthropic_request_body.json`. Expected provider-visible shape: attachment/context before the real prompt, adjacent user messages still separate, cache-control on the latest non-system provider message.
 
-- `*.openai_request_body.json`
-- `*.anthropic_request_body.json`
+Observed:
 
-The expected provider-visible shape is attachment/context before real prompt, adjacent user messages still separate, and cache-control follows the latest non-system provider message rule.
-
-Observed evidence:
-
-- `out/user-message-provider-request-order/integration-e2e-final/trajectories/0001.openai_request_body.json`
-- `out/user-message-provider-request-order/integration-e2e-final/trajectories/0001.anthropic_request_body.json`
-- `out/user-message-pasted-image-order-latest/trajectories/0001.openai_request_body.json`
-- `out/user-message-pasted-image-order-latest/trajectories/0001.anthropic_request_body.json`
-- OpenAI-compatible snapshot keeps adjacent user messages separate.
-- Anthropic Messages snapshot represents the provider-normalized adjacent-user content block shape.
-- Pasted image order snapshot keeps the real prompt text before the pasted image placeholder.
+- `out/user-message-provider-request-order/integration-e2e-final/trajectories/0001.{openai,anthropic}_request_body.json`
+- `out/user-message-pasted-image-order-latest/trajectories/0001.{openai,anthropic}_request_body.json`
+- The OpenAI-compatible snapshot keeps adjacent user messages separate; the Anthropic Messages snapshot shows the provider-normalized adjacent-user content block shape; the pasted-image snapshot keeps the real prompt text before the pasted image placeholder.

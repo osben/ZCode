@@ -1,6 +1,6 @@
-# 02 · 命令行参考
+# 02 · CLI reference
 
-## 常用入口
+## Common entry points
 
 ```sh
 zcode
@@ -12,31 +12,31 @@ zcode plugins list --json
 zcode hooks trust status --workspace /absolute/path/to/project --json
 ```
 
-无参数进入 TUI。`--prompt`/`-p` 必须带非空文本；不要把 `-p` 当作无需值的开关，也不要用裸位置参数替代 prompt。`app-server` 是协议服务入口，不是批量任务的普通问答命令。
+With no arguments the TUI starts. `--prompt`/`-p` requires non-empty text; do not treat `-p` as a flag without a value, and do not use a bare positional argument in place of the prompt. (In the sample, "任务说明" means "task description".) `app-server` is the protocol server entry, not an ordinary Q&A command for batch tasks.
 
-## 参数
+## Flags
 
-- `--cwd <path>`：本次调用的有效工作目录，用于项目配置、技能发现和会话归属。
-- `--mode plan|build|edit|yolo|guarded`：显式指定权限模式。`--prompt` 缺省为 `yolo`；旧构建可能缺少 guarded。
-- `--attach <path>`：添加本地附件，可重复。实际媒体支持还受所选模型限制。
-- `--resume <sessionId>`：恢复指定会话；`--continue`/`-c` 恢复当前目录最近的会话。两者互斥。
-- `--target <objective>`：设置或推进会话目标，与 `--prompt` 互斥；替换已有目标使用 `--target-replace`。
-- `--disallowed-tools <names>` / `--disallowedTools <names>`：本次运行移除整项工具，逗号或空格分隔；不持久化。`Bash(git *)` 仍移除整个 `Bash`，不是命令匹配规则。
-- `--json`：命令支持时输出 JSON；并非所有子命令或错误路径都返回 JSON。
-- `--output-format text|json|stream-json`：控制普通 prompt 的输出，优先于 `--json`。
-- `--workflow-mode disabled|onDemand|alwaysOn`：当前源码中用于 prompt、target 和 TUI；默认 `disabled`。旧构建可能拒绝此参数。
-- `--memory-bench`：仅配合 `--prompt`，开启自动记忆提取并等待提取结束；须先启用记忆。
-- `--browser-use=headless`：显式启用 CLI 管理的无界面浏览器；可用 `--browser-executable <absolute-path>` 指定浏览器。后者不能单独使用。
-- `--locale auto|en-US|zh-CN`、`--no-color`、`--verbose`：语言、颜色与附加诊断。
-- `--version`/`-v`：版本；`-v` 不是 verbose。
+- `--cwd <path>`: the effective working directory for this call, used for project configuration, skill discovery and session ownership.
+- `--mode plan|build|edit|yolo|guarded`: set the permission mode explicitly. `--prompt` defaults to `yolo`; older builds may lack guarded.
+- `--attach <path>`: add a local attachment, repeatable. Actual media support also depends on the selected model.
+- `--resume <sessionId>`: resume the given session; `--continue`/`-c` resumes the most recent session of the current directory. The two are mutually exclusive.
+- `--target <objective>`: set or advance the session target; mutually exclusive with `--prompt`. Use `--target-replace` to replace an existing target.
+- `--disallowed-tools <names>` / `--disallowedTools <names>`: remove whole tools for this run, comma- or space-separated; not persisted. `Bash(git *)` still removes the entire `Bash`; it is not a command-matching rule.
+- `--json`: output JSON where the command supports it; not every subcommand or error path returns JSON.
+- `--output-format text|json|stream-json`: controls ordinary prompt output; takes precedence over `--json`.
+- `--workflow-mode disabled|onDemand|alwaysOn`: in the current source used for prompt, target and TUI; default `disabled`. Older builds may reject this flag.
+- `--memory-bench`: only with `--prompt`; enables automatic memory extraction and waits for extraction to finish; memory must be enabled first.
+- `--browser-use=headless`: explicitly enable the CLI-managed headless browser; `--browser-executable <absolute-path>` can name the browser. The latter cannot be used alone.
+- `--locale auto|en-US|zh-CN`, `--no-color`, `--verbose`: language, color and extra diagnostics.
+- `--version`/`-v`: version; `-v` is not verbose.
 
-插件命令还支持 `--scope`、`--available`、`--all`、`--keep-data` 等选项，见[插件](10-plugins.md)。`--force-mcs` 是 Anthropic 接口的专项诊断选项，不是通用评测开关。
+Plugin commands also support `--scope`, `--available`, `--all`, `--keep-data` and other options; see [Plugins](10-plugins.md). `--force-mcs` is a dedicated diagnostic option for Anthropic interfaces, not a general evaluation switch.
 
-不要使用未经解析器支持的 `--print`、`--model`、`--settings`、`--max-turns`、`--allowed-tools` 或 `--permission-mode`。若需要运行时限，由评测进程管理器控制；不要杜撰 CLI token 或轮数预算参数。
+Do not use `--print`, `--model`, `--settings`, `--max-turns`, `--allowed-tools` or `--permission-mode`, which the parser does not support. If a runtime limit is needed, enforce it in the evaluation process manager; do not invent CLI token or turn budget flags.
 
-## JSON 与流式输出
+## JSON and streaming output
 
-普通 prompt 的 JSON 示例仅展示结构，具体字段可随构建变化：
+The JSON example for an ordinary prompt shows structure only; the exact fields can change with the build:
 
 ```json
 {
@@ -48,14 +48,14 @@ zcode hooks trust status --workspace /absolute/path/to/project --json
 }
 ```
 
-`stream-json` 是 NDJSON：逐行输出事件，正常结束时输出 `type: "result"` 的结果行。逐行 `JSON.parse`，不要把整个文件当作一个 JSON 对象。遇到未知事件类型应保留原始记录；不要按固定事件数量判断成功。
+`stream-json` is NDJSON: events are output line by line, and a normal end outputs a result line with `type: "result"`. Run `JSON.parse` per line; do not treat the whole file as one JSON object. Keep the raw record of unknown event types; do not judge success by a fixed event count.
 
-`--prompt "/help"` 等本地命令可以提前返回文本，即使传了 `--output-format json` 也不代表一定有普通 prompt 的结果结构。此类调用只能验证参数被接受，不能验证完整输出协议。
+Local commands such as `--prompt "/help"` can return text early; even with `--output-format json` this does not imply the result structure of an ordinary prompt. Such calls only verify that the flags are accepted, not the full output protocol.
 
-stdout 保存业务输出，stderr 单独保存诊断。异常路径可能只有 stderr；先检查进程退出状态，再解析结果。进程成功结束也不等于任务评分通过，须结合工具执行、文件产物和独立判题结果。
+stdout holds business output and stderr holds diagnostics separately. Error paths may have only stderr; check the process exit status before parsing results. A process that ends successfully does not mean the task passed grading; combine tool execution, file artifacts and an independent judging result.
 
-## 退出与取消
+## Exit and cancellation
 
-常见参数或运行错误返回退出码 `1`；成功入口通常返回 `0`。信号取消要记录原始 exit code、signal 和超时标记，不要只归一化为“没有输出”。权限拒绝可能作为工具错误交给模型后继续一轮，因此也不能只靠进程退出码检测工具失败。
+Common flag or runtime errors return exit code `1`; successful entry points usually return `0`. For signal cancellation, record the raw exit code, the signal and the timeout flag; do not normalize them to "no output". A permission denial may be handed to the model as a tool error and the run continues for another round, so tool failure cannot be detected from the process exit code alone.
 
-恢复、goal 和后台工作流的结束语义见[会话](06-sessions.md)。
+For the ending semantics of resume, goal and background workflows, see [Sessions](06-sessions.md).

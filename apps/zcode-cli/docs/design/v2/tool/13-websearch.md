@@ -1,85 +1,71 @@
 # WebSearch Client Wrapper Tool
 
-## 结论
+## Conclusion
 
-`WebSearch` 是主模型可见的普通 client-side tool。模型调用 `WebSearch`
-后，ZCode 在 tool handler 内部发起一个只包含 provider-native `web_search`
-的 model request。内部 request 返回后，ZCode 把 links/sources 格式化为
-普通 tool result，回灌给主模型继续生成最终答案。
+`WebSearch` is an ordinary client-side tool visible to the main model. After the model calls `WebSearch`, ZCode issues, inside the tool handler, a model request that contains only the provider-native `web_search`. After the internal request returns, ZCode formats the links/sources into an ordinary tool result and feeds it back to the main model to continue generating the final answer.
 
-主模型请求不得直接暴露 provider-native `web_search`。
+The main model request must not expose the provider-native `web_search` directly.
 
-## 设计目标
+## Design goals
 
-1. 主 loop 的 provider-visible tool name 是 `WebSearch`，执行模式是 `client`。
-2. `WebSearch` 必须进入 `ToolExecutor`、permission、scheduler、hooks、事件、
-   resultBudget、tool result history 和 replay 生命周期。
-3. provider-native `web_search` 只允许出现在 `WebSearch` handler 发起的内部
-   side request 中，并由 adapter 投影成 provider SDK helper。
-4. public input schema 保持核心字段：`query`、`allowed_domains`、
-   `blocked_domains`；同时保留当前 Anthropic provider-native `web_search`
-   实际消费的 `maxUses` 可选调参字段。`searchContextSize`、`numResults`、
-   `safeSearch` 不对主模型可见。
-5. 不支持 native web search 的 provider/model 默认不向主模型暴露 `WebSearch`；
-   如果运行时无法解析 provider capability，也不暴露 `WebSearch`。
-6. handler 输出必须提取 provider 返回的 sources/results/usage，并用普通 tool result
-   提醒主模型在最终答案中使用 markdown links 引用来源。
+1. The provider-visible tool name in the main loop is `WebSearch`, execution mode `client`.
+2. `WebSearch` must enter the `ToolExecutor`, permission, scheduler, hooks, events, resultBudget, tool result history and replay lifecycle.
+3. The provider-native `web_search` may appear only in the internal side request issued by the `WebSearch` handler, projected by the adapter into the provider SDK helper.
+4. The public input schema keeps the core fields: `query`, `allowed_domains`, `blocked_domains`; it also keeps the optional tuning field `maxUses` that the current Anthropic provider-native `web_search` actually consumes. `searchContextSize`, `numResults` and `safeSearch` are not visible to the main model.
+5. A provider/model that does not support native web search does not expose `WebSearch` to the main model by default; if the runtime cannot resolve the provider capability, `WebSearch` is not exposed either.
+6. The handler output must extract the sources/results/usage returned by the provider and remind the main model, in an ordinary tool result, to cite sources with markdown links in the final answer.
 
 ## Public Tool Contract
 
-主模型看到的 contract：
+The contract the main model sees:
 
-| 字段 | 值 |
-| --- | --- |
-| `name` | `WebSearch` |
-| `capability` | `web_search` |
-| `executionMode` | `client` |
-| `providerNative` | 不存在 |
-| `readOnly` | `true` |
-| `concurrentSafe` | `true` |
-| `sideEffectScope` | `network` |
-| `needsApproval` | `false` |
+| Field             | Value        |
+| ----------------- | ------------ |
+| `name`            | `WebSearch`  |
+| `capability`      | `web_search` |
+| `executionMode`   | `client`     |
+| `providerNative`  | absent       |
+| `readOnly`        | `true`       |
+| `concurrentSafe`  | `true`       |
+| `sideEffectScope` | `network`    |
+| `needsApproval`   | `false`      |
 
 public input:
 
-| 字段 | 说明 |
-| --- | --- |
-| `query` | 要搜索的自然语言 query |
-| `allowed_domains` | 可选，只允许这些 domain 的结果 |
-| `blocked_domains` | 可选，排除这些 domain 的结果 |
-| `maxUses` | 可选，内部 provider-native 搜索次数上限，默认 `8` |
+| Field             | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `query`           | Natural-language query to search                                                    |
+| `allowed_domains` | Optional, allow only results from these domains                                     |
+| `blocked_domains` | Optional, exclude results from these domains                                        |
+| `maxUses`         | Optional, upper limit of internal provider-native searches, default `8`             |
 
-`allowed_domains` 和 `blocked_domains` 不能同时传入。domain 只接受 hostname，不接受
-protocol、path 或 wildcard。
+`allowed_domains` and `blocked_domains` cannot be passed together. A domain accepts only a hostname, not a protocol, path or wildcard.
 
 ## Internal Provider-Native Request
 
-`WebSearch` handler 负责把 public input 转成内部 provider-native args：
+The `WebSearch` handler converts the public input into internal provider-native args:
 
-| public 字段 | 内部 provider-native args |
-| --- | --- |
-| `allowed_domains` | `allowedDomains` |
-| `blocked_domains` | `blockedDomains` |
-| `maxUses` | `maxUses`，未传时默认 `8` |
+| public field      | internal provider-native args       |
+| ----------------- | ----------------------------------- |
+| `allowed_domains` | `allowedDomains`                    |
+| `blocked_domains` | `blockedDomains`                    |
+| `maxUses`         | `maxUses`, default `8` when omitted |
 
-内部 request 固定：
+The internal request is fixed:
 
 - system message: `You are an assistant for performing a web search tool use.`
 - user message: `Perform a web search for the query: <query>`
-- tools: 只包含 `web_search`
-- toolChoice: 不设置。BigModel 的 Anthropic 兼容端点会拒绝 named forced
-  `web_search` tool choice（1210）；当前依靠单工具请求和 prompt 触发 provider-native 搜索。
+- tools: only `web_search`
+- toolChoice: not set. BigModel's Anthropic-compatible endpoint rejects a named forced `web_search` tool choice (1210); provider-native search is currently triggered by the single-tool request and the prompt.
 - metadata.querySource: `web_search_tool`
 
-## Provider 映射
+## Provider mapping
 
-core 不 import `@ai-sdk/anthropic` 或 `@ai-sdk/openai`。adapter 是唯一把
-provider-native contract 转成 SDK provider tool 的地方。
+Core does not import `@ai-sdk/anthropic` or `@ai-sdk/openai`. The adapter is the only place that converts the provider-native contract into an SDK provider tool.
 
 ### Anthropic-compatible
 
-内部 `web_search` 使用 `anthropic.tools.webSearch_20260209()`，并由 AI SDK 在内部
-请求中生成：
+The internal `web_search` uses `anthropic.tools.webSearch_20260209()`, and the AI SDK generates in the internal request:
 
 ```json
 {
@@ -88,100 +74,76 @@ provider-native contract 转成 SDK provider tool 的地方。
 }
 ```
 
-支持条件：
+Support conditions:
 
-- provider kind 是 `anthropic`。
-- resolved baseURL host 是 `bigmodel.cn`、`z.ai`、`deepseek.com` 或其子域。
-- 未命中 allowlist 的 Anthropic-compatible provider 不投影 provider-native search。
+- The provider kind is `anthropic`.
+- The resolved baseURL host is `bigmodel.cn`, `z.ai`, `deepseek.com` or a subdomain.
+- An Anthropic-compatible provider outside the allowlist does not project provider-native search.
 
 ### OpenAI
 
-当前不投影 `openai.web_search`，即使 baseURL host 命中 WebSearch allowlist 也不暴露
-`WebSearch`。WebSearch gate 必须同时满足 `providerKind === "anthropic"` 和 baseURL
-host allowlist。
+`openai.web_search` is currently not projected; even if the baseURL host hits the WebSearch allowlist, `WebSearch` is not exposed. The WebSearch gate must satisfy both `providerKind === "anthropic"` and the baseURL host allowlist.
 
-### 其他 Provider
+### Other providers
 
-`openai-compatible`、`gateway`、`custom` 当前不投影 WebSearch provider-native tool。
-不要把它降级为普通 function tool，也不要恢复旧 BigModel Web Search REST API 或
-DuckDuckGo HTML fallback。
+`openai-compatible`, `gateway` and `custom` currently do not project the WebSearch provider-native tool. Do not degrade it to an ordinary function tool, and do not restore the old BigModel Web Search REST API or the DuckDuckGo HTML fallback.
 
-## 注册、权限与执行
+## Registration, permission and execution
 
-- `WebSearch` 注册进 `builtInTools`，默认主 agent 和 Explore agent 都可以按各自
-  tool pool/allowlist 暴露它。
-- `web_search` 仅作为 legacy allowlist alias 映射到 `WebSearch`；不得出现在主请求
-  `tools[].name`。
-- provider capability gate 优先在 runtime projection 过滤 `WebSearch`；handler 的
-  `assertProviderSupportsWebSearch` 是第二道防线。
-- capability gate 由 provider kind 和 resolved baseURL 共同决定；只有 `anthropic`
-  且 baseURL host 是 `bigmodel.cn`、`z.ai`、`deepseek.com` 或其子域时才暴露。
-- `WebSearch` 进入本地 `ToolExecutor` 并触发普通 tool lifecycle：
-  `ToolCallScheduled`、`ToolCallStarted`、`ToolCallResult`、permission、hook、
-  scheduler、resultBudget 和 session history。
-- 内部 provider-native request 的 network status 通过 tool context 继续转发为
-  `ModelNetworkStatus` 事件。
+- `WebSearch` is registered in `builtInTools`; the default main agent and the Explore agent may each expose it according to their own tool pool/allowlist.
+- `web_search` is only a legacy allowlist alias mapped to `WebSearch`; it must not appear in the main request `tools[].name`.
+- The provider capability gate filters `WebSearch` first in the runtime projection; the handler's `assertProviderSupportsWebSearch` is the second line of defense.
+- The capability gate is decided jointly by provider kind and the resolved baseURL; it is exposed only for `anthropic` with a baseURL host of `bigmodel.cn`, `z.ai`, `deepseek.com` or a subdomain.
+- `WebSearch` enters the local `ToolExecutor` and triggers the ordinary tool lifecycle: `ToolCallScheduled`, `ToolCallStarted`, `ToolCallResult`, permission, hook, scheduler, resultBudget and session history.
+- The network status of the internal provider-native request keeps being forwarded as `ModelNetworkStatus` events through the tool context.
 
-## 删除与迁移
+## Deletion and migration
 
-删除或不恢复：
+Deleted or not restored:
 
-- 主请求直接追加 provider-native `web_search` contract。
-- 旧 BigModel Web Search adapter tool。
-- DuckDuckGo HTML fallback。
-- `searchContextSize` / `numResults` / `safeSearch` 字段。
-- public schema 中的 `allowedDomains`、`blockedDomains` legacy camelCase domain
-  字段。
+- Appending the provider-native `web_search` contract directly to the main request.
+- The old BigModel Web Search adapter tool.
+- The DuckDuckGo HTML fallback.
+- The `searchContextSize` / `numResults` / `safeSearch` fields.
+- The legacy camelCase domain fields `allowedDomains`, `blockedDomains` in the public schema.
 
-保留：
+Kept:
 
-- `WEBSEARCH_PROVIDER_NATIVE_SPEC` 作为内部 request adapter 映射依据。
-- `packages/adapters/src/model/tool-transform.ts` 中的 provider-native helper 映射。
-- `ModelUsage.serverToolUse.webSearchRequests` 汇总 provider usage，并作为 nested usage
-  计入主 turn。
+- `WEBSEARCH_PROVIDER_NATIVE_SPEC` as the basis of the internal request adapter mapping.
+- The provider-native helper mapping in `packages/adapters/src/model/tool-transform.ts`.
+- `ModelUsage.serverToolUse.webSearchRequests` aggregates provider usage and counts as nested usage in the main turn.
 
-## 测试要求
+## Test requirements
 
-Core：
+Core:
 
-- public JSON Schema 暴露 `query`、`allowed_domains`、`blocked_domains`、
-  `maxUses`，但不暴露 `allowedDomains`、`blockedDomains`、`searchContextSize`、
-  `numResults` 或 `safeSearch`。
-- `registerBuiltInTools()` 注册 `WebSearch`，不注册 `web_search`。
-- 主 runtime 和 Explore child request 的 `tools[]` 包含 `WebSearch`，不包含
-  `web_search`。
-- `toolAllowlist: ["web_search"]` 能作为兼容 alias 暴露 `WebSearch`。
-- handler 发起的内部 request 只包含 provider-native `web_search`，不设置
-  `toolChoice`。
-- `WebSearch` 作为只读并发安全 tool 进入 permission、scheduler 和 lifecycle event。
+- The public JSON Schema exposes `query`, `allowed_domains`, `blocked_domains`, `maxUses`, but not `allowedDomains`, `blockedDomains`, `searchContextSize`, `numResults` or `safeSearch`.
+- `registerBuiltInTools()` registers `WebSearch` and not `web_search`.
+- The `tools[]` of the main runtime and the Explore child request contain `WebSearch` and not `web_search`.
+- `toolAllowlist: ["web_search"]` can expose `WebSearch` as a compatibility alias.
+- The internal request issued by the handler contains only the provider-native `web_search` and does not set `toolChoice`.
+- `WebSearch` enters permission, scheduler and lifecycle events as a read-only, concurrency-safe tool.
 
-Adapters：
+Adapters:
 
-- 只有内部 provider-native `web_search` contract 会被映射为
-  `anthropic.web_search_20260209`。
-- 只有 Anthropic provider kind 且 baseURL host 命中 `bigmodel.cn`、`z.ai`、
-  `deepseek.com` allowlist 时投影；官方 OpenAI、MiniMax、任意自定义/网关 provider
-  不暴露 WebSearch。
-- public client-side `WebSearch` 保持普通 function tool。
+- Only the internal provider-native `web_search` contract is mapped to `anthropic.web_search_20260209`.
+- Projected only when the provider kind is Anthropic and the baseURL host hits the `bigmodel.cn`, `z.ai`, `deepseek.com` allowlist; official OpenAI, MiniMax and any custom/gateway provider do not expose WebSearch.
+- The public client-side `WebSearch` stays an ordinary function tool.
 
-Trajectory：
+Trajectory:
 
-- 主请求 request body 只出现 `WebSearch`。
-- 内部 `metadata.querySource === "web_search_tool"` 的 request body 只出现 `web_search`。
-- 当前 prompt-trajectory mock proxy 会影响 runtime provider capability 注入；后续若要恢复
-  WebSearch trajectory testcase，需要让 harness 显式提供 allowlisted Anthropic baseURL。
+- Only `WebSearch` appears in the main request body.
+- The request body with internal `metadata.querySource === "web_search_tool"` contains only `web_search`.
+- The current prompt-trajectory mock proxy affects runtime provider capability injection; to restore the WebSearch trajectory testcase later, the harness must explicitly provide an allowlisted Anthropic baseURL.
 
-回归：
+Regression:
 
 - `CI=true pnpm typecheck`
 - `CI=true pnpm lint`
 - focused core/adapters vitest
-- prompt-trajectory P-12 testcase；WebSearch testcase 需要先补 harness capability baseURL
+- prompt-trajectory P-12 testcase; the WebSearch testcase needs the harness capability baseURL first
 
-## 剩余风险
+## Remaining risks
 
-- 当前先不实现 streaming progress；内部 request 使用 `generateText`，只保证
-  request shape、tool lifecycle 和 tool result 符合本文契约。
-- 不同 provider 对 citations、sources、providerExecuted tool result 的暴露不完全一致；
-  handler 需要同时兼容 provider `sources`、typed tool result output 和 source-like
-  result payload。
+- Streaming progress is not implemented for now; the internal request uses `generateText` and only guarantees that the request shape, tool lifecycle and tool result conform to this contract.
+- Providers expose citations, sources and providerExecuted tool results inconsistently; the handler must be compatible with provider `sources`, typed tool result output and source-like result payloads at the same time.
