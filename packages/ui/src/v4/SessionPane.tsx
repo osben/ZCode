@@ -320,7 +320,12 @@ import {
   hasPluginReferenceUserRows,
   isSessionPluginCatalogReady,
 } from "@/v4/pluginReferenceIconProjection.js";
-import { shouldResyncForStaleAuthority } from "@/v4/staleAuthorityRecovery.js";
+import {
+  dispatchQueueCommandWithStaleRetry,
+  isQueueCommandSettledAck,
+  shouldReportSteerFailure,
+  shouldResyncForStaleAuthority,
+} from "@/v4/staleAuthorityRecovery.js";
 import { createCommandEnvelope } from "@/v4/commandFactory.js";
 import { createConfigCommandBarrier } from "@/v4/configCommandBarrier.js";
 import { recordV4CommandAck } from "@/v4/commandAckObservability.js";
@@ -4869,15 +4874,17 @@ export function SessionPane({
       const sourceCommandId = current.queue.items.find(
         (item) => item.queueItemId === queueItemId,
       )?.sourceCommandId;
-      void dispatchCommand("deleteQueueItem", { queueItemId }, sessionId, current.revision).then(
-        (ack) => {
-          if (ack.status !== "accepted" && ack.status !== "noop") {
-            logger.warn(`[v4-pane] deleteQueueItem 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
-            return;
-          }
-          if (sourceCommandId) pendingCommandRegistry.settle(sessionId, sourceCommandId);
-        },
-      );
+      void dispatchQueueCommandWithStaleRetry(
+        (baseRevision) =>
+          dispatchCommand("deleteQueueItem", { queueItemId }, sessionId, baseRevision),
+        current.revision,
+      ).then((ack) => {
+        if (ack.status !== "accepted" && ack.status !== "noop") {
+          logger.warn(`[v4-pane] deleteQueueItem 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+          return;
+        }
+        if (sourceCommandId) pendingCommandRegistry.settle(sessionId, sourceCommandId);
+      });
     },
     [dispatchCommand, sessionId],
   );
@@ -4899,10 +4906,9 @@ export function SessionPane({
       queueEditOperationRef.current = operation;
       setQueueEditOperation(operation);
       try {
-        const ack = await dispatchCommand(
-          "deleteQueueItem",
-          { queueItemId },
-          sessionId,
+        const ack = await dispatchQueueCommandWithStaleRetry(
+          (baseRevision) =>
+            dispatchCommand("deleteQueueItem", { queueItemId }, sessionId, baseRevision),
           restoreTarget.baseRevision,
         );
         if (!shouldRestoreQueuedComposerFromAck(ack.status)) {
@@ -4978,23 +4984,39 @@ export function SessionPane({
           });
           return null;
         }
-        return dispatchCommand(
-          "sendQueuedNow",
-          { queueItemId, ...highspeedOverride },
-          sessionId,
+        return dispatchQueueCommandWithStaleRetry(
+          (baseRevision) =>
+            dispatchCommand(
+              "sendQueuedNow",
+              { queueItemId, ...highspeedOverride },
+              sessionId,
+              baseRevision,
+            ),
           latest.revision,
         );
-      })().then((ack) => {
-        if (!ack) return;
-        if (ack.status !== "accepted" && ack.status !== "noop") {
+      })().then(
+        (ack) => {
+          if (!ack || isQueueCommandSettledAck(ack.status)) return;
           logger.warn(`[v4-pane] sendQueuedNow 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
-        }
-      });
+          const itemStillQueued =
+            snapshotRef.current?.queue.items.some((item) => item.queueItemId === queueItemId) ??
+            false;
+          // ISSUE-072: a log-only rejection left Steer looking like a no-op; the item stays queued for a retry.
+          if (shouldReportSteerFailure(ack, itemStillQueued)) {
+            toast(intl.formatMessage({ id: "chat.queue.sendNowFailed" }));
+          }
+        },
+        (error: unknown) => {
+          logger.warn("[v4-pane] sendQueuedNow 命令失败", error);
+          toast(intl.formatMessage({ id: "chat.queue.sendNowFailed" }));
+        },
+      );
     },
     [
       captureHighspeedPaneOrigin,
       dispatchCommand,
       focusTimelineToLatest,
+      intl,
       prepareHighspeedTurnFrom,
       sessionId,
     ],
@@ -5004,10 +5026,14 @@ export function SessionPane({
     (queueItemId: string, beforeQueueItemId: string | null) => {
       const current = snapshotRef.current;
       if (!sessionId || current === null) return;
-      void dispatchCommand(
-        "reorderQueueItem",
-        { queueItemId, beforeQueueItemId },
-        sessionId,
+      void dispatchQueueCommandWithStaleRetry(
+        (baseRevision) =>
+          dispatchCommand(
+            "reorderQueueItem",
+            { queueItemId, beforeQueueItemId },
+            sessionId,
+            baseRevision,
+          ),
         current.revision,
       ).then((ack) => {
         if (ack.status !== "accepted" && ack.status !== "noop") {

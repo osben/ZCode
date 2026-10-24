@@ -5257,6 +5257,7 @@ const zhCN: Record<string, string> = {
   "chat.queue.edit": "编辑",
   "chat.queue.editDraftConflict": "请先发送或清空当前草稿，再编辑队列消息。",
   "chat.queue.editRestoreFailed": "未能把队列消息退回输入框，请重试。",
+  "chat.queue.sendNowFailed": "未能立即发送队列消息，请重试。",
   "chat.queue.remove": "移除待发送消息",
   "chat.queue.turnSteer.steering": "正在引导对话",
   "chat.queue.paused.stopped": "由于你中断了当前响应，队列已暂停",
