@@ -1,21 +1,15 @@
-# 设备上线后的工作区恢复入口
+# Workspace restore entry after a device comes online
 
-旧侧栏设备组头与 connect-and-chat UI 已由[平铺项目导航](../remote/project-first-remote-navigation-spec.md)替代。
-带目录入口恢复原项目，无目录的手动连接成功后选目录；需凭据、安装或升级时交接唯一向导，保留原意图。
-展示只依赖[统一五态](remote-device-connection-ux-spec.md)，不再维护旧四态或 pending→离线规则。
+The old sidebar device group header and connect-and-chat UI were replaced by the [flat project navigation](../remote/project-first-remote-navigation-spec.md). An entry with a directory restores the original project; a manual connection without a directory asks for a directory after it succeeds. When credentials, install or upgrade are needed, the single wizard takes over and keeps the original intent. Presentation depends only on the [unified five states](remote-device-connection-ux-spec.md); the old four states and the pending->offline rule are gone.
 
-## C3 设备上线恢复门禁
+## C3 Device-online restore gate
 
-本项有效规则已集中到 [Renderer 重挂](../remote/desktop-remote-session-renderer-reattach.md)：
-Host 冷启动按设备最近 7 天 `lastOnlineAt` 选择静默连接候选；设备 online 后，Renderer 挂回当前窗口
-该 Source 下全部 open、断连且 stable identity 的项目，不再次按 workspace 年龄或上次 connected 状态过滤。
-同周期去重、terminal close、主动断开与迟到结果边界均由该规格维护。
+The effective rule now lives in [Renderer re-attach](../remote/desktop-remote-session-renderer-reattach.md). At cold start the Host picks silent-connect candidates by each device's `lastOnlineAt` within the last 7 days. After a device is online, the Renderer re-attaches all open, disconnected, stable-identity projects of that Source in the current window; it does not filter again by workspace age or last connected state. Same-cycle dedupe, terminal close, explicit disconnect and late-result boundaries are maintained by that spec.
 
-历史 RDUX-12/13/14 是原设备组头回归编号，不等同于后来同号的 UX 实施票；保留原记录，
-不得用旧 connect-and-chat 断言替代当前导航验收。原根因日志、改动清单和测试记录：
+The historical RDUX-12/13/14 numbers are regression IDs of the old device group header and are not the later UX implementation tickets with the same numbers. Do not replace the current navigation acceptance with old connect-and-chat assertions. Original root-cause log, change list and test record:
 
 ```bash
 git show a17a875588b8d66c2bee49236292e174df651363:docs/architecture/remote-device-sidebar-device-level-connect-spec.md
 ```
 
-本次仅收敛文档，不改变 Host 门禁、数据格式或 desktop continuous / mobile replayable 语义。
+Host gate, data format and the desktop continuous / mobile replayable semantics are unchanged.

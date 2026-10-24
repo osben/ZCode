@@ -2,92 +2,39 @@
 
 ## Background
 
-The core implementation of remote connections is no longer specific to SSH:
+The remote connection core is not SSH-specific. `packages/server/src/remote/connect.ts` depends only on `IRemoteBackend`; deploy, stdio handshake and RPC proxy are reusable. What tied the capability to SSH was the entry protocol at the desktop -> main -> host layer: shared types used `SSHConnectOptions`, the old remote Host init payload used `sshOptions`, and the Host instantiated `SSHBackend` directly in the entry branch, so each new remote form (WSL, Docker) would need its own `ConnectWSL` / `InitWSL` / `setupWSLConnection` set.
 
-- `packages/server/src/remote/connect.ts` depends only on `IRemoteBackend`.
-- Deploy, stdio handshake, and RPC proxy can all be reused.
+The connection contract is now unified (the shared target, the backend factory, platform detection and a single connection dialog all exist; see below).
 
-What once tied the capability to SSH was the entry protocol at the desktop → main → host layer:
+## Unified target
 
-- Shared types used `SSHConnectOptions`.
-- The old remote Host init payload used `sshOptions`.
-- The Host directly instantiated `SSHBackend` in the entry branch.
+The shared layer defines the `RemoteTarget` discriminated union with `kind: "ssh" | "wsl" | "docker"`. `IPlatformService.connectRemote()`, `PlatformChannels.ConnectRemote` and the Main -> Window Host `ConnectRemoteWorkspace` payload all pass `target`. Main only forwards the request; the `RemoteConnectionRegistry` inside the Window Host owns connection reuse and logical-session lifecycles.
 
-This meant that every new remote form (WSL, Docker) required copying a set of `ConnectWSL` / `InitWSL` / `setupWSLConnection` methods.
+## Backend factory
 
-## Changes in This Update
+`packages/server/src/remote/create-backend.ts` converts a `RemoteTarget` into an `IRemoteBackend`: SSH reads the private key and creates `SSHBackend`; WSL creates `WSLBackend`; Docker creates `DockerBackend`. The Window Host control layer therefore need not know the transport. It:
 
-Three steps have now been completed:
+1. receives `ConnectRemoteWorkspace { requestId, target }`;
+2. calls `createRemoteBackend(target)`;
+3. passes the result to `connectRemote()`;
+4. allocates `remoteSessionId` and exposes a scoped attachment that strictly validates identity/path.
 
-- Phase 0: unify the connection contract without changing the main deploy/handshake flow.
-- Phase 1: connect the WSL/Docker backends to the unified target.
-- Phase 2: add platform detection and a unified remote-connection UI to the desktop/web entry points.
+## Platform detection and unified UI
 
-### Unified Target
+`IPlatformService` has three host capabilities: `isDockerAvailable()`, `listWSLDistros()`, `listDockerContainers()`. Desktop calls the detection functions in `@zcode/server/remote` dynamically through the main process; the Web implementation is empty.
 
-The shared layer adds the `RemoteTarget` discriminated union:
+The UI uses a single remote-connection dialog instead of `SSHDialog` / `WSLDialog` / `DockerDialog`: SSH is always shown, WSL only on Windows desktop, Docker only when the local Docker daemon is available. Adding a transport needs only a shared target type, a backend-factory branch, a platform-detection capability and a mode in the unified dialog.
 
-- `kind: "ssh"`
-- `kind: "wsl"`
-- `kind: "docker"`
-
-`IPlatformService.connectRemote()`, `PlatformChannels.ConnectRemote`, and the Main→Window Host `ConnectRemoteWorkspace` payload all pass `target`. After R1, Main only forwards this request; the `RemoteConnectionRegistry` inside the Window Host owns connection reuse and logical-session lifecycles.
-
-### Backend Factory
-
-`packages/server/src/remote/create-backend.ts` converts `RemoteTarget` into an `IRemoteBackend`:
-
-- SSH: reads the private key and creates `SSHBackend`.
-- WSL: creates `WSLBackend`.
-- Docker: creates `DockerBackend`.
-
-The Window Host control layer therefore no longer needs to know the specific transport. It only:
-
-1. Receives `ConnectRemoteWorkspace { requestId, target }`.
-2. Calls `createRemoteBackend(target)`.
-3. Passes the result to `connectRemote()`.
-4. Allocates `remoteSessionId` and exposes a scoped attachment that strictly validates identity/path.
-
-### Platform Detection and Unified UI
-
-`IPlatformService` adds three host capabilities:
-
-- `isDockerAvailable()`
-- `listWSLDistros()`
-- `listDockerContainers()`
-
-Desktop dynamically calls the detection functions in `@zcode/server/remote` through the main process; the Web implementation remains empty.
-
-The UI no longer splits the entry point into `SSHDialog` / `WSLDialog` / `DockerDialog`; it uses a single remote-connection dialog:
-
-- Always show SSH.
-- Show WSL only on Windows desktop.
-- Show Docker only when the local Docker daemon is available.
-
-When adding a transport, the entry layer only needs:
-
-1. A shared target type.
-2. A backend-factory branch.
-3. Platform-detection capability.
-4. A mode in the unified dialog.
-
-## Results
-
-- The existing SSH path remains available.
-- WSL reuses the same deploy/handshake/RPC path; no new Host/Main protocol is needed.
-- Docker reuses the same deploy/handshake/RPC path; no new Host/Main protocol is needed.
-- Remote entry-point names are no longer tied to a specific transport.
-
-## Current Status
+## Current status
 
 - `kind: "ssh"`: available.
-- `kind: "wsl"`: available; it prefers direct file copying through `\\wsl.localhost\` / `\\wsl$\`, falling back to shell streaming upload when unavailable.
-- `kind: "docker"`: available; it connects directly to a local container using `docker exec` and streaming writes through stdin. The uploaded file is created by the container's current user to avoid ownership mismatches during later replacement.
-- Desktop UI: SSH / WSL / Docker can be selected from the unified remote dialog.
-- Web UI: SSH only; WSL / Docker detection is an empty implementation, so those entry points are not shown.
+- `kind: "wsl"`: available; prefers direct file copy through `\\wsl.localhost\` / `\\wsl$\`, falling back to shell streaming upload.
+- `kind: "docker"`: available; connects to a local container with `docker exec` and streaming writes through stdin. The uploaded file is created by the container's current user to avoid ownership mismatches on later replacement.
+- WSL and Docker reuse the same deploy/handshake/RPC path as SSH; no new Host/Main protocol is needed, and entry-point names are not tied to a transport.
+- Desktop UI: SSH / WSL / Docker selectable in the unified dialog. Web UI: SSH only; WSL / Docker detection is an empty implementation, so those entries are not shown.
 
-## Follow-up Suggestions
+## Follow-ups
 
-1. Keep and verify that “Docker via SSH” does not regress.
+1. Keep and verify that "Docker via SSH" does not regress.
 2. Add more detailed E2E coverage for the remote dialog (WSL/Docker tab switching, container selection).
-3. Add backend capabilities as needed (for example, all Docker containers or default WSL distro metadata).
+3. Add backend capabilities as needed (for example all Docker containers or default WSL distro metadata).
