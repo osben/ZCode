@@ -1,271 +1,163 @@
-# Todo 88：Provider 重构审查问题统一修复
+# Todo 88: Provider Refactor Review Findings: Unified Repair
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。 显式 Subagent 的旧暂缓条款已由 Todo99 实现取代；Off-Peak Ticket 例外和不增加发送前同步的边界不变。
+> Verification ownership (2026-09-09): residual untested/failing/manual-promotion items moved to [Todo102](todo-102-verification-debt-closeout.md). Historical evidence stays; the hand-off does not mean the tests pass. The old deferral for explicit Subagent was superseded by the Todo99 implementation; the Off-Peak Ticket exception and the rule of adding no pre-send sync are unchanged.
 
-> 状态：本轮已批准范围完成，2026-09-08 纯提交复验与补修验收完成。AS02（损坏的新 Subagent 选择）后续已获用户接受按继承处理，不再暂挂或列为必修；属于接受现状，不计为修复通过。额外发现与未运行的验证见末尾收口与审计表。
+> Status: the approved scope of this round is done; pure-commit re-verification and fix-up acceptance finished 2026-09-08. AS02 (a corrupt new Subagent selection) was later accepted by the user as "treat as inherit": no longer suspended or a must-fix, and it counts as accepted status quo, not as a fix passing. Extra findings and unrun verification are at the end.
 >
-> 日期：2026-09-07
+> Date: 2026-09-07
 >
-> 审查基线：`ceb9625ebeb63b2dada528c8a3d1d4bdda77a10f`，`provider-refactor-e2e-recovery`。
+> Review baseline: `ceb9625ebeb63b2dada528c8a3d1d4bdda77a10f`, `provider-refactor-e2e-recovery`.
 >
-> 用户授权：汇总本轮已知问题，全面修复并记录实施、验证、复审结果。
+> User authorization: collect the known findings of this round, fix them comprehensively and record implementation, verification and re-review.
 >
-> 2026-09-08 后续裁决：R01–R04 中依赖 Host 账号的 Selection 身份导入与恢复提前置空由 [Todo96](todo-96-selection-offline-migration-and-resolution-consolidation.md) 接续替代；不改 R05 的真实连接迁移/OAuth 补齐。Subagent Markdown 由 Todo97 改回用户可读原字段，仅用户目录原地迁移，不兼容未发布的中间格式。下文保留旧实现证据，不作为这些新裁决的完成声明。
+> 2026-09-08 follow-up rulings: the Host-account-dependent Selection identity import and early empty-on-restore in R01-R04 are superseded by [Todo96](todo-96-selection-offline-migration-and-resolution-consolidation.md); R05's real connection migration / OAuth completion is unaffected. Subagent Markdown returns to user-readable original fields via Todo97 with in-place user-directory migration only, no compatibility for the unreleased intermediate format. The old implementation evidence below is not a completion claim for these new rulings.
 
-## 原则与范围
+## Principles and scope
 
-- 本 Todo 接管本轮审查发现的缺口，不以旧 Todo 的“已完成”状态作为证据；保留 Todo 68–72、74、76、79、81–85、87 的其余有效裁决。
-- 老数据尽量迁移；旧字段仅供实际支持的回滚路径使用，不能反向覆盖新版选择。旧文件/原字段不因只读解析被破坏；兼容代码必须有中文原因和清理条件。
-- 新格式已存在时只认新字段。缺失或失效的选择可以留空，不能拖垮 Session 或列表；明确的旧结构才能进入单向迁移。
-- 主动选新模型取目标模型最高 Reasoning；恢复已有选择不补最高。账号切换按 Todo 87 保留同模型、同档位的有效解析，不在读取时改写原意图或历史请求。
-- 不恢复发送前强制远端同步；不跨账号重绑已持 Ticket 的闲时任务；显式 Subagent 的后台账号自动对应仍按已裁决范围暂缓。
-- 旧的未发布 Personal `matchRules` 等格式不新增兼容工程。远端 `unusual activity` 拒绝不冒充本地配置 Bug，不绕过风控。
-- 不直接恢复 staging 整文件；不合入后续 staging；保留当前 Provider/Account/Selection 分层及桌面、手机、远程边界。
-- 不修改同事的真实数据来制造测试通过；备份只在隔离目录使用，脱敏 fixture 不含账号凭据、API Key 或个人会话内容。
+- This Todo takes over the gaps found this round and does not treat older Todos' "done" status as evidence; the remaining valid rulings of Todo 68-72, 74, 76, 79, 81-85, 87 are kept.
+- Migrate old data where possible; old fields serve only genuinely supported rollback paths and never overwrite new-version selections in reverse. Old files/original fields are not damaged by read-only parsing; compatibility code needs a Chinese reason and a cleanup condition.
+- When the new format exists only new fields count. A missing or invalid selection may be left empty and must not break Session or list; only an explicit old structure enters one-way migration.
+- Actively picking a new model takes the target's highest Reasoning; restoring an existing selection does not fill the highest. Account switching keeps same-model / same-level effective resolution per Todo 87 and does not rewrite original intent or historical requests on read.
+- No forced pre-send remote sync; no cross-account rebinding of off-peak tasks holding a Ticket; the explicit-Subagent background account auto-mapping stays deferred per the ruled scope.
+- No compatibility work for the old unreleased Personal `matchRules` formats. A remote `unusual activity` rejection is not passed off as a local config bug and risk control is not bypassed.
+- Do not restore whole staging files or merge later staging; keep the Provider/Account/Selection layering and desktop, mobile, remote boundaries.
+- Colleagues' real data is never modified to make tests pass; backups are used only in an isolated directory, with desensitized fixtures (no account credentials, API Keys or personal session content).
 
-## 问题与完成条件
+## Findings and completion conditions (all done unless noted)
 
-### R01：模型未绑定时历史会话仍可能打不开（Todo 70）
+### R01: history Session may fail to open when the model is unbound (Todo 70)
 
-- [x] 修复 App 允许无 Model，而协议 Session/settings/read/fork 等转换仍解析空字符串的问题。
-- [x] 统一表示未绑定状态；不伪造模型、不创建兜底 Model。历史消息、标题、模式正常可读，重新选择后可继续使用。
-- [x] 验证冷恢复、读取会话信息、历史列表、fork；桌面 continuous 与手机 replayable 使用各自链路。
-- 证据：`session-mapper.ts` 的 `modelSelectionFromString(app.getModel())`；真实日志 `Invalid provider-qualified model selection: `。
+App allowed no Model while protocol Session/settings/read/fork conversions still parsed an empty string (`session-mapper.ts` `modelSelectionFromString(app.getModel())`; real log `Invalid provider-qualified model selection: `). Fixed: a unified unbound representation (no forged model, no fallback Model); history messages, title and mode read normally and execution resumes after re-selection; cold restore, session info read, history list and fork verified (desktop continuous and mobile replayable via their own chains). A second review also covered importing history with no model.
 
-### R02：定时任务旧模型字段解码错误（Todo 72）
+### R02: scheduled-task legacy model field decoding (Todo 72)
 
-- [x] 区分旧 backend 字段与真实 Provider ID；解码 provider-qualified 和旧 `custom:` 模型值，再使用既有身份转换规则。
-- [x] 真实旧格式最大努力转换；无法确定保留原记录并阻止执行，不按模型名匹配另一供应商。
-- [x] 用旧数据库行验证读取、正常保存和再次读取；不是只测新版 Selection。
-- 证据：`automationRepo.ts` 直接将旧 `provider` 和整个 `model` 当新版身份，旧逻辑源于 `9f3a113f92f`，Todo 72 收口漏接。
-- 二次复审补充：后台首次派发也须经过 Host 的旧选择导入，然后重新读取新版选择。未导入的旧显式模型或损坏的新值不能被当成“跟随 Workspace”执行；新版明确未指定模型的原有跟随行为保留。同 run 已固定选择不重新迁移/解析。导入账号查询失败只影响相关项，不能让整个任务列表读取失败。
+Distinguish the legacy backend field from a real Provider ID; decode provider-qualified and old `custom:` model values and then use the existing identity conversion. Best-effort conversion of real old formats; undeterminable ones keep the original record and block execution, never matching another vendor by model name. Verified with old database rows (read, normal save, read again). Cause: `automationRepo.ts` treated the old `provider` and the whole `model` as new identities (from `9f3a113f92f`, missed by Todo 72). Second review: the first background dispatch also goes through the Host's legacy selection import and re-reads the new selection; an un-imported old explicit model or a corrupt new value is never treated as "follow Workspace"; a new-version explicitly unspecified model keeps the existing follow behavior; a run's already-fixed selection is not re-migrated/re-resolved; an import account-query failure affects only the related item and never fails the whole task-list read.
 
-### R03：内置 Subagent 的旧配置没有迁入（Todo 72）
+### R03: built-in Subagent legacy config not migrated (Todo 72)
 
-- [x] 导入旧 `builtInModelOverrides` / `builtInThoughtLevelOverrides` 到新版选择；保留新版覆盖的优先级。
-- [x] 识别自定义 Markdown 与内置 state 两种存储；未指定模型仍继承父任务，不偷偷升级为显式模型。
-- [x] 验证旧 state、已有新版 state、重复读取/保存、无法转换的单项不会破坏其他项。
+Import the old `builtInModelOverrides` / `builtInThoughtLevelOverrides` into the new selection while keeping the new override's priority; recognize both custom Markdown and built-in state storage; an unspecified model still inherits the parent task and is never silently upgraded to an explicit model; verified for old state, existing new state, repeated read/save, and one unconvertible item not harming others.
 
-### R04：旧字段反向覆盖新 Selection（Todo 70/72）
+### R04: old fields reverse-overwriting new Selection (Todo 70/72)
 
-- [x] 修复 Subagent 新 Reasoning 被旧 thoughtLevel 覆盖。
-- [x] 修复 Automation、Wiki 新字段损坏后回读旧选择；区分“新版明确空值”与“真正旧记录没有新版字段”。
-- [x] 核查迁移标记/存储版本，不能用简单 truthy/null 判断让已经清空的新选择复活。
-- [x] 保留 Wiki、Bot、Subagent 的真实执行错误与业务保存边界；不将全部场景改成 Composer 通知语义。
-- Wiki 旧 `generationModel` 的账号 ID 导入复用 Host 注入的 Todo 72 转换，不在 Storage 查询账号接口。新 `modelSelection` 存在时不调用旧身份转换；无法绑定的旧显式意图保留为不可绑定选择，内容仍可读，不能变成“未指定模型”后自动使用默认模型。读取不改写旧文件，正常保存才固定新版字段。
+Fixed: Subagent new Reasoning overwritten by old thoughtLevel; Automation and Wiki reading back the old selection after the new field is corrupt (distinguish "new version explicitly empty" from "genuine old record with no new field"); migration markers/storage versions are checked so a simple truthy/null test cannot revive a cleared new selection; real execution errors and business save boundaries for Wiki, Bot, Subagent stay (not turned into Composer notice semantics). Wiki legacy `generationModel` account-ID import reuses the Host-injected Todo 72 conversion (Storage never queries accounts); with a new `modelSelection` present the old identity conversion is not called; an unbindable old explicit intent stays as an unbindable selection (content readable), never becoming "unspecified model" that auto-uses a default; reads do not rewrite the old file, a normal save fixes the new fields.
 
-### R05：旧账号连接选择迁移遗漏（Todo 72）
+### R05: legacy account connection selection migration gap (Todo 72)
 
-2026-09-07 补充裁决：缺组织 ID 的旧 Team 连接，在迁移时使用已有 OAuth 凭据调用 `/api/biz/customer/getCustomerInfo`，按旧项目 ID 唯一匹配组织后补齐。不是支持“无组织 Team”，不调用会申请 API Key 的完整 pricing/凭据流程。查询失败、无匹配或多组织匹配时保留待迁移原记录；不可把它保存成新空选择并按启动排序替换。新版字段存在即权威，用户显式保存新选择可结束旧迁移。
+2026-09-07 ruling: an old Team connection lacking an organization ID is completed at migration by calling `/api/biz/customer/getCustomerInfo` with the existing OAuth credential and uniquely matching the organization by the old project ID. This is not support for "organization-less Team", and it does not call the full pricing/credential flow that would request an API Key. Query failure, no match or multiple matches keep the original record pending migration (never saved as a new empty selection and replaced by startup order). Once a new-version field exists it is authoritative; a user's explicit new selection ends the old migration.
 
-依赖边界：普通 Setting 读取只做本地解析；Host 装配层把只读 OAuth 查询注入迁移入口，在 Account 事实读取前协调。网络层读取代理设置不得重新等待迁移。网络查询在设置写队列外，提交在队列内重新核对旧连接、新字段和账号域；并发修改胜过迟到迁移。迁移未就绪的 Family 投影为未知，不阻塞普通 Personal Provider、历史阅读或基础设置；既有账号刷新触发下一次尝试，不增加轮询器。
+Dependency boundary: ordinary Setting reads only parse locally; the Host assembly layer injects the read-only OAuth query into the migration entry, coordinating before Account facts are read; the network layer reading proxy settings must not wait on the migration again. The network query runs outside the settings write queue; the commit re-checks the old connection, new fields and account domain inside the queue, so a concurrent edit beats a late migration. A Family with unready migration projects as unknown, not blocking ordinary Personal Providers, history reading or basic settings; existing account refresh triggers the next attempt (no poller). Also done: convert old Family mode/selectedKey before the new schema drops them (only where new fields are not yet built); personal/Team/Start and Z.ai/BigModel convert by real old identity, Team keeping full product/organization/project info; the user's saved old selection is never replaced by first-start ordering; unconfirmable never forges a Team identity.
 
-- [x] 在旧 settings 被新 schema 丢弃前，转换旧 Family mode/selectedKey；只导入新字段尚未建立的旧设置。
-- [x] 个人/Team/Start、Z.ai/BigModel 按旧真实身份转换，Team 保留完整产品/组织/项目信息。
-- [x] 不能用首次启动排序代替用户保存的旧选择；无法确认不得伪造 Team 身份。
-- [x] 验证旧设置升级、重新启动、新设置优先、迁移幂等及既定回滚边界。
+### R06: actual connection vs page display after Start becomes invalid
 
-### R06：Start 失效后的实际连接与页面展示不一致
+> Product ruling changed on 2026-09-08: [Todo93](todo-93-account-plan-loss-manual-switch.md) changes to a one-time notice when the same connection truly becomes invalid, switching only after the user clicks a specific target button; the first startup snapshot only builds a baseline, and manually choosing an unactivated plan does not auto bounce back. The text below is old implementation/acceptance history and not the target spec for later auto-switching.
 
-> 2026-09-08 后续产品裁决已变更：[Todo93](todo-93-account-plan-loss-manual-switch.md) 改为同连接真实失效时提示一次，用户点击具体目标按钮后才切换；启动首份只建基线，手动选未开通套餐不自动弹回。下文是旧实现/验收历史，不再作为后续自动切换的目标规范；Todo93 尚待实现。
+After an explicit invalidation of the original connection a legal alternative connection is chosen uniformly and persisted, with a notice naming the target; the page and the running connection use the same result. Query failure/unknown is not treated as explicit invalidation; with no usable alternative, an unavailable state shows normally (no dead loop, no false switch). Todo 83's pending, entitlement state, activity refresh and claim card rulings are kept ("start now" is not opened). Implementation: startup recovery and later Account View changes share one account-connection reconciliation entry; later changes trigger only when the saved current connection is explicitly `unavailable`; the alternative must be confirmed by entitlement/team identity (the purchase-page landing of "no plan still returns personal" is not an available alternative); saving goes through the existing settings write queue and re-checks the pre-query account domain and connection selection, so a late result cannot overwrite a manual switch; after a successful write and refresh the target plan is announced; no persisted state field added.
 
-2026-09-08 二次复验补充：自动协调的账号查询或设置写入失败，保留当前连接且不通知成功；下一次正常 View 更新（即使账号状态相同）允许再尝试。一次协调自身引发的重复 View 在该批次内仍去重，不能形成自触发循环；不增加 timer、轮询或后台重试器。启动恢复继续容错，后续观察器必须能识别本次协调失败，不能把吞掉的异常当成功永久缓存。
+2026-09-08 second re-verification: an automatic reconciliation's failed account query or settings write keeps the current connection and sends no success notice; the next normal View update (even with the same account state) may retry; a duplicate View caused by the reconciliation itself is de-duplicated within that batch (no self-trigger loop); no timer, polling or background retrier; startup recovery stays tolerant and later observers must recognize the failure, never caching a swallowed exception as success.
 
 ```text
-明确失效 -> 协调失败 -> 本批相同 View 不循环，原设置不动
-                              |
-                    后续正常刷新 / 用户刷新
-                              |
-                    允许再次协调 -> 保存成功才通知
+explicit invalidation -> reconciliation fails -> same View in this batch does not loop, setting untouched
+   -> later normal refresh / user refresh -> reconciliation allowed again -> notify only after save succeeds
 ```
 
-- [x] 确认原连接明确失效后，统一选择合法替代连接并持久化，提示用户已自动切换到哪项。
-- [x] 页面与运行连接使用同一结果；不再只展示另一套餐却保留失效连接。
-- [x] 查询失败/未知不当作明确失效；没有可用替代时正常展示不可用状态，不死循环、不虚假切换。
-- [x] 保留 Todo 83 的待生效、权益状态、活动刷新和领取卡片裁决，不借此开启“立即体验”。
-- 实施收口：启动恢复和后续 Account View 变化共用账号连接协调入口；后续变化只在保存的当前连接明确 `unavailable` 时触发。替代项必须经权益/团队身份确认，不使用“无套餐仍返回个人”的购买页落点充当可用替代。保存走既有设置写入队列，并校验查询前的账号域与连接选择未变化；迟到结果不能覆盖手动切换。成功写入并刷新后提示目标套餐，不增加持久化状态字段。
+### R07: generic model config incomplete (Todo 76)
 
-### R07：通用模型配置不完整（Todo 76）
+An unknown model / Highspeed not hitting a specific rule lacked the max-output-token type/max and became unselectable. The generic baseline now produces a complete config, following the existing release-default basis without guessing vendor capability for tests. 2026-09-07: the user asked for a larger value than the proposed 8,192, so the generic initial max output is 32,000 tokens, user-editable; it is not a claim of an unknown vendor's real ability, and known models stay covered by specific rules. Verified for unknown/new models and every API Schema (completeness and selection list) without loosening Registry integrity validation; known-series variant capability matching and the conservative default for the purely unknown are verified separately (not granting the highest capability to all). Release revision bumped to 10.
 
-- [x] 修复未知模型/Highspeed 未命中特定规则时，缺失最大输出 Token type/max 导致不可选的问题。
-- [x] 通用基线要能生成完整配置；沿用已有发布默认值依据，不为测试随意猜厂商能力。
-- 2026-09-07 用户要求比提议的 8,192 更大，本轮确定通用最大输出初始上限为 32,000 Token，可由用户修改；这不是未知厂商真实能力承诺，已知型号继续由具体规则覆盖。
-- [x] 未知模型、新增模型、各 API Schema 验证完整性与选择列表；不通过放宽 Registry 的完整性校验解决。
-- [x] 已知系列变体需要的能力匹配与纯未知保守默认分开验证，不一律赋予最高能力。
+### R08: follow-recommended save and layout (Todo 82)
 
-### R08：跟随推荐配置的保存和布局（Todo 82）
+Closing follow and saving keeps an existing `enabled=false` (enabling is not changed by config mode); after switching back to follow, continued editing must save (the sticky clear marker no longer swallows edited values); closing follow saves the complete editor-managed fields (incomplete blocks the whole submit and keeps the draft; `enabled` is outside this mode and not materialized); the follow switch sits in the bottom save/cancel row replacing the old "restore all defaults" position (wraps sensibly on small screens, works in dark/light and zh/en), reusing the design system's standard Switch (no more borrowing the checkbox-looking BooleanSwitchField), with text associated to the switch and operation changing only the Draft; switching mode changes only the draft, cancel writes nothing, and acceptance includes save, close and reopen, not just draft return values. Evidence `361bf66ce7`; the three save problems were reproduced in real helper memory and an old test even asserted a pinned config without enabled.
 
-- [x] 关闭跟随并保存，保留已有 `enabled=false`；启停状态不由配置模式改变。
-- [x] 固定切回跟随后继续编辑，新输入必须能保存；消除 sticky 清空标记吞掉编辑值的问题。
-- [x] 关闭跟随保存完整的编辑器管理字段；不完整时阻止整个提交，保留草稿。未纳入此模式的 enabled 不要求物化。
-- [x] 跟随开关放底部保存/取消同一行，替代旧“全部恢复默认”位置；小屏允许合理换行，深浅主题与中英文可用。
-- 复用设计系统的标准 Switch，不再借用名称为 BooleanSwitchField、实际显示复选框按钮的能力字段控件；文案与开关关联，操作仍只修改 Draft。
-- [x] 切换模式只改草稿；取消不落盘。验收必须包括保存、关闭、重新打开，不能只断言 draft 返回值。
-- 证据：`361bf66ce7`；三项保存问题已用真实 helper 内存复现；旧测试甚至断言固定配置不含 enabled。
+### R09: aggregator provider model config and Logo (Todo 79)
 
-### R09：聚合供应商模型配置和 Logo（Todo 79）
+- Apply Todo 76's "Match rule principles": `modelRules` / `modelApiRules` support namespace prefixes and confirmed version suffixes, generic family first, specific model/variant later; enumerating only the currently known OpenRouter prefixes is not prefix/suffix matching done; Template/Provider exact members and Site URL rules are not loosened. Verified with the original model name, different namespace prefixes, confirmed version suffixes and prefix/suffix combinations on final capability and Option Map; semantic variants (`-flash`, `-turbo`, `-thinking`, `:free`) are verified to be covered by specific rules, not treated as plain aliases.
+- Against the maintenance list, OpenRouter namespace IDs and OpenCode models get the right capability and Option Map without copying upstream Provider endpoint/access; the full request model ID (prefix, `:free`) is preserved, never rewritten for matching; each upstream vendor's representative model default-enabled (verify the final resolved result, not only the model list).
+- Official square OpenRouter/OpenCode Logos are packaged with sources recorded and no brand graphic modification (dark variants where needed); missing assets degrade safely and stay compatible with remote published config; no user-upload Logo.
+- Real requests verify reasoning/output fields; no unfounded `budget_tokens` or `max_completion_tokens` assertions.
+- Second review: after a GPT model match, the OpenRouter Anthropic entry still inherited an empty Reasoning Map; the site contract adds `output_config.effort` (Responses' `reasoning.effort` is not transplanted to Messages, and the original model ID is unchanged), based on OpenRouter's request-level effort docs, verified on the request fields the evaluated Map forms; the difference sits in the Site layer with no runtime branch.
 
-- [x] 一并落实 Todo 76「Match 规则原则」：`modelRules` / `modelApiRules` 支持命名空间前缀与已确认版本后缀，通用族在前、具体型号/变体在后。不能仅给 OpenRouter 等当前平台枚举可选前缀，就宣称前后缀匹配已完成；Template/Provider 精确成员和 Site URL 规则不放宽。
-- [x] 用原始型号、不同命名空间前缀、已确认版本后缀、前后缀组合验证最终能力和 Option Map；`-flash`、`-turbo`、`-thinking`、`:free` 等语义变体验证具体规则覆盖，不当成无差别别名。
-- [x] 对照当前维护清单，为 OpenRouter 命名空间 ID、OpenCode 型号接上正确模型能力与 Option Map；不复制上游 Provider endpoint/access。
-- [x] 保留完整请求 model ID（含前缀、`:free` 等），不为匹配改写请求身份。
-- [x] 落实各上游厂商代表模型默认启用的既定要求；验证最终解析结果而非仅模型名单。
-- [x] 补齐 OpenRouter/OpenCode 官方方形 Logo，打包内置资源，记录官方来源；不修改品牌图形，暗色必要时使用适当变体。
-- [x] 素材缺失仍安全降级，兼容远程发布配置；不增加用户上传 Logo 功能。
-- [x] 实际请求验证 reasoning/output 字段，不照搬无依据的 budget_tokens 或 max_completion_tokens 断言。
-- 二次复审：GPT 命中型号能力后，OpenRouter Anthropic 入口仍继承空 Reasoning Map。按站点契约补 `output_config.effort`，不把 Responses 的 `reasoning.effort` 生搬到 Messages，也不改变原始 model ID。依据：[OpenRouter Reasoning 文档](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) 的 request-level effort 说明；验证实际 Map 求值后形成的请求字段。此差异放 Site 层，不扩展运行时分支。
+### R10: dynamic account model edit/sort member facts inconsistent
 
-### R10：动态账号模型的编辑/排序成员事实不一致
-
-- [x] 设置 Facade 从已解析配置快照取得成员和来源，作为 Host 内部只读输入传给写入操作；前端不提供可信名单。
-- [x] ConfigService 保持 Personal 写入职责，不调用 Account API、不依赖 Runtime 实现；去掉相关操作按静态名单重新判断的逻辑。
-- [x] 编辑、排序、添加去重、重命名冲突、删除/改名权限一起核对。Account 模型仍是继承成员，不转为个人自建模型。
-- [x] 不用可执行 Registry 名单替代配置成员；关闭、缺 Key、不完整的模型仍可按规则管理。
-- [x] Account 明确空名单/替换名单尊重 Overlay 语义，不与静态名单取并集；Personal 只保存配置覆盖和顺序，不复制账号模型成员。
-- [x] 保留保存入口版本检查与 Personal 事务版本校验；过时草稿明确冲突并保留，不靠超时、不新增账号网络请求。
-- [x] 动态新 ID 编辑/调序后重读成功，重复 ID 被拒绝，账号移除成员不会被迟到保存复活。
+The settings Facade takes members and sources from the resolved config snapshot as a Host-internal read-only input for write operations (the frontend supplies no trusted list); ConfigService keeps the Personal write responsibility, calls no Account API and depends on no Runtime implementation; operations no longer re-judge by a static list. Edit, sort, add de-duplication, rename conflict and delete/rename permissions are checked together; an Account model stays an inherited member and never becomes a personal custom model; the executable Registry list does not replace config membership (disabled, key-missing and incomplete models stay manageable by the rules); an explicit empty/replacement Account list respects Overlay semantics (no union with the static list); Personal stores only config overrides and order, never copying account model members. The save-entry version check and Personal transaction version validation stay: a stale draft conflicts explicitly and is kept (no timeouts, no new account network request). A dynamic new ID edited/sorted reads back; duplicate IDs are rejected; an account-removed member cannot be revived by a late save.
 
 ```text
-Built-in / Template + Account + Personal
-                 |
-          已解析配置快照
-          /            \
-     设置页展示       写操作成员校验
-                          |
-                  Personal 原子提交
-                          |
-                      刷新视图
+Built-in / Template + Account + Personal -> resolved config snapshot
+  -> settings page display | write-operation member validation -> atomic Personal commit -> refresh view
 ```
 
-### R11：主动选模最高档与初始模型兜底（Todo 71/84）
+### R11: active-pick highest level and initial-model fallback (Todo 71/84)
 
-- [x] 用户主动选择目标模型时，公共构造入口取目标当前 `values.at(-1)`；不继承源模型档位，不在 ModelFactory 补值。
-- [x] 历史恢复、已有选择重新解析仍清空缺失/失效档位，账号同模型衔接保留支持的原档位。
-- [x] 核对并恢复没有 Configured Default 时的 Host 初始模型顺序兜底；不得把未绑定历史会话误当全新草稿填默认。
-- [x] 有效 Configured Default 含 options 保留，Recent 和显式草稿优先级不变；失效默认的具体处理按原有效 spec 核实，若冲突无法裁决单列。
-- 复审核实：`design/registry/runtime.md` 明确失效 Configured Default 使用 Registry fallback；Todo 84、87 均声明不改新草稿初始化。因此只在 Host 初始推荐解析中丢弃失效偏好、按列表顺序初始化最高档，不写回默认偏好；已有 Session/草稿的有效解析仍留空，不走此入口。
-- [x] Composer 与其他主动选模入口共享行为；辅助请求最低档策略不变。
-- [x] Bot `/model` 的草稿和已有任务入口同样取目标模型最高档；不把旧档位带过去。菜单过期或 View 读取失败时保留原选择，不提交不完整的新选择。
+On an active pick the shared construction entry takes the target's current `values.at(-1)` (no source-model level inheritance, no ModelFactory fill); history restore and re-resolving an existing selection still empty a missing/invalid level, account same-model continuity keeps the supported original level. Restore the Host's initial-model order fallback when there is no Configured Default (an unbound history Session is never mistaken for a brand-new draft and filled with a default). A valid Configured Default with options is kept, Recent and explicit-draft priority unchanged; review verified `design/registry/runtime.md` says an invalid Configured Default uses the Registry fallback and Todo 84/87 declare new-draft initialization unchanged, so only Host initial recommended resolution drops an invalid preference and initializes the highest level by list order, without writing back the default preference; existing Session/draft resolution stays empty and does not use this entry. Composer and other active-pick entries share behavior; the auxiliary lowest-level policy is unchanged. Bot `/model` draft and existing-task entries also take the target's highest level without carrying the old level; a stale menu or View read failure keeps the original selection and submits no incomplete new selection.
 
-### R12：视觉能力标记丢失
+### R12: vision capability marker lost
 
-- [x] 恢复 Provider 设置模型行与模型选择器的既有视觉能力标记，读取当前模型能力配置，不维护型号白名单。
-- [x] 以当前图片/多模态能力契约核对旧徽标含义，不把“有任意非文本输入”随意当成支持图片。
-- [x] 深浅主题、长模型名、手机布局验证；不改模型实际能力来满足徽标断言。
-- 证据：`4a59fba07b` 丢失，后续合并没有补回；不是周六首次引入。
+Restore the existing vision capability marker in Provider settings model rows and the model picker, reading the current model capability config with no model whitelist; the old badge meaning is checked against the current image/multimodal capability contract ("any non-text input" is not treated as image support); dark/light themes, long model names and mobile layout verified; model real capability is not changed to satisfy the badge assertion. Evidence: `4a59fba07b` lost it and later merges did not restore it.
 
-## 执行与验收顺序
+### R13 (added): two group containers missing in the model edit dialog
 
-### 补充 R13：模型编辑弹窗缺少已裁决的两个分组容器
+"Reasoning settings" container (reasoning levels + Mapping, zh/en titles, reuse existing group border and spacing) and "Advanced settings" container (MFJS tool Schema, own title and container; grouping only, no collapse switch); Footer save/cancel and the follow-recommended switch stay outside the containers; no change to draft, save or request semantics; zh/en, light/dark and narrow window checked. 2026-09-07 user confirmed this grouping had been discussed while Todo 75 still said "no Advanced settings" and Todo 77 "no Reasoning container", and `ProviderModelSettingsGroups.tsx` did not implement it; this item supersedes those two old requirements.
 
-- [x] “推理设置”容器：包含推理档位、推理参数 Mapping，增加中英文标题，复用现有分组边框、间距。
-- [x] “高级设置”容器：包含 MFJS 工具 Schema，独立标题与容器；仅分组，不重新引入折叠开关。
-- [x] Footer 保存/取消与跟随推荐开关留在容器外；不改变草稿、保存或请求语义。
-- [x] 检查中文/英文、深浅主题和窄窗口，并验证两个字段分组与保存操作。
-- 2026-09-07 用户补充确认：此前已讨论此分组，但当前 Todo 75 仍写“无高级设置”，Todo 77 仍写“不新增 Reasoning 容器”；当前 `ProviderModelSettingsGroups.tsx` 也未实现。这两条旧要求由本项取代，不以旧完成状态关闭。
+## Execution order
 
-### 执行步骤
+1. R01-R05 migration and unbound recovery first (data-safety boundary), checking overlap with parallel workers before touching files. 2. R10, R08: unify the member basis then fix config saving including real save-and-reread. 3. R07, R09, R11, R12: default config, active pick, aggregator models, display. 4. R06: unified conversion and notice of invalid connections with joint Account/Selection refresh regression. 5. Each group writes a failing test first, then implements, then reviews the actual diff and whether tests independently cover the requirement and neighbors. 6. Formal Electron E2E runs on the MacBook Pro with isolated test data per the user's latest ruling, never disturbing real sessions/accounts and never claiming real entitlements for fixtures; real-user old-data restore tests run separately and are not mixed into public E2E fixtures. 7. Finally `pnpm typecheck`, `pnpm lint`, related unit tests, `typecheck:e2e` and targeted E2E; failures and unrun items recorded separately. 8. Commit only this task's files, preserve others' changes, never `--no-verify`, no push unless requested.
 
-1. R01–R05：迁移与未绑定恢复，先保存数据安全边界；与已有并行工作者修改重叠时先核对，不能覆盖。
-2. R10、R08：统一成员依据，再修配置保存，包含真实保存重读。
-3. R07、R09、R11、R12：默认配置、主动选择、聚合模型和展示。
-4. R06：连接失效的统一转换与通知；联合回归 Account/Selection 刷新。
-5. 每组先补失败测试再实现，再 review 实际 diff、测试是否独立覆盖需求和相邻路径。
-6. 正式 Electron E2E 按用户最新裁决改在 MacBook Pro 隔离测试数据运行，不干扰真实会话/账号；不通过真实领取权益制造 fixture。真实用户旧数据恢复测试独立进行，不能混作公共 E2E fixture。
-7. 最后执行 `pnpm typecheck`、`pnpm lint`、相关单测、`typecheck:e2e` 及定向 E2E。失败/未运行分别记录，不虚报通过。
-8. 只提交本任务文件，保留其他工作者变更，禁止 `--no-verify`；用户未要求本轮 push 时不擅自推送。
+## Accepted regression scenarios
 
-## 已接受的回归场景
+- Built-in Subagent old state is imported once at the Host's Agent-startup preparation boundary and written to disk (not triggered by opening the settings page; no account-replacement interface added to the App-Agent protocol); it reuses the same identity conversion and keeps old fields for rollback; if the original file changed during the async conversion the late write is abandoned (never overwriting the user's new selection); existing new fields are not filled from old fields.
+- Ruled 2026-09-07: importing the old `builtin:` identity of custom/project/plugin Markdown is in this round, as an awaitable initialization step reusing the existing `resolveLegacyModelProviderId` port, without auto-rewriting Markdown; an ordinary new-version Account ID does not call the conversion and is not rewritten on account switch; a single unconfirmable identity keeps the original unbindable selection; identical old IDs merge into one query.
+- Initialization impact: `createZCodeApp` must finish the profile import before constructing Runtime, so it returns a Promise; Protocol session materialization, temporary connectivity-test / text generation, CLI prompt/TUI and trajectory tools all await; the original Session resident pool creation coordination is reused with no new background initialization state or Runtime private config change. Test/embedding dependencies may use a synchronous factory; production callers always await.
+- Acceptance additions: real Markdown loading + deferred identity resolution means Runtime is not created early; a conversion failure keeps only that profile unbindable without losing other profiles; new-field levels stay authoritative; the original file is not written back. Protocol desktop continuous / mobile replayable restore and concurrent cold loads regress via the original entries. Codegraph was unavailable and `dep:refs` does not index the standalone CLI workspace; full-repo call search plus CLI three-package typecheck fill the gap (no-index is not read as no-reference).
+- History Sessions with empty/bad Selection open and continue after re-selecting; real old-format imports for old scheduled tasks, built-in/custom Subagent and Wiki never let old values overwrite new ones.
+- Old connection settings match the actual running identity; explicit invalidation auto-replaces and notifies, unknown entitlement does not switch wrongly.
+- Dynamic-account new models edit, sort and re-read; disabled models stay editable but disabled; inherited models cannot be renamed/deleted as personal models.
+- Pinned/follow two-way switch, continued editing, cancel, save-reopen; integrity failure never partially writes; the switch sits in the bottom action area.
+- A conservative baseline makes unknown models usable, aggregator models get truly effective config and Logos; active-pick highest level and history empty are strictly separate.
+- Desktop local and mobile/remote read their own Host's config; no pre-send sync added; no change to running requests or history records.
 
-- 内置 Subagent 旧 state 在 Host 的 Agent 启动准备边界完成一次性导入并落盘；不靠打开设置页触发，不向 App–Agent 协议增加账号替换接口。导入沿用同一身份转换，保留旧字段用于回滚；异步转换后原文件已变化则放弃迟到写入，不能覆盖用户新选择。已有新字段不从旧字段补值。
-- 已裁决（2026-09-07）：用户同意将自定义/项目/插件 Markdown 的旧 `builtin:` 身份导入纳入本轮，整理为可等待的初始化步骤，复用已有 `resolveLegacyModelProviderId` 端口，不自动改写 Markdown。普通新版 Account ID 不调用此转换、不随账号切换改写；单项身份无法确认保留原不可绑定选择，相同旧 ID 合并一次查询。
-- 初始化影响核对：`createZCodeApp` 必须先完成 profile 导入再构造 Runtime，因此创建返回 Promise；Protocol 的 session materialization、临时连接测试/文本生成、CLI prompt/TUI 和轨迹工具统一等待。复用原 Session resident pool 的创建协调，不新增后台初始化状态或修改 Runtime 私有配置。测试/嵌入依赖允许同步 factory，生产调用方统一 await。
-- 验收补充：真实 Markdown 加载 + 延迟身份解析时 Runtime 不提前创建；转换失败仅保留该 profile 不可绑定，不丢其他 profile；新字段档位保持权威；原文件不写回。Protocol 的桌面 continuous/手机 replayable 恢复及并发冷加载沿原入口回归。Codegraph 当前不可用，dep:refs 未索引独立 CLI workspace；以完整仓库调用搜索和 CLI 三包类型检查补齐，不把无索引误认为无引用。
+## Implementation outcome (condensed)
 
-- 历史空/坏 Selection 的 Session 可打开并重选继续；旧定时任务、内置/自定义 Subagent、Wiki 的真实旧格式导入，新值不被旧值覆盖。
-- 旧连接设置与实际运行身份一致；明确失效自动替换并通知，未知权益不误切。
-- 动态账号新模型编辑、调序、重读；禁用模型可编辑但仍禁用；继承模型不得改名/作为个人模型删除。
-- 固定/跟随双向切换、继续编辑、取消、保存重开；完整性失败不部分写盘；开关位于底部操作区。
-- 未知模型可用的保守基线、聚合模型真实有效配置和 Logo；主动选模最高档与历史留空严格分开。
-- 桌面本地与手机/远端读取各自 Host 的配置；不新增发送前同步，不修改运行中请求或历史记录。
+Per-item evidence summary (each fix was written test-first and reproduced red before the change):
 
-## 实施报告与复审记录
+- R01: real App/SQLite/Protocol tests for read, settings and fork (10 failures reproduced), plus a no-model history import; 12 pass afterwards (desktop continuous / mobile replayable). Pro verified missing level, invalid level and invalid Provider all open history and continue after re-selecting. The first fixture changed only the Session DB and missed the Session's Composer draft; the fixture was fixed, not the restore rule.
+- R02 / R04 Automation: both legacy encodings and new-field null/bad values failed then passed; background dispatch imports via the Host and re-reads, a fixed run is not re-resolved; `automationRepo` 68 and dispatch helper 6 pass. Pro TSL38 (`desktop-e2e-20260907-145947-115`) injected `provider=zcode` + old custom model/high after exit, the scheduler executed after restart and the actual request, definition and run carried the new selection with old rollback fields. The first TSL38 run failed because a start-time-due task let the scheduler dispatch before the window Host (`no local host available` retry); the fixture now advances the due time after the Host is ready, with product retry logic unchanged.
+- R03 / R04 Subagent: Host imports state before start with late-write protection and tolerates bad JSON; Service and new-field authority 28 pass; CLI Markdown authority (2 failures reproduced) 22 pass; real App/Markdown tests prove the legacy identity port is awaited, passed to Runtime and writes no file. Pro I20: three child requests at the specified model/high, parent at max. The new explicit-Subagent background account auto-mapping adds no protocol (later Todo99).
+- R04 Wiki: Storage uses Host-injected legacy identity conversion; new-field null/corrupt cannot read back the old value; independent storage 5 and service 57 pass; Pro WIKI-READ-01 (`desktop-e2e-20260907-145711-596`, Wiki pass, Automation fail in that group) restarted from an old-field-only file, echoed the original model/high and left the file unchanged.
+- R05: full Team/personal/Start imported before the new schema parses, old fields kept; settingService 33 pass; Pro I26 (`desktop-e2e-20260907-150508-565`) built Composer persistence by really picking a model, restarted with new and old Team connection and checked the original non-first model and a successful request (the first I26 run failed on a stale fixture: it wrote only Recent while the draft outranked it). Old API mode and a project-only selection lacking an organization identity still need joint startup-recovery checks.
+- R06: unknown entitlement never switches; conditional write protects a manual switch; Root / observer / lifecycle 26 pass; Pro SPMC-08 (`desktop-e2e-20260907-144614-095`) real invalidation: Start -> mock no entitlement -> settings refresh -> auto switch to personal with notice and persisted connection (superseded by Todo93).
+- R07 / R09: unknown-model completeness for the three API Schemas failed then passed with a real Registry list; Builtin completeness 14 pass; revision bumped to 10 (later 13). Prefix/suffix matching redone (vendor prefix enumeration limit removed); three APIs, 16 models and 4 alias kinds compare final config; the OpenRouter GPT Messages Reasoning Map request-field test failed then passed; completeness and alias tests 18 pass; two official square Logos packaged.
+- R08: `enabled=false` kept, edit after switching back to follow, pinned completeness and unsaved-input materialization reproduced then fixed; Draft 23, dialog 16, server 27, model row 41 pass; Pro MP-UI-06 verified cancel, two-way switch, save-reopen, bottom switch and narrow window.
+- R10: Facade supplies trusted members/source/snapshot validation; ConfigService queries no account; 47 tests pass; Pro Start Plan balance-only model verified edit-save-reopen, read-only ID and real drag order written to disk with no forged Personal modelIds.
+- R11: Composer, scheduled tasks, off-peak tasks, Subagent and Wiki active picks use the shared construction; selection config/Facade/Composer 33 pass; Pro I20 verified Subagent active pick lands at the highest level then an explicit change to high is used by the real child request.
+- R12: image-capability badge reused when true (no model-name guessing); model row and list 42 pass; theme, long names and mobile layout awaited Electron/page acceptance.
+- R13: levels + Mapping in one group, MFJS in its own advanced group, no collapse, independent bottom actions; dialog 16 and Pro MP-UI-06 pass.
 
-本节作为本 Todo 的实施报告，逐项填写：根因、测试先失败证据、修复文件、通过命令/产物、复审结论、提交；不得只写“已完成”。
+Environment and tooling facts: the real-user backup (SHA-256 `e4b179c215619fc700848a51cece6fef8e77dec8c742f52ec2f8c0e33c282827`, 9,787,073,272 bytes) was transferred to the Air and Pro and used only as an isolated, repeatable migration fixture on the Pro (originals kept under `/Users/dev/.zcode-test-fixtures/real-user-20260902/pristine/.zcode`, old Pro data kept, restore script on the desktop; sensitive backup and tools stay on the test machine and are not committed). Air/Pro SSH Git credential reads failed with keychain `-25308` (not an account failure); a source bundle prepared the Pro isolated workspace `/Users/dev/zcode-todo88-pro-e2e`; CUA stays locked at `95ca9ede5f308c1fcf33ea1081da4d9550bd439d`; the Pro used an isolated pnpm store and a process-level `ELECTRON_GET_USE_PROXY` for Electron install; no global proxy, keychain ACL or dependency version was changed. Pro artifacts live under `/Users/dev/zcode-todo88-pro-e2e/packages/desktop/.e2e-artifacts/` (settings `desktop-e2e-20260907-135538-982` 7 pass / 1 SSH skip; Start claim / dynamic models `desktop-e2e-20260907-140557-441` 4 pass; Subagent I20 + old-session restore `desktop-e2e-20260907-143425-628` 2 pass).
 
-| 项目                 | 实施状态                                        | 验证与复审证据                                                                                                                                                                                                                                                                                                                                             | 待讨论/限制                                                                                                                                     |
-| -------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| R01                  | 代码修复与 Pro 定向验收通过                     | 真实 App/SQLite/Protocol 测试新增 read、settings、fork 断言，先复现 10 条失败；二次复审又复现无模型导入历史失败，修复后同组 12 条通过（桌面 continuous / 手机 replayable）。Pro 验证缺档位、失效档位、失效 Provider 均可打开历史并重选继续                                                                                                                 | E2E 仍在原 pending 目录，不擅自转正式门禁；首次夹具只改 Session DB，漏清该 Session 的新版 Composer 草稿，已修夹具隔离而非放宽产品恢复规则       |
-| R02 / R04 Automation | 代码修复与 Pro 后台首次执行通过                 | 两种旧模型编码与新字段 null/坏值先失败后修复；后台派发经 Host 导入并重读，已固定 run 不重解。automationRepo 68 条、派发 helper 6 条通过。TSL38 退出后注入 `provider=zcode` 与旧 custom 模型/high，新列 SQL NULL；重启后 scheduler 执行并命中独立 fixture，核对实际请求、定义与 run 的新版选择及旧回滚字段                                                  | `desktop-e2e-20260907-145947-115`，1 条通过；本例为普通 Provider，旧账号身份单项失败仍由仓库/Host 测试覆盖                                      |
-| R03 / R04 Subagent   | 已按用户批准接入异步 profile 初始化             | Host 启动前导入 state、迟到写入保护、坏 JSON 保留不阻塞启动，Service 与新字段权威 28 条通过。CLI Markdown 权威先复现 2 条失败，修复后 22 条通过。新增真实 App/Markdown 测试先证明旧身份接口未调用，再验证等待导入、传入 Runtime、不写文件；4 条纯转换测试覆盖失败和新身份不改。Pro I20 在新初始化代码下重跑，三个 child 请求为指定模型/high、parent 为 max | 新版显式 Subagent 后台账号自动对应仍不扩协议；I20 证明旧内置覆盖和新 Markdown 档位权威，不能单独宣称它已验证真实账号旧 Markdown 的整条 Host RPC |
-| R04 Wiki             | 读取修复与 Pro 旧文件验收通过                   | Wiki 新字段 null/损坏不能回读旧值；Storage 由 Host 注入旧身份转换，无法绑定的旧显式选择不变成跟随默认。独立存储 5 条与现有服务 57 条通过。Pro WIKI-READ-01 从仅旧字段的文件重启，回显原模型/high，读取不改原文件，阅读/删除通过                                                                                                                            | `desktop-e2e-20260907-145711-596` 中 Wiki 通过、Automation 失败，不能称整组通过；账号 ID 转换由存储与服务测试证明，桌面代表是普通 Provider      |
-| R05                  | 完整 Team 迁移通过 Pro 冷启动验收，继续边界复审 | 新 schema 解析前导入完整 Team/个人/Start，保留旧字段；新字段存在不回读旧值。settingService 33 条通过。I26 从真实选模建立新版 Composer 持久状态，分别用新版与旧版 Team 连接重启，核对原非首个模型、完整 Team 身份、保留旧字段，最后实际请求成功                                                                                                             | `desktop-e2e-20260907-150508-565`；旧 API 模式与缺组织身份的 project-only 选择仍需联合启动恢复核查，不能用完整 Team 代表这两个边界              |
-| R06                  | 统一刷新与 Pro 失效切换验收通过                 | 未知权益不误切，异步查询前捕获设置、条件写入保护手动切换，写入后的刷新失败不吞通知。启动刷新拒绝后仍订阅，Root / 观察器 / 生命周期共 26 条通过。SPMC-08 扩展真实失效场景：已选 Start → mock 明确无权益 → 点击设置刷新 → 自动切个人并通知，核对实际持久连接；整组 4 条通过                                                                                  | 证据 `desktop-e2e-20260907-144614-095`；不是仅凭领取成功判定失效切换通过                                                                        |
-| R09                  | 通用前后缀匹配已重做、继续整体复审              | 已移除厂商前缀枚举限制，Model / Model API 统一支持前后缀；具体变体排在通用族之后。三种 API、16 个型号及 4 类别名比较最终配置；OpenRouter GPT Messages 的 Reasoning Map 另补请求字段测试，先失败后修复。完整性与别名测试共 18 条通过；两家官方方形 Logo 已打包                                                                                              | 语义变体及其余接口的真实请求仍需核查；不得把任意后缀宣称成已确认能力                                                                            |
-| R07                  | 通用配置已补齐、待整体发布复审                  | 用户确认更大的通用初始值，本轮定 32,000。三种 API Schema 的未知模型完整性测试先失败，修复后包含真实 Registry 列表验证，Builtin 完整性共 14 条通过；发布 revision 已升至 10                                                                                                                                                                                 | 已知系列变体和聚合模型专用能力另由 R09 核查                                                                                                     |
-| R08                  | 保存与布局通过 Pro 定向验收                     | 保留 enabled=false、切回跟随后编辑、固定完整性、未保存输入物化均先复现再修复；草稿 23、弹窗 16、服务端 27、模型行 41 条通过。Pro MP-UI-06 已验证取消、双向切换、保存重开、开关底部定位及窄窗口                                                                                                                                                             | 深浅主题与中英文组合继续随整体页面复审                                                                                                          |
-| R10                  | 完整快照成员与 Pro 动态模型验收通过             | Facade 提供可信成员、来源及快照校验；ConfigService 不查询账号。编辑、排序、修改 Provider 后保留动态顺序及异步成员消失拒绝迟到写入共 47 条通过。Pro Start Plan 的仅余额返回模型已验证编辑保存重开、ID 只读、真实拖拽顺序写盘，且没有伪造 Personal modelIds                                                                                                  | 远程同步复用既有边界，不新增发送前同步                                                                                                          |
-| R11                  | 主动选模最高档与全新初始兜底已接入              | Composer、定时任务、闲时任务、Subagent、Wiki 的主动操作接入公共构造；历史恢复不补档位。选择配置/Facade/Composer 共 33 条通过；Pro I20 验证 Subagent 主动选模先落最高档，再显式改为 high 并用于真实子请求                                                                                                                                                   | 其他后端主动构造入口仍需复核；不能用 Subagent 一项代替所有界面验收                                                                              |
-| R12                  | 设置模型行与公共选择列表已恢复视觉标记          | 图片能力为真时复用既有徽标，不按型号猜；先复现缺失，模型行与列表共 42 条通过                                                                                                                                                                                                                                                                               | 主题、长名称和手机布局待 Electron/页面验收                                                                                                      |
-| R13                  | 两个容器已实现并通过 Pro 设置页验收             | 推理档位与 Mapping 同组、MFJS 独立高级组，无折叠，底部操作独立；弹窗 16 条与 Pro MP-UI-06 通过                                                                                                                                                                                                                                                             | 主题与语言整体复审继续                                                                                                                          |
-| 类型检查             | 根工作区与 CLI bootstrap 通过                   | 多轮 `pnpm typecheck` 通过；重建 contracts 后 CLI bootstrap `typecheck` 通过，原 `HookRunLifecyclePayload.blockReason` 错误来自过时依赖类型产物                                                                                                                                                                                                            | 后续变更仍需重跑全检查                                                                                                                          |
-| 范围与现场           | 已记录                                          | 当前分支与自身远端同步；工作区有并行修改，保留                                                                                                                                                                                                                                                                                                             | 不操作真实配置                                                                                                                                  |
+Async-initialization review (2026-09-07): reading user / project / plugin Markdown awaits the existing Host import port only for old `builtin` identities (deduped by ID), then assembles Runtime config and creates the App; an undeterminable import keeps that item's unbindable selection while other profiles load; CLI/TUI exit during initialization releases the late App without sending. Initialization, config, real SQLite cold restore, Protocol in both deliveries, MCP, Hook and workflow: 12 files, 172 pass; exit regressions 4 pass. A wider Protocol run had 1 remote Cron denylist failure that reproduces with HEAD's original files (not caused by this change). CLI first full group 294: 289 pass, 5 fail; four outdated fixtures were fixed (181/181) and the SEA dependency-closure failure remains and exists in fixed staging too (packaging structure; AS03), so "all 294 pass" is not claimed. Wrap-up checks: root `pnpm typecheck`, Desktop `typecheck:e2e`, `pnpm lint` (40 existing warnings, 0 errors) and `git diff --check` pass; the I26 fixture checker prints warnings about imported `E2E_*` constants (not a missing send marker; checker not loosened).
 
-- Air 备份：真实用户备份压缩包已完整传输，源端与 Air 的 SHA-256 均为 `e4b179c215619fc700848a51cece6fef8e77dec8c742f52ec2f8c0e33c282827`，9,787,073,272 字节。未解压、未恢复真实数据；Air 当时剩余约 12 GiB，后续测试必须控制空间。
-- 2026-09-07 用户新增授权：把该真实用户备份传到 Pro，并替换 Pro 的默认 `.zcode` 作为重复迁移测试数据。现已完成：原包 SHA-256 与 Air/源端一致；解压原件留在 `/Users/dev/.zcode-test-fixtures/real-user-20260902/pristine/.zcode`，恢复后的 `/Users/dev/.zcode` 与其全量 checksum dry-run 比较无差异。原 Pro 数据约 533 MiB 留在 `/Users/dev/.zcode.before-real-user-2026-09-07T13-18-05.536Z`，没有删除，没有启动旧版应用。桌面 `Restore-Real-User-Test-Data.command` 可在退出全部 ZCode/Agent/Host 后重复恢复，工具每次先准备副本、再改名留档。工具和敏感备份仅留测试机，不提交 Git。
-- 2026-09-07 验证环境：Air 与 Pro 的 SSH Git 凭据读取均报钥匙串 `-25308`，本机终端 Git 可用，不能据此判成账号失效。未放宽钥匙串权限；改用本机已授权取得的源码 bundle 准备 Pro 隔离工作区 `/Users/dev/zcode-todo88-pro-e2e`，CUA 仍为锁定的 `95ca9ede5f308c1fcf33ea1081da4d9550bd439d`。Electron 通过结果见下文。
-- 最新本地全量 `pnpm typecheck` 通过；`pnpm lint` 通过（40 条既有 warning，0 error）。后续修改仍需重跑，不能用本条替代最终验收。
-- 二次复审批量回归：Provider、Provider Node、Automation、Subagent、Settings、Wiki、Account 与 UI 相关 34 个测试文件、501 条通过。桌面 MP-UI-06 的真实交互断言已通过，详见产物记录。
-- Pro 环境准备：使用隔离 pnpm store 和测试机已有 HTTP 代理完成锁定依赖安装；Electron 首次安装未启用其代理选项而超时，启用进程级 `ELECTRON_GET_USE_PROXY` 后安装成功。没有改全局代理、钥匙串 ACL 或依赖版本，不把环境安装失败计为产品用例失败。
+## Final closeout
 
-### 2026-09-07 异步初始化复审与最新验收
+- AS02 ruled: the user later accepted treating a corrupt new Subagent selection as inherit; the original proposal "keep display, execution reports a config error" is no longer implemented. This is accepted status quo, not a fix or new passing test; Markdown original-field migration and retirement of the intermediate format follow Todo 97.
+- 2026-09-08: the AS06 four-place E2E attribute-naming omission was committed alone (`be348019e1`); AS07 fixed the account reconciliation failure being permanently de-duplicated. Independent commit source plus this round's fix-ups: root and E2E typecheck and Lint pass, 28 changed-related files 471/471, Pro claim / dynamic model / fail-then-recover group 4/4 (`desktop-e2e-20260908014430812-p41305-9af07adb1cfb1a1e`). CLI full suite 295/296, the single failure still the confirmed baseline SEA closure (no claim of all green).
 
-```text
-读取用户 / 项目 / 插件 Markdown
-  -> 仅旧 builtin 身份：await 现有 Host 导入端口（同 ID 去重）
-  -> 组装 Runtime 配置 -> 创建 App -> 返回 Protocol / CLI 调用方
+Full findings, commit range, second findings and rulings: [completion and recent commit review record](../research/todo88-completion-and-commit-audit.md).
 
-导入无法确定 -> 保留该项原不可绑定选择；其他 profile 正常加载
-初始化期间 CLI/TUI 退出 -> 释放迟到 App，不发送、不重新激活
-```
+| Scope | Final result | Evidence / limits |
+| --- | --- | --- |
+| R01-R04 | approved restore, legacy import, new-field priority and async profile initialization done | SQLite/Protocol, real old files and Pro targeted cases; AS02 accepted as inherit (not a fix pass) |
+| R05 | full Team and organization-less legacy Team both pass cold restart and real request acceptance | Pro `desktop-e2e-20260907-160104-848`; OAuth unique match, failure retention, concurrent overwrite protection 87 unit tests; API mode proven by unit tests not to enter account migration (no claim of a standalone desktop upgrade run) |
+| R06 | auto alternative and notice done; observer no longer loses a refresh at the end | Pro `desktop-e2e-20260907-162115-439` 4/4; unknown never triggers an alternative |
+| R07 / R09 | default cap, prefix/suffix, semantic variants, all aggregator members and Logos done | 19 config/Map checks evaluate each tier; not live API tests per vendor |
+| R08 / R10 / R12 / R13 | save, dynamic members, visual marker, grouping and footer done | dynamic Start edit/sort Pro 4/4; `desktop-e2e-20260907-160913-084` zh/en, both themes, 390px, long ID and cancel/save-reopen pass |
+| R11 | all located active-pick entries use the shared highest level; Bot `/model` two entries filled | Bot service 93/93, Pro `desktop-e2e-20260907-163541-147` 3/3; history missing level stays empty with no ModelFactory default fill |
+| merge-wide review AS01 | restored the lost reference passing and blocking condition of Markdown auxiliary questions | real SessionPane tests red then 8/8; Pro formal case `desktop-e2e-20260907-162820-560` passes |
+| final batch regression | changed-related 33 files 599/599; architecture-adjacent 28 files 394/394 | the two overlap and are not summed as independent case totals; CLI listed separately; full desktop/mobile suites not run |
+| real backup | source kept; of 15 old automations, 14 imported in memory and 1 left pending by the cross-Family limit | no real tasks started and no colleague credentials used to send requests; not claimed as all real history run-accepted |
 
-- 初始化、配置、真实 SQLite 冷恢复、Protocol 两种 delivery、MCP、Hook、workflow 等 12 文件 172 条通过。API 调用方已统一 await；旧同步测试/嵌入 factory 仍可注入。
-- 退出回归分别先复现 headless 退出后仍提交、TUI 关闭后仍返回 App；修复后连同现有退出/失败清理共 4 条通过。只收口新等待窗口，不新增进程级重试。
-- 扩大运行的 Protocol 测试另有 1 条远程 Cron denylist 失败。使用 HEAD 原版 `server-operations`、`workspace-model-runtime` 和原版用例隔离复跑，得到相同失败，确认不是本轮异步化导致；临时基线文件已移除，日志 `/tmp/todo88-cron-baseline.log` 保留。没有改远程 Cron 权限。
-- CLI 初轮全组 294 条中 289 通过、5 失败。后续修正四项过时 fixture，相关组 181/181；SEA 依赖闭包仍失败，已确认固定 staging 同样存在的打包结构问题。没有重跑并宣称全部 294 条通过，详见复审报告 AS03。
-- Pro 产物统一位于 `/Users/dev/zcode-todo88-pro-e2e/packages/desktop/.e2e-artifacts/`：设置页 `desktop-e2e-20260907-135538-982`（7 过、1 SSH 跳过）；Start 领取/动态模型 `desktop-e2e-20260907-140557-441`（4 过）；新异步初始化后的 Subagent I20 + 旧会话恢复 `desktop-e2e-20260907-143425-628`（2 过）。
-- 此时尚欠的 R05、R09、R12 验收已在下方最终收口补齐。R02 后台旧定时任务、R04 Wiki 旧文件与 R06 明确失效自动切换也有 Pro 证据；这些是定向验收，不是全量 E2E。
-- TSL38 首次迁移验收未通过时，运行数据库显示 Selection 已正确导入，但启动即到期导致 scheduler 先于窗口 Host 派发，进入既有 `no local host available` 重试。夹具现于退出后只写旧模型、重启 Host 就绪后仅推进到期时间，产品重试逻辑未改；后续真实后台执行通过。Wiki 首次失败是测试把 DOM 的 `custom:` picker value 误写成 provider/model，日志确认正确回显后修正测试并重跑通过。
-- I26 首次复跑停在旧夹具的 Recent 断言：它只写 Recent，页面已经有更高优先级的新版 Composer 草稿，因此仍显示草稿模型。这不是连接迁移失败。改为真实点选模型建立草稿，再复用同一 Chromium Profile 冷启动；不降低 Composer 的持久化优先级。只运行 I26，未把同文件 I25/I27/I28 记为通过。
-- 本轮新增 Pro 证据：`desktop-e2e-20260907-145010-681` 的定时任务表单管理、Wiki 阅读/删除、Wiki 生成设置共 3 条通过；它们只证明原功能回归，旧文件迁移另由上面的定向用例验证。
-- 本轮收尾检查：根 `pnpm typecheck`、Desktop `typecheck:e2e`、`pnpm lint` 和 `git diff --check` 均通过；Lint 仍为 40 条既有 warning、0 error。TSL38、I26 所在文件、Wiki 阅读用例的 fixture contract 检查通过。I26 检查器对导入的 `E2E_*` 常量仍打印未匹配 marker 的 warning，不是缺失实际发送 marker；未更改其公共 matcher 或放宽检查器。
+## Relation to existing Todos
 
-## 最终收口（取代上表中“继续复审 / 待验收”的早期进度）
-
-- [x] AS02 裁决完成：用户后续明确接受损坏的新 Subagent 选择按继承处理，原“保留展示、执行报配置错误”提案不再实施。此项是接受现状，不宣称修复或新增测试通过；Markdown 原字段迁移及中间格式退役另按 Todo 97 执行。
-
-2026-09-08 补充收口：AS06 四处 E2E 属性命名遗漏已单独提交 `be348019e1`；AS07 修复账号协调失败被永久去重。独立提交源码加本轮补修，根/E2E 类型检查与 Lint 通过，变更相关 28 文件 471/471，Pro 领取/动态模型/失效后失败再恢复整组 4/4（`desktop-e2e-20260908014430812-p41305-9af07adb1cfb1a1e`）。CLI 全套 295/296，唯一失败仍是已确认的基线 SEA 闭包，不冒称全绿。具体红灯、归因、修复边界及日志见下方链接。
-
-完整问题、提交范围、二次发现和裁决见 [完成与近期提交复审记录](../research/todo88-completion-and-commit-audit.md)。
-
-| 范围                  | 最终结果                                                                | 证据 / 限制                                                                                                                                         |
-| --------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R01–R04               | 已批准的恢复、旧格式导入、新字段优先与异步 profile 初始化完成           | SQLite/Protocol、真实旧文件和 Pro 定向用例。AS02 后续已接受按继承处理，不再待裁决，也不计为修复通过                                  |
-| R05                   | 完整 Team 与缺组织旧 Team 均完成冷重启及实际请求验收                    | Pro `desktop-e2e-20260907-160104-848`；OAuth 唯一匹配、失败保留、并发防覆盖共 87 条单测。API 模式由单测证明不进入账号迁移，不冒称单独跑过其桌面升级 |
-| R06                   | 自动替代与通知完成，并修复观察器收尾时丢刷新                            | Pro `desktop-e2e-20260907-162115-439` 4/4；unknown 不触发替代                                                                                       |
-| R07 / R09             | 默认上限、前后缀、语义变体、全部聚合成员及 Logo 完成                    | 19 条配置/Map 验证逐档求值；不是对每个厂商线上 API 的实测                                                                                           |
-| R08 / R10 / R12 / R13 | 保存、动态成员、视觉标记、分组与页脚完成                                | 动态 Start 编辑/排序 Pro 4/4；`desktop-e2e-20260907-160913-084` 中英文、双主题、390px、长 ID 与取消/保存重开通过                                    |
-| R11                   | 所有已定位主动选模入口接公共最高档；补齐 Bot `/model` 两入口            | Bot 服务 93/93，Pro `desktop-e2e-20260907-163541-147` 3/3。历史缺档位仍留空，不在 ModelFactory 默认补值                                             |
-| 合并扩大复审 AS01     | 补回 Markdown 辅助提问丢失的引用传递及阻塞条件                          | 真实 SessionPane 测试先红后 8/8；Pro 正式用例 `desktop-e2e-20260907-162820-560` 通过                                                                |
-| 最终批量回归          | 变更相关 33 文件 599/599；架构相邻 28 文件 394/394                      | 两组有重叠，不相加作为独立用例总数；CLI 另列，完整桌面/手机全量未运行                                                                               |
-| 真实备份              | 源文件保留；15 条旧自动化内存导入 14 条，1 条按既定跨 Family 限制待迁移 | 没有启动真实任务，也没有使用同事凭据发送请求；不能说全部真实历史已完成运行验收                                                                      |
-
-## 与既有 Todo 的关系
-
-- 2026-09-07 执行链复审新增 R03/R04 核查：CLI `subagent/profile.ts` 仍用旧 `thoughtLevel` 覆盖新 `modelSelection`，并用 `??` 复活新字段 null；补 CLI 真正 loader 的新字段权威测试后修复。另发现 Host 的旧 built-in override 导入目前只在内存中，而 CLI 独立读取 `agents-state.json`；必须追到启动/持久化边界证明迁移真正用于运行，不能用设置页测试关闭 R03。
-- Pro 正式设置页 E2E：`desktop-e2e-20260907-135538-982` 共 7 条通过，1 条远程 SSH 场景因未配置目标跳过；MP-UI-06 覆盖底部跟随开关、取消、双向切换保存重开及两个分组。首次发现误复用 Checkbox，已改标准 Switch 后通过。Start Plan 新增编辑用例首次因中文页面使用英文 Save 定位失败，修双语定位后整组 4 条通过。
-
-- 本 Todo 是修复缺口和验收追踪入口，不重写旧 Todo 历史；关联项本次验收通过后再同步对应旧文档状态。
-- Todo 84 曾按 2026-09-07 用户裁决重新打开，现已由本 Todo R11 的最高档实现及后续验收收口；不是以旧“全部留空”用例通过关闭。2026-09-08 已同步其状态。
-- Todo 80 独立流式 JSON Schema 功能不在本次扩大范围内。
-- 已修 trace 转换 Bug 只作回归保护，不重复计为未修问题。
+- 2026-09-07 execution-chain review added R03/R04 checks: CLI `subagent/profile.ts` still overrode the new `modelSelection` with the old `thoughtLevel` and revived a null new field with `??`; fixed with a new-field authority test on the real CLI loader. The Host's old built-in override import was only in memory while the CLI reads `agents-state.json` independently; it must be traced to the startup/persistence boundary to prove the migration is really used at run time (the settings-page test cannot close R03).
+- Pro formal settings E2E `desktop-e2e-20260907-135538-982`: 7 pass, 1 remote SSH scenario skipped (no target configured); MP-UI-06 covered the bottom follow switch, cancel, two-way save-reopen and both groups. The first run found a Checkbox misuse, fixed with the standard Switch; the Start Plan edit case first failed on locating the English Save in the Chinese page, fixed with bilingual locators, then the group of 4 passed.
+- This Todo is the entry for repair gaps and acceptance tracking and does not rewrite older Todo history; related old documents are synced after acceptance passes.
+- Todo 84 was reopened by the 2026-09-07 user ruling and is now closed by this Todo's R11 highest-level implementation and later acceptance (not by the old "all empty" cases); status synced 2026-09-08.
+- Todo 80 (streaming JSON Schema) is out of this scope; the fixed trace-conversion bug is regression protection only and not double-counted as an unfixed problem.
