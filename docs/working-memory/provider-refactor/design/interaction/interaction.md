@@ -1,6 +1,8 @@
 # How Model Selection Enters an Execution
 
-The model selection in the input box expresses the user's intent for the next submission. After the message is submitted, this selection is fixed with the Submission; when the Submission starts executing, the Session records the Selection for subsequent continuation, and the Agent Loop creates and holds the Model that truly initiates requests.
+The input box's model selection expresses the user's intent for the next submission. On submit, the
+selection is fixed with the Submission; when execution starts, the Session records the Selection for
+subsequent continuation; the Agent Loop creates and holds the Model that truly initiates requests.
 
 ```text
 Composer Selection
@@ -18,11 +20,13 @@ Session Selection
 Active Model
 ```
 
-This chain separates "which one we want to use next" from "which one is currently being used." The model selector always serves the next submission; the running model is expressed by an independent execution state.
+This chain separates "which one we want to use next" from "which one is currently being used." The model
+selector always serves the next submission; the running model is expressed by an independent execution
+state.
 
 ## A Normal Path for a Message
 
-Assume the Session last used model A, the user selects model B in the input box, and then sends a message:
+Session last used model A; the user selects model B and sends a message:
 
 ```text
 Session Selection = A
@@ -46,7 +50,9 @@ Start new Agent Loop
 This Loop's model requests use Model B
 ```
 
-If Provider Config or Registry changes during Loop execution, the already-created Model is not modified. The current Registry is re-read when creating the next Model, so new configurations take effect from the next segment of execution.
+If Provider Config or Registry changes during the Loop, the already-created Model is not modified. The
+current Registry is re-read when creating the next Model, so new configurations take effect from the next
+segment of execution.
 
 ## Three Core States
 
@@ -56,7 +62,10 @@ If Provider Config or Registry changes during Loop execution, the already-create
 | Session Selection  | Which model the Session continues to use           | Session Store    | Updated when submission starts executing or Guide is received |
 | Active Model       | The model truly called by the current Loop         | Agent Loop       | Held within Loop; switchable at Step boundary by Guide        |
 
-Draft is the persistent carrier of the Composer state. Workspace App Recent and Host `preferredSelection` are only responsible for providing the initial Selection for the Composer; they do not participate in current model requests; `preferredSelection` already includes the Host's atomic resolution of Configured Default and Fallback Policy.
+Draft is the persistent carrier of the Composer state. Workspace App Recent and Host `preferredSelection`
+only provide the initial Selection for the Composer; they do not participate in current model requests;
+`preferredSelection` already includes the Host's atomic resolution of Configured Default and Fallback
+Policy.
 
 ```text
 Draft / workspace Recent / Host preferred
@@ -78,11 +87,14 @@ Draft / workspace Recent / Host preferred
             Active Model
 ```
 
-The persistence scope of each state and the initialization rules for App, TUI, and Prompt CLI are documented in [`selection-state.md`](./selection-state.md).
+Persistence scope per state and initialization rules for App, TUI, and Prompt CLI:
+[`selection-state.md`](./selection-state.md).
 
 ## Receive Method Determines Update Time
 
-The same Submission can start immediately, enter the Queue, or enter the current Loop as a Guide. Selection always belongs to the Submission; different receive methods only change when it becomes Session and execution state.
+The same Submission can start immediately, enter the Queue, or enter the current Loop as a Guide. Selection
+always belongs to the Submission; the receive method only changes when it becomes Session and execution
+state.
 
 ```text
 CoreSubmission B
@@ -96,9 +108,12 @@ CoreSubmission B
    └─ After current Loop receives, Session updates to B, subsequent Model Step uses Model B
 ```
 
-The diagram above describes normal user Submissions. Idle tasks are a special `start-now`: the Submission still carries a standard `ModelSelection`, but the execution context explicitly specifies it only applies to this Loop. Core uses the same Registry and ModelFactory to create an idle Model, does not write App Recent, does not change Session Selection, and does not enter the ordinary Queue; Core directly rejects when busy.
+The diagram above describes normal user Submissions. Idle tasks are a special `start-now`: the Submission
+still carries a standard `ModelSelection`, but the execution context explicitly applies it to this Loop only.
+Core uses the same Registry and ModelFactory to create an idle Model, writes no App Recent, changes no
+Session Selection, and enters no ordinary Queue; Core directly rejects when busy.
 
-Taking the App as an example, state changes are as follows:
+App state changes:
 
 | Event                                           | App Recent | Session Selection | Active Model                                                 |
 | ----------------------------------------------- | ---------- | ----------------- | ------------------------------------------------------------ |
@@ -107,13 +122,15 @@ Taking the App as an example, state changes are as follows:
 | B in Queue starts executing                     | B          | B                 | B                                                            |
 | Guide C is received by current Loop             | C          | C                 | Current request keeps original Model, subsequent Steps use C |
 
-App Recent updates when the App confirms the Submission is received as start-now, queue, or Guide. Session Selection is updated when the Submission truly starts the Loop, or when the current Loop receives it as a Guide. Prompt CLI and TUI do not read/write App Recent.
+App Recent updates when the App confirms the Submission is received as start-now, queue, or Guide. Session
+Selection updates when the Submission truly starts the Loop, or when the current Loop receives it as a
+Guide. Prompt CLI and TUI do not read/write App Recent.
 
-The complete timing for Queue, Guide, and derived submissions is documented in [`submission-delivery.md`](./submission-delivery.md).
+Complete timing for Queue, Guide, and derived submissions: [`submission-delivery.md`](./submission-delivery.md).
 
 ## Composer's Initial Selection
 
-When creating or restoring a Composer, the Entry obtains the initial value from states it has authority over:
+When creating or restoring a Composer, the Entry takes the initial value from states it owns:
 
 | Scenario                   | Initialization Order                                                                  |
 | -------------------------- | ------------------------------------------------------------------------------------- |
@@ -123,30 +140,46 @@ When creating or restoring a Composer, the Entry obtains the initial value from 
 | Prompt CLI new Session     | Explicit model parameter -> domain preferred                                          |
 | Prompt CLI restore Session | Explicit model parameter -> Session Selection                                         |
 
-Initialization only occurs when creating or restoring a Composer. While the Composer is alive, the editing memory state prevails; Provider Registry updates can mark the current selection as unavailable, but will not silently replace a user's unsubmitted selection.
+Initialization happens only when creating or restoring a Composer. While the Composer is alive, the editing
+memory state prevails; Provider Registry updates can mark the current selection as unavailable but will not
+silently replace a user's unsubmitted selection.
 
 ## Queue and Guide
 
-Queue items save the complete Submission, including the ModelSelection determined at that time. Reordering the Queue does not change Selection; clicking "Immediate" also uses the Queue item's own Selection, not the value in the current Composer.
+Queue items save the complete Submission, including the ModelSelection determined at that time. Reordering
+the Queue does not change Selection; clicking "Immediate" uses the Queue item's own Selection, not the
+current Composer value.
 
-Guide and the "Immediate" in the product use the same Core semantics. After a Guide is received, Context injection, Session Selection update, and Active Model switching form an atomic change. Already-issued requests continue to be completed by the old Model; the new Model is used from the next Model Step. When creating a new Model or injection fails, the complete Submission is retained as an ordinary Queue item.
+Guide and the product's "Immediate" use the same Core semantics. After a Guide is received, Context
+injection, Session Selection update, and Active Model switching form an atomic change. Already-issued
+requests continue on the old Model; the new Model is used from the next Model Step. When creating the new
+Model or injecting fails, the complete Submission is retained as an ordinary Queue item.
 
 ## Edit, Retry, and Runtime Display
 
-Edit and Retry are derived from existing Submissions, defaulting to inheriting the source Submission's ModelSelection. They do not read the current Composer Selection; if the product supports "retry with current model" in the future, a new Selection must be explicitly carried in the new Submission.
+Edit and Retry derive from existing Submissions and default to inheriting the source Submission's
+ModelSelection. They do not read the current Composer Selection; a future "retry with current model" must
+explicitly carry a new Selection in the new Submission.
 
-The model selector continues to display the Selection for the next submission. The current execution model, idle task model, and Guide switch results are runtime states that can be displayed in execution details or a dedicated banner; they do not write back to the model selector to simulate runtime state.
+The model selector keeps displaying the Selection for the next submission. The current execution model, idle
+task model, and Guide switch results are runtime states displayed in execution details or a dedicated
+banner; they do not write back to the model selector to simulate runtime state.
 
 ## Stable Constraints
 
 - prompt, attachments, mode, and ModelSelection are received as one Submission.
 - Queue and Guide use the Selection already fixed in the Submission.
-- Sessions only persist ModelSelection, not Model.
+- Sessions persist only ModelSelection, never Model.
 - Usage, Trace, and errors read the Model that truly initiated the request.
-- Composer Selection, Session Selection, and Active Model each have independent write events; they do not serve as projections of each other.
-- Idle tasks still only carry a standard ModelSelection; Request Auth, Ticket, attribution info, and Subagent override are execution context, see [`../execution/execution.md`](../execution/execution.md). They do not form a second set of Execution Model, Selection, or temporary Provider static config.
+- Composer Selection, Session Selection, and Active Model have independent write events; they are not
+  projections of each other.
+- Idle tasks still carry only a standard ModelSelection; Request Auth, Ticket, attribution, and Subagent
+  override are execution context (see [`../execution/execution.md`](../execution/execution.md)). They form
+  no second set of Execution Model, Selection, or temporary Provider static config.
 
 ## Sub-documents
 
-- [`selection-state.md`](./selection-state.md) explains the ownership, memory and persistence carriers of Selection states, and initialization rules for different Entries.
-- [`submission-delivery.md`](./submission-delivery.md) explains the receipt and state update timing for CoreSubmission, start-now, Queue, Guide, Edit, and Retry.
+- [`selection-state.md`](./selection-state.md): ownership, memory and persistence carriers of Selection
+  states, and initialization rules per Entry.
+- [`submission-delivery.md`](./submission-delivery.md): receipt and state-update timing for CoreSubmission,
+  start-now, Queue, Guide, Edit, and Retry.

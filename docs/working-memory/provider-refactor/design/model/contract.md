@@ -1,6 +1,8 @@
 # Model Public Contract
 
-This document presents the Model type visible to business callers. How Provider config is formed and how Models are created are documented in [`../registry/configuration.md`](../registry/configuration.md) and [`../registry/model-creation.md`](../registry/model-creation.md).
+The Model type visible to business callers. How Provider config is formed:
+[`../registry/configuration.md`](../registry/configuration.md); how Models are created:
+[`../registry/model-creation.md`](../registry/model-creation.md).
 
 ## Type Relationships
 
@@ -24,8 +26,6 @@ ModelRequest
 ├─ options
 └─ abortSignal
 ```
-
-Four data types serve different responsibilities:
 
 | Data            | Meaning                                                                       | Can Request modify?           |
 | --------------- | ----------------------------------------------------------------------------- | ----------------------------- |
@@ -56,7 +56,8 @@ interface ModelProperties {
 }
 ```
 
-Properties are used by callers to choose request strategies, and also by Models to check compatibility between the request and the model before sending.
+Properties are used by callers to choose request strategies and by Models to check request/model
+compatibility before sending.
 
 | Property                        | Usage location                                            |
 | ------------------------------- | --------------------------------------------------------- |
@@ -68,11 +69,15 @@ Properties are used by callers to choose request strategies, and also by Models 
 | `supportsNativeWebSearch`       | Whether to use Provider native search capability          |
 | `supportsMidConversationSystem` | Provider message conversion strategy for history messages |
 
-`supportsNativeWebSearch` and `supportsMidConversationSystem` are the final capability facts of Effective Model Config, fixed during the Model creation phase. The Model Config Rules that produce them can match based on model, Provider, API type, and other resolution context combinations; capabilities do not have to be determined solely by modelId. Core only reads the fixed conclusions, no longer inferring temporarily based on Provider type, URL, or modelId.
+`supportsNativeWebSearch` and `supportsMidConversationSystem` are final capability facts of Effective Model
+Config, fixed during Model creation. The Model Config Rules producing them may match on model, Provider, API
+type, and other resolution-context combinations; capabilities need not be determined by modelId alone. Core
+reads only the fixed conclusions; it does not infer temporarily from Provider type, URL, or modelId.
 
 ## Option Specs
 
-Public Options use fixed fields. Each model describes the valid range, semantic order, hard upper limits, request mapping, and default level for new selections through Option Specs:
+Public Options use fixed fields. Each model declares the valid range, semantic order, hard upper limits,
+request mapping, and default level for new selections:
 
 ```ts
 interface EnumOptionSpec {
@@ -101,14 +106,22 @@ interface ModelOptions {
 }
 ```
 
-`reasoningLevel` is the user's expected reasoning intensity. It is a soft constraint: the Adapter expresses it as much as possible using the target protocol's effort, level, toggle, or compatible budget.
-`reasoningLevel.values` are ordered by reasoning intensity from lowest to highest; `values[0]` is the lowest level the model publicly exposes, but does not guarantee being disabled.
-Standard model new selections prefer to use `default`; when not set or cleared through `null`, Host Selection falls back to `values.at(-1)`. After the value list is replaced, if the inherited `default` no longer belongs to the new list, that default must be discarded; Personal Overlay must not also save defaults not in its valid `values`. Explicitly adopting a low-cost strategy for auxiliary requests explicitly selects
-`values[0]`. Do not scan names like `off`, `nothink`, or `none` to guess disabling capability.
+`reasoningLevel` is the user's expected reasoning intensity — a soft constraint: the Adapter expresses it as
+far as the target protocol's effort, level, toggle, or compatible budget allows. `reasoningLevel.values` is
+ordered lowest to highest; `values[0]` is the lowest publicly exposed level but is not guaranteed to be
+"disabled". Standard model new selections prefer `default`; when unset or cleared via `null`, Host Selection
+falls back to `values.at(-1)`. After the value list is replaced, an inherited `default` no longer in the new
+list must be discarded; a Personal Overlay must not save defaults outside its valid `values`. Explicit
+low-cost auxiliary requests select `values[0]`. Do not scan names like `off`, `nothink`, or `none` to guess
+disabling capability.
 
-`maxOutputTokens` is the hard upper limit for total generation tokens shared by reasoning and final answers. The Model validates that the call value does not exceed the corresponding `LimitOptionSpec.max`; it does not silently truncate on behalf of the caller.
+`maxOutputTokens` is the hard upper limit for total generation tokens shared by reasoning and final answer.
+The Model validates that the call value does not exceed `LimitOptionSpec.max`; it never silently truncates
+for the caller.
 
-Option fields are a closed set. Providers cannot add arbitrary `Record<string, unknown>` parameters through the public interface. New general Options need to determine cross-Provider semantics first, then enter `ModelOptionSpecs`, `ModelOptions`, and Adapter.
+Option fields are a closed set. Providers cannot add arbitrary `Record<string, unknown>` parameters through
+the public interface. New general Options need cross-Provider semantics defined first, then entry into
+`ModelOptionSpecs`, `ModelOptions`, and Adapter.
 
 ## Option Resolution
 
@@ -120,7 +133,11 @@ Specific Options bound to Model
 Request Effective Options
 ```
 
-Request explicit values override Model-bound values. `ModelOptions` is a sparse Overlay at the binding/request phase, but both valid `reasoningLevel` and `maxOutputTokens` must exist simultaneously before entering the Executor. Missing values fail before network I/O; Model, Adapter, and Runner do not guess execution values from Option Specs. Standard initial selection only fills once at the Host Selection boundary by `values.at(-1)`; auxiliary calls explicitly bind `values[0]`.
+Request explicit values override Model-bound values. `ModelOptions` is a sparse Overlay at the
+binding/request phase, but both valid `reasoningLevel` and `maxOutputTokens` must exist before entering the
+Executor. Missing values fail before network I/O; Model, Adapter, and Runner do not guess execution values
+from Option Specs. Standard initial selection fills once, at the Host Selection boundary, by
+`values.at(-1)`; auxiliary calls explicitly bind `values[0]`.
 
 ```ts
 const model = baseModel.bind({
@@ -136,7 +153,8 @@ await model.generateText({
 });
 ```
 
-The example above's request uses `reasoningLevel = high` and `maxOutputTokens = 8_000`, without modifying `model.options`.
+The request above uses `reasoningLevel = high` and `maxOutputTokens = 8_000` without modifying
+`model.options`.
 
 ## ModelRequest
 
@@ -150,11 +168,15 @@ interface ModelRequest {
 }
 ```
 
-ModelRequest describes a single model call. Model identity, API Key, Request Auth, Endpoint, Provider type, and Provider-specific parameters are already determined by the Model's execution implementation and its dependencies; they do not appear in the Request. Dynamic access materials for `zhipu-account` are resolved by the Account Request Auth Service on each request attempt, without changing the public ModelRequest Schema.
+ModelRequest describes a single model call. Model identity, API Key, Request Auth, Endpoint, Provider type,
+and Provider-specific parameters are already determined by the Model's execution implementation and its
+dependencies; they do not appear in the Request. Dynamic access materials for `zhipu-account` are resolved
+by the Account Request Auth Service on each request attempt, without changing the public ModelRequest
+Schema.
 
 ## Request Checks
 
-Model performs unified checks before calling Adapter:
+Model performs unified checks before calling the Adapter:
 
 | Request content      | Check basis                             |
 | -------------------- | --------------------------------------- |
@@ -166,10 +188,12 @@ Model performs unified checks before calling Adapter:
 | `reasoningLevel`     | `optionSpecs.reasoningLevel.values`     |
 | `maxOutputTokens`    | `optionSpecs.maxOutputTokens.max`       |
 
-Requests exceeding Option Spec return explicit errors. When a Request uses input or capabilities that the model explicitly declares as unsupported, the Model similarly returns explicit errors. This check is a unified double check before sending the request; callers can still read Property early to choose their own strategy.
+Requests exceeding an Option Spec return explicit errors; so do requests using input or capabilities the
+model explicitly declares unsupported. This is a unified double check before sending; callers may still read
+Properties early to choose their own strategy.
 
-Target Registry-published ModelConfig must have complete Properties; therefore, `unknown` does not exist in the target design.
-The complete structure, Rule Overlay, and migration boundary for input/output formats are documented in
+Registry-published ModelConfig must have complete Properties; `unknown` does not exist in the target design.
+Complete structure, Rule Overlay, and migration boundary for input/output formats:
 [`input-output-format.md`](./input-output-format.md).
 
 ## Adapter Boundary
@@ -194,11 +218,19 @@ Final Provider request
 └─ Error normalization
 ```
 
-The public Model layer understands `reasoningLevel` and `maxOutputTokens` separately; it does not understand thinking budget, nor does it add Provider-specific combined constraints. The `map` of each Option Spec is the sole configuration authority for final request fields; Runtime does not parallel-pass AI SDK reasoning namespace, standard max-output fields, or fixed-thinking budget conversions. The complete contract is documented in
+The public Model layer understands `reasoningLevel` and `maxOutputTokens` separately; it understands no
+thinking budget and adds no Provider-specific combined constraints. Each Option Spec's `map` is the sole
+configuration authority for final request fields; Runtime does not parallel-pass AI SDK reasoning namespace,
+standard max-output fields, or fixed-thinking budget conversions. Full contract:
 [`model-option-map.md`](./model-option-map.md).
 
 ## Result, Event, and Attribution
 
-`ModelResult` and `ModelEvent` use the unified result types established in M1: the former expresses final messages, usage, and end reasons; the latter expresses streaming increments, tool calls, usage, and end events. Provider SDK raw objects remain within the Adapter; no parallel result types are formed for different callers.
+`ModelResult` and `ModelEvent` use the unified result types established in M1: the former expresses final
+messages, usage, and end reasons; the latter expresses streaming increments, tool calls, usage, and end
+events. Provider SDK raw objects stay within the Adapter; no parallel result types exist for different
+callers.
 
-Usage, Trace, Model IO, cost, quota, and errors are attributed to the requesting Model's identity and this round's Effective Options; they do not read Composer Selection, later-changed Session Selection, or rely on the provider's response's optional model field.
+Usage, Trace, Model IO, cost, quota, and errors are attributed to the requesting Model's identity and this
+round's Effective Options; they do not read Composer Selection, later-changed Session Selection, or rely on
+the provider response's optional model field.
