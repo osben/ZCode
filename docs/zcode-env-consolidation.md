@@ -1,81 +1,78 @@
-# ZCODE_ENV 环境收敛
+# ZCODE_ENV consolidation
 
-## 背景
+## Background
 
-历史上桌面端同时使用 `ZCODE_ENV`、`ZCODE_API_ENV` 和
-`ZCODE_DESKTOP_BUILD_ENV*` 表达构建形态、API 环境和发布产物环境，容易让测试
-产物误带开发行为，也让 CI 默认值难以判断。
+Historically the desktop app used `ZCODE_ENV`, `ZCODE_API_ENV` and `ZCODE_DESKTOP_BUILD_ENV*` for build
+shape, API environment and release-artifact environment, which let test artifacts carry dev behavior
+and made CI defaults hard to judge.
 
-## 目标
+## Goal
 
-`ZCODE_ENV` 是唯一产品环境变量，枚举只保留：
+`ZCODE_ENV` is the single product environment variable; the enum keeps only:
 
-- `test`：测试环境，使用测试 API / OAuth endpoint，允许展示测试专用菜单。
-- `production`：正式环境，使用正式 API / OAuth endpoint，隐藏测试专用菜单。
+- `test`: test environment, uses test API / OAuth endpoints, may show test-only menus.
+- `production`: production environment, uses production API / OAuth endpoints, hides test-only menus.
 
-本地开发不是产品环境。通用构建器未显式设置 `ZCODE_ENV` 时默认按 `test` 运行；
-桌面默认启动和远程初始化入口显式选择 production，具体规则见下文。本地调试能力
-由运行形态判断，例如 Electron 是否 packaged、Vite dev mode 或专用 debug 开关。
+Local development is not a product environment. A generic builder that does not set `ZCODE_ENV`
+explicitly defaults to `test`; the default desktop launch and remote init entries select production
+explicitly (rules below). Local debugging capability is decided by run shape, e.g. whether Electron is
+packaged, Vite dev mode or a dedicated debug switch.
 
-## 配置规则
+## Configuration rules
 
-`.env*` 文件只保存链接和公开 OAuth client id 等配置，不保存当前产品环境选择。
-链接配置按环境前缀分组，避免 host、Vite 和业务代码重复声明同一 URL：
+`.env*` files hold only links and public settings such as the OAuth client id, never the current
+product environment. Links are grouped by environment prefix so host, Vite and business code do not
+redeclare the same URL:
 
-- `ZCODE_TEST_BASE_URL`
-- `ZCODE_PRODUCTION_BASE_URL`
-- `ZAI_TEST_OAUTH_ORIGIN`
-- `ZAI_PRODUCTION_OAUTH_ORIGIN`
-- `ZAI_TEST_BUSINESS_BASE_URL`
-- `ZAI_PRODUCTION_BUSINESS_BASE_URL`
-- `ZAI_TEST_OAUTH_CLIENT_ID`
-- `ZAI_PRODUCTION_OAUTH_CLIENT_ID`
+- `ZCODE_TEST_BASE_URL`, `ZCODE_PRODUCTION_BASE_URL`
+- `ZAI_TEST_OAUTH_ORIGIN`, `ZAI_PRODUCTION_OAUTH_ORIGIN`
+- `ZAI_TEST_BUSINESS_BASE_URL`, `ZAI_PRODUCTION_BUSINESS_BASE_URL`
+- `ZAI_TEST_OAUTH_CLIENT_ID`, `ZAI_PRODUCTION_OAUTH_CLIENT_ID`
 
-构建配置根据 `ZCODE_ENV` 选择对应链接，并向 renderer 注入公开的 `VITE_*` 值。
-renderer、host/service 和 agent 里的 ZCode API、远控链接、zcode-plan OpenAI/Anthropic
-入口都通过 `@zcode/shared` 的 endpoint resolver 派生，业务代码不要再手写
-`zcode.z.ai` / `zcode.z.ai` 的 zcode-plan URL。
+Build config picks the matching links by `ZCODE_ENV` and injects public `VITE_*` values into the
+renderer. The ZCode API, remote-control links and zcode-plan OpenAI/Anthropic entries in renderer,
+host/service and agent are all derived by the `@zcode/shared` endpoint resolver; business code must
+not hand-write the `zcode.z.ai` zcode-plan URL again.
 
 ## Endpoint resolver
 
-`packages/shared/src/zcodeEndpoint.ts` 是产品环境域名的唯一事实源。运行时调用方必须把
-当前 `env` 显式传入 resolver，不能在 service/provider 内部读取编译期全局 `ZCODE_ENV`。
+`packages/shared/src/zcodeEndpoint.ts` is the single source of truth for product-environment domains.
+Runtime callers must pass the current `env` to the resolver explicitly and must not read the
+compile-time global `ZCODE_ENV` inside a service/provider.
 
-默认域名矩阵：
+Default domain matrix:
 
-| 产品环境 | ZCode API | ZAI OAuth | ZAI Business API | BigModel API |
-| --- | --- | --- | --- | --- |
-| `test` | `https://zcode.z.ai` | `https://chat.z.ai` | `https://api.z.ai` | `https://bigmodel.cn` |
-| `production` | `https://zcode.z.ai` | `https://chat.z.ai` | `https://api.z.ai` | `https://bigmodel.cn` |
+| Product environment | ZCode API            | ZAI OAuth           | ZAI Business API   | BigModel API          |
+| ------------------- | -------------------- | ------------------- | ------------------ | --------------------- |
+| `test`              | `https://zcode.z.ai` | `https://chat.z.ai` | `https://api.z.ai` | `https://bigmodel.cn` |
+| `production`        | `https://zcode.z.ai` | `https://chat.z.ai` | `https://api.z.ai` | `https://bigmodel.cn` |
 
-覆盖优先级：
+Override priority:
 
-1. 完整 URL 覆盖优先，例如 `ZAI_OAUTH_AUTHORIZE_URL`、`BIGMODEL_OAUTH_AUTHORIZE_URL`。
-2. 不带环境前缀的 origin/base 覆盖其次，例如 `ZCODE_BASE_URL`、`ZAI_OAUTH_ORIGIN`、`ZAI_BUSINESS_BASE_URL`、`BIGMODEL_API_BASE_URL`。
-3. 环境 scoped 覆盖再次，例如 `ZCODE_TEST_BASE_URL`、`ZAI_PRODUCTION_OAUTH_ORIGIN`、`BIGMODEL_TEST_API_BASE_URL`。
-4. 最后使用 shared resolver 内置默认域名。
+1. Full URL overrides first, e.g. `ZAI_OAUTH_AUTHORIZE_URL`, `BIGMODEL_OAUTH_AUTHORIZE_URL`.
+2. Un-prefixed origin/base overrides next, e.g. `ZCODE_BASE_URL`, `ZAI_OAUTH_ORIGIN`, `ZAI_BUSINESS_BASE_URL`, `BIGMODEL_API_BASE_URL`.
+3. Environment-scoped overrides next, e.g. `ZCODE_TEST_BASE_URL`, `ZAI_PRODUCTION_OAUTH_ORIGIN`, `BIGMODEL_TEST_API_BASE_URL`.
+4. Finally the shared resolver's built-in default domains.
 
-`.env.development` 只保存本地开发常用的测试环境链接常量；它本身不选择产品环境。
-桌面启动脚本按所选命令显式注入 `ZCODE_ENV`；默认 `pnpm dev:desktop` 当前指向正式环境，
-测试环境必须显式使用 `pnpm dev:desktop:test`。
+`.env.development` holds only the test-environment link constants commonly used in local development
+and does not select the product environment itself. The desktop launch scripts inject `ZCODE_ENV`
+explicitly per chosen command; the default `pnpm dev:desktop` currently points to production, and the
+test environment must be chosen explicitly with `pnpm dev:desktop:test`.
 
-## 启动与 CI
+## Launch and CI
 
-- `pnpm dev:desktop` 默认等同于 `pnpm dev:desktop:prod`。
-- `pnpm dev:desktop:test` 显式注入 `ZCODE_ENV=test`。
-- `pnpm dev:desktop:prod` 显式注入 `ZCODE_ENV=production`。
-- `pnpm bootstrap:with-remote` 在 `ZCODE_ENV` 未设置或空白时向全部构建子进程注入
-  `production`；显式 `test|production` 保留，非法值在任何初始化动作前拒绝。
-  测试环境产物应搭配 `pnpm dev:desktop:test`，详见 [Bootstrap 命令](bootstrap.md)。
-- CI 未传 `ZCODE_ENV` 时默认 `production`。
-- CI 只接受 `ZCODE_ENV=test|production`，不再读取
-  `ZCODE_DESKTOP_BUILD_ENV*` 或 `ZCODE_API_ENV`。
-- `ZCODE_ENV=test` 只允许构建、收集、上传测试产物；`publish-release.sh`
-  会拒绝测试环境调用正式 release API。
+- `pnpm dev:desktop` defaults to `pnpm dev:desktop:prod`.
+- `pnpm dev:desktop:test` injects `ZCODE_ENV=test` explicitly.
+- `pnpm dev:desktop:prod` injects `ZCODE_ENV=production` explicitly.
+- `pnpm bootstrap:with-remote` injects `production` into all build subprocesses when `ZCODE_ENV` is unset or blank; an explicit `test|production` is preserved and an invalid value is rejected before any init action. Test-environment artifacts pair with `pnpm dev:desktop:test`; see [Bootstrap commands](bootstrap.md).
+- CI defaults to `production` when `ZCODE_ENV` is not passed.
+- CI accepts only `ZCODE_ENV=test|production` and no longer reads `ZCODE_DESKTOP_BUILD_ENV*` or `ZCODE_API_ENV`.
+- `ZCODE_ENV=test` may only build, collect and upload test artifacts; `publish-release.sh` rejects calling the production release API from a test environment.
 
-## 安装包命名
+## Installer naming
 
-正式环境安装包保持原有文件名，例如 `ZCode-3.0.0-mac-x64.dmg`。
-测试环境安装包在架构后追加 `_TEST`，例如 `ZCode-3.0.0-mac-x64_TEST.dmg`。
-同一规则适用于 macOS、Windows、Linux 产物，避免测试包与正式包在下载、上传或人工验收时混淆。
-构建产物飞书通知会显示“测试环境/正式环境”标识；release 发布通知只用于正式发布。
+Production installers keep the original file name, e.g. `ZCode-3.0.0-mac-x64.dmg`. Test installers
+append `_TEST` after the architecture, e.g. `ZCode-3.0.0-mac-x64_TEST.dmg`. The same rule applies to
+macOS, Windows and Linux artifacts so test and production packages are not confused during download,
+upload or manual acceptance. The build-artifact Feishu notification shows a "test environment" /
+"production environment" marker; the release publish notification is for production releases only.

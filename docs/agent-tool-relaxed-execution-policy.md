@@ -1,28 +1,28 @@
 # Agent tool relaxed execution policy
 
-## 背景
+## Background
 
-2026-06-29 的日志排查显示，连续 subagent 失败的第一层原因不是同类型 `Agent` tool call 被拒绝，而是：
+Consecutive subagent failures trace first to two local policies, not to same-type `Agent` tool call rejection:
 
-- `TodoWriteInputSchema` 在 schema 层拒绝多个 `in_progress` todo，导致 `TodoWrite` 失败；
-- `executeToolSchedule` 看到前序非 `concurrentSafe` 工具失败后，对后续调度组生成 skipped 结果并停止执行。
+- `TodoWriteInputSchema` rejected multiple `in_progress` todos at the schema layer, failing `TodoWrite`.
+- `executeToolSchedule` saw a prior non-`concurrentSafe` tool failure, emitted skipped results for later schedule groups, and stopped execution.
 
-这两个策略都会把模型一次性产出的后续工具调用提前截断。为了让 agent 能继续执行模型已经排好的后续 tool calls，本次放宽这两个本地策略。
+Both truncate the remaining tool calls the model produced in one batch, so these two local policies are relaxed.
 
-## 行为
+## Behavior
 
-- `TodoWrite` 不再在 runtime schema 层硬拒绝多个 `in_progress` todo。`summary.inProgress` 继续按真实数量统计。
-- `TodoWrite` 的 provider-visible description 保持原样，不主动提示模型写入多个 `in_progress`。
-- 工具调度按既有 `parallelGroups` 顺序执行。某一组出现普通失败后，不再自动跳过后续组；后续工具是否能运行仍由各自权限、取消信号、handler 错误和调度分组决定。
-- `turnControl.stopTurnAfterResult` 是显式 turn 边界。某个工具结果请求停止当前 turn 时，后续调度组不再执行真实 handler，并会生成取消结果来闭合 provider-visible tool call history。
+- `TodoWrite` no longer hard-rejects multiple `in_progress` todos at the runtime schema layer; `summary.inProgress` counts the real number.
+- `TodoWrite`'s provider-visible description stays as-is; it does not invite the model to write multiple `in_progress`.
+- Tool scheduling executes groups in the existing `parallelGroups` order. A plain failure in one group no longer auto-skips later groups; whether later tools run is decided by their own permissions, cancellation signal, handler errors, and schedule grouping.
+- `turnControl.stopTurnAfterResult` is an explicit turn boundary. When a tool result asks to stop the current turn, later schedule groups skip real handlers and emit cancelled results to close the provider-visible tool call history.
 
-## 非目标
+## Non-goals
 
-- 不修改 todo 存储结构，也不引入 id-based task store。
-- 不扩展 UI/TUI 摘要展示策略；如果界面当前只突出一个 `in_progress`，本次不改变该展示语义。
-- 不删除旧策略代码。旧校验和跳过分支保留为注释，方便后续对比或回滚。
+- No change to todo storage structure; no id-based task store.
+- No UI/TUI summary display change; if the UI highlights one `in_progress`, that display semantics stays.
+- Old validation and skip branches remain as comments for comparison or rollback.
 
-## 验收
+## Acceptance
 
-- 多个 `in_progress` 的 `TodoWrite` 能成功写入并读回。
-- plan mode 下前序写工具被权限拒绝时，后续只读工具仍会执行并把真实结果返回给模型。
+- A `TodoWrite` with multiple `in_progress` writes and reads back successfully.
+- In plan mode, after a prior write tool is permission-denied, later read-only tools still run and return real results to the model.

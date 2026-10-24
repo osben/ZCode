@@ -1,25 +1,25 @@
 # MCP Image Payload Test Server
 
-## 目的
+## Purpose
 
-`scripts/mcp-image-payload-test-server.mjs` 是本地调试用 stdio MCP server，用来验证 MCP 图片结果的 inline / artifact 分流逻辑。它会生成合法 PNG，并通过 PNG `tEXt` ancillary chunk 填充字节，让 image content 的 base64 payload 接近指定大小。
+`scripts/mcp-image-payload-test-server.mjs` is a local-debug stdio MCP server for verifying the inline/artifact split of MCP image results. It generates a valid PNG and pads bytes through a PNG `tEXt` ancillary chunk so the image content's base64 payload approaches a chosen size.
 
-## 工具
+## Tool
 
-MCP server 名称建议配置为 `zcode_image_payload_test`，工具名为 `emit_image`。
+Configure the MCP server name as `zcode_image_payload_test`; the tool is `emit_image`.
 
-输入：
+Inputs:
 
-- `preset`：`tiny`、`below_limit`、`just_over_limit`、`large`、`huge`
-- `base64Bytes`：手动指定目标 base64 payload 字节数，会覆盖 `preset`
-- `label`：可选文本标签
-- `dataUrl`：可选；为 `true` 时在 image `data` 字段里返回 data URL
+- `preset`: `tiny`, `below_limit`, `just_over_limit`, `large`, `huge`
+- `base64Bytes`: manually set the target base64 payload size, overriding `preset`
+- `label`: optional text label
+- `dataUrl`: optional; when `true`, return a data URL in the image `data` field
 
-默认 preset 是 `below_limit`，约 `180 KiB` base64；`just_over_limit` 约 `210 KiB` base64，用来验证超过 `200 KiB` 后被保存为二进制 artifact 并只返回 path/URI。
+The default preset is `below_limit` (≈180 KiB base64); `just_over_limit` (≈210 KiB base64) verifies that payloads over `200 KiB` are saved as a binary artifact returning only the path/URI.
 
-## 本机 ZCode 配置
+## Local ZCode config
 
-ZCode Agent MCP 用户配置位于 `~/.zcode/cli/config.json` 的 `mcp.servers`。本地测试可加入：
+ZCode Agent MCP user config lives in `mcp.servers` of `~/.zcode/cli/config.json`. For local testing:
 
 ```json
 {
@@ -35,4 +35,4 @@ ZCode Agent MCP 用户配置位于 `~/.zcode/cli/config.json` 的 `mcp.servers`�
 }
 ```
 
-修改配置后，需要新建或重启 ZCode Agent session，让 MCP 列表重新加载。
+After changing the config, create or restart a ZCode Agent session so the MCP list reloads.

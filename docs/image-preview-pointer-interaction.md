@@ -1,34 +1,27 @@
-# 图片预览指针交互约束
+# Image preview pointer interaction constraints
 
-## 问题
+## Problem
 
-桌面端全屏图片预览使用模态 Dialog。Dialog 打开时会把页面根交互层设为
-`pointer-events: none`，Electron 顶部区域同时可能参与窗口拖拽命中；图片视口还会
-在拖拽时捕获 pointer。若预览没有显式恢复指针命中、退出拖拽区域，或拖拽结束后
-遗留 pointer capture，右上角下载、关闭等操作会出现鼠标 hover 和点击无反馈。
+The desktop fullscreen image preview is a modal Dialog. Opening the Dialog sets the page root interaction layer to `pointer-events: none`; the Electron top area may also take part in window-drag hit testing, and the image viewport captures the pointer while dragging. If the preview does not explicitly restore pointer hit testing, leave the drag region, or clear leftover pointer capture after dragging, the top-right download and close actions show no hover or click feedback.
 
-## 交互边界
+## Interaction boundaries
 
 ```text
-Electron 原生鼠标事件
-        │
-        ▼
-图片预览 Dialog（pointer-events-auto + app-region:no-drag）
-        │
-        ├── 顶部操作按钮（不得被图片视口捕获）
-        ├── 上一张 / 下一张
-        ├── 图片拖拽与缩放（pointerup/cancel/lostcapture 时释放）
-        └── 底部缩放按钮
+Electron native mouse events
+        |
+        v
+Image preview Dialog (pointer-events-auto + app-region:no-drag)
+        |
+        ├── top action buttons (never captured by the image viewport)
+        ├── previous / next
+        ├── image drag and zoom (released on pointerup/cancel/lostcapture)
+        └── bottom zoom buttons
 ```
 
-- 预览 Dialog 必须显式使用 `pointer-events-auto` 和 `[app-region:no-drag]`。
-- 所有可点击按钮必须保持既有 hover 视觉，不因交互修复改变样式。
-- 图片拖拽只由预览视口处理，不得覆盖浮层按钮的命中区域。
-- 图片视口在 `pointerup`、`pointercancel` 和 `lostpointercapture` 时必须清理拖拽状态；
-  重置预览时必须主动释放仍存在的 pointer capture。
-- 位于 Electron 标题栏范围内的右上角操作区必须统一声明 `[app-region:no-drag]`，
-  并同时包住下载和关闭按钮，避免两个相邻操作形成不连续的原生命中区域。
-- macOS desktop 使用 `titleBarStyle: hidden`，其原生标题栏命中不能只靠 CSS
-  `no-drag` 抵消；右上角操作区必须整体放到标题栏下方。Web、手机、Windows 和
-  Linux 使用各自布局，不继承 macOS 安全间距。
-- 桌面端和 Web 端共用这一交互边界；Electron 专用属性在 Web 端应无副作用。
+- The preview Dialog must explicitly use `pointer-events-auto` and `[app-region:no-drag]`.
+- Every clickable button keeps its existing hover visuals; the interaction fix must not change styling.
+- Image dragging is handled only by the preview viewport and must not cover floating buttons' hit areas.
+- The image viewport must clear drag state on `pointerup`, `pointercancel`, and `lostpointercapture`; resetting the preview must actively release any remaining pointer capture.
+- The top-right action area inside the Electron title-bar range must declare `[app-region:no-drag]` as a whole, wrapping both download and close so two adjacent actions do not form a discontinuous native hit region.
+- macOS desktop uses `titleBarStyle: hidden`; its native title-bar hit testing cannot be offset by CSS `no-drag` alone — the top-right action area must sit below the title bar. Web, mobile, Windows, and Linux use their own layouts and do not inherit the macOS safe spacing.
+- Desktop and Web share this interaction boundary; Electron-specific attributes must be no-ops on Web.

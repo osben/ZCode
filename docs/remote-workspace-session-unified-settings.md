@@ -1,18 +1,12 @@
 # Remote Workspace Session Unified Settings
 
-## 背景
+## Background
 
-之前 workspace 会话相关状态分散在三个字段里：
+Workspace session state used to be spread across three fields — `lastOpenTabs`, `remoteWorkspaceHistory`, `lastWorkspaceSession` — so restore, reconnect, and removal each maintained multiple sources of truth and drifted.
 
-- `lastOpenTabs`
-- `remoteWorkspaceHistory`
-- `lastWorkspaceSession`
+## Current structure
 
-这会导致恢复、重连、移除三条链路维护多份真相源，容易出现状态漂移。
-
-## 现在的结构
-
-统一只保留 `lastWorkspaceSession`：
+Only `lastWorkspaceSession` remains:
 
 ```json
 [
@@ -35,29 +29,25 @@
 ]
 ```
 
-说明：
+- `local` entries store only the local workspace path.
+- `remote` entries store the remote target, identity key, and latest connection status.
+- `workspaceIdentity` is retained for remote workspace isolation and deduplication.
 
-- `local` 条目只保存本地 workspace 路径
-- `remote` 条目同时保存远端目标、身份键、最近一次连接状态
-- `workspaceIdentity` 仍然保留，用于 remote workspace 隔离和去重
+## Migration
 
-## 迁移策略
+- Old `setting.json` is migrated automatically during schema parsing on read.
+- Old `lastOpenTabs` entries become `local` entries.
+- Old `lastWorkspaceSession.remote(historyId)` entries expand into full `remote` entries using `remoteWorkspaceHistory`.
+- The migrated runtime object no longer exposes `lastOpenTabs` / `remoteWorkspaceHistory`.
 
-- 读取旧 `setting.json` 时，在 schema 解析阶段自动迁移
-- 旧的 `lastOpenTabs` 会转成 `local` 条目
-- 旧的 `lastWorkspaceSession.remote(historyId)` 会结合 `remoteWorkspaceHistory` 展开成完整 `remote` 条目
-- 迁移后的运行态对象不再暴露 `lastOpenTabs` / `remoteWorkspaceHistory`
+## Restore and removal rules
 
-## 恢复与移除规则
+- Tabs restore on startup from `lastWorkspaceSession` only.
+- A remote workspace restores only as a disconnected tab; no background auto-reconnect.
+- Closing a remote tab is an explicit removal: delete it from `lastWorkspaceSession` and clean the matching SSH credential key if present.
 
-- 启动时只按 `lastWorkspaceSession` 恢复 tab
-- 远端 workspace 只恢复为“断开态 tab”，不再后台自动重连
-- 用户关闭远端 tab 时，视为显式移除：
-  - 从 `lastWorkspaceSession` 删除
-  - 清理对应 SSH 凭据 key（如存在）
+## Reconnect rules
 
-## 重连规则
-
-- 远端 workspace 只允许用户手动点击 sidebar 的 reconnect
-- 手动重连成功后，更新对应 `remote` 条目的 `lastOpenedAt` / `lastConnectionStatus`
-- 手动重连失败后，仅更新失败状态并保留 tab，方便继续手动重试
+- A remote workspace reconnects only via an explicit sidebar reconnect click.
+- On success, update the entry's `lastOpenedAt` / `lastConnectionStatus`.
+- On failure, update the failure status only and keep the tab so the user can retry.

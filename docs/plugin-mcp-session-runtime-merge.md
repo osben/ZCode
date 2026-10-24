@@ -1,16 +1,16 @@
 # Plugin MCP Session Runtime Merge
 
-## 背景
+## Background
 
-ZCode Dev 的设置页会通过 `zcode/mcp/list` 展示插件 MCP 和用户 MCP 的合并结果，但桌面端创建或恢复 session 时，UI 传给 protocol 的 `mcpServers` 只来自 `source === "zcodeagentmcp"` 的用户配置。
+The ZCode Dev settings page shows the merged result of plugin MCP and user MCP via `zcode/mcp/list`, but when the desktop creates or restores a session, the `mcpServers` passed to the protocol only came from user config with `source === "zcodeagentmcp"`.
 
-## 问题
+## Problem
 
-`resolveAppRuntimeConfig` 过去把 `runtimeConfig.mcp.servers` 当作完整覆盖配置。一旦 protocol 传入用户 MCP，插件 MCP 就不会再和 runtime 配置合并，导致模型侧只能看到用户 MCP 中成功连接的服务器；例如本机 `context7`、`exa`、`playwright` 等用户 MCP 保留，但 `plugin:chrome-devtools-mcp:chrome-devtools`、`plugin:ios-simulator:ios-simulator` 等插件 MCP 丢失。
+`resolveAppRuntimeConfig` treated `runtimeConfig.mcp.servers` as a full override. Once user MCP was passed through the protocol, plugin MCP no longer merged with the runtime config, so the model side only saw the successfully connected user MCP servers: local user MCP such as `context7`, `exa`, `playwright` survived, while plugin MCP such as `plugin:chrome-devtools-mcp:chrome-devtools` and `plugin:ios-simulator:ios-simulator` was lost.
 
-## 修复
+## Fix
 
-session runtime 配置解析时始终先注入插件 MCP，再合并显式用户 MCP：
+Session runtime config resolution always injects plugin MCP first, then merges explicit user MCP:
 
 ```ts
 {
@@ -19,4 +19,4 @@ session runtime 配置解析时始终先注入插件 MCP，再合并显式用户
 }
 ```
 
-这样保留用户配置覆盖同名 MCP 的优先级，同时保证插件注册的 MCP 进入新 session 的 runtime。
+User config keeps priority over same-named MCP, and plugin-registered MCP always enters the new session's runtime.

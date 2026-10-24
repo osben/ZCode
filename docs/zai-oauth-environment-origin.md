@@ -1,19 +1,21 @@
 # ZAI OAuth Environment Origin
 
-## 背景
+## Background
 
-ZAI OAuth 登录入口当前使用 `/api/oauth` 前缀，生产默认入口为 `https://chat.z.ai/api/oauth/authorize`。为了支持测试环境登录入口，需要避免在多端代码里散落完整授权 URL。
+The ZAI OAuth login entry uses the `/api/oauth` prefix; the production default is
+`https://chat.z.ai/api/oauth/authorize`. To support a test-environment login entry without
+scattering full authorization URLs across clients, URLs derive from per-environment constants.
 
-## 方案
+## Approach
 
-- Host/service 与 Web/Vite 都只读取按 `ZCODE_ENV=test|production` 分组的链接常量。
-- `ZAI_<ENV>_OAUTH_ORIGIN` 用于派生 ZAI OAuth `authorizeUrl` 和 `userinfoUrl`。
-- `ZAI_<ENV>_BUSINESS_BASE_URL` 用于派生 ZAI 业务 token 交换接口 `/api/auth/z/login`。
-- 继续保留已有完整 URL override：`ZAI_OAUTH_AUTHORIZE_URL`、`ZAI_OAUTH_USERINFO_URL` 优先级高于 origin 派生值，兼容旧配置。
-- 继续保留业务 token 完整 URL override：`ZAI_BUSINESS_LOGIN_URL` 优先级高于 `ZAI_BUSINESS_BASE_URL`，仅用于测试或接口路径迁移。
-- token exchange 走 `ZCODE_<ENV>_BASE_URL` 派生出的 ZCode API：桌面/host 为 `${baseUrl}/api/v1/oauth/token`，Web 默认请求 `/api/v1/oauth/token` 并由 Vite proxy 按 `ZCODE_ENV` 选择的 base url 转发。
+- Host/service and Web/Vite read only link constants grouped by `ZCODE_ENV=test|production`.
+- `ZAI_<ENV>_OAUTH_ORIGIN` derives the ZAI OAuth `authorizeUrl` and `userinfoUrl`.
+- `ZAI_<ENV>_BUSINESS_BASE_URL` derives the ZAI business token-exchange endpoint `/api/auth/z/login`.
+- Existing full-URL overrides are kept: `ZAI_OAUTH_AUTHORIZE_URL` and `ZAI_OAUTH_USERINFO_URL` take priority over the origin-derived values, for compatibility with old config.
+- The full business-login URL override is kept: `ZAI_BUSINESS_LOGIN_URL` takes priority over `ZAI_BUSINESS_BASE_URL`, for tests or endpoint-path migration only.
+- Token exchange goes to the ZCode API derived from `ZCODE_<ENV>_BASE_URL`: desktop/host uses `${baseUrl}/api/v1/oauth/token`; Web requests `/api/v1/oauth/token` by default and the Vite proxy forwards to the base url selected by `ZCODE_ENV`.
 
-## 测试环境配置
+## Test environment config
 
 ```env
 ZCODE_TEST_BASE_URL=https://zcode.z.ai
@@ -22,9 +24,11 @@ ZAI_TEST_OAUTH_ORIGIN=https://chat.z.ai
 ZAI_TEST_BUSINESS_BASE_URL=https://api.z.ai
 ```
 
-本地开发默认 `ZCODE_ENV=test`，让 `pnpm dev:web`、`pnpm dev:desktop:test` 都走测试环境登录入口。不要在 `.env*` 里写 `ZCODE_ENV`，当前环境由启动脚本或 CI 注入。
+Local development defaults to `ZCODE_ENV=test`, so `pnpm dev:web` and `pnpm dev:desktop:test` both use
+the test login entry. Do not write `ZCODE_ENV` in `.env*`; the launch script or CI injects the current
+environment.
 
-正式环境在 `.env.production` 显式配置生产 client id：
+Production configures the production client id explicitly in `.env.production`:
 
 ```env
 ZCODE_PRODUCTION_BASE_URL=https://zcode.z.ai

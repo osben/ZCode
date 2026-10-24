@@ -1,33 +1,28 @@
-# CUA `get_app_state` 用户标题
+# CUA `get_app_state` user title
 
 ## Feature Summary
 
-| Field            | Value                                                                                               |
-| ---------------- | --------------------------------------------------------------------------------------------------- |
-| Developer intent | 让模型为「读取应用界面」提供具体、用户可读的操作标题，避免所有观察动作都显示同一条泛化文案          |
-| Capability       | Computer Use observation tool projection                                                            |
-| Change layer     | validation + presentation                                                                           |
-| Operating mode   | planning                                                                                            |
-| Primary seeds    | `apps/zcode-cli/packages/core/src/mcp/index.ts`、`packages/ui/src/ToolCallBlocks/renderers/cua.tsx` |
-| Out of scope     | 修改 Computer Use Helper 权限边界、改变 `get_app_state` 的观察结果、要求其他 CUA 工具提供标题                |
+| Field            | Value                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Developer intent | The model supplies a concrete, user-readable action title for "read app UI", instead of one generic string for every observation        |
+| Capability       | Computer Use observation tool projection                                                                                                |
+| Change layer     | validation + presentation                                                                                                               |
+| Operating mode   | planning                                                                                                                                |
+| Primary seeds    | `apps/zcode-cli/packages/core/src/mcp/index.ts`, `packages/ui/src/ToolCallBlocks/renderers/cua.tsx`                                     |
+| Out of scope     | Changing Computer Use Helper permission boundaries, changing `get_app_state` observation results, requiring titles from other CUA tools |
 
 ## Product Contract
 
-- 官方 CUA `get_app_state` 的模型可见 input schema 必须包含必填 `title`：长度为
-  1–120 个字符，使用用户当前语言，描述本次读取的目的，而不是复述
-  `get_app_state`、CUA 或 MCP 等实现名。
-- `title` 是 ZCode 的展示元数据，不属于上游 `zcode-cua` runtime 参数。Core MCP bridge
-  在调用 `McpPort.callTool` 前必须移除它，避免破坏上游严格 schema。
-- Conversation 工具卡优先展示 `input.title`。旧会话或历史 provider 调用没有 title 时，继续
-  回退到「读取 {app} 应用界面」或「读取应用界面」。
-- 该约定只作用于 CUA `get_app_state`。普通 MCP 的同名工具、其他 CUA 工具和
-  `node_repl` 的既有 title contract 均保持不变。
+- The model-visible input schema of the official CUA `get_app_state` must include a required `title`: 1–120 characters, in the user's current language, describing the purpose of this read — not restating implementation names such as `get_app_state`, CUA, or MCP.
+- `title` is ZCode display metadata, not an upstream `zcode-cua` runtime parameter. The Core MCP bridge must remove it before calling `McpPort.callTool`, so the upstream strict schema stays intact.
+- The conversation tool card prefers `input.title`. Old sessions or historical provider calls without a title keep the fallbacks 「读取 {app} 应用界面」 or 「读取应用界面」.
+- The convention applies only to CUA `get_app_state`. Same-named plain MCP tools, other CUA tools, and the existing `node_repl` title contract are unchanged.
 
 ## UI Surface Matrix
 
-| User scenario    | UI entry                  | Shared implementation                          | Display/draft owner                        | Validation/gating                                                        | Commit action                        | Authority/persistence                                           | Mode boundary                                                                | Must remain isolated from                     |
-| ---------------- | ------------------------- | ---------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | ------------------------------------ | --------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------- |
-| 模型读取应用界面 | Conversation CUA tool row | MCP descriptor projection + `CuaToolCallBlock` | Agent tool input / Conversation projection | Core 注入 required title；CUA server identity + `get_app_state` 双重门控 | `McpPort.callTool`，调用前剥离 title | CUA runtime 只拥有真实观察参数；title 随 tool call history 投影 | Desktop continuous 与 mobile replayable 展示同一已持久化输入，不改变交付语义 | 上游 CUA 参数 schema、其他 MCP、其他 CUA 动作 |
+| User scenario      | UI entry                  | Shared implementation                          | Display/draft owner                        | Validation/gating                                                                    | Commit action                                      | Authority/persistence                                                                | Mode boundary                                                                                        | Must remain isolated from                               |
+| ------------------ | ------------------------- | ---------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Model reads app UI | Conversation CUA tool row | MCP descriptor projection + `CuaToolCallBlock` | Agent tool input / Conversation projection | Core injects the required title; CUA server identity + `get_app_state` double gating | `McpPort.callTool`, title stripped before the call | CUA runtime owns only real observation params; title projects with tool call history | Desktop continuous and mobile replayable show the same persisted input; delivery semantics unchanged | Upstream CUA param schema, other MCP, other CUA actions |
 
 ## State And Call Boundary
 
@@ -53,76 +48,75 @@ Model tool contract -----> model emits { title, app_ref, ... }
 
 ## Shared And Divergent Behavior
 
-| Concern      | Shared                                  | Deliberately different                                                          | Why it matters                               |
-| ------------ | --------------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------- |
-| 模型标题     | 与 `node_repl` 一样由模型给出短标题     | CUA title 由 Core 叠加到外部 MCP descriptor；`node_repl` 在自身 contract 中定义 | 外部 CUA server 不应被迫识别 ZCode UI 元数据 |
-| UI fallback  | 新旧会话都走同一个 CUA renderer         | 新调用优先模型标题；旧调用保留本地化固定文案                                    | 历史任务必须继续可渲染                       |
-| runtime 参数 | 原有 `app_ref`、`detail` 等参数原样传递 | 仅 `title` 在 dispatch 前移除                                                   | 不能改变观察语义或上游兼容性                 |
+| Concern      | Shared                                          | Deliberately different                                                                                    | Why it matters                                                       |
+| ------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Model title  | Model supplies a short title, like `node_repl`  | CUA title is layered by Core onto the external MCP descriptor; `node_repl` defines it in its own contract | The external CUA server must not be forced to know ZCode UI metadata |
+| UI fallback  | New and old sessions share one CUA renderer     | New calls prefer the model title; old calls keep the localized fixed copy                                 | Historical tasks must keep rendering                                 |
+| Runtime args | Existing `app_ref`, `detail`, etc. pass through | Only `title` is removed before dispatch                                                                   | Observation semantics and upstream compatibility must not change     |
 
 ## Feature Relationships
 
-| Rank           | From                    | Semantic edge                   | To                             | Why inspect it                       | Evidence                |
-| -------------- | ----------------------- | ------------------------------- | ------------------------------ | ------------------------------------ | ----------------------- |
-| must-inspect   | CUA tools/list          | projects model contract through | Core MCP bridge                | 必填字段必须真实进入 provider schema | `registerMcpTools`      |
-| must-inspect   | Core MCP bridge         | strips display metadata before  | CUA runtime                    | 上游 contract 不包含 title           | `McpPort.callTool`      |
-| must-inspect   | Conversation projection | renders title in                | CUA tool card                  | 用户需要看到模型描述的具体目的       | `CuaToolCallBlock`      |
-| invariant-only | CUA title projection    | must not change                 | Helper/broker authorization    | title 与权限、token、TCC owner 无关  | CUA broker spec         |
-| invariant-only | CUA title projection    | must not change                 | continuous/replayable delivery | title 只是既有 tool input 的一部分   | conversation projection |
+| Rank           | From                    | Semantic edge                   | To                             | Why inspect it                                                | Evidence                |
+| -------------- | ----------------------- | ------------------------------- | ------------------------------ | ------------------------------------------------------------- | ----------------------- |
+| must-inspect   | CUA tools/list          | projects model contract through | Core MCP bridge                | Required fields must truly reach the provider schema          | `registerMcpTools`      |
+| must-inspect   | Core MCP bridge         | strips display metadata before  | CUA runtime                    | The upstream contract has no title                            | `McpPort.callTool`      |
+| must-inspect   | Conversation projection | renders title in                | CUA tool card                  | The user needs to see the model's stated purpose              | `CuaToolCallBlock`      |
+| invariant-only | CUA title projection    | must not change                 | Helper/broker authorization    | title has nothing to do with permission, tokens, or TCC owner | CUA broker spec         |
+| invariant-only | CUA title projection    | must not change                 | continuous/replayable delivery | title is just part of the existing tool input                 | conversation projection |
 
 ## Must-Preserve Invariants
 
-| Invariant                                    | Surfaces/modes                           | Proof needed                           |
-| -------------------------------------------- | ---------------------------------------- | -------------------------------------- |
-| 只有官方 CUA `get_app_state` 被要求 title    | local/current/legacy server names        | bridge 单测覆盖 CUA 与普通 MCP 边界    |
-| `title` 不发送给上游 CUA                     | Agent runtime                            | `McpPort.callTool` 参数断言            |
-| 旧会话没有 title 仍可读                      | Desktop/Web/Mobile history               | renderer fallback 单测                 |
-| 模型 title 在工具卡优先于固定 app 文案       | Desktop/Web/Mobile conversation          | renderer summary 单测                  |
-| Computer Use Helper 权限和 remote attachment 语义不变 | macOS desktop-local / mobile shared host | 无 broker、protocol、delivery 文件改动 |
+| Invariant                                                                 | Surfaces/modes                           | Proof needed                                  |
+| ------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------------- |
+| Only the official CUA `get_app_state` requires a title                    | local/current/legacy server names        | bridge unit tests covering CUA vs plain MCP   |
+| `title` is never sent to upstream CUA                                     | Agent runtime                            | `McpPort.callTool` argument assertions        |
+| Old sessions without title stay readable                                  | Desktop/Web/Mobile history               | renderer fallback unit test                   |
+| Model title beats the fixed app string in the tool card                   | Desktop/Web/Mobile conversation          | renderer summary unit test                    |
+| Computer Use Helper permissions and remote attachment semantics unchanged | macOS desktop-local / mobile shared host | No broker, protocol, or delivery file changes |
 
 ## Codegraph Evidence
 
-当前 worktree 没有可调用的 codegraph 命令或索引，因此使用功能图 code seed 与精确符号搜索核对
-深度 2 的路径，不声称完整静态调用图。
+No callable codegraph command or index exists in this worktree; depth-2 paths were verified with feature-graph code seeds and exact symbol search, not a full static call graph.
 
-| Seed                        | Query            | Direct callers / key path                                                          | Depth | Interpretation                                                |
-| --------------------------- | ---------------- | ---------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------- |
-| `registerMcpTools`          | symbol/file scan | MCP tools/list → `createMcpToolEntry` → ToolRegistry contract / `McpPort.callTool` | 2     | 同一 bridge 同时拥有 provider schema 与 runtime dispatch 边界 |
-| `CuaToolCallBlock`          | symbol/file scan | `ToolCallBlock` CUA route → summary projection                                     | 2     | summary 当前使用固定 i18n 文案，可安全增加 title 优先级       |
-| `buildNodeReplDisplayModel` | symbol/file scan | node_repl input title → renderer summary                                           | 2     | 既有产品先例是模型 title 优先、实现名 fallback                |
+| Seed                        | Query            | Direct callers / key path                                                          | Depth | Interpretation                                                            |
+| --------------------------- | ---------------- | ---------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------- |
+| `registerMcpTools`          | symbol/file scan | MCP tools/list → `createMcpToolEntry` → ToolRegistry contract / `McpPort.callTool` | 2     | One bridge owns both the provider schema and runtime dispatch boundaries  |
+| `CuaToolCallBlock`          | symbol/file scan | `ToolCallBlock` CUA route → summary projection                                     | 2     | Summary currently uses fixed i18n copy; adding title priority is safe     |
+| `buildNodeReplDisplayModel` | symbol/file scan | node_repl input title → renderer summary                                           | 2     | The existing precedent is model title first, implementation-name fallback |
 
 ## Graph Delta
 
-| Status    | Node/edge                                        | Semantic reason                                     | Action         |
-| --------- | ------------------------------------------------ | --------------------------------------------------- | -------------- |
-| confirmed | `capability.computer-use` aliases/docs           | `get_app_state` 用户标题成为可检索产品语义          | 更新功能图     |
-| confirmed | `service.cua-tool-contract-projection`           | Core bridge 拥有模型 schema 叠加与 runtime 剥离边界 | 新增节点与边   |
-| confirmed | `surface.computer-use-task-experience` code seed | 专用 CUA renderer 是当前用户可见落点                | 增加 code seed |
+| Status    | Node/edge                                        | Semantic reason                                                      | Action                   |
+| --------- | ------------------------------------------------ | -------------------------------------------------------------------- | ------------------------ |
+| confirmed | `capability.computer-use` aliases/docs           | `get_app_state` user title becomes a searchable product semantic     | Update the feature graph |
+| confirmed | `service.cua-tool-contract-projection`           | Core bridge owns model-schema layering and runtime-strip boundaries  | New node and edges       |
+| confirmed | `surface.computer-use-task-experience` code seed | The dedicated CUA renderer is the current user-visible landing point | Add code seed            |
 
 ## Boundary Decisions And Pruning
 
-| Boundary       | Decision                                  | Includes                                                            | Excludes / prunes                       | Source                    |
-| -------------- | ----------------------------------------- | ------------------------------------------------------------------- | --------------------------------------- | ------------------------- |
-| 工具范围       | 只改 `get_app_state`                      | 当前 official、`computer-use` 与 legacy `zcode-cua` server identity | screenshot、click、type 等其他工具      | 用户请求                  |
-| 标题 authority | 模型 input.title 是新调用的显示 authority | 1–120 字符、用户语言                                                | UI 根据 app 名二次改写模型标题          | 用户请求 + node_repl 先例 |
-| 上游兼容       | title 在 Core dispatch 前剥离             | provider contract、history projection                               | 修改或升级外部 CUA package schema       | 当前依赖边界              |
-| 历史兼容       | 缺 title 使用既有 i18n fallback           | 旧 session、旧 provider                                             | 对历史输入做迁移                        | 兼容性不变量              |
-| 多端矩阵       | 用投影不变量剪枝                          | Desktop 与 mobile 各取代表性 renderer 单测语义                      | 展开 theme/locale × clientMode 笛卡尔积 | 无布局或 delivery 变更    |
+| Boundary               | Decision                                                            | Includes                                                                   | Excludes / prunes                                         | Source                             |
+| ---------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------- |
+| Tool scope             | Only `get_app_state` changes                                        | Current official, `computer-use`, and legacy `zcode-cua` server identities | screenshot, click, type, etc.                             | User request                       |
+| Title authority        | `input.title` from the model is the display authority for new calls | 1–120 chars, user language                                                 | UI rewriting the model title from the app name            | User request + node_repl precedent |
+| Upstream compatibility | title is stripped before Core dispatch                              | provider contract, history projection                                      | Modifying or upgrading the external CUA package schema    | Current dependency boundary        |
+| History compatibility  | missing title uses the existing i18n fallback                       | old sessions, old providers                                                | Migrating historical inputs                               | Compatibility invariant            |
+| Multi-surface matrix   | Pruned via projection invariants                                    | Representative renderer unit-test semantics for Desktop and mobile         | Expanding the theme/locale × clientMode cartesian product | No layout or delivery changes      |
 
 ## Accepted Cases
 
-| Case ID      | Setup                   | Action               | Assertions                                         | Evidence layers | E2E status |
-| ------------ | ----------------------- | -------------------- | -------------------------------------------------- | --------------- | ---------- |
-| CUA-TITLE-01 | official CUA descriptor | 注册 `get_app_state` | model schema 的 `title` 必填且保留原 required 字段 | contract unit   | automated  |
-| CUA-TITLE-02 | 模型调用含 title        | 执行 tool handler    | `McpPort.callTool` 收到其他参数但不含 title        | runtime unit    | automated  |
-| CUA-TITLE-03 | 新 CUA tool row         | 渲染 summary         | 优先显示模型 title，不显示固定 app 摘要            | UI unit         | automated  |
-| CUA-TITLE-04 | 无 title 历史 row       | 渲染 summary         | 回退到既有本地化 app 摘要                          | UI unit         | automated  |
+| Case ID      | Setup                        | Action                   | Assertions                                                          | Evidence layers | E2E status |
+| ------------ | ---------------------------- | ------------------------ | ------------------------------------------------------------------- | --------------- | ---------- |
+| CUA-TITLE-01 | official CUA descriptor      | register `get_app_state` | `title` required in the model schema, original required fields kept | contract unit   | automated  |
+| CUA-TITLE-02 | model call includes title    | run the tool handler     | `McpPort.callTool` receives the other params but not title          | runtime unit    | automated  |
+| CUA-TITLE-03 | new CUA tool row             | render summary           | model title shown, fixed app summary not                            | UI unit         | automated  |
+| CUA-TITLE-04 | historical row without title | render summary           | falls back to the existing localized app summary                    | UI unit         | automated  |
 
 ## Planning Handoff
 
-| Item             | Destination                                        | Status     |
-| ---------------- | -------------------------------------------------- | ---------- |
-| Spec update      | 本文                                               | complete   |
-| Case catalog     | 本文 Accepted Cases                                | complete   |
-| Coverage matrix  | 本文 Accepted Cases                                | complete   |
-| Decision backlog | none                                               | complete   |
-| E2E handoff      | 无新 E2E；contract/runtime/UI 单测足以覆盖本次边界 | not-needed |
+| Item             | Destination                                                    | Status     |
+| ---------------- | -------------------------------------------------------------- | ---------- |
+| Spec update      | this document                                                  | complete   |
+| Case catalog     | Accepted Cases above                                           | complete   |
+| Coverage matrix  | Accepted Cases above                                           | complete   |
+| Decision backlog | none                                                           | complete   |
+| E2E handoff      | no new E2E; contract/runtime/UI unit tests cover this boundary | not-needed |

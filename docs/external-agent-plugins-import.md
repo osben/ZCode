@@ -1,70 +1,70 @@
 # External Agent Plugins Import
 
-## 目标
+## Goal
 
-设置页「插件管理」支持从外部 Agent 的本地 plugins 目录一键导入到 ZCode。交互与「技能」「命令」导入保持一致，但业务目录、扫描规则、目标写入和去重逻辑独立维护。
+The Settings "Plugin Management" page supports one-click import from external agents' local plugin directories into ZCode. Interaction matches the skills/commands imports, but the business directories, scan rules, target writes, and dedupe logic are maintained independently.
 
-## 来源范围
+## Source scope
 
-导入入口自动扫描以下本地来源：
+The import entry auto-scans these local sources:
 
-- Claude Code：用户级 `~/.claude/plugins` 与工作区级 `<workspace>/.claude/plugins`
-- Codex CLI：用户级 `~/.codex/plugins` 与工作区级 `<workspace>/.codex/plugins`
-- OpenCode：用户级 `~/.config/opencode/plugins` 与工作区级 `<workspace>/.opencode/plugins`
-- OpenClaw：用户级 `~/.openclaw/plugins` 与工作区级 `<workspace>/plugins`
-- Augment：用户级 `~/.augment/plugins` 与工作区级 `<workspace>/.augment/plugins`
-- Continue：用户级 `~/.continue/plugins` 与工作区级 `<workspace>/.continue/plugins`
-- Goose：用户级 `~/.config/goose/plugins` 与工作区级 `<workspace>/.goose/plugins`
-- Qwen Code：用户级 `~/.qwen/plugins` 与工作区级 `<workspace>/.qwen/plugins`
-- Qoder：用户级 `~/.qoder/plugins` 与工作区级 `<workspace>/.qoder/plugins`
-- Qoder CN：用户级 `~/.qoder-cn/plugins` 与工作区级 `<workspace>/.qoder/plugins`
-- Windsurf：用户级 `~/.codeium/windsurf/plugins` 与工作区级 `<workspace>/.windsurf/plugins`
-- Trae：用户级 `~/.trae/plugins` 与工作区级 `<workspace>/.trae/plugins`
-- Kiro CLI：用户级 `~/.kiro/plugins` 与工作区级 `<workspace>/.kiro/plugins`
-- Roo Code：用户级 `~/.roo/plugins` 与工作区级 `<workspace>/.roo/plugins`
-- CodeBuddy：用户级 `~/.codebuddy/plugins` 与工作区级 `<workspace>/.codebuddy/plugins`
+- Claude Code: user `~/.claude/plugins` and workspace `<workspace>/.claude/plugins`
+- Codex CLI: user `~/.codex/plugins` and workspace `<workspace>/.codex/plugins`
+- OpenCode: user `~/.config/opencode/plugins` and workspace `<workspace>/.opencode/plugins`
+- OpenClaw: user `~/.openclaw/plugins` and workspace `<workspace>/plugins`
+- Augment: user `~/.augment/plugins` and workspace `<workspace>/.augment/plugins`
+- Continue: user `~/.continue/plugins` and workspace `<workspace>/.continue/plugins`
+- Goose: user `~/.config/goose/plugins` and workspace `<workspace>/.goose/plugins`
+- Qwen Code: user `~/.qwen/plugins` and workspace `<workspace>/.qwen/plugins`
+- Qoder: user `~/.qoder/plugins` and workspace `<workspace>/.qoder/plugins`
+- Qoder CN: user `~/.qoder-cn/plugins` and workspace `<workspace>/.qoder/plugins`
+- Windsurf: user `~/.codeium/windsurf/plugins` and workspace `<workspace>/.windsurf/plugins`
+- Trae: user `~/.trae/plugins` and workspace `<workspace>/.trae/plugins`
+- Kiro CLI: user `~/.kiro/plugins` and workspace `<workspace>/.kiro/plugins`
+- Roo Code: user `~/.roo/plugins` and workspace `<workspace>/.roo/plugins`
+- CodeBuddy: user `~/.codebuddy/plugins` and workspace `<workspace>/.codebuddy/plugins`
 
-不支持 Gemini，也不扫描用户级或项目级 `.agents/plugins`。
+Gemini is unsupported, and user- or project-level `.agents/plugins` is not scanned.
 
-## 识别规则
+## Recognition rules
 
-- 插件候选是包含 manifest 的目录。
-- manifest 优先级：
+- Plugin candidates are directories containing a manifest.
+- Manifest priority:
   1. `.zcode-plugin/plugin.json`
   2. `.claude-plugin/plugin.json`
   3. `.codex-plugin/plugin.json`
-- manifest 必须是 JSON object，且 `name` 为非空字符串；`version` 读不到时不展示。
-- 扫描深度只查来源根目录下一层插件目录，不递归扫描插件内部资源目录。
+- The manifest must be a JSON object with `name` a non-empty string; a missing `version` is simply not shown.
+- Scanning covers only one level of plugin directories below the source root — no recursion into plugin internals.
 
-## 导入策略
+## Import policy
 
-- 导入目标由用户在导入按钮下拉菜单中选择：
-  - `Global` 写入 `~/.zcode/plugins/<plugin-dir>/`，并把该绝对路径追加到 `~/.zcode/cli/config.json` 的 `plugins.dirs`。
-  - `Project` 写入 `<workspace>/.zcode/plugins/<plugin-dir>/`，并把该绝对路径追加到 `<workspace>/.zcode/config.json` 的 `plugins.dirs`。
-- 导入方式与技能、命令一致：
-  - `软链`：在目标路径创建指向来源插件目录的符号链接，默认选项。
-  - `直接复制`：复制插件目录到目标路径。
-- 若没有打开工作区，`Project` 目标不可选。
-- 已存在同名目标目录，或目标配置中已经存在相同 plugin id（`<manifest.name>@inline`）时跳过，不覆盖现有插件。
-- 打开弹窗或重新扫描后默认停留在 `Global`，但 `Global` 与 `Project` 来源都不默认勾选，需要用户显式选择。
+- The import target is chosen in the import button's dropdown:
+  - `Global` writes to `~/.zcode/plugins/<plugin-dir>/` and appends that absolute path to `plugins.dirs` of `~/.zcode/cli/config.json`.
+  - `Project` writes to `<workspace>/.zcode/plugins/<plugin-dir>/` and appends that absolute path to `plugins.dirs` of `<workspace>/.zcode/config.json`.
+- Import modes match skills and commands:
+  - `软链` (symlink): create a symbolic link at the target pointing at the source plugin directory; default.
+  - `直接复制` (direct copy): copy the plugin directory to the target.
+- `Project` is unavailable without an open workspace.
+- An existing target directory with the same name, or the same plugin id (`<manifest.name>@inline`) already in the target config, is skipped — existing plugins are never overwritten.
+- Opening the dialog or rescanning defaults to `Global`, but neither scope's sources are pre-checked.
 
-## UI 行为
+## UI behavior
 
-- 「插件管理」设置页在刷新按钮旁展示导入图标按钮。
-- 弹窗结构、范围 Select、刷新按钮、两层来源树、全选/取消全选、导入目标分裂按钮、导入方式下拉菜单、完成结果列表均与技能、命令导入保持一致。
-- 第二层展示插件名称；若 manifest 中存在 `version`，紧跟插件名称展示版本 badge。
-- 导入完成页展示本次涉及的插件列表；每项显示状态图标和插件名，不展示文件路径。
+- The "Plugin Management" settings page shows an import icon button next to the refresh button.
+- Dialog structure, scope Select, refresh button, two-level source tree, select-all/deselect-all, split import button, import-mode dropdown, and completion result list match the skills/commands imports.
+- The second level shows plugin names; a `version` in the manifest renders as a version badge next to the name.
+- The completion page lists the plugins involved; each entry shows a status icon and plugin name, not file paths.
 
-## 兼容与边界
+## Compatibility and boundaries
 
-- `settings-sync` 新增 `plugins` 分类，插件来源表独立维护，不从 `skills` 或 `commands` 来源表派生；资源扫描、去重和导入也独立。
-- 远程 workspace 只使用当前 host process 可访问的文件系统路径；身份隔离语义仍传递 `workspaceIdentity`，路径执行仍使用 `workspacePath`。
-- 直接复制模式不引用外部目录；软链模式会持续指向外部插件目录，适合希望跟随外部 Agent 插件变更的用户。
-- ZCode 运行态通过 `plugins.dirs` 读取导入后的 inline 插件；导入功能不写入 official marketplace cache。
+- `settings-sync` adds a `plugins` category with its own source table, derived from neither `skills` nor `commands`; scanning, dedupe, and import are likewise independent.
+- Remote workspaces use only paths the current host process can access; identity isolation still passes `workspaceIdentity`, path execution uses `workspacePath`.
+- Direct copy does not reference external directories; symlink keeps pointing at the external plugin directory — suitable for users who want to follow external agent changes.
+- The ZCode runtime reads imported inline plugins via `plugins.dirs`; the import never writes the official marketplace cache.
 
-## 验证
+## Verification
 
-- 覆盖缺失目录、空目录、同名跳过、用户级导入、工作区级导入、copy/symlink 两种模式。
-- 覆盖 `.zcode-plugin/plugin.json` 与 `.claude-plugin/plugin.json` 两种 manifest。
-- UI 覆盖导入按钮、弹窗来源列表、导入完成刷新。
-- 必须运行 `pnpm typecheck` 和 `pnpm lint`。
+- Cover missing directories, empty directories, same-name skips, user-level import, workspace-level import, and copy/symlink modes.
+- Cover both `.zcode-plugin/plugin.json` and `.claude-plugin/plugin.json` manifests.
+- UI covers the import button, dialog source list, and post-import refresh.
+- `pnpm typecheck` and `pnpm lint` must run.

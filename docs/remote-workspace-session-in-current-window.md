@@ -1,8 +1,6 @@
-# Remote Workspace Session in a Workspace Window（当前事实）
+# Remote Workspace Session in a Workspace Window (current state)
 
-远程 workspace 作为当前 workspace window 内的逻辑 session/tab 打开，不为每个 workspace 另建 BrowserWindow；
-本地与远端 scope 统一由该窗口唯一 Window Host 承载。SSH 按 `remoteHostKey` 共享 Host 内连接，WSL 按
-`normalized(distro,user)` 共享 Host 内连接；Docker/Server 使用 dedicated connection，但不创建额外 Host PID。
+A remote workspace opens as a logical session/tab inside the current workspace window; no separate BrowserWindow is created per workspace. Local and remote scopes are both owned by the window's single Window Host. SSH shares a Host connection by `remoteHostKey`, WSL by `normalized(distro,user)`; Docker/Server use dedicated connections but create no extra Host PID.
 
 ```text
 Workspace Window
@@ -19,16 +17,15 @@ Workspace Window
           └─ dedicated Server connection -> server workspaceKey
 ```
 
-## 身份与路由
+## Identity and routing
 
-- `workspaceIdentity` 表示隔离身份，`workspacePath` 表示目标环境中的真实路径。
-- session、tab、CLI、缓存、队列、历史和远控 key 使用
-  `workspaceKey = workspaceIdentity?.trim() || workspacePath`。
-- 文件操作与命令 cwd 使用 `workspacePath`。
-- 远程 workspace 必须传递统一构造的 `workspaceIdentity`；远控还必须传递 `remoteSessionId`。
-- renderer 通过 workspace service resolver 选择 workspace scope，不能只按路径匹配。
+- `workspaceIdentity` is the isolation identity; `workspacePath` is the real path in the target environment.
+- Sessions, tabs, CLI, caches, queues, history, and remote-control keys use `workspaceKey = workspaceIdentity?.trim() || workspacePath`.
+- File operations and command cwd use `workspacePath`.
+- A remote workspace must pass a uniformly constructed `workspaceIdentity`; remote control must also pass `remoteSessionId`.
+- The renderer selects the workspace scope through the workspace service resolver, never by path alone.
 
-## 生命周期
+## Lifecycle
 
 ```text
 select/connect remote workspace
@@ -41,15 +38,12 @@ select/connect remote workspace
   -> mobile may attach to the same Host/CLI
 ```
 
-关闭 pane 或切 workspace 不应误杀其他 workspace 的 CLI；关闭单个 attachment 不销毁 Window Host 或仍被使用的连接。
-WSL logical session 关闭时按 workspace generation 释放对应 runtime，最后 owner 消失后保留 60 秒 idle TTL；
-Docker/Server dedicated connection 按 logical session 生命周期回收。Main/relay 只做连接请求、端口与 attachment
-调度，不复制远端 session 状态。
+Closing a pane or switching workspaces must not kill another workspace's CLI; closing a single attachment does not destroy the Window Host or a connection still in use. When a WSL logical session closes, its runtime is released per workspace generation, with a 60-second idle TTL after the last owner disappears; Docker/Server dedicated connections are reclaimed with the logical session lifecycle. Main/relay only handle connection requests, ports, and attachment scheduling — they do not duplicate remote session state.
 
-## 回归边界
+## Regression boundaries
 
-- 同路径但不同 remote identity 必须隔离。
-- desktop continuous 与 mobile replayable 必须连接同一 workspace CLI。
-- 切换 workspace 后，文件/terminal cwd 使用新 `workspacePath`，缓存与 session 按 workspaceKey 隔离。
-- 手机端不得另起独立 Host 或 Agent runtime；它只能 attach 桌面窗口唯一 Window Host 的既有 scope。
-- Window Host registry 不跨 BrowserWindow 共享，避免身份、端口和故障域越过窗口边界。
+- Same path with different remote identities must be isolated.
+- Desktop continuous and mobile replayable must connect to the same workspace CLI.
+- After switching workspaces, file/terminal cwd uses the new `workspacePath`; caches and sessions stay isolated by workspaceKey.
+- Mobile must not start its own Host or Agent runtime; it can only attach to an existing scope of the desktop window's single Window Host.
+- The Window Host registry is not shared across BrowserWindows, keeping identity, ports, and failure domains inside the window boundary.

@@ -1,37 +1,41 @@
 # ZCode Lite Static Distribution
 
-## 背景
+## Background
 
-ZCode Lite 是不安装 Desktop App 的本地 Web 形态。内网下载源只托管静态发布资源，用户机器负责运行 Node.js、本地 HTTP server、ZCode services 和 agent runtime。
+ZCode Lite is a local Web form that needs no Desktop App install. The intranet download source hosts
+static release assets only; the user's machine runs Node.js, the local HTTP server, ZCode services and
+the agent runtime.
 
-当前内网下载源是普通静态文件服务，不提供 npm registry metadata API：
+The intranet download source is a plain static file service with no npm registry metadata API:
 
 ```text
 http://intranet.example.invalid:12345/zcode/deps/
   -> /Users/dev/shared/zcode/deps/
 ```
 
-因此 ZCode Lite 不依赖 `npx --registry`。发布产物放在 `zcode-lite` 目录下，安装入口优先使用 `install.sh`，tarball 作为可直接下载的备选产物。
+So ZCode Lite does not depend on `npx --registry`. Release artifacts live under the `zcode-lite`
+directory; the install entry prefers `install.sh`, with the tarball as a directly downloadable
+alternative.
 
-## 目标
+## Goals
 
-- 构建脚本能在本地生成一套可上传到静态下载源的 ZCode Lite 发布目录。
-- 发布目录包含安装脚本、版本 manifest、压缩包和校验文件。
-- 用户机器只要求已有 Node.js，不随 ZCode Lite 打包 Node runtime。
-- `zcode-lite serve` 默认随机选择可用端口、绑定 `127.0.0.1`、自动打开浏览器。
-- 用户显式传 `--host 0.0.0.0` 时允许局域网访问，并默认启用访问 token。
+- The build script produces, locally, a ZCode Lite release directory that can be uploaded to a static download source.
+- The release directory contains the install script, version manifest, archive and checksum file.
+- The user's machine needs only an existing Node.js; ZCode Lite does not bundle a Node runtime.
+- `zcode-lite serve` by default picks a random available port, binds `127.0.0.1` and opens the browser automatically.
+- When the user passes `--host 0.0.0.0` explicitly, LAN access is allowed and an access token is enabled by default.
 
-## 非目标
+## Non-goals
 
-- 不把 push/upload 写进 build 脚本。上传目标是临时的，build 产物应能被发布到任意静态源。
-- 不实现 npm registry。
-- 不复用手机 Web 远控 relay，也不改变 `/remote` 的 replayable 恢复语义。
-- 不支持一个共享 server 服务多个隔离用户；运行发生在安装者自己的机器或服务器上。
+- No push/upload in the build script: the upload target is temporary, and build artifacts must be publishable to any static source.
+- No npm registry implementation.
+- No reuse of the mobile Web remote-control relay and no change to the `/remote` replayable recovery semantics.
+- No support for one shared server serving several isolated users; it runs on the installer's own machine or server.
 
-## 架构
+## Architecture
 
 ```text
-内网静态下载源
+Intranet static download source
   /zcode/deps/zcode-lite/
     install.sh
     latest.json
@@ -39,26 +43,26 @@ http://intranet.example.invalid:12345/zcode/deps/
       zcode-lite-<version>.tar.gz
       sha256.txt
 
-用户机器
+User machine
   ~/.zcode/lite/releases/<version>
   ~/.zcode/lite/current -> releases/<version>
   ~/.local/bin/zcode-lite
 
-运行时
+Runtime
   zcode-lite serve [--host <host>] [--port <port>]
       |
       v
   Node local server
-    |-- packages/web/dist 静态资源
+    |-- packages/web/dist static assets
     |-- /ws RPC
     |-- createLocalServices()
     |-- bundled zcode.cjs app-server --stdio
       |
       v
-  浏览器访问 Web UI
+  browser opens the Web UI
 ```
 
-ZCode Lite 使用普通 Web 模式同源 `/ws`，不是手机远控：
+ZCode Lite uses ordinary Web mode with same-origin `/ws`, not mobile remote control:
 
 ```text
 Lite Web:
@@ -68,67 +72,82 @@ Mobile Remote:
 mobile browser -> relay -> desktop main -> existing host/services -> existing runtime
 ```
 
-## 当前普通 Web 支持边界
+## Current ordinary Web support boundary
 
-这里的“普通 Web”指浏览器直接连接 `@zcode/server` 的同源 `/ws`，包括开发环境的 Web 入口和 `zcode-lite serve` 打开的 ZCode Lite 页面；它不包括手机 `/remote`。
+"Ordinary Web" means a browser connecting directly to the same-origin `/ws` of `@zcode/server`,
+including the dev Web entry and the ZCode Lite page opened by `zcode-lite serve`; it excludes mobile
+`/remote`.
 
-当前普通 Web 没有 Desktop 的窗口级 Local Host 进程，因此也没有 Window Host Controller。依赖 Window Host Controller 聚合本地及远程 source 的左侧全局任务列表，暂时不支持普通 Web / ZCode Lite；Controller 不可用时，不在 Web renderer 中另外实现一套聚合或 fallback 逻辑。
+Ordinary Web has no Desktop window-scoped Local Host process and therefore no Window Host Controller.
+The left global task list, which depends on the Window Host Controller to aggregate local and remote
+sources, is not supported on ordinary Web / ZCode Lite for now; when the Controller is unavailable, no
+separate aggregation or fallback logic is implemented in the Web renderer.
 
 ```text
-当前普通 Web / ZCode Lite：
+Current ordinary Web / ZCode Lite:
 browser
   -> @zcode/server /ws
      -> createLocalServices()
         -X-> Window Host Controller
-        -X-> 基于 Controller 的左侧全局任务列表
+        -X-> Controller-based left global task list
 
-当前 Desktop 与手机 /remote：
+Current Desktop and mobile /remote:
 Desktop renderer -----------------------+
                                         v
-mobile /remote -> relay/main 透传 -> Desktop Window Local Host
+mobile /remote -> relay/main passthrough -> Desktop Window Local Host
                                         |
                                         v
                                 Window Host Controller
                                         |
-                                        +-> 本地 source
+                                        +-> local source
                                         +-> SSH / WSL / Docker / Server source
 ```
 
-这条边界只限制依赖 Window Host Controller 的全局任务列表和多 source 聚合，不表示普通 Web 的静态页面、文件、终端、会话等现有 `/ws` 能力整体不可用，也不改变 Desktop 本地、Desktop 远程 workspace 或手机 `/remote` 的现有链路。
+This boundary limits only the global task list and multi-source aggregation that depend on the Window
+Host Controller. It does not mean the existing `/ws` abilities of ordinary Web (static pages, files,
+terminal, sessions) are unavailable, and it changes no existing chain of Desktop local, Desktop remote
+workspace or mobile `/remote`.
 
-后续只有在 Lite / Browser Controller Runtime（或经架构确认的等价服务端 Controller 边界）实现，并补齐普通 Web、Desktop 和手机 `/remote` 回归验证后，才重新支持普通 Web 的全局任务列表。目标架构见 `docs/architecture/unified-zcode-lite-server-multi-server-plan.md`。
+The ordinary Web global task list is supported again only after a Lite / Browser Controller Runtime
+(or an architecture-approved equivalent server-side Controller boundary) is implemented and regression
+verification for ordinary Web, Desktop and mobile `/remote` is complete. Target architecture:
+`docs/architecture/unified-zcode-lite-server-multi-server-plan.md`.
 
-## 命令行为
+## Command behavior
 
-默认命令：
+Default command:
 
 ```bash
 zcode-lite serve
 ```
 
-默认行为：
+Defaults:
 
-- `--host` 默认为 `127.0.0.1`。
-- `--port` 省略时随机找一个可用端口。
-- 绑定本机地址时默认自动打开浏览器。
-- `--host 0.0.0.0` 时默认不自动打开浏览器。
-- `--host 0.0.0.0` 时默认生成访问 token，并在 URL 中输出 `?token=...`。
+- `--host` defaults to `127.0.0.1`.
+- Omitting `--port` picks a random available port.
+- Binding a local address opens the browser automatically.
+- With `--host 0.0.0.0` the browser is not opened automatically.
+- With `--host 0.0.0.0` an access token is generated by default and the URL is printed with `?token=...`.
 
-常用服务端启动：
+Common server start:
 
 ```bash
 zcode-lite serve --host 0.0.0.0 --port 3030 --no-open
 ```
 
-## 安全边界
+## Security boundary
 
-本地 `127.0.0.1` 启动不强制 token。绑定 `0.0.0.0` 时必须默认生成 token，server 对 `/api/*` 和 `/ws` 做 token 校验。浏览器首次携带 `?token=...` 访问时，server 写入同源 cookie，后续同源 WebSocket 自动带 cookie。
+Starting on local `127.0.0.1` does not force a token. Binding `0.0.0.0` must generate a token by
+default, and the server validates the token on `/api/*` and `/ws`. When the browser first visits with
+`?token=...`, the server writes a same-origin cookie and later same-origin WebSockets carry the cookie
+automatically.
 
-静态资源可以被局域网读取；真正能读写文件、执行命令、访问 agent 的 RPC 入口必须受 token 保护。
+Static assets may be read over the LAN; the RPC entries that can read/write files, run commands or
+reach the agent must be token-protected.
 
-## 发布目录
+## Release directory
 
-build 脚本只生成本地目录，例如：
+The build script generates only a local directory, e.g.:
 
 ```text
 dist/zcode-lite/
@@ -139,18 +158,15 @@ dist/zcode-lite/
     sha256.txt
 ```
 
-上传是临时动作，不落脚本。当前内网上传目标是：
+Upload is a temporary action and is not scripted. The current intranet upload target is
+`/Users/dev/shared/zcode/deps/zcode-lite/`.
 
-```text
-/Users/dev/shared/zcode/deps/zcode-lite/
-```
+## Verification
 
-## 验证
+At minimum verify:
 
-完成后至少验证：
-
-- `pnpm --filter @zcode/server test -- serverInfoHttp.test.ts` 覆盖静态资源和 token 保护。
-- `pnpm --filter @zcode/web build` 确认 Web bootstrap 能读取 `/api/server-info`。
-- `node scripts/build-zcode-lite.mjs --skip-build` 能生成发布目录和 tarball。
-- 解压 tarball 后运行 `node bin/zcode-lite.mjs serve --port 0 --no-open` 能启动 server 并输出 URL。
-- 提交前执行 `pnpm typecheck` 和 `pnpm lint`。
+- `pnpm --filter @zcode/server test -- serverInfoHttp.test.ts` covers static assets and token protection.
+- `pnpm --filter @zcode/web build` confirms the Web bootstrap can read `/api/server-info`.
+- `node scripts/build-zcode-lite.mjs --skip-build` produces the release directory and tarball.
+- After extracting the tarball, `node bin/zcode-lite.mjs serve --port 0 --no-open` starts the server and prints the URL.
+- Run `pnpm typecheck` and `pnpm lint` before committing.

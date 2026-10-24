@@ -1,24 +1,24 @@
-# Read Tool 模型可见结果契约
+# Read Tool model-visible result contract
 
-## 背景
+## Background
 
-Read 工具的 provider-visible `tool_result`（包括 `is_error` 和文本内容）是模型理解读取结果的唯一依据。本文约束 Read 在 warning、重复读取、preflight 失败、图片与普通文本读取时的模型可见形态，结构化输出与内部错误类型不在此收敛范围内。
+The Read tool's provider-visible `tool_result` (including `is_error` and text content) is the model's only basis for understanding the read outcome. This document constrains the model-visible shape of Read for warnings, duplicate reads, preflight failures, image and plain-text reads. Structured output and internal error types are out of scope.
 
-## 目标
+## Goals
 
-- Read 的模型可见 warning / dedup / preflight error 使用固定、可回归的文案与包装。
-- 保持结构化输出和内部错误类型可调试；只收敛模型可见文本边界。
+- Read's model-visible warning / dedup / preflight error uses fixed, regression-testable copy and wrapping.
+- Keep structured output and internal error types debuggable; converge only the model-visible text boundary.
 
-## 设计
+## Design
 
-- `file_unchanged` 模型可见内容固定为：
+- The `file_unchanged` model-visible content is fixed to:
   `Wasted call — file unchanged since your last Read. Refer to that earlier tool_result instead.`
-- Read tool result 内联 warning 使用单行 `<system-reminder>body</system-reminder>`。这是 Read mapper 的专用路径，不替换全局 `wrapSystemReminderForSource(...)`。
-- 成功读取非空文本时，不追加旧版 malware reminder；只输出按条件生成的 freshness / truncation reminder 与带行号正文。
-- 图片 Read 的 provider-visible tool result 只保留 image block。图片 resize 产生的尺寸和坐标换算数据继续保留在结构化 output，但不再生成额外 text block。
-- Read input semantic preflight 失败时，handler 捕获 `ReadInputSchema.parse(...)` 的 custom issue，并抛出可恢复 `ToolExecutionFailed`，message 为 `<tool_use_error>${issue.message}</tool_use_error>`。
-- 非 Read 或非 custom semantic validation 错误继续走现有通用 validation 路径，避免把所有 schema 错误误包装成 `<tool_use_error>` 格式。
+- Inline warnings in Read tool results use a single-line `<system-reminder>body</system-reminder>`. This is a Read-mapper-specific path and does not replace the global `wrapSystemReminderForSource(...)`.
+- On a successful non-empty text read, the legacy malware reminder is not appended; only the conditionally generated freshness / truncation reminder and the line-numbered body are output.
+- The provider-visible tool result of an image Read keeps only the image block. Resize dimension and coordinate data stays in the structured output; no extra text block is generated.
+- When Read input semantic preflight fails, the handler catches the custom issue from `ReadInputSchema.parse(...)` and throws a recoverable `ToolExecutionFailed` whose message is `<tool_use_error>${issue.message}</tool_use_error>`.
+- Non-Read or non-custom semantic validation errors keep going through the existing generic validation path; not every schema error may be wrapped as `<tool_use_error>`.
 
-## 验收
+## Acceptance
 
-- `read-tool-contract.test.ts` 覆盖成功文本不追加旧版安全提醒、图片只含 media block、dedup 文案、Read warning 单行 wrapper、binary/device preflight 的 `<tool_use_error>`。
+- `read-tool-contract.test.ts` covers: successful text without the legacy security reminder, image results containing only the media block, dedup copy, the single-line Read warning wrapper, and `<tool_use_error>` for binary/device preflight.

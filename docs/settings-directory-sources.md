@@ -1,47 +1,47 @@
-# 设置目录来源
+# Settings directory sources
 
-`command`、`mcp`、`hooks` 现在按 ZCode Agent 的约定目录读取。设置页只标识配置属于 `workspace` 还是 `user`，不再把目录名展示成 CLI/provider 来源。
+`command`, `mcp`, and `hooks` now read from the ZCode Agent's conventional directories. Settings only labels config as `workspace` or `user`; directory names are no longer shown as CLI/provider sources.
 
-## 读取顺序
+## Read order
 
-`command` 和 `mcp` 的固定顺序如下：
+`command` and `mcp` use this fixed order:
 
 1. `<workspace>/.zcode/*`
-2. `<workspace>/.agents/*`（仅当 workspace `.zcode` 没有有效条目时 fallback）
+2. `<workspace>/.agents/*` (fallback only when workspace `.zcode` has no valid entries)
 3. `~/.zcode/*`
-4. `~/.agents/*`（仅当 user `.zcode` 没有有效条目时 fallback）
+4. `~/.agents/*` (fallback only when user `.zcode` has no valid entries)
 
-`command` 和 `mcp` 不再读取 `.claude`。当前 workspace 就是项目级配置边界，不在设置服务里向上扫描每一级目录。
+`command` and `mcp` no longer read `.claude`. The current workspace is the project-level config boundary; the settings service does not scan up the directory tree.
 
-`hooks` 仍保留兼容读取顺序：`<workspace>/.zcode/*`、`<workspace>/.agents/*`、`<workspace>/.claude/*`、`~/.zcode/*`、`~/.agents/*`、`~/.claude/*`。
+`hooks` keeps the compatible read order: `<workspace>/.zcode/*`, `<workspace>/.agents/*`, `<workspace>/.claude/*`, `~/.zcode/*`, `~/.agents/*`, `~/.claude/*`.
 
 ## Command
 
-- workspace：优先 `<workspace>/.zcode/commands`；没有有效命令时 fallback 到 `<workspace>/.agents/commands`
-- user：优先 `~/.zcode/commands`；没有有效命令时 fallback 到 `~/.agents/commands`
-- 设置页展示目录路径，不展示具体命令文件路径
-- 新建/编辑只写 `.zcode/commands`，通过下拉选择 user 或 workspace；`.agents` 作为兼容 fallback 来源保持只读
-- 禁用命令不改 markdown 文件，统一写入 `~/.zcode/cli/config.json`：`command[命令文件绝对路径].enable = false`；重新启用时删除该 override
+- workspace: prefer `<workspace>/.zcode/commands`; fall back to `<workspace>/.agents/commands` when there are no valid commands
+- user: prefer `~/.zcode/commands`; fall back to `~/.agents/commands`
+- Settings shows the directory path, not individual command file paths
+- Create/edit writes only `.zcode/commands`, choosing user or workspace via dropdown; `.agents` stays a read-only compatible fallback source
+- Disabling a command does not touch the markdown file; it writes to `~/.zcode/cli/config.json`: `command[absolute path of command file].enable = false`; re-enabling deletes the override
 
 ## MCP
 
-MCP 设置页和运行时统一使用 ZCode Agent MCP source。旧通用 MCP 配置只迁移一次到 user 级 `.zcode` 主配置，之后不再读取通用位置。
+The MCP settings page and runtime use the ZCode Agent MCP source uniformly. The old generic MCP config is migrated once into the user-level `.zcode` main config; generic locations are not read afterwards.
 
-- workspace `.zcode`：`<workspace>/.zcode/config.json` 下的 `mcp.servers`
-- workspace `.agents`：`<workspace>/.agents/mcp.json` 下的 `mcpServers`，仅当 workspace `.zcode` 没有 MCP server 时 fallback
-- user `.zcode`：`~/.zcode/cli/config.json` 下的 `mcp.servers`
-- user `.agents`：`~/.agents/mcp.json` 下的 `mcpServers`，仅当 user `.zcode` 没有 MCP server 时 fallback
-- 新建/编辑只写 `.zcode` 主配置，通过下拉选择 user 或 workspace；兼容 fallback 来源保持只读
-- 禁用 MCP server 直接写回该 server 所在的 MCP 配置对象：`mcp.servers[serverName].enable = false` 或 `mcpServers[serverName].enable = false`；重新启用时删除该 `enable` 字段
+- workspace `.zcode`: `mcp.servers` in `<workspace>/.zcode/config.json`
+- workspace `.agents`: `mcpServers` in `<workspace>/.agents/mcp.json`, fallback only when workspace `.zcode` has no MCP server
+- user `.zcode`: `mcp.servers` in `~/.zcode/cli/config.json`
+- user `.agents`: `mcpServers` in `~/.agents/mcp.json`, fallback only when user `.zcode` has no MCP server
+- Create/edit writes only the `.zcode` main config, choosing user or workspace via dropdown; compatible fallback sources stay read-only
+- Disabling an MCP server writes back into the config object that holds it: `mcp.servers[serverName].enable = false` or `mcpServers[serverName].enable = false`; re-enabling deletes that `enable` field
 
 ## Hooks
 
-- workspace `.zcode`：`<workspace>/.zcode/config.json` 下的 `hooks`
-- workspace `.agents`：`<workspace>/.agents/settings.json` 下的 `hooks`
-- workspace `.claude`：`<workspace>/.claude/settings.json` 下的 `hooks`
-- user `.zcode`：`~/.zcode/cli/config.json` 下的 `hooks`
-- user `.agents`：`~/.agents/settings.json` 下的 `hooks`
-- user `.claude`：`~/.claude/settings.json` 下的 `hooks`
-- 新建/编辑只写 `.zcode` hooks，通过下拉选择 user 或 workspace；兼容来源 hooks 只读展示
-- 表单保留 process hook 的额外 JSON 字段，避免设置页保存时丢失当前 UI 未建模的 hooks 字段
-- 禁用 hook 统一写入 `~/.zcode/cli/config.json`：`hooks[配置目录路径][hook 签名].enable = false`；签名由 `event`、`matcher`、`command`、`args` 组成，重新启用时删除该 override
+- workspace `.zcode`: `hooks` in `<workspace>/.zcode/config.json`
+- workspace `.agents`: `hooks` in `<workspace>/.agents/settings.json`
+- workspace `.claude`: `hooks` in `<workspace>/.claude/settings.json`
+- user `.zcode`: `hooks` in `~/.zcode/cli/config.json`
+- user `.agents`: `hooks` in `~/.agents/settings.json`
+- user `.claude`: `hooks` in `~/.claude/settings.json`
+- Create/edit writes only `.zcode` hooks, choosing user or workspace via dropdown; compatible-source hooks are read-only
+- The form preserves extra JSON fields of process hooks so saving from Settings does not lose hook fields the current UI does not model
+- Disabling a hook writes to `~/.zcode/cli/config.json`: `hooks[config directory path][hook signature].enable = false`; the signature is built from `event`, `matcher`, `command`, and `args`; re-enabling deletes the override

@@ -1,20 +1,20 @@
-# 本地 HTML 预览外部打开
+# Local HTML preview external open
 
-## 目标
+## Goal
 
-桌面端本地 HTML 预览卡片的“在浏览器中打开”必须直接按文件路径交给操作系统默认应用，打开失败时向用户反馈并写入主进程日志。普通 `http`/`https` 外链继续使用系统浏览器 URL 打开，Web 和远程工作区保持现有行为。内置浏览器工具栏的「在默认浏览器中打开」对本地页面遵循同一约束。
+The desktop local HTML preview card's "open in browser" must hand the file path directly to the OS default application; on failure, tell the user and write a main-process log. Plain `http`/`https` external links keep opening via the system browser URL; Web and remote workspaces keep current behavior. The built-in browser toolbar's 「在默认浏览器中打开」 follows the same constraint for local pages.
 
-## 行为约束
+## Behavior
 
-- 本地桌面 HTML 卡片保留绝对文件路径，菜单动作调用路径打开接口，不再把 `file://` URL 交给 `shell.openExternal`。
-- 主进程 `openExternal` IPC 对 `file:` URL 统一分流：`fileURLToPath` 解码（含中文、空格的 percent-encoding，并剥掉 hash/query）后调用 `shell.openPath`；覆盖内置浏览器工具栏等从 `webview.getURL()` 取得 percent-encoded file URL 的入口。转换失败时记主进程日志，不回退 `shell.openExternal`。
-- 路径打开结果使用 `{ success, error? }` 返回；`success=false` 时 UI 展示国际化 toast。
-- 主进程记录本地文件打开成功或失败、路径和错误信息，便于从导出日志定位 Windows ShellExecute 错误。
-- 普通外部 URL 仍通过 `shell.openExternal`，但必须捕获并记录 rejected Promise，避免其他入口继续静默失败。
+- The local desktop HTML card keeps the absolute file path; the menu action calls the path-opening API instead of passing a `file://` URL to `shell.openExternal`.
+- The main-process `openExternal` IPC diverts all `file:` URLs: `fileURLToPath` decodes (percent-encoding with Chinese characters and spaces included, stripping hash/query), then `shell.openPath`; this covers entries that take a percent-encoded file URL from `webview.getURL()`, such as the built-in browser toolbar. On conversion failure, log in main and never fall back to `shell.openExternal`.
+- Path-open results return `{ success, error? }`; on `success=false` the UI shows an internationalized toast.
+- Main logs local-file open success or failure, the path, and the error, so exported logs can pinpoint Windows ShellExecute errors.
+- Plain external URLs still use `shell.openExternal`, but rejected promises must be caught and logged so other entries stop failing silently.
 
-## 验收
+## Acceptance
 
-1. Windows 绝对路径、中文和空格路径调用 `shell.openPath`，成功返回空错误并不触发 `shell.openExternal`。
-2. `shell.openPath` 返回错误或抛异常时，主进程日志包含错误，HTML 卡片显示失败 toast。
-3. `http`/`https` 外链和远程 HTML 卡片不改变原有打开路径。
-4. 内置浏览器打开含中文与空格路径的本地 HTML 后，菜单「在默认浏览器中打开」经 `shell.openPath` 用解码后的本地路径打开，不触发 `shell.openExternal`（ZCT-202610-8F404D97）。
+1. Windows absolute paths and paths with Chinese characters and spaces call `shell.openPath`, return success with no error, and never trigger `shell.openExternal`.
+2. When `shell.openPath` returns an error or throws, the main-process log contains the error and the HTML card shows a failure toast.
+3. `http`/`https` external links and remote HTML cards keep their original open paths.
+4. After the built-in browser opens a local HTML with Chinese characters and spaces in the path, the menu's 「在默认浏览器中打开」 opens the decoded local path via `shell.openPath` without triggering `shell.openExternal` (ZCT-202610-8F404D97).

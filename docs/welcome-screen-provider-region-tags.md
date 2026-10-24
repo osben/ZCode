@@ -1,10 +1,17 @@
 # Welcome Screen Provider Region Tags
 
-Welcome Screen 的 OAuth provider 入口在未登录时同时展示 Z.AI 与 BigModel。为了帮助用户区分两个入口的服务区域，按钮文案后展示固定地域标签：
+When signed out, the Welcome Screen's OAuth provider entries show both Z.AI and BigModel. To help users tell the
+service regions of the two entries apart, a fixed region tag follows the button label:
 
-- Z.AI：中文 `全球`，英文 `Global`
-- BigModel：中文 `中国`，英文 `CN`
+- Z.AI: zh-CN `全球` (Global), English `Global`
+- BigModel: zh-CN `中国` (China), English `CN`
 
-标签文案必须走 `packages/ui/src/i18n/locales/*`，组件只保留 provider id 到 message id 的映射。标签只表达入口区域差异，不参与 OAuth provider 选择、排序、可用性或 provider family domain 判断。尺寸使用紧凑 pill：`h-5 px-2 text-ui-xs`。
+The tag copy must go through `packages/ui/src/i18n/locales/*`, and the component keeps only the mapping from provider
+id to message id. The tag only expresses the regional difference of the entry and takes no part in OAuth provider
+selection, ordering, availability or provider family domain judgment. Size uses a compact pill: `h-5 px-2 text-ui-xs`.
 
-OAuth provider 按钮使用 `Button variant="default"`，背景来自 `bg-primary`。ZAI 主题下浅色为 `#000000`、深色为 `#ffffff`，文字分别使用 `text-primary-foreground`。地域标签作为按钮内部附属信息，不再使用 Coding Plan 的独立渐变徽标；样式应跟随按钮前景色，使用 `border-primary-foreground/30 text-primary-foreground/60`，保证浅色和深色主题里都只是弱强调。
+OAuth provider buttons use `Button variant="default"`, with the background from `bg-primary`. In the ZAI theme the
+background is `#000000` in light mode and `#ffffff` in dark mode, and text uses `text-primary-foreground`. The region
+tag is secondary information inside the button and no longer uses the Coding Plan's standalone gradient badge; its
+style follows the button foreground color, using `border-primary-foreground/30 text-primary-foreground/60`, so it is
+only a weak emphasis in both light and dark themes.

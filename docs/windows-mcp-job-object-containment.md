@@ -1,31 +1,36 @@
-# Windows MCP Job Object 进程托管（原型）
+# Windows MCP Job Object containment (prototype)
 
-## 目的
+## Purpose
 
-在 Windows 上为 ZCode 的本地 stdio MCP root 进程创建独立的 Job Object，并在 MCP 关闭时优先终止该 Job。这样可以覆盖 root 在托管期间创建的后代进程，减少 Agent/MCP 退出后遗留的控制台进程。
+On Windows, create a separate Job Object for ZCode's local stdio MCP root process and prefer terminating
+that Job when the MCP closes. This covers descendants the root creates during containment and reduces
+console processes left behind after the Agent/MCP exits.
 
-## 范围
+## Scope
 
-- 只覆盖 Agent 侧 `ProcessTreeStdioClientTransport` 启动的本地 stdio MCP。
-- macOS/Linux 保持现有 process group 清理逻辑不变。
-- Job Object 创建或 PID 加入失败时，继续使用现有 `taskkill /T /F` 回退路径。
-- 本原型在 Node SDK 已创建 root 后进行 attach，因此不能保证覆盖 attach 之前已经创建的后代；要保证完整覆盖所有后代，后续仍需 native `CREATE_SUSPENDED → AssignProcessToJobObject → ResumeProcess` launcher。
+- Covers only the local stdio MCP started by the Agent-side `ProcessTreeStdioClientTransport`.
+- macOS/Linux keep the existing process-group cleanup logic unchanged.
+- When Job Object creation or adding the PID fails, keep using the existing `taskkill /T /F` fallback path.
+- This prototype attaches after the Node SDK has created the root, so it cannot guarantee covering
+  descendants created before the attach; to guarantee complete coverage of all descendants, a native
+  `CREATE_SUSPENDED → AssignProcessToJobObject → ResumeProcess` launcher is still needed later.
 
-## 生命周期契约
+## Lifecycle contract
 
 ```text
 MCP start
-  ├─ 非 Windows：现有 process group 路径
-  └─ Windows：SDK spawn root → 尝试 attach Job Object → 失败则保留 taskkill
+  ├─ non-Windows: existing process group path
+  └─ Windows: SDK spawn root → try attach Job Object → on failure keep taskkill
 
 MCP close
-  ├─ Windows Job 存在：TerminateJobObject + CloseHandle
-  └─ 之后仍执行 SDK pipe/transport 清理；Job 失败不阻断 fallback
+  ├─ Windows Job exists: TerminateJobObject + CloseHandle
+  └─ afterwards still run the SDK pipe/transport cleanup; a Job failure does not block the fallback
 ```
 
-## 安全边界
+## Safety boundary
 
-- 每个 MCP transport 独立持有一个 Job，不使用全局 Job，避免误杀其他 workspace 或 MCP。
-- 仅使用 transport 自身的 root PID attach，不根据进程名或全局进程表匹配。
-- 所有 Windows API 调用失败均降级到既有回收逻辑，不改变非 Windows 行为。
-- 该原型不宣称消除 spawn/attach 竞态，生产化前必须增加 Windows 真机测试，验证 root 在 attach 后创建的 descendant 会随 Job 终止。
+- Each MCP transport owns its own Job; no global Job, to avoid killing other workspaces or MCPs by mistake.
+- Attach uses only the transport's own root PID, never matching by process name or the global process table.
+- Any Windows API failure degrades to the existing reclaim logic and does not change non-Windows behavior.
+- The prototype does not claim to remove the spawn/attach race; before productization Windows real-machine
+  tests must be added to verify that descendants the root creates after attach terminate with the Job.

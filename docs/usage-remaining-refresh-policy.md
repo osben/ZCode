@@ -1,38 +1,67 @@
-# Usage Remaining 刷新策略
+# Usage Remaining Refresh Policy
 
-日期：2026-06-13（2026-08-14 更新为按需访问刷新）
+Date: 2026-06-13 (updated 2026-08-14 to refresh on access)
 
-## 背景
+## Background
 
-footer 套餐 badge、输入框 context 面板里的 Coding Plan 剩余额度，以及 Start Plan 余额都来自 `useUsageEntitlement`。这些数据会影响用户判断是否还能继续发起任务，因此需要统一刷新策略，避免各入口刷新时机不一致，也避免多个组件同时挂载时放大 quota / billing 请求。
+The footer plan badge, the Coding Plan remaining quota in the composer context panel, and the Start Plan
+balance all come from `useUsageEntitlement`. This data affects whether a user can keep starting tasks, so
+a unified refresh policy is needed to keep entry refresh timing consistent and to avoid amplifying quota /
+billing requests when several components mount at once.
 
-## 策略
+## Policy
 
-- 剩余用量统一为“缓存优先 + 用户访问时校正”：对话 Context 在 hover/open 时触发，模型供应商套餐卡和 Usage 页 Coding Plan tab 在打开时触发。侧栏 footer 套餐徽标是常驻入口，在可见/挂载时触发同样的 access 探测，不依赖用户先访问其它入口预热。
-- 三个入口首帧立即回显同一账户/套餐范围的缓存快照，后台校正不阻塞面板展示；无缓存时才展示 loading。
-- 自动访问刷新按 `usageStatsService + providerId + organizationId + projectId + provider credential fingerprint` 共享 1 分钟 freshness window。任一入口刚请求过，1 分钟内反复 hover 或打开其他入口都不重复请求。
-- 用量刷新必须按权益调度状态执行：
-  - `unknown` / `active` / `none` / `unavailable` 都允许用户访问触发校正，但受共享 1 分钟 freshness window 限制。
-  - 用户手动刷新、登录/token/provider 指纹变化、购买成功可强制绕过 freshness window，用于重新探测 `none` 或 `unavailable`。
-- 同一品牌账号存在 Coding Plan 与 Start Plan 两套入口时，权益调度必须互斥：
-  - 只要 Coding Plan provider 已配置，就先查询 Coding Plan。
-  - Coding Plan 已有 quota / subscription / remaining 时，只处理 Coding Plan，不再查询或展示同品牌 Start Plan 余额。
-  - 只有 Coding Plan provider 未配置，或服务端明确返回 `no_plan`，才允许同品牌 Start Plan 作为兜底入口。
-  - Coding Plan 查询中、网络错误、token 过期或 `unavailable` 状态不能降级到 Start Plan，避免把“暂时查不到”误判成“没有 Coding 权益”。
-- 不再因任务开始、完成、失败或停止刷新剩余用量，也不再运行 5 分钟/空闲 30 分钟轮询或 `nextResetTime` 定时器。
-- Context 每次从关闭变为打开时调用 `reason=access`、`silent=true`；反复 hover 不得重置或延长面板展示，只由共享 freshness window 决定是否发请求。
-- 模型供应商套餐卡、Usage 页 Coding Plan tab 和侧栏 footer 在打开/可见时调用同样的 `reason=access`、`silent=true`；Usage 趋势数据也按相同 scope 使用 1 分钟访问 freshness window。
-- 用户手动刷新、登录成功、token/provider 指纹变化、购买成功可以重新探测 `none` 状态；这些显式动作用于处理用户刚购买或登录态刚恢复的场景。
-- 请求失败后退避：30 秒、60 秒、120 秒、300 秒，成功后清零。
-- 同一个服务实例、同一 provider 请求参数和同一 provider 指纹共享一份最新快照；任一入口刷新成功后，其它已挂载入口同步显示。
-- 同一时刻的相同请求继续复用 in-flight Promise，避免并发重复请求。
+1. Remaining usage is uniformly "cache first + correct on user access": conversation Context triggers on
+   hover/open; the model provider plan card and the Usage page Coding Plan tab trigger on open. The
+   sidebar footer plan badge is a resident entry and triggers the same access probe on visible/mount,
+   without depending on another entry to warm up first.
+2. The three entries echo the cache snapshot of the same account/plan scope on the first frame, and
+   background correction does not block panel display; loading shows only when there is no cache.
+3. Automatic access refresh shares a 1-minute freshness window by `usageStatsService + providerId +
+organizationId + projectId + provider credential fingerprint`. Once any entry has just requested,
+   repeated hovers or opening another entry within 1 minute do not request again.
+4. Usage refresh must follow the entitlement scheduling state:
+   - `unknown` / `active` / `none` / `unavailable` all allow user-access-triggered correction, subject to
+     the shared 1-minute freshness window.
+   - Manual refresh by the user, login/token/provider fingerprint change and purchase success may force
+     bypassing the freshness window to re-probe `none` or `unavailable`.
+5. When one brand account has both a Coding Plan and a Start Plan entry, entitlement scheduling must be mutually exclusive:
+   - As long as the Coding Plan provider is configured, query Coding Plan first.
+   - When the Coding Plan already has quota / subscription / remaining, handle only Coding Plan and no
+     longer query or show the same brand's Start Plan balance.
+   - Only when the Coding Plan provider is not configured, or the server explicitly returns `no_plan`, may
+     the same brand's Start Plan serve as the fallback entry.
+   - Coding Plan querying, network errors, token expiry or `unavailable` state cannot degrade to Start
+     Plan, so "temporarily cannot query" is not misjudged as "no Coding entitlement".
+6. Remaining usage is no longer refreshed on task start, completion, failure or stop, and the 5-minute /
+   idle-30-minute polling and the `nextResetTime` timer no longer run.
+7. Each time Context goes from closed to open it calls `reason=access`, `silent=true`; repeated hovers
+   must not reset or extend panel display, and only the shared freshness window decides whether a request is sent.
+8. The model provider plan card, the Usage page Coding Plan tab and the sidebar footer call the same
+   `reason=access`, `silent=true` on open/visible; Usage trend data also uses the same 1-minute access
+   freshness window by the same scope.
+9. Manual refresh by the user, login success, token/provider fingerprint change and purchase success may
+   re-probe the `none` state; these explicit actions handle the case of a just-completed purchase or a
+   just-restored login.
+10. After a request failure, back off 30 s, 60 s, 120 s, 300 s and reset to zero on success.
+11. The same service instance, the same provider request parameters and the same provider fingerprint
+    share one latest snapshot; after any entry refreshes successfully, the other mounted entries show it in sync.
+12. Identical concurrent requests keep reusing the in-flight Promise to avoid duplicate concurrent requests.
 
-## 边界
+## Boundaries
 
-- Coding Plan Usage 面板的 quota 是核心数据：quota 网络失败时整体报错；activity / usage-detail / model-performance-day 是可选数据面，单路网络/HTTP 失败只清空对应区域并在服务层记 warn，不拖垮整张面板。HTTP 200 但业务信封失败（如 token expired）仍整体抛错，避免把鉴权错误伪装成空用量。
-- `nextResetTime` 表示额度重置时间，不是数据生成时间。
-- `UsageEntitlementSnapshot.generatedAt` 表示本地生成快照的时间。
-- 缓存中的 `no_plan` 可以用于停止自动、轮询和任务生命周期刷新，但不能永久封死手动刷新、登录/token/provider 指纹变化或购买成功后的重新探测。
-- Usage 页 Coding 图表的打开自动刷新受 1 分钟访问 freshness window 限制；用户点击刷新仍强制获取。
-- 桌面端和 Web 端均通过 UI hook 触发服务层依赖注入，不直接访问本地文件或 credential。
-- 桌面 `desktop-continuous` 与手机 `web-remote-replayable` 都只由各自 renderer 的用户访问触发。额度状态仍留在 UI / shared host 服务，不下沉到 relay 或 desktop main，也不改变两端各自的 stream 恢复边界。
+- The quota of the Coding Plan Usage panel is core data: a quota network failure errors the whole panel;
+  activity / usage-detail / model-performance-day are optional data surfaces, where a single network/HTTP
+  failure only clears the corresponding area and logs a warn at the service layer without dragging down
+  the whole panel. An HTTP 200 with a failing business envelope (such as token expired) still throws as a
+  whole, so an auth error is not disguised as empty usage.
+- `nextResetTime` is the quota reset time, not the data generation time.
+- `UsageEntitlementSnapshot.generatedAt` is the time the snapshot was generated locally.
+- A cached `no_plan` may be used to stop automatic, polling and task-lifecycle refresh, but must not
+  permanently block manual refresh, a login/token/provider fingerprint change or re-probing after a purchase success.
+- The open-time automatic refresh of the Usage page Coding charts is bound by the 1-minute access
+  freshness window; a user click on refresh still forces a fetch.
+- Desktop and Web both trigger service-layer dependency injection through the UI hook and do not access local files or credentials directly.
+- Desktop `desktop-continuous` and mobile `web-remote-replayable` are both triggered only by user access
+  in their own renderer. Quota state stays in the UI / shared host service, does not sink into the relay
+  or desktop main, and does not change either side's stream recovery boundary.

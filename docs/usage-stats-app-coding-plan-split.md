@@ -1,34 +1,32 @@
-# 使用统计 App Usage / Coding Plan 拆分
+# Usage statistics: App Usage / Coding Plan split
 
-## 目标
+## Goal
 
-设置页「使用统计」分为两条独立链路：
+The Settings "Usage statistics" page is split into two independent chains:
 
-- App Usage：只读取本地 session 历史，展示产品内使用活跃度。
-- Coding Plan：只读取当前选中的 Coding Plan provider，展示套餐额度与 monitor 用量。
+- App Usage: reads only the local session history and shows in-product usage activity.
+- Coding Plan: reads only the currently selected Coding Plan provider and shows plan quota and monitor usage.
 
-Coding Plan 不回退到 App Usage、本地 session、普通 Z.AI/BigModel API Key 或环境变量 key。
+Coding Plan does not fall back to App Usage, local sessions, an ordinary Z.AI/BigModel API Key or an environment variable key.
 
-## 顶部布局
+## Top layout
 
 ```text
-使用统计    [ App Usage | Coding Plan | Project A | Project B ]
+Usage statistics    [ App Usage | Coding Plan | Project A | Project B ]
 App Usage:  [ all-time summary ] [ 30d / 7d ]
 Coding Plan:                         [ today / 7d / 30d ]
 ```
 
-- 主 tab 展开账号级统计来源：`App Usage`、个人 Coding Plan、以及每个已订阅 Team Plan 项目。
-- Coding Plan tab 不再跟随当前 workspace 连接方式；API Key、Start Plan 或 Team Plan 的当前选择不会隐藏账号已拥有的个人 / 团队用量来源。
-- App Usage 的全量概览固定展示在时间范围控件上方。
-- Coding Plan 的时间范围保持 `today` / `7d` / `30d`，不使用 App Usage 的全量概览口径。
+- The main tabs expand the account-level statistics sources: `App Usage`, the personal Coding Plan, and each subscribed Team Plan project.
+- The Coding Plan tab no longer follows the current workspace connection mode; the current API Key, Start Plan or Team Plan selection does not hide the personal / team usage sources the account owns.
+- App Usage's all-time overview is fixed above the time range control.
+- Coding Plan's time range stays `today` / `7d` / `30d` and does not use App Usage's all-time overview scope.
 
 ## App Usage
 
 ```text
-[ 累计 Token 数 ] [ 峰值 Token 数 ] [ 最长聊天时长 ] [ 当前连续天数 ] [ 最长连续天数 ]
-
-中文摘要指标中的紧凑 Token 数值需在数字与单位之间保留一个空格（例如 `3.7 亿`），与时长、天数指标的单位间距保持一致；其他强调紧凑展示的 Token 场景不受此规则影响。
-  // 固定读取当前 usage DB 保留范围内的全量数据，不受下方时间范围切换影响。
+[ Total Tokens ] [ Peak Tokens ] [ Longest chat duration ] [ Current streak days ] [ Longest streak days ]
+  // Always reads all data within the current usage DB retention, unaffected by the time range switch below.
 
 [ Token Activity / Calendar Grid ]                  [ Daily / Weekly / Cumulative ]
   // independent range control, reads range=all, first row is Sunday, bottom row shows month labels.
@@ -53,59 +51,81 @@ Coding Plan:                         [ today / 7d / 30d ]
 [ Refresh ] [ Export CSV ] [ Export JSON ]
 ```
 
-- 趋势图的绘图区左右各保留 24px 安全区，确保首尾日期刻度在桌面端和手机 Web 端都完整显示，不被 SVG 边界裁切；下方时间范围 tabs 使用 pill 样式，尺寸对齐 task tabs。
-- 全量概览行位于时间范围控件上方，使用 `range=all` 的 App Usage snapshot；它只展示聚合指标，不改变下方 7d/30d 的图表窗口。
-- 全量概览行不使用外框，容器使用 `rounded-xl`；桌面横排时用独立 `w-px h-7` 竖线分隔指标，不使用 border 类分割。
-- Token 活动位于全量概览下方，使用独立的 `每日 / 每周 / 累计` 范围切换；它读取 `range=all` 的 heatmap 数据，不受下方 `最近 7 天 / 最近 30 天` 图表范围影响。
-- Token 活动网格固定展示最近 52 个自然周，统一按自然周对齐，第一行是周日；52 列等分容器且不横向滚动，底部显示月份。`每周` 模式按周总量从下往上填充整列，`累计` 模式按截至当周的累计 Token 从下往上填充整列；这两个模式 hover 任意格时高亮整列，tooltip 锚定整列容器。tooltip 使用两行结构，第一行展示日期/周范围，第二行展示 Token 数和消息轮数。
-- `最长聊天时长` 按同一 session 内已完成 turn 的 `duration_ms` 求和后取最大值，避免把单轮耗时误当成整段聊天时长。
+- In the zh-CN summary metrics, a compact Token value needs one space between the number and the unit
+  (for example `3.7 亿`), consistent with the unit spacing of the duration and day metrics; other
+  Token scenarios that stress compact display are not affected by this rule.
+- The trend chart's plot area keeps a 24px safe zone on each side so the first and last date ticks show
+  completely on desktop and mobile Web and are not clipped by the SVG boundary; the time range tabs
+  below use the pill style, sized to match task tabs.
+- The all-time overview row sits above the time range control and uses the `range=all` App Usage
+  snapshot; it shows aggregate metrics only and does not change the 7d/30d chart window below.
+- The all-time overview row has no outer frame, its container uses `rounded-xl`; when laid out
+  horizontally on desktop, metrics are separated by a standalone `w-px h-7` vertical line, not border classes.
+- Token activity sits below the all-time overview and uses an independent `Daily / Weekly / Cumulative`
+  range switch (zh-CN `每日 / 每周 / 累计`); it reads the `range=all` heatmap data and is unaffected by
+  the `Last 7 days / Last 30 days` chart range below.
+- The Token activity grid fixedly shows the latest 52 natural weeks, aligned uniformly to natural weeks
+  with Sunday as the first row; the 52 columns split the container equally with no horizontal scrolling,
+  and months show at the bottom. `Weekly` mode fills a whole column bottom-up by the week's total;
+  `Cumulative` mode fills a whole column bottom-up by cumulative Tokens through that week; in both
+  modes hovering any cell highlights the whole column and the tooltip anchors to the column container.
+  The tooltip has a two-line structure: the first line shows the date/week range and the second line
+  shows the Token count and message-turn count.
+- `Longest chat duration` takes the maximum over sessions of the sum of the completed turns'
+  `duration_ms` within the same session, so a single turn's time is not mistaken for a whole chat's duration.
 
-数据来源：本地 session repo 聚合。
+Data source: aggregated from the local session repo.
 
 ## Coding Plan
 
 ```text
-[ Z.AI | BigModel ]   // 仅两个 Coding Plan 账号都可用时显示
+[ Z.AI | BigModel ]   // shown only when both Coding Plan accounts are available
 
-[ 5 小时剩余额度 ]      [ 每周剩余额度 ]        [ 工具调用 ]
-  remaining percent      remaining percent     remaining percent
-  remaining progress     remaining progress    remaining progress
-  重置时间（仅 Usage stats 设置页统一展示月日+时间，例如“9月16日 23:00”；缺 nextResetTime 时不展示）
+[ 5-hour remaining quota ]  [ Weekly remaining quota ]  [ Tool calls ]
+  remaining percent           remaining percent           remaining percent
+  remaining progress          remaining progress          remaining progress
+  reset time (only the Usage stats settings page uniformly shows month-day + time, e.g. "9月16日 23:00"; not shown when nextResetTime is missing)
 
-设置页 Model Providers 里的 Coding Plan 状态卡也展示同一组 quota 剩余额度。三条进度条必须按顺序复用 usage chart 色板：
-
-- 5 小时额度：`--color-usage-chart-1`
-- 每周额度：`--color-usage-chart-2`
-- 工具调用（月度）：`--color-usage-chart-3`
-- ZCode MCP 每日额度：`--color-usage-chart-5`（图表色板暖黄色）
-
-Start Plan 余额卡保持成功态绿色，不跟随 Coding Plan 多色 quota 色板。
-
-模型用量
-[ Token 消耗总量 ] [ Top Model 1 ] [ Top Model 2 ] [ Top Model 3 ... ]
+Model usage
+[ Total Token consumption ] [ Top Model 1 ] [ Top Model 2 ] [ Top Model 3 ... ]
 [ Multi-line Model Usage Chart ]
 
-工具用量
-[ 联网搜索 MCP ] [ 网页读取 MCP ] [ 开源仓库 MCP ... ]
+Tool usage
+[ Web search MCP ] [ Web reader MCP ] [ Open-source repo MCP ... ]
 [ Multi-line Tool Usage Chart ]
 ```
 
-数据来源：
+The Coding Plan status card in Settings Model Providers also shows the same group of quota remaining
+amounts. The three progress bars must reuse the usage chart palette in order:
 
-- quota：套餐额度卡。`percentage` 是服务端返回的已用比例，前端必须反转为剩余额度百分比展示。
-- `/api/monitor/usage/model-usage`：模型用量趋势与汇总。
-- `/api/monitor/usage/tool-usage`：工具用量趋势与汇总。
+- 5-hour quota: `--color-usage-chart-1`
+- weekly quota: `--color-usage-chart-2`
+- tool calls (monthly): `--color-usage-chart-3`
+- ZCode MCP daily quota: `--color-usage-chart-5` (warm yellow of the chart palette)
 
-只使用 monitor 新字段：`x_time`、`granularity`、`modelDataList`、`modelSummaryList`、`toolDataList`、`toolSummaryList`。
+The Start Plan balance card keeps the success green and does not follow the Coding Plan multi-color quota palette.
 
-## Provider / Source 规则
+Data sources:
 
-可用 Coding Plan provider 必须满足：
+- quota: the plan quota card. `percentage` is the used ratio returned by the server; the frontend must invert it to show the remaining quota percentage.
+- `/api/monitor/usage/model-usage`: model usage trend and summary.
+- `/api/monitor/usage/tool-usage`: tool usage trend and summary.
 
-- provider id 为 `zaiCodingPlan` 或 `bigmodelCodingPlan`。
-- provider enabled。
-- provider apiKey 非空。
+Only the new monitor fields are used: `x_time`, `granularity`, `modelDataList`, `modelSummaryList`, `toolDataList`, `toolSummaryList`.
 
-- 个人 Coding Plan 来源来自 active entitlement，tab 标签默认为 `Coding Plan`；如果同时存在多个个人来源，可按 provider 名称区分。
-- Team Plan 来源来自已订阅企业套餐项目，tab 标签只使用组织名称；缺少组织名称时不使用项目名、组织 / 项目 ID、商品名或 `Team Plan` 兜底。
-- Team Plan 请求必须带 `organizationId` / `projectId`，个人 Coding Plan 请求不带团队上下文。
+## Provider / Source rules
+
+An available Coding Plan provider must satisfy:
+
+- provider id is `zaiCodingPlan` or `bigmodelCodingPlan`.
+- provider enabled.
+- provider apiKey non-empty.
+
+Rules:
+
+- The personal Coding Plan source comes from the active entitlement, and the tab label defaults to
+  `Coding Plan`; if several personal sources exist at once, they can be distinguished by provider name.
+- A Team Plan source comes from a subscribed enterprise plan project, and the tab label uses only the
+  organization name; when the organization name is missing, the project name, organization / project ID,
+  product name or `Team Plan` is not used as a fallback.
+- A Team Plan request must carry `organizationId` / `projectId`, and a personal Coding Plan request carries no team context.

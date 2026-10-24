@@ -1,18 +1,24 @@
 # message_completion provider_name
 
-## 背景
+`message_completion` previously reported only `model_provider`, which for custom providers is an
+internal provider id or uuid and cannot be analyzed by real request hostname.
 
-`message_completion` 之前只上报 `model_provider`。自定义 provider 场景下该字段通常是内部 provider id 或 uuid，无法直接按真实请求域名做分析。
+## Rules
 
-## 方案
+- Keep `model_provider` for existing data-warehouse compatibility.
+- `provider_name` is new: the hostname of the provider endpoint only — no protocol, path, query,
+  header or API key.
+- The initial send snapshot parses the hostname from the current provider registry endpoint
+  `baseURL`.
+- On `model_request_started`, if the event carries `baseURL`, the snapshot is overwritten with the
+  hostname of the real request `baseURL`.
+- `send_btn` and `message_completion` share one prompt telemetry extraDetail; first send, follow-up
+  and queued sends all carry the same initial `provider_name` snapshot in the send event.
+- When the URL cannot be parsed, leave the field empty; never report an internal uuid or raw
+  endpoint as hostname.
 
-- 保留 `model_provider` 兼容既有数仓口径。
-- 新增 `provider_name`，当前取 provider endpoint 的 hostname，只上报 hostname，不包含 protocol、path、query、header 或 API key。
-- 初始发送快照从当前 provider registry 的 endpoint `baseURL` 解析 hostname。
-- 运行时收到 `model_request_started` 时，如果事件带 `baseURL`，以真实请求 `baseURL` 的 hostname 覆盖发送快照。
-- `send_btn` 与 `message_completion` 共用同一份 prompt telemetry extraDetail；首发、续聊和队列发送都会在 send 事件里带同一个 `provider_name` 初始快照。
-- 无法解析 URL 时字段留空，避免把内部 uuid 或原始 endpoint 当 hostname 上报。
+## Scope
 
-## 影响面
-
-该变更只影响 UI 遥测 extraDetail，不修改 app-agent 协议和任务流语义。桌面 continuous 与手机 web-remote replayable 都复用同一 prompt telemetry 状态，`provider_name` 作为普通维度字段随现有 `message_completion` 上报。
+UI telemetry extraDetail only; the app-agent protocol and task flow are unchanged. Desktop
+continuous and mobile web-remote replayable share the same prompt telemetry state, and
+`provider_name` reports as a plain dimension on the existing `message_completion`.

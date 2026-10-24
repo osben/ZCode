@@ -16,21 +16,15 @@ MCP server rows present ownership scope as compact metadata beside the server na
 
 Plugin-provided MCP rows show plugin ownership beside the MCP server name.
 
-- Plugin ownership由所在分组标题表达，行内不重复显示 Plugin badge 或 marketplace。
+- Plugin ownership is expressed by the group title; rows do not repeat a Plugin badge or marketplace.
 - Plugin names use the canonical display-name formatter, including converting slug-like names into title-cased words.
-- Plugin MCP 按稳定 `pluginId` 分组；同名不同 id 不合并。Plugin 分组按规范化 display name 排序，组内待处理项优先，其余保持声明顺序。
+- Plugin MCP is grouped by stable `pluginId`; same-name different-id entries are not merged. Plugin groups sort by normalized display name; pending items come first within a group, the rest keep declaration order.
 - Runtime status is represented only by the status dot and its hover explanation; plugin MCP rows do not repeat status as a text badge. Tool count remains separate metadata.
-- Plugin MCP names reuse the configured-server status dot: connected is green, connecting is a yellow spinner, errors are red, disconnected or unknown is tertiary foreground, and authorization-required is a static yellow dot. Plugin-disabled is part of this status resolution and takes precedence over stale runtime state, always rendering a static tertiary-foreground dot.
+- Plugin MCP names reuse the configured-server status dot: connected is green, connecting is a yellow spinner, errors are red, disconnected or unknown is tertiary foreground, and authorization-required is a static yellow dot. Plugin-disabled is part of this status resolution, takes precedence over stale runtime state, and always renders a static tertiary-foreground dot.
 
-Configured、Plugin MCP 共用一套失败展示：按 `failureKind` 国际化的摘要使用普通次要文字颜色，
-错误状态只由 status dot 使用红色。原始 `error` 通过摘要后方的小型信息按钮按需在 Popover 中显示；
-服务端 request id 已作为 ` - <requestId>` 后缀合并到这段可选择复制的详情文本，不再单独展示或提供第二个复制按钮。不得从 error 文本反解业务分类。
-连接成功、重新连接或 workspace 切换必须清除旧诊断。
+Configured and plugin MCP share one failure display: a `failureKind`-localized summary uses normal secondary text color, and the error state colors only the status dot red. The raw `error` is shown on demand in a Popover via a small info button after the summary; the server request id is appended to that selectable detail text as ` - <requestId>` instead of being shown separately or getting a second copy button. Never reverse-derive business classification from the error text.
+A successful connection, reconnection, or workspace switch must clear old diagnostics.
 
-官方 Server MCP 的 JSON-RPC 错误码会先转换为稳定的设置页分类：`1006` 显示“未登录，请先登录
-ZCode”，`3101` 显示“当前账号没有 Coding Plan，请先购买或配置 Coding Plan”；这两类提示不再
-显示为笼统的“协议请求失败”。
+Official Server MCP JSON-RPC error codes are first mapped to stable settings-page categories: `1006` shows "未登录，请先登录 ZCode" (not logged in, log in to ZCode first) and `3101` shows "当前账号没有 Coding Plan，请先购买或配置 Coding Plan" (this account has no Coding Plan; purchase or configure one first); neither is shown as a generic "protocol request failed".
 
-MCP、Skills、Commands 共用 `SettingsResourceGroupHeader` 与 `SettingsResourceList`：分组间
-`space-y-6`、组内 `space-y-4`、标题 `h-7 text-ui-base`、数量 `text-ui-sm`、列表
-`rounded-xl bg-surface`，行间使用独立 `h-px bg-border/50`。
+MCP, Skills, and Commands share `SettingsResourceGroupHeader` and `SettingsResourceList`: `space-y-6` between groups, `space-y-4` inside a group, `h-7 text-ui-base` titles, `text-ui-sm` counts, `rounded-xl bg-surface` lists, and standalone `h-px bg-border/50` row separators.

@@ -51,13 +51,14 @@ Agent/runtime retry event
   `chat.apiRetryStatus`. Moving the status into the timeline keeps the former
   composer copy: `重新连接中... x/y` / `Reconnecting... x/y`.
 
-## Planned presentation threshold (2026-08-17)
+## Presentation threshold (2026-08-17)
 
-当 `apiRetry.attempt <= 2` 时，UI 不显示重连次数，也不显示
-`重新连接中... x/y` 文案；当前 running turn 继续使用同一个 `ChatLoading` 槽位，
-让用户把前两次短暂恢复视为普通加载。`attempt >= 3` 才显示重连文案，计数仍保持
-现有用户口径（例如 `3/10`）。这里的 `attempt` 是投影层已经转换后的“第几次重试”，
-不是原始 `maxAttempts` 总尝试次数。
+When `apiRetry.attempt <= 2`, the UI shows neither the reconnect count nor the
+`重新连接中... x/y` copy; the current running turn keeps using the same
+`ChatLoading` slot, so the user sees the first two brief recoveries as ordinary
+loading. The reconnect copy shows only at `attempt >= 3`, and the count keeps the
+existing user-facing form (for example `3/10`). Here `attempt` is the "n-th retry"
+already converted by the projection layer, not the raw `maxAttempts` total attempts.
 
 ```text
 ProductProjection.control.apiRetry
@@ -71,11 +72,12 @@ ProductProjection.control.apiRetry
   current live turn only
 ```
 
-该门槛只存在于 timeline presentation；不得在
-`normalizeZCodeApiRetryStatus`、`ProductProjection`、service tracker 或 protocol schema
-中把 1/2 次重试改成 `null`，否则会丢失恢复态，影响 snapshot、desktop continuous 和
-mobile replayable 的恢复一致性。`attempt <= 2` 且当前 turn 被权限/问答/maintenance
-阻塞时，仍遵守现有 gating，不额外显示 generic loading。
+The threshold exists only in the timeline presentation. It must not turn the
+1st/2nd retry into `null` in `normalizeZCodeApiRetryStatus`, `ProductProjection`,
+the service tracker or the protocol schema, otherwise the recovery state is lost
+and snapshot, desktop continuous and mobile replayable recovery consistency
+breaks. When `attempt <= 2` and the current turn is blocked by permission/Q&A/
+maintenance, the existing gating still applies and no generic loading is shown extra.
 
 ## State lifecycle
 
@@ -165,15 +167,17 @@ one CLI projection -----+
 
 ## Implementation status (2026-08-17)
 
-1. 已在 `packages/ui/src/v4/ConversationTurnGroup.tsx` 的
-   `TurnChatLoadingSlot` 中增加 presentation-only 的
-   `visibleRetryStatus`：`attempt=1/2` 回退到 `ChatLoading`，`attempt>=3` 才
-   进入 `ChatApiRetryStatus`；阻塞交互的既有 loading gate 保持不变。
-2. 已在 `packages/ui/test/v4ConversationTurnGroup.test.ts` 覆盖 attempts `1`、`2`、
-   `3`，以及阻塞交互下的 loading/retry 互斥。
-3. `ChatApiRetryStatus`、projection normalization、runtime snapshot、协议 schema、
-   i18n 和 retry lifecycle 均未修改；SAT25 fixture/manifest 只增加 Main 的第二、
-   第三次 429，使 UI 可观察到隐藏早期尝试与可见 `3/10`。
-4. 验证结果：focused UI test 53/53、`pnpm typecheck`、`pnpm lint`（0 error）和
-   conversation coverage audit 通过。SAT25 WDIO E2E 已完成构建，但当前环境缺少
-   可下载的 macOS arm64 Chromedriver，启动阶段失败，待具备 driver 后复跑。
+1. `packages/ui/src/v4/ConversationTurnGroup.tsx` `TurnChatLoadingSlot` has a
+   presentation-only `visibleRetryStatus`: `attempt=1/2` falls back to
+   `ChatLoading` and only `attempt>=3` enters `ChatApiRetryStatus`; the existing
+   loading gate for blocking interactions is unchanged.
+2. `packages/ui/test/v4ConversationTurnGroup.test.ts` covers attempts `1`, `2`,
+   `3` and the loading/retry mutual exclusion under a blocking interaction.
+3. `ChatApiRetryStatus`, projection normalization, runtime snapshot, protocol
+   schema, i18n and retry lifecycle are unchanged; the SAT25 fixture/manifest
+   only adds Main's second and third 429 so the UI can observe the hidden early
+   attempts and the visible `3/10`.
+4. Verification: focused UI test 53/53, `pnpm typecheck`, `pnpm lint` (0
+   errors) and the conversation coverage audit passed. The SAT25 WDIO E2E built
+   but failed at startup because this environment lacked a downloadable macOS
+   arm64 Chromedriver; rerun once a driver is available.

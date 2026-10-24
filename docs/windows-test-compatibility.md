@@ -1,123 +1,132 @@
-# Windows 单元测试兼容规范（spec）
+# Windows unit test compatibility spec
 
-## 背景
+## Background
 
-Windows 开发机上 `pnpm test` 曾大面积失败（56 文件 / 161 用例）并间歇性以
-`0xC0000005`（ACCESS_VIOLATION）崩溃退出。逐用例定性后约 97% 是 Windows 环境兼容
-问题，分 8 类根因；本规范记录每类根因的修复方式与今后写测试必须遵守的规则。
-分支：`fix/windows-unit-test-compat`。
+On Windows dev machines `pnpm test` once failed widely (56 files / 161 cases) and intermittently crashed
+with `0xC0000005` (ACCESS_VIOLATION). Classifying case by case, about 97% were Windows environment
+compatibility problems in 8 root-cause classes; this spec records the fix for each class and the rules tests
+must follow from now on. Branch: `fix/windows-unit-test-compat`.
 
-## rebase 后状态（2026-08-24，基线 origin/staging c8c15b8d02）
+## State after rebase (2026-08-24, baseline origin/staging c8c15b8d02)
 
-rebase 到最新 staging 后全量单测 **9 失败 / 12444 通过**，无崩溃。剩余构成：
+After rebasing onto the latest staging, the full unit test run was **9 failed / 12444 passed**, with no crash.
+Remaining composition:
 
-| 类别 | 数量 | 说明 |
-| --- | --- | --- |
-| Windows 进程树回收残余 | 3 | `zcodeAgentProcessManager`；lifecycle fixtures 工作已把该项从 8 修到 3 |
-| staging 存量漂移（任何平台都挂） | 3 | settings MCP/skill/subagent scope badge 的 `formatCanonicalPluginName` 断言；`a9263f3d03` 从列表组件移除该调用但未同步测试，需业务定性 |
-| 跨平台漂移 | 2 | `feedbackHttpClient`、`stdioDesktopPresentationSurface`（见下） |
-| flaky（负载超时） | 1 | `appUsagePanel`，单独运行通过 |
+| Category                                           | Count | Note                                                                                                                                                                                     |
+| -------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows process-tree reclaim residue               | 3     | `zcodeAgentProcessManager`; the lifecycle fixtures work took this from 8 to 3                                                                                                            |
+| staging pre-existing drift (fails on any platform) | 3     | settings MCP/skill/subagent scope badge `formatCanonicalPluginName` assertions; `a9263f3d03` removed the call from the list component without syncing the tests, needs a business ruling |
+| cross-platform drift                               | 2     | `feedbackHttpClient`, `stdioDesktopPresentationSurface` (see below)                                                                                                                      |
+| flaky (load timeout)                               | 1     | `appUsagePanel`, passes when run alone                                                                                                                                                   |
 
-rebase 附带处理：staging 的 CUA 单包合并（broker 51 文件并入 `@zcode/zcode-cua`）
-移除了 `launchSocketPath` / `reservedTransport`（rendezvous `.pending` 让渡机制），
-本地 windowsCuaDevHelperHost / node.ts 与相关测试已对齐新 API（Windows named pipe
-无 fs 让渡语义，socketPath 即唯一事实源；caller_timeout 一律 warming up fail-closed）。
+Handled along with the rebase: staging's CUA single-package merge (the 51 broker files folded into
+`@zcode/zcode-cua`) removed `launchSocketPath` / `reservedTransport` (the rendezvous `.pending` handover
+mechanism); the local windowsCuaDevHelperHost / node.ts and related tests were aligned to the new API
+(a Windows named pipe has no fs handover semantics, socketPath is the single source of truth; caller_timeout
+always fails closed as warming up).
 
-## 环境事实（先读这一节）
+## Environment facts (read this section first)
 
-| 事实 | 影响 |
-| --- | --- |
-| 仓库 `core.autocrlf=true`，工作区文本为 CRLF | 所有"读源码断言片段"的测试必须换行归一化 |
-| Git Bash 把 `/usr/bin`（GNU tar 1.35）注入 PATH 最前 | GNU tar 把归档参数里的 `C:` 当远程主机；`zip`/`ditto` 等 macOS/Linux 命令缺失 |
-| Windows 真实用户 PATH 中 System32 靠前（bsdtar） | 产品在用户机上用的是 bsdtar；测试环境需在 vitest.setup.ts 恢复同序 |
-| NTFS 不保留 POSIX exec 位（0o111 恒 0） | exec 位断言仅在 POSIX 宿主生效 |
-| Windows 无法删除任何进程 cwd 所在目录；持打开句柄期间 rename 同一目标 EPERM | 子进程生命周期类测试的 teardown 顺序有硬约束 |
-| `node:fs` globSync 在 Windows 返回反斜杠路径 | glob 结果必须归一化后再做前缀过滤 |
-| 产品 control endpoint 在 Windows 使用 `\\\\.\\pipe\\...` named pipe | IPC 测试必须按平台构造 endpoint，禁止因 POSIX socket fixture 在 Windows 报 EACCES 而跳过产品链路 |
+| Fact                                                                                                                             | Impact                                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The repo has `core.autocrlf=true` and workspace text is CRLF                                                                     | Every test that "reads source and asserts a snippet" must normalize newlines                                                                       |
+| Git Bash injects `/usr/bin` (GNU tar 1.35) at the front of PATH                                                                  | GNU tar treats the `C:` in an archive argument as a remote host; macOS/Linux commands such as `zip`/`ditto` are missing                            |
+| The real Windows user PATH has System32 in front (bsdtar)                                                                        | The product uses bsdtar on user machines; the test environment must restore the same order in vitest.setup.ts                                      |
+| NTFS does not keep POSIX exec bits (0o111 is always 0)                                                                           | exec-bit assertions apply only on POSIX hosts                                                                                                      |
+| Windows cannot delete the directory that is any process's cwd; renaming the same target while an open handle is held gives EPERM | Child-process lifecycle tests have a hard constraint on teardown order                                                                             |
+| `node:fs` globSync returns backslash paths on Windows                                                                            | glob results must be normalized before prefix filtering                                                                                            |
+| The product control endpoint on Windows uses a `\\\\.\\pipe\\...` named pipe                                                     | IPC tests must construct the endpoint per platform; the product chain must not be skipped because a POSIX socket fixture reports EACCES on Windows |
 
-## 已修复的 8 类根因与规则
+## The 8 fixed root-cause classes and rules
 
-1. **CRLF（16 用例 / 12 文件）**：新增 `packages/{ui,desktop}/test/readSourceText.ts`
-   （读取后 `\r\n → \n`）。规则：契约测试读源码一律走 `readSourceText` /
-   `readSourceTextAsync`，禁止裸 `readFileSync + toContain(多行片段)`。
-2. **fixture 注入 Windows 路径产生非法 JSON（7 用例）**：占位符替换必须连引号一起
-   换成 `JSON.stringify(path)` 的产物，禁止把裸路径 `replaceAll` 进 JSON 字符串。
-3. **GNU tar / zip / ditto（21 用例）**：
-   - vitest.setup.ts 把 System32 前置到 PATH（Windows 且 System32 有 tar.exe 时）；
-   - 产品 `stageRelease` 在 Windows 用 `tar -a` 写 zip（**真实产品 bug 修复**，
-     Windows 本机没有 `zip` 命令）；POSIX 宿主保留 `zip`；
-   - 测试造 zip fixture 在 Windows 用 `tar -acf`；依赖 `ditto` 的用例 win32 skip。
-4. **Unix socket / macOS 专属链路（约 50 用例）**：CUA 权限代理是 macOS/Linux 专属
-   （.app / LaunchServices / codesign / ps+SIGTERM），相关 describe/it 用
-   `describe.skipIf(process.platform === "win32")` 并注明原因；平台无关的纯逻辑
-   组保留运行。ZCode Server control channel 不属于此类：Windows 产品实现使用 named
-   pipe，测试必须用 `resolveServerLayout(...).controlEndpoint` 或等价的平台 endpoint
-   helper 覆盖。规则：skip 必须写清"产品为什么不支持 Windows"，禁止无注释 skip。
-5. **路径分隔符（约 20 用例）**：mock POSIX 风格输入的用例，期望值与产品同源构造
-   （`join` / `resolve` / `path.delimiter`），验证拼接语义而非分隔符字形。
-   例外：产品硬编码的 POSIX 字面量（如 flatpak 导出路径）期望保持字面量。
-6. **exec 位断言（3 处）**：`if (process.platform !== "win32")` 包裹。
-7. **pdfjs cMapUrl（1 用例，兼 0xC0000005 可疑源头）**：Node factory 用 fs.readFile
-   读取 cMapUrl 拼接路径；跨平台唯一可行形态是"正斜杠 fs 路径 + /"。
-   `file://` URL 与反斜杠路径均不可用（已实测）。
-8. **teardown EPERM**：测试 teardown 的 rm 加 `maxRetries/retryDelay`（Node 官方
-   Windows 文件锁机制）。注意：**retry 救不了长持句柄**（见下）。
+1. **CRLF (16 cases / 12 files)**: added `packages/{ui,desktop}/test/readSourceText.ts` (`\r\n → \n` after
+   reading). Rule: contract tests read source through `readSourceText` / `readSourceTextAsync`; a bare
+   `readFileSync + toContain(multi-line snippet)` is forbidden.
+2. **Fixtures injecting Windows paths produce invalid JSON (7 cases)**: placeholder replacement must replace
+   the quotes too with the product of `JSON.stringify(path)`; a bare path must not be `replaceAll`-ed into a JSON string.
+3. **GNU tar / zip / ditto (21 cases)**:
+   - vitest.setup.ts puts System32 first in PATH (on Windows when System32 has tar.exe);
+   - the product `stageRelease` writes zip with `tar -a` on Windows (**a real product bug fix**, since a
+     Windows machine has no `zip` command); POSIX hosts keep `zip`;
+   - tests building zip fixtures use `tar -acf` on Windows; cases depending on `ditto` are skipped on win32.
+4. **Unix socket / macOS-only chain (about 50 cases)**: the CUA permission proxy is macOS/Linux only (.app /
+   LaunchServices / codesign / ps+SIGTERM); the related describe/it use
+   `describe.skipIf(process.platform === "win32")` with the reason noted; platform-independent pure-logic
+   groups keep running. The ZCode Server control channel does not belong to this class: the Windows product
+   implementation uses a named pipe, and tests must cover it with `resolveServerLayout(...).controlEndpoint`
+   or an equivalent platform endpoint helper. Rule: a skip must state "why the product does not support
+   Windows"; an uncommented skip is forbidden.
+5. **Path separators (about 20 cases)**: for cases mocking POSIX-style input, the expected value is
+   constructed from the same source as the product (`join` / `resolve` / `path.delimiter`), verifying
+   concatenation semantics rather than separator glyphs. Exception: a POSIX literal hardcoded by the product
+   (such as the flatpak export path) keeps the literal in the expectation.
+6. **exec-bit assertions (3 places)**: wrapped in `if (process.platform !== "win32")`.
+7. **pdfjs cMapUrl (1 case, also a suspected source of 0xC0000005)**: the Node factory reads the cMapUrl
+   concatenated path with fs.readFile; the only cross-platform viable form is "forward-slash fs path + /".
+   A `file://` URL and a backslash path both do not work (measured).
+8. **teardown EPERM**: add `maxRetries/retryDelay` to the test teardown rm (Node's official Windows file-lock
+   mechanism). Note: **retry cannot save a long-held handle** (see below).
 
-## 已知未修复（需专项，勿盲目兜底）
+## Known unfixed (needs a dedicated effort; do not blindly paper over)
 
-### Windows 进程树回收不彻底（当前最大剩余失败源）
+### Windows process-tree reclaim incomplete (currently the largest remaining failure source)
 
-现象：`zcodeAgentProcessManager`（8 用例）报
-`runtime process tree cleanup incomplete; remaining pid=...`；其衍生效应使
-`zcodeAgentService(.v4)` / `localServicesRemoteAuthority` / `daemonRegistration`
-（约 32 用例）在 afterEach 删除 temp 目录时 EPERM——**agent 子进程未完全退出时
-cwd 占用目录，Windows 无法删除任何进程的 cwd 目录**（已用最小 repro 验证：
-进程活着 → EPERM 恒失败；退出后 → 删除成功）。
+Symptom: `zcodeAgentProcessManager` (8 cases) reports `runtime process tree cleanup incomplete; remaining pid=...`;
+its derived effect makes `zcodeAgentService(.v4)` / `localServicesRemoteAuthority` / `daemonRegistration`
+(about 32 cases) hit EPERM deleting the temp directory in afterEach: **when the agent child process has not
+fully exited, its cwd occupies the directory, and Windows cannot delete any process's cwd directory** (verified
+with a minimal repro: process alive → EPERM always; after exit → deletion succeeds).
 
-`processTreeTerminator.ts` 的 Windows 分支（taskkill /T /F + fail-closed 身份验证）
-设计语义需完整调查后再动；禁止用"删目录前无脑 sleep"或"跳过身份验证"之类兜底。
-排查入口：`cleanupManagedProcessForShutdown` → `forceTerminateWindowsProcessTree`
-→ `processTreeWaiter` 的残留上报，抓 taskkill 实际输出与退出时序。
+The design semantics of the Windows branch of `processTreeTerminator.ts` (taskkill /T /F + fail-closed identity
+verification) need a full investigation before touching; papering over with "blind sleep before deleting the
+directory" or "skip identity verification" is forbidden. Investigation entry: `cleanupManagedProcessForShutdown`
+→ `forceTerminateWindowsProcessTree` → the residual report of `processTreeWaiter`; capture taskkill's actual
+output and exit timing.
 
-### 产品设计缺口：Project Memory 稳定读 vs Windows rename
+### Product design gap: Project Memory stable read vs Windows rename
 
-`projectMemoryStableRead` 的前提"读取方持 O_RDONLY 句柄、并发方原子 rename 更新"
-在 Windows 不成立：持打开句柄期间 rename 同一目标必然 EPERM（最小 repro 已验证）。
-测试侧已改为"先 rename 后 open"的双平台一致顺序，但**产品在 Windows 真实并发场景
-仍会遇到**；需要设计 Windows 分支（如 rename 失败退化为 copy+truncate，或写入侧
-retry）。修完恢复原 mock 顺序作为回归。
+The premise of `projectMemoryStableRead`, "the reader holds an O_RDONLY handle while a concurrent party
+atomically renames to update", does not hold on Windows: renaming the same target while an open handle is held
+always gives EPERM (verified with a minimal repro). The tests were changed to the platform-consistent order
+"rename first, then open", but **the product will still meet it in real Windows concurrent scenarios**; a
+Windows branch needs design (for example degrade to copy+truncate when rename fails, or a write-side retry).
+After the fix, restore the original mock order as a regression.
 
-### 3 个跨平台真实失败（非 Windows 问题，需业务定性）
+### 3 real cross-platform failures (not Windows problems, need a business ruling)
 
-- `stdioDesktopPresentationSurface`：期望装配传 `presentationSurface: "desktop"`，
-  `packages/server/src` 无该字段（services 层有）；
-- `feedbackHttpClient`：ZCODE_ENV=test 期望 base `zcode.z.ai`，实际 `zcode.z.ai`；
-- `useCodingPlanQuotaResetUi`：mock 收到 `builtin:personal-granted`，期望 `builtin:team`。
+- `stdioDesktopPresentationSurface`: expects assembly to pass `presentationSurface: "desktop"`, but
+  `packages/server/src` has no such field (the services layer has it);
+- `feedbackHttpClient`: with ZCODE_ENV=test expects base `zcode.z.ai`, actual `zcode.z.ai`;
+- `useCodingPlanQuotaResetUi`: the mock received `builtin:personal-granted`, expected `builtin:team`.
 
-### 间歇性 0xC0000005
+### Intermittent 0xC0000005
 
-全量跑时 vitest worker 偶发原生崩溃（本轮复现一次于 pdfjs CMap 用例修复前）。
-pdfjs 修复后未再复现，但未定论；若复现，优先排查该用例与 native 模块加载顺序。
+During full runs a vitest worker occasionally crashes natively (reproduced once this round before the pdfjs
+CMap case fix). It did not reproduce after the pdfjs fix, but is not conclusive; if it reproduces, first
+investigate that case and the native module loading order.
 
-## 安全备注
+## Security note
 
-（历史记录）`changelogAiClient` 失败时 vitest 会把完整真实环境变量（含 API key、
-JWT）打进测试输出；该测试已随 staging `b232f93ab1` 移除自定义 changelog 管线一并
-删除，但"vitest 断言失败会整对象打印 mock 参数"的行为仍在——任何断言 spawn
-options 的测试都应避免把真实 env 塞进可 diff 对象。本地调试日志须及时清理，
-泄露过的凭据建议轮换。
+(Historical.) When `changelogAiClient` failed, vitest printed the full real environment variables (including
+API key and JWT) into the test output; that test was deleted together with the custom changelog pipeline when
+staging `b232f93ab1` removed it, but the behavior "a vitest assertion failure prints the whole mock argument
+object" remains: any test asserting spawn options should avoid putting a real env into a diffable object. Clean
+local debug logs promptly, and rotate credentials that have leaked.
 
-## Rebase 后新增回归约束（2026-08-21）
+## Regression constraints added after the rebase (2026-08-21)
 
-- JSON 格式的 Windows service descriptor 必须先 `JSON.parse` 再断言字段，禁止对
-  序列化文本直接匹配原始反斜杠路径。
-- 测试临时路径必须用 `join` 构造；fixture 中的 PATH 必须用 `path.delimiter` 构造。
-- macOS CUA 测试分为两类：可注入平台的纯逻辑测试显式传 `platform: "darwin"`；
-  依赖真实 Darwin native ABI 的测试组在 Windows 显式 skip，平台无关策略测试继续运行。
-- Repo Wiki JSON 状态必须走共享原子写入工具，避免 cancel/generate 并发读到半截 JSON。
-- Coding Plan history/read 去重必须包含 provider/organization/project scope，禁止只用
-  `usedAt`，否则同一时间戳会让不同套餐互相吞掉上报。
-- 测试通过 timer 模拟后台生命周期写入时，必须持有并在 teardown 前等待该 Promise；
-  临时文件名必须唯一，禁止 fire-and-forget 写入固定 `.test.tmp`。
-- “持有只读句柄时 rename 覆盖目标文件”的原子替换场景只在 POSIX 成立；Windows
-  会按文件共享模式返回 `EPERM`，此类 POSIX 语义测试必须显式隔离，不能伪装成跨平台契约。
+- A JSON-format Windows service descriptor must be `JSON.parse`d before asserting fields; matching raw
+  backslash paths directly against the serialized text is forbidden.
+- Test temp paths must be built with `join`; PATH in fixtures must be built with `path.delimiter`.
+- macOS CUA tests fall into two kinds: pure-logic tests that can inject a platform explicitly pass
+  `platform: "darwin"`; test groups depending on the real Darwin native ABI are explicitly skipped on
+  Windows, and platform-independent policy tests keep running.
+- Repo Wiki JSON state must go through the shared atomic write utility, so cancel/generate concurrency
+  does not read half a JSON.
+- Coding Plan history/read dedupe must include provider/organization/project scope; using only `usedAt` is
+  forbidden, otherwise the same timestamp makes different plans swallow each other's reports.
+- When a test simulates background lifecycle writes through a timer, it must hold that Promise and await
+  it before teardown; temp file names must be unique, and fire-and-forget writes to a fixed `.test.tmp` are forbidden.
+- The atomic-replace scenario "rename over the target while holding a read-only handle" holds only on
+  POSIX; Windows returns `EPERM` per the file sharing mode, so such POSIX-semantics tests must be isolated
+  explicitly and not disguised as a cross-platform contract.

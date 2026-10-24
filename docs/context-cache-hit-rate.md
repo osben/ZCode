@@ -1,6 +1,6 @@
 # Context Cache Hit Rate
 
-ZCode context usage now carries provider cache hit information on the same path as the input toolbar context meter.
+ZCode context usage carries provider cache hit information on the same path as the input toolbar context meter.
 
 The toolbar cache hit rate is a main-session aggregate, not the last provider request.
 
