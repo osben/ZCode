@@ -117,5 +117,5 @@ Before creating a commit, the agent confirms:
 ## References
 
 - [Conventional Commits](https://www.conventionalcommits.org/)
-- [Electron Commit Message Guidelines](../electron/docs/development/pull-requests.md#commit-message-guidelines)
+- Electron Commit Message Guidelines (`docs/electron/docs/development/pull-requests.md#commit-message-guidelines`)
 - Project rules: [AGENTS.md](../../AGENTS.md)
