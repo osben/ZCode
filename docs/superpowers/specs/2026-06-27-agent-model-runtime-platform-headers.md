@@ -19,8 +19,8 @@ Non-goals: no `@zcode/protocol` change (the app does not need to send this to th
 
 Coverage matrix:
 
-| Case ID | Setup | Action | Assertions | Evidence |
-| --- | --- | --- | --- | --- |
-| AMRPH-001 | Default provider config, no custom headers | Create AI SDK provider registry config | Provider headers include `X-Platform`, `X-Os-Category`, `X-Os-Version` | bootstrap unit test |
-| AMRPH-002 | Explicit same-name header in provider config | Create AI SDK provider registry config | User config overrides default platform header | bootstrap unit test |
-| AMRPH-003 | Provider headers already include platform headers | Create `generateText` request options | Platform headers coexist with `x-request-id`, `x-session-id` | adapter options unit test |
+| Case ID   | Setup                                             | Action                                 | Assertions                                                             | Evidence                  |
+| --------- | ------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------- | ------------------------- |
+| AMRPH-001 | Default provider config, no custom headers        | Create AI SDK provider registry config | Provider headers include `X-Platform`, `X-Os-Category`, `X-Os-Version` | bootstrap unit test       |
+| AMRPH-002 | Explicit same-name header in provider config      | Create AI SDK provider registry config | User config overrides default platform header                          | bootstrap unit test       |
+| AMRPH-003 | Provider headers already include platform headers | Create `generateText` request options  | Platform headers coexist with `x-request-id`, `x-session-id`           | adapter options unit test |

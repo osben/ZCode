@@ -218,16 +218,16 @@ runtime, snapshot, queue or owner command.
 
 ## 7. Error semantics
 
-| Scenario                                          | Behavior                                         |
-| ------------------------------------------------- | ------------------------------------------------ |
-| producer contract missing or schema unsupported   | build/staging fails closed                       |
-| entry/native addon missing                        | build/staging fails closed                       |
-| staged digest, PE arch or Electron mismatch       | the runtime resolver refuses to start            |
-| WGC unsupported, locked screen, high integrity or minimized window | explicit unavailable, no blank success |
-| AUMID/exe identity cannot be resolved uniquely    | rejected before the action, no PID guessing      |
-| raw input target is not the unique foreground PID | rejected before the action, no auto-activation, no replay |
-| clipboard not on the interactive desktop or occupancy timeout | bounded failure, no PowerShell fallback |
-| Helper stop/parent exit                           | stop admission, release owned input, close pipe  |
+| Scenario                                                           | Behavior                                                  |
+| ------------------------------------------------------------------ | --------------------------------------------------------- |
+| producer contract missing or schema unsupported                    | build/staging fails closed                                |
+| entry/native addon missing                                         | build/staging fails closed                                |
+| staged digest, PE arch or Electron mismatch                        | the runtime resolver refuses to start                     |
+| WGC unsupported, locked screen, high integrity or minimized window | explicit unavailable, no blank success                    |
+| AUMID/exe identity cannot be resolved uniquely                     | rejected before the action, no PID guessing               |
+| raw input target is not the unique foreground PID                  | rejected before the action, no auto-activation, no replay |
+| clipboard not on the interactive desktop or occupancy timeout      | bounded failure, no PowerShell fallback                   |
+| Helper stop/parent exit                                            | stop admission, release owned input, close pipe           |
 
 ## 8. Test strategy
 
@@ -258,36 +258,36 @@ resource preparation and a package smoke from a temp directory with no historica
 
 ## 9. Impact Brief
 
-| Field        | Conclusion                                                        |
-| ------------ | ----------------------------------------------------------------- |
-| Capability   | Computer Use / desktop-local CUA                                  |
-| Change layer | validation, commit-effect, persistence/build artifact             |
-| Operating mode | planning                                                        |
-| Main entries | desktop local Host, official CUA plugin, Windows packaged runtime |
-| Explicitly not involved | settings UI, conversation stream, mobile replay, remote runtime |
+| Field                   | Conclusion                                                        |
+| ----------------------- | ----------------------------------------------------------------- |
+| Capability              | Computer Use / desktop-local CUA                                  |
+| Change layer            | validation, commit-effect, persistence/build artifact             |
+| Operating mode          | planning                                                          |
+| Main entries            | desktop local Host, official CUA plugin, Windows packaged runtime |
+| Explicitly not involved | settings UI, conversation stream, mobile replay, remote runtime   |
 
 ### 9.1 Surface/owner
 
-| Scenario                  | Entry                                 | Authority                                    | Commit/side effect    | Mode boundary           |
-| ------------------------- | ------------------------------------- | -------------------------------------------- | --------------------- | ----------------------- |
-| Windows desktop local CUA | official plugin + Host                | pinned producer contract + packaged manifest | start a local Helper child | desktop-continuous only |
-| macOS desktop local CUA   | Computer Use settings + signed Helper | signed Helper/TCC                            | install or start Helper.app | unchanged          |
-| mobile remote             | `/remote` shared-host attachment      | existing desktop Host                        | pass-through/attach only | creates no Helper      |
+| Scenario                  | Entry                                 | Authority                                    | Commit/side effect          | Mode boundary           |
+| ------------------------- | ------------------------------------- | -------------------------------------------- | --------------------------- | ----------------------- |
+| Windows desktop local CUA | official plugin + Host                | pinned producer contract + packaged manifest | start a local Helper child  | desktop-continuous only |
+| macOS desktop local CUA   | Computer Use settings + signed Helper | signed Helper/TCC                            | install or start Helper.app | unchanged               |
+| mobile remote             | `/remote` shared-host attachment      | existing desktop Host                        | pass-through/attach only    | creates no Helper       |
 
 ## 10. Case pruning and acceptance
 
-| ID      | Setup                                      | Action                 | Assertions                                  | Status                     |
-| ------- | ------------------------------------------ | ---------------------- | ------------------------------------------- | -------------------------- |
-| WCFR-01 | clean zcode-cua latest main                | build/package          | contract, entry and native source are all in pack | accepted             |
-| WCFR-02 | clean z-code checkout + fixed producer SHA | prepare runtime        | no dependence on ignored files, digest manifest generated | accepted     |
-| WCFR-03 | packaged Windows local desktop             | enable official plugin | Helper ready, 30 tools callable, no orphans on exit | accepted           |
-| WCFR-04 | occluded non-minimized test window         | capture                | WGC returns a non-empty image bound to the HWND | accepted               |
-| WCFR-05 | minimized/locked/high-IL target            | capture/action         | fail closed, no fake success                | accepted                   |
-| WCFR-06 | foreground target changes before raw input | dispatch               | action rejected and no input sent           | accepted                   |
-| WCFR-07 | Unicode clipboard marker                   | write/read/restore     | exact read-back and original value restored | accepted                   |
-| WCFR-08 | packaged Calculator AUMID                  | open/observe           | unique HWND/PID, later state bound to the same app | accepted            |
-| WCFR-09 | macOS/Linux build/tests                    | regression             | existing behavior and 30-tool surface unchanged | accepted               |
-| WCFR-10 | mobile/remote workspace                    | initialize             | no staging or separate Helper started       | pruned: architecture invariant |
+| ID      | Setup                                      | Action                 | Assertions                                                | Status                         |
+| ------- | ------------------------------------------ | ---------------------- | --------------------------------------------------------- | ------------------------------ |
+| WCFR-01 | clean zcode-cua latest main                | build/package          | contract, entry and native source are all in pack         | accepted                       |
+| WCFR-02 | clean z-code checkout + fixed producer SHA | prepare runtime        | no dependence on ignored files, digest manifest generated | accepted                       |
+| WCFR-03 | packaged Windows local desktop             | enable official plugin | Helper ready, 30 tools callable, no orphans on exit       | accepted                       |
+| WCFR-04 | occluded non-minimized test window         | capture                | WGC returns a non-empty image bound to the HWND           | accepted                       |
+| WCFR-05 | minimized/locked/high-IL target            | capture/action         | fail closed, no fake success                              | accepted                       |
+| WCFR-06 | foreground target changes before raw input | dispatch               | action rejected and no input sent                         | accepted                       |
+| WCFR-07 | Unicode clipboard marker                   | write/read/restore     | exact read-back and original value restored               | accepted                       |
+| WCFR-08 | packaged Calculator AUMID                  | open/observe           | unique HWND/PID, later state bound to the same app        | accepted                       |
+| WCFR-09 | macOS/Linux build/tests                    | regression             | existing behavior and 30-tool surface unchanged           | accepted                       |
+| WCFR-10 | mobile/remote workspace                    | initialize             | no staging or separate Helper started                     | pruned: architecture invariant |
 
 ## 11. Commit strategy
 

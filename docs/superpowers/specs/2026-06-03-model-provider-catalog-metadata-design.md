@@ -28,9 +28,7 @@ Current constraints:
 App-side source abstraction; the China LLM catalog is not disguised as `models.dev` schema:
 
 ```ts
-type ModelProviderCatalogSourceId =
-  | "models-dev"
-  | "china-llm-zcode-dev";
+type ModelProviderCatalogSourceId = "models-dev" | "china-llm-zcode-dev";
 
 interface ModelProviderCatalogSource {
   id: ModelProviderCatalogSourceId;

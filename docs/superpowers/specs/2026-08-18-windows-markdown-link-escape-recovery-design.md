@@ -90,6 +90,7 @@ For each `link` / `image` / `definition` node:
    UNC requires only **one** leading backslash: in the source `\\host`, `\\` is itself one punctuation escape
    and parses to a single backslash (verified: `[log](\\build01\share\.logs\run.txt)` →
    `\build01\share.logs\run.txt`). Requiring two would miss every UNC that needs restoring.
+
 2. Skip if `node.title` is non-empty (title syntax is not parsed).
 3. Slice the whole segment from the VFile source using the `node.position` start/end offsets and take the
    destination by node shape:

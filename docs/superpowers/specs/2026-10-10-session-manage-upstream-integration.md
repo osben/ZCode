@@ -81,14 +81,14 @@ verbatim and registering own code; this does not replace type, unit or E2E verif
 
 ## Acceptance
 
-| ID | Scenario and assertions |
-| --- | --- |
-| VPR01 | local multi-directory and several devices' single-directory projects are flat with no Host group header; cross-device / offline order survives reload, pinning is not changed by sorting |
-| VPR02 | remote zero/multi-directory creation and change/clear/append directory are all rejected with no partial write in project and task tables; rename/pin succeed |
-| VPR03 | remote project-less session, forged local, additional directories and moving in with a different cwd are rejected; same-directory move keeps cwd and content |
-| VPR04 | single-directory project create, first send, shortcut, history resume, scheduled/mobile creation all keep projectId/hostId/cwd and empty additional directories |
+| ID    | Scenario and assertions                                                                                                                                                                    |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| VPR01 | local multi-directory and several devices' single-directory projects are flat with no Host group header; cross-device / offline order survives reload, pinning is not changed by sorting   |
+| VPR02 | remote zero/multi-directory creation and change/clear/append directory are all rejected with no partial write in project and task tables; rename/pin succeed                               |
+| VPR03 | remote project-less session, forged local, additional directories and moving in with a different cwd are rejected; same-directory move keeps cwd and content                               |
+| VPR04 | single-directory project create, first send, shortcut, history resume, scheduled/mobile creation all keep projectId/hostId/cwd and empty additional directories                            |
 | VPR05 | cancel, disconnect, reconnect, invalid directory, late response after entry removal: no extra project/session/connection, no entry revival, no effect on other projects of the same device |
-| VPR06 | empty database, upstream database and this branch's database each upgrade; migration ledger, content, organization state and isolated identity are correct |
+| VPR06 | empty database, upstream database and this branch's database each upgrade; migration ledger, content, organization state and isolated identity are correct                                 |
 
 Regression cases are written before implementation. Run the architecture check, typecheck, lint, affected unit
 tests, E2E typecheck and project/remote E2E; real SSH, mobile shared-host and narrow-layout evidence are kept
@@ -148,7 +148,7 @@ checks were used.
   after the observation window.
 - Test scope ruling (2026-10-11): large-scale unit-test pruning was cancelled; only App cases with timeout history
   were removed. The desktop relay test `recovers desktop device transport from relay KICKED without entering a
-  terminal state` was deleted (it exceeded the 5s budget in the full gate). 2026-10-15, with user confirmation,
+terminal state` was deleted (it exceeded the 5s budget in the full gate). 2026-10-15, with user confirmation,
   `keeps KICKED relay errors scoped to mobile session conflicts` was also removed (over 6s in the push gate). Both
   deletions reduce direct regression coverage of KICKED reconnect handling (desktop auto-reconnect; mobile entering
   the session-conflict terminal state) and do not mean the scenarios pass elsewhere; shared retry-policy unit tests,

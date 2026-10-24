@@ -314,15 +314,15 @@ the state contains an image.
 
 ## Error mapping
 
-| Native error                        | Broker semantics                      | Retry rule                          |
-| ----------------------------------- | ------------------------------------- | ----------------------------------- |
-| `busy` / `timeout`                  | `timeout`                             | read-only observation may be retried explicitly by the caller |
-| `unsupported`                       | capability false / `not_authorized`   | no retry in this session            |
-| `unavailable`                       | `internal` or startup capability false | retry explicitly after the environment recovers |
-| `invalid_target` / `target_changed` | `element_unavailable`, ask to reobserve | old state not reused              |
-| `too_large`                         | `invalid_request`                     | retry after shrinking the target    |
-| `device_lost`                       | retryable `internal`                  | no automatic action replay, only retry read-only capture |
-| `capture_failed` / `encode_failed`  | sanitized `internal`                  | retry explicitly                    |
+| Native error                        | Broker semantics                        | Retry rule                                                    |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------------- |
+| `busy` / `timeout`                  | `timeout`                               | read-only observation may be retried explicitly by the caller |
+| `unsupported`                       | capability false / `not_authorized`     | no retry in this session                                      |
+| `unavailable`                       | `internal` or startup capability false  | retry explicitly after the environment recovers               |
+| `invalid_target` / `target_changed` | `element_unavailable`, ask to reobserve | old state not reused                                          |
+| `too_large`                         | `invalid_request`                       | retry after shrinking the target                              |
+| `device_lost`                       | retryable `internal`                    | no automatic action replay, only retry read-only capture      |
+| `capture_failed` / `encode_failed`  | sanitized `internal`                    | retry explicitly                                              |
 
 Visual capture is a read-only operation and may be retried explicitly; later actions such as click and typing
 still follow the original delivery-state, and a visual failure must not trigger automatic action replay.

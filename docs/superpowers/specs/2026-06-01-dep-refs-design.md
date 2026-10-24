@@ -34,12 +34,26 @@ JSON schema for a symbol query:
 
 ```json
 {
-  "symbol": { "name": "createBotSession", "kind": "function", "file": "packages/services/src/bots/botsService.ts", "line": 12 },
+  "symbol": {
+    "name": "createBotSession",
+    "kind": "function",
+    "file": "packages/services/src/bots/botsService.ts",
+    "line": 12
+  },
   "references": [
-    { "file": "packages/services/src/node.ts", "line": 42, "col": 8, "snippet": "const session = await createBotSession(opts)" }
+    {
+      "file": "packages/services/src/node.ts",
+      "line": 42,
+      "col": 8,
+      "snippet": "const session = await createBotSession(opts)"
+    }
   ],
   "reExports": [
-    { "file": "packages/services/src/index.ts", "line": 5, "snippet": "export { createBotSession } from './bots/botsService'" }
+    {
+      "file": "packages/services/src/index.ts",
+      "line": 5,
+      "snippet": "export { createBotSession } from './bots/botsService'"
+    }
   ],
   "notes": ["Static analysis only. Dynamic import() and string-based usage not detected."]
 }
@@ -57,16 +71,16 @@ covers the batch use case.
 
 ## Edge cases
 
-| Case | Behavior |
-|---|---|
-| `export *` | resolved through `getExportedDeclarations` |
-| `import { foo as bar }` alias | tracked by `findReferences` |
-| type-only vs value imports | both found |
-| multi-hop re-export chains (a → b → c) | traversed |
-| same-name overloads (multiple declarations) | references merged and deduplicated |
-| missing file / symbol | exit code 1, clear stderr error |
-| dynamic `import()` string paths | not detected; noted in output |
-| no symbol argument | hint to run `--list-exports` first |
+| Case                                        | Behavior                                   |
+| ------------------------------------------- | ------------------------------------------ |
+| `export *`                                  | resolved through `getExportedDeclarations` |
+| `import { foo as bar }` alias               | tracked by `findReferences`                |
+| type-only vs value imports                  | both found                                 |
+| multi-hop re-export chains (a → b → c)      | traversed                                  |
+| same-name overloads (multiple declarations) | references merged and deduplicated         |
+| missing file / symbol                       | exit code 1, clear stderr error            |
+| dynamic `import()` string paths             | not detected; noted in output              |
+| no symbol argument                          | hint to run `--list-exports` first         |
 
 ## Failure modes
 

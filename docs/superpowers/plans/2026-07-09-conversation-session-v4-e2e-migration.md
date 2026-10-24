@@ -69,45 +69,45 @@ catalog product semantics
 
 ## P0 Formal Old-Helper Triage (historical baseline of 28, superseded by the 32-spec inventory)
 
-| # | Old formal spec | Action |
-|---|---|---|
-| 1 | `agent-step-message-scope` | Rewrite as v4 formal with projection/timeline + provider request assertions; keep as turn-scoping guard. |
+| #   | Old formal spec                                                       | Action                                                                                                                                                |
+| --- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `agent-step-message-scope`                                            | Rewrite as v4 formal with projection/timeline + provider request assertions; keep as turn-scoping guard.                                              |
 | 2-7 | `ask-user-question-*` (custom click/enter/mixed, keyboard navigation) | Merge into v4 AskUserQuestion custom-answer and keyboard-navigation specs; keep manual-typing path (IME regressions) and click path as distinct rows. |
-| 8 | `background` | Split: keep notification/queue/stop/goal semantics as smaller v4 specs + native projection tests; drop obsolete old-row rendering assertions. |
-| 9 | `bash-read-state` | Rewrite against v4 tool cards + filesystem evidence; keep formal. |
-| 10 | `built-in-subagent-model-overrides` | Rewrite as v4 send + child provider request inspection. |
-| 11 | `composer-prefix-routing` | Rewrite only uncovered `@`/`$`/subagent/skill routing; merge duplicated slash coverage. |
-| 12 | `file-tools-atomic-write` | Rewrite with filesystem mode assertions; provider fixture local. |
-| 13 | `fork-merged-assistant` | Keep formal; priority failing probe for `E10` until it passes with provider replay + handoff file evidence. |
-| 14 | `markdown-table-layout` | Rewrite only v4 `MessageResponse` behaviors still present; move pure visual parity to UI component tests. |
-| 15 | `model-switch-image-strip` | Rewrite with v4 composer/model controls + provider request verification. |
-| 16 | `native-file-picker-attachments` | Rewrite with v4 composer attachment surfaces; desktop-only picker stays formal. |
-| 17 | `oversized-inline-image-attachment` | Rewrite with v4 attachment validation; keep provider non-send assertion. |
-| 18 | `plan-approval-feedback-user-message` | Rewrite with v4 plan approval dialog + user row assertion. |
-| 19 | `plan-file-compact-continuity` | Rewrite with v4 compact flow; desktop continuous compact must not adopt replayable gap recovery. |
-| 20 | `plan-mode-capabilities` | Split into runtime policy assertions + one v4 UI decline-flow spec. |
-| 21 | `plan-mode-mcp-permission` | Rewrite or move to native protocol test; keep permission dialog evidence only for the visible path. |
-| 22 | `read-session-context-timeout` | Prefer native runtime/protocol test + one v4 timeline completion assertion. |
-| 23 | `subagent-interaction-delegate` | Rewrite against v4 interaction/permission dialogs; preserve owner/delegation semantics. |
-| 24 | `subagent-prompt-assembly` | Rewrite as v4 send/provider request evidence. |
-| 25 | `subagent-provider-registry-cold-start` | Rewrite with v4 send helper + registry evidence; keep cold-start isolation fixture. |
-| 26 | `title-generation-timeout` | Rewrite with v4 title/sidebar evidence; generous timeout, deterministic fixture. |
-| 27 | `tool-error-surface` | Rewrite with v4 tool card selectors + sibling completion assertion. |
-| 28 | `webfetch` | Rewrite with v4 tool card + provider/tool-result evidence. |
+| 8   | `background`                                                          | Split: keep notification/queue/stop/goal semantics as smaller v4 specs + native projection tests; drop obsolete old-row rendering assertions.         |
+| 9   | `bash-read-state`                                                     | Rewrite against v4 tool cards + filesystem evidence; keep formal.                                                                                     |
+| 10  | `built-in-subagent-model-overrides`                                   | Rewrite as v4 send + child provider request inspection.                                                                                               |
+| 11  | `composer-prefix-routing`                                             | Rewrite only uncovered `@`/`$`/subagent/skill routing; merge duplicated slash coverage.                                                               |
+| 12  | `file-tools-atomic-write`                                             | Rewrite with filesystem mode assertions; provider fixture local.                                                                                      |
+| 13  | `fork-merged-assistant`                                               | Keep formal; priority failing probe for `E10` until it passes with provider replay + handoff file evidence.                                           |
+| 14  | `markdown-table-layout`                                               | Rewrite only v4 `MessageResponse` behaviors still present; move pure visual parity to UI component tests.                                             |
+| 15  | `model-switch-image-strip`                                            | Rewrite with v4 composer/model controls + provider request verification.                                                                              |
+| 16  | `native-file-picker-attachments`                                      | Rewrite with v4 composer attachment surfaces; desktop-only picker stays formal.                                                                       |
+| 17  | `oversized-inline-image-attachment`                                   | Rewrite with v4 attachment validation; keep provider non-send assertion.                                                                              |
+| 18  | `plan-approval-feedback-user-message`                                 | Rewrite with v4 plan approval dialog + user row assertion.                                                                                            |
+| 19  | `plan-file-compact-continuity`                                        | Rewrite with v4 compact flow; desktop continuous compact must not adopt replayable gap recovery.                                                      |
+| 20  | `plan-mode-capabilities`                                              | Split into runtime policy assertions + one v4 UI decline-flow spec.                                                                                   |
+| 21  | `plan-mode-mcp-permission`                                            | Rewrite or move to native protocol test; keep permission dialog evidence only for the visible path.                                                   |
+| 22  | `read-session-context-timeout`                                        | Prefer native runtime/protocol test + one v4 timeline completion assertion.                                                                           |
+| 23  | `subagent-interaction-delegate`                                       | Rewrite against v4 interaction/permission dialogs; preserve owner/delegation semantics.                                                               |
+| 24  | `subagent-prompt-assembly`                                            | Rewrite as v4 send/provider request evidence.                                                                                                         |
+| 25  | `subagent-provider-registry-cold-start`                               | Rewrite with v4 send helper + registry evidence; keep cold-start isolation fixture.                                                                   |
+| 26  | `title-generation-timeout`                                            | Rewrite with v4 title/sidebar evidence; generous timeout, deterministic fixture.                                                                      |
+| 27  | `tool-error-surface`                                                  | Rewrite with v4 tool card selectors + sibling completion assertion.                                                                                   |
+| 28  | `webfetch`                                                            | Rewrite with v4 tool card + provider/tool-result evidence.                                                                                            |
 
 ## Pending Old-Helper Batch Order
 
-| Batch | Count | Scope / decision |
-|---|---:|---|
-| main-queue-stop | 11 | Triage first; merge into `conversation-session-v4-queue*` / `-stop-queue*` where covered. |
-| compact | 7 | Migrate after plan-mode P0 cases share helpers. |
-| goal | 6 | Migrate with the background split (goal verifier interacts with background work). |
-| fork-edit | 3 | Handle `E10` failing fork case first, then port remaining rows. |
-| model-provider | 22 | Migrate after image-strip and subagent provider cases establish fixture patterns. |
-| tools-subagent-plan | 21 | Migrate in small semantic groups; no giant resurrection PR. |
-| composer-rendering | 5 | Migrate only uncovered rows after the v4 composer/toolbar/table audit. |
-| other | 7 | Triage after the formal gate is clean. |
-| multi-session-config | 1 | Keep pending until v4 multi-pane/session binding coverage is confirmed. |
+| Batch                | Count | Scope / decision                                                                          |
+| -------------------- | ----: | ----------------------------------------------------------------------------------------- |
+| main-queue-stop      |    11 | Triage first; merge into `conversation-session-v4-queue*` / `-stop-queue*` where covered. |
+| compact              |     7 | Migrate after plan-mode P0 cases share helpers.                                           |
+| goal                 |     6 | Migrate with the background split (goal verifier interacts with background work).         |
+| fork-edit            |     3 | Handle `E10` failing fork case first, then port remaining rows.                           |
+| model-provider       |    22 | Migrate after image-strip and subagent provider cases establish fixture patterns.         |
+| tools-subagent-plan  |    21 | Migrate in small semantic groups; no giant resurrection PR.                               |
+| composer-rendering   |     5 | Migrate only uncovered rows after the v4 composer/toolbar/table audit.                    |
+| other                |     7 | Triage after the formal gate is clean.                                                    |
+| multi-session-config |     1 | Keep pending until v4 multi-pane/session binding coverage is confirmed.                   |
 
 ## Open Tasks (3-8)
 

@@ -31,12 +31,12 @@ provider wire body (no ZCode-generated extra_body)
 
 ZCode auto-generated OpenAI-compatible parameters:
 
-| Model contract | Levels | Canonical option | Final wire |
-| --- | --- | --- | --- |
-| GLM-5.2 | `max` / `high` / `nothink` | `reasoningEffort=max/high/none` | `reasoning_effort=max/high/none` |
-| DeepSeek V4 auto-inference | `high/max` | `thinking.type=enabled` + `reasoningEffort=<level>` | `thinking.type=enabled` + `reasoning_effort=<level>` |
-| Qwen thinking toggle | `enabled/off` | `enable_thinking=true/false` | `enable_thinking=true/false` |
-| Kimi/MiMo etc. thinking toggle | `enabled/off` | `thinking.type=enabled/disabled` | `thinking.type=enabled/disabled` |
+| Model contract                 | Levels                     | Canonical option                                    | Final wire                                           |
+| ------------------------------ | -------------------------- | --------------------------------------------------- | ---------------------------------------------------- |
+| GLM-5.2                        | `max` / `high` / `nothink` | `reasoningEffort=max/high/none`                     | `reasoning_effort=max/high/none`                     |
+| DeepSeek V4 auto-inference     | `high/max`                 | `thinking.type=enabled` + `reasoningEffort=<level>` | `thinking.type=enabled` + `reasoning_effort=<level>` |
+| Qwen thinking toggle           | `enabled/off`              | `enable_thinking=true/false`                        | `enable_thinking=true/false`                         |
+| Kimi/MiMo etc. thinking toggle | `enabled/off`              | `thinking.type=enabled/disabled`                    | `thinking.type=enabled/disabled`                     |
 
 The GLM-5.2 UI key `nothink` is unchanged and maps to `none` only at the provider option boundary; no new alias or UI level. DeepSeek V4's built-in exact catalog can show `off/high/max`; the row above covers only auto-inference without an exact catalog. `low/medium` normalize to `high` as legacy config values only — they are not canonical presentable levels.
 

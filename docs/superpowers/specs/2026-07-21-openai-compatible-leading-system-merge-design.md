@@ -2,13 +2,13 @@
 
 ## Feature/change summary
 
-| Field | Value |
-| --- | --- |
-| Change | Before an OpenAI-compatible request is sent, consecutive leading system messages are merged into one |
+| Field                 | Value                                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Change                | Before an OpenAI-compatible request is sent, consecutive leading system messages are merged into one                      |
 | User-visible surfaces | No direct UI change; legacy chat templates no longer error on, or keep only the last of, multiple leading system messages |
-| Existing code owners | `apps/zcode-cli/packages/adapters/src/model/transform.ts`, `system-message-compat.ts` |
-| Evidence | Adapter unit tests and the real `@ai-sdk/openai-compatible` fake-fetch wire body |
-| Out of scope | Anthropic, OpenAI Responses, gateway/custom provider, core ContextBuilder, mid-conversation system semantics |
+| Existing code owners  | `apps/zcode-cli/packages/adapters/src/model/transform.ts`, `system-message-compat.ts`                                     |
+| Evidence              | Adapter unit tests and the real `@ai-sdk/openai-compatible` fake-fetch wire body                                          |
+| Out of scope          | Anthropic, OpenAI Responses, gateway/custom provider, core ContextBuilder, mid-conversation system semantics              |
 
 ## Background and root cause
 
@@ -58,13 +58,13 @@ user ... system(mid-conversation) ───────────────�
 
 ## Domain scope and high-risk cross-products
 
-| Domain | Include? | Decision |
-| --- | --- | --- |
-| Model/provider/runtime config | yes | `providerKind` is the only switch; the adapter owns the transform |
-| Conversation/session behavior | limited | Only message order is protected; session/history/persistence are untouched |
-| Mobile remote/replayable | no | Desktop and mobile ultimately share the agent adapter; delivery semantics unchanged |
-| Workspace identity | no | No workspace-related fields are read |
-| Protocol/schema | no | `ModelInputMessage` and `@zcode/protocol` are unchanged |
+| Domain                        | Include? | Decision                                                                            |
+| ----------------------------- | -------- | ----------------------------------------------------------------------------------- |
+| Model/provider/runtime config | yes      | `providerKind` is the only switch; the adapter owns the transform                   |
+| Conversation/session behavior | limited  | Only message order is protected; session/history/persistence are untouched          |
+| Mobile remote/replayable      | no       | Desktop and mobile ultimately share the agent adapter; delivery semantics unchanged |
+| Workspace identity            | no       | No workspace-related fields are read                                                |
+| Protocol/schema               | no       | `ModelInputMessage` and `@zcode/protocol` are unchanged                             |
 
 The only high-risk cross-product is provider kind x system position x system count. Client, workspace and
 stream/generate are all collapsed by the same adapter normalization function and are not separate product
@@ -72,14 +72,14 @@ states.
 
 ## Candidate combinations and pruning
 
-| Candidate ID | Provider | Input shape | Expected effect | Status |
-| --- | --- | --- | --- | --- |
-| OCS-01 | OpenAI-compatible | 0 system | Converted as is | accepted |
-| OCS-02 | OpenAI-compatible | 1 leading system | Converted as is | accepted |
-| OCS-03 | OpenAI-compatible | 2+ leading system | Merged into one, order and text unchanged | accepted |
-| OCS-04 | OpenAI-compatible | system after a user message | Position and content kept, no hoist | accepted |
-| OCS-05 | Anthropic/OpenAI/gateway/custom | 2+ leading system | Not merged | accepted |
-| OCS-06 | generate/stream | Same message input | Same result because both share `toAiSdkMessages` | accepted |
+| Candidate ID | Provider                        | Input shape                 | Expected effect                                  | Status   |
+| ------------ | ------------------------------- | --------------------------- | ------------------------------------------------ | -------- |
+| OCS-01       | OpenAI-compatible               | 0 system                    | Converted as is                                  | accepted |
+| OCS-02       | OpenAI-compatible               | 1 leading system            | Converted as is                                  | accepted |
+| OCS-03       | OpenAI-compatible               | 2+ leading system           | Merged into one, order and text unchanged        | accepted |
+| OCS-04       | OpenAI-compatible               | system after a user message | Position and content kept, no hoist              | accepted |
+| OCS-05       | Anthropic/OpenAI/gateway/custom | 2+ leading system           | Not merged                                       | accepted |
+| OCS-06       | generate/stream                 | Same message input          | Same result because both share `toAiSdkMessages` | accepted |
 
 Pruned: desktop/mobile, local/remote, continuous/replayable, workspace identity. They decide transport or
 runtime ownership before the request enters the adapter and do not change this design's pure
@@ -87,12 +87,12 @@ message/`providerKind` input.
 
 ## Accepted cases
 
-| Case ID | Setup | Action | Assertions | Evidence layers | E2E status |
-| --- | --- | --- | --- | --- | --- |
-| OCS-01/02 | OpenAI-compatible, 0/1 system | Call message transform | Count and content unchanged | unit | adapter unit |
-| OCS-03 | Three leading system + normal history | Call transform and real SDK generate | Wire has one system; later roles/order unchanged | unit + network body | adapter wire |
-| OCS-04 | System inserted after a user message | Call transform | Position and content kept; leading prefix still merges | unit | adapter unit |
-| OCS-05 | Anthropic, two leading system | Call transform | Still two system messages | unit | adapter unit |
+| Case ID   | Setup                                 | Action                               | Assertions                                             | Evidence layers     | E2E status   |
+| --------- | ------------------------------------- | ------------------------------------ | ------------------------------------------------------ | ------------------- | ------------ |
+| OCS-01/02 | OpenAI-compatible, 0/1 system         | Call message transform               | Count and content unchanged                            | unit                | adapter unit |
+| OCS-03    | Three leading system + normal history | Call transform and real SDK generate | Wire has one system; later roles/order unchanged       | unit + network body | adapter wire |
+| OCS-04    | System inserted after a user message  | Call transform                       | Position and content kept; leading prefix still merges | unit                | adapter unit |
+| OCS-05    | Anthropic, two leading system         | Call transform                       | Still two system messages                              | unit                | adapter unit |
 
 No conversation-session E2E catalog/matrix entry is added: the fix adds no user-interaction state, the real
 SDK wire test already covers the final acceptance surface, and desktop E2E would only repeat the adapter

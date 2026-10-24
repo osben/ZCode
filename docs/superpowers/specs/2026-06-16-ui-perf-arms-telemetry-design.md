@@ -47,11 +47,11 @@ Performance constraints (binding):
 
 New/enhanced events:
 
-| name                     | value                | Trigger                                           | Key properties                                                                                                                                                                                                                   |
-| ------------------------ | -------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `perf_ui_turn_breakdown` | `duration_ms`        | Once per prompt completion              | `talk_id`, `message_id`, `model`, `result`, `ttft_ms`, `waiting_ms`, `tool_call_total`, `tool_call_failed`, `agent_step_cnt`, `retry_cnt`, `file_change_cnt`, `generated_code_lines`                                              |
+| name                     | value                | Trigger                                                   | Key properties                                                                                                                                                                                                                    |
+| ------------------------ | -------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `perf_ui_turn_breakdown` | `duration_ms`        | Once per prompt completion                                | `talk_id`, `message_id`, `model`, `result`, `ttft_ms`, `waiting_ms`, `tool_call_total`, `tool_call_failed`, `agent_step_cnt`, `retry_cnt`, `file_change_cnt`, `generated_code_lines`                                              |
 | `plan_request`           | `1` or `duration_ms` | All model network states from `task_network_debug_status` | `request_status`, `request_id`, `task_id`, `input_id`, `query_id`, `event_key`, `attempt`, `max_attempts`, `status_code`, `duration_ms`, `delay_ms`, `idle_ms`, `timeout_ms`, `retryable`, `reason`, `transport`, `provider_kind` |
-| `perf_ui_stream_stall`   | gap ms               | Adjacent body/thought chunk gap over threshold                 | adds `chunk_type` (`message` / `thought`); normal chunks still unrecorded                                                                                                                               |
+| `perf_ui_stream_stall`   | gap ms               | Adjacent body/thought chunk gap over threshold            | adds `chunk_type` (`message` / `thought`); normal chunks still unrecorded                                                                                                                                                         |
 
 Attribution calibers: `perf_ui_message_complete` stays the experience total; `perf_ui_turn_breakdown` flattens per-turn TTFT, permission waits, tool totals/failures, retries for ARMS attribution; `plan_request` (extended from started-only to all low-frequency network states) answers whether slowness comes from retries, failures, provider tail latency, or stream stalls; `perf_ui_stream_stall` remains UI-observed upstream gap, not React jank.
 
@@ -64,8 +64,8 @@ The Bash and Write/Edit fields below must be produced by the agent/tool runtime;
 
 New event:
 
-| name                       | value                                      | Trigger                                                            | Key properties                                                                                                                                                                                                                                                                                                                                                                                          |
-| -------------------------- | ------------------------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| name                       | value                                      | Trigger                                                              | Key properties                                                                                            |
+| -------------------------- | ------------------------------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `perf_ui_tool_call_detail` | `total_ms` or `command_run_ms/fs_write_ms` | Tool terminal state `completed/failed/denied` with `raw.result.perf` | `tool_name`, `status`, `talk_id`, `message_id`, `tool_call_id`, plus all Bash and Write/Edit fields above |
 
 Volume/privacy constraints:
@@ -79,12 +79,12 @@ Volume/privacy constraints:
 
 The ARMS Browser SDK's `longTask` event carries LoAF/rAF attribution in `snapshots` (top script `duration` + `invokerType`), but `snapshots` is unstable SDK metadata that does not reliably land as a queryable SLS dimension, while raw script names/URLs/paths are high-cardinality and leak paths. The main-process `beforeReport` therefore distills the top-5 attributions into low-cardinality fields merged into the same `longTask` event's `properties`, without new events:
 
-| properties field         | Type   | Caliber                                                                                                                                                         |
-| ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `loaf_script_count`     | number | attribution count in SDK `snapshots`, max 5.                                                                                                                |
-| `loaf_top_duration_ms`  | number | max attribution `duration`, rounded to ms, negatives clamped to 0.                                                                                                   |
+| properties field        | Type   | Caliber                                                                                                                                                             |
+| ----------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loaf_script_count`     | number | attribution count in SDK `snapshots`, max 5.                                                                                                                        |
+| `loaf_top_duration_ms`  | number | max attribution `duration`, rounded to ms, negatives clamped to 0.                                                                                                  |
 | `loaf_top_invoker_type` | string | top attribution source: `user-callback` / `event-listener` / `script` / `unknown`. rAF sources without `invokerType` count as `script`; invalid enums as `unknown`. |
-| `loaf_top_share_pct`    | number | integer percent of `loaf_top_duration_ms / longTask.duration`; 0 when the total is missing, non-numeric, or ≤ 0.                                                               |
+| `loaf_top_share_pct`    | number | integer percent of `loaf_top_duration_ms / longTask.duration`; 0 when the total is missing, non-numeric, or ≤ 0.                                                    |
 
 Boundaries: only the SDK's `event_type="longTask"` events are enhanced — no new `sendCustom` events and no change to `group=ui_perf` volume; parse failures, missing `snapshots`, or invalid attributions skip silently without affecting the original report; no raw script names, URLs, file paths, stacks, selectors, or source snippets reach SLS. The summary describes only the largest sampled attribution within one longTask and is not a complete React root cause — judge user impact together with `duration`, `fps`, `source`, and `perf_ui_*` events.
 

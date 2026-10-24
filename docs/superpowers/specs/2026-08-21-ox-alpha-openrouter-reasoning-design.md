@@ -149,39 +149,39 @@ default = max
 
 ### State Owners And Commit Sinks
 
-| State/fact              | Draft/display owner   | Authoritative owner    | Commit command/service    | Persistence/cache    | Evidence                    |
-| ----------------------- | --------------------- | ---------------------- | ------------------------- | -------------------- | --------------------------- |
-| reasoning level candidates | shared model UI    | CLI capability overlay | existing session model config | runtime catalog  | adapter/bootstrap tests     |
-| current thought level   | composer/session      | session runtime        | existing thought switch   | session settings     | existing model switch tests |
-| context/output/types    | model settings draft  | provider registry      | model provider service    | config.json          | invariant-only              |
-| `magic_name`            | remote client/configs | model-provider service | preset sync               | config-version cache | service tests               |
-| reasoning profile       | none (hidden fact)    | remote model config    | provider registry         | config.json          | storage/protocol tests      |
+| State/fact                 | Draft/display owner   | Authoritative owner    | Commit command/service        | Persistence/cache    | Evidence                    |
+| -------------------------- | --------------------- | ---------------------- | ----------------------------- | -------------------- | --------------------------- |
+| reasoning level candidates | shared model UI       | CLI capability overlay | existing session model config | runtime catalog      | adapter/bootstrap tests     |
+| current thought level      | composer/session      | session runtime        | existing thought switch       | session settings     | existing model switch tests |
+| context/output/types       | model settings draft  | provider registry      | model provider service        | config.json          | invariant-only              |
+| `magic_name`               | remote client/configs | model-provider service | preset sync                   | config-version cache | service tests               |
+| reasoning profile          | none (hidden fact)    | remote model config    | provider registry             | config.json          | storage/protocol tests      |
 
 ### Must-Preserve Invariants
 
-| Invariant                                              | Surfaces/modes       | Proof needed               | Evidence             |
-| ------------------------------------------------------ | -------------------- | -------------------------- | -------------------- |
-| Only low/high/max, default max                         | all model selectors  | capability equality        | unit/integration     |
-| The two transports use their own namespaces            | request runtime      | final wire body            | wire tests           |
-| The original model ID is not rewritten                 | all requests         | catalog key/request model  | bootstrap/wire tests |
-| No context/output/media is filled                      | settings/CLI/runtime | defaults absence           | default-policy test  |
-| An empty `magic_name` matches no model                 | production config    | no reasoning profile       | service tests        |
-| A remote match withdrawal clears the old reasoning profile | provider refresh | returned + persisted state | service tests        |
-| Local `modified` models are not affected by remote withdrawal | provider refresh | local branch preserved   | service tests        |
-| desktop continuous and mobile replayable unchanged     | all clients          | no protocol/state diff     | diff review          |
+| Invariant                                                     | Surfaces/modes       | Proof needed               | Evidence             |
+| ------------------------------------------------------------- | -------------------- | -------------------------- | -------------------- |
+| Only low/high/max, default max                                | all model selectors  | capability equality        | unit/integration     |
+| The two transports use their own namespaces                   | request runtime      | final wire body            | wire tests           |
+| The original model ID is not rewritten                        | all requests         | catalog key/request model  | bootstrap/wire tests |
+| No context/output/media is filled                             | settings/CLI/runtime | defaults absence           | default-policy test  |
+| An empty `magic_name` matches no model                        | production config    | no reasoning profile       | service tests        |
+| A remote match withdrawal clears the old reasoning profile    | provider refresh     | returned + persisted state | service tests        |
+| Local `modified` models are not affected by remote withdrawal | provider refresh     | local branch preserved     | service tests        |
+| desktop continuous and mobile replayable unchanged            | all clients          | no protocol/state diff     | diff review          |
 
 ### Accepted Cases
 
-| Case ID | Setup                                    | Action                                          | Assertions                                                             | Evidence layers       | E2E status |
-| ------- | ---------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------- | --------------------- | ---------- |
-| OXA-001 | standalone OpenAI-compatible provider    | load `ox-alpha`                                 | three levels/default and reasoning_effort mapping correct              | shared + adapter      | not-needed |
-| OXA-002 | standalone Anthropic provider            | load `ox-alpha`                                 | adaptive + effort mapping, no budget                                   | adapter + wire        | not-needed |
-| OXA-003 | dynamic provider, metadata missing/stale | upsert registry                                 | rebuild three levels by transport, other capabilities unchanged        | bootstrap integration | not-needed |
-| OXA-004 | standalone, both transports              | load `GLM-x-preview-f` in any case              | exactly the same three-level mapping as `ox-alpha`, no other default injected | shared + adapter | not-needed |
-| OXA-005 | dynamic provider / OpenAI Responses      | upsert `GLM-x-preview-f`                        | first two transports rebuild three levels; Responses explicitly does not enable the dedicated mapping | bootstrap integration | not-needed |
-| OXA-006 | `magic_name="GLM-Flash"`                 | sync a remote mixed-case matching model         | persist and project `reasoningProfile="ox-alpha"`                      | service + shared      | not-needed |
-| OXA-007 | `magic_name=""` / missing                | sync any remote model                           | no profile generated, existing reasoning unchanged                     | service               | not-needed |
-| OXA-008 | dynamic provider carrying an ox-alpha profile | load as Anthropic/OpenAI-compatible        | same low/high/max mapping as the built-in public IDs, original ID kept | bootstrap integration | not-needed |
-| OXA-009 | standalone, both transports              | load `x-preview-f-free` in any case             | exactly the same mapping as the existing public IDs, near-miss IDs rejected | shared + adapter | not-needed |
-| OXA-010 | `magic_name="foo\|bar"`                  | sync remote models containing either name       | both names written to the same reasoning profile, illegal regex safely ignored | service       | not-needed |
-| OXA-011 | first `magic_name` hit, later authoritative config withdraws it | sync two config versions in order with the same home | ordinary remote model's returned value and disk write both drop the profile; local `modified` model unchanged | service | not-needed |
+| Case ID | Setup                                                           | Action                                               | Assertions                                                                                                    | Evidence layers       | E2E status |
+| ------- | --------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------- | ---------- |
+| OXA-001 | standalone OpenAI-compatible provider                           | load `ox-alpha`                                      | three levels/default and reasoning_effort mapping correct                                                     | shared + adapter      | not-needed |
+| OXA-002 | standalone Anthropic provider                                   | load `ox-alpha`                                      | adaptive + effort mapping, no budget                                                                          | adapter + wire        | not-needed |
+| OXA-003 | dynamic provider, metadata missing/stale                        | upsert registry                                      | rebuild three levels by transport, other capabilities unchanged                                               | bootstrap integration | not-needed |
+| OXA-004 | standalone, both transports                                     | load `GLM-x-preview-f` in any case                   | exactly the same three-level mapping as `ox-alpha`, no other default injected                                 | shared + adapter      | not-needed |
+| OXA-005 | dynamic provider / OpenAI Responses                             | upsert `GLM-x-preview-f`                             | first two transports rebuild three levels; Responses explicitly does not enable the dedicated mapping         | bootstrap integration | not-needed |
+| OXA-006 | `magic_name="GLM-Flash"`                                        | sync a remote mixed-case matching model              | persist and project `reasoningProfile="ox-alpha"`                                                             | service + shared      | not-needed |
+| OXA-007 | `magic_name=""` / missing                                       | sync any remote model                                | no profile generated, existing reasoning unchanged                                                            | service               | not-needed |
+| OXA-008 | dynamic provider carrying an ox-alpha profile                   | load as Anthropic/OpenAI-compatible                  | same low/high/max mapping as the built-in public IDs, original ID kept                                        | bootstrap integration | not-needed |
+| OXA-009 | standalone, both transports                                     | load `x-preview-f-free` in any case                  | exactly the same mapping as the existing public IDs, near-miss IDs rejected                                   | shared + adapter      | not-needed |
+| OXA-010 | `magic_name="foo\|bar"`                                         | sync remote models containing either name            | both names written to the same reasoning profile, illegal regex safely ignored                                | service               | not-needed |
+| OXA-011 | first `magic_name` hit, later authoritative config withdraws it | sync two config versions in order with the same home | ordinary remote model's returned value and disk write both drop the profile; local `modified` model unchanged | service               | not-needed |

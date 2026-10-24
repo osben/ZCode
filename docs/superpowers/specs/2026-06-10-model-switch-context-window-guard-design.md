@@ -28,12 +28,12 @@ Non-goals: plain `/compact` FIFO unchanged (append to tail when running, to held
 
 Domain scope and high-risk cross-products:
 
-| Domain | State owner | Responsibility here | High-risk crossings |
-| --- | --- | --- | --- |
-| V4 composer/model config | `packages/ui/src/v4/SessionPane.tsx` + CLI `switchModelConfig` | resolve target, show confirmation, consume authoritative projection, submit final switch | late selections, revision CAS, custom/native provider metadata |
-| Context usage/compact | CLI session runtime + V4 projection | compact with the current model, produce marker and fresh usage | compact ACK ≠ completion, duplicate compacts, failure/cancel |
-| Stop/queue | CLI command core | freeze auto-drain, stop foreground work, preserve queue, make guard compact preempt FIFO | late stop terminals, held queue, input added while running, goal pause |
-| Client delivery | shared host/CLI session | desktop continuous and mobile replayable observe the same command facts | reconnect, model changed on the other end, `workspaceIdentity`/`remoteSessionId` isolation |
+| Domain                   | State owner                                                    | Responsibility here                                                                      | High-risk crossings                                                                        |
+| ------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| V4 composer/model config | `packages/ui/src/v4/SessionPane.tsx` + CLI `switchModelConfig` | resolve target, show confirmation, consume authoritative projection, submit final switch | late selections, revision CAS, custom/native provider metadata                             |
+| Context usage/compact    | CLI session runtime + V4 projection                            | compact with the current model, produce marker and fresh usage                           | compact ACK ≠ completion, duplicate compacts, failure/cancel                               |
+| Stop/queue               | CLI command core                                               | freeze auto-drain, stop foreground work, preserve queue, make guard compact preempt FIFO | late stop terminals, held queue, input added while running, goal pause                     |
+| Client delivery          | shared host/CLI session                                        | desktop continuous and mobile replayable observe the same command facts                  | reconnect, model changed on the other end, `workspaceIdentity`/`remoteSessionId` isolation |
 
 Current facts:
 
@@ -123,29 +123,29 @@ UI behavior:
 
 Dimensions and pruning:
 
-| Dimension | Equivalence classes | Handling |
-| --- | --- | --- |
-| Session phase | draft / completed / running / compacting | draft pruned; completed and running accepted; existing auto compact reuses N14 |
-| Queue | empty / auto-drain queue / held queue | all three kept; counts `1/2/3+` fold into the "contents and order unchanged" invariant, representative value 2 |
-| Guard result | cancel / compact success fits / success still too large / failed or usage unknown | cancel, fits, and fail-closed must all be proven |
-| Client | desktop continuous / mobile replayable | same product semantics, separate projection evidence; replay-gap logic stays out of desktop |
-| Provider | native / custom / mapped runtime id / metadata unknown | resolver pairwise in unit tests; E2E uses a controllable native fixture |
-| Active work | assistant output / tool or goal foreground / independent background work | shared existing Stop-foreground invariant; background work's stop scope is not widened |
-| Workspace | local / SSH-WSL-Docker identity | commands isolated per session; remote validated via `workspaceIdentity + remoteSessionId` focus, not a full OS/provider cross-product |
+| Dimension     | Equivalence classes                                                               | Handling                                                                                                                              |
+| ------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Session phase | draft / completed / running / compacting                                          | draft pruned; completed and running accepted; existing auto compact reuses N14                                                        |
+| Queue         | empty / auto-drain queue / held queue                                             | all three kept; counts `1/2/3+` fold into the "contents and order unchanged" invariant, representative value 2                        |
+| Guard result  | cancel / compact success fits / success still too large / failed or usage unknown | cancel, fits, and fail-closed must all be proven                                                                                      |
+| Client        | desktop continuous / mobile replayable                                            | same product semantics, separate projection evidence; replay-gap logic stays out of desktop                                           |
+| Provider      | native / custom / mapped runtime id / metadata unknown                            | resolver pairwise in unit tests; E2E uses a controllable native fixture                                                               |
+| Active work   | assistant output / tool or goal foreground / independent background work          | shared existing Stop-foreground invariant; background work's stop scope is not widened                                                |
+| Workspace     | local / SSH-WSL-Docker identity                                                   | commands isolated per session; remote validated via `workspaceIdentity + remoteSessionId` focus, not a full OS/provider cross-product |
 
 Pruning decisions: plain `/compact` × preemption pruned (command-entry invariant; A08/B13 unchanged); queue-count full cross-product pruned (queue is neither deleted nor reordered; representative value suffices); draft × guard pruned (no active session usage); unknown metadata × E2E pruned to resolver unit tests (product stays fail-open); provider × desktop/mobile pruned (metadata resolver and delivery projection proven in layers); direct V4 switch to an undersized model is the `bug-candidate` closed by N05/N09–N14 once implemented.
 
 Accepted cases:
 
-| ID | Setup | Action | Assertions | Evidence |
-| --- | --- | --- | --- | --- |
-| N05 | completed, queue=0, used over target budget | select target, then cancel/confirm | cancel changes nothing; confirm compacts with the old model; switch only after fresh usage fits | dialog, compact request/marker, snapshot usage/config |
-| N09 | running, queue=0, used over budget | click “立即停止并压缩” | foreground turn interrupted; guard compact then starts; switch after success | stop/compact timeline, provider request model, config projection |
-| N10 | running, queue=2, autoDrain=true | confirm guard | queue contents/order unchanged; compact runs ahead of the queue; auto-drain restored after switch; queue consumed by the target model | CLI queue projection, request order, model config |
-| N11 | completed/interrupted, queue=2, autoDrain=false | confirm guard | no held-queue clear/keep dialog; compact starts immediately; queue stays held; the switch triggers no consumption | inputRouting, queue IDs/order, compact/config projection |
-| N12 | running or completed, compact failed/cancelled, usage unknown or still over budget | confirm guard | no switch; stopped turn not resumed; queue preserved and held; clear user feedback | failed marker, usage/config, queue autoDrain |
-| N13 | guard confirmed, compact pending/running | new model selected in the same session, task switch, or config updated from the other end | the old selection token must not late-switch the wrong model/task; the newest selection wins per latest config/revision | command/revision, session-scoped projection, final config on both ends |
-| N14 | auto compact already running, target context insufficient | select model | no stop, no second compact; wait for the existing compact, re-check, then apply the latest valid selection | single compact lifecycle, pending selection, config CAS |
+| ID  | Setup                                                                              | Action                                                                                    | Assertions                                                                                                                            | Evidence                                                               |
+| --- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| N05 | completed, queue=0, used over target budget                                        | select target, then cancel/confirm                                                        | cancel changes nothing; confirm compacts with the old model; switch only after fresh usage fits                                       | dialog, compact request/marker, snapshot usage/config                  |
+| N09 | running, queue=0, used over budget                                                 | click “立即停止并压缩”                                                                    | foreground turn interrupted; guard compact then starts; switch after success                                                          | stop/compact timeline, provider request model, config projection       |
+| N10 | running, queue=2, autoDrain=true                                                   | confirm guard                                                                             | queue contents/order unchanged; compact runs ahead of the queue; auto-drain restored after switch; queue consumed by the target model | CLI queue projection, request order, model config                      |
+| N11 | completed/interrupted, queue=2, autoDrain=false                                    | confirm guard                                                                             | no held-queue clear/keep dialog; compact starts immediately; queue stays held; the switch triggers no consumption                     | inputRouting, queue IDs/order, compact/config projection               |
+| N12 | running or completed, compact failed/cancelled, usage unknown or still over budget | confirm guard                                                                             | no switch; stopped turn not resumed; queue preserved and held; clear user feedback                                                    | failed marker, usage/config, queue autoDrain                           |
+| N13 | guard confirmed, compact pending/running                                           | new model selected in the same session, task switch, or config updated from the other end | the old selection token must not late-switch the wrong model/task; the newest selection wins per latest config/revision               | command/revision, session-scoped projection, final config on both ends |
+| N14 | auto compact already running, target context insufficient                          | select model                                                                              | no stop, no second compact; wait for the existing compact, re-check, then apply the latest valid selection                            | single compact lifecycle, pending selection, config CAS                |
 
 Error handling:
 

@@ -176,36 +176,36 @@ from the capability list and gets no `glm-5.3` model ID branch.
 
 ### State Owners And Commit Sinks
 
-| State/fact                  | Draft/display owner         | Authoritative owner           | Commit sink              | Evidence                 |
-| --------------------------- | --------------------------- | ----------------------------- | ------------------------ | ------------------------ |
-| GLM-5.3 static capability   | each model-selection entry  | catalog + CLI default policy  | existing provider registry | catalog/adapter tests  |
-| current reasoning level     | composer/runtime projection | session settings              | existing model switch    | wire test                |
-| dynamic reasoning patch     | workspace overlay           | shared identity + CLI overlay | existing protocol sync   | protocol regression test |
-| dynamic image capability    | provider registry / catalog | runtime media resolver        | provider request projection | model-selection tests |
+| State/fact                | Draft/display owner         | Authoritative owner           | Commit sink                 | Evidence                 |
+| ------------------------- | --------------------------- | ----------------------------- | --------------------------- | ------------------------ |
+| GLM-5.3 static capability | each model-selection entry  | catalog + CLI default policy  | existing provider registry  | catalog/adapter tests    |
+| current reasoning level   | composer/runtime projection | session settings              | existing model switch       | wire test                |
+| dynamic reasoning patch   | workspace overlay           | shared identity + CLI overlay | existing protocol sync      | protocol regression test |
+| dynamic image capability  | provider registry / catalog | runtime media resolver        | provider request projection | model-selection tests    |
 
 ### Must-Preserve Invariants
 
-| Invariant                                              | Proof needed                                  | Evidence              |
-| ------------------------------------------------------ | --------------------------------------------- | --------------------- |
-| Only low/high/max, default max                         | capability equality                           | adapter/catalog tests |
-| GLM-5.2 and ordinary GLM policies unchanged            | negative assertions + existing suite          | default-policy tests  |
-| ToB alias does not fall into other broad model policies | still gets the official three levels under conflicting tokens | adapter/protocol test |
-| The original ToB model ID is not canonicalized         | provider registry key and request model keep the original | service/wire test |
-| App catalog does not enrich routing aliases            | prefix/suffix and path IDs keep inbound metadata | service test       |
-| Explicit image config first, unknown decided like GLM-5.2 | provider/transport/suffix combination assertions | bootstrap unit tests |
-| No change to provider entitlement and UI/session state | related files absent from diff                | diff review           |
+| Invariant                                                 | Proof needed                                                  | Evidence              |
+| --------------------------------------------------------- | ------------------------------------------------------------- | --------------------- |
+| Only low/high/max, default max                            | capability equality                                           | adapter/catalog tests |
+| GLM-5.2 and ordinary GLM policies unchanged               | negative assertions + existing suite                          | default-policy tests  |
+| ToB alias does not fall into other broad model policies   | still gets the official three levels under conflicting tokens | adapter/protocol test |
+| The original ToB model ID is not canonicalized            | provider registry key and request model keep the original     | service/wire test     |
+| App catalog does not enrich routing aliases               | prefix/suffix and path IDs keep inbound metadata              | service test          |
+| Explicit image config first, unknown decided like GLM-5.2 | provider/transport/suffix combination assertions              | bootstrap unit tests  |
+| No change to provider entitlement and UI/session state    | related files absent from diff                                | diff review           |
 
 ## Case plan
 
-| Case ID   | Setup                              | Action                              | Assertions                                   | Evidence layer        | E2E status |
-| --------- | ---------------------------------- | ----------------------------------- | -------------------------------------------- | --------------------- | ---------- |
-| GLM53-001 | models.dev disabled                | query official/ToB/path/near IDs    | non-digit suffix hits, digit continuation rejected | shared + adapter unit | not-needed |
-| GLM53-002 | load bundled snapshot              | iterate the four providers          | all have GLM-5.3 base capability             | adapter integration   | not-needed |
-| GLM53-003 | load China model catalog           | iterate the four providers          | three levels/default/Anthropic patch correct | service unit          | not-needed |
-| GLM53-004 | OpenAI-compatible fake fetch       | select each of the three levels     | wire has the matching reasoning_effort       | adapter wire          | not-needed |
-| GLM53-005 | dynamic Anthropic/OpenAI fixture   | sync a ToB alias without metadata   | three levels and matching transport options rebuilt | protocol integration | not-needed |
-| GLM53-006 | App config with exact and routing IDs | load provider                    | exact ID filled; routing ID not enriched     | service integration   | not-needed |
-| GLM53-007 | GLM-5.3 missing or explicit image metadata | resolve capability by provider/transport | consistent with GLM-5.2 fallback; explicit value first | bootstrap unit | not-needed |
+| Case ID   | Setup                                      | Action                                   | Assertions                                             | Evidence layer        | E2E status |
+| --------- | ------------------------------------------ | ---------------------------------------- | ------------------------------------------------------ | --------------------- | ---------- |
+| GLM53-001 | models.dev disabled                        | query official/ToB/path/near IDs         | non-digit suffix hits, digit continuation rejected     | shared + adapter unit | not-needed |
+| GLM53-002 | load bundled snapshot                      | iterate the four providers               | all have GLM-5.3 base capability                       | adapter integration   | not-needed |
+| GLM53-003 | load China model catalog                   | iterate the four providers               | three levels/default/Anthropic patch correct           | service unit          | not-needed |
+| GLM53-004 | OpenAI-compatible fake fetch               | select each of the three levels          | wire has the matching reasoning_effort                 | adapter wire          | not-needed |
+| GLM53-005 | dynamic Anthropic/OpenAI fixture           | sync a ToB alias without metadata        | three levels and matching transport options rebuilt    | protocol integration  | not-needed |
+| GLM53-006 | App config with exact and routing IDs      | load provider                            | exact ID filled; routing ID not enriched               | service integration   | not-needed |
+| GLM53-007 | GLM-5.3 missing or explicit image metadata | resolve capability by provider/transport | consistent with GLM-5.2 fallback; explicit value first | bootstrap unit        | not-needed |
 
 No conversation E2E is added: no UI interaction, model switch commit, session state or realtime/replayable
 semantics changed, and the layered unit and wire tests cover the new behavior directly.

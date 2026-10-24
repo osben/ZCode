@@ -29,14 +29,14 @@ Exclusions (not typing lag):
 
 Payload (existing `ArmsCustomEventPayload`):
 
-| Field | Value | Purpose |
-|------|-----|------|
-| `name` | `"perf_ui_input_lag"` | event name |
-| `group` | `"ui_perf"` | existing group |
-| `value` | `Math.round(lagMs)` | main metric, dashboards do distribution/p95 |
-| `properties.lag_ms` | same as value | mirrors `stall_ms` of stream_stall for dimension filtering |
-| `properties.text_length` | current editor text length | key attribution: "longer text, worse lag" |
-| `properties.task_id` | current taskId (empty in draft) | session correlation, consistent with other ui_perf events |
+| Field                    | Value                           | Purpose                                                    |
+| ------------------------ | ------------------------------- | ---------------------------------------------------------- |
+| `name`                   | `"perf_ui_input_lag"`           | event name                                                 |
+| `group`                  | `"ui_perf"`                     | existing group                                             |
+| `value`                  | `Math.round(lagMs)`             | main metric, dashboards do distribution/p95                |
+| `properties.lag_ms`      | same as value                   | mirrors `stall_ms` of stream_stall for dimension filtering |
+| `properties.text_length` | current editor text length      | key attribution: "longer text, worse lag"                  |
+| `properties.task_id`     | current taskId (empty in draft) | session correlation, consistent with other ui_perf events  |
 
 Deliberately excluded (YAGNI): text content (privacy + size), model (input side is model-independent), mention count (watch `text_length` first).
 

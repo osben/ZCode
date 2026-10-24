@@ -16,18 +16,18 @@ C2 — the UI installed list/detail renders from `plugins/list` (`ZCodePluginInf
 
 ## Decisions (locked with product)
 
-| Question | Decision |
-| --- | --- |
-| Uninstall built-in semantics | Permanent + reversible hide, with full purge of plugin user state: persistent suppression surviving restart and upgrades; cache files deleted; `enabledPlugins[id]`, `options[id]`, and the plugin `data/` dir removed. Restore re-seeds a clean plugin — config/data are NOT restored; uninstall fully clears. |
-| Update detection | Detect & badge; show only when newer. |
-| Update scope | Marketplace (`cache`) plugins only. |
-| Update freshness | Cached manifest; a "Check for updates" action re-pulls on demand. |
-| Restore of an uninstalled built-in | Via catalog through a dedicated restore action, not the marketplace install path. |
-| Non-semver version diff | Show "version changed", not "update available" (only `semver.gt` is an update). |
-| Official marketplace name | Locked: user-added marketplaces may not claim `zcode-plugins-official` / `claude-plugins-official`. |
+| Question                                    | Decision                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Uninstall built-in semantics                | Permanent + reversible hide, with full purge of plugin user state: persistent suppression surviving restart and upgrades; cache files deleted; `enabledPlugins[id]`, `options[id]`, and the plugin `data/` dir removed. Restore re-seeds a clean plugin — config/data are NOT restored; uninstall fully clears.                   |
+| Update detection                            | Detect & badge; show only when newer.                                                                                                                                                                                                                                                                                             |
+| Update scope                                | Marketplace (`cache`) plugins only.                                                                                                                                                                                                                                                                                               |
+| Update freshness                            | Cached manifest; a "Check for updates" action re-pulls on demand.                                                                                                                                                                                                                                                                 |
+| Restore of an uninstalled built-in          | Via catalog through a dedicated restore action, not the marketplace install path.                                                                                                                                                                                                                                                 |
+| Non-semver version diff                     | Show "version changed", not "update available" (only `semver.gt` is an update).                                                                                                                                                                                                                                                   |
+| Official marketplace name                   | Locked: user-added marketplaces may not claim `zcode-plugins-official` / `claude-plugins-official`.                                                                                                                                                                                                                               |
 | Installed record vs built-in classification | `installed_plugins.json` wins: an exact installed record always uninstalls through the marketplace path even when its cache lives under `zcode-plugins-official`; only ids without an installed record may enter built-in suppression. Marketplace uninstall also removes stale suppression markers left by older buggy versions. |
-| Update vs running session | Next session only; the UI shows a "takes effect in new sessions" note. |
-| Concurrency safety | Lightweight in-process per-storageRoot async mutex around install/update/uninstall/restore; cross-process file locking is a non-goal. |
+| Update vs running session                   | Next session only; the UI shows a "takes effect in new sessions" note.                                                                                                                                                                                                                                                            |
+| Concurrency safety                          | Lightweight in-process per-storageRoot async mutex around install/update/uninstall/restore; cross-process file locking is a non-goal.                                                                                                                                                                                             |
 
 ## Architecture
 

@@ -58,13 +58,13 @@ Key rules delivered:
 
 ## Acceptance matrix
 
-| Layer    | Must prove                                                                                                                                                                             |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Core     | stream success; empty SSE/orphan/eligible body failure/HTTP 404 setup fallback; other setup, post-commit, abort/context/media do not fall back; hidden stream never lands in session   |
-| Adapter  | compact observes raw non-ping events and projects response-start/block-start-stop/stop-reason; hard transport status separates setup/body errors; setup keeps API retry, inner stream only pre-event stale/watchdog retry with cancellation first; direct tool validation commits first; main eager unchanged |
-| Responses | `stream:true / failure → non-stream / success`; missing-field JSON still compatible                                                                                                   |
-| Desktop  | normal stream compact and fallback compact both reach the success marker; model selection and main requests do not regress                                                              |
-| Static   | core/adapters tests, CLI/root typecheck, root lint, fixture/typecheck:e2e, diff check                                                                                                   |
+| Layer     | Must prove                                                                                                                                                                                                                                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core      | stream success; empty SSE/orphan/eligible body failure/HTTP 404 setup fallback; other setup, post-commit, abort/context/media do not fall back; hidden stream never lands in session                                                                                                                          |
+| Adapter   | compact observes raw non-ping events and projects response-start/block-start-stop/stop-reason; hard transport status separates setup/body errors; setup keeps API retry, inner stream only pre-event stale/watchdog retry with cancellation first; direct tool validation commits first; main eager unchanged |
+| Responses | `stream:true / failure → non-stream / success`; missing-field JSON still compatible                                                                                                                                                                                                                           |
+| Desktop   | normal stream compact and fallback compact both reach the success marker; model selection and main requests do not regress                                                                                                                                                                                    |
+| Static    | core/adapters tests, CLI/root typecheck, root lint, fixture/typecheck:e2e, diff check                                                                                                                                                                                                                         |
 
 ## Open follow-ups
 

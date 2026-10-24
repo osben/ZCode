@@ -265,18 +265,18 @@ This phase fixes only capability declarations; it does not implement the Windows
 
 ## 10. Error and retry semantics
 
-| Scenario                              | Result                                                |
-| ------------------------------------- | ----------------------------------------------------- |
-| Missing native pointer ABI            | `not_authorized`                                      |
-| Target lacks app scope                | fail closed before the action                         |
-| Drag ends differ in / lack identity   | fail closed before the action                         |
-| Target is not the unique frontmost PID | `element_unavailable`, asks to re-activate and observe |
-| Coordinate outside virtual desktop    | `invalid_request` or a stable permission error; no input |
-| `SendInput` returns 0 / partial write | `permission_denied`                                   |
-| Drag fails after down                 | send up, then return failure                          |
-| Broker disconnects after action write | keep `possibly_sent`, no auto-replay                  |
-| Helper terminal stop                  | freeze admission, release registered inputs, close pipe |
-| WGC/clipboard not implemented         | explicit unavailable, no fake success                 |
+| Scenario                               | Result                                                   |
+| -------------------------------------- | -------------------------------------------------------- |
+| Missing native pointer ABI             | `not_authorized`                                         |
+| Target lacks app scope                 | fail closed before the action                            |
+| Drag ends differ in / lack identity    | fail closed before the action                            |
+| Target is not the unique frontmost PID | `element_unavailable`, asks to re-activate and observe   |
+| Coordinate outside virtual desktop     | `invalid_request` or a stable permission error; no input |
+| `SendInput` returns 0 / partial write  | `permission_denied`                                      |
+| Drag fails after down                  | send up, then return failure                             |
+| Broker disconnects after action write  | keep `possibly_sent`, no auto-replay                     |
+| Helper terminal stop                   | freeze admission, release registered inputs, close pipe  |
+| WGC/clipboard not implemented          | explicit unavailable, no fake success                    |
 
 ## 11. Test strategy
 

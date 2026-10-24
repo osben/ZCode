@@ -29,14 +29,14 @@ caller querySource ─→ query-source ├─→ adapter → HTTP headers
 workspace scope ───→ other ────────┘
 ```
 
-| Request scope | `x-zcode-session-type` |
-| --- | --- |
-| interactive, fork, workflow parent | `main` |
-| subagent child | `subagent` |
-| selection side chat (incl. `/side`, `/btw`) | `side_chat` |
-| workflow child, nested workflow child | `other` |
+| Request scope                                                                             | `x-zcode-session-type`                              |
+| ----------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| interactive, fork, workflow parent                                                        | `main`                                              |
+| subagent child                                                                            | `subagent`                                          |
+| selection side chat (incl. `/side`, `/btw`)                                               | `side_chat`                                         |
+| workflow child, nested workflow child                                                     | `other`                                             |
 | in-session compact, goal verification, session/goal title, Memory, in-tool model requests | inherit the host class above, regardless of purpose |
-| workspace-level Repo Wiki, Git copy, connectivity tests | `other` |
+| workspace-level Repo Wiki, Git copy, connectivity tests                                   | `other`                                             |
 
 Workspace-level requests may borrow an existing session's runtime without belonging to it; their model creation entry passes `scope: "workspace"`, affecting only that handle's attribution (never runtime config or the provider factory). Default scope is session; there is no purpose-matching whitelist. This change adjusts attribution only — it does not enable previously disabled Memory/title paths and does not change model selection, retry, admission, tool execution, or UI/remote delivery semantics.
 

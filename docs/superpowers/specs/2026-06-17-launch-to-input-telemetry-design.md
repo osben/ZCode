@@ -13,27 +13,27 @@ Clocks: the start anchor is in main, the end in renderer; their `performance.now
 
 Seven timestamps:
 
-| Mark | Where captured | Process | Meaning |
-|------|----------|------|------|
-| `T0` | `process.getCreationTime()` | main | process creation (anchor) |
-| `T1` | first line of `main/index.ts` module top, `Date.now()` | main | main JS start |
-| `T2` | `app.whenReady().then` callback entry (`index.ts:981`) | main | framework ready |
-| `T3` | before main-window `loadURL` | main | start loading renderer |
-| `T4` | `renderer/src/main.tsx` module top | renderer | bundle starts executing |
-| `T5` | on `zcode-react-startup-ready` | renderer | first React commit |
-| `T6` | when the startup gate `isStartupRenderBlocked` flips `true→false` | renderer | input usable |
+| Mark | Where captured                                                    | Process  | Meaning                   |
+| ---- | ----------------------------------------------------------------- | -------- | ------------------------- |
+| `T0` | `process.getCreationTime()`                                       | main     | process creation (anchor) |
+| `T1` | first line of `main/index.ts` module top, `Date.now()`            | main     | main JS start             |
+| `T2` | `app.whenReady().then` callback entry (`index.ts:981`)            | main     | framework ready           |
+| `T3` | before main-window `loadURL`                                      | main     | start loading renderer    |
+| `T4` | `renderer/src/main.tsx` module top                                | renderer | bundle starts executing   |
+| `T5` | on `zcode-react-startup-ready`                                    | renderer | first React commit        |
+| `T6` | when the startup gate `isStartupRenderBlocked` flips `true→false` | renderer | input usable              |
 
 Seven stages (adjacent differences), each event's `properties` carrying `session_id` (derived from `T0` or renderer_id) to reassemble one launch:
 
-| Event (`group=ui_perf`) | `value` | Interval | Optimization target |
-|---------------------------|---------|------|----------|
-| `perf_ui_launch_to_input` | total | `T6 - T0` | main "launch → usable" metric |
-| `perf_ui_launch_electron_init_ms` | `T1 - T0` | creation → main JS | Electron binary + V8 start (baseline, mostly uncontrollable) |
-| `perf_ui_launch_app_ready_ms` | `T2 - T1` | main JS → whenReady | main synchronous init |
-| `perf_ui_launch_window_ms` | `T3 - T2` | whenReady → loadURL | window/data-dir/network-policy orchestration |
-| `perf_ui_launch_renderer_load_ms` | `T4 - T3` | loadURL → bundle | HTML shell, bundle download/parse |
-| `perf_ui_launch_react_commit_ms` | `T5 - T4` | bundle → React commit | renderer render (= old `perf_ui_first_screen`) |
-| `perf_ui_launch_startup_gate_ms` | `T6 - T5` | commit → input usable | auth / provider / workspace restore |
+| Event (`group=ui_perf`)           | `value`   | Interval              | Optimization target                                          |
+| --------------------------------- | --------- | --------------------- | ------------------------------------------------------------ |
+| `perf_ui_launch_to_input`         | total     | `T6 - T0`             | main "launch → usable" metric                                |
+| `perf_ui_launch_electron_init_ms` | `T1 - T0` | creation → main JS    | Electron binary + V8 start (baseline, mostly uncontrollable) |
+| `perf_ui_launch_app_ready_ms`     | `T2 - T1` | main JS → whenReady   | main synchronous init                                        |
+| `perf_ui_launch_window_ms`        | `T3 - T2` | whenReady → loadURL   | window/data-dir/network-policy orchestration                 |
+| `perf_ui_launch_renderer_load_ms` | `T4 - T3` | loadURL → bundle      | HTML shell, bundle download/parse                            |
+| `perf_ui_launch_react_commit_ms`  | `T5 - T4` | bundle → React commit | renderer render (= old `perf_ui_first_screen`)               |
+| `perf_ui_launch_startup_gate_ms`  | `T6 - T5` | commit → input usable | auth / provider / workspace restore                          |
 
 Data flow:
 

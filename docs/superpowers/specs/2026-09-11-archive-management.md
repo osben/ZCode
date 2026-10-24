@@ -101,29 +101,29 @@ archive settings card -> SettingsPage original callback -> SettingService.update
 
 ## Impact analysis and test decisions
 
-| Item | Conclusion |
-| --- | --- |
-| Layer/pattern | presentation, option-source, validation, commit-effect |
-| Entries to check | SettingsPage/navigation/config; RootWorkspaceContent/WorkspaceShellLayout; ProjectDirectoryProvider; task archive/delete commands |
-| Shared / different | three places share the directory source; the archive page takes only archived and includes deleted containers; the sidebar shows no archive; the composer shows no deleted containers |
-| UI surface matrix | settings filter: page draft -> pure tree projection; row/group/all actions: confirmation and in-flight -> existing command -> Host/CLI; sidebar: refreshed by the same event, navigation unchanged |
-| Owner / landing | query and preferences by Provider; archive by Host tasks-index; delete by CLI mutateSessionFacts -> mirror; no new landing |
-| Invariants | workspaceIdentity isolation, Host+projectId grouping, old cwd unchanged, no change to time/title, no write to the other database, continuous/replayable separated |
-| Codegraph | unavailable (`no such table: unresolved_refs`); impact traced from source with rg, no graph analysis claimed |
-| Graph drift | old surface.project-task-list still points at deleted grouped/workspace nodes (historical drift); only the new archive entry and existing authoritative ports were registered |
-| Not expanded | provider/tools/message stream/queues do not affect archive management; no full cartesian product, no new runtime request |
-| Clarification | user confirmed the middle dropdown is sort-by with only updated/created time; delete-all uses the current filtered result and the dialog shows the count |
+| Item               | Conclusion                                                                                                                                                                                         |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Layer/pattern      | presentation, option-source, validation, commit-effect                                                                                                                                             |
+| Entries to check   | SettingsPage/navigation/config; RootWorkspaceContent/WorkspaceShellLayout; ProjectDirectoryProvider; task archive/delete commands                                                                  |
+| Shared / different | three places share the directory source; the archive page takes only archived and includes deleted containers; the sidebar shows no archive; the composer shows no deleted containers              |
+| UI surface matrix  | settings filter: page draft -> pure tree projection; row/group/all actions: confirmation and in-flight -> existing command -> Host/CLI; sidebar: refreshed by the same event, navigation unchanged |
+| Owner / landing    | query and preferences by Provider; archive by Host tasks-index; delete by CLI mutateSessionFacts -> mirror; no new landing                                                                         |
+| Invariants         | workspaceIdentity isolation, Host+projectId grouping, old cwd unchanged, no change to time/title, no write to the other database, continuous/replayable separated                                  |
+| Codegraph          | unavailable (`no such table: unresolved_refs`); impact traced from source with rg, no graph analysis claimed                                                                                       |
+| Graph drift        | old surface.project-task-list still points at deleted grouped/workspace nodes (historical drift); only the new archive entry and existing authoritative ports were registered                      |
+| Not expanded       | provider/tools/message stream/queues do not affect archive management; no full cartesian product, no new runtime request                                                                           |
+| Clarification      | user confirmed the middle dropdown is sort-by with only updated/created time; delete-all uses the current filtered result and the dialog shows the count                                           |
 
-| Case | Setup -> Action -> Assertion | Status/evidence |
-| --- | --- | --- |
-| ARM01 | settings data-and-statistics entry; several virtual projects sharing a cwd, long titles, unclassified, deleted project -> search / time sort / project filter -> groups / counts / candidates use virtual projects only | accepted; unit + pending E2E |
-| ARM02 | archived row -> unarchive -> index archived=false, page row gone, sidebar shows it again; cancelling delete changes nothing, confirmed delete sets CLI time_deleted and mirror delete, refresh does not revive | accepted; unit + pending E2E |
-| ARM03 | after search/project filter -> group/all batch action -> only items matching at confirmation are processed; repeated clicks run once, failed items kept and reported, other groups untouched | accepted; unit + pending E2E |
-| ARM04 | same projectId / task ID / real path on different Hosts -> routing -> full identity/source/attachment kept; local and remote isolated | accepted; unit; real remote/mobile GUI pending |
-| ARM05 | long titles, 50+ list, Chinese/English, 390px, light/dark -> search / more / buttons / scroll usable | accepted; unit + E2E on the shared renderer, not a mobile pairing |
-| ARM06 | default all collapsed -> mouse/keyboard expand and collapse -> only expanded groups mounted; collapsed groups' counts and batch actions stay complete | accepted; unit + pending E2E |
-| ARM07 | general page has no auto-archive item -> archive management default off / 30 days -> while off change and save the duration, restored on refresh -> on uses the stored duration; still editable after turning off | accepted; pending E2E; layout covered by ARM05 |
-| ARM08 | page header "归档管理" above the auto-archive settings, fixed session copy and delete confirmation | accepted; layout reuses ARM05 |
+| Case  | Setup -> Action -> Assertion                                                                                                                                                                                            | Status/evidence                                                   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| ARM01 | settings data-and-statistics entry; several virtual projects sharing a cwd, long titles, unclassified, deleted project -> search / time sort / project filter -> groups / counts / candidates use virtual projects only | accepted; unit + pending E2E                                      |
+| ARM02 | archived row -> unarchive -> index archived=false, page row gone, sidebar shows it again; cancelling delete changes nothing, confirmed delete sets CLI time_deleted and mirror delete, refresh does not revive          | accepted; unit + pending E2E                                      |
+| ARM03 | after search/project filter -> group/all batch action -> only items matching at confirmation are processed; repeated clicks run once, failed items kept and reported, other groups untouched                            | accepted; unit + pending E2E                                      |
+| ARM04 | same projectId / task ID / real path on different Hosts -> routing -> full identity/source/attachment kept; local and remote isolated                                                                                   | accepted; unit; real remote/mobile GUI pending                    |
+| ARM05 | long titles, 50+ list, Chinese/English, 390px, light/dark -> search / more / buttons / scroll usable                                                                                                                    | accepted; unit + E2E on the shared renderer, not a mobile pairing |
+| ARM06 | default all collapsed -> mouse/keyboard expand and collapse -> only expanded groups mounted; collapsed groups' counts and batch actions stay complete                                                                   | accepted; unit + pending E2E                                      |
+| ARM07 | general page has no auto-archive item -> archive management default off / 30 days -> while off change and save the duration, restored on refresh -> on uses the stored duration; still editable after turning off       | accepted; pending E2E; layout covered by ARM05                    |
+| ARM08 | page header "归档管理" above the auto-archive settings, fixed session copy and delete confirmation                                                                                                                      | accepted; layout reuses ARM05                                     |
 
 E2E cases live under manual-review/pending with fixtures in an isolated HOME/workspace; history data needs no model
 (provider policy=none). Function and batch semantics follow the user request and existing command constraints; the

@@ -319,18 +319,18 @@ never a plain argv.
 
 ## 12. Errors and recovery semantics
 
-| Scenario                          | Required behavior                                           |
-| --------------------------------- | ----------------------------------------------------------- |
-| Visual Studio C++ toolchain missing | build fails with a clear dependency hint                  |
-| `ax_native.node` missing          | dev preflight fails, no silent `available=false`            |
-| addon ABI mismatch                | print the Node ABI, addon path and rebuild hint             |
-| non-interactive session / locked screen | Helper unavailable, no input injected                 |
+| Scenario                                  | Required behavior                                                             |
+| ----------------------------------------- | ----------------------------------------------------------------------------- |
+| Visual Studio C++ toolchain missing       | build fails with a clear dependency hint                                      |
+| `ax_native.node` missing                  | dev preflight fails, no silent `available=false`                              |
+| addon ABI mismatch                        | print the Node ABI, addon path and rebuild hint                               |
+| non-interactive session / locked screen   | Helper unavailable, no input injected                                         |
 | Helper start timeout / health check fails | terminate this child, clean the pipe, publish no tuple, inject no credentials |
-| Helper disconnects after action   | `possibly_sent`, no automatic retry                         |
-| HWND/PID/revision stale           | re-observe diagnostic, execute no input                     |
-| UIPI refuses a high-privilege app | explicit permission denied, no automatic elevation          |
-| Helper crash                      | generation invalidated, recover via the existing active-turn/recycle boundary |
-| ZCode closes                      | stop admission, release input, close pipe, exit the child   |
+| Helper disconnects after action           | `possibly_sent`, no automatic retry                                           |
+| HWND/PID/revision stale                   | re-observe diagnostic, execute no input                                       |
+| UIPI refuses a high-privilege app         | explicit permission denied, no automatic elevation                            |
+| Helper crash                              | generation invalidated, recover via the existing active-turn/recycle boundary |
+| ZCode closes                              | stop admission, release input, close pipe, exit the child                     |
 
 ## 13. Repository responsibilities
 

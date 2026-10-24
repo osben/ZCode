@@ -2,7 +2,7 @@
 
 > Historical optimization plan (2026-07-10), implemented; this file keeps the current
 > Windows E2E runtime contract, measured outcomes and open follow-ups.
-> Full history: git show 4d4e9adb:docs/superpowers/plans/2026-07-10-windows-e2e-runtime-optimization.md
+> Full history: git show 45f808f7:docs/superpowers/plans/2026-07-10-windows-e2e-runtime-optimization.md
 
 **Goal:** Keep Windows `pnpm test:e2e` within a bounded wall-clock budget while preserving
 cross-spec state isolation and intentional time-boundary coverage.

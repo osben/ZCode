@@ -52,15 +52,15 @@ duplicate schema coupling, and it violates the "new data goes through ZCode Prot
 
 Summary keeps 8 cards:
 
-| Card | Source |
-|---|---|
-| Real tokens (total; subtitle split input/output/cache) | `model_usage.computed_total_tokens` etc. |
-| Conversation turns (replaces message count) | `turn_usage` row count |
-| Sessions | distinct `session_id` |
-| Active days | distinct day(`started_at`) |
-| Consecutive active days (30d; merges current/longest streak) | day(`started_at`) |
-| Cache hit rate (replaces peak-hour card) | `cache_read / (input + cache_creation + cache_read)` |
-| Most used model (by real tokens) | `model_usage` GROUP BY model |
+| Card                                                                              | Source                                                       |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Real tokens (total; subtitle split input/output/cache)                            | `model_usage.computed_total_tokens` etc.                     |
+| Conversation turns (replaces message count)                                       | `turn_usage` row count                                       |
+| Sessions                                                                          | distinct `session_id`                                        |
+| Active days                                                                       | distinct day(`started_at`)                                   |
+| Consecutive active days (30d; merges current/longest streak)                      | day(`started_at`)                                            |
+| Cache hit rate (replaces peak-hour card)                                          | `cache_read / (input + cache_creation + cache_read)`         |
+| Most used model (by real tokens)                                                  | `model_usage` GROUP BY model                                 |
 | Tool calls (total + error rate) and/or reliability (model error rate / mean TTFT) | `tool_usage`; `model_usage.status`, `time_to_first_token_ms` |
 
 Of the 9 candidates, 8 are kept: streak and reliability are preferred because tool usage has its

@@ -75,11 +75,7 @@ const ANALYZE_IMAGE_CAPABLE_BASE_HOSTS = ["bigmodel.cn", "z.ai", "z.ai"];
 
 export const AnalyzeImageInputSchema = z
   .object({
-    image_path: z
-      .string()
-      .trim()
-      .min(1)
-      .describe("Local image file path to analyze"),
+    image_path: z.string().trim().min(1).describe("Local image file path to analyze"),
     prompt: z
       .string()
       .trim()
@@ -166,7 +162,7 @@ export const ANALYZE_IMAGE_TOOL_CONTRACT: ToolContractDeclaration = {
   `source.kind: "local_file"` with path/mime/size and `placeholder: input.image_path`); tools are
   exactly one provider-native contract named `analyze_image` (`executionMode: "providerNative"`,
   `args` from `toAnalyzeImageProviderNativeArgs`); `maxOutputTokens: 4096`; `metadata.querySource:
-  "analyze_image_tool"`; wired `statusSink` and `traceContext`. It uses `streamText`, not
+"analyze_image_tool"`; wired `statusSink` and `traceContext`. It uses `streamText`, not
   `generateText`.
 - Result: `analysis` is the trimmed stream text; empty text throws `CoreErrorType.ModelError`
   "AnalyzeImage returned no analysis text". Output includes `durationMs` and `modelUsage` when
@@ -255,11 +251,11 @@ command before reporting the residual failure.
 
 ## Risks and mitigations
 
-| Risk | Impact | Mitigation |
-| --- | --- | --- |
-| AI SDK rejects arbitrary Anthropic provider-defined tools | `tool({ type: "provider", id: "anthropic.analyze_image" })` is dropped by prepare-tools | Use the `analyze_image` sentinel function tool; rewrite the outbound body in `createAnthropicCompatFetch` |
-| Provider injects unsolicited main-turn `server_tool_use analyze_image` | Corrupted tool input can pollute Bash or normal tool dispatch | Suppress the block and matching `tool_result` in the Anthropic SSE compat layer; assembler guard as second line |
-| Handler implicitly picks an image from history | Wrong source (prompt attachment / Read result / MCP artifact) | v1 requires explicit `image_path`; attachment-id support needs its own spec |
-| Exposed on an unsupported provider | Main model calls a tool that cannot execute | Gate on `providerKind === "anthropic"` plus baseURL allowlist, aligned with WebSearch |
-| Windows paths / working directory | Relative-path resolution errors | `path.isAbsolute` + `path.resolve(context.workingDirectory, input.image_path)`; reads still go through `FileSystemPort` |
-| Noisy production logs | High-frequency streaming deltas at info level | Per-chunk diagnostics only via existing debug logging; one warn at the anomaly suppression start |
+| Risk                                                                   | Impact                                                                                  | Mitigation                                                                                                              |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| AI SDK rejects arbitrary Anthropic provider-defined tools              | `tool({ type: "provider", id: "anthropic.analyze_image" })` is dropped by prepare-tools | Use the `analyze_image` sentinel function tool; rewrite the outbound body in `createAnthropicCompatFetch`               |
+| Provider injects unsolicited main-turn `server_tool_use analyze_image` | Corrupted tool input can pollute Bash or normal tool dispatch                           | Suppress the block and matching `tool_result` in the Anthropic SSE compat layer; assembler guard as second line         |
+| Handler implicitly picks an image from history                         | Wrong source (prompt attachment / Read result / MCP artifact)                           | v1 requires explicit `image_path`; attachment-id support needs its own spec                                             |
+| Exposed on an unsupported provider                                     | Main model calls a tool that cannot execute                                             | Gate on `providerKind === "anthropic"` plus baseURL allowlist, aligned with WebSearch                                   |
+| Windows paths / working directory                                      | Relative-path resolution errors                                                         | `path.isAbsolute` + `path.resolve(context.workingDirectory, input.image_path)`; reads still go through `FileSystemPort` |
+| Noisy production logs                                                  | High-frequency streaming deltas at info level                                           | Per-chunk diagnostics only via existing debug logging; one warn at the anomaly suppression start                        |

@@ -36,18 +36,18 @@ Multi-client and duplicate events:
 
 Tests:
 
-| Case | Scenario | Assertion |
-| --- | --- | --- |
-| PW01 | One tool, one authorization | tool and completion `waiting_ms` equal; both `duration_ms` include the wait |
-| PW02 | Multiple tools waiting in one turn | completion equals the sum of tool `waiting_ms` |
-| PW03 | Multiple authorizations for one tool | all intervals accumulate in tool and completion |
-| PW04 | User stops / task ends without response | open intervals count to termination time |
-| PW05 | Duplicate request/response delivery | start not reset, no double counting |
-| PW06 | Another client responds | stream response closes the wait |
-| PW07 | Permission matches no active tool | completion counts it; other tool steps unpolluted |
-| PW08 | reasoning/generation steps | `waiting_ms="0"` |
-| PW09 | request → response → terminal tool update, no prior tool call | fallback step backfills closed waits, `duration_ms >= waiting_ms` |
-| PW10 | request → terminal tool update, no prior tool call | open wait closes at terminal and lands in the fallback step, `duration_ms >= waiting_ms` |
+| Case | Scenario                                                      | Assertion                                                                                |
+| ---- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| PW01 | One tool, one authorization                                   | tool and completion `waiting_ms` equal; both `duration_ms` include the wait              |
+| PW02 | Multiple tools waiting in one turn                            | completion equals the sum of tool `waiting_ms`                                           |
+| PW03 | Multiple authorizations for one tool                          | all intervals accumulate in tool and completion                                          |
+| PW04 | User stops / task ends without response                       | open intervals count to termination time                                                 |
+| PW05 | Duplicate request/response delivery                           | start not reset, no double counting                                                      |
+| PW06 | Another client responds                                       | stream response closes the wait                                                          |
+| PW07 | Permission matches no active tool                             | completion counts it; other tool steps unpolluted                                        |
+| PW08 | reasoning/generation steps                                    | `waiting_ms="0"`                                                                         |
+| PW09 | request → response → terminal tool update, no prior tool call | fallback step backfills closed waits, `duration_ms >= waiting_ms`                        |
+| PW10 | request → terminal tool update, no prior tool call            | open wait closes at terminal and lands in the fallback step, `duration_ms >= waiting_ms` |
 
 Regression invariants: `message_completion.duration_ms` is always `max(finishedAt - sendTime, 0)` and `agent_step.duration_ms` always `max(stepFinishedAt - stepStartedAt, 0)`; adding `waiting_ms` changes neither formula.
 

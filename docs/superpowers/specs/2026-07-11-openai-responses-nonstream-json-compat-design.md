@@ -72,7 +72,7 @@ When the wrapper cannot parse or the minimal rules do not apply, return the orig
 
 ### Unit and integration tests
 
-- Pure normalizer: fills only the missing message `id` and output_text `annotations`; message ID matches `msg_<UUIDv4>`.
+- Pure normalizer: fills only the missing message `id` and output*text `annotations`; message ID matches `msg*<UUIDv4>`.
 - Legal Responses JSON returns the original `Response` with body unchanged.
 - Unknown output items are not modified.
 - SSE and non-2xx responses pass through unchanged.

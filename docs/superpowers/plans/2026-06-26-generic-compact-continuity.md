@@ -18,11 +18,11 @@ policies, or config switches; everything lands in the generic compact path.
   `Tool use is not allowed during compaction`; no tool result part is persisted and no
   `ToolExecutor` is scheduled.
 - Full prompt anchors (verbatim, asserted by tests): `CRITICAL: Respond with TEXT ONLY. Do NOT
-  call any tools.`, `Tool calls will be REJECTED`, preserve security-relevant constraints
+call any tools.`, `Tool calls will be REJECTED`, preserve security-relevant constraints
   verbatim, `Current Work`, `Optional Next Step`.
 - `formatCompactSummary("<analysis>…<summary>abc</summary>")` produces `Summary:\nabc`;
   `buildCompactSummaryMessage` accepts `{ suppressFollowup, transcriptPath,
-  recentMessagesPreserved, replStateCleared }` and appends `Resume directly` continuation text
+recentMessagesPreserved, replStateCleared }` and appends `Resume directly` continuation text
   when `suppressFollowup` is set. Transcript recovery text is only injected when ZCode actually
   has a transcript path capability.
 
@@ -43,7 +43,7 @@ policies, or config switches; everything lands in the generic compact path.
   `readFileState` (sorted by most recent read; capped at 5 files, ~50k total tokens, ~5k per
   file). A too-large file yields exactly:
   `Note: <path> was read before the last conversation was summarized, but the contents are too
-  large to include. Use Read tool if you need to access it.`
+large to include. Use Read tool if you need to access it.`
   Plan file, memory files, and denied paths are never exposed through this reminder.
 - Todo state: compact does not restore todo state into provider-visible context
   (`Current session todo state (authoritative):` must not appear in summary bodies); the generic

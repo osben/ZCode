@@ -67,24 +67,24 @@ The compact summary still carries the existing runtime/MCP tool schemas (provide
 
 Event handling:
 
-| `ModelStreamEvent` | Hidden aggregation action | SSE retry eligibility | HTTP fallback commit |
-| --- | --- | --- | --- |
-| AI SDK synthetic `start` | not saved | kept | no |
-| raw provider event (excluding `ping`) | observed only; raw body never projected to core/UI | ends | no |
-| provider `response_start` boundary | records provider response established | ends | no |
-| provider `content_block_start(index,type)` boundary | records raw block index/type | ends | no |
-| provider `content_block_delta(index,type)` boundary | validates block exists, delta type compatible | ends | no |
-| provider `content_block_stop(index)` boundary | solidifies real block commit when same-index legal | ends | yes |
-| provider `message_delta.stop_reason` boundary | overwrites current truthy stop-reason state | ends | no |
-| `text_start` / `reasoning_start` / `tool_input_start` | observes provider event only | ends | no |
-| `text_delta` | appends to pending text block | ends | no |
-| `reasoning_delta` | records partial delta seen | ends | no |
-| `tool_input_delta` | not projected to UI; awaits real input end | ends | no |
-| `tool_input_end` / provider-complete `tool_call` | aggregates the denied tool call | ends | inferred only without raw block provenance |
-| `text_end` / `reasoning_end` | closes block; text joins the summary only here | ends | inferred only without raw block provenance |
-| `tool_call` | normalized, deduped by id, saved | ends | inferred only without raw block provenance |
-| `finish` | saves usage/finish/provider metadata | ends | no; also needs the stream completeness gate |
-| `error` | normalized into the fallback gate | only pre-first-event stale/watchdog kept; SSE protocol/business errors end | depends on commit state |
+| `ModelStreamEvent`                                    | Hidden aggregation action                          | SSE retry eligibility                                                      | HTTP fallback commit                        |
+| ----------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------- |
+| AI SDK synthetic `start`                              | not saved                                          | kept                                                                       | no                                          |
+| raw provider event (excluding `ping`)                 | observed only; raw body never projected to core/UI | ends                                                                       | no                                          |
+| provider `response_start` boundary                    | records provider response established              | ends                                                                       | no                                          |
+| provider `content_block_start(index,type)` boundary   | records raw block index/type                       | ends                                                                       | no                                          |
+| provider `content_block_delta(index,type)` boundary   | validates block exists, delta type compatible      | ends                                                                       | no                                          |
+| provider `content_block_stop(index)` boundary         | solidifies real block commit when same-index legal | ends                                                                       | yes                                         |
+| provider `message_delta.stop_reason` boundary         | overwrites current truthy stop-reason state        | ends                                                                       | no                                          |
+| `text_start` / `reasoning_start` / `tool_input_start` | observes provider event only                       | ends                                                                       | no                                          |
+| `text_delta`                                          | appends to pending text block                      | ends                                                                       | no                                          |
+| `reasoning_delta`                                     | records partial delta seen                         | ends                                                                       | no                                          |
+| `tool_input_delta`                                    | not projected to UI; awaits real input end         | ends                                                                       | no                                          |
+| `tool_input_end` / provider-complete `tool_call`      | aggregates the denied tool call                    | ends                                                                       | inferred only without raw block provenance  |
+| `text_end` / `reasoning_end`                          | closes block; text joins the summary only here     | ends                                                                       | inferred only without raw block provenance  |
+| `tool_call`                                           | normalized, deduped by id, saved                   | ends                                                                       | inferred only without raw block provenance  |
+| `finish`                                              | saves usage/finish/provider metadata               | ends                                                                       | no; also needs the stream completeness gate |
+| `error`                                               | normalized into the fallback gate                  | only pre-first-event stale/watchdog kept; SSE protocol/business errors end | depends on commit state                     |
 
 `text_delta` / `reasoning_delta` / parseable-but-unstopped tool JSON, even if arrived, stay invisible; they end the physical SSE's retry eligibility, but as long as the whole stream has completed no provider content block, core may discard the hidden partial and run the non-stream fallback — the first-provider-event boundary and the `content_block_stop` commit boundary respectively. The criterion is not whether a single part contains text, nor whether the final summary is empty. For providers with raw message-block provenance, AI SDK-synthesized `text_end` / `reasoning_end` / `tool_input_end` cannot replace a real `content_block_stop`; only providers without that provenance keep the existing normalized-end inference. Pending text that never saw `text_end` cannot join the summary even if a clean `finish` follows; when an unclosed tail block appears after a completed text block, only the completed block survives.
 

@@ -2,14 +2,14 @@
 
 ## Feature Summary
 
-| Field                 | Value                                                                                                             |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Field                 | Value                                                                                                                                                             |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Change                | The composer `#` panel aggregates all opened or restored workspaces under the current session-storage authority and limits visible candidates to 20 per workspace |
-| Change layer          | `option-source + presentation`                                                                                    |
-| User-visible surfaces | The `#` sessions panel of `MentionPlugin`                                                                         |
-| Existing docs         | `docs/ui/mention-panel-layout.md`, `docs/session-context-tool.md`                                                 |
-| Existing code owners  | `sessionsMentionProvider`, `useWorkspaceSessionsIndexItems`, Tab Store, remote workspace service resolver         |
-| Out of scope          | `@` session candidate scope, rewriting the canonical mention, moving sessions across Hosts, Agent/protocol changes, stream/queue/snapshot/replayable semantics |
+| Change layer          | `option-source + presentation`                                                                                                                                    |
+| User-visible surfaces | The `#` sessions panel of `MentionPlugin`                                                                                                                         |
+| Existing docs         | `docs/ui/mention-panel-layout.md`, `docs/session-context-tool.md`                                                                                                 |
+| Existing code owners  | `sessionsMentionProvider`, `useWorkspaceSessionsIndexItems`, Tab Store, remote workspace service resolver                                                         |
+| Out of scope          | `@` session candidate scope, rewriting the canonical mention, moving sessions across Hosts, Agent/protocol changes, stream/queue/snapshot/replayable semantics    |
 
 ## Product boundary
 
@@ -89,13 +89,13 @@ aggregated result
 
 ## State Owners
 
-| State / fact                | Authority                                          | Mirrors / caches        | Evidence                               |
-| --------------------------- | -------------------------------------------------- | ----------------------- | -------------------------------------- |
-| Workspace set of the window | window-scoped Tab Store                            | tab persistence restore | workspace tabs in hook test            |
-| remote workspace -> service | `remoteSessionId` + remote workspace session store | identity/path lookup    | mock service call counts per endpoint  |
-| Session candidate facts     | sessions-index of each Host                        | shared registry store   | snapshot/delta aggregation result      |
+| State / fact                | Authority                                          | Mirrors / caches        | Evidence                                           |
+| --------------------------- | -------------------------------------------------- | ----------------------- | -------------------------------------------------- |
+| Workspace set of the window | window-scoped Tab Store                            | tab persistence restore | workspace tabs in hook test                        |
+| remote workspace -> service | `remoteSessionId` + remote workspace session store | identity/path lookup    | mock service call counts per endpoint              |
+| Session candidate facts     | sessions-index of each Host                        | shared registry store   | snapshot/delta aggregation result                  |
 | session context content     | SQLite session store of the current Agent Host     | no cross-Host mirror    | `ReadSessionContext` docs and store implementation |
-| workspace isolation key     | `workspaceIdentity?.trim() \|\| workspacePath`     | scope/registry key      | same path, different identity focused case |
+| workspace isolation key     | `workspaceIdentity?.trim() \|\| workspacePath`     | scope/registry key      | same path, different identity focused case         |
 
 ## Boundary Decisions
 
@@ -111,17 +111,17 @@ aggregated result
 
 ## Candidate Combinations and pruning
 
-| Candidate ID | State                                                  | Event                       | Expected effect                                              | Status   |
-| ------------ | ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------ | -------- |
-| CWM01        | local draft, window has workspace A/B                  | type `#` in A               | sessions of A and B appear, A first                          | accepted |
-| CWM02        | remote draft, same remote authority has workspace A/B  | type `#` in A               | sessions of A and B both appear from the remote service      | accepted |
-| CWM03        | local and remote workspaces coexist                    | type `#` in local           | only local authority sessions appear, remote does not wrongly go through the base service | accepted |
-| CWM04        | two remote authorities coexist                         | type `#` in remote A        | only authority A sessions appear, B does not enter the invalid candidates | accepted |
-| CWM05        | remote tab has not restored its service                | open `#`                    | does not subscribe the local host; re-aggregates after the connection recovers | accepted |
-| CWM06        | panel not enabled                                      | ordinary composer render    | no extra sessions-index pre-subscription                     | accepted |
-| CWM07        | local draft, window has workspace A/B                  | type `@` in A               | subscribes only A; B does not enter the `@` session group    | accepted |
-| CWM08        | workspaces A/B in the same authority each have more than 20 sessions | type empty-query `#` in A | A and B each keep only their recent 20; A must not crowd out B | accepted |
-| CWM09        | a matching session of workspace B is not in its recent 20 | type `#` in A and search | match B's full history first, then show at most 20 of B's matches | accepted |
+| Candidate ID | State                                                                | Event                     | Expected effect                                                                           | Status   |
+| ------------ | -------------------------------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- | -------- |
+| CWM01        | local draft, window has workspace A/B                                | type `#` in A             | sessions of A and B appear, A first                                                       | accepted |
+| CWM02        | remote draft, same remote authority has workspace A/B                | type `#` in A             | sessions of A and B both appear from the remote service                                   | accepted |
+| CWM03        | local and remote workspaces coexist                                  | type `#` in local         | only local authority sessions appear, remote does not wrongly go through the base service | accepted |
+| CWM04        | two remote authorities coexist                                       | type `#` in remote A      | only authority A sessions appear, B does not enter the invalid candidates                 | accepted |
+| CWM05        | remote tab has not restored its service                              | open `#`                  | does not subscribe the local host; re-aggregates after the connection recovers            | accepted |
+| CWM06        | panel not enabled                                                    | ordinary composer render  | no extra sessions-index pre-subscription                                                  | accepted |
+| CWM07        | local draft, window has workspace A/B                                | type `@` in A             | subscribes only A; B does not enter the `@` session group                                 | accepted |
+| CWM08        | workspaces A/B in the same authority each have more than 20 sessions | type empty-query `#` in A | A and B each keep only their recent 20; A must not crowd out B                            | accepted |
+| CWM09        | a matching session of workspace B is not in its recent 20            | type `#` in A and search  | match B's full history first, then show at most 20 of B's matches                         | accepted |
 
 Pruned: theme, locale, task phase, model/provider, continuous stream and replayable recovery do not form a
 Cartesian product with candidate scope, since they do not change workspace authority. Desktop local + remote

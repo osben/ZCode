@@ -57,12 +57,12 @@ Mount point, store, dialog lifecycle, and current task/model context reads of th
 
 Regression tests must prove feedback service selection does not depend on workspace-scoped services:
 
-| Scenario | Workspace services | Feedback service | Expected |
-| --- | --- | --- | --- |
-| Local workspace | base services | base feedback | unchanged |
-| SSH connected | merged remote services | base feedback | unchanged |
-| SSH session unbound | disconnected proxy | base feedback | submittable, no disconnect error |
-| SSH disconnected | disconnected proxy | base feedback | submittable, no disconnect error |
+| Scenario            | Workspace services     | Feedback service | Expected                         |
+| ------------------- | ---------------------- | ---------------- | -------------------------------- |
+| Local workspace     | base services          | base feedback    | unchanged                        |
+| SSH connected       | merged remote services | base feedback    | unchanged                        |
+| SSH session unbound | disconnected proxy     | base feedback    | submittable, no disconnect error |
+| SSH disconnected    | disconnected proxy     | base feedback    | submittable, no disconnect error |
 
 Tests assert that `FeedbackHost` receives the explicit base feedback service, not that an object spread happens to keep the field. Existing feedback submission tests keep covering `getDeviceSnapshot`, ticket creation, attachments, and log flow.
 

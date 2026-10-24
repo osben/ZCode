@@ -109,12 +109,12 @@ moved into the provider modules under services):
 
 ```ts
 export const BIGMODEL_OAUTH_CONFIG = {
-  authorizeUrl: 'https://bigmodel.cn/login',
-  tokenUrl: 'https://bigmodel.cn/api/oauth/token',      // 待确认
-  userinfoUrl: 'https://bigmodel.cn/api/oauth/userinfo',  // 待确认，可选
-  appId: 'zcode-bigmodel-app',                            // 待确认
-  redirectUri: 'zcode://bigmodel-auth/callback',
-}
+  authorizeUrl: "https://bigmodel.cn/login",
+  tokenUrl: "https://bigmodel.cn/api/oauth/token", // 待确认
+  userinfoUrl: "https://bigmodel.cn/api/oauth/userinfo", // 待确认，可选
+  appId: "zcode-bigmodel-app", // 待确认
+  redirectUri: "zcode://bigmodel-auth/callback",
+};
 ```
 
 Desktop is a public client: no `clientSecret`; PKCE provides the security.
@@ -132,14 +132,14 @@ Desktop is a public client: no `clientSecret`; PKCE provides the security.
 
 ## Edge cases
 
-| Scenario | Handling |
-|---|---|
-| User closes the browser after clicking login | 5-minute timeout; OAuthService clears state; renderer shows timeout |
-| Repeated login clicks | pendingStates check ignores duplicates (per host process) |
+| Scenario                                           | Handling                                                                                                     |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| User closes the browser after clicking login       | 5-minute timeout; OAuthService clears state; renderer shows timeout                                          |
+| Repeated login clicks                              | pendingStates check ignores duplicates (per host process)                                                    |
 | Deep link arrives with the app closed (cold start) | macOS `open-url`; Windows/Linux `process.argv`. State cannot match (memory lost) → error, user logs in again |
-| Deep link arrives with the app running | state→windowId routing to the correct window |
-| Deep link before renderer ready | Main caches the URL until `RendererReady` |
-| State mismatch | rejected with an error |
-| Token exchange network failure | error surfaced, retryable |
-| Stored token expired at startup | load optimistically; a later 401 triggers refresh or re-login in the hook layer |
-| Multiple windows logging in concurrently | each window has its own host OAuthService; state→windowId routes each callback correctly |
+| Deep link arrives with the app running             | state→windowId routing to the correct window                                                                 |
+| Deep link before renderer ready                    | Main caches the URL until `RendererReady`                                                                    |
+| State mismatch                                     | rejected with an error                                                                                       |
+| Token exchange network failure                     | error surfaced, retryable                                                                                    |
+| Stored token expired at startup                    | load optimistically; a later 401 triggers refresh or re-login in the hook layer                              |
+| Multiple windows logging in concurrently           | each window has its own host OAuthService; state→windowId routes each callback correctly                     |

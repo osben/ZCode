@@ -18,7 +18,7 @@ Shipped (2026-07-23). Acceptance criteria: BCP-207/BCP-208 in
 - The most recent non-`about:blank` URL is kept in renderer memory keyed by
   `workspaceIdentity?.trim() || workspacePath`, then bucketed by stable side-pane tab id;
   the new guest re-attaches via the existing `browserViewAttachGuest({ key: browserKey,
-  ... })` chain with the same browserKey/tabId/session and the new webContentsId, then
+... })` chain with the same browserKey/tabId/session and the new webContentsId, then
   restores the URL after `dom-ready`.
 - User-triggered explicit close of a tab/window and ZCode process exit never auto-recover.
 - Main process: old-guest listener cleanup is best-effort (`try/finally`), so cleanup

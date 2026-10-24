@@ -25,17 +25,17 @@ WSL remote workspaces reuse the unified `IRemoteBackend` / `connectRemote` / Des
 
 ## Reclaim points
 
-| Event | Reclaim? | Scope | Reason |
-| --- | --- | --- | --- |
-| Close a real BrowserWindow | yes | that window's Local Host, dedicated sessions, shared SSH Hosts, Bot runtimes | window owner ended |
-| Windows close button hides to tray | no | — | window and running tasks stay alive |
-| Minimize | no | — | visibility only |
-| renderer reload / crash recovery | no | old attachments only | Host/CLI lifecycle belongs to the window, not the renderer |
-| mobile `/remote` disconnect or bridge dispose | no | mobile attachment only | shared-host attachment owns no runtime |
-| `before-quit` / Cmd+Q / tray quit | yes, with wait | all in-app Local/Remote Hosts | app owner ended |
-| before auto-update install | yes, with wait | all in-app Local/Remote Hosts | release processes, files, and runtime locks before update handoff |
-| Host remote connection abnormal close | yes | that Host's services, attachments, Agents, backend | Host failure domain ended |
-| Main/Host IPC disconnect | yes, bounded | all resources of that Host | parent owner gone |
+| Event                                         | Reclaim?       | Scope                                                                        | Reason                                                            |
+| --------------------------------------------- | -------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Close a real BrowserWindow                    | yes            | that window's Local Host, dedicated sessions, shared SSH Hosts, Bot runtimes | window owner ended                                                |
+| Windows close button hides to tray            | no             | —                                                                            | window and running tasks stay alive                               |
+| Minimize                                      | no             | —                                                                            | visibility only                                                   |
+| renderer reload / crash recovery              | no             | old attachments only                                                         | Host/CLI lifecycle belongs to the window, not the renderer        |
+| mobile `/remote` disconnect or bridge dispose | no             | mobile attachment only                                                       | shared-host attachment owns no runtime                            |
+| `before-quit` / Cmd+Q / tray quit             | yes, with wait | all in-app Local/Remote Hosts                                                | app owner ended                                                   |
+| before auto-update install                    | yes, with wait | all in-app Local/Remote Hosts                                                | release processes, files, and runtime locks before update handoff |
+| Host remote connection abnormal close         | yes            | that Host's services, attachments, Agents, backend                           | Host failure domain ended                                         |
+| Main/Host IPC disconnect                      | yes, bounded   | all resources of that Host                                                   | parent owner gone                                                 |
 
 ## Lifecycle state machines
 
@@ -170,15 +170,15 @@ Any failed check logs a warn and skips. Legacy orphans without an owner registry
 
 Constants, injected in tests — no scattered magic numbers:
 
-| Phase | Default | Note |
-| --- | ---: | --- |
-| Agent stdin graceful exit | 300 ms | current release fast path |
-| Agent process-tree TERM/KILL fallback | 2,250 ms | current 2 s + 250 ms fallback |
-| remote server RPC stop | 1,000 ms | service dispose continues after timeout |
-| remote server service/Agent dispose | 3,500 ms | covers Agent process-tree fallback |
-| Host remote stream close | 5,000 ms | covers both server phases plus scheduling slack |
-| Main per-host force fallback | 6,000 ms | must be later than Host/remote normal budgets |
-| App/update aggregate barrier | 8,000 ms | hosts wait in parallel, not summed |
+| Phase                                 |  Default | Note                                            |
+| ------------------------------------- | -------: | ----------------------------------------------- |
+| Agent stdin graceful exit             |   300 ms | current release fast path                       |
+| Agent process-tree TERM/KILL fallback | 2,250 ms | current 2 s + 250 ms fallback                   |
+| remote server RPC stop                | 1,000 ms | service dispose continues after timeout         |
+| remote server service/Agent dispose   | 3,500 ms | covers Agent process-tree fallback              |
+| Host remote stream close              | 5,000 ms | covers both server phases plus scheduling slack |
+| Main per-host force fallback          | 6,000 ms | must be later than Host/remote normal budgets   |
+| App/update aggregate barrier          | 8,000 ms | hosts wait in parallel, not summed              |
 
 E2E may use existing coverage-specific extended configs. All timeout logs must carry phase, host label, PID, remote kind, elapsedMs; high-frequency protocol frames never upgrade to info.
 
@@ -238,15 +238,15 @@ Repository checks: `pnpm typecheck`, `pnpm lint`.
 
 ## Risks and mitigations
 
-| Risk | Mitigation |
-| --- | --- |
-| Slower update/app quit | hosts wait in parallel; normal exit is event-driven, only abnormal paths hit deadlines |
-| Inverted timeout layers killing top-down | unified budget constants with tested strict ordering: Agent < server < Host < app |
-| Repeated window/app/update dispose | single-flight + process-object dedup + registry removal before await |
-| Killing user WSL processes | no distro terminate; ownerId + PID start time + env + executable multi-check |
-| Mobile disconnect killing the Host | mobile attachment and Host ownership layered, bridge dispose tested |
-| SSH/Docker regressions | unified interface stays compatible with legacy `dispose()`, per-backend behavior covered |
-| Main holding business state | the manager holds only Host/session lifecycle, never task/queue/snapshot |
+| Risk                                     | Mitigation                                                                               |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Slower update/app quit                   | hosts wait in parallel; normal exit is event-driven, only abnormal paths hit deadlines   |
+| Inverted timeout layers killing top-down | unified budget constants with tested strict ordering: Agent < server < Host < app        |
+| Repeated window/app/update dispose       | single-flight + process-object dedup + registry removal before await                     |
+| Killing user WSL processes               | no distro terminate; ownerId + PID start time + env + executable multi-check             |
+| Mobile disconnect killing the Host       | mobile attachment and Host ownership layered, bridge dispose tested                      |
+| SSH/Docker regressions                   | unified interface stays compatible with legacy `dispose()`, per-backend behavior covered |
+| Main holding business state              | the manager holds only Host/session lifecycle, never task/queue/snapshot                 |
 
 ## Acceptance criteria
 

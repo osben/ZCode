@@ -11,7 +11,7 @@
 
 1. Provider-visible layer: direct `Glob` / `Grep` tools are not exposed to the model by default.
 2. Bash prompt: the model is not told to avoid running `find` / `grep` in Bash.
-3. Plan prompt: uses ``find``/Glob, ``grep``/Grep, and Read.
+3. Plan prompt: uses `find`/Glob, `grep`/Grep, and Read.
 4. Runtime layer: `find()` / `grep()` shell functions are injected into session shells that
    support POSIX shell functions (see the switch above; the original plan recorded a temporary
    policy of not injecting, relying on the user's local commands).
@@ -20,7 +20,7 @@
 
 - The embedded search gate is on by default; non-default local agent entry points may disable it.
 - Gate on and Bash available:
-  - main system broad exploration guidance uses ``find`` / ``grep`` via the Bash tool;
+  - main system broad exploration guidance uses `find` / `grep` via the Bash tool;
   - the Explore prompt uses Bash `find` / `grep` guidance;
   - the Bash prompt avoid list no longer includes `find` / `grep`;
   - Bash initialization injects `find` / `grep` functions executed by the embedded search backend
@@ -48,17 +48,16 @@ prompt lines. The default embedded branch must satisfy all of:
 
 1. `tools[]` does not expose direct `Glob` / `Grep` — neither for the main agent nor for the
    Explore subagent.
-2. The Bash tool description's avoid list contains exactly ``cat``, ``head``, ``tail``, ``sed``,
-   ``awk``, or ``echo`` and not `find` / `grep`.
-3. The Explore prompt uses `Use \`find\` via Bash for broad file pattern matching` and
-   `Use \`grep\` via Bash for searching file contents with regex`; the Explore allowlist has no
-   direct `Glob` / `Grep`.
-4. The Plan prompt uses ``find``, ``grep``, and Read for patterns/conventions.
+2. The Bash tool description's avoid list contains exactly `cat`, `head`, `tail`, `sed`,
+   `awk`, or `echo` and not `find` / `grep`.
+3. The Explore prompt uses `Use \`find\` via Bash for broad file pattern matching`and`Use \`grep\` via Bash for searching file contents with regex`; the Explore allowlist has no
+direct `Glob`/`Grep`.
+4. The Plan prompt uses `find`, `grep`, and Read for patterns/conventions.
 5. The Agent tool description does not leak direct search tools (no
    `(Tools: Glob, Grep, Read, Bash, WebFetch, WebSearch, TodoWrite)`).
 6. Main system guidance does not emit Agent/Explore session guidance lines for the embedded
    branch; the dedicated-tool list does not mention Glob/Grep; the broad exploration fallback
-   reads ``find`` or ``grep`` via the Bash tool.
+   reads `find` or `grep` via the Bash tool.
 
 ## Three-Layer Architecture
 

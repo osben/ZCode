@@ -123,7 +123,7 @@ Flow (from the reverse engineering, eager creation):
 1. **Project**: palette sub-page `page: new-task-project`: open workspaces + `recentProjects` with search; an
    "already open" mark.
 2. **Setup page**: a second sub-page (analog of Copilot's session form): destination (`New worktree` / `Current
-   checkout`), base branch (combobox searching `listLocalBranches`), new branch name with validation (taken, invalid,
+checkout`), base branch (combobox searching `listLocalBranches`), new branch name with validation (taken, invalid,
    or branch already attached to a worktree: error code `branch-in-other-worktree`); preview of the target directory.
 3. **Start**: for a worktree, service `createWorktree`, then open the workspace by the existing contract
    (`activateTabByPath`/`addTab` + `startDraft`) in the new directory; on error `target-path-exists` with an existing
@@ -153,17 +153,17 @@ section, so settings are added together with the feature.
 
 **General settings**: section `Worktrees` in Settings:
 
-| Control | Behavior |
-| --- | --- |
-| Worktree location | Choice: Global storage, Inside repository, Next to repository or Custom. For Custom show a path field and a `Choose folder` button. |
+| Control               | Behavior                                                                                                                                                          |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worktree location     | Choice: Global storage, Inside repository, Next to repository or Custom. For Custom show a path field and a `Choose folder` button.                               |
 | Default branch prefix | Text field, an example of the resulting branch name and a `Reset to default` button. If a template syntax is supported, the preview expands variables explicitly. |
 
 **Project settings**: available from the project/workspace and override the general values:
 
-| Control | Behavior |
-| --- | --- |
-| Default base branch | Choice of the branch a new worktree branch is created from; the creation form can replace it for one task. |
-| Branch prefix override | Optional project prefix; `Reset to global` returns to inheriting the general prefix. |
+| Control                | Behavior                                                                                                   |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Default base branch    | Choice of the branch a new worktree branch is created from; the creation form can replace it for one task. |
+| Branch prefix override | Optional project prefix; `Reset to global` returns to inheriting the general prefix.                       |
 
 Parameters affect only later worktree creations. Changing the location moves and creates nothing by itself. The
 creation form shows the computed target path before confirmation. For Custom, check availability and that the path is
@@ -232,35 +232,35 @@ behind the service/API layer.
 
 ## Acceptance scenarios
 
-| ID | Scenario | Expected result |
-| --- | --- | --- |
-| `WT-01` | Create a task in a new worktree for a local Git project | The worktree is created from the chosen base; the workspace and a draft task open. The runtime session is created only after the normal message send. |
-| `WT-02` | Branch name taken or branch active in another worktree | Creation does not start; a clear explanation and an action to choose another branch. |
-| `WT-03` | Project is not a Git repository or Git unavailable | A separate state is shown; no worktree and no session are created. |
-| `WT-04` | Worktree created, but opening the workspace/draft failed | The existing path is shown and a retry is available without creating a second worktree. |
-| `WT-05` | Open an existing worktree already open in a tab | The existing tab is activated; no duplicate workspace is created. |
-| `TH-01` | Pick Light, Dark or System | Only the mode changes; the current palette is kept. |
-| `TH-02` | Pick a palette | Only the palette changes; the current mode is kept. |
-| `TH-03` | Change the theme in one window | Command Center shows the new selected value; other windows get the update by the current mechanism. |
-| `CC-01` | Open a nested choice, go back | Search gets focus, the entered context is kept. |
-| `WTS-01` | Pick Custom worktree location | The path field appears, the target path in the creation form updates; the folder is not created before confirmation. |
-| `WTS-02` | A branch prefix override is set for the project | The preview uses the project prefix; `Reset to global` returns the general prefix. |
-| `WTS-03` | Change a general Worktree setting | It is saved in the general scope and applies to later worktrees; already created paths/branches do not change. |
+| ID       | Scenario                                                 | Expected result                                                                                                                                       |
+| -------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WT-01`  | Create a task in a new worktree for a local Git project  | The worktree is created from the chosen base; the workspace and a draft task open. The runtime session is created only after the normal message send. |
+| `WT-02`  | Branch name taken or branch active in another worktree   | Creation does not start; a clear explanation and an action to choose another branch.                                                                  |
+| `WT-03`  | Project is not a Git repository or Git unavailable       | A separate state is shown; no worktree and no session are created.                                                                                    |
+| `WT-04`  | Worktree created, but opening the workspace/draft failed | The existing path is shown and a retry is available without creating a second worktree.                                                               |
+| `WT-05`  | Open an existing worktree already open in a tab          | The existing tab is activated; no duplicate workspace is created.                                                                                     |
+| `TH-01`  | Pick Light, Dark or System                               | Only the mode changes; the current palette is kept.                                                                                                   |
+| `TH-02`  | Pick a palette                                           | Only the palette changes; the current mode is kept.                                                                                                   |
+| `TH-03`  | Change the theme in one window                           | Command Center shows the new selected value; other windows get the update by the current mechanism.                                                   |
+| `CC-01`  | Open a nested choice, go back                            | Search gets focus, the entered context is kept.                                                                                                       |
+| `WTS-01` | Pick Custom worktree location                            | The path field appears, the target path in the creation form updates; the folder is not created before confirmation.                                  |
+| `WTS-02` | A branch prefix override is set for the project          | The preview uses the project prefix; `Reset to global` returns the general prefix.                                                                    |
+| `WTS-03` | Change a general Worktree setting                        | It is saved in the general scope and applies to later worktrees; already created paths/branches do not change.                                        |
 
 ## Decisions that change scope
 
-| Question | Options | Proposed direction |
-| --- | --- | --- |
-| What does Worktree mean in this feature? | New session in a separate worktree / open an existing one / both | Main flow is a new task in a separate worktree; opening existing ones stays a separate action. |
-| Where to pick the project from? | Only the active workspace / any already open workspace / list of all local projects | Start with already open local workspaces; no new directory picker in this flow. |
-| What if the chosen branch is already attached to a worktree? | Reuse it / create another branch / show a choice | Show the existing worktree explicitly and ask for a choice; do not switch workspaces silently. |
-| Which environments to support? | Desktop local / also Web and remote workspace | Start with Desktop local; remote needs a host-side Git contract. |
-| How to store the created folder? | Next to the project / in a chosen directory / via a general setting | Decide before implementation; Copilot has a configurable path, ZCode had no such contract. |
-| Where to store settings? | Local to the user / in project config / general default plus project override | General default plus explicit project overrides; format and sync not chosen yet. |
-| Which branch prefix syntax? | Literal prefix only / templates like `%username%` | Start with a literal prefix; templates need a username source and fallback behavior. |
-| Reusable worktrees and sparse checkout now? | MVP / separate stage | Defer: they add cleanup lifecycle and checkout content rules. |
-| What is the "Theme section"? | Mode only / mode and palette | Mode and palette as independent blocks per current ZCode settings. |
-| Which extra ideas to include? | Switch workspace / PR URL input / nothing yet | Switch workspace is the simplest next item; URL input needs separate research of routes. |
+| Question                                                     | Options                                                                             | Proposed direction                                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| What does Worktree mean in this feature?                     | New session in a separate worktree / open an existing one / both                    | Main flow is a new task in a separate worktree; opening existing ones stays a separate action. |
+| Where to pick the project from?                              | Only the active workspace / any already open workspace / list of all local projects | Start with already open local workspaces; no new directory picker in this flow.                |
+| What if the chosen branch is already attached to a worktree? | Reuse it / create another branch / show a choice                                    | Show the existing worktree explicitly and ask for a choice; do not switch workspaces silently. |
+| Which environments to support?                               | Desktop local / also Web and remote workspace                                       | Start with Desktop local; remote needs a host-side Git contract.                               |
+| How to store the created folder?                             | Next to the project / in a chosen directory / via a general setting                 | Decide before implementation; Copilot has a configurable path, ZCode had no such contract.     |
+| Where to store settings?                                     | Local to the user / in project config / general default plus project override       | General default plus explicit project overrides; format and sync not chosen yet.               |
+| Which branch prefix syntax?                                  | Literal prefix only / templates like `%username%`                                   | Start with a literal prefix; templates need a username source and fallback behavior.           |
+| Reusable worktrees and sparse checkout now?                  | MVP / separate stage                                                                | Defer: they add cleanup lifecycle and checkout content rules.                                  |
+| What is the "Theme section"?                                 | Mode only / mode and palette                                                        | Mode and palette as independent blocks per current ZCode settings.                             |
+| Which extra ideas to include?                                | Switch workspace / PR URL input / nothing yet                                       | Switch workspace is the simplest next item; URL input needs separate research of routes.       |
 
 ## Implementation map
 
@@ -290,11 +290,11 @@ flowchart LR
 
 ## Impact boundaries
 
-| Surface | Draft / displayed state | Action and authoritative owner | Boundary |
-| --- | --- | --- | --- |
-| Worktree setup | Project, branch and directory live temporarily in the nested UI flow | The Git operation must be run by the service on the Host that owns the repository | First version proposed for local Desktop only |
-| Opening the result | Workspace tab and draft task | `Root` opens/reuses the tab; `App.startDraft` creates the draft | Do not create a session before a message is sent |
-| Theme | Selected mode and palette are shown separately | Existing store setters apply and save the choice | Mode does not overwrite the palette and vice versa |
+| Surface            | Draft / displayed state                                              | Action and authoritative owner                                                    | Boundary                                           |
+| ------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Worktree setup     | Project, branch and directory live temporarily in the nested UI flow | The Git operation must be run by the service on the Host that owns the repository | First version proposed for local Desktop only      |
+| Opening the result | Workspace tab and draft task                                         | `Root` opens/reuses the tab; `App.startDraft` creates the draft                   | Do not create a session before a message is sent   |
+| Theme              | Selected mode and palette are shown separately                       | Existing store setters apply and save the choice                                  | Mode does not overwrite the palette and vice versa |
 
 Invariants to keep before implementation:
 
@@ -384,14 +384,14 @@ checking out an existing branch.
 
 ### Acceptance scenarios
 
-| # | Scenario | Expectation |
-| --- | --- | --- |
-| WT-G1 | Open the empty state, enable the checkbox | The checkbox sets automatic worktree creation for the first message; the name is generated, base comes from the current checkout honoring the silent project override; the form shows no name editor, base choice or regenerate |
-| WT-G2 | Open the Base branch choice | A list of local branches; the choice updates the path preview and goes to `createWorktree` |
-| WT-G3 | Enter a branch name that already has a worktree | Inline offer "open existing"; accepted -> the directory opens, the draft is transferred, no second directory is created |
-| WT-G4 | Enter the name of an existing free branch | A worktree is created checking out that branch; `baseBranch` is ignored by the server |
-| WT-G5 | Prefix `dev/` + generation | Result `dev/<adjective>-<noun>`; validation and preview as before |
-| WT-G6 | Open the palette setup page and edit the name | The name field is editable by hand; regenerate changes only the generated name |
+| #     | Scenario                                        | Expectation                                                                                                                                                                                                                     |
+| ----- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WT-G1 | Open the empty state, enable the checkbox       | The checkbox sets automatic worktree creation for the first message; the name is generated, base comes from the current checkout honoring the silent project override; the form shows no name editor, base choice or regenerate |
+| WT-G2 | Open the Base branch choice                     | A list of local branches; the choice updates the path preview and goes to `createWorktree`                                                                                                                                      |
+| WT-G3 | Enter a branch name that already has a worktree | Inline offer "open existing"; accepted -> the directory opens, the draft is transferred, no second directory is created                                                                                                         |
+| WT-G4 | Enter the name of an existing free branch       | A worktree is created checking out that branch; `baseBranch` is ignored by the server                                                                                                                                           |
+| WT-G5 | Prefix `dev/` + generation                      | Result `dev/<adjective>-<noun>`; validation and preview as before                                                                                                                                                               |
+| WT-G6 | Open the palette setup page and edit the name   | The name field is editable by hand; regenerate changes only the generated name                                                                                                                                                  |
 
 Tests: unit tests for the generator (determinism with a fixed seed/list, does not offer taken names) and the derive
 logic; e2e for WT-G3 (first-send interception + opening the existing one). i18n: new keys en-US / uk-UA / zh-CN.
@@ -443,6 +443,7 @@ identity, Host unchanged).
 
   Compatibility: the v4 command schema is not strict, so an old CLI silently drops the key (fail-closed: the session is
   created in the parent directory without an error).
+
 - **Persistence.** The session row gets new nullable columns `execution_directory` / `execution_branch` (migration
   `0023_session_execution_worktree`). The `directory`/`path` columns **keep the parent workspace path**: session
   listing filters by `directory = ?` and `workspaceID || path || directory` (`server-operations.listSessions`), so
@@ -451,7 +452,7 @@ identity, Host unchanged).
   creation so both `workingDirectory` and directory-bound dependencies (including MCP and custom commands) are created
   relative to the execution worktree. `resume.ts` keeps reading `execution_directory ?? directory`.
 - **Execution.** `createZCodeApp` normalizes `workingDirectory = executionWorktree.path ?? runtimeConfig.workingDirectory
-  ?? process.cwd()`; `projectID` for persisted mode settings is computed from `workspacePath` (the parent) so a
+?? process.cwd()`; `projectID` for persisted mode settings is computed from `workspacePath` (the parent) so a
   project's mode settings do not diverge across the project's sessions.
 
 ### Send flow (empty state, checkbox)
@@ -548,9 +549,9 @@ flow of the draft panel is unchanged.
 
 ### Acceptance scenarios
 
-| # | Scenario | Expectation |
-| --- | --- | --- |
-| WT-H1 | Checkbox + first message | The session is created in the current project; the worktree directory and branch are created; the first turn runs in the worktree; no separate project appears in the sidebar |
-| WT-H2 | Worktree creation error (git unavailable) | The send is cancelled, an inline error, the draft stays, no session is created |
-| WT-H3 | Restart the app, open the worktree session from the project list | Resume in the same worktree (`execution_directory`) |
-| WT-H4 | A prewarm session was already created before sending | Promote is skipped, the session is created with `executionWorktree`; the prewarm session does not linger |
+| #     | Scenario                                                         | Expectation                                                                                                                                                                   |
+| ----- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WT-H1 | Checkbox + first message                                         | The session is created in the current project; the worktree directory and branch are created; the first turn runs in the worktree; no separate project appears in the sidebar |
+| WT-H2 | Worktree creation error (git unavailable)                        | The send is cancelled, an inline error, the draft stays, no session is created                                                                                                |
+| WT-H3 | Restart the app, open the worktree session from the project list | Resume in the same worktree (`execution_directory`)                                                                                                                           |
+| WT-H4 | A prewarm session was already created before sending             | Promote is skipped, the session is created with `executionWorktree`; the prewarm session does not linger                                                                      |

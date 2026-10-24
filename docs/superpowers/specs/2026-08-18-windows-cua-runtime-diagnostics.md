@@ -28,12 +28,12 @@ node_modules/...     <- actually installed: an older commit from 8/10 (inconsist
 
 The same symbols therefore gave opposite conclusions in the two places:
 
-| Fact | node_modules (old) | producer main@72a8487d (true) |
-|---|---|---|
-| `package.json.zcodeCuaRuntime` | absent | **present** |
-| `dist/windows-helper.js` | absent | **present (checked in)** |
-| `WINDOWS_DEV_CONTROL_PROTOCOL` | no export | **present** (`windowsDevHelperMain.ts:17`) |
-| controller port in `ports.ts` | absent | **present** (`CuaController*` + take/stop) |
+| Fact                           | node_modules (old) | producer main@72a8487d (true)              |
+| ------------------------------ | ------------------ | ------------------------------------------ |
+| `package.json.zcodeCuaRuntime` | absent             | **present**                                |
+| `dist/windows-helper.js`       | absent             | **present (checked in)**                   |
+| `WINDOWS_DEV_CONTROL_PROTOCOL` | no export          | **present** (`windowsDevHelperMain.ts:17`) |
+| controller port in `ports.ts`  | absent             | **present** (`CuaController*` + take/stop) |
 
 All 8 TS errors came from this, not from a producer regression. Changes built on the wrong premise were fully
 reverted by `b99a74dbdf` (the wrongly deleted controller port and the single-source protocol constant import

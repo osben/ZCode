@@ -338,13 +338,7 @@ by path alone is forbidden.
 ### Host pool state
 
 ```ts
-type RemoteWslHostState =
-  | "connecting"
-  | "ready"
-  | "draining"
-  | "idle"
-  | "disposing"
-  | "disposed";
+type RemoteWslHostState = "connecting" | "ready" | "draining" | "idle" | "disposing" | "disposed";
 
 interface RemoteWslHostEntry {
   process: ElectronUtilityProcess;
@@ -818,19 +812,19 @@ Mechanical verification: `pnpm typecheck` and `pnpm lint`.
 
 ## Risks and mitigations
 
-| Risk | Mitigation |
-| --- | --- |
-| A shared Host crash widens the impact | Limit to window + distro + user; notify associated sessions in batch; reconnect recovers per workspace independently. |
-| An old timer wrongly kills a reused Host | entry identity + monotonic generation + re-derive idle predicates before firing. |
-| Hand-kept refcount drift | Prefer deriving from the authoritative sets of logical/mobile attachments; if an index is built for performance, only an atomic entry may update it, with a consistency test. |
-| Closing a tab wrongly kills a background task | Enter draining when refs=0 and running; release only after terminal. |
-| Draining never ends | Normally wait for the task lifecycle; real owner teardown uses the existing bounded shutdown; abnormal disconnects are cleaned by Host exit. |
-| Data mix-up between workspaces in a shared server | All isolation keys use `workspaceIdentity` falling back to `workspacePath`; end-to-end multi-workspace tests. |
-| First-install deploy contention | Unique staging + remote lock + version re-check inside the lock. |
-| Stale discovery cache | 5s short TTL, active refresh/failure invalidation, no permanent global caching of resolved user/home. |
-| App quit delayed by the TTL | Shutdown cancels timers first and disposes in parallel at once; the TTL never enters the exit wait budget. |
-| Mobile replayable pollutes desktop | Attachments keep clientMode/deliveryKind; desktop WSL explicitly forbids relay_bridge. |
-| Docker wrongly symmetrized | This spec explicitly keeps dedicated; design again after the container owner is confirmed. |
+| Risk                                              | Mitigation                                                                                                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A shared Host crash widens the impact             | Limit to window + distro + user; notify associated sessions in batch; reconnect recovers per workspace independently.                                                         |
+| An old timer wrongly kills a reused Host          | entry identity + monotonic generation + re-derive idle predicates before firing.                                                                                              |
+| Hand-kept refcount drift                          | Prefer deriving from the authoritative sets of logical/mobile attachments; if an index is built for performance, only an atomic entry may update it, with a consistency test. |
+| Closing a tab wrongly kills a background task     | Enter draining when refs=0 and running; release only after terminal.                                                                                                          |
+| Draining never ends                               | Normally wait for the task lifecycle; real owner teardown uses the existing bounded shutdown; abnormal disconnects are cleaned by Host exit.                                  |
+| Data mix-up between workspaces in a shared server | All isolation keys use `workspaceIdentity` falling back to `workspacePath`; end-to-end multi-workspace tests.                                                                 |
+| First-install deploy contention                   | Unique staging + remote lock + version re-check inside the lock.                                                                                                              |
+| Stale discovery cache                             | 5s short TTL, active refresh/failure invalidation, no permanent global caching of resolved user/home.                                                                         |
+| App quit delayed by the TTL                       | Shutdown cancels timers first and disposes in parallel at once; the TTL never enters the exit wait budget.                                                                    |
+| Mobile replayable pollutes desktop                | Attachments keep clientMode/deliveryKind; desktop WSL explicitly forbids relay_bridge.                                                                                        |
+| Docker wrongly symmetrized                        | This spec explicitly keeps dedicated; design again after the container owner is confirmed.                                                                                    |
 
 ## Acceptance
 

@@ -150,7 +150,7 @@ The chain does not change the guest or the responsive frame geometry the user se
 - **Detect and crop/deduplicate corrupt images.** It cannot prove the first tile covers the whole viewport and
   breaks the correspondence between screenshot coordinates and later click coordinates.
 - **Capture-only CDP metrics scale.** Windows Electron probes showed `Emulation.setDeviceMetricsOverride(scale:
-  1 / surfaceScale)`, temporary `deviceScaleFactor`, page scale and guest zoom changes still tile, and
+1 / surfaceScale)`, temporary `deviceScaleFactor`, page scale and guest zoom changes still tile, and
   `dontSetVisibleSize: false` is rejected by the guest widget. Do not rely on a CDP parameter combination that
   only holds in mocks.
 

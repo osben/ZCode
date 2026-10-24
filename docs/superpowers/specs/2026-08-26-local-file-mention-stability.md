@@ -49,29 +49,29 @@ error -> stop automatic requests -> only closing and reopening, or switching wor
 
 ## Impact brief
 
-| Item              | Conclusion                                                                                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Capability/layer  | Composer file reference; option-source, cache owner migration                                                                          |
-| UI Surface Matrix | Desktop/mobile Composer `@` -> MentionPlugin -> useFileMentionProvider -> file service; input/display belong to the UI, the index to the Host, and the Markdown after selection is unchanged |
-| Shared vs divergent | `.zcodeignore` and the matching algorithm are shared; the file tree/Command Center keep the full packed+Worker data path             |
-| must-inspect      | file service interface, index owner, provider latest-result/error state, cross-workspace isolation                                     |
-| invariant-only    | RPC protocol, the other mention groups, file tree/Command Center, desktop continuous / mobile replayable                               |
-| State and commit  | Host in-memory index; bounded UI result; the canonical mention after selection and the send behavior are unchanged, no new persistence |
-| Codegraph         | useFileMentionProvider -> MentionPlugin -> LexicalChatInput (depth 2); the service list interface code follows the fast-forwarded disk, and the index is being rebuilt |
-| Graph drift/update | The existing @ surface lacks a file-index owner; add the Host search service node and options-from relation                          |
-| Open questions    | None; this session confirmed only the @ search is adjusted, the public RPC is unchanged                                                |
+| Item                | Conclusion                                                                                                                                                                                   |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Capability/layer    | Composer file reference; option-source, cache owner migration                                                                                                                                |
+| UI Surface Matrix   | Desktop/mobile Composer `@` -> MentionPlugin -> useFileMentionProvider -> file service; input/display belong to the UI, the index to the Host, and the Markdown after selection is unchanged |
+| Shared vs divergent | `.zcodeignore` and the matching algorithm are shared; the file tree/Command Center keep the full packed+Worker data path                                                                     |
+| must-inspect        | file service interface, index owner, provider latest-result/error state, cross-workspace isolation                                                                                           |
+| invariant-only      | RPC protocol, the other mention groups, file tree/Command Center, desktop continuous / mobile replayable                                                                                     |
+| State and commit    | Host in-memory index; bounded UI result; the canonical mention after selection and the send behavior are unchanged, no new persistence                                                       |
+| Codegraph           | useFileMentionProvider -> MentionPlugin -> LexicalChatInput (depth 2); the service list interface code follows the fast-forwarded disk, and the index is being rebuilt                       |
+| Graph drift/update  | The existing @ surface lacks a file-index owner; add the Host search service node and options-from relation                                                                                  |
+| Open questions      | None; this session confirmed only the @ search is adjusted, the public RPC is unchanged                                                                                                      |
 
 ## Acceptance and test plan
 
-| Case  | Setup and action                                                  | Assertion/evidence                                                              |
-| ----- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| MFH01 | Open @ in a large workspace, search, select; desktop and mobile width | The search interface returns a bounded result, no length/range calls; the file can be selected and input stays responsive; UI E2E |
-| MFH02 | Query the same index with empty/name/path/Chinese/case/no hit     | Consistent with the existing fuzzy ordering; service + algorithm unit tests     |
-| MFH03 | After a no-hit, create a file externally, then query/rescan       | refresh bypasses the cache; service and hook unit tests                         |
-| MFH04 | Change keyword, identity, service or close the panel during a delayed response | A stale result must not overwrite; hook unit test                   |
-| MFH05 | Type more text after a query error                                | No retry loop; close and reopen recovers; hook unit test                        |
-| MFH06 | Change .zcodeignore; two services/identities with the same path   | The new rule takes effect, isolation holds; service unit test                   |
-| MFH07 | Original file tree and Command Center interfaces                  | Chunked returns and shared matching stay compatible; existing unit tests        |
+| Case  | Setup and action                                                               | Assertion/evidence                                                                                                                |
+| ----- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| MFH01 | Open @ in a large workspace, search, select; desktop and mobile width          | The search interface returns a bounded result, no length/range calls; the file can be selected and input stays responsive; UI E2E |
+| MFH02 | Query the same index with empty/name/path/Chinese/case/no hit                  | Consistent with the existing fuzzy ordering; service + algorithm unit tests                                                       |
+| MFH03 | After a no-hit, create a file externally, then query/rescan                    | refresh bypasses the cache; service and hook unit tests                                                                           |
+| MFH04 | Change keyword, identity, service or close the panel during a delayed response | A stale result must not overwrite; hook unit test                                                                                 |
+| MFH05 | Type more text after a query error                                             | No retry loop; close and reopen recovers; hook unit test                                                                          |
+| MFH06 | Change .zcodeignore; two services/identities with the same path                | The new rule takes effect, isolation holds; service unit test                                                                     |
+| MFH07 | Original file tree and Command Center interfaces                               | Chunked returns and shared matching stay compatible; existing unit tests                                                          |
 
 Confirmed boundary: keep the empty query, count, ordering, terminal failure state and miss-refresh; no new
 persistent index, file watcher system or search UI. Theme and language do not change the semantics; the same UI

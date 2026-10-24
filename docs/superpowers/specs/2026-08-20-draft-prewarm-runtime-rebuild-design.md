@@ -51,6 +51,7 @@ load") stay untouched and risk concentrates in the renderer; the cost is that th
 re-upload.
 
 Rejected/deferred alternatives:
+
 - Distinguish the trigger source on the recycle side (`onHelperHealthy` cold-start first ready vs
   `onHelperCredentialsRotated`) so a workspace being served is not recycled.
 - Give `ZCodeAgentService` an active-turn query and really wire up `hasActiveTurnRef` (`node.ts:1467`, currently
@@ -161,6 +162,7 @@ restart, so an effect depending only on it would not rerun and attachments would
 forever.
 
 Two attachment kinds are unaffected (already skipped at `:470-476`):
+
 - `localZeroCopy` (local file drag-in whose `ref` is the local path and is never uploaded); this explains why
   the problem concentrates on pasted/screenshot images, which have no `localPath`;
 - `referenceOwnership === "session"` (already sent with a message).
@@ -187,13 +189,13 @@ safety net for a repeatedly crashing helper.
 
 ### 5. Tests
 
-| Layer | Cases |
-| --- | --- |
-| coordinator | on `invalidationVersion` increment, retire + rebuild; `blockedInvalidationVersion` is cleared |
-| controller | `dispose()` does not delete the session in `pending` state (regression protection) |
+| Layer       | Cases                                                                                                                                                                |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| coordinator | on `invalidationVersion` increment, retire + rebuild; `blockedInvalidationVersion` is cleared                                                                        |
+| controller  | `dispose()` does not delete the session in `pending` state (regression protection)                                                                                   |
 | attachments | after a generation change set `waitingSession`; enqueue once a new sessionId arrives; `restartEpoch` wakes them even when the formal-state sessionId does not change |
-| attachments | no repeated re-upload within one `restartEpoch`; `failed` only when `runtimeRebuildRetryCount` reaches 5, without affecting `autoRetryCount` |
-| gate | disabled while rebuilding; lifted when the new binding arrives; lifted on timeout with fallback |
+| attachments | no repeated re-upload within one `restartEpoch`; `failed` only when `runtimeRebuildRetryCount` reaches 5, without affecting `autoRetryCount`                         |
+| gate        | disabled while rebuilding; lifted when the new binding arrives; lifted on timeout with fallback                                                                      |
 
 Two known local pitfalls:
 
@@ -204,13 +206,13 @@ Two known local pitfalls:
 
 ## Boundaries and failure modes
 
-| Case | Behavior |
-| --- | --- |
-| Another generation change during rebuild | `invalidationVersion` +1 again, reconcile retires + rebuilds again; gate timer resets |
-| Generation change while a send is in progress | `promotionState === "pending"`, `dispose()` does not delete the session; the formal session is handled by cold-resume |
-| Switching workspace | `invalidateDraftRuntime` targets by `workspacePath` / `workspaceIdentity`, other workspaces unaffected |
-| Rebuild failure / timeout | lift the disable, fall back to the no-prewarm send path; attachments stay `waitingSession` until a valid session exists |
-| Old session cleanup fails | harmless: the old session vanished with the runtime, and the `deleteCreatedSession` catch already ignores failure |
+| Case                                          | Behavior                                                                                                                |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Another generation change during rebuild      | `invalidationVersion` +1 again, reconcile retires + rebuilds again; gate timer resets                                   |
+| Generation change while a send is in progress | `promotionState === "pending"`, `dispose()` does not delete the session; the formal session is handled by cold-resume   |
+| Switching workspace                           | `invalidateDraftRuntime` targets by `workspacePath` / `workspaceIdentity`, other workspaces unaffected                  |
+| Rebuild failure / timeout                     | lift the disable, fall back to the no-prewarm send path; attachments stay `waitingSession` until a valid session exists |
+| Old session cleanup fails                     | harmless: the old session vanished with the runtime, and the `deleteCreatedSession` catch already ignores failure       |
 
 ## Risks
 

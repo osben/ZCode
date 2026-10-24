@@ -7,7 +7,7 @@ This ledger records deviations from the design, prior understanding, or first-im
 expectations. "Handled" means a targeted fix exists and was verified — never that the whole refactor
 is done. GUI, real-remote and cross-platform checks that did not run do not count as passed.
 
-Full history: git show 7db9b1e9:docs/superpowers/plans/2026-09-11-virtual-project-development-deviations.md
+Full history: git show 45f808f7:docs/superpowers/plans/2026-09-11-virtual-project-development-deviations.md
 
 ## Confirmed and handled deviations
 

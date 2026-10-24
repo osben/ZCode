@@ -6,7 +6,7 @@ validation). The product rules and invariants live in the spec:
 record. This file keeps the durable cross-repo contract and workflow constraints that produced the
 implementation.
 
-Full history: git show 7db9b1e9:docs/superpowers/plans/2026-09-21-cua-helper-lazy-startup.md
+Full history: git show 45f808f7:docs/superpowers/plans/2026-09-21-cua-helper-lazy-startup.md
 
 ## What shipped
 
@@ -36,7 +36,7 @@ this monorepo): win32 fork branch in `src/tools/computer-use-runtime.ts`
   elements after the program, satisfying `parseWindowsDevHelperConfig` validation.
 - Fork env: `ELECTRON_RUN_AS_NODE=1`, `[HELPER_ADDON_ENV]=addonPath` (`HELPER_ADDON_ENV` is
   `"ZCODE_CUA_HELPER_ADDON"`), plus the `commandEnv` whitelist. Fork is `detached`, `stdio:
-  "ignore"`, `child.unref()`; failures are swallowed so the warmup retry loop reports the real
+"ignore"`, `child.unref()`; failures are swallowed so the warmup retry loop reports the real
   broker error.
 - The stable pipe name is minted once per process (`mintBrokerSocketPath`); recipe resolution
   (`resolveStableCuaWinRecipe` wrapping `resolveWindowsCuaRuntime`) caches success, returns null

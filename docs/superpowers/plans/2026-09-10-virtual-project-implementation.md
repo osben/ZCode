@@ -4,28 +4,28 @@
 > ledger, acceptance matrix and open follow-ups. Development surprises, failed rounds and root
 > causes live in the [deviation ledger](2026-09-11-virtual-project-development-deviations.md) —
 > D50 (test isolation wrote real settings; recovery boundaries) must not be erased from the record.
-> Full history: git show 7db9b1e9:docs/superpowers/plans/2026-09-10-virtual-project-implementation.md
+> Full history: git show 45f808f7:docs/superpowers/plans/2026-09-10-virtual-project-implementation.md
 
 ## Feature summary
 
-| Field | Decision |
-| --- | --- |
-| Goal | implement `2026-09-09-virtual-project-design.md`, delivered in §8 order |
-| Layers | presentation, option-source, draft-default, validation, commit-effect, persistence, recovery |
-| Seeds | `taskIndexRepo`, `createZCodeTaskIndexSyncer`, `IZCodeTaskService`, `WorkspaceSidebar`, `V4Gateway`, `SqliteSessionStore` |
-| Out of scope | workbench split groups, queue owner, bridge identity, directory hash, plain session config resolution chain |
+| Field        | Decision                                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Goal         | implement `2026-09-09-virtual-project-design.md`, delivered in §8 order                                                   |
+| Layers       | presentation, option-source, draft-default, validation, commit-effect, persistence, recovery                              |
+| Seeds        | `taskIndexRepo`, `createZCodeTaskIndexSyncer`, `IZCodeTaskService`, `WorkspaceSidebar`, `V4Gateway`, `SqliteSessionStore` |
+| Out of scope | workbench split groups, queue owner, bridge identity, directory hash, plain session config resolution chain               |
 
 ## UI surface matrix
 
-| Surface | Shared implementation | Draft / default | Validation & commit | Authority | Mode boundary / isolation |
-| --- | --- | --- | --- | --- | --- |
-| Sidebar projects / timeline / pinned | project query, task row components | UI keeps only collapse and sort preferences | Host project CRUD / move | app SQLite | same ownership desktop/web/mobile; remote has its own Host |
-| New task | existing createSession chain | project primary dir; global gets an independent dir | Host resolves roots then creates | CLI session + app membership | cwd fixed after creation |
-| Open history / reconnect | V4 subscribe and cold resume | task carries explicit project_id | Host resolves dirs from one read snapshot | CLI single-flight runtime | continuous / replayable each with own subscription; live roots not refreshed |
-| Composer files / skills / sub-agents | existing capability discovery and suggestion lists | current task directory scope | qualifiedName / path | CLI capability catalog | no merging of attached dirs' settings, MCP, hooks |
-| Settings Agent config | directory picker | all roots deduplicated | existing directory config service | directory-level config | virtual project is never used as path or config identity |
-| Scheduled / off-peak / Bots | their config editors | project primary dir plus remaining roots | execution config frozen at creation | each Host repo | later project roots edits are not followed |
-| Offline remote project | local entry list | last-success basic info cache | only entry removal; edits go through the remote | local entries / remote projects | late refresh only UPDATEs; rebuilding entries is forbidden |
+| Surface                              | Shared implementation                              | Draft / default                                     | Validation & commit                             | Authority                       | Mode boundary / isolation                                                    |
+| ------------------------------------ | -------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| Sidebar projects / timeline / pinned | project query, task row components                 | UI keeps only collapse and sort preferences         | Host project CRUD / move                        | app SQLite                      | same ownership desktop/web/mobile; remote has its own Host                   |
+| New task                             | existing createSession chain                       | project primary dir; global gets an independent dir | Host resolves roots then creates                | CLI session + app membership    | cwd fixed after creation                                                     |
+| Open history / reconnect             | V4 subscribe and cold resume                       | task carries explicit project_id                    | Host resolves dirs from one read snapshot       | CLI single-flight runtime       | continuous / replayable each with own subscription; live roots not refreshed |
+| Composer files / skills / sub-agents | existing capability discovery and suggestion lists | current task directory scope                        | qualifiedName / path                            | CLI capability catalog          | no merging of attached dirs' settings, MCP, hooks                            |
+| Settings Agent config                | directory picker                                   | all roots deduplicated                              | existing directory config service               | directory-level config          | virtual project is never used as path or config identity                     |
+| Scheduled / off-peak / Bots          | their config editors                               | project primary dir plus remaining roots            | execution config frozen at creation             | each Host repo                  | later project roots edits are not followed                                   |
+| Offline remote project               | local entry list                                   | last-success basic info cache                       | only entry removal; edits go through the remote | local entries / remote projects | late refresh only UPDATEs; rebuilding entries is forbidden                   |
 
 ## Shared and divergent behavior
 
@@ -77,16 +77,16 @@ The task was an explicit refactor: trace old task-management dependencies, then 
 implementations; no parallel writers. `session` / `services` are unmanaged directory splits only and
 are not evidence of completion.
 
-| Old implementation | Action | New responsibility |
-| --- | --- | --- |
-| TaskOverlay / overlays / applyOverlayToMeta | deleted | Host SQLite organization state read through services; UI keeps uncommitted drafts only |
-| adapter.updateTaskIndexFromStreamEvent | deleted | sessions-index / reconcile is the sole fact ingestion |
-| applyAgentPatch, snapshot status merging, shouldPreserveNewerTerminalStatus | deleted | CLI writes explicit last_outcome; live phase is display-only |
-| Host-first rename/delete with best-effort CLI sync | deleted | CLI command confirmation → syncer reads facts; failures keep the old value |
-| closeTask writing deleted | deleted | close only releases the runtime; delete is a separate command |
-| task_groups management, mixing, workspace auto-grouping | runtime API/UI/sort cache deleted after migration | project / roots / task.project_id; old tables only feed the first migration |
-| full snapshot write-back of title/status/time | fact writes deleted; search body and display info stay separate | display cache must not write `cli_*` |
-| legacy data compatibility | limited to startup migration and lazy handover | no permanent fallback or second runtime implementation |
+| Old implementation                                                          | Action                                                          | New responsibility                                                                     |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| TaskOverlay / overlays / applyOverlayToMeta                                 | deleted                                                         | Host SQLite organization state read through services; UI keeps uncommitted drafts only |
+| adapter.updateTaskIndexFromStreamEvent                                      | deleted                                                         | sessions-index / reconcile is the sole fact ingestion                                  |
+| applyAgentPatch, snapshot status merging, shouldPreserveNewerTerminalStatus | deleted                                                         | CLI writes explicit last_outcome; live phase is display-only                           |
+| Host-first rename/delete with best-effort CLI sync                          | deleted                                                         | CLI command confirmation → syncer reads facts; failures keep the old value             |
+| closeTask writing deleted                                                   | deleted                                                         | close only releases the runtime; delete is a separate command                          |
+| task_groups management, mixing, workspace auto-grouping                     | runtime API/UI/sort cache deleted after migration               | project / roots / task.project_id; old tables only feed the first migration            |
+| full snapshot write-back of title/status/time                               | fact writes deleted; search body and display info stay separate | display cache must not write `cli_*`                                                   |
+| legacy data compatibility                                                   | limited to startup migration and lazy handover                  | no permanent fallback or second runtime implementation                                 |
 
 ```text
 CLI command / session store                         Host organization
@@ -132,18 +132,18 @@ dependence. The old grouped-task-list graph is replaced by the project tree.
 
 ## Acceptance dimensions
 
-| ID | Setup → action | Assertion | Evidence layer |
-| --- | --- | --- | --- |
-| VP01 | old DB with bodies → upgrade / backup restore | only touchedTables change; message/part intact; checksums unchanged | SQLite fixture / unit |
-| VP02 | upgrade → old writer deletes, renames, creates → re-upgrade | intent handover, orphans, empty membership judged once | SQLite fixture / service |
-| VP03 | cold seed omission / lost delete event → reconcile | exists/deleted distinguished; absence never deletes a row | protocol / CLI / Host |
-| VP04 | 0 / 1 / many roots → create, edit, soft delete, same-set restore | cwd fixed, names unique, same host, cancel is side-effect free | service / UI E2E |
-| VP05 | NULL membership, 0/1/many matches → first discovery / restart | only a unique match is adopted, once; any cwd lands in the task area | service / UI E2E |
-| VP06 | projects A+B → create / explicit resume / subscribe cold resume | B skills/subagents/writable scope available; AGENTS/config only A | CLI / Host / E2E |
-| VP07 | live B→C change / primary dir swap / same-cwd dual projects / concurrent subscribe | live scope fixed; rebuild by membership; no cross-use; single-flight | unit / E2E |
-| VP08 | offline entry removal + late refresh / restart reconnect → manual re-add | no resurrection, no remote mutation; re-add keeps original ID | repo / service / E2E |
-| VP09 | overdue unpinned old task (outcome/read ignored) → Host scheduled scan / settings-change rescan (since 2026-09-14 not triggered by tree load or click) | any cwd auto-archives; pinned/running exempt; organization ops don't reorder; clicking doesn't change archived | unit / E2E |
-| VP10 | create scheduled/off-peak/bot in project → edit roots → resume execution | keeps frozen cwd/additionalDirectories | unit / E2E |
+| ID   | Setup → action                                                                                                                                         | Assertion                                                                                                      | Evidence layer           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| VP01 | old DB with bodies → upgrade / backup restore                                                                                                          | only touchedTables change; message/part intact; checksums unchanged                                            | SQLite fixture / unit    |
+| VP02 | upgrade → old writer deletes, renames, creates → re-upgrade                                                                                            | intent handover, orphans, empty membership judged once                                                         | SQLite fixture / service |
+| VP03 | cold seed omission / lost delete event → reconcile                                                                                                     | exists/deleted distinguished; absence never deletes a row                                                      | protocol / CLI / Host    |
+| VP04 | 0 / 1 / many roots → create, edit, soft delete, same-set restore                                                                                       | cwd fixed, names unique, same host, cancel is side-effect free                                                 | service / UI E2E         |
+| VP05 | NULL membership, 0/1/many matches → first discovery / restart                                                                                          | only a unique match is adopted, once; any cwd lands in the task area                                           | service / UI E2E         |
+| VP06 | projects A+B → create / explicit resume / subscribe cold resume                                                                                        | B skills/subagents/writable scope available; AGENTS/config only A                                              | CLI / Host / E2E         |
+| VP07 | live B→C change / primary dir swap / same-cwd dual projects / concurrent subscribe                                                                     | live scope fixed; rebuild by membership; no cross-use; single-flight                                           | unit / E2E               |
+| VP08 | offline entry removal + late refresh / restart reconnect → manual re-add                                                                               | no resurrection, no remote mutation; re-add keeps original ID                                                  | repo / service / E2E     |
+| VP09 | overdue unpinned old task (outcome/read ignored) → Host scheduled scan / settings-change rescan (since 2026-09-14 not triggered by tree load or click) | any cwd auto-archives; pinned/running exempt; organization ops don't reorder; clicking doesn't change archived | unit / E2E               |
+| VP10 | create scheduled/off-peak/bot in project → edit roots → resume execution                                                                               | keeps frozen cwd/additionalDirectories                                                                         | unit / E2E               |
 
 ## Pruning decisions / unresolved questions
 
@@ -169,15 +169,15 @@ created. Mobile keeps its no-settings-page product boundary.
 
 Managed modules and their ownership:
 
-| Module | Sole responsibility / state owner |
-| --- | --- |
-| sqlite-migrations / startup-storage | shared async migration runner for both DBs, table-level backup, verified restore, fail-closed before window creation |
-| project-storage / project | Host project/roots/task-membership persistence; unified create/resume/cold directory resolution |
-| task-facts | sole ingestion and handover owner of CLI facts; organization state never writes `cli_*` |
-| remote-projects | Controller connection members, project entries, basic cache; remote organization stays in Source |
-| project-catalog / bot-project-runtime | project candidates and frozen bot execution binding; routed through existing Source/Registry |
-| project-workspace-navigation | shared-host draft/history admission and generation guards |
-| project-sidebar / workspace-config-catalog | project display and config directory candidates, both read via service contracts |
+| Module                                     | Sole responsibility / state owner                                                                                    |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| sqlite-migrations / startup-storage        | shared async migration runner for both DBs, table-level backup, verified restore, fail-closed before window creation |
+| project-storage / project                  | Host project/roots/task-membership persistence; unified create/resume/cold directory resolution                      |
+| task-facts                                 | sole ingestion and handover owner of CLI facts; organization state never writes `cli_*`                              |
+| remote-projects                            | Controller connection members, project entries, basic cache; remote organization stays in Source                     |
+| project-catalog / bot-project-runtime      | project candidates and frozen bot execution binding; routed through existing Source/Registry                         |
+| project-workspace-navigation               | shared-host draft/history admission and generation guards                                                            |
+| project-sidebar / workspace-config-catalog | project display and config directory candidates, both read via service contracts                                     |
 
 Deleted: TaskOverlay, stream-event task status write-back, Host-first rename/delete then best-effort
 sync, Group management API/UI, old workspace auto-grouping, old timeline/pinned/archived sidebar,
@@ -191,19 +191,19 @@ registered with policy, five-piece sets and runtime contracts; architecture base
 
 ### Verification evidence (with boundaries)
 
-| Check | Result / boundary |
-| --- | --- |
-| Full affected unit tests | final round 9: 1724 files / 14942 tests passed; 2 files / 14 tests skipped by config |
-| Both DB schemas | round 3: real migration artifacts + additive-only constraint checks; CLI historical SQL/checksums preserved |
-| Architecture gate | final round 69: violations 0 / baseline 0 / new 0 |
-| Type & lint | typecheck 87 passed; lint 48 warnings / 0 errors; format check on 460 changed files passed |
-| Desktop & URL remote | round 53: 8/8 — migration ledger, global unique cwd/NULL membership, CRUD/same-roots restore, offline entries, URL metadata/real agent/extra root/reopen/cold resume, scheduled definitions, config roots, bot auth JSON |
-| Composer & drag | round 52: VP14/15 — same-name multi-root files, project-grouped references, native drag with cancel/confirm on missing root, fixed cwd, body readable after move |
-| Mobile shared-host | rounds 34/36/40/48: 390px, real relay, project draft reload, send/task-switch reopen, taskId/projectId/cwd/body and desktop tab/Host counts verified. Rounds 52/54 were blocked before navigation by a relay WSS certificate error (D91) — not recorded as a passing combined round |
-| Local multi-dir full cold resume | rounds 42/48/52: CREATE/LIVE used A+B; after full Electron/Host/CLI exit, COLD with same taskId/cwd used A+C; AGENTS always only A |
-| URL remote agent cold resume | rounds 52/53: VP18 — old CLI exited, new runtime identity, real COLD model request includes C's skill but not B's; taskId/cwd/projectId fixed; Controller holds no remote-authoritative task copy |
-| Old-source upgrade/downgrade/re-upgrade | four phases passed on an independent old checkout (see below); not equivalent to an installed-binary upgrade |
-| Bot runtime | 193 targeted unit tests + 3 synthetic E2E (round 52); real remote third-party send/stream not executed |
+| Check                                   | Result / boundary                                                                                                                                                                                                                                                                   |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Full affected unit tests                | final round 9: 1724 files / 14942 tests passed; 2 files / 14 tests skipped by config                                                                                                                                                                                                |
+| Both DB schemas                         | round 3: real migration artifacts + additive-only constraint checks; CLI historical SQL/checksums preserved                                                                                                                                                                         |
+| Architecture gate                       | final round 69: violations 0 / baseline 0 / new 0                                                                                                                                                                                                                                   |
+| Type & lint                             | typecheck 87 passed; lint 48 warnings / 0 errors; format check on 460 changed files passed                                                                                                                                                                                          |
+| Desktop & URL remote                    | round 53: 8/8 — migration ledger, global unique cwd/NULL membership, CRUD/same-roots restore, offline entries, URL metadata/real agent/extra root/reopen/cold resume, scheduled definitions, config roots, bot auth JSON                                                            |
+| Composer & drag                         | round 52: VP14/15 — same-name multi-root files, project-grouped references, native drag with cancel/confirm on missing root, fixed cwd, body readable after move                                                                                                                    |
+| Mobile shared-host                      | rounds 34/36/40/48: 390px, real relay, project draft reload, send/task-switch reopen, taskId/projectId/cwd/body and desktop tab/Host counts verified. Rounds 52/54 were blocked before navigation by a relay WSS certificate error (D91) — not recorded as a passing combined round |
+| Local multi-dir full cold resume        | rounds 42/48/52: CREATE/LIVE used A+B; after full Electron/Host/CLI exit, COLD with same taskId/cwd used A+C; AGENTS always only A                                                                                                                                                  |
+| URL remote agent cold resume            | rounds 52/53: VP18 — old CLI exited, new runtime identity, real COLD model request includes C's skill but not B's; taskId/cwd/projectId fixed; Controller holds no remote-authoritative task copy                                                                                   |
+| Old-source upgrade/downgrade/re-upgrade | four phases passed on an independent old checkout (see below); not equivalent to an installed-binary upgrade                                                                                                                                                                        |
+| Bot runtime                             | 193 targeted unit tests + 3 synthetic E2E (round 52); real remote third-party send/stream not executed                                                                                                                                                                              |
 
 Round 52 (`desktop-e2e-20260911030401818-p18811-a137ff2609ad1117`) was 12 pass / 2 fail (VP11 read
 text during menu animation; VP13 hit relay TLS handshake failure). After fixing the VP11 wait
@@ -247,14 +247,14 @@ deleted, helpers kept alive only by unit-test imports.
 
 Deleted batches:
 
-| Batch | Content | Main locations |
-| --- | --- | --- |
-| Orphan modules | 27 UI modules with no production consumer (~2,900 lines) and 23 tests existing only for them, incl. WebRemoteControlTaskIndex(.Row), buildTaskListResultFromSessions, taskStatusUnreadSync, workspaceTaskListDisplayGroups/OptimisticOverlay/RefreshSignatures, taskListRefreshPolicy, taskListWorkspaceEventCoordinator, WorkspaceSourceGroupHeader, workspaceSourceGroups, CollapsedRail, workspaceSidebarSelection, taskTimelineGroups, workspaceRemovalSafety, chatStatus, workspaceSourceConnection, sidebarTaskPreferences, workspaceRuntimeRelease, restrictVerticalDragWithinContainer, workspacePurpose, workbenchNewTaskTarget, chatActionHelpers, useLocalWorkspaceScopes, TaskListRemoteSyncHint, taskRuntimeDisplayStatus; taskListMetaSync kept only the two functions still used by bot broadcast | packages/ui |
-| Mobile task snapshot chain | Root's three useGlobalTaskList → IPC SyncWebRemoteControlTasks → main availableTasksByWindowId → the tasks field of workspace-list/bootstrap, whose only reader died with the old mobile home; displayStatus/pinned/archived fields used only by that old home's signature | shared, desktop main/preload, web |
-| Dead service interfaces | closeTask, createTask.draftSessionId (incl. sameModelSelection), taskIndexRepo.listSessionsByAutomation, TaskIndexWriteRecord.writeUnreadAt/searchableText with @write_unread_at CASE, syncer refreshSessionFacts, ensureSessionSubscription.includeSnapshot, ISettingService.ensureDefaultProject, ProjectCatalogContract, resolveStartupWorkspacePath | packages/services, desktop main |
-| CLI archive field chain | SessionInfo.time.archived / timeArchived / includeArchived / archivedAt (shared protocol + services params), explicit time_archived=null on createSession, orphan ensureParentDir / SchemaMigrationRow, cold-session-resume triple-ternary compatibility | apps/zcode-cli, shared, services |
-| Copy & comments | 116 unreferenced i18n keys × 2 languages; comments still describing grouped/overlay/applyAgentPatch/closeSession | ui, services, CLI |
-| Docs | sidebar-task-view-switcher.md and CLI multi-workspace.md got deprecation banners; the E2E matrix and case catalog retired Group-semantics cases (TSL22/27/37, CWP05) | docs |
+| Batch                      | Content                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Main locations                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| Orphan modules             | 27 UI modules with no production consumer (~2,900 lines) and 23 tests existing only for them, incl. WebRemoteControlTaskIndex(.Row), buildTaskListResultFromSessions, taskStatusUnreadSync, workspaceTaskListDisplayGroups/OptimisticOverlay/RefreshSignatures, taskListRefreshPolicy, taskListWorkspaceEventCoordinator, WorkspaceSourceGroupHeader, workspaceSourceGroups, CollapsedRail, workspaceSidebarSelection, taskTimelineGroups, workspaceRemovalSafety, chatStatus, workspaceSourceConnection, sidebarTaskPreferences, workspaceRuntimeRelease, restrictVerticalDragWithinContainer, workspacePurpose, workbenchNewTaskTarget, chatActionHelpers, useLocalWorkspaceScopes, TaskListRemoteSyncHint, taskRuntimeDisplayStatus; taskListMetaSync kept only the two functions still used by bot broadcast | packages/ui                       |
+| Mobile task snapshot chain | Root's three useGlobalTaskList → IPC SyncWebRemoteControlTasks → main availableTasksByWindowId → the tasks field of workspace-list/bootstrap, whose only reader died with the old mobile home; displayStatus/pinned/archived fields used only by that old home's signature                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | shared, desktop main/preload, web |
+| Dead service interfaces    | closeTask, createTask.draftSessionId (incl. sameModelSelection), taskIndexRepo.listSessionsByAutomation, TaskIndexWriteRecord.writeUnreadAt/searchableText with @write_unread_at CASE, syncer refreshSessionFacts, ensureSessionSubscription.includeSnapshot, ISettingService.ensureDefaultProject, ProjectCatalogContract, resolveStartupWorkspacePath                                                                                                                                                                                                                                                                                                                                                                                                                                                          | packages/services, desktop main   |
+| CLI archive field chain    | SessionInfo.time.archived / timeArchived / includeArchived / archivedAt (shared protocol + services params), explicit time_archived=null on createSession, orphan ensureParentDir / SchemaMigrationRow, cold-session-resume triple-ternary compatibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | apps/zcode-cli, shared, services  |
+| Copy & comments            | 116 unreferenced i18n keys × 2 languages; comments still describing grouped/overlay/applyAgentPatch/closeSession                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | ui, services, CLI                 |
+| Docs                       | sidebar-task-view-switcher.md and CLI multi-workspace.md got deprecation banners; the E2E matrix and case catalog retired Group-semantics cases (TSL22/27/37, CWP05)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | docs                              |
 
 Incidental fixes: off-peak busy detection was dead (tasks-index rows mirror CLI last_outcome, never
 "running"); added `IZCodeTaskService.listActiveTaskIds` from the syncer's active set, host now uses
@@ -286,7 +286,7 @@ repo-wiki-generation-settings,
 workspace-agent-warmup-small-set/-lifecycle, workspace-passive-agent-startup,
 workspace-provider-save-dormant-agent, browser-tab-close-cross-workspace (warmup fixture
 expectation changed 3 → 1 per spec F13; TSL29/31/36 docs updated). Not run: the SSH series (no real
-SSH; helpers only made semantically consistent), remaining repo-wiki/workspace-file-tree/*/
+SSH; helpers only made semantically consistent), remaining repo-wiki/workspace-file-tree/\*/
 configurable-data-directory/pasted-image-path-projection/markdown-preview specs (same helper path
 covered by the above), ~30 manual-review/pending specs with mechanical replacement only.
 `workspace-removal-runtime-release` demoted to pending: whether deleting a project should release
@@ -308,7 +308,7 @@ project-sidebar still hardcodes testid strings instead of the new constants.
   sourceServerWorkspaceAliasRepo.ts still write the task*group* tables inside identity-migration
   transactions (~150 lines), although spec F2/F4 say post-migration they are written once, read-only;
   taskIndexRepo.initialize still creates the four tables for new DBs; mergeTaskDatabase merges only
-  old columns, not cli_*/project_id.
+  old columns, not cli\_\*/project_id.
 - Small legacy-column read violations: listDeletedTaskIds reads only `deleted`, not `cli_deleted`;
   an old index is on updated_at while queries use cli_updated_at (fixing needs a new migration); the
   legacy ACP migration reads old columns every startup outside the runner.

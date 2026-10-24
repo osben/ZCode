@@ -94,43 +94,43 @@ Model capabilities are the single fact source; the UI only derives switchability
 
 ## Impact briefing
 
-| Field | Value |
-| --- | --- |
-| Developer intent | Add `k3`; rename `kimi-k3-256k` to `k3-256k` |
-| Capability | Model capabilities / model selection / provider registry |
-| Change layer | option-source, validation |
-| Primary seeds | China LLM catalog, models.dev snapshot, model default policy, workspace provider overlay |
-| Out of scope | session state, model-switch commit semantics, remote replay, workspace identity |
+| Field            | Value                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| Developer intent | Add `k3`; rename `kimi-k3-256k` to `k3-256k`                                             |
+| Capability       | Model capabilities / model selection / provider registry                                 |
+| Change layer     | option-source, validation                                                                |
+| Primary seeds    | China LLM catalog, models.dev snapshot, model default policy, workspace provider overlay |
+| Out of scope     | session state, model-switch commit semantics, remote replay, workspace identity          |
 
 UI surfaces all consume the same provider registry: conversation model selection (V4 composer), automation/Subagent/Repo Wiki selectors, and Model Provider settings. Each keeps its own draft owner, inheritance rules, and commit sink; this change only swaps candidate names and never crosses commit sinks or adds platform branches. Remote workspaces keep the existing registry sync.
 
 Must-preserve invariants:
 
-| Invariant | Surfaces | Proof |
-| --- | --- | --- |
-| `k3` and `kimi-k3` identical except id/name | catalog / CLI | catalog and default-policy equality assertions |
-| `k3-256k` differs only in 262144 context | catalog / CLI | capability assertions |
-| Legacy `kimi-k3-256k` never registered or matched | catalog / CLI | absence assertions |
-| Renaming changes no UI commit sink | desktop/web/mobile | no UI/session/replay code changes |
+| Invariant                                         | Surfaces           | Proof                                          |
+| ------------------------------------------------- | ------------------ | ---------------------------------------------- |
+| `k3` and `kimi-k3` identical except id/name       | catalog / CLI      | catalog and default-policy equality assertions |
+| `k3-256k` differs only in 262144 context          | catalog / CLI      | capability assertions                          |
+| Legacy `kimi-k3-256k` never registered or matched | catalog / CLI      | absence assertions                             |
+| Renaming changes no UI commit sink                | desktop/web/mobile | no UI/session/replay code changes              |
 
 ## Case planning
 
 ### Boundary decisions
 
-| Boundary | Decision | Includes | Excludes |
-| --- | --- | --- | --- |
-| Final model set | `kimi-k3`, `k3`, `k3-256k` | catalog, snapshot, default policy, dynamic overlay, tool transform | `kimi-k3-256k` |
-| UI behavior | follows registry candidates only | all entries reusing the model list | UI component, interaction, i18n changes |
-| delivery | existing boundaries | desktop continuous, web remote shared-host registry | new realtime/session state |
+| Boundary        | Decision                         | Includes                                                           | Excludes                                |
+| --------------- | -------------------------------- | ------------------------------------------------------------------ | --------------------------------------- |
+| Final model set | `kimi-k3`, `k3`, `k3-256k`       | catalog, snapshot, default policy, dynamic overlay, tool transform | `kimi-k3-256k`                          |
+| UI behavior     | follows registry candidates only | all entries reusing the model list                                 | UI component, interaction, i18n changes |
+| delivery        | existing boundaries              | desktop continuous, web remote shared-host registry                | new realtime/session state              |
 
 ### Accepted cases
 
-| Case ID | Setup | Action | Assertions | Evidence layers |
-| --- | --- | --- | --- | --- |
-| K3-NAME-001 | load China LLM catalog | look up K3 models | only the three final ids; capability relations correct | service unit |
-| K3-NAME-002 | models.dev off, default policy only | query the three final ids and the old 256K id | final ids correct; old id misses | adapter unit |
-| K3-NAME-003 | load bundled models.dev snapshot | query Moonshot models | all three final ids present; old id absent | adapter integration |
-| K3-NAME-004 | dynamic provider missing K3 metadata | upsert `k3` / `k3-256k` | three-level reasoning synthesized per transport | protocol integration |
-| K3-NAME-005 | K3 tool contract with local `$ref` | project `k3` / `k3-256k` | `$ref` promoted to `$defs`; original contract unchanged | adapter wire unit |
+| Case ID     | Setup                                | Action                                        | Assertions                                              | Evidence layers      |
+| ----------- | ------------------------------------ | --------------------------------------------- | ------------------------------------------------------- | -------------------- |
+| K3-NAME-001 | load China LLM catalog               | look up K3 models                             | only the three final ids; capability relations correct  | service unit         |
+| K3-NAME-002 | models.dev off, default policy only  | query the three final ids and the old 256K id | final ids correct; old id misses                        | adapter unit         |
+| K3-NAME-003 | load bundled models.dev snapshot     | query Moonshot models                         | all three final ids present; old id absent              | adapter integration  |
+| K3-NAME-004 | dynamic provider missing K3 metadata | upsert `k3` / `k3-256k`                       | three-level reasoning synthesized per transport         | protocol integration |
+| K3-NAME-005 | K3 tool contract with local `$ref`   | project `k3` / `k3-256k`                      | `$ref` promoted to `$defs`; original contract unchanged | adapter wire unit    |
 
 No conversation E2E this round: model-selection commit, session state, and realtime/replayable semantics are unchanged, and catalog/default-policy/protocol-overlay/wire-transform coverage is direct via layered unit/integration tests.

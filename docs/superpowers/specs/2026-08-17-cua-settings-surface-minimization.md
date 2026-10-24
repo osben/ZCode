@@ -54,11 +54,11 @@ Remove `CuaControllerStatusControl` and its `showCuaControllerStatus` wiring in 
 
 ### Runtime defaults (no longer configurable)
 
-| Capability                         | Before                            | Now                                           |
-| ---------------------------------- | --------------------------------- | --------------------------------------------- |
+| Capability                           | Before                             | Now                                             |
+| ------------------------------------ | ---------------------------------- | ----------------------------------------------- |
 | Agent pointer overlay (ghost cursor) | `cuaGhostCursorEnabled` default on | Always on (producer product factory fixes true) |
-| Picture-in-Picture window          | `cuaPipMode` default on           | Always on (producer product factory fixes true) |
-| Background mode (no focus stealing) | `cuaBackgroundMode` default off   | Removed (host no longer passes the startup arg) |
+| Picture-in-Picture window            | `cuaPipMode` default on            | Always on (producer product factory fixes true) |
+| Background mode (no focus stealing)  | `cuaBackgroundMode` default off    | Removed (host no longer passes the startup arg) |
 
 ### Settings storage
 

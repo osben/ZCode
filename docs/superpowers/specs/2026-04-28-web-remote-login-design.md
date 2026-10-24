@@ -14,13 +14,13 @@ chat. This design added the same ZAI OAuth login as desktop — ZAI provider onl
 
 ## Constraints
 
-| Constraint | Value |
-|---|---|
-| Deployment domain | `https://zcode.z.ai` (already in the ZAI OAuth allowlist) |
-| OAuth provider | ZAI (`chat.z.ai/auth`), **not** the desktop `zcode://` deep link |
-| Token storage | Web `localStorage`, keys shared with desktop: `zcodejwttoken`, `oauth:zai:access_token`, `oauth:zai:user_info`, `oauth:active_provider` |
-| Production same-origin | page at `zcode.z.ai` calls `zcode.z.ai/api/v1/oauth/token` same-origin, no CORS issue |
-| Development | local origin injected via env; the ZAI callback first lands on the production domain and is forwarded back to the LAN IP; local token exchange must go through a Vite proxy or a backend CORS allowlist — the local Vite origin has no `/api/v1/oauth/token` of its own |
+| Constraint             | Value                                                                                                                                                                                                                                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deployment domain      | `https://zcode.z.ai` (already in the ZAI OAuth allowlist)                                                                                                                                                                                                               |
+| OAuth provider         | ZAI (`chat.z.ai/auth`), **not** the desktop `zcode://` deep link                                                                                                                                                                                                        |
+| Token storage          | Web `localStorage`, keys shared with desktop: `zcodejwttoken`, `oauth:zai:access_token`, `oauth:zai:user_info`, `oauth:active_provider`                                                                                                                                 |
+| Production same-origin | page at `zcode.z.ai` calls `zcode.z.ai/api/v1/oauth/token` same-origin, no CORS issue                                                                                                                                                                                   |
+| Development            | local origin injected via env; the ZAI callback first lands on the production domain and is forwarded back to the LAN IP; local token exchange must go through a Vite proxy or a backend CORS allowlist — the local Vite origin has no `/api/v1/oauth/token` of its own |
 
 ## Scope and integration boundary
 
@@ -139,13 +139,13 @@ SPA routing by `window.location.pathname`: `/web-remote?remoteControlToken=...&r
 (legacy entry, login required), `/web-remote` (login + waiting page), `/web-remote/callback`
 (callback processing). No router library.
 
-| localStorage key | Value | Purpose |
-|---|---|---|
-| `zcodejwttoken` | backend JWT (`data.token`) | business API auth; future device list identifies the user by it |
-| `oauth:zai:access_token` | ZAI access token (`data.zai.access_token`) | matches the desktop ZAI token set |
-| `oauth:zai:user_info` | JSON; backend `data.user` raw structure, mapped to `UserInfo` for display | user name/avatar; compatible with `OAuthCredentialRepo` restore |
-| `oauth:active_provider` | `"zai"` | active login method |
-| `oauth:zai:expires_at` | timestamp | optional expiry check (later iteration) |
+| localStorage key         | Value                                                                     | Purpose                                                         |
+| ------------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `zcodejwttoken`          | backend JWT (`data.token`)                                                | business API auth; future device list identifies the user by it |
+| `oauth:zai:access_token` | ZAI access token (`data.zai.access_token`)                                | matches the desktop ZAI token set                               |
+| `oauth:zai:user_info`    | JSON; backend `data.user` raw structure, mapped to `UserInfo` for display | user name/avatar; compatible with `OAuthCredentialRepo` restore |
+| `oauth:active_provider`  | `"zai"`                                                                   | active login method                                             |
+| `oauth:zai:expires_at`   | timestamp                                                                 | optional expiry check (later iteration)                         |
 
 `sessionStorage['oauth_pending_nonce']` holds the CSRF UUID. Keys match the existing
 `OAuthCredentialRepo` naming; display uses `@zcode/shared`'s `UserInfo` (never imported from

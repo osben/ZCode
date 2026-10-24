@@ -2,13 +2,13 @@
 
 ## Feature summary
 
-| Field | Value |
-| --- | --- |
-| Change | All persistent sidebar task lists take their row set from `tasks-index.sqlite`; `sessions-index` only enriches live session fields |
-| User-visible surfaces | Project/workspace, Timeline, Pinned, Archived, Grouped, search results |
-| Existing docs | `docs/v4-refactor/14-sessions-index.md`, `docs/superpowers/specs/2026-07-13-v4-sidebar-task-state-authority-design.md`, `docs/ui/task-grouped-view.md` |
-| Existing code owners | `taskListMembershipSets.ts`, `buildTaskListResultFromSessions.ts`, `useGlobalTaskList.ts`, `useWorkspaceTaskLists.ts`, `useGroupedTaskView.ts` |
-| Out of scope | transcript/row authority, conversation command, CLI session store schema, relay/main business state, cross-client delivery protocol |
+| Field                 | Value                                                                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Change                | All persistent sidebar task lists take their row set from `tasks-index.sqlite`; `sessions-index` only enriches live session fields                     |
+| User-visible surfaces | Project/workspace, Timeline, Pinned, Archived, Grouped, search results                                                                                 |
+| Existing docs         | `docs/v4-refactor/14-sessions-index.md`, `docs/superpowers/specs/2026-07-13-v4-sidebar-task-state-authority-design.md`, `docs/ui/task-grouped-view.md` |
+| Existing code owners  | `taskListMembershipSets.ts`, `buildTaskListResultFromSessions.ts`, `useGlobalTaskList.ts`, `useWorkspaceTaskLists.ts`, `useGroupedTaskView.ts`         |
+| Out of scope          | transcript/row authority, conversation command, CLI session store schema, relay/main business state, cross-client delivery protocol                    |
 
 This corrects the 3.4.0 list data-source migration: runtime logs showed history tasks missing from Grouped after upgrading to 3.4.0 (before any auto-archive ran) and restored on rollback to 3.3.6. The pre-upgrade SQLite backup still had the tasks and group memberships, so a persistent task row must never disappear just because the current `sessions-index` snapshot lacks its summary. Not a UI cap; all list kinds share the same logic.
 
@@ -16,15 +16,15 @@ Case IDs start at `TSL23`; `TSL22` is reserved by the parallel Grouped remote-da
 
 ## Boundary decisions
 
-| Boundary | Decision | Includes | Excludes / prunes |
-| --- | --- | --- | --- |
-| Persistent row existence | `tasks-index` list results are the positive authority | active, pinned, archived, group member, ordering | never infer deletion from a missing sessions snapshot |
-| Negative visibility | `deleted` tombstone has top priority | all list kinds, live/restart/replay | no physical deletion of CLI transcript |
-| Live activity | `sessions-index` field-level overlay | phase, lastActivityAt, background, pending interaction, live title | never overwrites membership/sort/unread |
-| Temporary new task | renderer-owned optimistic/live overlay | between create/send acceptance and the task row landing | session-only cold summaries never bypass the task index |
-| New-task convergence | `task_created` invalidates the task-row snapshot | active tasks created in this window, other windows, and mobile shared-host | never waits for a sessions-index content frame to implicitly bring the row in |
-| Search | tasks-index queries decide the result set | searchable_text/snippets; hits may overlay known activity | sessions title-only filter is not full-text search |
-| Multi-client | identical row-existence semantics | local, SSH/WSL/Docker, desktop continuous, web remote replayable | snapshot/gap delivery stays per client |
+| Boundary                 | Decision                                                                                                                                                      | Includes                                                                                 | Excludes / prunes                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Persistent row existence | `tasks-index` list results are the positive authority                                                                                                         | active, pinned, archived, group member, ordering                                         | never infer deletion from a missing sessions snapshot                           |
+| Negative visibility      | `deleted` tombstone has top priority                                                                                                                          | all list kinds, live/restart/replay                                                      | no physical deletion of CLI transcript                                          |
+| Live activity            | `sessions-index` field-level overlay                                                                                                                          | phase, lastActivityAt, background, pending interaction, live title                       | never overwrites membership/sort/unread                                         |
+| Temporary new task       | renderer-owned optimistic/live overlay                                                                                                                        | between create/send acceptance and the task row landing                                  | session-only cold summaries never bypass the task index                         |
+| New-task convergence     | `task_created` invalidates the task-row snapshot                                                                                                              | active tasks created in this window, other windows, and mobile shared-host               | never waits for a sessions-index content frame to implicitly bring the row in   |
+| Search                   | tasks-index queries decide the result set                                                                                                                     | searchable_text/snippets; hits may overlay known activity                                | sessions title-only filter is not full-text search                              |
+| Multi-client             | identical row-existence semantics                                                                                                                             | local, SSH/WSL/Docker, desktop continuous, web remote replayable                         | snapshot/gap delivery stays per client                                          |
 | Index-read normalization | the SQLite row's `task_id`, `workspace_path`, and primary key `workspace_key` decide entity identity; a legal remote key outranks identity projection columns | remote history rows with missing or stale identity in the identity column or `meta_json` | projection fields never rewrite the isolation key; no cross-remote join by path |
 
 ## Domain scope and high-risk cross-products
@@ -63,52 +63,52 @@ create/send accepted -> optimistic row -> tasks-index commit -> task_created
                                       invalidate task-row snapshot -> Project row
 ```
 
-| State/fact | Authority | Mirrors/caches |
-| --- | --- | --- |
-| Persistent task rows and workspace isolation | tasks-index | task query cache |
-| pinned/archived/deleted/group/unread | tasks-index | membership snapshot/overlay |
-| phase/lastActivity/attention | sessions-index | query entity sidecar |
-| transcript/session config | CLI conversation projection/store | active pane projection |
-| Not-yet-persisted new task | renderer optimistic overlay, then tasks-index | local store |
+| State/fact                                   | Authority                                     | Mirrors/caches              |
+| -------------------------------------------- | --------------------------------------------- | --------------------------- |
+| Persistent task rows and workspace isolation | tasks-index                                   | task query cache            |
+| pinned/archived/deleted/group/unread         | tasks-index                                   | membership snapshot/overlay |
+| phase/lastActivity/attention                 | sessions-index                                | query entity sidecar        |
+| transcript/session config                    | CLI conversation projection/store             | active pane projection      |
+| Not-yet-persisted new task                   | renderer optimistic overlay, then tasks-index | local store                 |
 
 ## Dimensions and candidate combinations
 
-| Candidate | tasks-index row | sessions summary | membership | Expected effect | Status |
-| --- | --- | --- | --- | --- | --- |
-| TSL23-A | present | absent | active/grouped | keep the static row; no spinner/attention; explicit group order unchanged | accepted |
-| TSL23-B | present | present | any non-deleted | row from task index; activity/title enriched per field owner | accepted |
-| TSL23-C | present | stale | deleted | tombstone excludes; summary cannot resurrect | pruned by TSL20 |
-| TSL24-A | absent | stored completed | none | cold summary never becomes a persistent row directly; the syncer creates the task row first | accepted |
-| TSL24-B | absent | newly live | pending create | only the existing optimistic/live overlay may show it temporarily; reconcile after commit | accepted |
-| TSL25-A | present in identity A | summary at same path, identity B | grouped/project | no join, no workspace crossing; A keeps its static row | accepted |
-| TSL25-B | present | present | pinned/archived | membership decides the section; sessions fields never move sections | accepted |
-| TSL25-C | SQLite row is remote identity A but `meta_json` missing/stale | summary in identity A | grouped/project | normalize on read from SQLite entity columns, then join; never degrade to path matching | accepted |
-| TSL26-A | just committed | present or pending | active/project | `task_created` invalidates the task-row snapshot; the new row enters the current workspace | accepted |
-| TSL26-B | absent | draft only | none | unsent drafts never fabricate persistent task rows | pruned |
+| Candidate | tasks-index row                                               | sessions summary                 | membership      | Expected effect                                                                             | Status          |
+| --------- | ------------------------------------------------------------- | -------------------------------- | --------------- | ------------------------------------------------------------------------------------------- | --------------- |
+| TSL23-A   | present                                                       | absent                           | active/grouped  | keep the static row; no spinner/attention; explicit group order unchanged                   | accepted        |
+| TSL23-B   | present                                                       | present                          | any non-deleted | row from task index; activity/title enriched per field owner                                | accepted        |
+| TSL23-C   | present                                                       | stale                            | deleted         | tombstone excludes; summary cannot resurrect                                                | pruned by TSL20 |
+| TSL24-A   | absent                                                        | stored completed                 | none            | cold summary never becomes a persistent row directly; the syncer creates the task row first | accepted        |
+| TSL24-B   | absent                                                        | newly live                       | pending create  | only the existing optimistic/live overlay may show it temporarily; reconcile after commit   | accepted        |
+| TSL25-A   | present in identity A                                         | summary at same path, identity B | grouped/project | no join, no workspace crossing; A keeps its static row                                      | accepted        |
+| TSL25-B   | present                                                       | present                          | pinned/archived | membership decides the section; sessions fields never move sections                         | accepted        |
+| TSL25-C   | SQLite row is remote identity A but `meta_json` missing/stale | summary in identity A            | grouped/project | normalize on read from SQLite entity columns, then join; never degrade to path matching     | accepted        |
+| TSL26-A   | just committed                                                | present or pending               | active/project  | `task_created` invalidates the task-row snapshot; the new row enters the current workspace  | accepted        |
+| TSL26-B   | absent                                                        | draft only                       | none            | unsent drafts never fabricate persistent task rows                                          | pruned          |
 
 ## Pruning decisions
 
-| ID | Pruned combinations | Guard/invariant | Coverage |
-| --- | --- | --- | --- |
-| P1 | desktop/mobile × every membership | delivery profile never changes terminal row membership | desktop unit + replayable scope/recovery tests |
-| P2 | local/SSH/WSL/Docker permutations | unified `workspaceKey`; each endpoint uses its own task service | identity focused tests |
-| P3 | session phase × provider/Goal/queue | phase affects only activity fields, never row existence | running/completed representatives |
-| P4 | deleted × all task types/list kinds | TSL20 tombstone negative invariant | TSL20 existing tests |
+| ID  | Pruned combinations                 | Guard/invariant                                                 | Coverage                                       |
+| --- | ----------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- |
+| P1  | desktop/mobile × every membership   | delivery profile never changes terminal row membership          | desktop unit + replayable scope/recovery tests |
+| P2  | local/SSH/WSL/Docker permutations   | unified `workspaceKey`; each endpoint uses its own task service | identity focused tests                         |
+| P3  | session phase × provider/Goal/queue | phase affects only activity fields, never row existence         | running/completed representatives              |
+| P4  | deleted × all task types/list kinds | TSL20 tombstone negative invariant                              | TSL20 existing tests                           |
 
 ## Accepted cases
 
-| Case | Setup | Action | Assertions | Evidence | E2E status |
-| --- | --- | --- | --- | --- | --- |
-| TSL23 | tasks-index has 25 active/grouped tasks; sessions-index has only 5 summaries | build Project/Timeline/Grouped | all 25 rows show; 5 with activity, rest with persistent meta; group order unchanged | pure projection + hook integration | focused covered; desktop covered |
-| TSL24 | task row and session summary both exist; phase/title/activity then update | apply sessions delta and membership refresh | row identity/section unchanged; live fields update; pin/unread mutations never change activity ordering | projection/store test | focused covered |
-| TSL25 | same path different identity, stale index JSON identity, or missing/late session summary | cold load, remote restore, summary arrival | SQLite entity columns normalize identity first; no crossing; no disappearance on missing summary; in-place enrichment when the correct summary arrives | repo + identity + hook integration | focused covered; remote GUI planned |
-| TSL26 | current workspace has an old task-row snapshot; a new conversation's first send commits its task row | receive `task_created` | membership/task-row reads refresh; Project shows the new row immediately and later refreshes never drop it | event policy + hook integration | focused covered; desktop covered |
+| Case  | Setup                                                                                                | Action                                      | Assertions                                                                                                                                             | Evidence                           | E2E status                          |
+| ----- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- | ----------------------------------- |
+| TSL23 | tasks-index has 25 active/grouped tasks; sessions-index has only 5 summaries                         | build Project/Timeline/Grouped              | all 25 rows show; 5 with activity, rest with persistent meta; group order unchanged                                                                    | pure projection + hook integration | focused covered; desktop covered    |
+| TSL24 | task row and session summary both exist; phase/title/activity then update                            | apply sessions delta and membership refresh | row identity/section unchanged; live fields update; pin/unread mutations never change activity ordering                                                | projection/store test              | focused covered                     |
+| TSL25 | same path different identity, stale index JSON identity, or missing/late session summary             | cold load, remote restore, summary arrival  | SQLite entity columns normalize identity first; no crossing; no disappearance on missing summary; in-place enrichment when the correct summary arrives | repo + identity + hook integration | focused covered; remote GUI planned |
+| TSL26 | current workspace has an old task-row snapshot; a new conversation's first send commits its task row | receive `task_created`                      | membership/task-row reads refresh; Project shows the new row immediately and later refreshes never drop it                                             | event policy + hook integration    | focused covered; desktop covered    |
 
 ## Matrix backfill and E2E handoff
 
-| File | Change |
-| --- | --- |
-| `docs/conversation-session-case-catalog.md` | add TSL23–TSL26 |
+| File                                                       | Change                                                  |
+| ---------------------------------------------------------- | ------------------------------------------------------- |
+| `docs/conversation-session-case-catalog.md`                | add TSL23–TSL26                                         |
 | `docs/testing/conversation-session-e2e-coverage-matrix.md` | mark focused tests + desktop regression representatives |
 
 - Provider fixture: no model requests; pre-seeded task SQLite plus controllable sessions-index snapshots.

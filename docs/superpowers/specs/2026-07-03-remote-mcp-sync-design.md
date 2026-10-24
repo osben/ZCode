@@ -64,7 +64,12 @@ Example — local:
       "filesystem": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/alice/workspace/z-code", "/Users/alice/Documents"],
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/Users/alice/workspace/z-code",
+          "/Users/alice/Documents"
+        ],
         "enable": true
       },
       "context7": {
@@ -93,7 +98,12 @@ Synced to `dev@host:/home/dev/z-code` with remote home `/home/dev`:
       "filesystem": {
         "type": "stdio",
         "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/dev/z-code", "/home/dev/Documents"],
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/home/dev/z-code",
+          "/home/dev/Documents"
+        ],
         "enable": true
       },
       "context7": {

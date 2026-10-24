@@ -7,13 +7,13 @@
 
 ## Current protocol responsibility
 
-| Request protocol          | State                        | Field serialization responsibility                                       |
-| ------------------------- | ---------------------------- | ------------------------------------------------------------------------ |
-| OpenAI Compatible Chat    | integrated                   | AI SDK maps `maxOutputTokens` to `max_tokens`                             |
-| OpenAI Responses          | integrated                   | AI SDK maps `maxOutputTokens` to `max_output_tokens`                      |
-| Anthropic Messages        | integrated                   | AI SDK maps `max_tokens` and adds the fixed thinking budget to the final  |
-| Gemini                    | no SDK/provider kind wired   | not supported by the existing AI SDK path                                 |
-| Bedrock                   | no SDK/provider kind wired   | not supported by the existing AI SDK path                                 |
+| Request protocol       | State                      | Field serialization responsibility                                       |
+| ---------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| OpenAI Compatible Chat | integrated                 | AI SDK maps `maxOutputTokens` to `max_tokens`                            |
+| OpenAI Responses       | integrated                 | AI SDK maps `maxOutputTokens` to `max_output_tokens`                     |
+| Anthropic Messages     | integrated                 | AI SDK maps `max_tokens` and adds the fixed thinking budget to the final |
+| Gemini                 | no SDK/provider kind wired | not supported by the existing AI SDK path                                |
+| Bedrock                | no SDK/provider kind wired | not supported by the existing AI SDK path                                |
 
 ZCode owns model capability budgets, provider-conditional omission and provider-specific
 renames in the final JSON body; the AI SDK only serializes standard fields for integrated

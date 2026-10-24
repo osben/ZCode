@@ -71,7 +71,7 @@ history. `bash-shell-selection.ts` remains only as compatibility re-exports
 - `/goal`, expert workflow, script workflow, and deferred drafts all go through the same user
   execution boundary before the first persisted or executed state.
 - No import cycle: `config.ts -> session-shell-environment.ts -> context-refresh.ts ->
-  context-history-entries.ts`; nothing imports back into `config.ts` or `context.ts`.
+context-history-entries.ts`; nothing imports back into `config.ts` or `context.ts`.
 
 ## Acceptance Criteria
 

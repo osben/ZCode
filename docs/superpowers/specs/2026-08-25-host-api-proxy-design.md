@@ -186,13 +186,13 @@ No Proxy hit and custom CA enabled; never proxy credentials, full URLs, OAuth co
 
 ### Must-Preserve Invariants
 
-| Invariant                                                                   | Surfaces/modes        | Proof needed                                 | Evidence                     |
-| --------------------------------------------------------------------------- | --------------------- | -------------------------------------------- | ---------------------------- |
-| Without an explicit proxy, Host business APIs keep going direct             | all                   | direct test                                  | `HAP-001`                    |
-| An explicit proxy failure must not fall back to direct                      | forced-proxy network  | capture upstream direct connection count = 0 | `HAP-004`                    |
-| Local-identity APIs of desktop-attached remote use the desktop policy, server remote is not overridden | remote modes | wiring tests                            | `HAP-008/009`                |
-| No change to the Agent, Electron Session, Bot, telemetry, object upload egresses | all              | dependency and regression checks             | `HAP-010`                    |
-| No change to continuous/replayable, workspace identity or session state     | desktop/mobile/remote | no protocol/schema/state diff                | static diff + existing tests |
+| Invariant                                                                                              | Surfaces/modes        | Proof needed                                 | Evidence                     |
+| ------------------------------------------------------------------------------------------------------ | --------------------- | -------------------------------------------- | ---------------------------- |
+| Without an explicit proxy, Host business APIs keep going direct                                        | all                   | direct test                                  | `HAP-001`                    |
+| An explicit proxy failure must not fall back to direct                                                 | forced-proxy network  | capture upstream direct connection count = 0 | `HAP-004`                    |
+| Local-identity APIs of desktop-attached remote use the desktop policy, server remote is not overridden | remote modes          | wiring tests                                 | `HAP-008/009`                |
+| No change to the Agent, Electron Session, Bot, telemetry, object upload egresses                       | all                   | dependency and regression checks             | `HAP-010`                    |
+| No change to continuous/replayable, workspace identity or session state                                | desktop/mobile/remote | no protocol/schema/state diff                | static diff + existing tests |
 
 ## Case Planning
 
@@ -235,14 +235,14 @@ does not replace the deterministic local proxy integration tests.
 
 ## Risks and rollback
 
-| Risk                                    | Mitigation                                                        |
-| --------------------------------------- | ----------------------------------------------------------------- |
-| Wrongly proxying localhost / intranet / remote server | scoped client + No Proxy + no global dispatcher     |
-| Wrong match on endpoint override        | rewrite-before-routing tests                                      |
-| Direct leak after proxy failure         | fail-closed integration test counting direct upstream hits        |
-| CA covering only one TLS segment        | verify direct, HTTPS proxy and CONNECT separately                 |
-| Connection pool or dispatcher leak      | the Host lifecycle owns it and closes it on service dispose; test open handles |
-| Settings hot-update semantics drift     | immutable lifecycle snapshot, settings page copy unchanged        |
+| Risk                                                  | Mitigation                                                                     |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Wrongly proxying localhost / intranet / remote server | scoped client + No Proxy + no global dispatcher                                |
+| Wrong match on endpoint override                      | rewrite-before-routing tests                                                   |
+| Direct leak after proxy failure                       | fail-closed integration test counting direct upstream hits                     |
+| CA covering only one TLS segment                      | verify direct, HTTPS proxy and CONNECT separately                              |
+| Connection pool or dispatcher leak                    | the Host lifecycle owns it and closes it on service dispose; test open handles |
+| Settings hot-update semantics drift                   | immutable lifecycle snapshot, settings page copy unchanged                     |
 
 Rollback only needs reverting the `NodeApiClient` fetch injection and the Host policy provider; there is no
 schema, protocol, credential, settings format or data migration, and the existing Electron Session and Agent

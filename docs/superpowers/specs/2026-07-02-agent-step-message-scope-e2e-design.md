@@ -8,13 +8,13 @@ User rulings: (1) cover only the history-accumulation defect (A), not also unclo
 
 Boundaries:
 
-| Boundary | Decision | Includes | Excludes / prunes |
-| --- | --- | --- | --- |
-| Client chain | `desktop-continuous` | desktop renderer normal session stream | `web-remote-replayable`, snapshot/gap recovery |
-| Session shape | two consecutive turns in one session | the second turn must see the first turn's history | cross-session, fork/edit/compact |
-| Step shape | one plain generation step per turn | deterministic plain-text replay | reasoning, tool call, permission/elicitation |
-| Reconciliation key | `talkId + messageId` | one completion and its per-step events | talkId-only aggregation |
-| Evidence | Electron main-process telemetry fetch call arguments | final HTTP body `agent_step` / `message_completion` | external telemetry server persistence |
+| Boundary           | Decision                                             | Includes                                            | Excludes / prunes                              |
+| ------------------ | ---------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------- |
+| Client chain       | `desktop-continuous`                                 | desktop renderer normal session stream              | `web-remote-replayable`, snapshot/gap recovery |
+| Session shape      | two consecutive turns in one session                 | the second turn must see the first turn's history   | cross-session, fork/edit/compact               |
+| Step shape         | one plain generation step per turn                   | deterministic plain-text replay                     | reasoning, tool call, permission/elicitation   |
+| Reconciliation key | `talkId + messageId`                                 | one completion and its per-step events              | talkId-only aggregation                        |
+| Evidence           | Electron main-process telemetry fetch call arguments | final HTTP body `agent_step` / `message_completion` | external telemetry server persistence          |
 
 State owners: active prompt telemetry — UI `activePromptTelemetryByTask` (completion `messageId`); agent step lifecycle — UI `agentStepTelemetryByTask` (per `talkId + messageId` `agent_step` payloads); session message history — agent runtime/session + UI projection (turn 1 complete before turn 2 sends; same `talkId`); telemetry transport input — renderer `reportAppTelemetryEvent` → main `createDesktopTelemetryFetch(net)`; E2E observation — WDIO Electron service `browser.electron.mock("net", "fetch")` call history.
 
@@ -41,13 +41,13 @@ Compatibility: the fix changes only the UI telemetry aggregation source — stre
 
 ## Case selection
 
-| ID | Setup | Event | Expected | Status | Reason |
-| --- | --- | --- | --- | --- | --- |
-| R01 | same desktop session, turn 1 complete | turn 2 plain-text completes | turn 2 `agent_step_cnt` = 1 | accepted | minimal stable production-defect reproduction |
-| R02 | turn 2 includes tools | completion | full tool/reasoning/generation reconciliation | pruned | later step-type coverage, not the minimal A boundary |
-| R03 | two different sessions, one turn each | both complete | independent per-session counts | pruned | never hits the history-accumulation condition |
-| R04 | mobile replayable restores history then sends | turn 2 completes | recovery chain still counts per message | ignored | cross-client semantics planned separately |
-| R05 | stop/error while running | completion closes | interrupted step reconciliation | ignored | fault/terminal lifecycle planned separately |
+| ID  | Setup                                         | Event                       | Expected                                      | Status   | Reason                                               |
+| --- | --------------------------------------------- | --------------------------- | --------------------------------------------- | -------- | ---------------------------------------------------- |
+| R01 | same desktop session, turn 1 complete         | turn 2 plain-text completes | turn 2 `agent_step_cnt` = 1                   | accepted | minimal stable production-defect reproduction        |
+| R02 | turn 2 includes tools                         | completion                  | full tool/reasoning/generation reconciliation | pruned   | later step-type coverage, not the minimal A boundary |
+| R03 | two different sessions, one turn each         | both complete               | independent per-session counts                | pruned   | never hits the history-accumulation condition        |
+| R04 | mobile replayable restores history then sends | turn 2 completes            | recovery chain still counts per message       | ignored  | cross-client semantics planned separately            |
+| R05 | stop/error while running                      | completion closes           | interrupted step reconciliation               | ignored  | fault/terminal lifecycle planned separately          |
 
 ## Accepted case R01: same-session second-turn step isolation
 

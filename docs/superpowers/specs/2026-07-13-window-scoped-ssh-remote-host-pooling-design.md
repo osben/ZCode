@@ -2,13 +2,13 @@
 
 ## Feature summary
 
-| Field | Value |
-| --- | --- |
-| Change | Desktop SSH remote workspaces move from one Remote Host per workspace to one shared Remote Host per SSH connection config per Electron window. |
-| User-visible surfaces | SSH connect, remote directory selection, remote workspace tabs, disconnect/reconnect, renderer reload, mobile `/remote` entering an SSH workspace. |
-| Existing docs | `docs/architecture/zcode-code-architecture-overview.md`, `docs/architecture/message-flow.md`, `docs/remote-workspace-session-unified-settings.md`, `docs/ssh-remote-app-global-state-authority.md`, `docs/web-remote-control/web-remote-control-architecture.md`, `docs/web-remote-control/task-realtime-sync.md`, `docs/web-remote-control-task-command-queue.md`, `docs/remote/desktop-remote-session-renderer-reattach.md`. |
-| Existing code owners | `packages/desktop/src/main/desktopRemoteSessions.ts`, `packages/desktop/src/main/desktopHostProcess.ts`, `packages/desktop/src/host/index.ts`, `packages/desktop/src/renderer/src/main.tsx`, `packages/ui/src/store/remoteWorkspaceSessionStore.ts`, `packages/ui/src/root/useRemoteWorkspaceHistory.ts`, `packages/ui/src/root/useRemoteWorkspaceTabLifecycle.ts`. |
-| Out of scope | WSL/Docker Host sharing, cross-window sharing, SSH Profile data model, Host-level disconnect UI, remote resident daemon, app cold-start auto-reconnect. |
+| Field                 | Value                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Change                | Desktop SSH remote workspaces move from one Remote Host per workspace to one shared Remote Host per SSH connection config per Electron window.                                                                                                                                                                                                                                                                                 |
+| User-visible surfaces | SSH connect, remote directory selection, remote workspace tabs, disconnect/reconnect, renderer reload, mobile `/remote` entering an SSH workspace.                                                                                                                                                                                                                                                                             |
+| Existing docs         | `docs/architecture/zcode-code-architecture-overview.md`, `docs/architecture/message-flow.md`, `docs/remote-workspace-session-unified-settings.md`, `docs/ssh-remote-app-global-state-authority.md`, `docs/web-remote-control/web-remote-control-architecture.md`, `docs/web-remote-control/task-realtime-sync.md`, `docs/web-remote-control-task-command-queue.md`, `docs/remote/desktop-remote-session-renderer-reattach.md`. |
+| Existing code owners  | `packages/desktop/src/main/desktopRemoteSessions.ts`, `packages/desktop/src/main/desktopHostProcess.ts`, `packages/desktop/src/host/index.ts`, `packages/desktop/src/renderer/src/main.tsx`, `packages/ui/src/store/remoteWorkspaceSessionStore.ts`, `packages/ui/src/root/useRemoteWorkspaceHistory.ts`, `packages/ui/src/root/useRemoteWorkspaceTabLifecycle.ts`.                                                            |
+| Out of scope          | WSL/Docker Host sharing, cross-window sharing, SSH Profile data model, Host-level disconnect UI, remote resident daemon, app cold-start auto-reconnect.                                                                                                                                                                                                                                                                        |
 
 ## Background
 
@@ -46,65 +46,65 @@ The remote `zcode-server` has no one-workspace-per-process limit: its `createLoc
 
 ## Boundary decisions
 
-| Boundary | Decision | Includes | Excludes / prunes |
-| --- | --- | --- | --- |
-| Sharing scope | `(windowWebContentsId, remoteHostKey)` uniquely identifies an SSH Host. | Same-window same-config workspaces. | Cross-window Hosts. |
-| Host lifecycle | A ready Host is cached until window close. | Idle Hosts with zero workspaces. | Dispose on last-session-close. |
-| Session identity | `remoteSessionId` stays workspace-scoped. | Independent RPC port, cache, mobile route. | Host-level shared session id. |
-| Workspace isolation | `workspaceKey = workspaceIdentity?.trim() || workspacePath`. | Agent/provider/task/cache isolation. | Matching by `workspacePath` alone. |
-| Reconnect | One workspace's reconnect restores the group's still-open workspaces. | One Host connection, multi-workspace attachment. | Per-workspace manual reconnect. |
-| Partial failure | After Host ready, per-workspace. | Provider/path/Agent init errors. | Rolling back the whole Host on one failure. |
-| Remote kind | Only SSH enters the Host pool. | password/private-key/agent auth. | WSL/Docker. |
-| UI | No new Host-level disconnect entry. | Existing workspace/tab behavior. | New UI and styles. |
-| Persistence | The Host pool is in-memory only. | Existing remote workspace history. | Host/Profile schema migration. |
-| Protocol | Only Desktop-internal channel/platform messages change. | Main ↔ Host, Renderer ↔ Main. | `@zcode/protocol`. |
+| Boundary            | Decision                                                                | Includes                                         | Excludes / prunes                           |
+| ------------------- | ----------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------- | ------------------------------------ | ---------------------------------- |
+| Sharing scope       | `(windowWebContentsId, remoteHostKey)` uniquely identifies an SSH Host. | Same-window same-config workspaces.              | Cross-window Hosts.                         |
+| Host lifecycle      | A ready Host is cached until window close.                              | Idle Hosts with zero workspaces.                 | Dispose on last-session-close.              |
+| Session identity    | `remoteSessionId` stays workspace-scoped.                               | Independent RPC port, cache, mobile route.       | Host-level shared session id.               |
+| Workspace isolation | `workspaceKey = workspaceIdentity?.trim()                               |                                                  | workspacePath`.                             | Agent/provider/task/cache isolation. | Matching by `workspacePath` alone. |
+| Reconnect           | One workspace's reconnect restores the group's still-open workspaces.   | One Host connection, multi-workspace attachment. | Per-workspace manual reconnect.             |
+| Partial failure     | After Host ready, per-workspace.                                        | Provider/path/Agent init errors.                 | Rolling back the whole Host on one failure. |
+| Remote kind         | Only SSH enters the Host pool.                                          | password/private-key/agent auth.                 | WSL/Docker.                                 |
+| UI                  | No new Host-level disconnect entry.                                     | Existing workspace/tab behavior.                 | New UI and styles.                          |
+| Persistence         | The Host pool is in-memory only.                                        | Existing remote workspace history.               | Host/Profile schema migration.              |
+| Protocol            | Only Desktop-internal channel/platform messages change.                 | Main ↔ Host, Renderer ↔ Main.                    | `@zcode/protocol`.                          |
 
 Host-level dispose closes all associated sessions; transport failure is layered separately from workspace initialization failure.
 
 ## High-risk cross-products
 
-| Cross-product | Candidate risk | Handling |
-| --- | --- | --- |
-| Host pool × workspace identity | Same path on different SSH hosts mixing services. | `remoteHostKey` only decides process reuse; every call still carries workspaceIdentity. |
-| Host pool × Renderer reload | One Host re-attaching multiple sessions overwriting renderer store. | Independent MessagePort and remoteSessionId per session. |
-| Host pool × mobile replayable | Phone reaching workspace B via session A. | Attach validates remoteSessionId, window owner, and workspaceIdentity/workspaceKey together. |
-| Host pool × realtime scope | Host receiving events for unbound workspaces. | Scope derived live from attached session context into TaskRealtimeBus. |
-| Host pool × provider registry | One workspace's applied revision reused by another. | Remote registry and revisions stay keyed by workspaceKey. |
-| Host pool × cancel | One waiter's cancel killing other concurrent waiters. | Pending connects are independent; dispose only when all waiters cancel and the Host is still connecting. |
-| Host pool × stale exit | An old Host exit callback deleting a new Host. | Compare current pool entry/process object identity before deletion. |
-| Host pool × window lifecycle | One window's close killing another window's same-key Host. | Pool key always includes windowWebContentsId. |
-| Host pool × credentials | Same-key workspaces saving different passwords. | A connected Host keeps being reused; a fresh connection uses the initiator's current valid credential. |
+| Cross-product                  | Candidate risk                                                      | Handling                                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Host pool × workspace identity | Same path on different SSH hosts mixing services.                   | `remoteHostKey` only decides process reuse; every call still carries workspaceIdentity.                  |
+| Host pool × Renderer reload    | One Host re-attaching multiple sessions overwriting renderer store. | Independent MessagePort and remoteSessionId per session.                                                 |
+| Host pool × mobile replayable  | Phone reaching workspace B via session A.                           | Attach validates remoteSessionId, window owner, and workspaceIdentity/workspaceKey together.             |
+| Host pool × realtime scope     | Host receiving events for unbound workspaces.                       | Scope derived live from attached session context into TaskRealtimeBus.                                   |
+| Host pool × provider registry  | One workspace's applied revision reused by another.                 | Remote registry and revisions stay keyed by workspaceKey.                                                |
+| Host pool × cancel             | One waiter's cancel killing other concurrent waiters.               | Pending connects are independent; dispose only when all waiters cancel and the Host is still connecting. |
+| Host pool × stale exit         | An old Host exit callback deleting a new Host.                      | Compare current pool entry/process object identity before deletion.                                      |
+| Host pool × window lifecycle   | One window's close killing another window's same-key Host.          | Pool key always includes windowWebContentsId.                                                            |
+| Host pool × credentials        | Same-key workspaces saving different passwords.                     | A connected Host keeps being reused; a fresh connection uses the initiator's current valid credential.   |
 
 ## Concept map
 
-| Concept | Why it matters |
-| --- | --- |
-| `createRemoteWorkspaceSession()` | Used to fork a Host per call; the refactor entry point (`packages/desktop/src/main/desktopRemoteSessions.ts`). |
-| `AttachServicePort` | Already exposes new RPC ports on the existing `activeServices` — the basis for sharing (`packages/desktop/src/host/index.ts`). |
-| `activeServices` | The shared mixed ServiceCollection inside one Host. |
-| `createRemoteWorkspaceServiceCollection()` | Combines local app-global services, remote services, and wrappers. |
-| `connectRemote()` | One full SSH backend + remote server stdio + RPC client connection (`packages/server/src/remote/connect.ts`). |
-| `createLocalServices()` | The remote server's multi-workspace service owner (`packages/services/src/node.ts`). |
-| `ZCodeAgentProcessManager` | Already reuses/isolates Agent processes by workspaceKey. |
-| `remoteWorkspaceSessionStore` | Renderer registers services by remoteSessionId, then binds the workspace by identity/path. |
-| `webRemoteControlSharedHostAttachments` | Mobile attachments resolve a logical session to the shared process. |
-| `TaskRealtimeBus` | Main-side router for Host delivery scope, owner/lease, session routes. |
-| `buildRemoteWorkspaceIdentity()` | authority + canonical-path workspace identity (`packages/ui/src/lib/remoteWorkspaceHistory.ts`). |
+| Concept                                    | Why it matters                                                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `createRemoteWorkspaceSession()`           | Used to fork a Host per call; the refactor entry point (`packages/desktop/src/main/desktopRemoteSessions.ts`).                 |
+| `AttachServicePort`                        | Already exposes new RPC ports on the existing `activeServices` — the basis for sharing (`packages/desktop/src/host/index.ts`). |
+| `activeServices`                           | The shared mixed ServiceCollection inside one Host.                                                                            |
+| `createRemoteWorkspaceServiceCollection()` | Combines local app-global services, remote services, and wrappers.                                                             |
+| `connectRemote()`                          | One full SSH backend + remote server stdio + RPC client connection (`packages/server/src/remote/connect.ts`).                  |
+| `createLocalServices()`                    | The remote server's multi-workspace service owner (`packages/services/src/node.ts`).                                           |
+| `ZCodeAgentProcessManager`                 | Already reuses/isolates Agent processes by workspaceKey.                                                                       |
+| `remoteWorkspaceSessionStore`              | Renderer registers services by remoteSessionId, then binds the workspace by identity/path.                                     |
+| `webRemoteControlSharedHostAttachments`    | Mobile attachments resolve a logical session to the shared process.                                                            |
+| `TaskRealtimeBus`                          | Main-side router for Host delivery scope, owner/lease, session routes.                                                         |
+| `buildRemoteWorkspaceIdentity()`           | authority + canonical-path workspace identity (`packages/ui/src/lib/remoteWorkspaceHistory.ts`).                               |
 
 ## State owners
 
-| State / fact | Authority | Mirrors / caches |
-| --- | --- | --- |
-| Window SSH Host existence | Desktop Main Host pool | none (pool entry + child process) |
-| Host readiness | Host pool entry `readiness` | pending connect waiters |
-| pending connect | Desktop Main pending connect map | UI loading state |
-| logical remote session | Desktop Main attached session map | Renderer `sessionsById`, tab remoteSessionId |
-| RPC attachment | Remote Host attachment map | Main session `attachmentId` |
-| workspace context | Renderer tab/history, bound into Main session | Host realtime scope |
-| workspace isolation key | `resolveWorkspaceKey(context)` | Agent/task/provider maps |
-| remote Agent process | remote `ZCodeAgentProcessManager` | process lifecycle reports |
-| Provider registry applied revision | remote workspace runtime | UI sync coordinator |
-| task/session/stream state | remote Agent/session services | desktop projection / mobile replay mirror |
+| State / fact                       | Authority                                     | Mirrors / caches                             |
+| ---------------------------------- | --------------------------------------------- | -------------------------------------------- |
+| Window SSH Host existence          | Desktop Main Host pool                        | none (pool entry + child process)            |
+| Host readiness                     | Host pool entry `readiness`                   | pending connect waiters                      |
+| pending connect                    | Desktop Main pending connect map              | UI loading state                             |
+| logical remote session             | Desktop Main attached session map             | Renderer `sessionsById`, tab remoteSessionId |
+| RPC attachment                     | Remote Host attachment map                    | Main session `attachmentId`                  |
+| workspace context                  | Renderer tab/history, bound into Main session | Host realtime scope                          |
+| workspace isolation key            | `resolveWorkspaceKey(context)`                | Agent/task/provider maps                     |
+| remote Agent process               | remote `ZCodeAgentProcessManager`             | process lifecycle reports                    |
+| Provider registry applied revision | remote workspace runtime                      | UI sync coordinator                          |
+| task/session/stream state          | remote Agent/session services                 | desktop projection / mobile replay mirror    |
 
 ## Identity model
 
@@ -193,10 +193,7 @@ interface AttachedRemoteWorkspaceSession {
 Authoritative indexes:
 
 ```ts
-sshHostsByPoolKey: Map<
-  `${windowWebContentsId}\0${remoteHostKey}`,
-  RemoteSshHostEntry
->;
+sshHostsByPoolKey: Map<`${windowWebContentsId}\0${remoteHostKey}`, RemoteSshHostEntry>;
 
 pendingConnectsByRequestId: Map<string, PendingRemoteConnect>;
 
@@ -449,102 +446,102 @@ The SSH Host's realtime delivery kind stays `relay_bridge`. The workspace scope 
 
 ## Dimensions
 
-| Dimension | Values | Reason |
-| --- | --- | --- |
-| window | same / different | Sharing boundary. |
-| remote kind | SSH / WSL / Docker | Only SSH changes. |
-| SSH key | same / different | Host pool primary key. |
-| Host readiness | absent / connecting / ready / exited | Concurrency, cancel, error semantics. |
-| logical session | pending / attached / removed | Attachment lifecycle. |
-| workspace context | unbound / bound | Directory browsing and identity validation. |
-| attached count | 0 / 1 / many | Idle cache and sharing behavior. |
-| renderer lifecycle | initial / reload / close | Port re-attach and reclamation. |
-| client mode | desktop-continuous / web-remote-replayable | Delivery boundaries must not mix. |
-| failure layer | Host transport / attachment / workspace initialization | Whole-failure vs partial-failure boundary. |
-| auth | password / private key / agent | remoteHostKey equivalence classes. |
-| credential content | same / changed | Secrets stay out of the key but affect reconnection. |
-| provider revision | same / independently failed | Applied state is per workspace. |
+| Dimension          | Values                                                 | Reason                                               |
+| ------------------ | ------------------------------------------------------ | ---------------------------------------------------- |
+| window             | same / different                                       | Sharing boundary.                                    |
+| remote kind        | SSH / WSL / Docker                                     | Only SSH changes.                                    |
+| SSH key            | same / different                                       | Host pool primary key.                               |
+| Host readiness     | absent / connecting / ready / exited                   | Concurrency, cancel, error semantics.                |
+| logical session    | pending / attached / removed                           | Attachment lifecycle.                                |
+| workspace context  | unbound / bound                                        | Directory browsing and identity validation.          |
+| attached count     | 0 / 1 / many                                           | Idle cache and sharing behavior.                     |
+| renderer lifecycle | initial / reload / close                               | Port re-attach and reclamation.                      |
+| client mode        | desktop-continuous / web-remote-replayable             | Delivery boundaries must not mix.                    |
+| failure layer      | Host transport / attachment / workspace initialization | Whole-failure vs partial-failure boundary.           |
+| auth               | password / private key / agent                         | remoteHostKey equivalence classes.                   |
+| credential content | same / changed                                         | Secrets stay out of the key but affect reconnection. |
+| provider revision  | same / independently failed                            | Applied state is per workspace.                      |
 
 ## Candidate combinations
 
-| ID | State | Event | Expected guard/effect | Status |
-| --- | --- | --- | --- | --- |
-| SSH-HOST-POOL-01 | no Host | connect A then B, same window/key | one Host, two logical sessions/ports | accepted |
-| SSH-HOST-POOL-02 | no Host | same key in different windows | one Host per window | accepted |
-| SSH-HOST-POOL-03 | no Host | two different keys in same window | two Hosts | accepted |
-| SSH-HOST-POOL-04 | connecting | concurrent same-key connects | share readiness promise and one spawn | accepted |
-| SSH-HOST-POOL-05 | connecting, two waiters | cancel one | one waiter removed, Host continues | accepted |
-| SSH-HOST-POOL-06 | connecting, last waiter | cancel | Host disposed and deployment stops | accepted |
-| SSH-HOST-POOL-07 | ready, temp session | cancel directory selection | session detached, Host cached | accepted |
-| SSH-HOST-POOL-08 | ready, two workspaces | close A | detach A only; B remains usable | accepted |
-| SSH-HOST-POOL-09 | ready, one workspace | close last workspace, reopen same key | Host stays idle and is reused | accepted |
-| SSH-HOST-POOL-10 | ready Hosts | close window | dispose all Hosts in that window | accepted |
-| SSH-HOST-POOL-11 | ready, two sessions | renderer reload | reattach two independent ports to same Host | accepted |
-| SSH-HOST-POOL-12 | ready, two sessions | Host/SSH exits | both sessions close and tabs disconnect | accepted |
-| SSH-HOST-POOL-13 | disconnected group | reconnect A | A and B restored through one new Host | accepted |
-| SSH-HOST-POOL-14 | Host ready | B provider/path init fails | A stays connected; B shows failure | accepted |
-| SSH-HOST-POOL-15 | shared Host, A/B | phones attach A and B | same process, isolated sessions/identities | accepted |
-| SSH-HOST-POOL-16 | session A bound to key A | attach with identity B | reject identity mismatch | accepted |
-| SSH-HOST-POOL-17 | A/B registry sync | same registry revision | applied state independently keyed | accepted |
-| SSH-HOST-POOL-18 | attached set changes | bind/unbind workspace | TaskRealtime scope equals derived union | accepted |
-| SSH-HOST-POOL-19 | WSL/Docker | open multiple workspaces | existing session-per-host behavior | accepted |
-| SSH-HOST-POOL-20 | ready or reconnecting | credential content changes | ready Host reused; new Host uses current credential | accepted |
-| SSH-HOST-POOL-21 | backend's first SFTP write/session fails | upload several resources in a row | the first resource falls back; later resources go straight to the exec pipe; exactly one degradation warn is logged | accepted |
-| SSH-HOST-POOL-22 | new session with the provider registry not yet synced | sync workspace app-global state | skip the decision-free pre-probe; apply the registry first, then run one successful post-apply identity probe | accepted |
-| SSH-HOST-POOL-23 | remote tab activated but services not yet registered | renderer workspace side effects about to start | state is `remote-waiting`; workspace RPC call counts for conversation, task-notification sessions-index, and MCP hydration are all 0, each starts exactly once after services register; local workspaces keep starting immediately | accepted |
-| SSH-HOST-POOL-24 | several remote tabs share `workspacePath` but differ in `workspaceIdentity`; only one identity is bound to a live session | renderer resolves workspace services | a tab with identity may only match an explicit `remoteSessionId` or an identity-exact mapping; when the exact mapping is missing it stays `remote-waiting` — borrowing another endpoint by path is forbidden | accepted |
-| SSH-HOST-POOL-25 | a local tab and a remote tab share `workspacePath`; the remote path index is bound to a live session | renderer resolves the local workspace's services | a local tab without remote metadata must use base services — borrowing the remote endpoint by path alone is forbidden | accepted |
-| SSH-HOST-POOL-26 | web remote entry carries a remote `workspaceIdentity`; the tab's `remoteSessionId` is not yet filled in or is stale | renderer resolves the remote-control target session | identity must participate in exact resolution; the overlay only receives registered resolution results — passing through unvalidated sessions or borrowing another endpoint by path is forbidden | accepted |
+| ID               | State                                                                                                                     | Event                                               | Expected guard/effect                                                                                                                                                                                                              | Status   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| SSH-HOST-POOL-01 | no Host                                                                                                                   | connect A then B, same window/key                   | one Host, two logical sessions/ports                                                                                                                                                                                               | accepted |
+| SSH-HOST-POOL-02 | no Host                                                                                                                   | same key in different windows                       | one Host per window                                                                                                                                                                                                                | accepted |
+| SSH-HOST-POOL-03 | no Host                                                                                                                   | two different keys in same window                   | two Hosts                                                                                                                                                                                                                          | accepted |
+| SSH-HOST-POOL-04 | connecting                                                                                                                | concurrent same-key connects                        | share readiness promise and one spawn                                                                                                                                                                                              | accepted |
+| SSH-HOST-POOL-05 | connecting, two waiters                                                                                                   | cancel one                                          | one waiter removed, Host continues                                                                                                                                                                                                 | accepted |
+| SSH-HOST-POOL-06 | connecting, last waiter                                                                                                   | cancel                                              | Host disposed and deployment stops                                                                                                                                                                                                 | accepted |
+| SSH-HOST-POOL-07 | ready, temp session                                                                                                       | cancel directory selection                          | session detached, Host cached                                                                                                                                                                                                      | accepted |
+| SSH-HOST-POOL-08 | ready, two workspaces                                                                                                     | close A                                             | detach A only; B remains usable                                                                                                                                                                                                    | accepted |
+| SSH-HOST-POOL-09 | ready, one workspace                                                                                                      | close last workspace, reopen same key               | Host stays idle and is reused                                                                                                                                                                                                      | accepted |
+| SSH-HOST-POOL-10 | ready Hosts                                                                                                               | close window                                        | dispose all Hosts in that window                                                                                                                                                                                                   | accepted |
+| SSH-HOST-POOL-11 | ready, two sessions                                                                                                       | renderer reload                                     | reattach two independent ports to same Host                                                                                                                                                                                        | accepted |
+| SSH-HOST-POOL-12 | ready, two sessions                                                                                                       | Host/SSH exits                                      | both sessions close and tabs disconnect                                                                                                                                                                                            | accepted |
+| SSH-HOST-POOL-13 | disconnected group                                                                                                        | reconnect A                                         | A and B restored through one new Host                                                                                                                                                                                              | accepted |
+| SSH-HOST-POOL-14 | Host ready                                                                                                                | B provider/path init fails                          | A stays connected; B shows failure                                                                                                                                                                                                 | accepted |
+| SSH-HOST-POOL-15 | shared Host, A/B                                                                                                          | phones attach A and B                               | same process, isolated sessions/identities                                                                                                                                                                                         | accepted |
+| SSH-HOST-POOL-16 | session A bound to key A                                                                                                  | attach with identity B                              | reject identity mismatch                                                                                                                                                                                                           | accepted |
+| SSH-HOST-POOL-17 | A/B registry sync                                                                                                         | same registry revision                              | applied state independently keyed                                                                                                                                                                                                  | accepted |
+| SSH-HOST-POOL-18 | attached set changes                                                                                                      | bind/unbind workspace                               | TaskRealtime scope equals derived union                                                                                                                                                                                            | accepted |
+| SSH-HOST-POOL-19 | WSL/Docker                                                                                                                | open multiple workspaces                            | existing session-per-host behavior                                                                                                                                                                                                 | accepted |
+| SSH-HOST-POOL-20 | ready or reconnecting                                                                                                     | credential content changes                          | ready Host reused; new Host uses current credential                                                                                                                                                                                | accepted |
+| SSH-HOST-POOL-21 | backend's first SFTP write/session fails                                                                                  | upload several resources in a row                   | the first resource falls back; later resources go straight to the exec pipe; exactly one degradation warn is logged                                                                                                                | accepted |
+| SSH-HOST-POOL-22 | new session with the provider registry not yet synced                                                                     | sync workspace app-global state                     | skip the decision-free pre-probe; apply the registry first, then run one successful post-apply identity probe                                                                                                                      | accepted |
+| SSH-HOST-POOL-23 | remote tab activated but services not yet registered                                                                      | renderer workspace side effects about to start      | state is `remote-waiting`; workspace RPC call counts for conversation, task-notification sessions-index, and MCP hydration are all 0, each starts exactly once after services register; local workspaces keep starting immediately | accepted |
+| SSH-HOST-POOL-24 | several remote tabs share `workspacePath` but differ in `workspaceIdentity`; only one identity is bound to a live session | renderer resolves workspace services                | a tab with identity may only match an explicit `remoteSessionId` or an identity-exact mapping; when the exact mapping is missing it stays `remote-waiting` — borrowing another endpoint by path is forbidden                       | accepted |
+| SSH-HOST-POOL-25 | a local tab and a remote tab share `workspacePath`; the remote path index is bound to a live session                      | renderer resolves the local workspace's services    | a local tab without remote metadata must use base services — borrowing the remote endpoint by path alone is forbidden                                                                                                              | accepted |
+| SSH-HOST-POOL-26 | web remote entry carries a remote `workspaceIdentity`; the tab's `remoteSessionId` is not yet filled in or is stale       | renderer resolves the remote-control target session | identity must participate in exact resolution; the overlay only receives registered resolution results — passing through unvalidated sessions or borrowing another endpoint by path is forbidden                                   | accepted |
 
 ## Pruning decisions
 
-| ID | Pruned combination | Guard/invariant | Reason |
-| --- | --- | --- | --- |
-| SSH-POOL-PD-01 | same key across windows shares Host | pool key includes window id | Window-scoped failure/lifecycle isolation |
-| SSH-POOL-PD-02 | WSL/Docker use Host pool | remote kind must be SSH | Limit regression surface |
-| SSH-POOL-PD-03 | all workspaces share one remoteSessionId | session stays workspace-scoped | Preserve routing/cache/mobile semantics |
-| SSH-POOL-PD-04 | last session closes Host | ready Host survives zero binding | Faster workspace reopen |
-| SSH-POOL-PD-05 | any workspace init failure rolls back Host | Host ready separates transport from workspace init | Avoid failure spread |
-| SSH-POOL-PD-06 | persist Host/Profile identity | Host pool is runtime-only | No config migration |
-| SSH-POOL-PD-07 | app cold start auto-connect | restored tabs remain disconnected | No background SSH |
-| SSH-POOL-PD-08 | new disconnect UI | no UI in scope | Focus on the process model |
-| SSH-POOL-PD-09 | mobile creates independent remote runtime | shared-host attachment invariant | Relay/Main own no business runtime |
+| ID             | Pruned combination                         | Guard/invariant                                    | Reason                                    |
+| -------------- | ------------------------------------------ | -------------------------------------------------- | ----------------------------------------- |
+| SSH-POOL-PD-01 | same key across windows shares Host        | pool key includes window id                        | Window-scoped failure/lifecycle isolation |
+| SSH-POOL-PD-02 | WSL/Docker use Host pool                   | remote kind must be SSH                            | Limit regression surface                  |
+| SSH-POOL-PD-03 | all workspaces share one remoteSessionId   | session stays workspace-scoped                     | Preserve routing/cache/mobile semantics   |
+| SSH-POOL-PD-04 | last session closes Host                   | ready Host survives zero binding                   | Faster workspace reopen                   |
+| SSH-POOL-PD-05 | any workspace init failure rolls back Host | Host ready separates transport from workspace init | Avoid failure spread                      |
+| SSH-POOL-PD-06 | persist Host/Profile identity              | Host pool is runtime-only                          | No config migration                       |
+| SSH-POOL-PD-07 | app cold start auto-connect                | restored tabs remain disconnected                  | No background SSH                         |
+| SSH-POOL-PD-08 | new disconnect UI                          | no UI in scope                                     | Focus on the process model                |
+| SSH-POOL-PD-09 | mobile creates independent remote runtime  | shared-host attachment invariant                   | Relay/Main own no business runtime        |
 
 ## Accepted cases
 
-| ID | Setup | Action | Assertions | Status |
-| --- | --- | --- | --- | --- |
-| SSH-HOST-POOL-01 | same window, no Host | connect workspaces A/B with the same key sequentially | single fork; A/B sessionId and attachmentId differ; one remote server | planned |
-| SSH-HOST-POOL-04 | Host connecting | two concurrent connects | connect/deploy/handshake runs once | planned |
-| SSH-HOST-POOL-05 | two pending waiters | cancel one requestId | the other still succeeds; Host not disposed | planned |
-| SSH-HOST-POOL-06 | one pending waiter | cancel requestId | connecting Host disposed; upload/deploy stops | planned |
-| SSH-HOST-POOL-08 | A/B attached | close tab A | Host detaches only A; B file/task RPC succeeds | planned |
-| SSH-HOST-POOL-09 | last workspace attached | close then reopen same-key workspace | Host PID unchanged; no new SSH handshake | planned |
-| SSH-HOST-POOL-11 | A/B attached | renderer reload | A/B original remoteSessionIds re-attach to the same Host process | planned |
-| SSH-HOST-POOL-12 | A/B running | simulate SSH/backend close | two session-closed; both tabs clear remoteSessionId; pool entry deleted | planned |
-| SSH-HOST-POOL-13 | A/B disconnected, still open | click reconnect on A | one Host creation; A/B get new sessions; identities bound individually | planned |
-| SSH-HOST-POOL-14 | Host restored | inject B provider/path init failure | A connected; B failed; Host retained | planned |
-| SSH-HOST-POOL-15 | A/B attached, one Host | mobile opens A and B | two shared-host attachments to one process; workspaceKeys do not cross | planned |
-| SSH-HOST-POOL-16 | session A bound to identity A | mobile attaches A with identity B | identity mismatch returned; no port created | planned |
-| SSH-HOST-POOL-17 | A/B share a provider snapshot | update registry separately | both workspaceKeys record applied revisions; failures independent | planned |
-| SSH-HOST-POOL-18 | A attached, B attaches, A detaches | update context | realtime scope goes `{A}` → `{A,B}` → `{B}` | planned |
-| SSH-HOST-POOL-22 | new remote session, no applied revision | sync provider registry | first operation is update; then exactly one successful identity probe | covered |
-| SSH-HOST-POOL-23 | remote tab with identity, no registered services | mount single/cross-workspace pane | data layer does not mount while waiting; mounts exactly once after registration+binding; local mounts immediately | covered |
-| SSH-HOST-POOL-24 | 115, localhost, jumpserver remote tabs all at `/root`; only 115's identity bound to a live session | resolve each tab's workspace services | 115 hits its own session; the other two stay remote-waiting and issue no sessions-index/provider/task RPC to 115's Host; legacy no-identity tabs still get path fallback | covered |
-| SSH-HOST-POOL-25 | local `/root` and remote `/root` both open, path index points at the remote session | resolve the active local tab's workspace services | returns the local/base route; never hits the remote session | covered |
-| SSH-HOST-POOL-26 | Web remote entry passes a localhost identity with a stale/missing session; the 115 path index is alive | open the remote-control overlay | resolver receives the localhost identity; the overlay only receives the resolver-validated session — never the stale or the 115 session | covered |
+| ID               | Setup                                                                                                  | Action                                                | Assertions                                                                                                                                                               | Status  |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| SSH-HOST-POOL-01 | same window, no Host                                                                                   | connect workspaces A/B with the same key sequentially | single fork; A/B sessionId and attachmentId differ; one remote server                                                                                                    | planned |
+| SSH-HOST-POOL-04 | Host connecting                                                                                        | two concurrent connects                               | connect/deploy/handshake runs once                                                                                                                                       | planned |
+| SSH-HOST-POOL-05 | two pending waiters                                                                                    | cancel one requestId                                  | the other still succeeds; Host not disposed                                                                                                                              | planned |
+| SSH-HOST-POOL-06 | one pending waiter                                                                                     | cancel requestId                                      | connecting Host disposed; upload/deploy stops                                                                                                                            | planned |
+| SSH-HOST-POOL-08 | A/B attached                                                                                           | close tab A                                           | Host detaches only A; B file/task RPC succeeds                                                                                                                           | planned |
+| SSH-HOST-POOL-09 | last workspace attached                                                                                | close then reopen same-key workspace                  | Host PID unchanged; no new SSH handshake                                                                                                                                 | planned |
+| SSH-HOST-POOL-11 | A/B attached                                                                                           | renderer reload                                       | A/B original remoteSessionIds re-attach to the same Host process                                                                                                         | planned |
+| SSH-HOST-POOL-12 | A/B running                                                                                            | simulate SSH/backend close                            | two session-closed; both tabs clear remoteSessionId; pool entry deleted                                                                                                  | planned |
+| SSH-HOST-POOL-13 | A/B disconnected, still open                                                                           | click reconnect on A                                  | one Host creation; A/B get new sessions; identities bound individually                                                                                                   | planned |
+| SSH-HOST-POOL-14 | Host restored                                                                                          | inject B provider/path init failure                   | A connected; B failed; Host retained                                                                                                                                     | planned |
+| SSH-HOST-POOL-15 | A/B attached, one Host                                                                                 | mobile opens A and B                                  | two shared-host attachments to one process; workspaceKeys do not cross                                                                                                   | planned |
+| SSH-HOST-POOL-16 | session A bound to identity A                                                                          | mobile attaches A with identity B                     | identity mismatch returned; no port created                                                                                                                              | planned |
+| SSH-HOST-POOL-17 | A/B share a provider snapshot                                                                          | update registry separately                            | both workspaceKeys record applied revisions; failures independent                                                                                                        | planned |
+| SSH-HOST-POOL-18 | A attached, B attaches, A detaches                                                                     | update context                                        | realtime scope goes `{A}` → `{A,B}` → `{B}`                                                                                                                              | planned |
+| SSH-HOST-POOL-22 | new remote session, no applied revision                                                                | sync provider registry                                | first operation is update; then exactly one successful identity probe                                                                                                    | covered |
+| SSH-HOST-POOL-23 | remote tab with identity, no registered services                                                       | mount single/cross-workspace pane                     | data layer does not mount while waiting; mounts exactly once after registration+binding; local mounts immediately                                                        | covered |
+| SSH-HOST-POOL-24 | 115, localhost, jumpserver remote tabs all at `/root`; only 115's identity bound to a live session     | resolve each tab's workspace services                 | 115 hits its own session; the other two stay remote-waiting and issue no sessions-index/provider/task RPC to 115's Host; legacy no-identity tabs still get path fallback | covered |
+| SSH-HOST-POOL-25 | local `/root` and remote `/root` both open, path index points at the remote session                    | resolve the active local tab's workspace services     | returns the local/base route; never hits the remote session                                                                                                              | covered |
+| SSH-HOST-POOL-26 | Web remote entry passes a localhost identity with a stale/missing session; the 115 path index is alive | open the remote-control overlay                       | resolver receives the localhost identity; the overlay only receives the resolver-validated session — never the stale or the 115 session                                  | covered |
 
 ## Matrix backfill
 
-| File | Change |
-| --- | --- |
-| `docs/architecture/zcode-code-architecture-overview.md` | SSH Remote Host shared per remoteHostKey within a window. |
-| `docs/architecture/message-flow.md` | MessagePort and stdio flow from multiple workspaces to the shared Host/server. |
-| `docs/remote-workspace-session-unified-settings.md` | Persisted workspace history separated from the runtime Host pool. |
-| `docs/ssh-remote-app-global-state-authority.md` | One Host, multiple workspaces: registry content same-source, applied state per workspaceKey. |
-| `docs/web-remote-control/web-remote-control-architecture.md` | Multiple logical sessions attaching one SSH Host. |
-| `docs/web-remote-control/task-realtime-sync.md` | Shared Host workspace scope is the derived union of attached sessions. |
-| `docs/remote/desktop-remote-session-renderer-reattach.md` | "session host" re-attach becomes "logical session attachment" re-attach. |
+| File                                                         | Change                                                                                       |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `docs/architecture/zcode-code-architecture-overview.md`      | SSH Remote Host shared per remoteHostKey within a window.                                    |
+| `docs/architecture/message-flow.md`                          | MessagePort and stdio flow from multiple workspaces to the shared Host/server.               |
+| `docs/remote-workspace-session-unified-settings.md`          | Persisted workspace history separated from the runtime Host pool.                            |
+| `docs/ssh-remote-app-global-state-authority.md`              | One Host, multiple workspaces: registry content same-source, applied state per workspaceKey. |
+| `docs/web-remote-control/web-remote-control-architecture.md` | Multiple logical sessions attaching one SSH Host.                                            |
+| `docs/web-remote-control/task-realtime-sync.md`              | Shared Host workspace scope is the derived union of attached sessions.                       |
+| `docs/remote/desktop-remote-session-renderer-reattach.md`    | "session host" re-attach becomes "logical session attachment" re-attach.                     |
 
 ## Test design
 
@@ -596,16 +593,16 @@ Repository checks: `pnpm typecheck`, `pnpm lint`.
 
 ## Risks and mitigations
 
-| Risk | Impact | Mitigation |
-| --- | --- | --- |
-| One Host failure hits more workspaces | same-config workspaces disconnect together | Explicit Host failure domain; batch reconnect; no cross-window sharing |
-| Unreleased attachments | subscription/memory leak over a long idle Host life | attachmentId + DetachServicePort + dispose-all tests |
-| session/context/Host index drift | identity mix-ups, wrong scope | Three-fact-source model; workspaceKey/sessionIds/workspaceKeys derived on demand |
-| Stale process callback | new Host wrongly reaped | Compare pool entry/process identity before deletion |
-| Provider state wrongly shared | workspace uses wrong model config | Applied revision and registry cache stay per workspaceKey |
-| Mobile attachment escape | cross-workspace task/data exposure | remoteSessionId + window + workspaceIdentity/workspaceKey quadruple validation |
-| Idle SSH holds resources | connection lives while the window lives | Confirmed UX choice; window close reclaims; no idle timeout this round |
-| workspace-scoped credential duplicates | multiple passwords for one config | Accepted this round; a separate SSH Profile design may come later |
+| Risk                                   | Impact                                              | Mitigation                                                                       |
+| -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------- |
+| One Host failure hits more workspaces  | same-config workspaces disconnect together          | Explicit Host failure domain; batch reconnect; no cross-window sharing           |
+| Unreleased attachments                 | subscription/memory leak over a long idle Host life | attachmentId + DetachServicePort + dispose-all tests                             |
+| session/context/Host index drift       | identity mix-ups, wrong scope                       | Three-fact-source model; workspaceKey/sessionIds/workspaceKeys derived on demand |
+| Stale process callback                 | new Host wrongly reaped                             | Compare pool entry/process identity before deletion                              |
+| Provider state wrongly shared          | workspace uses wrong model config                   | Applied revision and registry cache stay per workspaceKey                        |
+| Mobile attachment escape               | cross-workspace task/data exposure                  | remoteSessionId + window + workspaceIdentity/workspaceKey quadruple validation   |
+| Idle SSH holds resources               | connection lives while the window lives             | Confirmed UX choice; window close reclaims; no idle timeout this round           |
+| workspace-scoped credential duplicates | multiple passwords for one config                   | Accepted this round; a separate SSH Profile design may come later                |
 
 ## Implementation notes
 

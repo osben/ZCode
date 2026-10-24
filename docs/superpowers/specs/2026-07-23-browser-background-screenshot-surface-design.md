@@ -486,21 +486,21 @@ BrowserWindow`. It affects only `desktop-continuous` local transient resources a
 `web-remote-replayable`, the relay and snapshots; workspaceKey, tab/session ownership, image facts, UI
 selection, protocol shape and user focus are unchanged.
 
-| Case    | Initial state                    | Event                          | Expected effect                                             | Classification               |
-| ------- | -------------------------------- | ------------------------------ | ----------------------------------------------------------- | ---------------------------- |
-| BAS-001 | owner window in background, no screenshot | browser-use tab persists | keep default throttling, no continuous frames              | accepted                     |
-| BAS-002 | owner window in background       | explicit or end-of-turn screenshot | wake owner + target guest before prepare, stop the pump after settle | accepted          |
-| BAS-003 | concurrent prepare for the same guest | two requests ready        | share the surface group and one activity lease              | accepted                     |
-| BAS-004 | requests for different guests queued | previous screenshot not released | only the active group's target guest is woken         | accepted                     |
-| BAS-005 | timeout/abort before ready       | preparation fails              | release renderer and activity lease, run no screenshot      | accepted                     |
-| BAS-006 | backend hangs after ready        | host cancel/watchdog           | restore throttling, keep same-tab in-flight re-entry guard  | accepted                     |
-| BAS-007 | owner window destroyed           | any phase                      | idempotent cleanup, no access to a destroyed WebContents    | accepted                     |
-| BAS-008 | mobile replayable recovery       | read the persisted screenshot  | no propagation of activity lease or new mobile runtime      | pruned; desktop-local invariant |
-| BAS-009 | hidden owner; capture completes immediately | preparing continuous pump continues | yield a macrotask each round; IPC/timers can run and capture count stays bounded | accepted; root-cause regression |
-| BAS-010 | macOS owner already hidden       | later attach a guest and request a screenshot | transparent bootstrap first frame; screenshot succeeds and the window stays hidden/unfocused | accepted; root-cause regression |
-| BAS-011 | transparent bootstrap in progress | user actively focuses ZCode   | restore opacity immediately; Ready/release must not hide the user's window again | accepted; window state race |
-| BAS-012 | Windows owner hidden to tray     | later attach a guest and request a screenshot | transparent bootstrap; taskbar does not reappear; stays hidden to tray after the screenshot | accepted; Windows peer path |
-| BAS-013 | Linux or visible/minimized owner | request a screenshot           | no transparent bootstrap; follow the existing activity/close lifecycle | accepted; platform boundary |
+| Case    | Initial state                               | Event                                         | Expected effect                                                                              | Classification                  |
+| ------- | ------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
+| BAS-001 | owner window in background, no screenshot   | browser-use tab persists                      | keep default throttling, no continuous frames                                                | accepted                        |
+| BAS-002 | owner window in background                  | explicit or end-of-turn screenshot            | wake owner + target guest before prepare, stop the pump after settle                         | accepted                        |
+| BAS-003 | concurrent prepare for the same guest       | two requests ready                            | share the surface group and one activity lease                                               | accepted                        |
+| BAS-004 | requests for different guests queued        | previous screenshot not released              | only the active group's target guest is woken                                                | accepted                        |
+| BAS-005 | timeout/abort before ready                  | preparation fails                             | release renderer and activity lease, run no screenshot                                       | accepted                        |
+| BAS-006 | backend hangs after ready                   | host cancel/watchdog                          | restore throttling, keep same-tab in-flight re-entry guard                                   | accepted                        |
+| BAS-007 | owner window destroyed                      | any phase                                     | idempotent cleanup, no access to a destroyed WebContents                                     | accepted                        |
+| BAS-008 | mobile replayable recovery                  | read the persisted screenshot                 | no propagation of activity lease or new mobile runtime                                       | pruned; desktop-local invariant |
+| BAS-009 | hidden owner; capture completes immediately | preparing continuous pump continues           | yield a macrotask each round; IPC/timers can run and capture count stays bounded             | accepted; root-cause regression |
+| BAS-010 | macOS owner already hidden                  | later attach a guest and request a screenshot | transparent bootstrap first frame; screenshot succeeds and the window stays hidden/unfocused | accepted; root-cause regression |
+| BAS-011 | transparent bootstrap in progress           | user actively focuses ZCode                   | restore opacity immediately; Ready/release must not hide the user's window again             | accepted; window state race     |
+| BAS-012 | Windows owner hidden to tray                | later attach a guest and request a screenshot | transparent bootstrap; taskbar does not reappear; stays hidden to tray after the screenshot  | accepted; Windows peer path     |
+| BAS-013 | Linux or visible/minimized owner            | request a screenshot                          | no transparent bootstrap; follow the existing activity/close lifecycle                       | accepted; platform boundary     |
 
 Representative combinations are mainly "active group x lifecycle event" and are not permuted fully with tab
 count, workspace type or `desktop-continuous` / `web-remote-replayable`; the full scope stays proven by the

@@ -40,12 +40,12 @@ fake local settings/providers + legacy auth_token
 
 ## Combinations and pruning
 
-| Combination | Handling | Reason |
-| --- | --- | --- |
-| Local mode/selectedKey conflict + no active OAuth | keep | minimal product semantics of I32–I34 |
-| Local migration + Z.AI OAuth recovery success | prune | recovery refresh already covered by `rootOAuthCallbackHandling.test.ts` |
-| Local migration + real Z.AI network success/failure/timeout | prune | unrelated to the selectedKey migration algorithm; adds external nondeterminism |
-| BigModel Team complete/malformed identity | keep | core boundary of I33/I34 |
+| Combination                                                 | Handling | Reason                                                                         |
+| ----------------------------------------------------------- | -------- | ------------------------------------------------------------------------------ |
+| Local mode/selectedKey conflict + no active OAuth           | keep     | minimal product semantics of I32–I34                                           |
+| Local migration + Z.AI OAuth recovery success               | prune    | recovery refresh already covered by `rootOAuthCallbackHandling.test.ts`        |
+| Local migration + real Z.AI network success/failure/timeout | prune    | unrelated to the selectedKey migration algorithm; adds external nondeterminism |
+| BigModel Team complete/malformed identity                   | keep     | core boundary of I33/I34                                                       |
 
 ## Code and test scope
 

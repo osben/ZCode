@@ -39,11 +39,11 @@ Startup has exactly two main paths: restore a session, or enter the default conv
 
 ## Files
 
-| File | Role |
-|------|------|
-| `packages/services/src/file/fileService.ts` | backing workspace path and idempotent creation |
-| `packages/shared/src/protocol.ts` | `WorkspacePurpose` and the persisted descriptor |
+| File                                            | Role                                             |
+| ----------------------------------------------- | ------------------------------------------------ |
+| `packages/services/src/file/fileService.ts`     | backing workspace path and idempotent creation   |
+| `packages/shared/src/protocol.ts`               | `WorkspacePurpose` and the persisted descriptor  |
 | `packages/desktop/src/main/startupWorkspace.ts` | resolve restore-session vs conversation fallback |
-| `packages/desktop/src/main/index.ts` | startup wiring |
+| `packages/desktop/src/main/index.ts`            | startup wiring                                   |
 
 The full current design lives in [2026-07-10-non-project-conversation-workspace-design.md](./2026-07-10-non-project-conversation-workspace-design.md).
