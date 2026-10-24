@@ -4,7 +4,7 @@ Status: implemented.
 
 ## Problem
 
-A Start Plan turn failed with provider business code 3009 (`model concurrency limit exceeded`, HTTP 429). After the session was reopened, the chat showed the generic error banner with a feedback draft instead of the Start Plan concurrency-limit banner. The draft carried `TraceID: hydrate-trace`, which identifies nothing.
+After a Start Plan turn failed with provider business code 3009 (`model concurrency limit exceeded`, HTTP 429) and the session was reopened, the chat showed the generic error banner with a feedback draft instead of the Start Plan concurrency-limit banner. The draft carried `TraceID: hydrate-trace`, which identifies nothing.
 
 ## Facts from the code
 

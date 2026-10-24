@@ -1,10 +1,14 @@
 # UI upstream sync ledger, bucket 8 (part 2)
 
-| `root/RootShell.tsx` | `WorktreeFailureModalHost` mounted | Applied. | None. |
-| `ToolCallBlocks/renderers/agent.tsx` | Agent usage summary (`agentUsageSummary`, `agentUsageSummaryVersion`) | Applied. | None. |
-| `lib/settingsNavigation.ts`, `lib/workspaceSidePane.ts`, `settingsPageHelpers.tsx`, `lib/builtinSkillI18n.ts`, `lib/remoteWorkspaceHistory.ts` | Oversize (over 20 KB). Listed in `.staged-file-size-exemptions` under the bucket 8 block. | n/a | Reconcile with the UI-2 / i18n PRs. |
-| `SSHDialog.tsx` | Fork changes are comments only. Upstream moved the wizard to `remote-connection-flow/`. | Nothing to re-apply (stripped fork diff is empty). | None. |
-| `lib/taskListMetaSync.ts`, `root/useRemoteWorkspaceTabLifecycle.ts`, `lib/remoteConnectionWizard.ts`, `root/useRootOAuthEffects.ts` and other zero-code files | Formatting or comment churn only | Nothing to re-apply. | None. |
+Continuation of the source-file rows in `specs/ui-upstream-sync-ledger-b8.md`.
+
+| File                                                                                                                                                          | Fork feature / state                                                                      | Status                                             | What it needs                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------- |
+| `root/RootShell.tsx`                                                                                                                                          | `WorktreeFailureModalHost` mounted                                                        | Applied.                                           | None.                               |
+| `ToolCallBlocks/renderers/agent.tsx`                                                                                                                          | Agent usage summary (`agentUsageSummary`, `agentUsageSummaryVersion`)                     | Applied.                                           | None.                               |
+| `lib/settingsNavigation.ts`, `lib/workspaceSidePane.ts`, `settingsPageHelpers.tsx`, `lib/builtinSkillI18n.ts`, `lib/remoteWorkspaceHistory.ts`                | Oversize (over 20 KB). Listed in `.staged-file-size-exemptions` under the bucket 8 block. | n/a                                                | Reconcile with the UI-2 / i18n PRs. |
+| `SSHDialog.tsx`                                                                                                                                               | Fork changes are comments only. Upstream moved the wizard to `remote-connection-flow/`.   | Nothing to re-apply (stripped fork diff is empty). | None.                               |
+| `lib/taskListMetaSync.ts`, `root/useRemoteWorkspaceTabLifecycle.ts`, `lib/remoteConnectionWizard.ts`, `root/useRootOAuthEffects.ts` and other zero-code files | Formatting or comment churn only                                                          | Nothing to re-apply.                               | None.                               |
 
 ## i18n keys
 
@@ -13,11 +17,12 @@ Added to `en-US.ts` and `zh-CN.ts` (fork keys copied verbatim, `uk-UA.ts` alread
 `settings.resourceTelemetryEnabledDescription`, `settings.codingPlanLimitAutoContinueDefault`,
 `settings.codingPlanLimitAutoContinueDefaultDescription`, `settings.locale.uk-UA`.
 
-New (not fork) key added to `en-US.ts` and `zh-CN.ts`: `sidePane.launcher.model-trajectory`. Not added to `uk-UA.ts`.
+New (not fork) key added to `en-US.ts` and `zh-CN.ts`: `sidePane.launcher.model-trajectory`. Not added
+to `uk-UA.ts`.
 
 ## Test files
 
-Test files in bucket 8 are still the upstream versions. Fork test cases were not ported in this pass.
+Test files in bucket 8 are still the upstream versions; fork test cases were not ported in this pass.
 
 | Test file                                                                                                                                                                                                                                                                                                          | Status                  | Notes                                                                                                                                                                                                                                           |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -33,3 +38,5 @@ Test files in bucket 8 are still the upstream versions. Fork test cases were not
 | File                                        | Finding                                                                                                                                                                  | Needs                                                                                                                                                                                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `root/useRootPlatformEffects.ts` (line 226) | `tsc` error: `openTaskDraftIntent` calls `requestComposerTextInsert` with mode `prepend-if-missing` or `prepend-text`, but `zcodeSessionStore` only accepts `"replace"`. | The store owner must widen the `mode` parameter of `requestComposerTextInsert` to the same union as `root/openTaskDraftIntent.ts` (`replace` / `prepend-if-missing` / `prepend-text`). Not changed here (store is outside bucket 8). |
+
+Full history: git show 5df10a43f18201fe2dcfb1c8e1ccea240f50a0ef:specs/ui-upstream-sync-ledger-b8-2.md

@@ -4,8 +4,7 @@
 
 - This repository is a fork of `zai-org/ZCode`. Upstream syncs are merge commits such as `Merge upstream v3.15.1 (aac47556) into integration`; the `upstream` remote points at `zai-org/ZCode`.
 - Upstream does not run oxfmt over its whole tree. At the last sync (`aac47556`, v3.15.1) about 1480 files fail `oxfmt --check`, and every one of them is byte-identical to the upstream blob. Reformatting them would turn every later upstream sync into a conflict on each of those files.
-- Before this spec, `fmt` / `fmt:check` were plain `oxfmt` / `oxfmt --check` over the whole tree, so `pnpm fmt:check` always failed, and `pnpm fmt` would have rewritten upstream files. PR CI ran its own inline check over the PR diff only and skipped PRs labelled `upstream-sync`.
-- The pre-commit hook (`lint-staged.pre-commit.config.mjs` → `scripts/run-pre-commit-checks.mjs`) formats staged files in write mode, which is why fork-touched files are already clean. Until it was aligned with this spec it only matched `js mjs cjs jsx ts tsx mts cts json md mdx`, so a fork edit to e.g. a `.yml` file could be committed unformatted and fail only in CI.
+- The pre-commit hook (`lint-staged.pre-commit.config.mjs` → `scripts/run-pre-commit-checks.mjs`) formats staged files in write mode, which is why fork-touched files are already clean. It matches the same formattable set as `fmt` / `fmt:check` (below); a fork edit to e.g. a `.yml` file is therefore formatted on commit, not only in CI.
 
 ## Product rules
 
@@ -77,6 +76,5 @@ Every gate that runs on a commit, push or PR, and whether an upstream-identical 
 - PR CI `pr-checks.yml`: typecheck, lint, architecture, pre-push runner tests and unit tests do not read `docs/`; `pnpm fmt:check` is covered above.
 - `git-hooks.yml`, `integration-build.yml` (`pnpm build`) and `fork-release.yml` do not run the format check or read `docs/`.
 - Deleted files: pre-commit globs and the size guard consider staged additions and modifications only (`--diff-filter=ACMT`); fmt drops deleted paths.
-- On the repository at the time of writing, `pnpm fmt:check` passes: all ~3840 fork-changed formattable files are already formatted, and all ~1480 failing files are upstream-identical.
 
 Tests: `scripts/fork-format.test.mjs` (temporary git repositories) and `scripts/run-pre-commit-checks.test.mjs` (pre-commit glob parity with the formattable set, staged yml formatting); both are part of `pnpm test:node`.
