@@ -323,6 +323,7 @@ import {
 import {
   dispatchQueueCommandWithStaleRetry,
   isQueueCommandSettledAck,
+  shouldReportSteerFailure,
   shouldResyncForStaleAuthority,
 } from "@/v4/staleAuthorityRecovery.js";
 import { createCommandEnvelope } from "@/v4/commandFactory.js";
@@ -4997,8 +4998,13 @@ export function SessionPane({
         (ack) => {
           if (!ack || isQueueCommandSettledAck(ack.status)) return;
           logger.warn(`[v4-pane] sendQueuedNow 被拒绝: ${ack.status} ${ack.reasonCode ?? ""}`);
+          const itemStillQueued =
+            snapshotRef.current?.queue.items.some((item) => item.queueItemId === queueItemId) ??
+            false;
           // ISSUE-072: a log-only rejection left Steer looking like a no-op; the item stays queued for a retry.
-          toast(intl.formatMessage({ id: "chat.queue.sendNowFailed" }));
+          if (shouldReportSteerFailure(ack, itemStillQueued)) {
+            toast(intl.formatMessage({ id: "chat.queue.sendNowFailed" }));
+          }
         },
         (error: unknown) => {
           logger.warn("[v4-pane] sendQueuedNow 命令失败", error);

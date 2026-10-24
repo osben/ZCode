@@ -39,3 +39,18 @@ export async function dispatchQueueCommandWithStaleRetry(
 export function isQueueCommandSettledAck(status: CommandAck["status"]): boolean {
   return status === "accepted" || status === "duplicate" || status === "noop";
 }
+
+// Steer lost the race to the auto-drain or the turn end: the item is already running or will drain next,
+// so a failure toast would contradict what the user sees (specs/queue-command-stale-revision.md rule 5).
+const STEER_SUPERSEDED_REASON_CODES = new Set([
+  "guard.queueItemReserved",
+  "sendQueuedNowRequiresRunning",
+]);
+
+/** Whether a final Steer ACK needs the retry toast; `itemStillQueued` reads the latest projection. */
+export function shouldReportSteerFailure(ack: CommandAck, itemStillQueued: boolean): boolean {
+  if (isQueueCommandSettledAck(ack.status)) return false;
+  if (ack.reasonCode !== undefined && STEER_SUPERSEDED_REASON_CODES.has(ack.reasonCode))
+    return false;
+  return itemStillQueued;
+}

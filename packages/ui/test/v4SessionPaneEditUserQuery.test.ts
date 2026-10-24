@@ -1500,6 +1500,24 @@ describe("SessionPane queue commands after proto.staleRevision (ISSUE-072)", () 
     await act(async () => root.unmount());
   });
 
+  it("Steer that lost the race to the auto-drain shows no failure toast", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => ({
+      commandId: envelope.commandId,
+      revisionAtDecision: 7,
+      status: "failed",
+      reasonCode: "guard.queueItemReserved",
+    }));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onSendNow?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("sendQueuedNow")).toHaveLength(1);
+    expect(toastMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
   it("Edit re-sends the delete once and restores the queued text", async () => {
     sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
     const root = await renderPane();

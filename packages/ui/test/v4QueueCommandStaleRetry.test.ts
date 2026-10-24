@@ -3,6 +3,7 @@ import type { CommandAck } from "@zcode/shared/zcode-protocol-v4";
 import {
   dispatchQueueCommandWithStaleRetry,
   isQueueCommandSettledAck,
+  shouldReportSteerFailure,
 } from "@/v4/staleAuthorityRecovery.js";
 
 function ack(partial: Partial<CommandAck>): CommandAck {
@@ -66,5 +67,25 @@ describe("ISSUE-072 queue command stale revision retry", () => {
     expect(isQueueCommandSettledAck("noop")).toBe(true);
     expect(isQueueCommandSettledAck("stale")).toBe(false);
     expect(isQueueCommandSettledAck("rejected")).toBe(false);
+  });
+
+  it("does not report a Steer that lost the race to the drain or the turn end", () => {
+    for (const reasonCode of ["guard.queueItemReserved", "sendQueuedNowRequiresRunning"]) {
+      expect(shouldReportSteerFailure(ack({ status: "failed", reasonCode }), true)).toBe(false);
+    }
+    expect(shouldReportSteerFailure(ack({ status: "failed" }), false)).toBe(false);
+    expect(shouldReportSteerFailure(ack({ status: "noop" }), true)).toBe(false);
+  });
+
+  it("reports a Steer that left the item queued", () => {
+    expect(
+      shouldReportSteerFailure(ack({ status: "stale", reasonCode: "proto.staleRevision" }), true),
+    ).toBe(true);
+    expect(
+      shouldReportSteerFailure(
+        ack({ status: "failed", reasonCode: "guard.queuePromotionBusy" }),
+        true,
+      ),
+    ).toBe(true);
   });
 });

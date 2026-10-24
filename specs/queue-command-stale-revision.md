@@ -46,7 +46,11 @@ Renderer (snapshot rev N)        Host (forward only)          CLI CommandInbox /
 2. Only `proto.staleRevision` is retried. `proto.staleLogEpoch` / `proto.staleTarget`, `rejected`, `failed` are not.
 3. At most one retry per user action; no timers, no waiting for the projection to catch up.
 4. `noop` after the retry (the item drained or was removed elsewhere) is silent: the projection already shows it.
-5. Steer: when the final ACK is not `accepted`, `duplicate` or `noop`, show `chat.queue.sendNowFailed`. The item
+5. Steer: when the final ACK is not `accepted`, `duplicate` or `noop`, show `chat.queue.sendNowFailed`, except
+   when Steer lost the race to the auto-drain or the turn end: `guard.queueItemReserved` (the drain already
+   reserved the item), `sendQueuedNowRequiresRunning`, or the item is no longer in the latest projection. Those
+   stay log-only because the item is already running or drains next. `guard.queuePromotionBusy` (another
+   promotion holds the lease) does show the toast: the item was not sent and Steer can be retried. The item
    stays queued, so the user can press Steer again. The Highspeed refresh computed for the first attempt is reused
    for the retry; it is not prepared twice.
 6. Edit: the queue row and composer lock (`queueEditOperation`) stays held across the retry. The composer is
@@ -59,9 +63,9 @@ Renderer (snapshot rev N)        Host (forward only)          CLI CommandInbox /
 ## Acceptance
 
 - Unit (`packages/ui/test/v4QueueCommandStaleRetry.test.ts` (helper) and `packages/ui/test/v4SessionPaneEditUserQuery.test.ts` (SessionPane, "ISSUE-072" describe)):
-  - Steer: stale(revisionAtDecision 6) then accepted → two dispatches, the second with `baseRevision: 6`, no toast.
+  - Steer: stale(revisionAtDecision 9) then accepted → two dispatches, `baseRevision` 7 then 9, no toast.
   - Steer: stale twice → exactly two dispatches, then the `sendNowFailed` toast.
-  - Steer: `proto.staleLogEpoch` → one dispatch, no retry.
+  - Steer: `failed / guard.queueItemReserved` → one dispatch, no toast.
   - Edit: stale then accepted → composer restore request with the queued text.
   - Edit: stale twice → no restore, lock cleared, `editRestoreFailed` toast.
   - Delete: stale then accepted → second dispatch with the new revision.
