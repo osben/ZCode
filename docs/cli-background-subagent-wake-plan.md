@@ -3,8 +3,7 @@
 This is the design contract for background subagent completion wake-up and the
 foreground-subagent auto-background mechanism, built on the existing `Agent` tool /
 profile loader / child runtime / `RuntimeTaskRegistry` (implemented as the runtime
-command queue in `apps/zcode-cli/packages/core/src/runtime/`; see also
-`apps/zcode-cli/docs/design/v2/loop/runtime-command-queue-plan.md`).
+command queue in `apps/zcode-cli/packages/core/src/runtime/methods/runtime-command-queue.ts`).
 
 ## Expected behavior
 
