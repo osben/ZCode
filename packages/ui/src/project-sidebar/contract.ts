@@ -93,7 +93,7 @@ export interface ProjectSidebarProps {
     targetRemoteSessionId?: string,
     expectedUnreadAt?: number,
     /** Child-session capability: a subagent opens read-only, a side chat writable (restricted commands). */
-    options?: { readOnly?: boolean; selectionSideChat?: boolean },
+    options?: { readOnly?: boolean; selectionSideChat?: boolean; parentTaskId?: string },
   ) => void;
   onStartDraftInWorkspace: (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;

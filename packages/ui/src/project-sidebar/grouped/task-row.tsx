@@ -399,7 +399,10 @@ function GroupedTaskInteractiveRow({
   // Phone rows stay unchanged (spec §7): the web remote switcher cannot open child sessions.
   const childSessionsEnabled = !useContext(ProjectTaskListContext).isWebRemoteControl;
   const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
-    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, options);
+    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
+      ...options,
+      parentTaskId: task.taskId,
+    });
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",
   });

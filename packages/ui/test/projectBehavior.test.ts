@@ -408,7 +408,7 @@ it("SBV-CHILD: projects/timeline/pinned rows bind child-session selection to the
       "remote:server:a:/parent",
       undefined,
       undefined,
-      { readOnly: true, selectionSideChat: false },
+      { readOnly: true, selectionSideChat: false, parentTaskId: "parent" },
     );
     view.unmount();
   }

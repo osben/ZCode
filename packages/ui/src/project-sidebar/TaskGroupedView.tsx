@@ -261,7 +261,11 @@ export function TaskGroupedView({
     ) => {
       const task = findTaskInGroupedView(
         authoritativeView,
-        taskKey({ workspacePath: path, taskId: id, workspaceIdentity: identity }),
+        taskKey({
+          workspacePath: path,
+          taskId: options?.parentTaskId ?? id,
+          workspaceIdentity: identity,
+        }),
       );
       // Child sessions are not grouped rows: forward their capability so a subagent opens read-only.
       onSelect(
