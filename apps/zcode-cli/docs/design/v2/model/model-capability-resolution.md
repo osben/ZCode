@@ -38,7 +38,7 @@ importer and is converted immediately into Personal Provider Config and Personal
 
 Current specifications:
 
-- [`configuration.md`](../../../../../docs/working-memory/provider-refactor/design/registry/configuration.md)
-- [`registry.md`](../../../../../docs/working-memory/provider-refactor/design/registry/registry.md)
-- [`model-creation.md`](../../../../../docs/working-memory/provider-refactor/design/registry/model-creation.md)
-- [`contract.md`](../../../../../docs/working-memory/provider-refactor/design/model/contract.md)
+- [`configuration.md`](../../../../../../docs/working-memory/provider-refactor/design/registry/configuration.md)
+- [`registry.md`](../../../../../../docs/working-memory/provider-refactor/design/registry/registry.md)
+- [`model-creation.md`](../../../../../../docs/working-memory/provider-refactor/design/registry/model-creation.md)
+- [`contract.md`](../../../../../../docs/working-memory/provider-refactor/design/model/contract.md)
