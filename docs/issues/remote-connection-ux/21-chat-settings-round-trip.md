@@ -1,85 +1,74 @@
-# 21: 聊天连接后必选远程文件夹并进入项目
+# 21: Choose a Remote Folder after a Chat Connection and Enter the Project
 
 Status: done
 
-**Parent:** [#15 — 项目创建与远程连接管理分离](15-project-device-selection-and-connection-management.md)
+**Parent:** [#15 — Separating project creation from remote connection management](15-project-device-selection-and-connection-management.md)
 
-2026-10-14：已按 #23–#26 完成实施和集成验证。此前“连接成功后返回原聊天，仅提供创建项目按钮”的记录保留为历史；本轮结果与实际平台范围见下方最新验证记录，旧 PASS 不覆盖新合同。
+2026-10-14: implemented and integration-verified by #23-#26. The earlier contract "return to the original chat after a successful connection, offering only a create-project button" is superseded; the latest verification and actual platform scope are below, and old PASS records do not cover the new contract.
 
 ## Problem Statement
 
-用户在聊天框项目菜单点击「新建远程连接…」，连接成功后看到「选择项目」和「在此设备创建项目」。输入文字后仍可发送，最终创建的是本地无项目聊天。用户认为刚连接的设备就是接下来的执行目标，界面没有清楚说明聊天仍属于本地。
+A user who clicks "新建远程连接…" (new remote connection…) in the chat-box project menu saw "选择项目" (select project) and "在此设备创建项目" (create project on this device) after a successful connection. After typing text, sending was still possible and ended up creating a local projectless chat. The user considers the just-connected device the execution target of what follows, and the UI did not make clear that the chat still belonged to local.
 
-这条路径符合旧合同：设备添加成功只返回设备身份，原聊天目标没有改变。因此问题是连接完成后的产品流程与用户意图不一致，不能仅描述为远程发送失败后回退本地。远程无项目聊天已停用，本地无项目聊天仍受支持。
+This path matched the old contract: a successful device add only returned the device identity, and the original chat target did not change. So the problem is that the product flow after connection completion does not match user intent; it cannot be described merely as falling back to local after a remote send failure. Remote projectless chat is retired; local projectless chat is still supported.
 
-文件夹与项目不是一一对应：同一设备、同一目录可属于多个项目。选中文件夹不能只按路径猜测项目身份；只登记项目入口而不进入目标项目，也不能完成用户这次远程工作意图。
+Folders and projects are not one-to-one: the same device and directory can belong to several projects. Selecting a folder cannot guess the project identity by path alone; registering only a project entry without entering the target project does not complete the user's remote-work intent either.
 
 ## Solution
 
-从聊天框的「新建远程连接…」完成远程连接后，每次都打开目标设备的「选择文件夹」弹窗。使用已有目录浏览能力，包括路径输入、跳转、目录列表和隐藏目录显示。不得在用户确认文件夹前按最近项目、唯一项目或旧草稿项目自动打开。
+After completing a remote connection from "新建远程连接…" in the chat box, every time open the "选择文件夹" (select folder) dialog of the target device. Use the existing directory browsing capability, including path input, jump, directory list and hidden-directory display. No project may be opened automatically by recent project, unique project or old draft project before the user confirms a folder.
 
-适用于首页无项目草稿、已选本地项目的新任务草稿、已选远程项目的新任务草稿。既有会话身份不迁移；设置中的设备添加和原项目重连保持各自原有完成规则。
+Applies to a homepage draft without project, a new-task draft with a selected local project, and a new-task draft with a selected remote project. Existing session identities are not migrated; device addition in Settings and original-project reconnect keep their own completion rules.
 
-用户确认文件夹后，按所属设备及精确目录确定项目：
+After the user confirms a folder, the project is determined by the owning device and exact directory:
 
-| 条件                                 | 完成行为                                                                                     |
-| ------------------------------------ | -------------------------------------------------------------------------------------------- |
-| 恰好对应一个现存、未删除项目         | 打开原项目的新任务草稿，保留项目 ID 和历史任务归属                                           |
-| 对应多个现存、未删除项目             | 显示这些项目，让用户明确选择一个，再进入其新任务草稿                                         |
-| 没有对应项目                         | 使用文件夹名作为默认项目名，以该目录创建远程单目录项目，沿用已有创建确认，再进入其新任务草稿 |
-| 目录无效、无权限、设备断连或读取失败 | 显示实际原因，允许重试或取消；不创建替代项目，不回退本地                                     |
+| Condition                                              | Completion behavior                                                                                                       |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Exactly one existing, non-deleted project              | Open the original project's new-task draft, keeping the project ID and history task ownership                             |
+| Several existing, non-deleted projects                 | Show these projects, let the user choose one explicitly, then enter its new-task draft                                    |
+| No corresponding project                               | Use the folder name as the default project name, create a remote single-directory project at that directory, follow the existing creation confirmation, then enter its new-task draft |
+| Invalid directory, no permission, device disconnected or read failure | Show the actual reason and allow retry or cancel; create no substitute project and do not fall back to local |
 
-文件夹选择、项目确定、必要创建与登记、目标工作区准备全部完成后，才允许发送。发送按钮和键盘提交遵循同一约束；准备完成不自动发送任何消息。
+Sending is allowed only after folder selection, project determination, necessary creation and registration, and target workspace preparation are all complete. The send button and keyboard submit follow the same constraint; completing preparation does not send any message automatically.
 
-取消或关闭顶层选择流程表示放弃本次切到远程的操作，恢复连接前的聊天目标，并明确显示恢复后的设备／项目状态。原草稿由既有 owner 保留。成功建立的设备连接仍保留，其他任务不受影响。不得留下“远程未选项目但可以发送”的状态，也不提供跳过项目后继续远程聊天的出口。
+Cancelling or closing the top-level selection flow means abandoning this switch to remote: restore the chat target before the connection and explicitly show the restored device/project state. The original draft is kept by its existing owner. A successfully established device connection is kept and other tasks are unaffected. No state "remote without a selected project but sendable" may remain, and no exit is offered to continue remote chat by skipping the project.
 
 ```mermaid
 flowchart TD
-    A[聊天新任务草稿：新建远程连接] --> B[连接或复用目标设备]
-    B --> C[每次显示远程文件夹选择]
-    C --> D[用户确认目录并校验]
-    D --> E{该设备上精确目录对应的现存项目}
-    E -->|一个| F[沿用原项目身份]
-    E -->|多个| G[用户明确选择项目]
-    E -->|零个| H[默认文件夹名；沿用创建确认]
-    H --> I[保存项目并登记入口]
-    F --> J[准备目标项目工作区]
+    A[Chat new-task draft: new remote connection] --> B[Connect or reuse the target device]
+    B --> C[Show the remote folder selection every time]
+    C --> D[User confirms directory and it is validated]
+    D --> E{Existing project for the exact directory on that device}
+    E -->|one| F[Keep the original project identity]
+    E -->|several| G[User chooses a project explicitly]
+    E -->|zero| H[Default folder name; follow the creation confirmation]
+    H --> I[Save project and register entry]
+    F --> J[Prepare the target project workspace]
     G --> J
     I --> J
-    J --> K[进入项目新任务草稿；允许手动发送]
-    B -->|取消| L[恢复原聊天目标]
-    C -->|取消或关闭| L
-    G -->|取消整个流程| L
-    D -->|无效或读取失败| M[显示错误；可重试或取消]
-    J -->|准备失败| M
-    M -->|取消| L
-    B -->|在后台继续| N[后台完成仅提示]
-    N -->|显式继续且原意图仍有效| C
+    J --> K[Enter the project's new-task draft; manual send allowed]
+    B -->|cancel| L[Restore the original chat target]
+    C -->|cancel or close| L
+    G -->|cancel the whole flow| L
+    D -->|invalid or read failure| M[Show error; retry or cancel]
+    J -->|preparation failure| M
+    M -->|cancel| L
+    B -->|continue in background| N[Background completion only notifies]
+    N -->|explicit continue and original intent still valid| C
 ```
 
-### 目录确认的加载反馈
+### Loading feedback of directory confirmation
 
-点击「选择文件夹」后，复用 `ChatRemoteFolderSelection.busy`，在原确认按钮内显示转圈与
-「正在打开…」（英文 `Opening…`）。保留目录内容与已选路径；按钮预留两种文案的空间，
-切换状态不改变按钮宽度或弹窗高度，不再在目录选择器下方追加「加载中…」。
-正在执行的按钮保留主按钮前景色，减少动态效果时停止转圈。失败沿用原错误区，按钮恢复可操作。
-父层继续负责 single-flight、目录校验、项目准备与过期结果隔离；目录浏览器只接收展示状态。
-多个项目的选择阶段保留既有加载反馈，其他目录选择入口不启用本展示参数。
+After clicking "选择文件夹", reuse `ChatRemoteFolderSelection.busy` and show a spinner and "正在打开…" (English `Opening…`) inside the original confirm button. Directory contents and the chosen path stay; the button reserves space for both copies so switching state does not change the button width or dialog height, and no "加载中…" is appended below the directory picker any more. The running button keeps the primary button foreground color, and the spinner stops under reduced motion. A failure uses the original error area and the button becomes operable again. The parent layer keeps owning single-flight, directory validation, project preparation and stale-result isolation; the directory browser only receives display state. The multi-project selection stage keeps its existing loading feedback, and other directory selection entries do not enable this display parameter.
 
 ```text
-选择目录 → confirm / busy=true → 校验目录、匹配并准备项目 → 成功导航或显示错误
-                      └─ DirectoryBrowser 确认按钮：转圈 + 正在打开…
+select directory → confirm / busy=true → validate directory, match and prepare project → navigate on success or show error
+                      └─ DirectoryBrowser confirm button: spinner + 正在打开…
 ```
 
-验收：阻塞项目读取期间，目录与路径仍可见，只有按钮内存在加载提示，确认按钮不可重复提交；
-失败后按钮文案恢复，错误可见且能够重试。桌面与窄屏、深浅主题以及中英文均检查布局稳定。
+Acceptance: during blocking project reads the directory and path remain visible, only the button shows the loading hint, and the confirm button cannot be submitted repeatedly; after failure the button copy recovers, and the error is visible and retryable. Layout is stable on desktop and narrow screens, in dark/light themes and Chinese/English.
 
-2026-10-14 验证：原测试先复现「加载状态不在按钮内」，修复后相关 UI 回归通过；
-最终 affected 范围为 503 文件／5,471 项，类型、E2E 类型、Lint（0 错误）、架构及改动代码格式检查通过。
-macOS 桌面至独立 Linux arm64 SSH 容器的核心场景通过（`desktop-e2e-20261014-094915-820`）；
-创建项目、多项目选择和后台连接相邻场景通过（`desktop-e2e-20261014-095322-224`）。
-真实目录组件在 1200px／390px、中英／深浅主题的八组浏览器检查通过，含尺寸稳定及减少动态效果；
-手机 shared-host、手机真机和 Windows／Linux 桌面未在本轮实跑。候选不自动转正。
+2026-10-14 verification: the original test first reproduced "loading state is not inside the button", and after the fix the related UI regressions pass; final affected scope 503 files / 5,471 tests, with type, E2E type, lint (0 errors), architecture and changed-code format checks passing. The core scenario from macOS desktop to an independent Linux arm64 SSH container passes (`desktop-e2e-20261014-094915-820`); the adjacent create-project, multi-project selection and background connection scenarios pass (`desktop-e2e-20261014-095322-224`). Eight browser checks of the real directory component at 1200px/390px, Chinese/English, dark/light pass, including size stability and reduced motion; mobile shared-host, real phones and Windows/Linux desktop were not run this round. Candidates are not promoted automatically.
 
 ## User Stories
 
@@ -116,113 +105,105 @@ macOS 桌面至独立 Linux arm64 SSH 容器的核心场景通过（`desktop-e2e
 
 ## Implementation Decisions
 
-1. **入口与完成意图。** 聊天项目菜单仍复用统一设备添加、认证和安装链路，但它的完成意图改为“连接后必须选择远程目录并进入项目”。替换此入口“仅设备管理成功，然后显示创建项目按钮”的接线，不另造连接向导。设置添加、项目表单添加设备、原项目重连分别保留既有语义。
-2. **词汇与身份。** Source 是已识别的远端环境和账号；Connection Profile 是到达 Source 的连接方式；项目由所属 Host 与项目 ID 确定；目录是项目 root，不是项目身份。连接成功只证明设备可用，不能证明已选中项目。
-3. **目录来源。** 浏览、路径校验和目录判等使用目标 Host 的服务与既有路径规则，不使用本机文件系统或本机操作系统的路径归一化判断远端。匹配限定同一设备、同一固定 root 的精确匹配，不用名称、路径前缀、父目录或另一设备的同名路径猜测。
-4. **确认后的项目解析。** 只有用户确认目录后才读取／核对权威项目结果并执行一项、多个、零项分派。唯一匹配复用真实项目 ID；多个匹配继续用户选择；列表读取失败不是零项。已删除项目不作为现存匹配自动打开；新建命中已删除项目时沿用现有恢复或继续新建规则，不静默恢复。
-5. **新建范围。** 零项时由本流程填充默认文件夹名和单一固定 root，复用共享创建、目录确认、保存及本机入口登记，不要求用户重复填写同一目录。此入口的按目录解析不修改通用项目保存为全局 get-or-create，也不新增“每个目录只能有一个项目”的约束。显式创建同目录另一项目的其他入口保持原合同。
-6. **既有创建边界。** 新建／恢复仍经过已有目录信任确认；文件夹选择不代替该确认。旧远端仅支持读取时，已有项目可选择，不能通过本入口绕过新建能力限制。保存失败保持错误；远端已保存、本机登记失败时保留返回的项目 ID，重试登记而非重复创建。已有创建确认的层级取消和权限语义继续有效。
-7. **完整交付。** 选中或创建后必须把实际 Host、项目 ID 和目录交给既有项目选择与工作区准备链路，进入该项目的新任务草稿；只刷新列表或登记入口不足以完成。保留既有项目的历史任务，不自动恢复某个旧会话，不迁移其身份。
-8. **发送约束。** 当前前台切换意图尚未完成或取消时，发起方草稿不能通过按钮、Enter 或其他既有提交入口向旧目标发送。目标项目、attachment 与运行准备成功后才使用正常发送条件。后台不对无关聊天施加全局禁发；已有任务的消息与队列规则不变。不得靠延迟解除发送限制。
-9. **取消与提交边界。** 顶层文件夹／项目选择的取消、关闭及相应层级 Escape 取消本次切换，恢复仍有效的原聊天目标与焦点，并显示其设备／项目归属。不得让“稍后选择”成为可发送的远程无项目出口。嵌套下拉、恢复或目录信任确认层先按原层级语义处理，未完成整个流程仍不能发送。已经成功保存的项目不因关闭而自动删除；尚未保存时取消不新建项目。
-10. **资源归属。** 仅释放本次独占的临时 attachment；取消不删除设备记录，不断开已连接 Source，不释放其他项目共享 session。重复确认、重复继续和登记重试不得新增重复项目或入口，沿用既有在途结果与幂等边界，不承诺新增全局分布式目录唯一性。
-11. **异步与单一 owner。** 连接流程持有发起方、目标设备、请求身份和完成意图；已有草稿 owner 持有正文和附件。每次异步结果在导航或写入前复验当前请求、Source／Host membership、选定目录和项目。切换草稿、替换请求、成员移除、取消或卸载使旧结果失效；不复制一份草稿、另建连接状态缓存或用超时同步状态。
-12. **后台延续。** 沿用已有后台通知和显式继续契约。后台成功不弹目录窗口、不改变当前项目；用户显式继续且原意图仍有效时才进入文件夹选择。过期继续与重复继续不得抢导航或重复提交。旧的连接结果不能复活用户已放弃的流程。
-13. **范围与兼容。** SSH／WSL／Docker 使用同一完成规则并尊重现有平台能力。开发专用 Server 直连不扩展。共享 UI 沿用设计系统、国际化、深浅主题及键盘规则；Web／手机保留壳层能力门禁与既有 Host、desktop-continuous／web-remote-replayable 边界。
-14. **存储与协议。** 复用项目服务、目录浏览、远程入口和工作区身份契约；本需求不需要新数据库迁移、身份格式、任务协议、草稿持久化模型或第二个消息 owner。草稿和附件跨设备迁移维持现有行为，本轮不实现迁移与冲突合并。
+1. **Entry and completion intent.** The chat project menu still reuses the unified device add, authentication and install chain, but its completion intent becomes "after connecting, must choose a remote directory and enter the project". This replaces the wiring "device management success only, then show a create-project button" of this entry, and builds no separate connection wizard. Settings add, project-form add-device and original-project reconnect each keep their existing semantics.
+2. **Vocabulary and identity.** A Source is an identified remote environment and account; a Connection Profile is the way to reach a Source; a project is determined by its owning Host and project ID; a directory is a project root, not the project identity. A successful connection only proves the device is usable, not that a project is selected.
+3. **Directory source.** Browsing, path validation and directory equality use the target Host's service and existing path rules, never the local file system or the local OS path normalization to judge a remote. Matching is an exact match on the same device and the same fixed root; no guessing by name, path prefix, parent directory or a same-named path on another device.
+4. **Project resolution after confirmation.** Only after the user confirms the directory is the authoritative project result read/checked and the one / several / zero dispatch run. A unique match reuses the real project ID; several matches continue with user selection; a failed list read is not zero. A deleted project is not opened automatically as an existing match; creating at a deleted project follows the existing restore-or-create rule, never silently restoring.
+5. **Creation scope.** On zero matches this flow fills in the default folder name and a single fixed root, reusing the shared creation, directory confirmation, save and local entry registration, and does not ask the user to re-enter the same directory. The by-directory resolution of this entry does not turn the generic project save into a global get-or-create and adds no "one project per directory" constraint. Other entries that explicitly create another project at the same directory keep the original contract.
+6. **Existing creation boundary.** Creating/restoring still goes through the existing directory trust confirmation; folder selection does not replace it. When an old remote supports only reading, existing projects are selectable and this entry cannot bypass the create capability limit. A save failure keeps the error; when the remote save succeeded but the local registration failed, keep the returned project ID and retry registration rather than creating again. The layered cancel and permission semantics of the existing creation confirmation stay valid.
+7. **Complete delivery.** After selecting or creating, the actual Host, project ID and directory must be handed to the existing project selection and workspace preparation chain to enter the project's new-task draft; only refreshing the list or registering the entry is not enough. History tasks of an existing project are kept; no old session is restored automatically and no identity migrated.
+8. **Send constraint.** While the current foreground switch intent is unfinished or not cancelled, the initiating draft cannot send to the old target through the button, Enter or any other existing submit entry. Only after the target project, attachment and runtime preparation succeed do the normal send conditions apply. Background does not impose a global send ban on unrelated chats; message and queue rules of existing tasks are unchanged. The send restriction must not be lifted by delay.
+9. **Cancel and submit boundary.** Cancel, close and the corresponding layer's Escape of the top-level folder/project selection cancel this switch, restore the still-valid original chat target and focus, and show its device/project ownership. "稍后选择" (choose later) must not become a sendable remote projectless exit. Nested dropdown, restore or directory trust confirmation layers handle things by their own layer semantics first, and the unfinished whole flow still cannot send. An already-saved project is not deleted automatically by closing; cancelling before saving creates no project.
+10. **Resource ownership.** Release only the temporary attachment exclusive to this attempt; cancel deletes no device record, disconnects no connected Source, and releases no session shared by other projects. Repeated confirm, repeated continue and registration retry must not add duplicate projects or entries, following the existing in-flight result and idempotency boundaries, with no new global distributed directory uniqueness promised.
+11. **Async and single owner.** The connection flow holds the initiator, target device, request identity and completion intent; the existing draft owner holds the body and attachments. Every async result re-validates the current request, Source/Host membership, chosen directory and project before navigating or writing. Switching drafts, replacing the request, member removal, cancel or unmount invalidates old results; no copy of the draft, no separate connection state cache and no timeouts to sync state.
+12. **Background continuation.** Follow the existing background notice and explicit-continue contract. Background success does not pop a directory window and does not change the current project; only an explicit continue with a still-valid original intent enters folder selection. Expired and repeated continues must not steal navigation or submit twice. An old connection result cannot revive a flow the user abandoned.
+13. **Scope and compatibility.** SSH/WSL/Docker use the same completion rule and respect existing platform capabilities. The dev-only Server direct connection is not extended. Shared UI follows the design system, internationalization, dark/light themes and keyboard rules; Web/mobile keep the shell capability gating and the existing Host and desktop-continuous / web-remote-replayable boundaries.
+14. **Storage and protocol.** Reuse the project service, directory browsing, remote entry and workspace identity contracts; this requirement needs no new database migration, identity format, task protocol, draft persistence model or second message owner. Cross-device migration of drafts and attachments keeps existing behavior; migration and conflict merging are not implemented this round.
 
 ## Testing Decisions
 
-目录匹配兼容旧端保留的历史路径写法：旧端适配器按远端 platform 派生只读 `directoryMatchPath`，使用与 `readDirectory` 相同的 normalize 规则。它只参与单目录匹配，不写数据库或入口缓存，不改变原 roots、合成项目 ID、任务归属或 prepareSession 的 cwd。多个历史身份规范化为同一目录时仍须显式选项目；不增加 realpath 或符号链接等价规则。
+Directory matching is compatible with historical path spellings kept by old remotes: the old-remote adapter derives a read-only `directoryMatchPath` by the remote platform, using the same normalize rules as `readDirectory`. It takes part only in single-directory matching, writes no database or entry cache, and does not change the original roots, synthetic project ID, task ownership or the cwd of prepareSession. Several historical identities normalizing to the same directory still require an explicit project choice; no realpath or symlink equivalence rule is added.
 
-后台完成后的显式继续必须在查询 Source 或成员资格前同步恢复前台可见性，由原聊天 owner 立即恢复提交门禁。完成前取消、再次收起或原意图失效继续使用现有清理规则，不增加第二份发送状态。
+An explicit continue after background completion must restore foreground visibility synchronously before querying the Source or membership, and the original chat owner immediately restores the submit gate. Cancel before completion, re-collapse or original-intent invalidation use the existing cleanup rules, with no second send state.
 
 ```text
-后台解除禁发 → 显式继续 → 前台可见性通知／原草稿禁发 → Source／成员校验 → 选目录
-历史 root → 所属 Host 的规范化匹配值 → 目录匹配；原 ID／root／任务 cwd 保留
+background send-block released → explicit continue → foreground visibility notice / original draft send-blocked → Source/member check → choose directory
+historical root → owning Host's normalized match value → directory match; original ID/root/task cwd kept
 ```
 
-以已有真实 Desktop 聊天入口 E2E 为主接缝：从可见项目菜单发起连接，完成目录选择、项目进入和首次发送，检查实际任务归属与执行目录。复用聊天设备往返候选、添加已有远程项目候选、后台连接候选以及项目创建目录确认的测试能力。仅用已有 UI／服务端口补充难以稳定控制的迟到结果、失效身份和登记失败；不为测试新增产品 API。
+The main seam is the existing real Desktop chat-entry E2E: start the connection from the visible project menu, complete directory selection, project entry and first send, and check the actual task ownership and execution directory. Reuse the testing capabilities of the chat device round-trip candidate, the add-existing-remote-project candidate, the background connection candidate and the project creation directory confirmation. Existing UI/service ports supplement only late results, invalid identities and registration failures that are hard to control stably; no product API is added for tests.
 
-好的测试断言用户可见目标、实际 Host／项目／任务身份、目录、发送结果与持久化数量，不把局部 state、回调次数或“经过了该页面”当作行为正确。草稿预热可能已有运行时，不能用“没有启动任何本地 runtime”替代“没有向本地提交该条消息”。修复前先证明原无项目路径会错误发送到本地，再使对应 E2E 通过。
+Good tests assert the user-visible target, the actual Host/project/task identity, directory, send result and persisted counts, and do not treat local state, callback counts or "passed through that page" as correct behavior. Draft warm-up may already have a runtime, so "no local runtime started" cannot replace "this message was not submitted locally". Before the fix, first prove that the original projectless path sends wrongly to local, then make the corresponding E2E pass.
 
-以下是已确认的验收合同。实现与测试映射见 #23–#26、case 目录和覆盖矩阵；通过结论仅适用于记录的测试接缝与实际环境，不代表所有平台均已实跑：
+The confirmed acceptance contract follows. Implementation and test mapping are in #23-#26, the case catalog and the coverage matrix; a pass conclusion applies only to the recorded test seam and actual environment and does not mean all platforms were actually run:
 
-| ID        | Setup → Action                                       | 必须断言                                                                  |
-| --------- | ---------------------------------------------------- | ------------------------------------------------------------------------- |
-| RDUX21-01 | 本地无项目草稿，从聊天菜单真实连接远端               | 自动显示目标设备文件夹选择；未确认前按钮与 Enter 均不能提交到本地         |
-| RDUX21-02 | 远端仅一个项目，或有最近项目；分别连接               | 每次仍显示文件夹选择，不自动打开任何项目                                  |
-| RDUX21-03 | 复用已在线设备，含重复从同一聊天入口连接             | 仍需显式选目录，设备身份与列表正确                                        |
-| RDUX21-04 | 本地项目草稿、远程项目草稿分别进入本流程             | 与无项目草稿相同；原项目不是新设备的默认目标，旧任务身份不迁移            |
-| RDUX21-05 | 目录唯一匹配一个已有项目，确认并进入                 | 使用原项目 ID、Host、root；历史任务保留；首次消息实际发到目标远端         |
-| RDUX21-06 | 同设备同目录对应两个现存项目                         | 再显式选项目；未选择前不能发送；选定后不合并历史、不新增重复项目          |
-| RDUX21-07 | 目录无现存项目，完成既有创建确认                     | 默认文件夹名、唯一固定 root；保存／登记后进入新项目草稿；首次发送归属正确 |
-| RDUX21-08 | 再次连接并确认已经使用过的同一目录                   | 复用已有项目；重复点击确认不新增重复项目或入口                            |
-| RDUX21-09 | 两台设备有相同路径；另有同名前缀或父目录项目         | 只按目标设备与精确目录匹配，不选另一设备或父目录项目                      |
-| RDUX21-10 | 无效路径、非目录、无权限；确认期间目录失效           | 显示实际原因，可重试／取消；无替代目录、项目或本地消息                    |
-| RDUX21-11 | 项目列表读取失败；随后成功重试                       | 失败不当作零项创建；重试继续原设备／目录                                  |
-| RDUX21-12 | 目录选择、项目选择或工作区准备时断连／失败           | 不可发送，不切回本地；恢复后也不自动发送                                  |
-| RDUX21-13 | 文件夹选择分别取消、关闭、Escape                     | 恢复原目标、原草稿及合理焦点，目标标识明确；不留下远程无项目聊天          |
-| RDUX21-14 | 多项目选择取消；嵌套选择／信任确认按 Escape          | 顶层取消整次切换；嵌套只关闭当前层，不误提交，不同时关闭多层              |
-| RDUX21-15 | 连接前或连接中取消；设备另有运行中任务               | 未提交项目不新增；原聊天可恢复；已有连接记录和共享任务不受影响            |
-| RDUX21-16 | 取消、换草稿、换设备或成员失效后释放旧结果           | 旧连接／目录／保存／准备结果不导航、不覆盖新目标；不误释放共享资源        |
-| RDUX21-17 | 远端保存成功，本机入口登记失败后重试                 | 保留真实项目 ID；只重试登记，不重复创建；完成前不能发送                   |
-| RDUX21-18 | 后台完成后用户仍在另一聊天；再显式继续               | 完成不弹窗／抢焦点；有效继续进入目录选择；过期／重复继续无副作用          |
-| RDUX21-19 | 原目标分别为本地无项目、本地项目、远程项目，取消切换 | 显示并恢复原目标，保留现有草稿；本地无项目仍能在明确取消后正常发送        |
-| RDUX21-20 | 设置设备添加、原项目重连、已有会话续聊               | 保留原完成规则，原项目重连不因本入口要求重复选择目录                      |
-| RDUX21-21 | 无现存项目但有已删除项目；旧远端仅有只读能力         | 沿用恢复／新建确认；不静默恢复；只读远端不能绕过新建限制                  |
-| RDUX21-22 | 中英文、深浅主题、长路径、窄窗及键盘操作             | 设备／目录／错误可读，确认和取消可达，焦点合理；Enter 不串到聊天发送      |
-| RDUX21-23 | SSH／WSL／Docker 及相应操作系统能力                  | 支持的平台走相同目录完成规则；按实际环境分别记录证据                      |
-| RDUX21-24 | 普通 Web／手机共享界面与既有远程项目                 | 能力门禁有效；不引入浏览器本机目录、额外 Host／session 或 replayable 回退 |
+| ID        | Setup → Action                                              | Must assert                                                                                                      |
+| --------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| RDUX21-01 | Local projectless draft; really connect a remote from the chat menu | The target device's folder selection shows automatically; before confirming, neither the button nor Enter can submit to local |
+| RDUX21-02 | The remote has only one project, or recent projects; connect separately | The folder selection still shows every time, and no project opens automatically                                  |
+| RDUX21-03 | Reuse an online device, including repeated connects from the same chat entry | An explicit directory choice is still required; device identity and list are correct                             |
+| RDUX21-04 | Enter this flow from a local project draft and a remote project draft | Same as projectless draft; the original project is not the new device's default target, old task identity not migrated |
+| RDUX21-05 | The directory uniquely matches one existing project; confirm and enter | Uses the original project ID, Host, root; history tasks kept; the first message really goes to the target remote |
+| RDUX21-06 | Same device and directory correspond to two existing projects | Explicit project choice again; no send before choosing; after choosing history is not merged and no duplicate project added |
+| RDUX21-07 | The directory has no existing project; complete the existing creation confirmation | Default folder name, a unique fixed root; after save/registration enter the new project draft; first send ownership correct |
+| RDUX21-08 | Connect again and confirm the same directory used before    | Reuses the existing project; repeated confirm clicks add no duplicate project or entry                           |
+| RDUX21-09 | Two devices have the same path; also a same-name-prefix or parent-directory project | Match only by target device and exact directory; no project of another device or a parent directory is chosen    |
+| RDUX21-10 | Invalid path, non-directory, no permission; directory becomes invalid during confirmation | Shows the actual reason, retry/cancel; no substitute directory, project or local message                         |
+| RDUX21-11 | Project list read fails; then a successful retry            | A failure is not treated as zero-project creation; retry continues the original device/directory                 |
+| RDUX21-12 | Disconnect/failure during directory selection, project selection or workspace preparation | Cannot send, no switch back to local; no auto-send after recovery                                                |
+| RDUX21-13 | Cancel, close and Escape on the folder selection            | Restores original target, original draft and sensible focus, with a clear target marker; no remote projectless chat left |
+| RDUX21-14 | Cancel multi-project selection; press Escape in nested selection/trust confirmation | The top layer cancels the whole switch; a nested layer closes only the current layer, no wrong submit, no several layers at once |
+| RDUX21-15 | Cancel before or during connecting; the device has another running task | No uncommitted project added; original chat recoverable; existing connection record and shared task unaffected  |
+| RDUX21-16 | Release old results after cancel, draft change, device change or membership invalidation | Old connection/directory/save/preparation results do not navigate or overwrite the new target; shared resources not wrongly released |
+| RDUX21-17 | Remote save succeeds, local entry registration fails, then retry | Keeps the real project ID; only registration is retried, no duplicate creation; cannot send before completion    |
+| RDUX21-18 | After background completion the user is still in another chat; then continue explicitly | Completion does not pop a window or steal focus; a valid continue enters directory selection; expired/repeated continues have no side effect |
+| RDUX21-19 | Original target is local projectless, local project, remote project; cancel the switch | Shows and restores the original target, keeps the existing draft; local projectless can still send normally after an explicit cancel |
+| RDUX21-20 | Settings device add, original project reconnect, continuing an existing session | Keep the original completion rules; original-project reconnect does not require choosing a directory again because of this entry |
+| RDUX21-21 | No existing project but a deleted project exists; old remote with read-only capability only | Follow the restore/create confirmation; no silent restore; a read-only remote cannot bypass the create restriction |
+| RDUX21-22 | Chinese/English, dark/light, long paths, narrow window and keyboard operation | Device/directory/error readable, confirm and cancel reachable, sensible focus; Enter does not leak to chat send  |
+| RDUX21-23 | SSH/WSL/Docker and the corresponding operating-system capabilities | Supported platforms follow the same directory completion rule; evidence recorded per actual environment         |
+| RDUX21-24 | Ordinary Web/mobile shared UI and existing remote projects  | Capability gating works; no browser local directory, extra Host/session or replayable regression introduced     |
 
-- 本轮测试范围直接承接已确认的目录选择、项目匹配、取消返回、发送限制及异步保护，不重新访谈或扩大到草稿迁移。跨设备切换成功用空草稿隔离该范围；原草稿内容只用于取消／失败保留回归。
-- 实施时先补 E2E 及必要的既有端口测试，再改代码；同步 case 目录、覆盖矩阵和相关旧断言。主题／语言采用代表组合，不与所有失败类型作全量笛卡尔积。
-- 完成类型检查、lint、架构门禁、受影响单测、对应 Desktop E2E 与适用共享 UI／手机回归。记录真实连接类型和操作系统范围；窄桌面窗口不能替代手机证据。
-- 候选继续走既有 pending、人工审核和转正流程；本规格、实现完成及运行成功均不授权 formal／CI 准入。
+- This round's test scope directly takes over the confirmed directory selection, project matching, cancel return, send restriction and async protection, without re-interviewing or extending to draft migration. A successful cross-device switch isolates this scope with an empty draft; the original draft content is used only for cancel/failure retention regressions.
+- At implementation add E2E and necessary existing-port tests first, then change the code; sync the case catalog, coverage matrix and related old assertions. Themes/languages use representative combinations, not a full Cartesian product with all failure types.
+- Complete typecheck, lint, the architecture gate, affected unit tests, the corresponding Desktop E2E and applicable shared UI/mobile regression. Record the real connection types and OS scope; a narrow desktop window cannot replace phone evidence.
+- Candidates keep going through the existing pending, manual review and promotion flow; this spec, implementation completion and a successful run do not authorize formal/CI admission.
 
 ## Out of Scope
 
-- 在用户确认文件夹前自动打开唯一项目、最近项目、默认项目或原草稿项目。
-- 远程无项目聊天、远程多目录项目、迁移已有会话、按目录合并多个项目身份。
-- 草稿文字与附件跨设备迁移、附件重新暂存、目标草稿冲突处理或内容合并；沿用现有行为。
-- 改写设置设备管理、项目创建入口和原项目恢复的通用规则；仅本聊天入口采用确认目录后的匹配／创建规则。
-- 新连接传输、认证、安装、重连状态机，手机独立连接，身份／数据库／任务协议迁移，全局目录唯一性或新的持久信任机制。
-- 自动发送、后台自动跳页、扩大 Web／手机设备管理能力，或把未运行的平台补记为通过。
+- Auto-opening the unique project, recent project, default project or original draft project before the user confirms a folder.
+- Remote projectless chat, remote multi-directory projects, migrating existing sessions, merging multiple project identities by directory.
+- Cross-device migration of draft text and attachments, re-staging attachments, target-draft conflict handling or content merging; existing behavior stays.
+- Rewriting the generic rules of Settings device management, the project creation entry and original-project recovery; only this chat entry adopts the match/create rule after directory confirmation.
+- New connection transport, authentication, install, reconnect state machine, independent mobile connection, identity/database/task protocol migration, global directory uniqueness or a new persistent trust mechanism.
+- Auto-send, background auto page jump, expanding Web/mobile device management, or recording unrun platforms as passing.
 
 ## Further Notes
 
-- 本轮决策顺序已经收敛：先取消“连接后自动开项目”；每次显式选文件夹；确认目录后执行唯一／多个／零项规则；顶层取消撤销本次远程打开并回到原目标；草稿迁移延期。不再采用讨论中已放弃的“取消后保留远程待选状态”。
-- 本文件是本地 Issue 和完整 spec，父规格的聊天分支以本文件为准。#23–#26 已完成，旧成功按钮及旧 E2E 断言已更新；完成范围以本轮证据为准。
-- 领域与身份继续依据 [R3 主规格](../../architecture/r3-source-server-remote-architecture.md)、[运行时边界](../../agents/runtime-boundaries.md)和[虚拟项目规格](../../superpowers/specs/2026-09-09-virtual-project-design.md)。同目录多项目是受支持状态，不是待清理的重复数据。
-- 复用 [#17 分类添加设备](17-typed-remote-device-addition.md)、[#19 添加已有远程项目](19-add-existing-remote-project.md)及 [#22 后台连接与显式继续](22-background-connection-and-explicit-resume.md)；新建／恢复遵循[项目目录确认](../../specs/project-creation-folder-confirmation.md)，不将选目录视为自动信任。
-- 视觉沿用[设计规范](../../../DESIGN.md)。验收 ID 已登记在 [case 目录](../../conversation-session-case-catalog.md)与[覆盖矩阵](../../testing/conversation-session-e2e-coverage-matrix.md)；用例落地遵循 [E2E 工作流](../../testing/conversation-session-e2e-development-workflow.md)。
+- The decision order of this round has converged: first cancel "auto-open project after connecting"; explicitly select a folder every time; after directory confirmation apply the unique / several / zero rule; top-level cancel revokes this remote open and returns to the original target; draft migration is deferred. The abandoned discussion option "keep a remote pending-selection state after cancel" is no longer used.
+- This file is a local Issue and the complete spec; the chat branch of the parent spec follows this file. #23-#26 are done, and the old success button and old E2E assertions are updated; the completion scope follows this round's evidence.
+- Domain and identity continue to follow the [R3 main spec](../../architecture/r3-source-server-remote-architecture.md), [runtime boundaries](../../agents/runtime-boundaries.md) and the [virtual project spec](../../superpowers/specs/2026-09-09-virtual-project-design.md). Multiple projects at the same directory is a supported state, not duplicate data to clean up.
+- Reuse [#17 typed device addition](17-typed-remote-device-addition.md), [#19 add existing remote project](19-add-existing-remote-project.md) and [#22 background connection and explicit continue](22-background-connection-and-explicit-resume.md); creating/restoring follows the [project directory confirmation](../../specs/project-creation-folder-confirmation.md), and choosing a directory is not treated as automatic trust.
+- Visuals follow the [design guidelines](../../../DESIGN.md). The acceptance IDs are registered in the [case catalog](../../conversation-session-case-catalog.md) and [coverage matrix](../../testing/conversation-session-e2e-coverage-matrix.md); case implementation follows the [E2E workflow](../../testing/conversation-session-e2e-development-workflow.md).
 
-### 本轮实施与验证：2026-10-14
+### Implementation and verification: 2026-10-14
 
-审查修复补验：
+Review-fix re-verification:
 
-- 后台显式继续在 Source／成员查询前恢复前台通知和禁发。原实现的 Desktop RED 为 `desktop-e2e-20261014080117758-p36079-9dfb8d5ab50a47fa`：扣住 Source 查询后发送按钮仍可用。最终后台候选 `desktop-e2e-20261014081704935-p58111-926b13e33297f1e3` 1/1 通过，覆盖定向输入框 Enter／form 禁发、远程首发、取消恢复及 SSH／Docker；已审阅等待阶段截图。
-- 旧端适配器按远端平台派生目录匹配值，保留原 ID、root、任务 cwd 和只读限制。真实适配器／UI 回归覆盖 POSIX、Windows、唯一及多个等价历史身份；旧 UI 副本的两条回归均为 RED。聊天目录候选在 `desktop-e2e-20261014081447158-p54737-f7abcbb92e9dd5c6` 通过，新增旧端投影 RPC 回放并核对两个原项目 ID；已审阅项目选择截图。这不是旧 Server 二进制实跑。
-- `pnpm test:unit:affected --base c81f9736d7ccb83dc77203a43d7b2582b9bbecdd` 选择 312/2623 文件。首轮 311 文件通过；旧 Host 测试缺少新增路径投影所需的系统信息端口，补齐后该文件 18/18 通过。合计 4095 测试通过、1 个既有 skip；未跑全量 UT。最终 flow 文件 104/104 通过。
-- 根类型检查、E2E 类型检查、lint（209 个既有 warning，0 error）、架构门禁（0 violation）、两候选 fixture 检查、代码格式与 diff 检查通过。fixture 的成员读取故障标记仍为既有非 provider warning。
-- 手机 Web 项目目录在 390px × 中英文 × 深浅主题共 4 组通过，证据位于 `.tmp/chat-review-fix-mobile`；已审阅深浅主题截图。实机范围为 macOS Desktop 与独占 Linux arm64 SSH／Docker fixture；未运行 Windows／Linux Desktop、WSL、旧远端二进制或实体手机。候选仍保持 pending。
-- E2E 同步纠正了两个观测条件：继续后连接弹窗聚焦“收起”，全局 Enter 会合法解除门禁，因此键盘断言定向原输入框；返回时等待原 Dialog 的退出动画，项目菜单操作前移出身份浮层，均不增加产品超时或同步逻辑。
+- A background explicit continue restores the foreground notice and the send block before the Source/membership query. The Desktop RED of the original implementation was `desktop-e2e-20261014080117758-p36079-9dfb8d5ab50a47fa`: the send button was still usable after the Source query was held. The final background candidate `desktop-e2e-20261014081704935-p58111-926b13e33297f1e3` passes 1/1, covering targeted composer Enter/form send blocking, remote first send, cancel restore and SSH/Docker; waiting-stage screenshots were reviewed.
+- The old-remote adapter derives the directory match value by the remote platform and keeps the original ID, root, task cwd and read-only restriction. Real adapter/UI regressions cover POSIX, Windows, unique and several equivalent historical identities; both regressions on the old UI copy were RED. The chat directory candidate passes in `desktop-e2e-20261014081447158-p54737-f7abcbb92e9dd5c6`, adding old-remote projection RPC replay and checking two original project IDs; the project selection screenshots were reviewed. This is not a run of an old Server binary.
+- `pnpm test:unit:affected --base c81f9736d7ccb83dc77203a43d7b2582b9bbecdd` selected 312/2623 files. The first round passed 311 files; the old Host test lacked the system-info port needed for the new path projection, and after adding it that file passes 18/18. In total 4095 tests pass with 1 pre-existing skip; the full UT was not run. The final flow file passes 104/104.
+- Root type check, E2E type check, lint (209 pre-existing warnings, 0 errors), the architecture gate (0 violations), the fixture checks of the two candidates, code format and diff checks pass. The member-read fault marker in the fixture is still a pre-existing non-provider warning.
+- The mobile Web project directory passes 4 groups at 390px × Chinese/English × dark/light themes, with evidence in `.tmp/chat-review-fix-mobile`; dark/light screenshots reviewed. The real-environment scope is macOS Desktop and an exclusive Linux arm64 SSH/Docker fixture; Windows/Linux Desktop, WSL, old remote binaries and real phones were not run. The candidate stays pending.
+- E2E also corrected two observation conditions: after continue the connection dialog focuses "收起" (collapse), a global Enter legitimately releases the gate, so the keyboard assertion targets the original composer; on return it waits for the original Dialog's exit animation, and the project-menu action moves the identity popover out first; neither adds a product timeout or sync logic.
 
-- [#23](23-chat-remote-folder-existing-project.md)、[#24](24-chat-remote-folder-project-choice.md)、[#25](25-chat-remote-folder-create-project.md)、[#26](26-chat-remote-folder-background-resume.md) 均为 `done`，集成于 `feat/chat-remote-folder-integration`。每次显式选目录，唯一／多个／零匹配共用项目进入、发送限制及取消规则；原草稿仍由既有 owner 保留。
-- 双轴评审的问题已修复并复核：模块契约移除旧完成语义；成员资格读取失败沿原连接错误／重试／取消流程处理，前台持续禁发；等待中取消不接受迟到结果，再次收起后的迟到失败不重开弹窗。Standards 与 Spec 轴均无剩余 finding。
-- 根／E2E 类型检查、lint、架构、受影响单测及 fixture 检查通过。最终集成树从任务起点运行 `pnpm test:unit:affected --base 833e6dcb4b`：615 文件、6966 测试通过、1 个既有 skip。lint 保留 209 个既有 warnings，架构 0 violations；未运行全量单测。
-- 桌面真实 SSH 的唯一项目、多项目和创建首发分别通过；后台候选另含真实 Docker 连接。评审修复后的故障目录与后台候选 2/2 通过：`desktop-e2e-20261014062429307-p3874-62dc81c125bcbc6d`。运行证据核对实际 Host／project／task／cwd／identity，以及失败期间按钮、Enter、form 不向旧本地目标提交。
-- 集成后的 Web 项目目录与手机 shared-host 候选 2/2 通过：`desktop-e2e-20261014060018735-p87993-7a832ba2b1b8d036`。使用本仓 Web 页面、独立 Chrome 手机视口／触摸上下文和本地 relay fixture，验证远端项目、设备管理能力门禁、目录／信任确认、返回本地及既有 Host／tab 边界；已检查深浅主题截图。这是浏览器手机仿真，不能记作实体手机验证。
-- 实跑范围为 macOS Desktop、Linux arm64 SSH 目标和后台 Docker 分支。Windows／Linux Desktop、WSL、实体手机及旧远端二进制未实跑；旧端只读与 Windows 远端路径规则由服务／UI 合同测试覆盖，Docker 的创建与多匹配分支未单独实跑。所有候选仍为 `manual-review/pending`，未转正或取得 CI 准入。
+- [#23](23-chat-remote-folder-existing-project.md), [#24](24-chat-remote-folder-project-choice.md), [#25](25-chat-remote-folder-create-project.md), [#26](26-chat-remote-folder-background-resume.md) are all `done`, integrated in `feat/chat-remote-folder-integration`. Every time a directory is chosen explicitly, and the unique / several / zero matches share project entry, send restriction and cancel rules; the original draft is still kept by the existing owner.
+- Dual-axis review findings were fixed and re-checked: the module contract drops the old completion semantics; a membership read failure follows the original connection error / retry / cancel flow with the foreground send block kept; cancel while waiting accepts no late result, and a late failure after re-collapse does not reopen the dialog. Neither the Standards nor the Spec axis has a remaining finding.
+- Root/E2E type check, lint, architecture, affected unit tests and fixture checks pass. The final integration tree, from the task start with `pnpm test:unit:affected --base 833e6dcb4b`: 615 files, 6966 tests pass with 1 pre-existing skip. Lint keeps 209 pre-existing warnings, architecture 0 violations; the full unit suite was not run.
+- Real SSH on desktop passes for unique project, multiple projects and create-first-send respectively; the background candidate also includes a real Docker connection. The fault-directory and background candidates after the review fixes pass 2/2: `desktop-e2e-20261014062429307-p3874-62dc81c125bcbc6d`. The run evidence checks actual Host/project/task/cwd/identity, and during failure the button, Enter and form do not submit to the old local target.
+- The integrated Web project directory and mobile shared-host candidate pass 2/2: `desktop-e2e-20261014060018735-p87993-7a832ba2b1b8d036`. Using this repo's Web page, an independent Chrome mobile viewport/touch context and a local relay fixture, it verifies the remote project, device management capability gating, directory/trust confirmation, return to local and the existing Host/tab boundary; dark/light screenshots checked. This is browser mobile emulation and must not be recorded as real-phone verification.
+- Real-run scope: macOS Desktop, a Linux arm64 SSH target and the background Docker branch. Windows/Linux Desktop, WSL, real phones and old remote binaries were not run; old-remote read-only and Windows remote path rules are covered by service/UI contract tests, and the Docker create and multi-match branches were not run separately. All candidates are still `manual-review/pending`, not promoted or granted CI admission.
 
-### 历史实现与验证：2026-10-12，旧合同
+### Historical implementation and verification: 2026-10-12, old contract
 
-以下原完成记录只证明旧“设备添加后返回原聊天、显式继续创建”的实现，不能替代 2026-10-14 必选文件夹合同的独立运行证据。
-
-2026-10-12：已完成。聊天项目菜单复用 Root 的 `returnTarget` 和设置分类添加；正文、附件、项目选择继续由既有 owner 持有。成功只显示显式创建操作，使用返回的实际 Source ID 预选同一个项目表单。聊天切换、新建草稿或 owner 卸载后拒绝旧结果与旧继续操作，不创建或迁移任务。
-
-- `pnpm typecheck` 通过；`pnpm lint` 0 errors（仓库已有 warnings）；架构门禁 0 violations；本票文件清单选择的受影响测试通过（Vitest 6481 tests，Node 34 tests）。焦点修正后再次通过 12 个菜单 UI 测试。
-- macOS 原生真实 SSH E2E 1/1 通过：`desktop-e2e-20261012111702883-p10383-3368148f2ba7a92f`。先通过公开历史导入创建并选择真实本地项目任务，再从同项目草稿菜单往返设置；取消、认证失败后修正重试、成功、显式继续均验证原 task 的 Host／project／cwd／identity 和草稿正文、附件、项目不变。显式继续检查实际 Source ID，打开表单前后没有新增项目入口。
-- 中英 × 当前深浅主题 × 1440／480px：8 组真实设置取消往返的焦点与草稿检查，以及 8 组成功操作／菜单截图，共 33 张图；已审阅宽窄屏、语言和主题代表图。截图等待实际 CSS 过渡结束，无固定 sleep。
-- 运行时 focus 轨迹确认：layout 阶段的返回聚焦会被尚未释放的连接弹窗焦点锁拉回。改为同轮 passive effect 清理后聚焦，完整 E2E 已通过；没有新增同步定时器。原始定位证据保留在 `desktop-e2e-20261012111543445-p8782-332fe6402e28ae3a`。
-- 候选保持 `manual-review/pending`，不宣称 formal／CI 准入。WSL 和真实手机按用户要求留 TODO；没有用窄桌面窗口代替手机验证。普通 Web／手机不可用管理入口的能力门禁继续由壳层提供，并有 UI 回归覆盖。
+The earlier completion record (device add returning to the original chat with an explicit continue-to-create) proved only the old implementation and cannot replace the independent run evidence of the 2026-10-14 mandatory-folder contract; it is omitted here (see `git show fcfed95d:docs/issues/remote-connection-ux/21-chat-settings-round-trip.md`).

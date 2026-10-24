@@ -1,75 +1,42 @@
-# 保留数据卸载重装应沿用原设备身份与历史
+# A Data-Preserving Uninstall and Reinstall Should Keep the Original Device Identity and History
 
 Status: done
 
-## 原测试预期
+## Original Test Expectation
 
-桌面 SSH 指南“远程机器被重装”要求确认后建立新设备、归档旧连接并保留旧历史，
-不把旧历史混入新设备。
+The "remote machine reinstalled" requirement of the desktop SSH guide: after confirmation create a new device, archive the old connection and keep the old history, without mixing old history into the new device.
 
-## 真实历史复现
+## Real Historical Reproduction
 
-- 业务基线 `a13999a28927f629d0c64080a5096cf8b4f23bae`。
-- case `conversation-session-r3-uninstall.test.ts`，批次
-  `r3-server-20261010001224807-40c41f`，任务 `uninstall`。
-- 初次安装后在原项目完成真实回合，得到任务
-  `sess_3b24f10d-ee85-48b9-b8ab-803cfbbff229`。
-- 原安装身份 `2a4c7471-3337-4631-a43c-6129aa1ed4b6`。执行真实 CLI uninstall，
-  重新安装后需要身份确认；取消保留旧记录，确认后旧 Profile 归档、新 Profile 创建。
-- 新身份为 `c518b19a-5e27-4da8-b96a-3f57a0f5466b`。实际选择新设备及同一目录后，
-  新设备对应项目的可见任务列表包含上述旧任务，`not.toContain` 断言失败。
-- `uninstall.json` 保存原任务/身份、确认结果、保留的数据库行和
-  `newInstallationTaskIds`；不是仅以文件哨兵或旧 App 缓存代替历史验证。
+- Business baseline `a13999a28927f629d0c64080a5096cf8b4f23bae`.
+- Case `conversation-session-r3-uninstall.test.ts`, batch `r3-server-20261010001224807-40c41f`, task `uninstall`.
+- After the first install a real turn was completed in the original project, producing task `sess_3b24f10d-ee85-48b9-b8ab-803cfbbff229`.
+- Original install identity `2a4c7471-3337-4631-a43c-6129aa1ed4b6`. After the real CLI uninstall and a reinstall, identity confirmation was needed; cancel kept the old record, and after confirmation the old Profile was archived and a new Profile created.
+- The new identity was `c518b19a-5e27-4da8-b96a-3f57a0f5466b`. After actually selecting the new device and the same directory, the new device's project's visible task list contained the old task above, and the `not.toContain` assertion failed.
+- `uninstall.json` stores the original task/identity, the confirmation result, the retained database rows and `newInstallationTaskIds`; history was not verified only by file sentinels or the old App cache.
 
-## 数据模型边界
+## Data Model Boundary
 
-Server 为兼容回退保留 legacy canonical key，本轮数据库行仍使用原 SSH route key。
-`SourceServerWorkspaceAliasRepo` 按目录查找已有 canonical；App 的设备身份变化没有隔离
-该 Server 用户目录中已有任务的可见性。原测试把保留数据的卸载重装当成独立设备，但远端仍是同一份用户数据。不能删除用户数据
-或用安装 UUID 断言现有存储格式。
+The Server keeps the legacy canonical key for compatible fallback, and the database rows of that round still used the original SSH route key. `SourceServerWorkspaceAliasRepo` looks up an existing canonical by directory; the App's device identity change did not isolate the visibility of tasks already in that Server user directory. The original test treated a data-preserving uninstall and reinstall as an independent device, but the remote is still the same user data. User data cannot be deleted, and the existing storage format cannot be asserted through the install UUID.
 
-## 确认后的语义与修复目标（2026-10-10）
+## Confirmed Semantics and Fix Goal (2026-10-10)
 
-用户确认：保留数据卸载重装必须沿用原设备身份、连接和项目，原历史可见且可续聊。
-本版本尚未上线，无需身份丢失或重复设备的存量兼容。本轮起点
-`1229463da32f09989cc474e0a8641c7f5b183d40`。
+The user confirmed: a data-preserving uninstall and reinstall must keep the original device identity, connection and project, with the original history visible and chat continuable. This version has not shipped, so no legacy compatibility for lost identity or duplicate devices is needed. Start of this round: `1229463da32f09989cc474e0a8641c7f5b183d40`.
 
-根因是卸载 allowlist 删除 `install.json`，导致重装生成新 UUID，App 归档原连接并另建设备；
-历史读取本身符合保留数据语义。修复在 Server 卸载边界保留既有身份标记，复用当前原子创建、
-ownership 校验和卸载启动保护，不改 canonical 历史或 App 的身份路由。
+The root cause is that the uninstall allowlist deleted `install.json`, so the reinstall generated a new UUID, and the App archived the original connection and created another device; history reading itself matched the data-preserving semantics. The fix keeps the existing identity marker at the Server uninstall boundary, reusing the current atomic creation, ownership validation and uninstall startup protection, without changing canonical history or the App's identity routing.
 
-原 case 改验同设备恢复；确认/取消/归档/历史隔离改用真正独立数据环境变体。
-规格见 [R3 身份生命周期](../../architecture/r3-source-server-remote-architecture.md#保留数据的卸载重装2026-10-10)。
+The original case now verifies same-device recovery; confirm / cancel / archive / history isolation use a truly independent data-environment variant. Spec: [R3 identity lifecycle](../../architecture/r3-source-server-remote-architecture.md#保留数据的卸载重装2026-10-10).
 
-## 实施与验证
+## Implementation and Verification
 
-- 正式卸载保留 `install.json`，其余运行资产清理和 `uninstalled.json` 启动保护不变。
-  App 继续使用同一 sourceServerId 的既有连接/项目恢复路径，不改历史 canonical key。
-- 身份变化提示改为连接目标身份变化，普通安装确认不再称为“新设备”；中英文同步。
-- CLI 回归先红后绿：旧实现未将 `install.json` 列入 `preservedPaths`，新实现验证身份文件原样
-  保留、重新初始化不换 ID、安装完成前卸载标记仍在。相关 4 文件 / 78 项通过。
-- 受影响根测试（起点 `1229463da32f09989cc474e0a8641c7f5b183d40`）：631 个 Vitest 文件 /
-  6272 项与 28 项 Node 审计通过；最终安装确认文案相关 4 文件 / 15 项通过，未跑全量单测。
-- 类型检查、E2E 类型检查、lint、架构、fixture 与 105 项队列合同审计通过；lint 保留
-  81 条既有警告。术语扫描只命中当前规格中既有分支名，无新增命中。
-- macOS Electron → 独立 Linux arm64 SSH 容器，
-  `desktop-e2e-20261010-reinstall-fix-preserve-data-r2` **1/1 PASS**：正式卸载、从原项目点击
-  安装确认、真实安装、原 source/Profile/项目保持、原任务可见且实际续聊；连接 session 换代。
-  `uninstall.json`、`preserved-history.png` 和 `build-source-evidence.json` 保存证据，构建为
-  `fresh-stable`，实际 Linux archive 的卸载清单已核对为修复内容。
-- 保留数据首轮已验证真实卸载保留身份，但 case 未点击原项目交接页的安装确认就调用了
-  错误页等待 helper，因“需要先确认安装”失败。补上实际用户安装确认并等错误页退出后复跑，
-  未修改业务逻辑或放宽身份/续聊断言；首轮失败 artifact 保留。
-- `desktop-e2e-20261010-reinstall-fix-replace-environment` **1/1 PASS**：完整封存原 `.zcode`
-  后在同一 SSH 入口安装空数据环境；新 UUID 触发确认，取消保持原 Profile，确认归档旧连接、
-  新建独立 Profile。原任务在封存数据库可对账，新设备可见任务列表为空，当前会话与正文
-  不混入旧任务。`identity-confirmation.png`、`new-environment-empty.png`、`uninstall.json`
-  与 `fresh-stable` 构建证据保留在对应 run 目录。
-- 两个 E2E 均重新构建 Desktop，使用本次源码重新生成的 Server/Agent archive；
-  最终 Server CLI 运行文件与 E2E 使用的 archive 对应文件 SHA-256 一致，保存为
-  `final-runtime-check.json`。临时目标容器均已清理；截图检查未见遮挡或状态文案不一致。
+- The official uninstall keeps `install.json`, and the cleanup of other runtime assets and the `uninstalled.json` startup protection are unchanged. The App keeps using the existing connection/project recovery path with the same sourceServerId, and the history canonical key is unchanged.
+- The identity-change prompt now speaks of a change of the connection target's identity; an ordinary install confirmation no longer says "new device"; Chinese and English are synced.
+- CLI regression went red then green: the old implementation did not list `install.json` in `preservedPaths`, and the new one verifies the identity file is kept as is, re-initialization does not change the ID, and the uninstall marker stays until the install completes. 4 related files / 78 tests pass.
+- Affected root tests (start `1229463da32f09989cc474e0a8641c7f5b183d40`): 631 Vitest files / 6272 tests and 28 Node audits pass; the final install-confirmation-copy-related 4 files / 15 tests pass; the full unit suite was not run.
+- Type check, E2E type check, lint, architecture, fixture and the 105-item queue contract audit pass; lint keeps 81 pre-existing warnings. The terminology scan hit only existing branch names in the current spec, with no new hit.
+- macOS Electron → independent Linux arm64 SSH container, `desktop-e2e-20261010-reinstall-fix-preserve-data-r2` **1/1 PASS**: official uninstall, clicking the install confirmation from the original project, real install, original source/Profile/project kept, the original task visible and actually continued; the connection session regenerated. `uninstall.json`, `preserved-history.png` and `build-source-evidence.json` keep the evidence; the build is `fresh-stable`, and the uninstall manifest of the actual Linux archive was checked to be the fixed content.
+- The first data-preserving round verified that the real uninstall keeps identity, but the case called the error-page waiting helper without clicking the install confirmation of the original project's handoff page, failing on "install must be confirmed first". After adding the actual user install confirmation and waiting for the error page to exit, it was re-run without changing business logic or relaxing the identity/continued-chat assertions; the first round's failure artifact is kept.
+- `desktop-e2e-20261010-reinstall-fix-replace-environment` **1/1 PASS**: after fully sealing the original `.zcode`, an empty data environment was installed at the same SSH entry; the new UUID triggered the confirmation, cancel kept the original Profile, confirmation archived the old connection and created an independent Profile. The original task can be reconciled in the sealed database, the new device's visible task list is empty, and the current session and body do not mix in the old task. `identity-confirmation.png`, `new-environment-empty.png`, `uninstall.json` and the `fresh-stable` build evidence are kept in the corresponding run directory.
+- Both E2E rebuilt the Desktop and used the Server/Agent archive regenerated from this source; the final Server CLI runtime files and the corresponding files of the archive used by the E2E have identical SHA-256, saved as `final-runtime-check.json`. Temporary target containers were all cleaned up; screenshot checks found no occlusion or inconsistent status copy.
 
-两个变体保留 `manual-review/pending`，未做人工转正或 CI 准入。历史批次原始 FAIL 保留，
-其“保留数据重装不显示旧历史”预期由本轮用户确认的语义替代。未验证原生 Windows/Linux
-桌面宿主、WSL/Docker 产品连接方式或手机 relay 整链路；本次不改变 Host/协议及
-continuous/replayable 边界。
+The two variants keep `manual-review/pending` with no manual promotion or CI admission. The original FAIL of the historical batch is kept, and its expectation "a data-preserving reinstall shows no old history" is replaced by the semantics the user confirmed this round. Native Windows/Linux desktop hosts, the WSL/Docker product connection modes and the whole mobile relay chain were not verified; this change does not alter the Host/protocol or the continuous/replayable boundary.

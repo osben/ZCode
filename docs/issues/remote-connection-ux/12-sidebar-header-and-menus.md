@@ -1,67 +1,67 @@
-# 12 — 侧栏、会话头部与菜单
+# 12 — Sidebar, Session Header and Menus
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：** [03 — 远程连接展示模型、5 种状态与术语](./03-presentation-model-states-and-glossary.md)、[06 — 交互原型与评审](./06-interaction-prototype-review.md)
+**Blocked by:** [03 — Remote connection presentation model, 5 states and glossary](./03-presentation-model-states-and-glossary.md), [06 — Interaction prototype and review](./06-interaction-prototype-review.md)
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-- **项目行**：
-  - 改成单行布局：一个状态图标位、项目名、设备名。
-  - 状态图标四种形态：单个转圈、划掉的云、云加 `!`、云加 `✕`。
-  - 设备名用次要文字色，并限制宽度；设备不在线时，这个位置改为显示简短的状态文字。
-  - 去掉 ⓘ 图标、重复的转圈和常驻的重连按钮；行尾的操作只在悬停或键盘聚焦时出现。
-- **详情卡**：
-  - 点击设备标签立即弹出；悬停约 400ms 后弹出。
-  - 显示设备、连接、路径、状态和原因。
-  - 提供的操作：连接或断开、编辑连接、在设置中管理（跳到设置页并定位到这台设备的卡片）。
-- **"项目 +" 菜单**："打开远程项目"展开为设备列表。在线设备直接进入选目录；离线设备先连接再选目录。菜单最后一项是"新建远程连接…"。
-- **会话头部**：常驻显示设备名和状态图标。
-- **其他位置**：
-  - 输入框里的项目切换菜单显示设备名。
-  - 任务行上的设备标签，在所有视图里样式统一。
+- **Project row**:
+  - Single-line layout: one status icon slot, project name, device name.
+  - The status icon has four forms: a single spinner, a crossed-out cloud, a cloud with `!`, a cloud with `✕`.
+  - The device name uses the secondary text color with limited width; when the device is not online this position shows a short status text instead.
+  - Remove the ⓘ icon, the duplicate spinner and the always-visible reconnect button; row-end actions appear only on hover or keyboard focus.
+- **Detail card**:
+  - Click the device label to open immediately; hover opens after about 400ms.
+  - Shows device, connection, path, state and reason.
+  - Actions: connect or disconnect, edit connection, manage in Settings (jumps to the Settings page and locates this device's card).
+- **"项目 +" (project +) menu**: "打开远程项目" (open remote project) expands into a device list. An online device goes straight to directory selection; an offline device connects first and then selects a directory. The last item is "新建远程连接…" (new remote connection…).
+- **Session header**: permanently shows the device name and status icon.
+- **Other places**:
+  - The project switch menu in the composer shows the device name.
+  - The device label on task rows is styled the same in all views.
 
-对应父规格「侧栏、详情卡与会话头部」一节。
+It corresponds to the "sidebar, detail card and session header" section of the parent spec.
 
-范围：
+Scope:
 
-- **详情卡布局修正**：
-  - 分隔线撑满卡片宽度。
-  - 状态标签右对齐。
-  - 不遮挡行内操作和时间列。
-  - 类型标签用正常大小写。
-- **其他修复**：
-  - 项目菜单关闭后不再残留 tooltip。
-  - 会话头部悬停提示里的名称和路径与侧栏一致。
-  - 只连接了设备、还没打开项目的在线设备，也要出现在"打开远程项目"的列表里。
+- **Detail card layout fixes**:
+  - The divider spans the full card width.
+  - The status label is right-aligned.
+  - It does not cover in-row actions or the time column.
+  - The type tag uses normal casing.
+- **Other fixes**:
+  - No tooltip remains after the project menu closes.
+  - The name and path in the session header hover hint match the sidebar.
+  - An online device that is only connected with no project open also appears in the "打开远程项目" list.
 
-**原型评审结论**（[06 评审结论](./06-interaction-prototype-review.md#comments)）：界面按评审通过的原型实现，以下几点以 06 为准。
+**Prototype review conclusion** ([06 review conclusion](./06-interaction-prototype-review.md#comments)): the UI follows the approved prototype; these points follow 06.
 
-- 详情卡锚定整行、从侧栏右侧弹出，不遮挡行尾操作。
-- 设备状态标签写成“状态 · 原因短语”，例如“连接中 · 自动恢复 2/3”，不再直接拼接。
-- 项目行使用短恢复文案“自动恢复 2/3”，完整句子只放在详情卡里。
-- 连接描述使用正常大小写，例如 `Docker · …`，不再输出 `DOCKER`。
+- The detail card anchors to the whole row and pops out on the sidebar's right without covering row-end actions.
+- The device status label reads "state · reason phrase", for example "连接中 · 自动恢复 2/3", no longer concatenated directly.
+- The project row uses the short recovery copy "自动恢复 2/3"; the full sentence is only in the detail card.
+- The connection description uses normal casing, for example `Docker · …`, no longer `DOCKER`.
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] 侧栏默认宽度 264px 时，项目名的可见宽度相比走查基线明显增加，用截图对比确认。
-- [x] 5 种状态下项目行的样子与原型一致：组件测试断言图标和短状态文字来自展示模型，并附截图。
-- [x] 详情卡的弹出延迟、各项操作、跳转并定位到设置页都有测试；"在设置中管理"用 E2E 覆盖。
-- [x] "打开远程项目"菜单能列出设备，已连接但没打开项目的在线设备也在其中。
-- [x] 会话头部和项目切换菜单都显示设备名，不同设备上的同名项目能区分开。
-- [x] 所有任务视图里，任务行设备标签的样式一致。
-- [x] 截图覆盖浅色和深色主题、中文和英文、900px 宽的窗口。
-- [x] 更新导航规格，并同步 E2E 用例目录。
-- [x] `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响的单测、受影响的 E2E 全部通过后，在本地提交。
+- At the default sidebar width of 264px, the visible width of the project name is clearly larger than the walkthrough baseline, confirmed by screenshot comparison.
+- Project rows in the 5 states look like the prototype: component tests assert the icon and short status text come from the presentation model, with screenshots.
+- The detail card's popup delay, each action, and jumping to and locating in Settings are tested; "在设置中管理" is covered by E2E.
+- The "打开远程项目" menu lists devices, including online devices that are connected but have no project open.
+- The session header and the project switch menu both show the device name, so same-named projects on different devices can be told apart.
+- In all task views the task-row device label style is consistent.
+- Screenshots cover light and dark themes, Chinese and English, and a 900px-wide window.
+- The navigation spec is updated and the E2E case catalog synced.
+- `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and affected E2E all pass before the local commit.
 
-## 验证记录（2026-09-29）
+## Verification Record (2026-09-29)
 
-- 项目行使用唯一状态图标、限宽设备名/模型短状态；详情共用一个 400ms 悬停/点击浮层，编辑、设备断开、原目录连接与设置卡定位均复用既有入口。会话及远程草稿头部、项目切换菜单与任务标签已同步。
-- 规范/需求双轴评审通过。评审发现的多线路偏好覆盖、草稿头部缺口、定位意图重复消费和焦点接管计时器均已修复并回归。真实 E2E 另复现并修复 Radix 自动锚点覆盖虚拟锚点的问题，确保返回项目页后仍在行右侧。
-- 五态真实组件与起始 HEAD 行组件并排比较：264px 中文项目名空间在线 101→105px、恢复 64→125px、离线 126→154px、需要处理 116→144px、失败 12→144px；截图覆盖中英、深浅、1400/900px，共 8 张，位于 `packages/desktop/.e2e-artifacts/rdux12-visual`。临时视觉入口已清理，未提交。
-- 真实 SSH E2E `conversation-session-remote-sidebar-menus` 通过，run `desktop-e2e-20260928191550395-p40953-3f34da887a24cf8d`。覆盖无项目在线设备进入目录、头部设备名、编辑连接、管理定位、断开及原目录重连、菜单关闭无 tooltip；应用中英/深浅/1400/900px 在线/离线截图共 16 张，并断言详情在整行右侧。新增用例保持 pending，fixture 校验通过；同步 catalog、coverage matrix、服务器执行队列。
-- 最终 UI 定向回归 66 项通过；两处旧验收不一致（远程 spec 队列登记、草稿头部静态断言）修正后相关 21 项通过。手机仅做既有单测回归，未做真机视觉验证；未执行 Linux 全量远程队列。
-- `pnpm typecheck`、桌面 E2E 类型检查、`pnpm lint`（64 条存量警告，0 错误）、`pnpm architecture:check --changed`（0 违规）通过。
-- 全量单测已执行完毕（`ZCODE_TEST_POOL=forks`、2 workers）：2,034 文件 / 18,741 项通过，2 文件 / 14 项按既有条件跳过；两项失败正是上述远程清单登记与旧草稿源码断言，均已修复并由 21 项定向回归验证。最终没有遗留失败。本机 threads 高并发曾触发内存压力并中断，最终采用仓库支持的隔离运行模式完成全量。
+- The project row uses a single status icon and width-limited device name / short model status; details share one 400ms hover/click overlay, and edit, device disconnect, original-directory connect and Settings card location reuse existing entries. Session and remote-draft headers, the project switch menu and task labels are synced.
+- The dual-axis review (conventions/requirements) passed; the findings (multi-route preference override, draft header gap, repeated consumption of the locate intent, focus takeover timer) were fixed with regressions. Real E2E also reproduced and fixed Radix's automatic anchor overriding the virtual anchor, so the overlay stays on the row's right after returning to the project page.
+- Five-state real components compared side by side with the starting HEAD row component, project-name space at 264px in Chinese: online 101→105px, recovering 64→125px, offline 126→154px, needs action 116→144px, failed 12→144px; 8 screenshots (Chinese/English, dark/light, 1400/900px) in `packages/desktop/.e2e-artifacts/rdux12-visual`. The temporary visual entry was cleaned up and not committed.
+- Real SSH E2E `conversation-session-remote-sidebar-menus` passes, run `desktop-e2e-20260928191550395-p40953-3f34da887a24cf8d`: online device with no project entering a directory, header device name, edit connection, manage location, disconnect and original-directory reconnect, no tooltip after menu close; 16 in-app Chinese/English, dark/light, 1400/900px online/offline screenshots, with the detail asserted on the row's right. The new case stays pending, the fixture check passes; catalog, coverage matrix and server execution queue are synced.
+- Final targeted UI regression: 66 passed; after fixing two inconsistent old acceptances (remote spec queue registration, draft header static assertion) 21 related tests pass. Mobile had only existing unit-test regression and no real-device visual verification; the Linux full remote queue was not run.
+- `pnpm typecheck`, desktop E2E type check, `pnpm lint` (64 pre-existing warnings, 0 errors) and `pnpm architecture:check --changed` (0 violations) pass.
+- The full unit run completed (`ZCODE_TEST_POOL=forks`, 2 workers): 2,034 files / 18,741 passing, 2 files / 14 skipped by existing condition; the two failures were exactly the remote list registration and the old draft source assertion above, fixed and verified by the 21 targeted tests. No failure remains. High-concurrency threads on this machine once hit memory pressure and aborted, so the repository-supported isolated mode was used for the full run.

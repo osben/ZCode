@@ -1,56 +1,56 @@
-# 15 — 项目创建与远程连接管理分离
+# 15 — Separating Project Creation from Remote Connection Management
 
 Status: ready-for-agent
 
-2026-10-12：产品决策 Q1–Q12 与测试切入点已确认；各子票实施与验证以其完成记录为准。2026-10-14：聊天入口合同按新确认更新，详见 [#21：连接后必选远程文件夹并进入项目](21-chat-settings-round-trip.md)。#21 已重新标记 ready-for-agent；旧聊天往返证据不代表新行为已实现。
+2026-10-12: product decisions Q1-Q12 and the test entry points are confirmed; the implementation and verification of each sub-ticket follow its own completion record. 2026-10-14: the chat entry contract was updated by a new confirmation, see [#21: Must choose a remote folder after connecting and enter the project](21-chat-settings-round-trip.md). #21 was re-marked ready-for-agent; old chat round-trip evidence does not mean the new behavior is implemented.
 
 ## Problem Statement
 
-以下保留 2026-10-12 的立项背景；2026-10-14 聊天连接后执行目标不清晰的问题与修订范围见 #21。
+The 2026-10-12 background is kept below; the problem of unclear execution targets after a chat connection on 2026-10-14 and the revised scope are in #21.
 
-用户希望在某台设备上创建或添加项目，目前却需要先选择本地或远程、进入已有连接列表，再进入另一个包含已保存设备和发现候选的连接向导。设备选择与项目创建分散在多个页面，难以判断当前是在添加设备、建立连接，还是创建项目。
+Users who want to create or add a project on a device currently must first choose local or remote, enter an existing-connection list, then enter another connection wizard with saved devices and discovery candidates. Device selection and project creation are spread over several pages, so it is hard to tell whether the user is adding a device, establishing a connection, or creating a project.
 
-侧栏、聊天框项目菜单和设置页的连接入口还具有不同的完成路径：侧栏连接后选择远端已有项目或新建项目；聊天框和设置的新建入口连接后继续选择目录。仅想添加设备的用户也会进入项目流程。已有连接列表与发现候选来源不同，前一个列表为空、后一个列表有许多目标时，界面没有清楚表达两者的区别。
+The connection entries of the sidebar, the chat-box project menu and Settings also have different completion paths: the sidebar connects and then selects an existing remote project or creates one; the new entries of the chat box and Settings continue to directory selection after connecting. Users who only want to add a device also enter the project flow. The existing-connection list and the discovery candidates have different sources; when the former list is empty and the latter has many targets, the UI does not make the difference clear.
 
-从创建项目或聊天过程中进入设备管理，还需要保留原草稿和返回位置。否则用户完成连接后必须重新填写项目，或丢失聊天输入；后台完成若自动跳页，也会打断后续工作。
+Entering device management from project creation or from a chat also needs to keep the original draft and return position. Otherwise users must refill the project after connecting, or lose their chat input; if a background completion jumps pages automatically, it interrupts later work.
 
 ## Solution
 
-将项目操作与设备管理分开，SSH、WSL、Docker 共用同一套入口和完成规则。
+Separate project operations from device management; SSH, WSL and Docker share one entry and one completion rule.
 
-- 「项目 +」直接打开包含项目名称、设备和源文件夹的创建表单，不再经过本地／远程选择和「下一步」。
-- 设备默认取打开表单时当前任务所在设备；没有当前任务时选「此电脑」。离线设备仍保留默认选择，不能静默切回本地。
-- 设备下拉菜单只展示「此电脑」、所有已添加设备及其状态，以及「添加远程设备…」。尚未成功识别的连接配置和发现候选不进入这个列表。
-- SSH config Host、WSL 发行版和 Docker 容器的发现结果放在设置的添加窗口中。窗口按 SSH／WSL／Docker 分类，默认 SSH，各类型保留发现和手动填写能力及现有平台限制。
-- 所有新增连接入口进入「设置 → 远程设备」并打开添加窗口，主操作为「添加并连接」。设置来源完成设备管理即可；聊天新任务草稿来源每次连接成功后都继续选择远程文件夹，并按 #21 确定项目后进入，不允许跳过项目发送。
-- 选择已有设备不发起连接。在线设备的「添加文件夹」直接打开目录选择；离线设备通过「连接并选择文件夹」显式连接，进度、补凭据和必要安装确认留在当前项目流程中。
-- 远程项目表单保留「添加此设备上的已有项目…」次要入口，避免把新建同目录项目误当作恢复原项目和任务。
+- "项目 +" (project +) opens a creation form with project name, device and source folder directly, with no local/remote choice and "next".
+- The device defaults to the device of the current task when the form opens; with no current task, "此电脑" (this computer). An offline device stays the default selection and must not silently switch back to local.
+- The device dropdown lists only "此电脑", all added devices with their status, and "添加远程设备…" (add remote device…). Connection configurations not yet successfully identified and discovery candidates do not enter this list.
+- Discovery results of SSH config Hosts, WSL distributions and Docker containers live in the Settings add dialog. The dialog is organized by SSH/WSL/Docker, defaults to SSH, and each type keeps its discovery and manual entry capability and existing platform limits.
+- All add-connection entries go to "Settings → 远程设备" and open the add dialog; the primary action is "添加并连接" (add and connect). A Settings origin finishes with device management only; a chat new-task draft origin continues to choose a remote folder after every successful connection and enters the project per #21; sending without a project is not allowed.
+- Selecting an existing device does not start a connection. For an online device "添加文件夹" (add folder) opens directory selection directly; an offline device connects explicitly through "连接并选择文件夹" (connect and choose folder), with progress, credential supply and required install confirmation staying in the current project flow.
+- The remote project form keeps the secondary entry "添加此设备上的已有项目…" (add existing project on this device…), so that creating a same-directory project is not mistaken for restoring the original project and tasks.
 
 ```mermaid
 flowchart TD
-    P[侧栏：项目加号] --> F[创建项目：名称、设备、源文件夹]
-    F --> S[选择已有设备，不发起连接]
-    S --> D[添加文件夹；离线时先显式连接]
-    D --> C[确认创建项目]
-    S --> E[添加此设备上的已有项目]
-    E --> L[必要时连接，再读取已有项目列表]
-    L --> A[登记原项目的本机入口]
-    F -- 添加远程设备 --> M[设置：远程设备]
-    H[聊天菜单：新建远程连接] --> M
-    M --> N[添加窗口：SSH / WSL / Docker]
-    N --> R[添加并连接：沿用认证和安装确认]
-    R --> O[按发起位置完成或返回]
+    P[Sidebar: project plus] --> F[Create project: name, device, source folder]
+    F --> S[Select an existing device, no connection]
+    S --> D[Add folder; connect explicitly first if offline]
+    D --> C[Confirm project creation]
+    S --> E[Add existing project on this device]
+    E --> L[Connect if needed, then read the existing project list]
+    L --> A[Register the local entry of the original project]
+    F -- Add remote device --> M[Settings: remote devices]
+    H[Chat menu: new remote connection] --> M
+    M --> N[Add dialog: SSH / WSL / Docker]
+    N --> R[Add and connect: keeps auth and install confirmation]
+    R --> O[Complete or return by origin]
 ```
 
-前台完成和取消规则：
+Foreground completion and cancel rules:
 
-| 发起位置       | 添加并连接成功                                                                                                         | 取消尚未完成的添加                                                       |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| 创建项目       | 返回原项目草稿并选择新设备；已有文件夹时先按 Q7 确认切换，拒绝则保留原设备和目录，新设备仍已添加                       | 返回原项目草稿，保持名称、设备和目录                                     |
-| 聊天框项目菜单 | 每次弹目标设备文件夹选择；确认目录后唯一匹配复用、多个匹配显式选择、零匹配按默认文件夹名创建；准备完成后进入项目新草稿 | 取消本次远程切换，恢复并明确显示原聊天目标，保留原草稿；已连接设备不断开 |
-| 设置页         | 留在远程设备页并定位对应设备                                                                                           | 留在远程设备页，不继续项目流程                                           |
+| Origin               | Add and connect succeeds                                                                                                                                                       | Cancel an unfinished add                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Create project       | Return to the original project draft and select the new device; if folders exist, confirm the switch per Q7 first; on rejection keep the original device and folders, the new device is still added | Return to the original project draft, keeping name, device and folders                              |
+| Chat-box project menu | Every time, a folder picker for the target device; after the directory is confirmed: a single match is reused, several matches are chosen explicitly, zero matches create a project with the default folder name; after preparation, enter the project's new draft | Cancel this remote switch, restore and show the original chat target explicitly, keep the original draft; an already-connected device is not disconnected |
+| Settings page        | Stay on the remote devices page and locate the device                                                                                                                          | Stay on the remote devices page and do not continue the project flow                                |
 
-「在后台继续」收起当前连接交互，由设置的设备卡或未完成连接项承接进度。后台成功只提示完成并提供继续入口，不强制跳页。失败保留配置和原因，可修改重试；关闭、取消或连接交互层的 Esc 取消本次尚未完成的流程。设备已经连接后关闭界面，不断开设备。
+"在后台继续" (continue in background) collapses the current connection interaction, and the Settings device card or the unfinished-connection item takes over progress. Background success only notifies completion and offers a continue entry and does not force a page jump. Failure keeps the configuration and reason for editing and retrying; close, cancel or Esc on the connection interaction layer cancels this unfinished flow. Closing the UI after the device is connected does not disconnect it.
 
 ## User Stories
 
@@ -109,130 +109,130 @@ flowchart TD
 
 ## Implementation Decisions
 
-### 已确认的产品决策
+### Confirmed product decisions
 
-| 决策 | 实施合同                                                                                                   |
-| ---- | ---------------------------------------------------------------------------------------------------------- |
-| Q1   | 项目入口负责设备、目录和项目选择；所有新增连接入口转设置；设备添加有独立完成点                             |
-| Q2   | SSH、WSL、Docker 一起实施，保留各自的能力与平台限制                                                        |
-| Q3   | 新建项目默认当前任务设备；无当前任务时用本地；离线不自动替换默认设备                                       |
-| Q4   | 设备选择只列已添加设备，含离线设备；发现候选留在添加窗口                                                   |
-| Q5   | 添加窗口按类型组织，默认 SSH，每类保留发现和手动填写                                                       |
-| Q6   | 选择已有设备不连接；离线设备由「连接并选择文件夹」发起连接，在项目流程中处理等待和错误                     |
-| Q7   | 有目录时切换设备须确认；确认后清目录、保留名称；取消保持全部原值                                           |
-| Q8   | 主操作为「添加并连接」；不增加「仅保存」模式；未识别配置保留在设置的未完成连接中                           |
-| Q9   | 远程项目表单提供添加已有项目入口，同一弹窗内显示列表，返回保留新建草稿                                     |
-| Q10  | 从项目添加设备，前台成功返回草稿并选新设备；已有目录仍须确认；取消恢复原草稿                               |
-| Q11  | 聊天新任务草稿每次连接后必选远程文件夹，按 #21 确定项目并进入；顶层取消恢复原目标；设置来源仍留在设置      |
-| Q12  | 失败保留并可重试；关闭／取消／Esc 取消未完成流程；后台继续不取消，后台完成不抢导航；已连接后关闭不等于断开 |
+| Decision | Implementation contract                                                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Q1       | The project entry owns device, directory and project selection; all add-connection entries go to Settings; device addition has an independent completion point |
+| Q2       | SSH, WSL and Docker are implemented together, each keeping its capabilities and platform limits                                                       |
+| Q3       | New projects default to the current task's device; local when there is no current task; offline never auto-replaces the default device                 |
+| Q4       | Device selection lists only added devices, including offline ones; discovery candidates stay in the add dialog                                         |
+| Q5       | The add dialog is organized by type, defaults to SSH, and each type keeps discovery and manual entry                                                   |
+| Q6       | Selecting an existing device does not connect; an offline device connects through "连接并选择文件夹", with waiting and errors handled in the project flow |
+| Q7       | Switching devices with directories requires confirmation; after confirmation clear directories and keep the name; cancel keeps all original values     |
+| Q8       | The primary action is "添加并连接"; no "save only" mode; unidentified configurations stay in the Settings unfinished connections                       |
+| Q9       | The remote project form offers an add-existing-project entry that shows the list in the same dialog; returning keeps the new-project draft              |
+| Q10      | Adding a device from a project: foreground success returns to the draft and selects the new device; existing directories still need confirmation; cancel restores the original draft |
+| Q11      | A chat new-task draft must choose a remote folder after each connection, determines the project per #21 and enters; top-level cancel restores the original target; Settings origin stays in Settings |
+| Q12      | Failure is kept and retryable; close/cancel/Esc cancels an unfinished flow; continue-in-background does not cancel, background completion does not steal navigation; closing after connecting is not a disconnect |
 
-### 模块与接线
+### Modules and wiring
 
-1. 修改项目创建和项目编辑模块，将原类型选择、Host 列表与项目表单整合为直接创建表单；复用现有目录选择器和远端已有项目选择器。
-2. 修改侧栏项目入口、聊天项目菜单、设置导航和远程设备管理模块。聊天入口文案使用「新建远程连接…」；设置新建进入同一个分类添加界面。
-3. 复用现有连接表单、连接流程、设备展示模型、认证与安装确认能力。统一侧栏和应用级连接交互的接线，避免分别持有两套会竞争的连接向导。
-4. 在现有 UI 导航和连接完成接缝表达发起位置与完成意图：仅完成设备管理、继续选择目录、继续选择已有项目、恢复明确的原项目。连接成功时按该意图分派，不能再统一落入目录选择。
-5. 现有流程已支持连接成功后由调用方接管。优先复用该接缝；不为跳过目录屏新造一条认证、安装或连接主链，不新增仅保存 Profile 的管理 API。
-6. 设置中的连接操作完成在设备管理范围；设备卡上的明确项目操作仍沿用项目意图。已有项目重连继续原项目，不能被本轮新建表单接管。
+1. Modify the project creation and editing modules, merging the old type selection, Host list and project form into a direct creation form; reuse the existing directory picker and remote existing-project picker.
+2. Modify the sidebar project entry, the chat project menu, Settings navigation and the remote device management module. The chat entry copy is "新建远程连接…"; Settings new enters the same categorized add UI.
+3. Reuse the existing connection form, connection flow, device presentation model, authentication and install confirmation. Unify the wiring of the sidebar and the app-level connection interaction, avoiding two competing connection wizards.
+4. Express the origin and completion intent at the existing UI navigation and connection-completion seam: device management only, continue to directory selection, continue to existing-project selection, restore an explicit original project. On connection success dispatch by this intent; it must no longer fall uniformly into directory selection.
+5. The existing flow already lets the caller take over after a connection succeeds. Prefer reusing that seam; do not build a new authentication, install or connection main chain to skip the directory screen, and add no management API that only saves a Profile.
+6. A connection operation in Settings completes within device management scope; an explicit project action on a device card keeps the project intent. Reconnecting an existing project continues the original project and must not be taken over by this round's new form.
 
-### 数据与状态归属
+### Data and state ownership
 
-7. Source 表示已识别的远端环境和账号；Connection Profile 表示到达该 Source 的连接方式。一台 Source 可有多条 Profile，设备列表不能按连接地址或显示名称另造设备身份。
-8. 已添加设备候选来自既有设备管理事实，与本机是否已打开该设备上的项目无关。发现候选、尚未识别的 Profile 与已识别设备分开；复用同一 Source 的连接不能产生重复设备。
-9. 项目名称、所选设备和源文件夹由项目草稿的单一 owner 持有；打开时初始化默认设备，后续状态刷新不覆盖用户选择。设置往返保留同一草稿，不在侧栏、设置和聊天分别复制草稿再相互同步。
-10. 连接流程持有请求归属、发起位置和完成意图。后台卡和弹窗投影同一操作；真实连接状态、日志、凭据仍归既有 Host 服务，UI 不另建连接事实缓存。
-11. 连接配置与凭据沿用现有提交边界。失败、取消或复用在线连接，不得无条件保存本次密码或覆盖已有凭据；添加失败保留可修正的表单，不等于宣称本次认证信息已经持久保存。
-12. 项目草稿恢复只覆盖本次交互内的页面往返；不新增跨重启草稿恢复。返回意图不保存密码或私钥口令，不改变已有凭据服务的存储规则。
-13. 不新增数据库迁移或改写 Source、Profile、项目及 workspace 身份格式。界面层的返回意图不进入任务协议，不成为新的任务、连接或消息 owner。
+7. A Source is an identified remote environment and account; a Connection Profile is the way to reach that Source. One Source can have several Profiles, and the device list must not invent a device identity from the connection address or display name.
+8. Added-device candidates come from existing device-management facts and are unrelated to whether this machine has opened a project on the device. Discovery candidates, not-yet-identified Profiles and identified devices are kept separate; a connection that reuses the same Source must not produce a duplicate device.
+9. Project name, selected device and source folder are held by the single owner of the project draft; the default device is initialized on open and later state refreshes do not overwrite the user's choice. A Settings round trip keeps the same draft; the draft is not copied in the sidebar, Settings and chat and synced back.
+10. The connection flow holds request ownership, origin and completion intent. The background card and the dialog project the same operation; real connection state, logs and credentials stay in the existing Host service, and UI builds no connection fact cache.
+11. Connection configuration and credentials keep the existing commit boundary. Failure, cancel or reuse of an online connection must not unconditionally save this attempt's password or overwrite existing credentials; a failed add keeps a correctable form, which does not claim that this authentication information was persisted.
+12. Project draft recovery covers only the page round trip within this interaction; no cross-restart draft recovery is added. The return intent saves no password or key passphrase and does not change the credential service storage rules.
+13. No database migration is added and the Source, Profile, project and workspace identity formats are not rewritten. The UI-layer return intent does not enter the task protocol and does not become a new task, connection or message owner.
 
-### 异步、取消与目录边界
+### Async, cancellation and directory boundaries
 
-14. 切换设备确认必须先于目录清空与目标切换；拒绝确认不产生部分修改。异步目录选择或读取返回时，核对其草稿、设备和请求仍有效，旧设备的结果不能写入新设备草稿。
-15. 设备选择、连接完成和目录浏览不新增项目或聊天。聊天来源按 #21 在用户确认目录后解析现存项目，零匹配时使用默认名称并沿用共享创建确认；其他入口仍须显式创建或添加。无效目录、无权限、读取或保存失败不新增幽灵入口，失败不能当作零匹配。
-16. 本地项目继续允许零个或多个 roots；远程项目必须恰好一个固定 root。已有远程项目的固定目录、项目身份和历史任务归属不随新表单变化。
-17. 添加已有远程项目使用原项目身份；通用新建同目录项目仍可产生另一项目。聊天来源的确认目录动作按 #21 做同设备精确目录解析：唯一匹配复用、多个匹配再选择，不合并项目，也不把全局保存改为按目录去重。旧远端的只读项目能力继续可用。
-18. 取消只撤销本次尚未完成的交互请求和它持有的临时资源，不删除已保存连接记录，不断开其他项目共享的设备连接，不撤销已经成功完成的添加。连接窗口关闭与原项目表单的显式放弃是不同操作，不能连带清空发起方草稿。
-19. 关闭或取消后的迟到连接、凭据、安装确认及目录结果不得重新打开界面、创建项目或覆盖新草稿。复用既有请求身份与失效机制，不用延迟跳转、定时器或轮询补偿状态同步。
-20. 前台成功返回只消费仍有效的原流程意图；原任务、草稿或目标已经失效时，不复活旧页面。后台完成只通知并提供显式继续入口，即使用户已经离开设置也不能抢焦点；后台失败和需要处理同样保留可访问的详情。
-21. 下拉菜单或确认层打开时，Esc 先遵循共享组件的顶层关闭规则；到连接交互层才表示取消本次连接，避免一次按键同时关闭多个层级。
+14. The device-switch confirmation must precede directory clearing and target switching; rejecting the confirmation produces no partial change. When an async directory selection or read returns, check that its draft, device and request are still valid; a result of the old device cannot be written into the new device's draft.
+15. Device selection, connection completion and directory browsing add no project or chat. A chat origin resolves the existing project after the user confirms the directory per #21, uses the default name on zero matches and follows the shared creation confirmation; other entries must still create or add explicitly. An invalid directory, no permission, read or save failure adds no ghost entry, and a failure is not treated as zero matches.
+16. Local projects still allow zero or more roots; a remote project must have exactly one fixed root. The fixed directory, project identity and history task ownership of an existing remote project do not change with the new form.
+17. Adding an existing remote project uses the original project identity; the generic create-same-directory project can still produce another project. The confirm-directory action of the chat origin does same-device exact-directory resolution per #21: a single match is reused, several matches are chosen again, projects are not merged, and the global save is not changed to dedupe by directory. The read-only project capability of old remotes stays available.
+18. Cancel only revokes the interaction request not yet completed and the temporary resources it holds; it does not delete saved connection records, disconnect devices shared by other projects, or undo an add that already completed. Closing the connection window and explicitly abandoning the original project form are different operations and must not clear the initiator's draft along with it.
+19. A late connection, credential, install confirmation or directory result after close or cancel must not reopen the UI, create a project or overwrite a new draft. Reuse the existing request identity and invalidation mechanism; do not compensate state sync with delayed jumps, timers or polling.
+20. Foreground success returns by consuming only a still-valid original flow intent; when the original task, draft or target is invalid, an old page is not resurrected. Background completion only notifies and offers an explicit continue entry, and even if the user has left Settings it must not steal focus; background failure and needs-action likewise keep accessible details.
+21. When a dropdown or confirmation layer is open, Esc follows the top-layer close rule of the shared component first; only at the connection interaction layer does it mean cancel this connection, so one keypress does not close several layers.
 
-### 平台与视觉
+### Platform and visuals
 
-22. 复用设计系统的字号、颜色、层级、圆角、尺寸、组件和状态模型；连接类型与连接状态各表达自身含义，不仅用颜色表示离线、失败或需要处理。
-23. 验证当前浅色和深色主题、中英文、窄窗口、键盘操作与焦点返回。长设备名、路径、错误和翻译不得挡住主操作。
-24. 远程设备管理仍受既有 Desktop 平台能力约束；WSL 仅在支持的平台提供，Docker 的不可用与无候选状态保持可区分。发现失败不阻塞其他来源或现有可用的手动入口。
-25. 共用表单在 Web／手机上遵循已有能力，不能提供通向不存在设置页的新增入口。「此电脑」沿用已有控制宿主语义，不表示浏览器所在设备的本地文件系统。手机继续附着桌面已有 Host，不创建独立 SSH、WSL 或 Docker session。
-26. 桌面 continuous 与手机 replayable、原项目重连和启动恢复、任务 owner、Provider 下发及 workspace 隔离沿用现有合同；本轮只重组用户入口和交互完成去向。
+22. Reuse the design system's type scale, colors, layers, radii, sizes, components and state model; connection type and connection state each express their own meaning, and offline, failed or needs-action are not expressed by color alone.
+23. Verify the current light and dark themes, Chinese and English, narrow windows, keyboard operation and focus return. Long device names, paths, errors and translations must not block the primary action.
+24. Remote device management stays bound by existing Desktop platform capabilities; WSL is offered only on supported platforms, and Docker's unavailable and no-candidate states stay distinguishable. Discovery failure does not block other sources or existing usable manual entries.
+25. The shared form on Web/mobile follows existing capabilities and must not offer an add entry leading to a non-existent Settings page. "此电脑" keeps the existing control-host semantics and does not mean the file system of the browser's device. The phone keeps attaching to the desktop's existing Host and creates no independent SSH, WSL or Docker session.
+26. Desktop continuous and mobile replayable, original project reconnect and startup recovery, task owner, Provider delivery and workspace isolation keep their existing contracts; this round only reorganizes the user entries and the interaction completion destination.
 
 ## Testing Decisions
 
-2026-10-12 用户已确认测试切入点：以现有桌面应用 E2E 为主，从侧栏、聊天框和设置三个真实入口验证完整流程；仅对难稳定控制的迟到结果、取消、草稿恢复时序补 UI 集成测试；认证、安装使用现有真实远程测试链，不新增测试专用业务接口。
+2026-10-12 test entry points confirmed by the user: mainly the existing desktop app E2E, verifying complete flows from the three real entries (sidebar, chat box and Settings); UI integration tests only for late results, cancellation and draft recovery timing that are hard to control stably; authentication and install use the existing real remote test chain, and no test-only business interface is added.
 
-### 测试原则与既有切入点
+### Test principles and existing entry points
 
-- **主要切入点是应用外部行为。** 通过真实入口操作，断言可见页面、按钮、焦点、原草稿、项目身份、任务归属及实际连接状态。不能只验证内部方法调用或让用例手工跳过待测设置导航。
-- **以现有接缝控制时序。** UI 集成测试挂载真实项目／连接组件，在已有平台和服务端口延迟返回、注入失败或释放结果；断言可见结果与项目写入等外部副作用，不锁定 hook 名称、私有状态字段或 DOM 层数。
-- **被测模块。** 项目创建／编辑、设备候选、已有项目选择、侧栏和聊天入口、设置导航与设备管理、连接流程完成分派及草稿生命周期。Host 连接和项目服务保留既有合同测试，仅在受影响边界补充断言。
-- **现有先例。** 三屏连接测试已有 SSH config、离线目标、收起、失败和关闭场景；项目输入框测试已有侧栏同源、项目选择与跨布局证据；原项目交接测试已有真实 SSH、Host 绑定屏障和入口移除后的迟到结果；连接流程 UI 测试已有延迟凭据、安装确认和取消恢复。复用这些组织方式与环境，不照搬已被本规格替代的三屏导航断言。
-- **真实环境证据独立记录。** SSH、WSL、Docker 的真实链路分别验证，Windows 的 WSL 用例不能以 SSH 或 mock PASS 代替。窄桌面窗口截图不等于真实手机 shared-host 验证；原生目录框可沿用系统返回值替身，但要标明替身边界。
-- **先测试后实现。** 先把下表接受场景映射进现有 case 目录和覆盖矩阵，补充能证明旧行为不满足新合同的交互测试，再修改代码。既有 E2E 中依赖类型选择、通用目录收尾和侧栏收起卡的 helper 与断言同步更新。
+- **The main entry point is externally observable app behavior.** Operate through real entries and assert the visible page, buttons, focus, original draft, project identity, task ownership and actual connection state. Do not verify only internal method calls or let a case manually skip the Settings navigation under test.
+- **Control timing through existing seams.** UI integration tests mount the real project/connection components, and delay, inject failures or release results at existing platform and service ports; assert visible results and external side effects such as project writes, and do not lock hook names, private state fields or DOM depth.
+- **Modules under test.** Project creation/editing, device candidates, existing project selection, sidebar and chat entries, Settings navigation and device management, connection flow completion dispatch, and the draft lifecycle. Host connection and project services keep their existing contract tests, with assertions added only at affected boundaries.
+- **Existing precedents.** The three-screen connection tests already have SSH config, offline target, collapse, failure and close scenarios; the project input tests have sidebar same-source, project selection and cross-layout evidence; the original-project handoff tests have real SSH, the Host binding barrier and late results after entry removal; the connection flow UI tests have delayed credentials, install confirmation and cancel recovery. Reuse these structures and environments, without copying three-screen navigation assertions superseded by this spec.
+- **Real-environment evidence is recorded separately.** SSH, WSL and Docker real chains are verified separately; a Windows WSL case cannot be replaced by an SSH or mock PASS. A narrow desktop window screenshot is not real-phone shared-host verification; the native directory dialog may use a system return-value stand-in, with the stand-in boundary stated.
+- **Tests before implementation.** First map the acceptance scenarios below into the existing case catalog and coverage matrix, add interaction tests that prove the old behavior does not satisfy the new contract, then change the code. Helpers and assertions in existing E2E that depend on type selection, generic directory wrap-up and the sidebar collapsed card are updated in step.
 
-### 接受场景与证据要求
+### Acceptance scenarios and evidence requirements
 
-下列 ID 是本轮验收清单，不表示测试已经存在或通过。每条均需保留 setup、操作、断言及运行证据；覆盖主题、语言和平台时采用代表性与高风险组合，不无差别展开全量笛卡尔积。
+The IDs below are this round's acceptance list and do not mean tests exist or pass. Each needs setup, operation, assertion and run evidence; when covering themes, languages and platforms use representative and high-risk combinations, not the full Cartesian product.
 
-| ID        | 初始条件与操作                                                         | 可观察断言                                                                                                     | 主要证据                        |
-| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------- |
-| RDUX15-01 | 分别从本地任务、远程任务、无当前任务点击项目加号                       | 直接显示完整表单，默认设备分别为本地、对应远端、本地；没有类型前置屏                                           | Desktop E2E                     |
-| RDUX15-02 | 当前任务设备离线；打开表单并等待状态刷新                               | 默认设备保留，状态可读；不自动切本地、不建立连接                                                               | Desktop E2E + UI 时序           |
-| RDUX15-03 | 设备有在线、离线、未打开项目的记录，另有发现候选和未识别 Profile       | 下拉包含所有已识别设备，不混入发现候选和未完成连接；不按项目 open set 丢设备                                   | UI 集成 + Desktop E2E           |
-| RDUX15-04 | 从项目、聊天菜单、设置分别点击新增连接                                 | 进入同一设置分区与分类添加窗口，不再次选择跨类型的已有设备                                                     | 三入口 Desktop E2E              |
-| RDUX15-05 | 添加窗口切换 SSH／WSL／Docker，选择发现候选或手动输入；模拟发现失败    | 默认 SSH；类型字段和能力正确；候选选择不拨号，显式提交才连接；发现失败不阻塞其他可用入口                       | UI 集成 + 支持平台 E2E          |
-| RDUX15-06 | 项目表单选择在线设备并添加文件夹                                       | 选择设备无连接副作用，目录浏览复用该设备；选择文件夹尚不创建项目                                               | Desktop E2E                     |
-| RDUX15-07 | 项目表单选择离线设备，点击连接并选择文件夹                             | 点击前不连接；进度和必要确认在项目流程内，成功进入目录浏览，不跳设备设置                                       | 真实远程 Desktop E2E            |
-| RDUX15-08 | 表单已有名称和文件夹，切换设备；分别确认和取消                         | 确认只清目录并切设备，名称保留；取消保持全部原值；空目录草稿无需确认                                           | Desktop E2E                     |
-| RDUX15-09 | 设备 A 的目录选择／读取尚未完成，取消或切到设备 B，再释放 A 的响应     | A 的结果不写入 B 草稿，不重新打开旧目录页，不保存项目                                                          | UI 集成                         |
-| RDUX15-10 | 直接从设置添加并成功连接设备；另检查已有设备的普通连接操作             | 设备管理操作独立完成并定位设备，不弹目录页、不新增项目或聊天                                                   | 真实远程 Desktop E2E            |
-| RDUX15-11 | 从有名称的项目草稿新增设备并前台成功                                   | 返回同一草稿，保留名称并选新设备；未显式创建前项目数量不变                                                     | Desktop E2E                     |
-| RDUX15-12 | 原草稿已有文件夹，新增设备成功后返回；分别接受和拒绝换设备             | 返回仍须经过 Q7 确认；拒绝保留原设备和目录，新设备仍在已添加列表                                               | Desktop E2E                     |
-| RDUX15-13 | 从项目草稿新增设备，分别在表单、连接、等待确认时取消                   | 回到原项目草稿；未新增项目；已保存连接记录和其他共享项目不被删除或断开                                         | Desktop E2E + UI 时序           |
-| RDUX15-14 | 聊天新草稿新增设备；成功必选目录并进入项目，取消恢复原目标             | 新合同详见 RDUX21-01–24；发送限制、项目身份、取消和异步保护须重验；草稿跨设备迁移延期，旧 PASS 不覆盖          | Desktop E2E + 必要 UI／服务时序 |
-| RDUX15-15 | 远程设备有原项目和任务，从次要入口选该项目；也测试返回列表前的创建草稿 | 添加原项目入口并保留原任务身份；不创建同目录新项目；返回保留草稿；重复添加不造重复入口                         | Desktop E2E + 项目服务合同      |
-| RDUX15-16 | 同设备同目录存在不同项目；另以只读旧远端执行添加                       | 原项目可分别选择；不按路径合并；只读远端可添加已有项目且不能非法新建                                           | 既有服务／UI 合同 + E2E         |
-| RDUX15-17 | 本地创建空项目和多目录项目，远端创建单目录项目，再选择不可用目录       | 本地能力保留；远端目录合同有效；读取或保存失败不新增幽灵项目                                                   | Desktop E2E + 项目服务合同      |
-| RDUX15-18 | 分别遇到补凭据、认证失败、安装／升级确认，修正后重试                   | 原完成意图不丢失，配置及可理解错误保留；所需确认不被跳过；未使用的新凭据不覆盖已有值                           | 真实远程 E2E + 既有凭据合同     |
-| RDUX15-19 | 连接中点击后台继续，再手动离开设置；让连接成功、失败或等待处理         | 设置项承接同一进度；前台不被抢占；成功有继续入口，失败／待处理有可访问详情；无重复操作                         | Desktop E2E + UI 时序           |
-| RDUX15-20 | 连接已关闭、取消或发起方失效后释放旧凭据、安装或连接结果               | 旧结果不复活弹窗、不跳页、不新增项目、不覆盖新草稿；只清理本次独占临时资源                                     | UI 集成 + 原项目交接 E2E        |
-| RDUX15-21 | 同设备已有项目正在使用连接，再新增复用连接或取消另一请求               | 仍为同一设备；原项目可继续使用；新增未参与认证的凭据不覆盖旧值；关闭成功界面不断开                             | 真实远程 E2E + Host 合同        |
-| RDUX15-22 | 已有远程项目离线，点击原项目并经历补凭据／安装；另跑启动恢复           | 成功仍进入原项目和目录，不误入新建表单；恢复不要求重新选目录                                                   | 原项目重连 E2E                  |
-| RDUX15-23 | 仅用键盘操作设备下拉、添加、切换确认和关闭；覆盖长名称与错误           | Esc 按顶层交互语义生效，焦点可见且返回合理；状态有文字；无操作被裁切                                           | Desktop E2E + 可访问性断言      |
-| RDUX15-24 | 浅色／深色、中英文、正常／窄窗口；macOS／Windows／Linux 对应能力       | 使用现有设计系统；布局、系统目录选择及类型能力正确；WSL 仅在支持平台出现                                       | 视觉证据 + 对应平台 E2E         |
-| RDUX15-25 | Web／手机使用现有 Host 的项目界面，并恢复已有远程工作区                | 能力门禁有效，无不存在的设置入口，无浏览器本机目录误用，无独立远程 session；共享 Host 与 replayable 恢复不回退 | Web／手机回归 + 既有 Host 合同  |
+| ID        | Initial condition and operation                                                            | Observable assertion                                                                                                           | Main evidence                   |
+| --------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------- |
+| RDUX15-01 | Click project plus from a local task, a remote task, and with no current task              | The full form shows directly; default device is local, the corresponding remote, local respectively; no type-first screen      | Desktop E2E                     |
+| RDUX15-02 | Current task's device is offline; open the form and wait for a state refresh               | The default device is kept with a readable status; no auto switch to local, no connection established                          | Desktop E2E + UI timing         |
+| RDUX15-03 | Device has online, offline and no-project-open records, plus discovery candidates and unidentified Profiles | The dropdown includes all identified devices, without discovery candidates and unfinished connections; devices are not dropped by the project open set | UI integration + Desktop E2E    |
+| RDUX15-04 | Click add connection from a project, the chat menu and Settings                            | All enter the same Settings section and the categorized add dialog, with no second selection among cross-type existing devices | Three-entry Desktop E2E         |
+| RDUX15-05 | In the add dialog switch SSH/WSL/Docker, choose a discovery candidate or enter manually; simulate discovery failure | SSH default; type fields and capabilities are correct; choosing a candidate does not dial, explicit submit connects; discovery failure does not block other usable entries | UI integration + supported-platform E2E |
+| RDUX15-06 | Project form selects an online device and adds a folder                                    | Selecting a device has no connection side effect, directory browsing reuses that device; choosing a folder does not create the project yet | Desktop E2E                     |
+| RDUX15-07 | Project form selects an offline device and clicks connect and choose folder                | No connection before the click; progress and required confirmations are inside the project flow; success enters directory browsing without jumping to device settings | Real-remote Desktop E2E         |
+| RDUX15-08 | The form has a name and folders; switch device; confirm and cancel respectively            | Confirm clears only directories and switches device, the name is kept; cancel keeps all original values; an empty-directory draft needs no confirmation | Desktop E2E                     |
+| RDUX15-09 | Device A's directory selection/read is unfinished; cancel or switch to device B, then release A's response | A's result is not written into B's draft, does not reopen the old directory page, does not save a project                      | UI integration                  |
+| RDUX15-10 | Add and connect a device directly from Settings and succeed; also check ordinary connection operations of an existing device | The device management operation completes independently and locates the device, with no directory page, no new project or chat  | Real-remote Desktop E2E         |
+| RDUX15-11 | Add a device from a named project draft and succeed in the foreground                      | Returns to the same draft, keeps the name and selects the new device; the project count does not change before explicit creation | Desktop E2E                     |
+| RDUX15-12 | The original draft has folders; return after a new device is added; accept and reject the device change | Return still goes through the Q7 confirmation; rejecting keeps the original device and folders, the new device stays in the added list | Desktop E2E                     |
+| RDUX15-13 | Add a device from a project draft and cancel in the form, while connecting, and while waiting for confirmation | Back to the original project draft; no project added; saved connection records and other shared projects are not deleted or disconnected | Desktop E2E + UI timing         |
+| RDUX15-14 | Add a device from a new chat draft; success must choose a directory and enter the project, cancel restores the original target | The new contract is detailed in RDUX21-01 to 24; send limits, project identity, cancel and async protection must be re-verified; cross-device draft migration is deferred, old PASS does not cover this | Desktop E2E + necessary UI/service timing |
+| RDUX15-15 | A remote device has an original project and tasks; pick that project from the secondary entry; also test the create draft before returning to the list | The original project entry is added and original task identity kept; no same-directory new project is created; returning keeps the draft; repeated adds make no duplicate entry | Desktop E2E + project service contract |
+| RDUX15-16 | Different projects exist for the same device and directory; also add with a read-only old remote | Original projects can be selected separately; no merge by path; a read-only remote can add an existing project and cannot create illegally | Existing service/UI contracts + E2E |
+| RDUX15-17 | Create an empty project and a multi-directory project locally, a single-directory project remotely, then pick an unavailable directory | Local capability retained; the remote directory contract holds; a read or save failure adds no ghost project                    | Desktop E2E + project service contract |
+| RDUX15-18 | Meet credential supply, authentication failure, install/upgrade confirmation, then retry after correcting | The original completion intent is not lost, configuration and understandable errors are kept; required confirmations are not skipped; unused new credentials do not overwrite existing values | Real-remote E2E + existing credential contract |
+| RDUX15-19 | While connecting click continue in background, then leave Settings manually; let the connection succeed, fail or wait for action | The Settings item takes over the same progress; foreground is not preempted; success has a continue entry, failure/pending has accessible details; no duplicate operation | Desktop E2E + UI timing         |
+| RDUX15-20 | After the connection is closed, cancelled or the initiator is invalid, release an old credential, install or connection result | The old result does not revive a dialog, jump pages, add a project or overwrite a new draft; only exclusive temporary resources of this attempt are cleaned | UI integration + original-project handoff E2E |
+| RDUX15-21 | A project on the same device is using the connection; add a reusing connection or cancel another request | Still the same device; the original project keeps working; new credentials not involved in authentication do not overwrite old values; closing the success UI does not disconnect | Real-remote E2E + Host contract |
+| RDUX15-22 | An existing remote project is offline; click the original project and go through credential supply/install; also run startup recovery | Success still enters the original project and directory, not the new-project form; recovery does not require choosing a directory again | Original-project reconnect E2E  |
+| RDUX15-23 | Operate the device dropdown, add, switch confirmation and close by keyboard only; cover long names and errors | Esc works by top-layer interaction semantics, focus is visible and returns sensibly; states have text; no action is clipped    | Desktop E2E + accessibility assertions |
+| RDUX15-24 | Light/dark, Chinese/English, normal/narrow window; macOS/Windows/Linux capabilities       | Uses the existing design system; layout, system directory selection and type capabilities are correct; WSL appears only on supported platforms | Visual evidence + per-platform E2E |
+| RDUX15-25 | Web/mobile use the project UI of the existing Host and restore existing remote workspaces | Capability gating works, no non-existent Settings entry, no misuse of the browser's local directory, no independent remote session; shared Host and replayable recovery do not regress | Web/mobile regression + existing Host contract |
 
-### 实施完成门槛
+### Implementation completion bar
 
-- 代码实施需通过类型检查、lint、架构门禁、任务范围内受影响单测及对应 Desktop E2E；共享 UI 与远程边界做适用的 Web／手机回归。
-- 记录真实 SSH、WSL、Docker、操作系统和手机证据范围。环境阻塞必须列出未验证场景，不能用组件测试或旧版本通过记录代替。
-- 新 E2E 按既有工作流进入人工审核候选；运行成功不等于 formal／CI 准入，正式晋升另走原流程。
-- 本次交付仅为文档，检查文档结构、引用、规则一致性、格式和开源约束；不把未执行的功能测试写成已通过。
+- Code implementation passes typecheck, lint, the architecture gate, affected unit tests within the task scope and the corresponding Desktop E2E; shared UI and remote boundaries get applicable Web/mobile regression.
+- Record the evidence scope of real SSH, WSL, Docker, operating systems and phones. Environment blockers must list the unverified scenarios and must not be replaced by component tests or old-version pass records.
+- New E2E enter the manual-review candidate stage per the existing workflow; a successful run is not formal/CI admission, and formal promotion follows the original flow.
+- This delivery is documentation only: check document structure, references, rule consistency, formatting and open-source constraints; do not write unexecuted functional tests as passed.
 
 ## Out of Scope
 
-- 改写 SSH、WSL、Docker 的传输、认证、安装、升级或重连状态机；新增 ssh-agent、默认密钥等未确认能力。
-- 引入「仅保存但不连接」模式，或把尚未识别的连接配置作为已添加设备供项目选择。
-- 远程多目录、远程无项目任务、修改已建远程项目的固定目录、按路径合并项目或迁移历史任务。
-- 重做设备卡的全部视觉、侧栏排序和分组，或新增大型设备清单的筛选系统。
-- 新增跨重启的项目／连接草稿恢复，或把密码纳入页面返回意图。
-- 扩大手机或普通 Web 的远程设备管理能力，创建独立的手机远程连接 owner，或改变 continuous／replayable 边界。
-- 重做开发专用 Server 直连入口、Provider 下发、任务协议、workspace 身份和存储迁移。
+- Rewriting the SSH, WSL and Docker transport, authentication, install, upgrade or reconnect state machines; adding unconfirmed capabilities such as ssh-agent and default keys.
+- Introducing a "save but do not connect" mode, or offering unidentified connection configurations as added devices for project selection.
+- Remote multi-directory, remote projectless tasks, changing the fixed directory of an already-created remote project, merging projects by path, or migrating history tasks.
+- Redoing all visuals of the device card, sidebar ordering and grouping, or adding a filtering system for large device lists.
+- Adding cross-restart project/connection draft recovery, or putting the password into the page-return intent.
+- Expanding remote device management on mobile or ordinary Web, creating an independent mobile remote connection owner, or changing the continuous/replayable boundary.
+- Redoing the dev-only Server direct entry, Provider delivery, task protocol, workspace identity and storage migration.
 
 ## Further Notes
 
-- 本次发布只交付规格，未修改功能代码或执行功能测试；后续实施以本文为目标，不将 ready-for-agent 当作已实现或已验证。
-- 本轮 Q1–Q12 与测试切入点已确认；2026-10-14 的聊天入口修订及取消、目录匹配规则也已确认。实现前从本 Issue 及 #21 的接受场景开始，不重新讨论已确认决策；草稿／附件跨设备迁移不在 #21 范围。
-- [本地 Issue 约定](../../agents/issue-tracker.md)中的 ready-for-agent 由本文 Status 表达；本文件同时作为完整 spec，不复制另一份正文，也不发布远端 Issue。
-- [远程连接 UX 索引](01-remote-connection-ux-optimization.md)记录本票与已完成批次的关系。2026-10-14 仅重开 #21 以实施聊天入口新合同，其他子票状态及历史证据保留，不推进未决的 ssh-agent 评估。
-- 实施本票时，[连接 UX 规格](../../architecture/remote-device-connection-ux-spec.md)中的通用三屏入口、混合发现列表、成功必进目录、侧栏收起进度位置及关闭清空所有草稿的相关表述，由本文对应合同替代。五态、错误分类、日志、安装确认、凭据保存和设备身份继续沿用原合同。
-- 实施本票时，[项目导航规格](../../remote/project-first-remote-navigation-spec.md)中的项目加号入口和无目录手动连接统一选目录规则，按本文的项目／设备管理意图区分；既有项目重连、启动恢复、身份隔离和历史数据规则继续有效。旧文档的已实现标记和旧测试证据不代表本票完成。
-- 领域边界继续依据 [R3 主规格](../../architecture/r3-source-server-remote-architecture.md)及[运行时边界](../../agents/runtime-boundaries.md)；UI 依据[设计规范](../../../DESIGN.md)，本地目录选择沿用[现有合同](../../ui/project-local-directory-picker.md)。
-- 实施时把接受场景关联到[case 目录](../../conversation-session-case-catalog.md)和[覆盖矩阵](../../testing/conversation-session-e2e-coverage-matrix.md)，按照[E2E 工作流](../../testing/conversation-session-e2e-development-workflow.md)维护证据。这里只给验收目标，不伪造用例文件或 PASS。
+- This release delivers the spec only and changes no functional code or runs functional tests; later implementation targets this document, and ready-for-agent is not taken as implemented or verified.
+- This round's Q1-Q12 and the test entry points are confirmed; the 2026-10-14 chat entry revision and the cancel and directory matching rules are also confirmed. Before implementation start from this issue's and #21's acceptance scenarios without re-discussing confirmed decisions; draft/attachment migration across devices is outside #21.
+- ready-for-agent from the [local issue convention](../../agents/issue-tracker.md) is expressed by this document's Status; this file is also the complete spec, does not duplicate another body, and does not publish a remote issue.
+- The [remote connection UX index](01-remote-connection-ux-optimization.md) records this ticket's relation to the completed batches. 2026-10-14 reopens only #21 to implement the new chat entry contract; the status and historical evidence of other sub-tickets are kept and the undecided ssh-agent evaluation is not advanced.
+- When implementing this ticket, the statements in the [connection UX spec](../../architecture/remote-device-connection-ux-spec.md) about the generic three-screen entry, the mixed discovery list, success always entering a directory, the sidebar collapsed progress position, and closing clearing all drafts are replaced by the corresponding contract here. The five states, error classification, logs, install confirmation, credential saving and device identity keep the original contract.
+- When implementing this ticket, the project plus entry and the "manual connection without a directory uniformly chooses a directory" rule in the [project navigation spec](../../remote/project-first-remote-navigation-spec.md) are distinguished by this document's project/device-management intents; the existing project reconnect, startup recovery, identity isolation and history data rules remain valid. Implemented marks and old test evidence in old documents do not mean this ticket is complete.
+- Domain boundaries continue to follow the [R3 main spec](../../architecture/r3-source-server-remote-architecture.md) and [runtime boundaries](../../agents/runtime-boundaries.md); UI follows the [design guidelines](../../../DESIGN.md), and local directory selection follows the [existing contract](../../ui/project-local-directory-picker.md).
+- During implementation link the acceptance scenarios to the [case catalog](../../conversation-session-case-catalog.md) and [coverage matrix](../../testing/conversation-session-e2e-coverage-matrix.md) and maintain evidence per the [E2E workflow](../../testing/conversation-session-e2e-development-workflow.md). Only acceptance targets are given here; no case files or PASS are fabricated.

@@ -1,283 +1,154 @@
-# 原项目连接中的认证、升级与重装交接缺失
+# Missing Authentication, Upgrade and Reinstall Handoff while Connecting an Original Project
 
 Status: done
 
-## 2026-10-11 当前项目入口回归
+## 2026-10-11 Current Project Entry Regression
 
-业务基线 `d31e735905cf744e75a0a93548a80acabe871ae5`，test 构建。
-批次 `r3-server-20261011101534847-c8a52a` 的 `version-snapshot-failure-required` 已完成
-真实 SSH 首装、A/B 项目创建和旧版本元数据夹具安装。点击原项目菜单“连接”后没有打开向导，
-页面停在“需要处理 / 重新连接”，远端最终仍为 `3.14.0`。
+Business baseline `d31e735905cf744e75a0a93548a80acabe871ae5`, test build. In batch `r3-server-20261011101534847-c8a52a`, `version-snapshot-failure-required` completed a real SSH first install, A/B project creation and the install of the old-version metadata fixture. Clicking "连接" (connect) in the original project menu did not open the wizard; the page stayed on "需要处理 / 重新连接" (needs action / reconnect) and the remote ended at `3.14.0`.
 
-- 运行日志确认 `remote-projects.connectHost` 返回 `SourceServerUpgradeRequiredError`：
-  `Source Server 3.14.0 must be upgraded to at least 3.15.1`。
-- 快照故障夹具仅在向导存在时截获读取；299 次运行采样均为零条请求。此次失败发生在
-  升级意图交接之前，不能归因于快照拒绝后的恢复逻辑，也不能声称已覆盖该故障分支。
-- 当前 `packages/ui/src/project-sidebar/index.tsx` 的项目连接动作直接调用
-  `remoteService.connectHost`，未走此前恢复原项目时的向导升级交接。该调用链与上述运行错误一致。
-- 证据位于 `packages/desktop/.e2e-artifacts/r3-server-20261011101534847-c8a52a-version-snapshot-failure-required/`：
-  `version-policy.json`、`test-results.ndjson`、失败录像和 `logs/desktop` 日志。
+- The run log confirms `remote-projects.connectHost` returned `SourceServerUpgradeRequiredError`: `Source Server 3.14.0 must be upgraded to at least 3.15.1`.
+- The snapshot fault fixture intercepts reads only while the wizard exists; all 299 runtime samples had zero requests. This failure happened before the upgrade-intent handoff, so it cannot be attributed to the recovery logic after a snapshot rejection, and that fault branch cannot be claimed as covered.
+- The project connection action in the current `packages/ui/src/project-sidebar/index.tsx` calls `remoteService.connectHost` directly and does not use the wizard upgrade handoff used before when restoring the original project. This call chain matches the run error above.
+- Evidence is under `packages/desktop/.e2e-artifacts/r3-server-20261011101534847-c8a52a-version-snapshot-failure-required/`: `version-policy.json`, `test-results.ndjson`, the failure recording and the `logs/desktop` logs.
 
-全量批次 `r3-server-20261011105317614-4a6780` 再次复现：`manual-required` 397.3 秒失败，
-`snapshot-failure-required` 213.9 秒失败。两者 `finalInstalledVersion` 都仍为 `3.14.0`，
-均未得到 `restoredProjects`。测试中另有升级后版本硬编码 `3.15.0` 的过时断言，已改为本轮
-真实首装版本；这两次失败发生在恢复等待阶段，尚未执行到该版本断言，不能归为硬编码造成的误报。
+The full batch `r3-server-20261011105317614-4a6780` reproduced it again: `manual-required` failed at 397.3 seconds, `snapshot-failure-required` at 213.9 seconds. Both had `finalInstalledVersion` still `3.14.0` and neither got `restoredProjects`. The test also had an outdated assertion hard-coding the post-upgrade version `3.15.0`, now changed to this round's real first-install version; these two failures happened in the recovery wait stage and had not reached that version assertion, so they cannot be attributed to a false alarm from hard-coding.
 
-本轮只记录业务回归，保留失败断言，不修改业务实现。完整队列中的普通手动更新变体还需独立复核；
-以下旧版本修复与通过记录保留，不作为当前基线的通过证据。
+This round recorded only the business regression, kept the failing assertions, and modified no business implementation. The ordinary manual update variant in the full queue still needs an independent re-check; the old-version fixes and pass records below are kept and are not pass evidence for the current baseline.
 
-同基线测试补丁 07 的批次 `r3-server-20261011125749338-152f05` 中，`serverupdate`
-（213.3 秒）和 `serverupdate-force`（226.7 秒）也停在“恢复入口没有提供更新操作”。
-这两个同版本异 SHA 的用例未到达 running-task 强制更新确认，不能把它们计为 guard 已覆盖。
-原断言和独立目标仍保留，业务交接恢复后需继续验证后续取消/强制分支。
+In batch `r3-server-20261011125749338-152f05` of test patch 07 on the same baseline, `serverupdate` (213.3 seconds) and `serverupdate-force` (226.7 seconds) also stopped at "the recovery entry offers no update action". These two same-version different-SHA cases did not reach the running-task forced-update confirmation, so they cannot be counted as covering the guard. The original assertions and independent targets are kept; the later cancel/force branches still need verification once the business handoff is restored.
 
-同批 `version-snapshot-failure-required` 在 225.7 秒后失败，原始首装版本为 `3.15.1`，
-故障结束仍为 `3.14.0`，没有 `restoredProjects` 或 `snapshotFailure` 结果。
-这是升级交接之前的阻塞；快照拒绝、重试只更新一次的后续断言仍未到达。
-该批 `manual-required` 398.4 秒失败，最终也仍为 `3.14.0`，没有恢复项目。
+`version-snapshot-failure-required` in the same batch failed after 225.7 seconds, with an original first-install version of `3.15.1` and `3.14.0` at the end of the fault, with no `restoredProjects` or `snapshotFailure` result. This is a block before the upgrade handoff; the later assertions of snapshot rejection and "retry updates only once" were not reached. `manual-required` in that batch failed after 398.4 seconds and also ended at `3.14.0` with no restored projects.
 
-## 后台更新后的恢复仍待分诊
+## Recovery after a Background Update Still Awaiting Triage
 
-同一全量批次 `automatic-required` 的远端最终已是 `3.15.1`，与手动分支未更新不同。
-运行日志记录 `source-server-management.updateSource OK (64480.1ms)`；其后只看到一个 Source
-连接的 ready ACK，未看到原 A/B 的 workspace-context-bound。等待 B 恢复的快照仍保留 active
-identity/path，但没有匹配 tab 或 remoteSessionId，382.8 秒后失败。
+In the same full batch, the remote of `automatic-required` ended at `3.15.1`, unlike the manual branch which did not update. The run log records `source-server-management.updateSource OK (64480.1ms)`; afterwards only the ready ACK of one Source connection appeared, with no workspace-context-bound of the original A/B. The snapshot waiting for B to recover still kept the active identity/path but had no matching tab or remoteSessionId, and failed after 382.8 seconds.
 
-该分支不能记为“升级没执行”，也不能只凭导航缓存缺行就断言物理连接失败。
-原项目自动恢复的合同保留，后续需结合 Source attachment 与项目导航 owner 继续分诊。
-`optional` 已恢复 A/B 且远端保持 `3.16.0`。测试补充异步等待后，补丁 07 复验仍缺少更新提示，
-A/B 恢复正常；已另记为[可选更新提示缺失](21-optional-update-notice-missing.md)，
-避免与原项目升级/恢复失败混为一项。
+This branch cannot be recorded as "the upgrade did not run", and a missing row in the navigation cache alone cannot assert a physical connection failure. The contract of automatic recovery of the original project is kept; further triage needs to combine the Source attachment with the project-navigation owner. `optional` recovered A/B and the remote stayed at `3.16.0`. After the test added async waiting, the patch 07 re-check still lacked the update hint, with A/B recovering normally; this is recorded separately as [optional update notice missing](21-optional-update-notice-missing.md), to avoid mixing it with the original-project upgrade/recovery failure.
 
-测试补丁 07 的 `automatic-required` 再次在 395.2 秒后失败：`finalInstalledVersion=3.15.1`，
-但没有 `restoredProjects`。与同批手动分支保留 `3.14.0` 的结果不同，后台更新完成后的项目恢复
-仍需单独修复，不能用补上手动升级向导交接一项就宣称全部恢复。
+`automatic-required` of test patch 07 failed again after 395.2 seconds: `finalInstalledVersion=3.15.1` but no `restoredProjects`. Unlike the manual branch of the same batch that kept `3.14.0`, project recovery after the background update completes still needs a separate fix; adding the manual-upgrade wizard handoff does not justify claiming that all recovery is done.
 
-## 同基线的卸载后重新安装入口
+## Reinstall Entry after Uninstall on the Same Baseline
 
-全量批次 `r3-server-20261011105317614-4a6780` 的 `uninstall` 也没有到达原项目的安装确认。
-`uninstall.json` 记录正式 CLI 两次 DELETE 确认完成：`current.json`/releases 已清除，
-原 installationId、配置、历史和用户数据哨兵保留。原 task 已进入离线保留态，点击项目“连接”后，
-30 秒内没有“安装并继续”向导。失败视频末帧保留原消息，页面显示“需要处理 / 重新连接”，
-侧栏项目仍离线，未出现安装确认。
+`uninstall` in the full batch `r3-server-20261011105317614-4a6780` also did not reach the install confirmation of the original project. `uninstall.json` records that the official CLI's two DELETE confirmations completed: `current.json`/releases were cleared and the original installationId, config, history and the user data sentinel were kept. The original task entered the offline-retained state, and after clicking the project's "连接" there was no "安装并继续" (install and continue) wizard within 30 seconds. The last frame of the failure video keeps the original message, the page shows "需要处理 / 重新连接", the sidebar project is still offline and no install confirmation appeared.
 
-这是已观察到的重新安装交接缺失；尚不能只凭相似界面断言与升级分支具有完全相同根因。
-运行日志中的 `remote-projects.connectHost OK (32.3ms)` 也不能证明重新安装完成。
-定向复跑 `r3-server-20261011123601821-eca14c` 已确认：失败后 `current=none`、releases 为空、
-原 tab 的 remoteSessionId 为 null、项目 offline、dialog 为 null。没有发生静默重新安装。
-不改为从新设备入口安装来绕过原项目合同。
-证据目录：`packages/desktop/.e2e-artifacts/r3-server-20261011105317614-4a6780-uninstall/`。
+This is an observed missing reinstall handoff; it cannot be asserted to have exactly the same root cause as the upgrade branch merely from a similar UI. `remote-projects.connectHost OK (32.3ms)` in the run log does not prove the reinstall completed. The targeted re-run `r3-server-20261011123601821-eca14c` confirmed that after the failure `current=none`, releases are empty, the original tab's remoteSessionId is null, the project is offline and the dialog is null; no silent reinstall happened. Installing from the new-device entry to bypass the original-project contract is not adopted. Evidence directory: `packages/desktop/.e2e-artifacts/r3-server-20261011105317614-4a6780-uninstall/`.
 
-## 原项目缺少凭据时没有进入认证向导
+## Original Project Without Credentials Did Not Enter the Authentication Wizard
 
-补丁 08、批次 `r3-server-20261011143037600-31012b` 的 `projectnavigation` 已通过离线项目
-平铺、时间线切换、设备标注、项目菜单与停用远程无项目入口检查。夹具故意不保存 SSH 密码，
-从项目菜单点击连接后，Host 明确返回 `Connection Profile requires interactive credentials`，
-但 20 秒内没有认证向导，整体在 86.5 秒失败。
+`projectnavigation` in patch 08, batch `r3-server-20261011143037600-31012b`, passed the checks of flat offline projects, timeline switching, device labels, the project menu and the retired remote projectless entry. The fixture deliberately saves no SSH password; after clicking connect in the project menu the Host returned `Connection Profile requires interactive credentials`, but no authentication wizard appeared within 20 seconds, and the whole case failed at 86.5 seconds.
 
-这是缺凭据时的交接缺失，不是凭据丢失：该夹具本来就没有保存密码。跨设备表单隔离和既有
-下载方式保留的后续断言尚未到达。当前项目动作直接调用 connectHost 的路径应继续交给
-既有认证流程，不能仅让用户看到不可处理的失败。业务实现未修改。
+This is a missing handoff when credentials are absent, not lost credentials: the fixture never saved a password. The later assertions of cross-device form isolation and retaining the existing download method were not reached. The current project action path that calls connectHost directly should continue to hand over to the existing authentication flow, rather than only showing the user a failure they cannot handle. The business implementation was not modified at that time.
 
-## 规格与原失败行为
+## Spec and Original Failure Behavior
 
-飞书桌面 SSH 指南“远端版本更新”和主规格
-[§6.3](../../architecture/r3-source-server-remote-architecture.md#63-版本兼容与远端更新d10)
-要求显式手动连接时自动发起一次受保护更新，无运行任务时继续原操作。
-原测试基线的原项目入口打开正确的“更新远端”页面，但不自动发起更新。
+The Feishu desktop SSH guide's "remote version update" and the main spec [§6.3](../../architecture/r3-source-server-remote-architecture.md#63-版本兼容与远端更新d10) require that an explicit manual connection starts one protected update automatically, and continues the original operation when no task is running. The original-project entry on the original test baseline opened the correct "更新远端" page but did not start an update automatically.
 
-## 运行证据
+## Run Evidence
 
-- 业务基线 `a13999a28927f629d0c64080a5096cf8b4f23bae`。
-- `conversation-session-ssh-remote-version-policy.test.ts`，`manual-required`。
-- 批次 `r3-server-20261009223735233-3b63ee` 和 `r3-server-20261009234650716-227ddc`。
-- 独立目标用本轮完整 runtime 的版本元数据变体模拟 Server 3.14.0；CLI 记录 daemon runtime
-  已收敛到 3.14.0。不是用版本字符串冒充旧业务实现。
-- A/B 已打开，无运行任务；从原项目 B 点击连接。Host 报
-  `Source Server 3.14.0 must be upgraded to at least 3.15.0`。
-- 原项目、目录意图仍保留，向导显示“更新远端”，但等待 180 秒后 B 的 session 仍为空。
-  Desktop 日志没有该操作触发的 `source-server-management.updateSource`；复跑后的
-  `finalInstalledVersion` 仍为 3.14.0。
+- Business baseline `a13999a28927f629d0c64080a5096cf8b4f23bae`.
+- `conversation-session-ssh-remote-version-policy.test.ts`, `manual-required`.
+- Batches `r3-server-20261009223735233-3b63ee` and `r3-server-20261009234650716-227ddc`.
+- The independent target simulated Server 3.14.0 with the version-metadata variant of this round's full runtime; the CLI recorded that the daemon runtime converged to 3.14.0. A version string was not used to pose as an old business implementation.
+- A/B were open with no running task; clicking connect on the original project B, the Host reported `Source Server 3.14.0 must be upgraded to at least 3.15.0`.
+- The original project and directory intent were kept and the wizard showed "更新远端", but after waiting 180 seconds B's session was still empty. The Desktop log had no `source-server-management.updateSource` triggered by this operation; after the re-run `finalInstalledVersion` was still 3.14.0.
 
-## 判定与边界
+## Judgment and Boundary
 
-原测试将其保留为原项目入口与自动更新合同之间的差异；后续根因核实见下节。
-不通过在 case 中补点“更新远端”来把“自动更新”断言变绿。原回归轮次未改业务。
-后台等待用户更新与确认强制更新均有独立通过证据，不代表此原项目自动更新分支通过。
+The original test kept this as a difference between the original-project entry and the automatic-update contract; the root cause was verified in the next section. The "automatic update" assertion is not turned green by adding a click on "更新远端" in the case. The original regression round changed no business code. Waiting in the background for the user to update and confirming a forced update both have independent passing evidence and do not mean this original-project automatic update branch passes.
 
-## 根因与修复（2026-10-10）
+## Root Cause and Fix (2026-10-10)
 
-修复起点 `6ea1a0e30e8c62c278cb7c948ea936f8ff5b7704`。向导、项目入口、更新动作及 Host
-兼容检查代码与原业务基线相同。`requestRemoteProjectConnection` 将已完成的连接失败作为
-`initialFailure` 交给向导；`acceptInitialFailure` 只设置错误与更新按钮后返回，绕过
-`startRemoteConnection` 异常分支中已有的自动更新逻辑。指南第 41 版和主规格 §6.3
-均明确手动连接自动更新；普通连接失败不自动重试的规则不取消这项升级合同。
+Fix start `6ea1a0e30e8c62c278cb7c948ea936f8ff5b7704`. The wizard, project entry, update action and Host compatibility check code equal the original business baseline. `requestRemoteProjectConnection` hands an already-completed connection failure to the wizard as `initialFailure`; `acceptInitialFailure` only sets the error and the update button and returns, bypassing the automatic update logic that already exists in the exception branch of `startRemoteConnection`. Both guide version 41 and main spec §6.3 state that a manual connection updates automatically; the rule that an ordinary connection failure does not retry automatically does not cancel this upgrade contract.
 
-当前真实 dispatcher + Hook 探针已复现：同一 SSH Profile 和升级快照，普通向导自动调用
-`updateSource(force:false)` 一次，原项目交接调用零次；再点更新按钮可继续原目录。
-该边界使用模拟服务 I/O，历史真实 SSH 的错误、截图与 session 未恢复结果单独核对，
-不以探针代替远端安装成功证据。
+A real dispatcher + Hook probe reproduced it: with the same SSH Profile and upgrade snapshot, the ordinary wizard calls `updateSource(force:false)` once automatically while the original-project handoff calls it zero times; clicking the update button again can continue the original directory. This boundary used simulated service I/O; the error, screenshots and unrecovered-session results of the historical real SSH runs are checked separately and the probe does not stand in for remote install success evidence.
 
-修复将必须更新的编排收敛到向导同一函数，原项目交接与普通连接错误均读取 Host 最新快照，
-只为远端 required 状态自动执行一次受保护更新。沿用运行任务 guard、显式强制确认、
-原目录意图及现有 epoch；取消或换意图后的结果不继续旧连接，失败保留操作入口，
-更新后仍不兼容不自动循环。本机过旧、普通失败与后台恢复不新增自动更新。
+The fix converges the must-update orchestration into the wizard's same function; both the original-project handoff and ordinary connection errors read the Host's latest snapshot and run one protected update automatically only for a remote required state. It keeps the running-task guard, the explicit force confirmation, the original directory intent and the existing epoch; results after cancel or an intent change do not continue the old connection, a failure keeps the action entry, and an incompatible state after the update does not loop. An over-old local app, ordinary failure and background recovery add no automatic update.
 
 ```text
-原项目连接失败 / 普通向导连接失败
-  -> 同一向导意图 -> Host 快照确认远端 required -> updateSource(force=false)
-  -> running-task guard：等待用户确认；成功：只继续一次原目录连接
-  -> 取消 / 换意图：旧 epoch 失效，不恢复旧项目
+Original-project connection failure / ordinary wizard connection failure
+  -> same wizard intent -> Host snapshot confirms remote required -> updateSource(force=false)
+  -> running-task guard: wait for the user to confirm; success: continue the original directory connection once only
+  -> cancel / change intent: the old epoch is invalidated, the old project is not restored
 ```
 
-验证记录：
+Verification record:
 
-- 新增 9 项真实 dispatcher / Hook 回归，修复前 7 项失败、2 项正常对照通过；
-  修复后相关两文件 27 项全部通过。覆盖首次报升级、已有需升级状态、运行任务取消/确认、
-  更新取消后的晚到结果、更新失败、更新后仍不兼容、收起恢复、本机过旧和普通失败。
-- `pnpm test:unit:affected --base 6ea1a0e30e8c62c278cb7c948ea936f8ff5b7704`：
-  370 个 Vitest 文件 / 4379 项用例及 28 项 Node 审计通过，未跑全量单测。
-- 根类型检查、E2E 类型检查、lint、架构、fixture、改动代码格式和开源术语检查通过；
-  lint 保留 81 条既有警告。
-- macOS Electron → 独立 Linux arm64 SSH 容器，
-  `desktop-e2e-20261010-version-fix-manual-required-r2` **1/1 PASS**。
-  仅点击原项目 B 连接，真实 `updateSource` 成功，远端从夹具 3.14.0 更新回 3.15.0，
-  A/B 保留原 identity、目录且取得新 session。新增这两项 session 换代断言及 artifact，
-  原 180 秒恢复断言保留。构建证据 `fresh-stable` 中向导源码摘要与修复工作区一致。
-- 本机首轮没有带服务器 harness 的外层预算，被 WDIO 默认 120 秒在夹具准备阶段截断，
-  尚未进入原项目重连。复跑按既有 `ZCODE_E2E_MANUAL_REVIEW_HOLD_MS=780000` 配置补齐
-  外层 15 分钟预算，与 spec 自身预算一致；没有放宽恢复断言或添加业务重试。
-- `desktop-e2e-20261010-version-fix-{automatic-required,optional,controller-required}-r2`
-  三个独立变体均 **1/1 PASS**：后台先等待、点击后更新及恢复 A/B；可选版本保持 3.16.0、
-  两项目恢复且“稍后”跨设置重开生效；本机过旧只提示升级本机，远端 archive 不变。
-  后两项未出现 Desktop 管理服务更新成功日志，远端版本/产物保持。三个复用构建的原始状态仍保留
-  `unverified-reused-build`；另将全部 5282 个产物摘要与上述 `fresh-stable` 构建逐一比较，
-  完全一致，核验结果保存为各 run 的 `version-fix-verification.json`。
+- 9 new real dispatcher / Hook regressions: before the fix 7 failed and 2 normal controls passed; after the fix the related two files' 27 tests all pass. Covers first-reported upgrade, existing upgrade-required state, running-task cancel/confirm, late results after update cancel, update failure, still incompatible after update, collapse recovery, over-old local app and ordinary failure.
+- `pnpm test:unit:affected --base 6ea1a0e30e8c62c278cb7c948ea936f8ff5b7704`: 370 Vitest files / 4379 cases and 28 Node audit cases pass; the full unit suite was not run.
+- Root type check, E2E type check, lint, architecture, fixture, changed-code format and open-source terminology checks pass; lint keeps 81 pre-existing warnings.
+- macOS Electron → independent Linux arm64 SSH container, `desktop-e2e-20261010-version-fix-manual-required-r2` **1/1 PASS**. Only clicking connect on the original project B, the real `updateSource` succeeded, the remote updated from the fixture's 3.14.0 back to 3.15.0, and A/B kept their original identity and directory and got new sessions. The two session-generation assertions and artifacts were added, and the original 180-second recovery assertion is kept. The wizard source digest in the `fresh-stable` build evidence equals the fix tree.
+- The first local round had no outer budget with the server harness and was cut off by the WDIO default 120 seconds in fixture preparation before the original-project reconnect. The re-run supplied the outer 15-minute budget by the existing `ZCODE_E2E_MANUAL_REVIEW_HOLD_MS=780000` configuration, equal to the spec's own budget; no recovery assertion was relaxed and no business retry added.
+- The three independent variants `desktop-e2e-20261010-version-fix-{automatic-required,optional,controller-required}-r2` all **1/1 PASS**: background wait first, update after the click and recovery of A/B; an optional version stays at 3.16.0, both projects recover and "稍后" (later) takes effect across reopening Settings; an over-old local app only prompts to upgrade the local app, and the remote archive is unchanged. The last two showed no Desktop management service update-success log, and the remote version/artifacts stayed. The raw state of the three reused builds stays `unverified-reused-build`; all 5282 artifact digests were additionally compared one by one with the `fresh-stable` build above, completely identical, and the check result is saved as `version-fix-verification.json` in each run.
 
-本轮四个变体保留 `manual-review/pending`，未做人工转正或 CI 准入。版本输入仍是完整当前
-runtime 的元数据变体，不宣称验证真实 3.14.0 旧业务实现。运行任务取消/强制确认和晚到结果
-由真实 Hook 边界测试覆盖，未另跑运行中任务的真实 SSH 强制更新场景；未复跑原生
-Windows/Linux 桌面宿主及手机 relay 整链路。修复只调整桌面显式连接的向导编排，不改变
-Host/协议、数据迁移或 continuous/replayable 权威；回滚本次提交即可恢复原来的等待按钮行为。
+The four variants of this round keep `manual-review/pending` with no manual promotion or CI admission. The version input is still a metadata variant of the full current runtime and does not claim to verify a real 3.14.0 old business implementation. Running-task cancel/force confirmation and late results are covered by real Hook boundary tests, and the real SSH forced-update scenario with a running task was not run separately; native Windows/Linux desktop hosts and the whole mobile relay chain were not re-run. The fix only adjusts the wizard orchestration of explicit desktop connections and does not change the Host/protocol, data migration or the continuous/replayable authority; reverting this commit restores the previous behavior of waiting buttons.
 
-## 升级快照失败的显式恢复（2026-10-10）
+## Explicit Recovery When the Upgrade Snapshot Fails (2026-10-10)
 
-`dcf125265e` 引入自动交接后，新增快照读取若失败，只清空 `upgradeProfileId`，
-仍保留旧的升级错误；“更新远端”按钮因缺少 Profile 直接返回。修复在同一异常分支清除旧升级错误，
-展示真实读取异常和既有“重试”，由用户重新发起原线路/目录的连接与升级核验。沿用 epoch 隔离，
-不使用旧快照自动更新，不增加后台重试。
+After `dcf125265e` introduced the automatic handoff, if the newly added snapshot read fails it only clears `upgradeProfileId` and keeps the old upgrade error; the "更新远端" button returns directly because it has no Profile. The fix clears the old upgrade error in the same exception branch, shows the real read exception and the existing "重试" (retry), and lets the user restart the connection and upgrade check of the original route/directory. It keeps epoch isolation, does not use an old snapshot to update automatically, and adds no background retry.
 
-- 先补普通连接与原项目交接两个失败回归，修复前均失败；取消后迟到快照异常作为对照。
-  修复后三项及原 Hook 用例 **23/23 PASS**。
-- 受影响验证（起点 `dcf125265e55416eed962a342250b592c0f46461`）：
-  **370 个 Vitest 文件 / 4382 项用例、28 项 Node 审计通过**；最终 E2E helper 调整后的
-  inventory 审计 **9/9 PASS**。类型检查、E2E 类型检查、lint、架构及 fixture 检查通过；
-  lint 保留 81 条既有警告。
-- `r3-server-snapshot-fix-20261010-r2` **1/1 PASS**：重新构建桌面端，真实 SSH 升级夹具上
-  注入短暂快照读取故障，向导出现实际错误详情及“重试”，失败期间未更新；点击后只更新一次，
-  A/B 保留原身份和目录并取得新 session，远端最终版本为 3.15.0。
-  `version-policy.json` 保存拒绝读取数（本轮 2 次）、按钮、更新调用数与恢复结果；
-  `snapshot-failure.png` 保存失败界面。
-- 首轮测试只拒绝首个无参数快照请求，命中并发后台读取而未覆盖向导，不能作为修复有效证据。
-  测试改为短暂读取故障持续至向导确认失败，再恢复读取后验证用户重试；未修改业务方案或放宽恢复断言。
+- Two failing regressions for the ordinary connection and the original-project handoff were added first, both failing before the fix; a late snapshot exception after cancel is the control. After the fix the three plus the original Hook cases pass **23/23**.
+- Affected verification (start `dcf125265e55416eed962a342250b592c0f46461`): **370 Vitest files / 4382 cases and 28 Node audit cases pass**; the inventory audit after the final E2E helper adjustment passes **9/9**. Type check, E2E type check, lint, architecture and fixture checks pass; lint keeps 81 pre-existing warnings.
+- `r3-server-snapshot-fix-20261010-r2` **1/1 PASS**: the desktop was rebuilt and, on a real SSH upgrade fixture, a short snapshot read fault was injected; the wizard shows the actual error details and "重试", no update happens during the failure, and after clicking it updates exactly once, A/B keep original identity and directory and get new sessions, and the final remote version is 3.15.0. `version-policy.json` records the number of rejected reads (2 this round), the buttons, update call count and recovery results; `snapshot-failure.png` keeps the failure screen.
+- The first round's test only rejected the first parameterless snapshot request, hit a concurrent background read and did not cover the wizard, so it is not evidence that the fix works. The test now keeps the short read fault until the wizard confirms the failure, then restores reading and verifies the user's retry; no business plan was changed and no recovery assertion relaxed.
 
-这次验证仍使用当前 runtime 的版本元数据变体，不证明真实旧版业务实现；未重跑原生
-Windows/Linux 桌面宿主或手机 relay。手机不使用本次桌面显式连接向导，Host/协议及恢复 owner 不变。
+This verification still uses the version-metadata variant of the current runtime and does not prove a real old business implementation; native Windows/Linux desktop hosts and the mobile relay were not re-run. The phone does not use this desktop explicit-connection wizard, and the Host/protocol and recovery owner are unchanged.
 
-## 2026-10-12 当前基线复核与修复边界
+## 2026-10-12 Current Baseline Re-check and Fix Boundary
 
-修复起点 `07c35ed00085b9bb105d07633488951ff02032c2`。原日志中的项目菜单仍直接调用
-remoteProjectService.connectHost，现行 RPN-06/§2.2 则要求需要交互时交给唯一向导并保留目录。
-既有 Root dispatcher/向导已具备凭据、受保护更新及安装确认处理，菜单没有接入；直接替换回调
-还不充分：新版仅恢复活动 tab，Root 旧入口遇到未加载 tab/历史 entry 会直接返回。
-真实 Root hook 的无 tab 项目回归确认了这一边界：认证/升级/安装交接及正常设备连接均未执行。
+Fix start `07c35ed00085b9bb105d07633488951ff02032c2`. The project menu in the original log still called remoteProjectService.connectHost directly, whereas the current RPN-06/§2.2 requires handing over to the single wizard when interaction is needed and keeping the directory. The existing Root dispatcher/wizard already handled credentials, protected update and install confirmation, and the menu was not wired to it; merely replacing the callback was not enough either: the new version only restores the active tab, and the Root's old entry returns directly for an unloaded tab/history entry. A real Root hook regression for a project without a tab confirmed this boundary: authentication/upgrade/install handoffs and the normal device connection were not executed.
 
 ```text
-已加载项目 → Root 原地重连 → 等待处理 → 唯一向导 → 原目录
-未加载的已保存项目 → Host 成员 connectHost → 等待处理 → 同一向导 → 原目录
-                                   └─ 普通成功只恢复设备，不新建导航 tab
+Loaded project → Root in-place reconnect → waits for handling → single wizard → original directory
+Unloaded saved project → Host member connectHost → waits for handling → same wizard → original directory
+                                   └─ ordinary success only restores the device, creating no navigation tab
 ```
 
-推荐修复：桌面项目菜单调用现有 Root 重连入口；Root 在没有 tab 时从本机成员目录解析目标，
-复用既有 dispatcher 和 connectHost。交接前重读成员，移除/替换后的迟到结果不打开旧向导。
-连接状态、凭据及物理连接仍归 Host；不把 Renderer tab 恢复成项目入口权威。
-非桌面路径继续使用原 Host 连接，不新增手机向导能力。
+Recommended fix: the desktop project menu calls the existing Root reconnect entry; with no tab, Root resolves the target from the local member directory, reusing the existing dispatcher and connectHost. Re-read the member before the handoff; late results after removal/replacement do not open an old wizard. Connection state, credentials and the physical connection stay with the Host; the Renderer tab restore does not become the authority of the project entry. Non-desktop paths keep using the original Host connection and no mobile wizard capability is added.
 
-后台更新用例另按 F5 核对：冷启动只恢复活动项目，旧兼容列表中的另一项目应按需打开。
-不能把未加载 A tab 当作更新失败；运行中已有 A/B attachments 的手动升级仍保留恢复断言。
+The background-update case is also checked against F5: a cold start restores only the active project, and another project in the old compatible list should open on demand. An unloaded A tab must not be treated as an update failure; a manual upgrade with existing A/B attachments running keeps its recovery assertion.
 
-### 首轮运行与进一步取证
+### First Run and Further Evidence
 
-批次 `r3-server-20261012022109986-c4ed79` 使用当前基线加项目入口修复，结果 5 PASS / 2 FAIL：
-serverupdate 271.8 秒、serverupdate-force 268.9 秒、manual-required 260.0 秒、
-snapshot-failure-required 263.3 秒、automatic-required 270.1 秒均通过。
-后两项仍失败：projectnavigation 没有认证向导；uninstall 已点击安装确认，但随后收到
-source-server-install-required。未把到达安装确认当作重装成功。
+Batch `r3-server-20261012022109986-c4ed79` used the current baseline plus the project entry fix and gave 5 PASS / 2 FAIL: serverupdate 271.8 seconds, serverupdate-force 268.9 seconds, manual-required 260.0 seconds, snapshot-failure-required 263.3 seconds, automatic-required 270.1 seconds all passed. The latter two still failed: projectnavigation had no authentication wizard; uninstall clicked the install confirmation but then received source-server-install-required. Reaching the install confirmation is not taken as reinstall success.
 
-认证新增根因：SourceServerDirectory.resolveProfileTarget 缺少凭据时抛普通 Error，丢失了既有
-credentials-required 公开码；真实 Directory 回归先失败，再在错误产生边界补码后通过。
-Root 的文本分类不扩大为猜测认证原因。安装确认的真实 Flow hook 已验证传出 confirmSourceServerInstall=true
-且旧错误清空；下一轮在 Main IPC 只记录确认标志与返回结果，不记录 target 或凭据，继续定位重装剩余失败。
+Newly found authentication root cause: SourceServerDirectory.resolveProfileTarget threw an ordinary Error when credentials were missing, losing the existing public credentials-required code; a real Directory regression failed first, then passed after adding the code at the error-producing boundary. Root's text classification is not extended to guess the authentication reason. The real Flow hook for the install confirmation has verified that confirmSourceServerInstall=true is sent out and the old error cleared; the next round records only the confirmation flag and the return result at the Main IPC (no target or credentials) to keep locating the remaining reinstall failure.
 
-### 重装根因复核：新恢复周期读取了旧终态失败
+### Reinstall Root-Cause Re-check: the New Recovery Cycle Read a Stale Terminal Failure
 
-第四轮 Main 已确认 confirmSourceServerInstall=true，排除 UI/Main 丢失确认。第六轮 Registry
-记录确认时 route=null，但同一 Source 仍有另一线路的 terminal owner，recovery=false、failure=true；
-随后新连接才进入 canonical Source 归属。此前同线路 recovering 的合成探针没有覆盖现场，
-安装特判与 Manager 授权接纳候选已撤回，不纳入最终实现。
+In round four Main confirmed confirmSourceServerInstall=true, ruling out that UI/Main lost the confirmation. Round six's Registry recorded route=null at confirmation, while the same Source still had a terminal owner of another route with recovery=false, failure=true; only afterwards did the new connection enter the canonical Source ownership. The earlier synthetic probe of a recovering same route did not cover the field case, so the install special case and the Manager-authorized admission candidate were withdrawn and are not part of the final implementation.
 
-现场：项目导航使用不含口令的 metadata 线路；用户确认连接加载了口令，得到不同 route key，
-握手后仍属于同一个 Source。Manager 重新发布物理连接时，旧终态 owner 开始异步挂回 workspace，
-但 recoveryFailure 直到全部挂回结束才清除，recoveryReady 又已在终态被清空。
-新线路在此期间 join canonical owner，会直接抛出上一次的安装等待错误，尽管新安装连接已经建立。
+Field case: project navigation uses a metadata route without a passphrase; the user-confirmed connection loaded the passphrase and got a different route key but still belongs to the same Source after the handshake. When Manager republishes the physical connection, the old terminal owner starts attaching workspaces asynchronously, but recoveryFailure is cleared only after all attachments end, and recoveryReady was already cleared at the terminal. The new route joining the canonical owner in the meantime directly throws the previous install-waiting error, although the new install connection has been established.
 
 ```text
-旧 owner：terminal + 旧 failure + 无 recoveryReady
-新物理连接 → logical 挂回（异步）→ 新线路 join → 误读旧 failure
-修复：新物理连接 → 新 recoveryReady，清旧 failure → logical 挂回 → join 等新周期结果
+Old owner: terminal + old failure + no recoveryReady
+New physical connection → logical attach (async) → new route joins → wrongly reads the old failure
+Fix: new physical connection → new recoveryReady, clear old failure → logical attach → join waits for the new cycle's result
 ```
 
-真实 Registry 回归使用现场同样的 agent/password 两种线路 key、同一 Source 和受控 workspace
-准备屏障，修复前得到与现场相同的 Remote connection recovery exhausted 错误。
-最终只在 terminal owner 收到新物理 reconnect 时调用既有 beginRecovery，并标记新的 recovering
-周期；不新增安装特判、Manager flight 字段、重试或超时。回归与相邻 Registry/Manager 两文件
-120 项通过。最终补丁的批次 `r3-server-20261012042036306-3218d0` 已通过真实重装（187.4 秒）、
-恢复守卫（177.4 秒）和冷启动重连（187.1 秒）。源码清单 SHA-256 为
-`3da756d09a6a91969782149c7f1d177124e49e5def287fcfde14ed11d56cd85d`。
-重装证据确认安装 ID、Profile、项目身份、配置哨兵和用户数据保留；session 已替换，原任务仍可继续，
-Host 进程集合没有增加。
+The real Registry regression used the same agent/password route keys as the field, the same Source and a controlled workspace-preparation barrier, and before the fix produced the same Remote connection recovery exhausted error. The final fix calls the existing beginRecovery only when a terminal owner receives a new physical reconnect and marks a new recovering cycle; no install special case, Manager flight field, retry or timeout is added. The regression plus the adjacent Registry/Manager two files pass 120 tests. Batch `r3-server-20261012042036306-3218d0` of the final patch passed the real reinstall (187.4 seconds), the recovery guard (177.4 seconds) and cold-start reconnect (187.1 seconds). The source manifest SHA-256 is `3da756d09a6a91969782149c7f1d177124e49e5def287fcfde14ed11d56cd85d`. The reinstall evidence confirms the install ID, Profile, project identity, config sentinel and user data are kept; the session was replaced, the original task can continue, and the Host process set did not grow.
 
-### 最终服务器验收
+### Final Server Acceptance
 
-批次 `r3-server-20261012042909750-5eed5a` 复用上述同一源码清单及已验真构建
-`beb4f93a0a86d3c6f4d0fab7d21188f5838fd7a07248f9eb7162e7d0db5551ae`，六项全部通过。
-与上一批三项共同覆盖本问题七项及相邻恢复/冷启动两项；没有合并不同补丁的 PASS。
+Batch `r3-server-20261012042909750-5eed5a` reused the same source manifest and the verified build `beb4f93a0a86d3c6f4d0fab7d21188f5838fd7a07248f9eb7162e7d0db5551ae`, and all six passed. Together with the previous batch's three, they cover this problem's seven items and the two adjacent recovery/cold-start items; PASS of different patches is not merged.
 
-| 用例                              | 结果 / 耗时     |
-| --------------------------------- | --------------- |
-| serverupdate                      | PASS / 256.9 秒 |
-| serverupdate-force                | PASS / 255.3 秒 |
-| uninstall                         | PASS / 187.4 秒 |
-| version-manual-required           | PASS / 273.6 秒 |
-| version-snapshot-failure-required | PASS / 231.5 秒 |
-| version-automatic-required        | PASS / 237.5 秒 |
-| projectnavigation                 | PASS / 73.1 秒  |
-| recov                             | PASS / 177.4 秒 |
-| coldreconnect                     | PASS / 187.1 秒 |
+| Case                              | Result / duration |
+| --------------------------------- | ----------------- |
+| serverupdate                      | PASS / 256.9 s    |
+| serverupdate-force                | PASS / 255.3 s    |
+| uninstall                         | PASS / 187.4 s    |
+| version-manual-required           | PASS / 273.6 s    |
+| version-snapshot-failure-required | PASS / 231.5 s    |
+| version-automatic-required        | PASS / 237.5 s    |
+| projectnavigation                 | PASS / 73.1 s     |
+| recov                             | PASS / 177.4 s    |
+| coldreconnect                     | PASS / 187.1 s    |
 
-取消强制更新保持原 SHA/Core；确认强制更新后才替换。快照故障恢复后仅调用一次更新，
-运行中手动升级恢复 A/B 两个原目录；冷启动自动升级按 F5 恢复活动 B，A 保留入口并按需打开。
-认证验证保存项目无需已有 tab 即可进入向导，切换设备不泄漏上一设备的密码或下载方式。
-最终代码与测试逐文件匹配服务器源码清单；之后仅补充验收文档。
+Cancelling the forced update keeps the original SHA/Core; the replacement happens only after the forced update is confirmed. After the snapshot fault is restored, the update is called exactly once; a manual upgrade with a running task restores both original directories A/B; a cold-start automatic upgrade restores active B by F5, and A keeps its entry and opens on demand. The authentication verification saves a project that enters the wizard without an existing tab, and switching devices leaks neither the previous device's password nor its download method. The final code and tests match the server source manifest file by file; only the acceptance documentation was added afterwards.
 
-### 本地验证与影响边界
+### Local Verification and Impact Boundary
 
-- `pnpm test:unit:affected --base 07c35ed00085b9bb105d07633488951ff02032c2`：442 个 Vitest 文件、
-  5174 项用例及 70 项 Node 检查通过；没有运行全量单测。此前一轮未改动的 Web 构建测试因并发
-  超时失败，独立复验 45 项通过，最终受影响范围也全部通过，没有修改超时或断言。
-- 类型检查、Lint、架构检查通过；Lint 为 208 条既有 warning、0 error，架构为 0 违规。
-- 四份改动 E2E 的 fixture 合同检查通过；server-update 保留既有的升级标记未被 matcher 覆盖提醒。
-- 版本策略场景使用当前 runtime 的版本元数据夹具，不能证明真实旧版程序的数据迁移。
-  服务器运行覆盖 Linux Electron 与真实 SSH/Docker；未复验原生 Windows/macOS 或实体手机。
-  非桌面连接仍走原 Host，Direct Server 的连接及错误语义由新增回归保持。
-- 无存储格式、凭据迁移或协议字段变更。回滚本次提交即可回到原实现；不需要回滚用户数据。
+- `pnpm test:unit:affected --base 07c35ed00085b9bb105d07633488951ff02032c2`: 442 Vitest files, 5174 cases and 70 Node checks pass; the full unit suite was not run. An earlier round's unchanged Web build test failed on a concurrent timeout, passed 45 tests in an independent re-check, and the final affected scope passed entirely, with no timeout or assertion changed.
+- Type check, lint and the architecture check pass; lint has 208 pre-existing warnings, 0 errors, and the architecture 0 violations.
+- The fixture contract checks of the four changed E2E pass; server-update keeps the existing reminder that the upgrade marker is not covered by the matcher.
+- Version-policy scenarios use a version-metadata fixture of the current runtime and cannot prove data migration of a real old program. Server runs cover Linux Electron with real SSH/Docker; native Windows/macOS and physical phones were not re-verified. Non-desktop connections still go through the original Host, and the Direct Server connection and error semantics are kept by the new regressions.
+- There is no change to storage format, credential migration or protocol fields. Reverting this commit returns to the original implementation; no user data rollback is needed.

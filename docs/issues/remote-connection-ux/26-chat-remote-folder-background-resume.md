@@ -1,104 +1,104 @@
-# 26: 后台连接完成后显式继续选目录
+# 26: Explicitly Continue to Folder Selection after a Background Connection Completes
 
 Status: done
 
-**Parent:** [#21 — 聊天连接后必选远程文件夹并进入项目](21-chat-settings-round-trip.md)
+**Parent:** [#21 — Choose a remote folder after a chat connection and enter the project](21-chat-settings-round-trip.md)
 
-**What to build:** 用户从聊天发起远程连接并选择在后台继续后，可以留在其他页面工作。连接完成只提示；用户显式继续且原意图仍有效时，显示同一目标设备的文件夹选择，随后进入项目并手动发送。过期或重复继续不能抢导航、重复操作或影响其他任务。
+**What to build:** After a user starts a remote connection from chat and chooses to continue in the background, they can keep working on other pages. Connection completion only notifies; when the user continues explicitly and the original intent is still valid, the folder selection of the same target device shows, after which they enter the project and send manually. An expired or repeated continue must not steal navigation, repeat operations or affect other tasks.
 
 **Blocked by:**
 
-- [#23 — 选文件夹并进入唯一匹配的已有项目](23-chat-remote-folder-existing-project.md)：提供可复用的聊天目录流程、原意图校验、发送约束和项目进入能力。
+- [#23 — Choose a folder and enter the uniquely matching existing project](23-chat-remote-folder-existing-project.md): provides the reusable chat directory flow, original-intent validation, send constraints and project entry capability.
 
-**Spec coverage:** RDUX21-18；RDUX21-03、RDUX21-12–13、RDUX21-15–16、RDUX21-19–20 的后台延续分支。RDUX21-22–24 随本票路径验证。
+**Spec coverage:** RDUX21-18; the background continuation branches of RDUX21-03, RDUX21-12-13, RDUX21-15-16, RDUX21-19-20. RDUX21-22-24 are verified along this ticket's path.
 
 ```mermaid
 flowchart TD
-    A[聊天发起连接] --> B[在后台继续]
-    B --> C[用户留在当前页面]
-    B --> D[连接完成；仅显示提示]
-    D -->|显式继续且原意图有效| E[目标设备文件夹选择]
-    E --> F[复用公共项目进入流程]
-    D -->|原意图失效或重复继续| C
-    E -->|取消整个流程| G[恢复仍有效的原聊天目标]
+    A[Chat starts connection] --> B[Continue in background]
+    B --> C[User stays on the current page]
+    B --> D[Connection completes; only a notice shows]
+    D -->|explicit continue and original intent valid| E[Folder selection of the target device]
+    E --> F[Reuse the shared project entry flow]
+    D -->|original intent invalid or repeated continue| C
+    E -->|cancel the whole flow| G[Restore the still-valid original chat target]
 ```
 
 ## Acceptance criteria
 
-- [x] 沿用已完成的后台连接生命周期和唯一操作 owner。后台继续只收起交互，设置设备卡／未完成项仍展示同一请求的进度与状态，不另建连接或独立恢复流程。
-- [x] 用户离开设置或切到其他聊天后，后台成功不弹目录选择、不切换设备或项目、不改变当前草稿，也不对无关聊天施加全局发送限制。
-- [x] 显式继续前复验原聊天意图、请求身份、实际 Source 和当前连接状态；有效时进入 #23 的目录选择流程，每次仍须用户确认目录，不因最近／唯一项目或在线复用跳过。
-- [x] 目录确认后复用公共项目结果交接、工作区准备和发送规则；以唯一已有项目完整证明“后台连接 → 显式继续 → 选目录 → 进入项目 → 远程首发”，不以仅打开弹窗作为完成。
-- [x] 原草稿已放弃、请求已取消或替换、成员已失效时，迟到成功和旧继续操作不复活旧页面、不覆盖新目标。重复继续只消费同一有效完成动作一次，不重复连接、登记或提交消息。
-- [x] 后台失败、需要凭据／安装确认或 Source 在继续前断开时，沿用原错误与显式处理入口；不伪装成功、不自动切本地、不强制弹窗打断用户。
-- [x] 继续后取消目录／项目选择按公共规则撤销本次远程切换，恢复仍有效的原目标并显示归属。用户仍在其他页面时取消后台操作不抢回原聊天。
-- [x] 取消只清理本次独占临时资源；已连接设备和其他项目共享 session 保持可用。失效或重复继续也不能误清理共享资源。
-- [x] 设置来源的设备添加仍留在设备管理；项目表单往返和明确原项目重连保留各自完成意图，不被聊天的必选目录规则接管。
-- [x] 以真实聊天入口补后台完整 E2E，并先写测试再实现；用既有 UI／服务端口补迟到失败、过期结果、重复继续及共享资源边界，不添加定时轮询或补偿跳转。
-- [x] 通知、继续操作及目录选择的焦点、键盘、中英文、深浅主题与窄窗可用；各连接类型和平台按实际执行记录。Web／手机继续使用既有 Host 与 replayable 边界，不新增手机连接 owner。
+- [x] Keep the completed background connection lifecycle and the single operation owner. Continue-in-background only collapses the interaction; the Settings device card / unfinished item still shows the same request's progress and state, with no separate connection or independent recovery flow.
+- [x] After the user leaves Settings or switches to another chat, background success does not pop a directory selection, switch device or project, change the current draft, or impose a global send restriction on unrelated chats.
+- [x] Before an explicit continue, re-validate the original chat intent, request identity, actual Source and current connection state; when valid, enter #23's directory selection flow, where the user still has to confirm a directory every time, and it is not skipped by recent / unique project or online reuse.
+- [x] After directory confirmation reuse the shared project result handoff, workspace preparation and send rules; "background connection → explicit continue → choose directory → enter project → remote first send" is fully proven with a unique existing project, and merely opening the dialog is not completion.
+- [x] When the original draft is abandoned, the request cancelled or replaced, or the member invalidated, a late success and an old continue action do not revive the old page or overwrite the new target. A repeated continue consumes the same valid completion action only once, without repeated connecting, registration or message submission.
+- [x] On background failure, credentials / install confirmation needed, or the Source disconnecting before continue, keep the original error and explicit handling entry; success is not faked, local is not switched to automatically, and the user is not interrupted by a forced popup.
+- [x] After continuing, cancelling directory / project selection revokes this remote switch per the shared rule and restores the still-valid original target with its ownership shown. Cancelling the background operation while the user is still on another page does not pull them back to the original chat.
+- [x] Cancel cleans only exclusive temporary resources of this attempt; connected devices and sessions shared by other projects stay usable. An invalidated or repeated continue must not wrongly clean shared resources either.
+- [x] Device add with a Settings origin still stays in device management; the project-form round trip and explicit original-project reconnect keep their own completion intent and are not taken over by the chat's mandatory-directory rule.
+- [x] The complete background E2E from the real chat entry was added first, then implemented; existing UI/service ports supplement late failures, stale results, repeated continue and the shared-resource boundary, with no timed polling or compensating jumps.
+- [x] The focus, keyboard, Chinese/English, dark/light themes and narrow window of the notice, the continue action and directory selection work; connection types and platforms are recorded by actual execution. Web/mobile keep using the existing Host and replayable boundary and add no mobile connection owner.
 
 ## Verification
 
-- 复用后台连接候选及聊天设备往返的真实入口，以当前页面、原草稿、真实项目／任务身份和首条消息目标验证结果。
-- 分别覆盖后台完成后仍在原草稿、已经切到其他聊天、原意图已失效和重复继续；正常后台完成只通知，显式恢复才进入可见目录流程。
-- 复验设置普通入口恢复同一后台操作的现有行为，避免只验证新通知按钮而遗漏原继续入口。
-- 完成类型检查、lint、架构门禁、受影响单测、本票 Desktop E2E 和适用共享 UI 回归；同步 case 与覆盖证据。环境不足明确列出，候选审核状态不自动改变。
+- Reuse the background connection candidate and the real entry of the chat device round trip, verifying results by the current page, original draft, real project/task identity and the first message's target.
+- Cover separately: still on the original draft after background completion, already switched to another chat, original intent invalidated, and repeated continue; a normal background completion only notifies, and only an explicit resume enters the visible directory flow.
+- Re-check the existing behavior where the ordinary Settings entry restores the same background operation, so that not only the new notification button is verified while the original continue entry is missed.
+- Complete typecheck, lint, the architecture gate, affected unit tests, this ticket's Desktop E2E and applicable shared UI regression; sync the case and coverage evidence. Insufficient environments are listed explicitly and the candidate review status does not change automatically.
 
 ## Scope and handoff
 
-- 不依赖 #24 或 #25：本票交付后台到共同目录入口的延续，并以 #23 的已有项目路径验证到底。其他票完成后使用同一公共分派，不复制多项目选择器或创建表单。
-- [#22 — 后台连接与显式恢复](22-background-connection-and-explicit-resume.md)是已完成的行为依据，不是新增阻塞项；本票只更新聊天来源继续后的目标及对应证据。
-- 不改后台连接状态机、认证、安装、任务消息队列或草稿跨设备迁移；不修改或关闭父 Issue。
+- Does not depend on #24 or #25: this ticket delivers the background continuation into the common directory entry and verifies it end to end with #23's existing-project path. Once other tickets are done they use the same shared dispatch, without duplicating the multi-project selector or the creation form.
+- [#22 — Background connection and explicit resume](22-background-connection-and-explicit-resume.md) is the completed behavior basis, not a new blocker; this ticket only updates the target and corresponding evidence after a chat-origin continue.
+- The background connection state machine, authentication, install, task message queue and cross-device draft migration are not changed; the parent Issue is neither modified nor closed.
 
 ## Implementation notes
 
-- 连接生命周期仍由 `remote-connection-flow` 唯一持有。Root 将连接可见性通知原返回 owner；聊天收起时解除原草稿提交限制，显式继续交付实际 Source 后进入共同目录流程并重新限制提交。完成回调同步标记返回意图正在校验，成功交付后才标记已消费，原先已有成员通过 readDirectory 复验 membership；await 后重读原草稿和 tab 身份，替换入口使旧返回失效。已校验 membership 传给目录流程，不能在挂载间隙把移除当作首次登记。
-- 测试接缝：既有 Composer UI 返回端口、真实连接 flow hook，以及后台候选的真实聊天→SSH→目录→项目→首发链。
+- The connection lifecycle is still held solely by `remote-connection-flow`. Root notifies the original return owner of connection visibility; when the chat collapses, the original draft's submit restriction is lifted, and an explicit continue delivers the actual Source and then enters the shared directory flow with the submit restriction re-applied. The completion callback marks the return intent as being validated synchronously and marks it consumed only after successful delivery; an originally existing member is re-validated for membership through readDirectory; after the await the original draft and tab identity are re-read, and replacing the entry invalidates the old return. The validated membership is passed to the directory flow, so a removal in the gap between mounts cannot be treated as a first registration.
+- Test seams: the existing Composer UI return port, the real connection flow hook, and the background candidate's real chat → SSH → directory → project → first-send chain.
 
 ```mermaid
 sequenceDiagram
-    participant Chat as 原聊天 owner
-    participant Root as 返回意图 owner
-    participant Flow as 连接 owner
-    participant Host as 原 Host 成员
-    Flow->>Root: 收起连接层
+    participant Chat as Original chat owner
+    participant Root as Return-intent owner
+    participant Flow as Connection owner
+    participant Host as Original Host member
+    Flow->>Root: collapse the connection layer
     Root->>Chat: onVisibilityChange(false)
-    Note over Chat: 解除原草稿提交门禁
-    Flow->>Flow: 后台完成；只通知
-    Flow->>Flow: 用户继续；校验 Source 在线与请求代际
-    Flow->>Root: 实际 Source 完成结果
-    Root->>Root: 同步 checking，防止重复继续；交付后 delivered
+    Note over Chat: Lift the original draft's submit gate
+    Flow->>Flow: background completes; only notifies
+    Flow->>Flow: user continues; validate Source online and request generation
+    Flow->>Root: actual Source completion result
+    Root->>Root: synchronous checking, preventing repeated continue; delivered after delivery
     Root->>Chat: canFinish(result)
-    Chat->>Host: readDirectory，核对原 membership
-    Host-->>Chat: 当前权威成员
-    Chat-->>Root: 当前意图且成员有效
-    Root->>Root: 重读 tab 和原聊天身份
-    Root->>Chat: 返回原 owner，打开共同目录选择
-    Note over Chat: 继承原成员资格；完成目录/项目准备前禁发
+    Chat->>Host: readDirectory, check the original membership
+    Host-->>Chat: current authoritative member
+    Chat-->>Root: current intent and member valid
+    Root->>Root: re-read tab and original chat identity
+    Root->>Chat: return to the original owner, open the shared directory selection
+    Note over Chat: Inherit the original membership; no sending before directory/project preparation completes
 ```
 
 ## Evidence (2026-10-14)
 
-- UI 红绿：后台收起后仍禁发的断言先失败；成员移除／换代／迟到草稿的资格断言先失败。完成后 Composer 21 项通过；合并 #24 后 Composer、项目选择、连接 flow 共 128 项通过。既有 flow 端口回归覆盖重复继续、取消／替换后的迟到失败、继续前 Source 离线、共享 attachment 不被取消。
-- 真实 Desktop E2E：`desktop-e2e-20261014054619416-p77568-1b2f973228b64db0`，后台候选 1/1 PASS（61 秒）。覆盖 SSH 后台收起解除原草稿门禁、完成仅通知、设置卡与通知的显式继续、必选目录、取消保持原正文附件与在线 Source、原草稿已放弃的继续失效、唯一项目首发；同时保留设置／项目表单／已有项目目录入口、后台认证失败与 Docker 传输回归。
-- `background-remote-first-submission.json` 核对实际 Host、项目 ID、task、cwd、workspaceIdentity；首发后本地任务列表未增加，远端项目数量未增加，本机入口仅一项。7 张截图已检查，包括完成提示、目录、中英文深浅 480px 设置状态及 Docker 完成。
-- 前三轮分别定位为本任务 fixture 的开发归档 hash 不一致、旧候选未处理新增远程介绍、测试重复添加已保留附件。均修正测试前置／断言，不修改连接产品语义，不删除 Source 或业务数据库；保留各轮失败证据。第三轮已通过远程首发，最终整轮以上述 PASS 为准。
-- `pnpm typecheck`、Desktop `typecheck:e2e`、lint（209 个原有 warnings，无 error）、架构门禁、fixture 校验通过。`test:unit:affected --base 833e6dcb4b` 官方选择 607/2615 文件：首轮 597 文件通过，10 文件因独立 worktree 的 Electron 路径缺失失败；补齐本地依赖路径后仅复跑这 10 文件，160 测试全部通过。未跑全量 UT。
-- 实机范围为 macOS Desktop 与本任务独占 Linux arm64 的 SSH、Docker 传输；未运行 Windows／Linux Desktop、WSL 或实体手机。Web／手机未新增 owner，保留既有能力门禁和 shared-host／replayable 接缝，整合共享手机回归由母任务记录。候选保持 pending，不自动转正或纳入 CI。
+- UI red-green: the assertion that sending stays blocked after background collapse failed first; the eligibility assertions for member removal / regeneration / late draft failed first. After completion the Composer's 21 tests pass; after merging #24 the Composer, project selection and connection flow total 128 tests pass. Existing flow port regressions cover repeated continue, late failure after cancel / replace, Source offline before continue, and a shared attachment not being cancelled.
+- Real Desktop E2E: `desktop-e2e-20261014054619416-p77568-1b2f973228b64db0`, background candidate 1/1 PASS (61 seconds). Covers SSH background collapse lifting the original draft gate, completion only notifying, explicit continue from the Settings card and the notice, mandatory directory, cancel keeping the original body / attachments and the online Source, continue invalidated when the original draft was abandoned, and unique-project first send; also keeps the Settings / project form / existing-project directory entries, background authentication failure and Docker transport regression.
+- `background-remote-first-submission.json` checks the actual Host, project ID, task, cwd, workspaceIdentity; after the first send the local task list did not grow, the remote project count did not grow, and the local entry is just one. 7 screenshots checked, including the completion notice, directory, Chinese/English dark/light 480px Settings states and Docker completion.
+- The first three rounds were located as a development archive hash mismatch in this task's fixture, an old candidate not handling the newly added remote introduction, and the test repeatedly adding retained attachments. All were fixed in test preconditions / assertions without changing connection product semantics or deleting Sources or business databases; failure evidence of each round is kept. The third round already passed the remote first send, and the final whole round follows the PASS above.
+- `pnpm typecheck`, Desktop `typecheck:e2e`, lint (209 pre-existing warnings, no errors), the architecture gate and fixture validation pass. `test:unit:affected --base 833e6dcb4b` officially selected 607/2615 files: the first round passed 597 files and 10 failed because the Electron path was missing in the independent worktree; after completing the local dependency path, re-running only those 10 files, all 160 tests pass. The full UT was not run.
+- Real-environment scope: macOS Desktop and this task's exclusive Linux arm64 SSH and Docker transport; Windows/Linux Desktop, WSL and physical phones were not run. Web/mobile add no owner and keep the existing capability gating and the shared-host / replayable seam; the integrated shared mobile regression is recorded by the parent task. The candidate stays pending, not promoted or added to CI.
 
-## 评审修正：完成资格读取失败
+## Review fix: completion-eligibility read failure
 
-成员资格读取失败与明确失效分开：Root 保留同一返回意图、恢复其重试资格，并由连接 flow 等待完成回调。IO 失败沿用连接错误界面的实际原因、显式重试和取消；前台请求仍禁发，未选目录且未取消时不能向原目标提交。取消撤销在途资格结果，后台仍由已有可见性通知解除原聊天门禁。
+A membership-eligibility read failure is separated from explicit invalidation: Root keeps the same return intent and restores its retry eligibility, and the connection flow waits for the completion callback. An IO failure follows the connection error UI's actual reason, explicit retry and cancel; the foreground request still blocks sending, and nothing can be submitted to the original target while no directory is chosen and not cancelled. Cancel revokes the in-flight eligibility result, and the background still lifts the original chat gate through the existing visibility notification.
 
 ```text
-连接 flow 完成 → Root checking → canFinish
-                     │ 成功且前台 → delivered → 文件夹选择
-                     │ IO 失败 → 保留 owner → 原 flow 错误／重试／取消
-                     │ 等待时收起 → flow 保留后台完成 → 显式继续
-                     └ 明确取消 → 撤销返回引用 → 迟到结果无权导航
+connection flow completes → Root checking → canFinish
+                     │ success and foreground → delivered → folder selection
+                     │ IO failure → keep owner → original flow error / retry / cancel
+                     │ collapse while waiting → flow keeps the background completion → explicit continue
+                     └ explicit cancel → revoke the return reference → late results have no right to navigate
 ```
 
-- 评审 TDD：完成资格 IO 拒绝原先提前关闭且无错误；后台显式继续后再次收起时的拒绝原先会请求重开弹窗。两项均保留 RED；最终连接 flow 103/103 测试通过，另覆盖等待中取消后的迟到成功／失败、等待中收起后的显式继续及重复继续。
-- 真实故障回归与后台回归 2/2 PASS：`desktop-e2e-20261014062429307-p3874-62dc81c125bcbc6d`。通过既有 RPC 端口让已有 Host 的资格读取失败，检查原始原因可展开、按钮／Enter／form 不向原本地提交、等待中明确取消后迟到结果不弹目录、重试进入目录、取消恢复原草稿；随后核对真实远端首发。原后台候选继续覆盖 SSH／Docker 与设置／项目等完成意图。`membership-read-failure.png` 已审阅。
-- 首轮故障与远程首发已通过，但后续菜单点击被既有项目身份 hover 浮层遮挡；测试按既有 Escape 交互先关闭浮层，最终整轮以上述 PASS 为准，未更改产品 hover 行为。
-- 最终根类型检查、lint（209 条既有 warning，0 error）、架构（0 violation）、fixture、格式和 diff 检查通过。全任务起点 `--base 833e6dcb4b` 的受影响测试选择 615 文件，6965 passed／1 既有 skip；之后仅新增后台再次收起拒绝回归并修复该条件，受影响 flow 文件最终 103/103 通过，未重复已过的其他 614 文件。
+- Review TDD: a completion-eligibility IO rejection used to close early with no error; a rejection after re-collapse following a background explicit continue used to request reopening the dialog. Both keep their RED; the final connection flow passes 103/103 tests, also covering late success / failure after cancel while waiting, explicit continue after collapse while waiting, and repeated continue.
+- Real fault regression and background regression 2/2 PASS: `desktop-e2e-20261014062429307-p3874-62dc81c125bcbc6d`. The existing RPC port makes the eligibility read of an existing Host fail; checks that the original reason is expandable, button / Enter / form do not submit to the original local, a late result after explicit cancel while waiting does not pop a directory, retry enters the directory, and cancel restores the original draft; the real remote first send is then checked. The original background candidate keeps covering SSH/Docker and completion intents such as Settings / project. `membership-read-failure.png` reviewed.
+- The first-round fault and remote first send already passed, but a later menu click was covered by the existing project identity hover overlay; the test closes the overlay first by the existing Escape interaction, and the final whole round follows the PASS above, with no product hover behavior changed.
+- Final root type check, lint (209 pre-existing warnings, 0 errors), architecture (0 violations), fixture, format and diff checks pass. The affected-test selection from the whole task's start `--base 833e6dcb4b` was 615 files, 6965 passed / 1 pre-existing skip; afterward only the re-collapse rejection regression was added and that condition fixed, the affected flow file finally passes 103/103, and the other 614 passed files were not repeated.
