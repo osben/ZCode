@@ -1,212 +1,188 @@
-# Todo130：智能配置开关与手动配置字段边界修正
+# Todo130: Smart-config switch and manual config editable-field boundary
 
-> 2026-09-12 后续裁决：[Todo134](todo-134-model-editor-basic-advanced-draft.md) 隐藏 MFJS / 输出类型，MFJS 退出手动可编辑 schema；保留本文“只固化可编辑字段”的通用机制。下文历史字段表的 MFJS 行不再有效。
-
-> 2026-09-11 执行结果：**本地实现与局部 review 完成，整批最终验收待执行**。领域 schema 定义可编辑叶子，提取/清理均复用 schema 结构；手动规则保留当前身份的系统基线，完整执行准入不放宽。文件 codec 仅规范化严格合法的旧完整手动规则，后续保存写新形状；未知/损坏形状仍拒绝。Todo131/125 布局与帮助另行接入，不属于本项已实现声明。
-
-### 本轮实施与复审证据
-
-- 先写两项领域失败测试，旧 schema 拒绝新手动形状；再写 codec/草稿失败测试，抓到隐藏字段仍物化的问题。实现后 Provider、Provider Node、相关 UI 草稿/组件 42 文件 498 项通过。随后新增真实临时 Repository 写入/重开/启停测试，该文件 8 项通过；最终草稿定向 37 项通过（非累加计数）。
-- `manual-model-config.ts` 从共享严格叶子 pick 派生新 schema，类型由 z.infer 推导。新字段默认不进入手动契约；`enabled` 可选/null 原义保留，false 是有效手动值。合成先清可编辑基线再叠手动值，直接构造的残缺规则也不会通过继承补成可执行。
-- 严格文件边界暴露 `ModelPropertiesConfig.toJSON()` 未递归调用 input/output 格式的 toJSON，导致类实例的 undefined 系统键混入校验；已修正嵌套序列化，而非放宽 schema 或静默接受隐藏字段。旧合法完整手动形状在 codec 局部提取，新 API 写入仍拒绝系统字段。真实文件的默认选择、顺序、独立启停均保留；坏旧文件保护原有测试继续通过。
-- UI 删除隐藏 map/tool-call 的草稿职责，音频/固定文本不再由编辑器物化；关闭只保存可编辑内容。A→B 未解析时不回退 A 的配置；切回智能只清可编辑覆盖，不误删已有系统叶子/启停。开关始终显示，仅 saving 禁用。
-- 浏览器真实 Hook+弹窗 390/中文/浅色、1200/英文/深色两项通过：空 ID 不请求、开关可操作、解析中关闭后旧成功/失败均不覆盖草稿，无保存及页面异常。新增测试仍是隔离浏览器组件验证，不声称已跑 Pro/Electron/手机 shared-host 实机。
-- 根 typecheck 通过，根 lint 0 errors / 41 既有 warnings，架构 0 violations。未放松完整执行 schema、未改 API 请求/Selection/在途 Model，不新增协议、版本号或全局迁移器。旧格式是否曾发布没有额外外部发布证据；按既定范围提供严格旧完整形状的本地读取规范化，不宣称已核实“从未发布”。
-
-> 后续交互裁决（2026-09-11）：[Todo131](todo-131-model-settings-smart-config-placement-and-restore.md) 负责智能配置移到模型 ID 右侧及底部“恢复”按钮，取代本文不改布局的局部约束；字段归属、手动 schema 与保存合成仍以本 Todo 为准，两项均待执行。
-
-> 状态：**待执行，方案已确认**。2026-09-11 用户确认“关闭智能配置只固化页面可编辑字段”，要求将完整规划落盘；本轮仅写 Todo，未授权据此立即实施产品代码。
+> Status (2026-09-11): local implementation and local review done; final batch acceptance pending. The
+> domain schema defines the editable leaves; extraction and cleanup reuse the schema structure; a manual
+> rule keeps the current identity's system baseline and full execution admission is not relaxed. The file
+> codec normalizes only strictly valid old full manual rules, later saves write the new shape, and
+> unknown/corrupt shapes are still rejected. Todo131/125 layout and help are separate and not claimed here.
 >
-> 核心裁决：开关始终显示，只有保存中禁用；手动配置只保存完整的可编辑字段，系统字段仍随当前模型及接入配置解析、更新。不新增隐藏字段的编辑入口。
+> Later decisions: [Todo134](todo-134-model-editor-basic-advanced-draft.md) hides MFJS / output type, so
+> MFJS leaves the manual editable schema (the MFJS row of the field table below is no longer valid); the
+> general "freeze only editable fields" mechanism stays.
+> [Todo131](todo-131-model-settings-smart-config-placement-and-restore.md) moves the smart-config switch to
+> the right of the model ID plus a bottom "restore" button, superseding this Todo's no-layout-change
+> constraint; field ownership, manual schema and save composition still follow this Todo.
 >
-> 兼容范围：用户对“现行完整手动格式可能已正式发布”回应“这个应该没有，问题不大”。按**预计尚未正式发布**规划，不预设复杂迁移、新文件或版本升级；这是当前判断，不写成已核实的发布事实。
+> Core decision: the switch is always shown and disabled only while saving; manual config saves only the
+> complete editable fields, and system fields keep resolving from the current model and access config. No
+> editing entry is added for hidden fields.
 >
-> 关联：[Todo90 添加/编辑共用草稿](./todo-90-model-add-edit-shared-recommended-draft.md)、[Todo92 覆盖反馈](./todo-92-model-smart-config-and-override-feedback.md)、[Todo104 schema 精修](./todo-104-pre-release-schema-review.md)。本 Todo 取代其中“推荐未就绪禁用开关”“手动模式固化整份配置”“所有模型字段必填并清掉系统基线”的旧规则；其他已经完成的行为、证据与裁决不重开。
+> Compatibility: the user said a published old full manual format is unlikely ("this should not exist, no
+> big problem"). Plan as "probably unpublished": no complex migration, new file or version bump. This is a
+> current judgment, not a verified publication fact.
+>
+> Related: [Todo90 shared add/edit draft](./todo-90-model-add-edit-shared-recommended-draft.md),
+> [Todo92 override feedback](./todo-92-model-smart-config-and-override-feedback.md),
+> [Todo104 schema refinement](./todo-104-pre-release-schema-review.md). This Todo supersedes their rules
+> "disable the switch when recommendation is not ready", "manual mode freezes the whole config" and "all
+> model fields required, system baseline cleared".
 
-## 1. 背景与已验证问题
+## 1. Background and verified problems
 
-用户反馈模型设置页有时不能停用智能配置。调查发现：
+The model settings page sometimes could not turn smart config off:
 
-1. `ProviderModelMetadataDialog` 在智能模式且 ID 为空、推荐未就绪时禁用开关；有 ID 但无推荐且不处于 pending 时还会隐藏开关。
-2. `useProviderModelDraft.pending` 表达“需要解析但没有结果”，不等同于请求正在进行；解析失败后可能一直为 true。自动解析失败被 idle 调度吞掉，用户不一定看到错误，且无法切回手动。
-3. 直接放开开关会暴露保存缺陷：A 改 B、B 尚未解析就关闭，提交可能从原 A 的 `currentModel.config` 补回隐藏的最大输出映射。
-4. 全新模型没有推荐时，即使可见字段都填完，手动保存仍要求隐藏的 `maxOutputTokens.map`，并将缺失报为最大输出 Token 错误。
-5. 领域层同样固化整份配置：`manualModelConfigSchema` 从完整配置派生，仅 enabled 可选；`ModelConfigRules.resolve()` 遇手动规则时清空此前配置，仅保留 enabled。只修改 UI 不足以满足新语义。
+1. `ProviderModelMetadataDialog` disabled the switch in smart mode when the ID was empty and the recommendation not ready, and hid it when an ID existed without a recommendation and not pending.
+2. `useProviderModelDraft.pending` means "needs resolution but no result", not "request in flight"; after a failure it could stay true. Automatic resolution failures were swallowed by idle scheduling, so users saw no error and could not go manual.
+3. Simply enabling the switch exposed a save defect: after A -> B with B unresolved, closing smart mode could refill the hidden max-output mapping from the original A `currentModel.config`.
+4. A brand-new model without recommendation still required the hidden `maxOutputTokens.map` for manual save and reported it as a max-output-token error.
+5. The domain also froze the whole config: `manualModelConfigSchema` derived from the full config (only `enabled` optional), and `ModelConfigRules.resolve()` cleared earlier config for a manual rule keeping only `enabled`.
 
-2026-09-11 使用仓库真实 Hook 与弹窗组件进行了 7 项隔离验证，均通过对**当前问题行为**的断言：正常/空 ID/等待的开关状态、解析失败保持禁用且点击无回调、手动重新开启失败后 pending 不消失、旧 A 映射进入 B、无隐藏映射时可见字段填完仍报错。不是修复后的正式回归，也没有现场确认用户那一次失败请求。
+Evidence: seven isolated tests with the real Hook and dialog asserted the problem behaviors; baseline `HEAD=615657da82`.
 
-核查时本地 `HEAD=615657da82`；freshness 检查提示 staging 落后 origin/staging 5 个提交，相关 Provider schema、规则和保存实现与该远端引用一致。本轮不 merge/rebase；实施前必须重新检查并对齐实际开发基线。没有产品代码、真实账号、配置文件或请求变更。
+## 2. Layer 1: field ownership
 
-## 2. 第一层：字段归属
+| Editable in the page, user-managed in manual mode | Config path                                                                                     |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Context window                                    | `properties.contextWindow`                                                                      |
+| Max output token cap                              | `optionSpecs.maxOutputTokens.max`                                                               |
+| Image, video, PDF input                           | `properties.inputFormat.supportsImage / supportsVideo / supportsPdf`                            |
+| Structured output, native search, mid-conversation system message | `properties.supportsJsonSchemaOutput / supportsNativeWebSearch / supportsMidConversationSystem` |
+| Reasoning levels and reasoning parameter mapping  | `optionSpecs.reasoningLevel.values / map`                                                       |
+| MFJS tool schema (superseded by Todo134)          | `properties.requiresMfjsToolSchema`                                                             |
 
-| 页面可编辑，手动模式由用户管理       | 对应配置路径                                                                                    |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------- |
-| 上下文窗口                           | `properties.contextWindow`                                                                      |
-| 最大输出 Token 上限                  | `optionSpecs.maxOutputTokens.max`                                                               |
-| 图片、视频、PDF 输入                 | `properties.inputFormat.supportsImage / supportsVideo / supportsPdf`                            |
-| 结构化输出、原生搜索、对话中系统消息 | `properties.supportsJsonSchemaOutput / supportsNativeWebSearch / supportsMidConversationSystem` |
-| 推理档位及推理参数映射               | `optionSpecs.reasoningLevel.values / map`                                                       |
-| MFJS 工具 Schema                     | `properties.requiresMfjsToolSchema`                                                             |
+| Not editable, not frozen by manual mode | Config path                                                                   |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| Max output token request-parameter mapping | `optionSpecs.maxOutputTokens.map`                                          |
+| Tool-call capability                    | `properties.supportsToolCall`                                                 |
+| Audio input capability                  | `properties.inputFormat.supportsAudio`                                        |
+| Fixed text input / text output declarations | `properties.inputFormat.supportsText`, `properties.outputFormat.supportsText` |
 
-| 页面不能编辑，不随手动模式固化 | 对应配置路径                                                                  |
-| ------------------------------ | ----------------------------------------------------------------------------- |
-| 最大输出 Token 请求参数映射    | `optionSpecs.maxOutputTokens.map`                                             |
-| 工具调用能力                   | `properties.supportsToolCall`                                                 |
-| 音频输入能力                   | `properties.inputFormat.supportsAudio`                                        |
-| 固定文本输入、文本输出声明     | `properties.inputFormat.supportsText`、`properties.outputFormat.supportsText` |
+Model ID is identity and `enabled` is independent on/off; neither is rewritten by a mode switch. `enabled`
+keeps its optional/null semantics and any explicit personal value; closing smart config does not copy a new
+enable override from the effective config.
 
-模型 ID 属于身份，enabled 属于独立启停；两者不因切换模式而改写。enabled 继续保留现有可选/null 语义和个人明确值，不在关闭时从有效配置新复制一份启停覆盖。
+"Editable" is an explicit product field contract, not inferred from DOM disabled state, client type or
+transient state. New internal fields are outside the manual freeze by default; a new user setting must
+explicitly change the contract and tests. System-owned does not mean always writing true/false or fixed
+parameter names: facts keep coming from the current rule source. UI defaults never fabricate system fields
+and an empty `{}` mapping is never auto-written to fix a save error.
 
-“可编辑”是显式产品字段契约，不能由当前 DOM 控件是否 disabled、客户端类型或瞬时状态推断。保存中锁控件、尚无 ID 等不会改变归属；以后新增内部字段默认不进入手动固化范围，新增用户设置必须显式调整契约与测试。
+## 3. Layer 2: manual schema and write boundary
 
-系统负责不意味着一律写 true/false 或固定参数名，而是继续通过当前规则源提供事实。不凭 UI 默认值伪造系统字段，也不为解决保存错误自动写 `{}` 映射。
+Keep Provider/Model exact rules, the `manualProviderModelRules` collection and nested names. A manual
+rule's `config` requires **complete editable fields** and no system fields. optionSpecs shape:
+`reasoningLevel: { values: readonly string[]; map: string }`, `maxOutputTokens: { max: number }`;
+properties follow section 2; `inputFormat` requires only image/video/pdf. Editable leaves keep type and
+validation (positive integer, non-empty unique reasoning levels, valid CEL); `false` is a valid user value
+and a valid `{}` reasoning mapping follows the original validation. The layer is not made arbitrary
+partial (that would let missing manual fields inherit the recommendation).
 
-## 3. 第二层：手动 schema 与写入边界
+Principles:
 
-### 3.1 目标形状
+- Derive from existing leaf schemas by pick/omit/extend with `z.infer` types; no second hand-written type or validation.
+- The manual field contract lives in the Provider domain; UI reuses it or its field-extraction function; the domain never imports UI.
+- Schema, save extraction and resolution overlay use the same ownership basis (no three lists).
+- New manual rules never allow system fields; no object spread of `currentModel.config`, old personalConfig or full `inputFormat`.
+- Keep member validation, duplicate IDs, built-in models not renameable, revision conflicts and atomic member/order/rule commits.
+- Smart mode keeps the sparse-override semantics; the page must not auto-add hidden-field overrides from conservative display defaults.
 
-保留现有 Provider/Model 精确规则、`manualProviderModelRules` 集合和嵌套名称；不重做模式协议。手动规则中的 `config` 要求**可编辑字段完整**，不再要求系统字段。
+## 4. Layer 3: final config composition
 
-以 optionSpecs 层为例（接口仅用于讨论形状，实现从 schema 推导类型）：
-
-```ts
-interface ManualModelOptionSpecs {
-  reasoningLevel: {
-    values: readonly string[];
-    map: string;
-  };
-  maxOutputTokens: {
-    max: number;
-  };
-}
-```
-
-properties 层按第 2 节取可编辑叶子；inputFormat 仅要求 image/video/pdf 三项。可编辑叶子保留原类型与校验：正整数、推理档位非空且不重复、合法 CEL 等；false 是有效用户值，合法 `{}` 推理映射按原校验处理。不能把整层改为任意 partial，导致手动字段缺失又继承推荐。
-
-### 3.2 实现原则
-
-- 从现有叶子 schema 用 pick/omit/extend 派生，类型使用 `z.infer`，不维护第二份手写类型或校验。
-- 在 Provider 领域内声明手动字段契约；UI 复用它或导出的字段提取函数，领域不能反向导入 UI 组件。
-- schema、保存提取和解析叠加使用同一归属依据，避免三份不同清单。
-- 新写入的手动规则不允许系统字段；不能通过对象 spread 把 `currentModel.config`、旧 personalConfig 或完整 inputFormat 顺手写回。
-- 保留成员校验、重复 ID、内置模型不可重命名、revision 冲突、成员/排序/规则原子提交等原有约束。
-- 智能模式仍是原有稀疏覆盖语义；页面不得凭保守展示初值自动新增隐藏字段覆盖。不借本轮扩大为禁止其他入口所有高级配置，明确问题集中在编辑器物化及手动规则。
-
-## 4. 第三层：最终配置合成
-
-当前整份清空逻辑需要替换为保留系统字段的合成。使用现有规则引擎、规则层次和 Host/CLI 同源解析，不建立第二套“手动 Registry”。
+The whole-config clearing is replaced by composition that keeps system fields, using the existing rule
+engine, rule layers and Host/CLI same-source resolution (no second "manual Registry").
 
 ```text
-当前 Provider / 模型 / API 格式 / Base URL
-                    |
-             现有系统规则解析
-                    |
-        提取并保留系统负责的字段 + 原启停语义
-                    +
-             完整的手动可编辑字段
-                    |
-               最终模型配置
-                    |
-           原有完整性/可执行性校验
+current Provider / model / API format / Base URL
+  -> existing system rule resolution
+  -> extract and keep system-owned fields + original enable semantics
+  + complete manual editable fields
+  -> final model config -> existing completeness/executability validation
 ```
 
-必须同时保证：
+1. Manual editable fields no longer follow system recommendation changes; missing ones are rejected by the manual schema, never silently filled.
+2. System fields keep resolving from the current identity (Builtin updates and access changes take effect); they are not frozen into personal config.
+3. After A -> B, system fields are never filled from A's baseline or cache; an already kept user editable draft remains explicit user intent.
+4. Closing smart config only stops writing recommendations into the editable form; final-config system rule resolution continues.
+5. `completeModelConfigDataSchema` and the Registry's full-config admission stay strict; manual mode does not tolerate missing execution-required fields.
+6. Existing Models and running requests keep their frozen lifecycle; changes apply at the existing Registry update and next model resolution boundary.
 
-1. 手动可编辑字段不再跟随系统推荐变化，缺失时由手动 schema 拒绝，不能静默补值。
-2. 系统字段继续从当前身份解析，Builtin 更新和接入变化可生效；不冻结到个人配置中。
-3. 从 A 改 B 后绝不从 A 的基线或缓存补系统字段；已保留的用户可编辑草稿仍属于用户明确意图。
-4. 关闭智能配置只停止推荐值自动写回可编辑表单，不停止最终模型配置的系统规则解析。
-5. `completeModelConfigDataSchema` 和 Registry 的完整配置准入继续严格；不为手动模式容忍缺少执行所需字段。
-6. 不改变已经创建的 Model/正在运行请求的既有冻结生命周期；按现有 Registry 更新与下一次模型解析边界生效。
+## 5. Layer 4: page and draft lifecycle
 
-## 5. 第四层：页面与草稿生命周期
+### 5.1 Switch and mode change
 
-### 5.1 开关及模式切换
-
-- 开关始终显示，`disabled` 仅由 saving 控制；无 ID、解析中、解析失败、没有推荐都可切换。
-- 关闭时保存已有可编辑输入，并填入当前模型已取得的有效可编辑推荐值。未取得的数值、推理档位与映射留空；能力控件沿用明确的表单初值，不将其宣称为推荐结果。
-- 不复制隐藏字段；`maxOutputTokensMapValue` 等若只用于固化，应删除草稿保存职责。确有展示用途的系统值保持只读，不进入提交对象。
-- 去掉保存时 `draft.map ?? currentModel.config.map` 等旧模型回退，而不是用新 fallback 掩盖缺失。
-- 关闭后沿用已有编辑代次/身份校验，让在途推荐结果失效，停止向手动表单应用推荐；不额外创建请求/状态缓存。
-- 重新开启仍清除编辑器管理范围的个人覆盖并按当前身份取推荐；后续新编辑保留，enabled 不变。
-- pending 不能再决定开关是否可用；若仍用于推荐展示或提交准备，按真实职责保留，不能为了开关一处改名或重构整个异步 Hook。
-- 模式切换仅修改草稿；保存才落盘，取消不写入，失败保留编辑。新增和编辑共用同一套逻辑，保留身份权限差异。
+- The switch is always shown; `disabled` is controlled only by saving. Empty ID, resolving, failed resolution and no recommendation can all switch.
+- On close: keep existing editable input and fill valid editable recommendations already obtained for the current model. Values not obtained (numbers, reasoning levels, mapping) stay empty; capability controls keep their explicit form defaults, not presented as recommendation.
+- Hidden fields are not copied; `maxOutputTokensMapValue` etc., if only used for freezing, lose their draft-save role. The fallback `draft.map ?? currentModel.config.map` is removed rather than masked by a new fallback.
+- After close, the existing edit generation/identity check invalidates in-flight recommendations; no extra request/state cache.
+- Re-enabling still clears editor-managed personal overrides and fetches the recommendation for the current identity; later edits are kept; `enabled` unchanged.
+- `pending` no longer decides switch availability. Mode changes only edit the draft; save persists, cancel writes nothing, failure keeps edits. Add and edit share the logic and keep identity-permission differences.
 
 ```text
-推荐解析中/失败
-      |
-用户关闭智能配置
-      |
-冻结可编辑草稿，旧推荐回包失效
-      |
-手动编辑 → 可编辑字段校验 → 原子保存个人规则
-      |
-系统字段仍由当前 Registry 合成；不会被迟到响应写入手动草稿
+recommendation resolving/failed -> user closes smart config
+  -> freeze editable draft, stale recommendation replies invalid
+  -> manual edit -> editable-field validation -> atomic personal rule save
+  -> system fields still composed from the current Registry; late replies never write into the manual draft
 ```
 
-### 5.2 两种错误必须区分
+### 5.2 Two kinds of error
 
-| 状态                                   | 处理                                                               |
-| -------------------------------------- | ------------------------------------------------------------------ |
-| 用户可编辑字段缺失/非法                | 阻止保存，定位实际字段                                             |
-| 可编辑字段完整，但系统配置缺少执行字段 | 允许保存合法个人规则；模型在 Registry 中保持不可执行并展示配置问题 |
+| State                                                | Handling                                                                               |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| User-editable field missing/invalid                  | block save, locate the field                                                           |
+| Editable fields complete but system config lacks execution fields | allow saving the valid personal rule; model stays non-executable in the Registry with the config problem shown |
 
-沿用当前“不完整模型可在设置中修复、不能执行”的候选机制。缺 `maxOutputTokens.map` 不再报用户上限输入错误，不新增隐藏字段编辑器，也不放宽实际模型创建检查。
+The existing "incomplete model can be repaired in settings but not executed" candidate mechanism is kept.
+A missing `maxOutputTokens.map` no longer reports a user-cap input error; no hidden-field editor is added;
+actual Model creation checks are not relaxed.
 
-## 6. 兼容按未正式发布的前提保持轻量
+## 6. Compatibility stays light (assumed unpublished)
 
-用户对上一轮复杂兼容顾虑的裁决原话：“这个应该没有，问题不大。”本轮因此**不预设版本升级、双写、新文件、复杂迁移器或回滚系统**，不把这个风险扩成独立大工程。
+No version bump, dual write, new file, complex migrator or rollback system.
 
-- 实施时做一次有边界的发布事实核对；没有相反证据，按本分支未发布格式修正处理，不要求兼容所有迭代中间态。
-- 对当前开发环境可能已有的完整手动记录，采用局部规范化即可：保留可编辑字段、Provider/Model 身份及 enabled；旧固化系统字段不参与新手动覆盖。不删整份个人配置、不重置无关 Provider/默认选择/顺序。
-- 检查 codec 与 Repository 的读后规范化回写，确保不会因新 strict schema 把旧完整手动记录整体判坏后丢失个人视图。只在明确识别旧手动结构的边界处理，不把所有未知字段/非法文件一律吞掉。
-- 若实施时拿到明确证据证明该完整手动格式已正式发布，再说明证据及必要兼容调整；不将用户“应该没有”改写为已核实的永久兼容豁免，也不提前为假设设计复杂方案。
+- Do one bounded publication-fact check at implementation; without contrary evidence treat it as an unpublished in-branch format.
+- For full manual records that may exist in the current dev environment, normalize locally: keep editable fields, Provider/Model identity and `enabled`; old frozen system fields do not take part in the new manual override. Do not delete the whole personal config or reset unrelated Providers/default selection/order.
+- Check the codec and Repository read-normalize-write so the new strict schema does not mark an old full manual record bad and lose the personal view. Handle only at boundaries that clearly recognize the old manual structure; do not swallow all unknown fields/invalid files.
+- If clear evidence appears that the full manual format was officially published, state the evidence and the needed compatibility adjustment; "should not exist" is not rewritten as a verified permanent waiver.
 
-## 7. 修改位置与实施顺序
+## 7. Modification locations
 
-| 层次            | 主要位置                                                                                                         | 目的                                                   |
-| --------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 字段契约/schema | `packages/provider/src/config/rule-data-schema.ts`；复用 `packages/shared/src/model-config.ts` 叶子              | 手动只要求可编辑字段，不削弱最终完整 schema            |
-| 规则合成/写入   | `packages/provider/src/config/model-config.ts`、ConfigService/Facade 现有写入边界                                | 系统字段继承，手动字段明确覆盖，维持原子性与权限       |
-| 草稿/提交       | UI `ProviderModelMetadata.ts`、`ProviderModelDraftState.ts`、`useProviderModelDraft.ts`                          | 只物化可编辑项，移除旧模型和隐藏字段回退               |
-| 页面            | UI `ProviderModelMetadataDialog.tsx` 及现有控件                                                                  | 始终显示开关，仅保存中禁用；不加隐藏项编辑器、不改布局 |
-| 本地格式        | `packages/provider-node/src/provider-config-file-codec.ts`、`personal-provider-config-repository.ts`，按实际需要 | 局部处理旧开发记录，防止解码/规范化回写误伤            |
-| 验证/事实同步   | 当前 schema、resolver、draft、组件、Repository 和设置 E2E                                                        | 验证完整链路，实施后更新 Design V2 的稳定事实          |
+| Layer             | Main location                                                                                      | Purpose                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Field contract/schema | `packages/provider/src/config/rule-data-schema.ts`; reuse leaves of `packages/shared/src/model-config.ts` | manual requires editable fields only; final schema not weakened |
+| Rule composition/write | `packages/provider/src/config/model-config.ts`, ConfigService/Facade write boundary           | system fields inherited, manual fields override explicitly |
+| Draft/submit      | UI `ProviderModelMetadata.ts`, `ProviderModelDraftState.ts`, `useProviderModelDraft.ts`            | materialize editable items only; drop old-model and hidden-field fallbacks |
+| Page              | UI `ProviderModelMetadataDialog.tsx`                                                               | always show switch, disable only while saving            |
+| Local format      | `packages/provider-node/src/provider-config-file-codec.ts`, `personal-provider-config-repository.ts` | local handling of old dev records                      |
 
-UI 路径相对 `packages/ui/src/settings/model-provider-section/`。不要求每个列出的文件必须改，执行时以实际引用与测试为准。
+UI paths are relative to `packages/ui/src/settings/model-provider-section/`.
 
-实施顺序：
+## 8. Implementation result and verification
 
-1. 更新本 Working Memory 中相关设计与用例预期，补会在旧实现失败的测试；不把下方旧 Todo 的历史验证改写成新语义已通过。
-2. 先接通 schema、规则合成、保存边界及必要的局部读写规范化。
-3. 再修改草稿提取与开关，不出现 UI 已写新形状而 Host 仍按旧完整 schema 拒绝的半完成状态。
-4. 批量验证页面保存/重开和实际 Model 创建的最终配置，最后回填结果与提交。小字段改动不反复触发全量构建。
+- `manual-model-config.ts` derives the new schema from a shared strict-leaf pick; types come from `z.infer`. New fields are outside the manual contract by default; `enabled` keeps optional/null meaning and `false` is a valid manual value. Composition clears the editable baseline first and then overlays manual values, so directly-built incomplete rules cannot become executable via inheritance.
+- The strict file boundary exposed that `ModelPropertiesConfig.toJSON()` did not recursively call the input/output format `toJSON`, mixing undefined system keys of class instances into validation; nested serialization was fixed instead of relaxing the schema. Old valid full manual shapes are extracted locally in the codec while new API writes still reject system fields; default selection, order and independent enable state of real files are preserved; bad-old-file protection tests still pass.
+- UI: hidden map/tool-call draft duties removed; audio/fixed text no longer materialized by the editor; closing saves editable content only. A -> B unresolved never falls back to A's config; switching back to smart clears only editable overrides, not existing system leaves/enable state. Switch always shown, disabled only while saving.
+- Tests: two domain failing tests (old schema rejected the new manual shape), codec/draft failing tests (hidden fields still materialized); then Provider, Provider Node and UI draft/component tests (42 files, 498 passed), a real temporary Repository write/reopen/enable test (8), and targeted draft tests (37). Real Hook+dialog browser checks (390/zh-CN/light, 1200/English/dark) passed: empty ID makes no request, switch operable, stale success/failure after close never overwrites the draft. Root typecheck passed, lint 0 errors / 41 existing warnings, architecture 0 violations. No Pro/Electron/phone shared-host run is claimed.
 
-## 8. 验证清单
+| Case    | Setup and action                                                | Must prove                                                              |
+| ------- | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| M120-01 | add/edit with empty ID, resolving, failed, no recommendation; toggle mode | switch present and usable; disabled only while saving; smart -> manual works |
+| M120-02 | A -> B, B unresolved, close, fill editable items, save          | no A system-field fallback; saved rule has no hidden fields; final internal config from B |
+| M120-03 | on->off->on, A->B->A, switch Provider, close dialog, reversed resolve order | stale replies never overwrite manual/new-generation draft; smart config not auto re-enabled |
+| M120-04 | manual config pins editable values; system updates capability and mapping | user fields unchanged; system fields update; enable semantics unchanged |
+| M120-05 | manual missing any required editable field, or system field supplied | new-write schema rejects precisely; `false` and valid CEL accepted    |
+| M120-06 | visible fields complete, system maxOutput mapping missing; save then try to create Model | personal rule saves; candidate shows accurate system config problem and cannot execute; no false numeric error |
+| M120-07 | dev-env old full manual record incl. other Providers, default selection, order | local normalization keeps user values/identity/enable; no whole-file clearing or unrelated loss |
+| M120-08 | save+reopen, cancel, save failure, revision conflict, re-enable then edit | mode and values correct; cancel writes nothing; failure keeps edits; new edits not swallowed by restored recommendation |
+| M120-09 | smart mode untouched fields / explicit override / explicit false | sparse intent kept; no hidden-field overrides produced                 |
+| M120-10 | desktop, phone existing settings entries and CLI/Host consume the same config | ownership and final config agree; no new cross-end write fork; remote identity and message flow unchanged |
 
-| Case    | 设置与动作                                                  | 必须证明                                                         |
-| ------- | ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| M120-01 | 新增/编辑，无 ID、解析中、失败、无推荐，切换模式            | 开关存在且可用；仅 saving 禁用；可以从智能回到手动               |
-| M120-02 | A 改 B，B 尚未解析，关闭后填可编辑项并保存                  | 无 A 系统字段回退；保存规则不含隐藏字段，最终内部配置来自 B      |
-| M120-03 | 开→关→开、A→B→A、换 Provider、关闭弹窗，倒置解析完成顺序    | 旧回包不覆盖当前手动/新代次草稿；不额外自动开启智能配置          |
-| M120-04 | 手动配置固定可编辑值，系统更新能力与映射                    | 用户字段不变；系统字段更新；启停原语义不变                       |
-| M120-05 | 手动缺失任一必填可编辑字段，或传入系统字段                  | 新写入 schema 准确拒绝；false 和合法 CEL 按原约束接纳            |
-| M120-06 | 可见字段完整但系统 maxOutput 映射缺失，保存后尝试创建 Model | 个人规则可保存；候选有准确系统配置问题，禁止执行；不假报数值错误 |
-| M120-07 | 开发环境旧完整手动记录，包含其他 Provider、默认选择及排序   | 局部规范化保留用户值/身份/启停，无整文件清空、无无关字段丢失     |
-| M120-08 | 保存重开、取消、保存失败、revision 冲突、重新开启再编辑     | 模式与值正确；取消不写入；失败保留；新编辑不被恢复推荐吞掉       |
-| M120-09 | 智能模式未触碰字段/显式覆盖/显式 false                      | 仍保持原稀疏意图，不因本轮产生隐藏字段覆盖                       |
-| M120-10 | 桌面、手机已有设置入口与 CLI/Host 消费同一配置              | 字段归属和最终配置一致，未新增端间写入分叉；不改远程身份/消息流  |
+APP interaction needs E2E covering close click, fill, save, reopen and cancel (existing pending smart-config
+cases updated per the E2E lifecycle). Desktop and phone keep shared-host, continuous/replayable boundaries.
 
-- schema、规则、配置合成、codec 与草稿使用定向单测；测试真实类/边界，不只断言按钮 disabled。
-- APP 交互必须补 E2E，覆盖点击关闭、填写、保存、重开和取消；已有 pending 的智能配置用例按 E2E lifecycle 更新，不把历史通过当新验收。
-- 保留运行证据：组件回调/草稿与保存 payload、读回规则、最终 Model 配置。需要日志时遵守 UI logger，避免打印凭据；请求验证使用隔离 transport，不为检查映射消耗真实服务。
-- 桌面与手机保留原 shared-host、continuous/replayable 边界，不改 Account 分发、owner、queue、Workspace 身份或正在运行的会话配置。
-- 实施前按架构技能检查边界，代码完成后运行 `pnpm architecture:check --changed`、`pnpm typecheck`、`pnpm lint`、相关单测与 E2E；无法验证的实际端如实留账。
+## 9. Non-goals and open items
 
-## 9. 非目标与交付状态
-
-不新增隐藏字段编辑入口，不重命名全部 smart/recommended 类型，不调整模型目录/Builtin 推荐值，不改鉴权/套餐/遥测/Composer，不实施 Todo128/129，也不重做个人配置文件架构。Todo125 问号说明及文案独立处理，不在本轮夹带润色。
-
-风险集中在字段提取不完整、旧值回退、系统字段被再次写入、手动缺项被推荐掩盖；上述测试可以直接验证。具体实现保持可审查的完整批次，不为每个叶子抽象出新的框架。
-
-本轮只完成调查、裁决、目标结构与验证计划落盘。正式测试、产品实现、实际保存/请求验收均待执行；实施结束后补充真实文件变更、验证、提交和剩余事项。
+No hidden-field editor, no renaming of smart/recommended types, no change to the model catalog/Builtin
+recommendation values, auth/plan/telemetry/Composer, Todo128/129, or personal config file architecture.
+Todo125 question-mark help and copy are separate. Risks: incomplete field extraction, old-value fallback,
+system fields written again, manual gaps masked by recommendation. Open: final batch acceptance and
+real-end (Pro/Electron/phone shared-host) verification.

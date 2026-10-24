@@ -1,22 +1,32 @@
-# Todo138：空模型草稿与 Model 层推理档位兜底
+# Todo138: Empty model draft and Model-layer reasoning-level fallback
 
-> 状态：已完成。2026-09-12；按最终裁决实施并通过下述验证。
+> Status: done (2026-09-12); implemented per the final decision and verified below.
+>
+> Merge note: the source branch numbered this Todo134, now unified as Todo138. The source builtin
+> revision 23 became 24 after merging another revision-23 Turbo-disable change; old version mentions are
+> historical evidence.
 
-> 合并说明：来源分支编号为 Todo134，现统一为 Todo138。来源实现的 builtin revision 为 23；合并另一份 revision 23 的 Turbo 禁用改动后升为 24，正文旧版本记录保留为历史证据。
+## Background and decision
 
-## 背景与最终裁决
+A newly added model without an ID showed `disabled` because of a UI hardcode in
+`ProviderCardSections.createEmptyModel`. The user wants an empty draft with no prefilled level, and the
+real model to provide on/off fallback levels.
 
-新增模型未填写 ID 就显示 disabled，来源是 ProviderCardSections.createEmptyModel 的 UI 硬编码。用户要求空白草稿不预填档位，实际模型提供关闭/开启两档兜底。
+The first draft ("Model-generic levels empty, API layer adds two levels") was withdrawn: existing Model +
+API rules override later, which would override Model-layer dedicated levels. The final decision changes no
+layer, ordering or overlay algorithm, adds no field special case and does not redeclare dedicated levels
+across layers.
 
-讨论后撤回“Model 通用档位留空、API 层新增两档”的初稿：现有 Model + API 规则后置覆盖，会覆盖 Model 层专用档位。最终不改层级、排序、overlay 算法，不引入字段特例，也不跨层重复声明专用档位。
+## Resulting behavior
 
-## 修改后的状态
+### New-model UI
 
-### 新增模型 UI
+Without a model ID the reasoning levels are empty (no `disabled` prefill); levels can be added; after an ID
+is entered the existing resolution, draft projection and personal-override mechanisms apply. Clearing the ID
+sends no resolution request and returns to an empty level list when there is no user override; explicitly
+edited levels are kept. Existing models, manual settings and other initial capabilities are not reset.
 
-未填写模型 ID 时，推理档位为空，不预填 disabled。可添加档位；输入 ID 后沿用现有解析、草稿投影、个人覆盖机制。清空 ID 不发解析请求；没有用户覆盖时回到空档位。有显式编辑的档位继续保留。已有模型、手动设置及其他初始能力不被重置。
-
-### Model 层通用兜底
+### Model-layer generic fallback
 
 ```ts
 reasoningLevel: {
@@ -25,54 +35,53 @@ reasoningLevel: {
 }
 ```
 
-已知模型继续用后续专用规则声明自己的档位，不要求每个模型额外添加 disabled/enabled。无 API 信息时也可得到 Model 层两档，但不代表配置完整或可发请求；不放宽完整性校验。
+Known models keep declaring their own levels in later dedicated rules (no extra disabled/enabled needed).
+Without API information a model can still get the two Model-layer levels, but that does not mean complete
+config or sendable requests; completeness validation is not relaxed.
 
-### 三种 API 通用映射
+### Generic mapping for the three API formats
 
-API 通用规则不新增 values，只修改 map 的 enabled 分支：
+API generic rules add no `values`; only the `enabled` branch of `map` changes:
 
-- Anthropic Messages：disabled 保持 thinking.type=disabled；enabled 使用 thinking.type=adaptive、output_config.effort=high。
-- OpenAI Chat Completions：disabled 保持关闭字段及 effort=none；enabled 使用 thinking.type=enabled、enable_thinking=true，reasoning_effort 和 reasoning.effort 均为 high。
-- OpenAI Responses：disabled 保持 reasoning.effort=none；enabled 映射 reasoning.effort=high。
+- Anthropic Messages: disabled keeps `thinking.type=disabled`; enabled uses `thinking.type=adaptive`, `output_config.effort=high`.
+- OpenAI Chat Completions: disabled keeps the off fields and effort=none; enabled uses `thinking.type=enabled`, `enable_thinking=true`, and both `reasoning_effort` and `reasoning.effort` = `high`.
+- OpenAI Responses: disabled keeps `reasoning.effort=none`; enabled maps `reasoning.effort=high`.
 
-其他档位按原映射处理，模型/API/站点专用 map 和个人覆盖保持。只调整通用表达式，不把 enabled 作为接口 effort 原样发出。
+Other levels follow the original mapping; model/API/site dedicated maps and personal overrides are kept.
+Only generic expressions change; `enabled` is never sent as an API effort value as is.
 
-## 所有权与边界
+## Ownership and boundaries
 
 ```text
-空 ID 草稿（UI，空档位，不解析）
-  -> 输入 ID
-  -> 现有 Host 解析：Model 通用两档 -> 专用模型档位 -> 原有后层覆盖
-  -> 现有 UI 投影（保留显式编辑）
-  -> 现有请求适配器执行 API map
+empty-ID draft (UI, empty levels, no resolution)
+  -> enter ID
+  -> existing Host resolution: Model generic two levels -> dedicated model levels -> original later-layer overrides
+  -> existing UI projection (explicit edits kept)
+  -> existing request adapter executes the API map
 ```
 
-UI 只拥有未提交草稿；规则和有效模型配置仍由 Provider 解析链路负责。不增加协议、状态源、定时器或同步链，不改变桌面 continuous / 手机 replayable 边界。两端复用相同编辑组件。
+UI owns only the uncommitted draft; rules and effective model config remain with the Provider resolution
+chain. No new protocol, state source, timer or sync chain; desktop continuous / mobile replayable unchanged;
+both ends reuse the same editor component.
 
-用户主动选模型或全新初始化时，completeNewModelSelection 取档位数组最后一项，因而会为兜底模型选到 enabled；恢复/重解析已有选择不走此补全策略；本次接受两档的自然结果，不修改选档策略，不覆盖用户已保存选择。builtin revision 从 22 递增到 23，不改 schemaVersion，不增加文件格式或迁移。
+When a user actively picks a model or on fresh initialization, `completeNewModelSelection` takes the last
+level of the array, so a fallback model selects `enabled`; restoring/re-resolving an existing selection
+does not use that completion; this natural result is accepted, the selection strategy is not changed and
+saved user selections are not overwritten. Builtin revision 22 -> 23 (24 after merge); no `schemaVersion`
+change, file format or migration.
 
-## 实施与验收
+## Code locations
 
-- [x] 更新空模型初始值，补首次打开、输入 ID 后解析、清空、手动编辑保留的回归。
-- [x] 验证真实内置规则的通用两档、专用档位和个人 map 覆盖；不修改解析器。
-- [x] 执行三种 API 通用 CEL，并捕获真实 SDK 最终请求体验证 disabled/enabled（对应 high），其他强度由 CEL 和既有专用请求用例回归。
-- [x] 浏览器覆盖桌面/手机宽度、深浅主题和中英文，记录运行结果；不冒充完整 Electron/远控验证。
-- [x] 更新相关 spec/索引，运行相关单测、类型、lint、架构检查后提交。
+- UI: `packages/ui/src/settings/model-provider-section/ProviderCardSections.tsx`.
+- Resolution/projection (regression only): `useModelConfigResolution.ts`, `useProviderModelDraft.ts`, `ProviderModelDraftState.ts`.
+- Builtin: `config/provider/zcode-builtin.json` (first Model rule and the three generic Model + API maps).
+- Rule order (unchanged): `packages/provider/src/config/schema.ts`, `model-config.ts`.
 
-## 代码定位
+## Verification
 
-- UI：packages/ui/src/settings/model-provider-section/ProviderCardSections.tsx。
-- 解析/投影：useModelConfigResolution.ts、useProviderModelDraft.ts、ProviderModelDraftState.ts（仅回归，不改生命周期）。
-- 内置：config/provider/zcode-builtin.json 第一条 Model 规则与三条通用 Model + API map。
-- 规则顺序：packages/provider/src/config/schema.ts、model-config.ts（保持现状）。
-
-## 验证记录
-
-- 先红后绿：UI 初始档位、真实内置解析、SDK 未声明 enabled 校验及两种尺寸浏览器均先复现旧行为。
-- 相关 UI/内置配置单测 153 项通过；草稿规则 7 项通过；真实 SDK 序列化请求 64 项通过（含三种格式 disabled/enabled 共6项），使用隔离 fetch，不请求付费模型。
-- 类型检查、desktop E2E 类型检查通过；Lint 42 条既有警告、0 错误；架构检查 0 违规。
-- 专用 map 历史基线及 GPT-5.4、GLM-5.3 多档位保持。Grok-4.3 没有专用档位声明，因此与未知模型一样继承两档；其内置默认关闭状态未改。个人持久化不回写。
-- 浏览器新增用例两项通过；校验首次打开无档位/无请求，解析后两档，清空 ID 回到空列表，以及手动编辑不被后续回包覆盖。测试曾误等待推荐输入的 value，按运行记录改为等待 placeholder，不改生产同步逻辑。
-- 浏览器测试使用共享组件及隔离服务，未执行完整 Electron、手机远控或真实供应商联网调用。
-
-共用设置页浏览器合跑 22 项：21 项直接通过，手机 provider batch 被本次注释整理触发的 Vite HMR 打断；文件固定后两项 provider batch 重跑均通过。测试故障不涉及产品修复。新增两项也已独立通过。
+- Red first: UI initial levels, real builtin resolution, SDK undeclared-`enabled` validation and two-size browser checks reproduced the old behavior.
+- 153 UI/builtin-config unit tests; 7 draft-rule tests; 64 real SDK serialized-request tests (including 6 for disabled/enabled across the three formats) with isolated fetch (no paid model requests).
+- Typecheck and desktop E2E typecheck pass; lint 0 errors / 42 existing warnings; architecture 0 violations.
+- Dedicated-map historical baselines and GPT-5.4 / GLM-5.3 multi-level behavior kept. Grok-4.3 has no dedicated level declaration so it inherits the two levels like unknown models; its builtin default-off state is unchanged. Personal persistence is not written back.
+- Two new browser cases pass: first open has no levels and no request, two levels after resolution, clearing the ID returns to an empty list, and manual edits are not overwritten by a late reply (the test once wrongly waited for the recommendation input value and now waits for the placeholder; production sync logic unchanged).
+- Shared settings-page browser run of 22: 21 passed directly; the phone provider batch was interrupted by Vite HMR from a comment cleanup and passed on rerun. Tests used shared components and isolated services; full Electron, phone remote control and real-provider network calls were not run.
