@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, posix, win32 } from "node:path";
 import type { ConnectConfig, ServerHostKeyAlgorithm } from "ssh2";
 import type { PublicZCodeErrorCode } from "@zcode/shared";
 
@@ -214,11 +214,23 @@ export type HostKeyLookup =
   | { kind: "revoked" }
   | { kind: "unknown"; knownKeyTypes: string[] };
 
-export function defaultKnownHostsFiles(): KnownHostsFiles {
+/** OpenSSH's default UserKnownHostsFile and GlobalKnownHostsFile lists; only the first user file is written. */
+export function defaultKnownHostsFiles(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+): KnownHostsFiles {
+  // homedir() resolves %USERPROFILE% on Windows, matching OpenSSH for Windows.
+  const paths = platform === "win32" ? win32 : posix;
+  const systemDir =
+    platform === "win32" ? paths.join(env["ProgramData"] ?? "C:\\ProgramData", "ssh") : "/etc/ssh";
   return {
-    // homedir() resolves %USERPROFILE% on Windows, matching OpenSSH for Windows.
-    userFile: join(homedir(), ".ssh", "known_hosts"),
-    globalFiles: process.platform === "win32" ? [] : ["/etc/ssh/ssh_known_hosts"],
+    userFile: paths.join(home, ".ssh", "known_hosts"),
+    globalFiles: [
+      paths.join(home, ".ssh", "known_hosts2"),
+      paths.join(systemDir, "ssh_known_hosts"),
+      paths.join(systemDir, "ssh_known_hosts2"),
+    ],
   };
 }
 
@@ -419,6 +431,8 @@ async function withKnownHostsLock<T>(userFile: string, action: () => Promise<T>)
 export async function appendTrustedHostKey(
   files: KnownHostsFiles,
   request: HostKeyTrustRequest,
+  /** Runs under the lock right before the write; throwing aborts without writing (the caller's trust went stale). */
+  beforeAppend?: () => void,
 ): Promise<"appended" | "already-trusted"> {
   await mkdir(dirname(files.userFile), { recursive: true, mode: 0o700 });
   return await withKnownHostsLock(files.userFile, async () => {
@@ -433,6 +447,7 @@ export async function appendTrustedHostKey(
     const name = request.port === 22 ? request.host : `[${request.host}]:${request.port}`;
     const existing = await readOptional(files.userFile);
     const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    beforeAppend?.();
     await appendFile(
       files.userFile,
       `${separator}${name} ${request.keyType} ${request.publicKey}\n`,

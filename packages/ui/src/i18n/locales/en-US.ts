@@ -222,9 +222,9 @@ const enUS: Record<string, string> = {
     "The device did not respond in time. Check your connection and retry.",
   "remote.error.hostNotFound.reason": "Check the hostname or try an IP address.",
   "remote.error.hostKeyChanged.reason":
-    'The device\'s SSH host key no longer matches your known_hosts file. The device may have been reinstalled, or someone may be intercepting the connection. Confirm the new key with the device administrator, remove the old entry with ssh-keygen -R HOST (for a non-default port: ssh-keygen -R "[HOST]:PORT"), then connect again.',
+    'The device\'s SSH host key no longer matches the key recorded in known_hosts. The device may have been reinstalled, or someone may be intercepting the connection. Confirm the new key with the device administrator. If the old entry is in your ~/.ssh/known_hosts, remove it with ssh-keygen -R HOST (for a non-default port: ssh-keygen -R "[HOST]:PORT") and connect again. If it is in the system-wide known_hosts file, ask the administrator to update that file.',
   "remote.error.hostKeyUnknown.reason":
-    "This computer has not connected to this device before. Open the connection dialog to review the host key fingerprint and decide whether to trust it.",
+    "This computer has no trusted host key for this device yet. Open the connection dialog to review the host key fingerprint and decide whether to trust it.",
   "remote.error.downloadFailed.reason":
     "The installation package could not be downloaded. Check your connection and retry.",
   "remote.error.uploadFailed.reason":
@@ -2561,7 +2561,7 @@ const enUS: Record<string, string> = {
   "remote.installLocation": "Install location",
   "remote.hostKeyTrustTitle": "Trust this device's host key?",
   "remote.hostKeyTrustDescription":
-    "This is the first connection to this device from this computer. Compare the fingerprint with the one the device administrator gives you (ssh-keygen -lf on the device). Trusting adds the key to ~/.ssh/known_hosts.",
+    "This computer has no trusted host key for this device yet, even if you connected to it before. Compare the fingerprint with the one the device administrator gives you, for example from ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub on the device (use the key file that matches the key type shown). Trusting adds the key to ~/.ssh/known_hosts.",
   "remote.hostKeyType": "Key type",
   "remote.hostKeyFingerprint": "Fingerprint",
   "remote.hostKeyTrustConfirm": "Trust and connect",

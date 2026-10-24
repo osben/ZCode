@@ -1,10 +1,11 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { join, win32 } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appendTrustedHostKey,
+  defaultKnownHostsFiles,
   describeHostKey,
   lookupHostKey,
   orderServerHostKeyAlgorithms,
@@ -255,6 +256,21 @@ describe("known_hosts trust across Hosts", () => {
     await expect(pending).rejects.toMatchObject({ code: "remote-host-key-changed" });
   });
 
+  it("runs the caller's guard under the lock right before writing and writes nothing when it throws", async () => {
+    const guard = vi.fn(() => {
+      throw new Error("trust no longer pending");
+    });
+    await expect(
+      appendTrustedHostKey(
+        files,
+        { host: "dev.example", port: 22, ...describeHostKey(fakeKeyBlob()) },
+        guard,
+      ),
+    ).rejects.toThrow("trust no longer pending");
+    expect(guard).toHaveBeenCalledOnce();
+    await expect(readFile(files.userFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("breaks a stale lock left by a crashed Host", async () => {
     const lockPath = `${files.userFile}.zcode-lock`;
     await mkdir(join(dir, ".ssh"), { recursive: true });
@@ -268,6 +284,30 @@ describe("known_hosts trust across Hosts", () => {
         ...describeHostKey(fakeKeyBlob()),
       }),
     ).resolves.toBe("appended");
+  });
+});
+
+describe("defaultKnownHostsFiles", () => {
+  it("reads OpenSSH's default user and system files on macOS and Linux", () => {
+    const files = defaultKnownHostsFiles("linux", {}, "/home/alice");
+    expect(files.userFile).toBe("/home/alice/.ssh/known_hosts");
+    expect(files.globalFiles).toEqual([
+      "/home/alice/.ssh/known_hosts2",
+      "/etc/ssh/ssh_known_hosts",
+      "/etc/ssh/ssh_known_hosts2",
+    ]);
+  });
+
+  it("reads the system file under %ProgramData% on Windows", () => {
+    const files = defaultKnownHostsFiles("win32", { ProgramData: "D:\\Data" }, "C:\\Users\\alice");
+    expect(files.globalFiles).toEqual([
+      win32.join("C:\\Users\\alice", ".ssh", "known_hosts2"),
+      win32.join("D:\\Data", "ssh", "ssh_known_hosts"),
+      win32.join("D:\\Data", "ssh", "ssh_known_hosts2"),
+    ]);
+    expect(defaultKnownHostsFiles("win32", {}, "C:\\Users\\alice").globalFiles[1]).toBe(
+      win32.join("C:\\ProgramData", "ssh", "ssh_known_hosts"),
+    );
   });
 });
 

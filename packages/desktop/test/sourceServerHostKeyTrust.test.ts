@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -115,6 +115,27 @@ describe("SourceServerConnectionManager host key trust", () => {
       // The pending key is consumed; a second trust needs a new connect attempt.
       await expect(manager.trustHostKey(profileId, observedKey.fingerprint)).rejects.toMatchObject({
         code: "remote-host-key-unknown",
+      });
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it("does not write a key whose pending trust was invalidated while the write waited", async () => {
+    const manager = createManager(hostKeyError(observedKey));
+    const lockPath = `${knownHostsFiles.userFile}.zcode-lock`;
+    try {
+      await manager.connect({ profile, target }).catch(() => undefined);
+      // Another window's Host holds the known_hosts lock, so the trust waits; meanwhile the profile is removed.
+      await mkdir(join(dir, ".ssh"), { recursive: true });
+      await writeFile(lockPath, "other-host");
+      const trusting = manager.trustHostKey(profileId, observedKey.fingerprint);
+      const assertion = expect(trusting).rejects.toMatchObject({ code: "remote-host-key-unknown" });
+      manager.removeProfile(profileId);
+      await unlink(lockPath);
+      await assertion;
+      await expect(readFile(knownHostsFiles.userFile, "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
       });
     } finally {
       manager.dispose();

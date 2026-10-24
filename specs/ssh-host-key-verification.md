@@ -105,8 +105,10 @@ the transport handshake.
 
 ## `known_hosts` support
 
-Files read: `~/.ssh/known_hosts` (`os.homedir()`, so `%USERPROFILE%\.ssh\known_hosts` on Windows) and, read-only,
-`/etc/ssh/ssh_known_hosts` on macOS/Linux. A missing file is empty. Unreadable or unparsable lines are skipped.
+Files read, matching OpenSSH's default `UserKnownHostsFile` and `GlobalKnownHostsFile` lists: `~/.ssh/known_hosts`
+(`os.homedir()`, so `%USERPROFILE%\.ssh\known_hosts` on Windows) and, read-only, `~/.ssh/known_hosts2`,
+`ssh_known_hosts` and `ssh_known_hosts2` in `/etc/ssh` (macOS/Linux) or `%ProgramData%\ssh` (Windows). Only the first
+file is written. A pinned key in a system file therefore makes a different key "changed", never "unknown". A missing file is empty. Unreadable or unparsable lines are skipped.
 
 | Format                                    | Support                                                                                        |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -157,10 +159,14 @@ the user-facing text from i18n keys:
   brings the trust panel back; other surfaces reconnect and fail closed again).
 - Trust panel: `remote.hostKeyTrustTitle`, `remote.hostKeyTrustDescription`, `remote.hostKeyType`,
   `remote.hostKeyFingerprint`, `remote.hostKeyTrustConfirm` ("Trust and connect"), `remote.hostKeyTrustRejected`.
-- `remote.error.hostKeyChanged.reason` (updated): the key no longer matches known_hosts; the device may have been
-  reinstalled or the connection intercepted; confirm with the administrator, remove the old entry with
-  `ssh-keygen -R HOST` (`ssh-keygen -R "[HOST]:PORT"` for a non-default port) and connect again. Primary action
+- `remote.error.hostKeyChanged.reason` (updated): the key no longer matches the one recorded in known_hosts; the device
+  may have been reinstalled or the connection intercepted; confirm with the administrator. If the old entry is in the
+  user's `~/.ssh/known_hosts`, remove it with `ssh-keygen -R HOST` (`ssh-keygen -R "[HOST]:PORT"` for a non-default
+  port) and connect again; if it is in a system-wide file, the administrator must correct that file. Primary action
   `security` (details only); there is no override.
+- The unknown-key copy says the computer has no trusted key for the device yet, not that this is a first connection,
+  because devices added before this change also reach it. The trust description names a concrete fingerprint command
+  (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, using the key file for the shown type).
 
 The refused key travels on the backend error as a non-enumerable `hostKey` property, so `console.error` of the
 connect error never prints the host, key or fingerprint.

@@ -390,7 +390,14 @@ export class SourceServerConnectionManager {
   public async trustHostKey(profileId: string, fingerprint: string): Promise<void> {
     const pending = this.pendingHostKeys.get(profileId);
     if (!pending || pending.fingerprint !== fingerprint) throw hostKeyTrustUnavailableError();
-    await appendTrustedHostKey(this.options.knownHostsFiles ?? defaultKnownHostsFiles(), pending);
+    // The write can wait for another window's lock; a removal, success or newer attempt meanwhile cancels it.
+    await appendTrustedHostKey(
+      this.options.knownHostsFiles ?? defaultKnownHostsFiles(),
+      pending,
+      () => {
+        if (this.pendingHostKeys.get(profileId) !== pending) throw hostKeyTrustUnavailableError();
+      },
+    );
     if (this.pendingHostKeys.get(profileId) !== pending) return;
     this.pendingHostKeys.delete(profileId);
     const current = this.states.get(profileId);
@@ -736,6 +743,7 @@ export class SourceServerConnectionManager {
 
   public removeProfile(profileId: string): void {
     this.operationLogs.removeProfile(profileId);
+    this.pendingHostKeys.delete(profileId);
     const canceledUpdateSources = new Set<string>();
     for (const flight of this.updateFlights) {
       if (flight.profileId !== profileId) continue;
