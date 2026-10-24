@@ -1,18 +1,12 @@
 # Fork Session Title Design
 
-## 背景
+## Problem
 
-用户报告 fork 出来的 `sess_0f8d6d7c-d682-49ec-b925-f91552c2fa73` 在列表标题显示为「新任务」，但 fork child 应该显示为 `Fork of <parent title>`。运行时取证显示：
+Fork child sessions showed as「新任务」in the task list instead of `Fork of <parent title>`. The fork child's persisted title (`session.title = "Fork of <parent title>"`, `title_source=generated` in `~/.zcode/cli/db/db.sqlite`) never reached the child's own v4 event/projection. The v4 sessions-index live summary derives from `ConversationSnapshot.meta.title`, and `ProductProjection` updates `meta.title` only on `SessionTitleUpdated`. After resume a fork child emits only `SessionResumed`, so the `v4/conversation/frame` sessions-index delta stayed `title: ""`, `titleSource: "default"`, and the UI fell back to `task.forkedFromTaskId ? taskList.forkedUntitled : taskList.untitled`. Live `getSessionIndexMeta` also returned only `createdAt` and `lastActivityAt`, without `parentSessionId`, so the fork relation could be lost from the live summary as well.
 
-- `~/.zcode/cli/db/db.sqlite` 的 `session.title` 已经是 `Fork of Checkpoint复现目标`，`title_source=generated`。
-- `v4/conversation/frame` 的 `sessions-index` 下行 delta 里同一 session 一直是 `title: ""`、`titleSource: "default"`。
-- UI 看到空标题后按 `task.forkedFromTaskId ? taskList.forkedUntitled : taskList.untitled` fallback，因此显示「新任务」。
+## Root cause
 
-## 根因
-
-fork child 的持久化标题只写入了 session store，没有进入 child 自己的 v4 event/projection。v4 sessions-index 的 live 摘要从 `ConversationSnapshot.meta.title` 派生，而 `ProductProjection` 只有收到 `SessionTitleUpdated` 事件才会更新 `meta.title`。fork child resume 后只产生 `SessionResumed`，没有补发已持久化的 title 事实。
-
-同时，live `getSessionIndexMeta` 只返回 `createdAt` 和 `lastActivityAt`，未返回 `parentSessionId`，导致 fork 关系在 live sessions-index 摘要中也可能丢失。
+The persisted title was written only to the session store, not replayed into the child's v4 event stream.
 
 ```text
 fork parent
@@ -28,27 +22,24 @@ fork parent
   -> UI task row/header
 ```
 
-## 设计
+## Design
 
-1. 在 runtime resume 路径中同步持久化标题到当前 runtime event stream。
-   - 当 `session.title` 非空时，append `SessionTitleUpdated`。
-   - `source` 使用持久化 `session.titleSource`；`first_input` 归一逻辑仍由 v4 projection 映射为 `generated`。
-   - 事件必须由当前 child runtime 自己 append，避免 parent runtime 事件误投到 parent publisher。
+1. Sync the persisted title into the current runtime event stream on resume.
+   - When `session.title` is non-empty, append `SessionTitleUpdated`.
+   - `source` uses the persisted `session.titleSource`; `first_input` normalization still maps to `generated` in the v4 projection.
+   - Only the current child runtime appends the event, so parent runtime events never land on the parent publisher.
 
-2. 在 bootstrap live record 中保留 fork parent 关系。
-   - `ZCodeProtocolSessionRecord` 新增可选 `parentSessionId`。
-   - `createRecord` 从 `params.parentSessionId` 初始化该字段。
-   - fork record 创建时传入 `parentSessionId: fork.parentSessionId`。
-   - resume 老会话时从 session store 的 `parentID` 回填。
-   - v4 bridge 的 `getSessionIndexMeta` 透传该字段。
+2. Keep the fork parent relation in the bootstrap live record.
+   - `ZCodeProtocolSessionRecord` gains optional `parentSessionId`; `createRecord` initializes it from `params.parentSessionId`.
+   - Fork record creation passes `parentSessionId: fork.parentSessionId`; resuming an old session backfills from the session store's `parentID`.
+   - The v4 bridge's `getSessionIndexMeta` passes the field through.
 
-3. 测试覆盖 live sessions-index，而不是只覆盖 DB。
-   - 新增 core resume 回归：fork child 的持久化 generated title 必须在 `SessionResumed` 前补发 `SessionTitleUpdated`。
-   - 扩展 v4 cold-resume 集成：fork child 不在 `roots: true` store seed 中，live sessions-index summary 仍必须包含 `parentSessionId`。
-   - 保留现有 core fork DB title 测试。
+3. Test the live sessions-index, not only the DB.
+   - Core resume regression: a fork child's persisted generated title must replay `SessionTitleUpdated` before `SessionResumed`.
+   - v4 cold-resume integration: a fork child not present in the `roots: true` store seed must still expose `parentSessionId` in the live sessions-index summary.
+   - Keep the existing core fork DB title tests.
 
-## 非目标
+## Non-goals
 
-- 不修改 UI fallback 文案。
-- 不把 `Fork of ...` 逻辑下沉到 UI。
-- 不改变 desktop continuous 与 web remote replayable 的恢复边界；两端继续消费同一 v4 event/sessions-index 事实。
+- No UI fallback copy changes; the `Fork of ...` logic does not move into the UI.
+- desktop-continuous and web-remote-replayable recovery boundaries are unchanged; both consume the same v4 event/sessions-index facts.

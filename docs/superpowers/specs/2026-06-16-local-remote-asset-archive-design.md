@@ -1,72 +1,24 @@
 # Local Remote Asset Archive Design
 
-## Background
+Windows SSH users could fail in the default `local-download-upload` remote asset flow with `spawn C:\Windows\System32\tar.exe ENOENT`: after downloading a CDN component archive into the local `remote-assets-cache`, the desktop host tried to extract it by spawning the Windows system tar binary. The desktop client no longer depends on a local system `tar` for remote asset cache extraction or local upload archive creation.
 
-Windows SSH users can fail during the default `local-download-upload` remote asset flow with:
+Scope: desktop host local side of `local-download-upload` only. `remote-download` still uses the remote server's detected `tar`; uploaded directory archives are still extracted on the remote host with remote `tar`. SSH protocol, remote target types, web remote control delivery, and UI form behavior are unchanged.
 
-```text
-spawn C:\Windows\System32\tar.exe ENOENT
-```
-
-Logs show SSH authentication and remote environment detection succeed. The failure happens after the desktop host downloads a CDN component archive into the local `remote-assets-cache` and tries to extract it by spawning the Windows system tar binary.
-
-## Goal
-
-Remove the desktop client's dependency on a local system `tar` executable for remote asset cache extraction and local upload archive creation.
-
-## Scope
-
-- Applies to the desktop host local side of `local-download-upload`.
-- Keeps `remote-download` behavior unchanged: remote servers still use their detected `tar` tool.
-- Keeps the remote side of local upload unchanged: uploaded directory archives are still extracted on the remote host with remote `tar`.
-- Does not change SSH protocol, remote target types, web remote control delivery semantics, or UI form behavior.
-
-## Design
-
-Add a small Node-based `.tar.gz` helper in `packages/server/src/remote`:
+Design — Node-based `.tar.gz` helper in `packages/server/src/remote`:
 
 - `extractTarGzArchive(archivePath, targetDir)`
 - `createTarGzArchive(archivePath, entries)`
 
-The helper uses Node built-ins (`zlib`, `fs/promises`, `path`) and supports the archive shapes used by ZCode remote assets:
+Built on Node built-ins (`zlib`, `fs/promises`, `path`), supporting regular files, directories, and POSIX-style relative tar entry paths. The extractor rejects unsafe entries: absolute paths, `..` traversal, backslash paths, symlinks and special device entries, and paths resolving outside the target directory.
 
-- regular files
-- directories
-- POSIX-style relative tar entry paths
+Integration:
 
-The extractor rejects unsafe entries:
+- `packages/server/src/remote/remoteAssetCache.ts`: local `tar -xzf` extraction of downloaded CDN archives replaced by `extractTarGzArchive`.
+- `packages/server/src/remote/remoteAssetInstaller.ts`: local `tar -czf` creation in `LocalUploadAssetInstaller.installDirectory()` replaced by `createTarGzArchive`.
+- `packages/server/test/remoteDeploy.test.ts`: test CDN fixture archives built with `createTarGzArchive`, removing the local system tar dependency.
 
-- absolute paths
-- `..` traversal
-- backslash paths
-- symlinks and special device entries
-- paths that resolve outside the target directory
+Compatibility: cache layout and deployment behavior unchanged — staging-directory extraction, `.ready` markers and atomic commit in existing callers, top-level source directory name preserved in upload archives, remote extraction command unchanged.
 
-## Integration Points
+Tests: `ensureRemoteReleaseDirFromCdn()` downloads and extracts without spawning local `tar`; path-traversal entries rejected; local upload archive creation spawns no local `tar` and preserves the expected shape.
 
-- `packages/server/src/remote/remoteAssetCache.ts`
-  - Replace local `tar -xzf` extraction of downloaded CDN component archives with `extractTarGzArchive`.
-- `packages/server/src/remote/remoteAssetInstaller.ts`
-  - Replace local `tar -czf` creation for `LocalUploadAssetInstaller.installDirectory()` with `createTarGzArchive`.
-- `packages/server/test/remoteDeploy.test.ts`
-  - Use `createTarGzArchive` for test CDN fixture archives so tests no longer depend on local system tar.
-
-## Compatibility
-
-Existing cache layout and deployment behavior stay the same:
-
-- component archives still extract into staging directories
-- `.ready` markers and atomic commit behavior stay in existing callers
-- local upload directory archives still preserve the top-level source directory name
-- remote extraction command is unchanged
-
-## Tests
-
-- A regression test verifies `ensureRemoteReleaseDirFromCdn()` can download and extract component archives without spawning local `tar`.
-- A safety test verifies path traversal tar entries are rejected.
-- A local upload test verifies directory archive creation no longer spawns local `tar` and preserves the expected archive shape.
-
-## Risks
-
-- The Node tar helper intentionally supports a small tar subset. This is acceptable because remote asset build output is controlled by this project.
-- If future assets require symlinks or special entries, this helper should be extended explicitly with tests instead of silently accepting them.
+Limitation: the helper intentionally supports a small tar subset (remote asset build output is controlled by this project). Future assets needing symlinks or special entries require an explicit, tested extension — never silent acceptance.

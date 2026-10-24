@@ -1,7 +1,7 @@
 /**
  * Built-in branch-name generator for the worktree flow (spec:
  * docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md,
- * «Уточнение 2026-10-13»). Pure and dependency-free: the caller injects the RNG so tests are
+ * "Clarification 2026-10-13", section 2). Pure and dependency-free: the caller injects the RNG so tests are
  * deterministic. All words are lowercase ASCII and pass `git check-ref-format` unchanged.
  * The name format is fixed (`{adjective}-{noun}`); there is intentionally no user-facing
  * template setting (review 2026-10-13: a free-form template is an error surface).

@@ -1,20 +1,11 @@
 # Compact Thinking Control
 
-## 背景
+The compact summary is a short auxiliary request. The runtime flag `ENABLE_COMPACT_SUMMARY_THINKING` decides whether the main conversation's reasoning/thinking providerOptions are passed through to compact. It only controls whether the summary uses thinking; Anthropic fixed thinking and visible output still share the compact request's total budget, which the adapter enforces per request without touching main-conversation config.
 
-Compact summary 是一次短输出的辅助请求。runtime 通过 `ENABLE_COMPACT_SUMMARY_THINKING`
-决定是否把主对话的 reasoning/thinking providerOptions 透传给 compact。这个开关只控制
-summary 是否使用 thinking；Anthropic fixed thinking 与可见输出仍共享 compact 的请求总预算，
-由 adapter 在当前请求内限制 oversized thinking，不修改主对话配置。
+Behavior:
 
-## 行为
+- `ENABLE_COMPACT_SUMMARY_THINKING` = `false`: the compact summary request disables inherited thinking/reasoning providerOptions.
+- `ENABLE_COMPACT_SUMMARY_THINKING` = `true` (current default): compact passes through the current `modelProviderOptions`; Anthropic fixed thinking stays within the request's total budget.
+- Regular conversation, subagent, and title-generation requests are unaffected by the flag.
 
-- `ENABLE_COMPACT_SUMMARY_THINKING` 为 `false` 时，compact summary 请求会禁用 inherited thinking/reasoning providerOptions。
-- `ENABLE_COMPACT_SUMMARY_THINKING` 为 `true`（当前默认）时，compact 继续透传当前 `modelProviderOptions`；Anthropic fixed thinking 仍受本次请求总预算约束。
-- 普通对话、subagent、标题生成等非 compact 请求不受这个开关影响。
-
-## 范围
-
-这里只控制 compact summary request 是否继承 reasoning/thinking providerOptions，不负责请求总预算
-约束，也不改变 compact prompt、history selection、UI compact divider 展示或普通模型请求的
-reasoning 配置。
+Scope: only compact summary inheritance of reasoning/thinking providerOptions. Not owned here: total-budget enforcement, compact prompt, history selection, UI compact divider, or reasoning config of normal model requests.

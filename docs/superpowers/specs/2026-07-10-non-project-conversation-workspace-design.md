@@ -1,8 +1,8 @@
-# 非项目对话工作区设计
+# Non-project Conversation Workspace Design
 
-## 目标
+## Goal
 
-新用户不再必须先选择项目，也不再自动创建 `~/ZCodeProject`。应用在内部使用一个稳定的 conversation backing workspace：
+New users no longer must pick a project first, and `~/ZCodeProject` is no longer auto-created. The app uses one stable internal conversation backing workspace:
 
 ```text
 workspacePath = <dataBaseDir>/.zcode/workspace/default
@@ -10,20 +10,19 @@ workspacePurpose = conversation
 selectedProject = null
 ```
 
-默认 `dataBaseDir` 为用户 home，因此默认路径是 `~/.zcode/workspace/default`。该目录提供 Agent、session、terminal 和文件工具需要的真实 cwd，但不作为项目展示给用户。所有非项目对话共享这一目录；本期不实现每条对话独立目录及对应的 Agent 回收、目录注册和 GC。
+The default `dataBaseDir` is the user home, so the default path is `~/.zcode/workspace/default`. The directory provides the real cwd that Agent, session, terminal, and file tools need, but is never presented to the user as a project. All non-project conversations share this directory; per-conversation directories (and the Agent recycling, directory registry, and GC they need) are out of scope for this phase.
 
-## 状态与边界
+## State and boundaries
 
-新增 `WorkspacePurpose = "project" | "conversation"`。缺少该字段的旧数据按 `project` 处理。purpose 只表达产品分类，不改变 workspace identity：
+New `WorkspacePurpose = "project" | "conversation"`. Legacy data without the field is treated as `project`. Purpose is a product classification only and does not change workspace identity:
 
 ```text
 workspaceKey = workspaceIdentity?.trim() || workspacePath
 ```
 
-本地 conversation workspace 不合成 `workspaceIdentity`，也不修改 App/Agent 的 ZCode Protocol。purpose 需要存在于 app-owned 的 workspace session、tab、task meta、task-index 和 Web remote workspace 描述中，以便恢复、查询和展示使用相同事实。
+The local conversation workspace synthesizes no `workspaceIdentity` and does not change the App/Agent ZCode Protocol. The purpose field lives in app-owned workspace session, tab, task meta, task-index, and Web remote workspace descriptions so recovery, queries, and display use the same fact.
 
-本地桌面启动时先幂等确保 conversation backing directory，供非项目对话和任意失效历史 workspace 的
-Agent spawn cwd fallback 共用；有真实项目时只创建目录，不激活为当前 workspace。随后分为两条路径：
+At local desktop startup, idempotently ensure the conversation backing directory first; it also serves as the Agent spawn cwd fallback for non-project conversations and for any invalidated historical workspace. When a real project exists, only create the directory — do not activate it as the current workspace. Then:
 
 ```text
 ensure conversation backing directory
@@ -37,11 +36,11 @@ ensure conversation backing directory
   -> composer 可直接首发
 ```
 
-Main 是首次 bootstrap 权威；Renderer 只消费完整 descriptor，或在用户显式切换到非项目模式时幂等 ensure。不得由 Main 和 Renderer 各自分配不同默认目录。
+Main is the first-bootstrap authority; Renderer only consumes the complete descriptor, or idempotently ensures when the user explicitly switches to non-project mode. Main and Renderer must never each assign a different default directory.
 
-## 侧栏信息架构
+## Sidebar information architecture
 
-一级仍为 `分组 / 项目`，不增加一级“任务”。`项目 + 按项目` 视图包含两个可排序的二级 section：
+The top level stays `分组 / 项目`; no new top-level "任务". The `项目 + 按项目` view has two sortable second-level sections:
 
 ```text
 已置顶                         仅有数据或加载中时显示
@@ -52,20 +51,20 @@ Main 是首次 bootstrap 权威；Renderer 只消费完整 descriptor，或在�
   非项目任务
 ```
 
-- 首次、旧版偏好或坏数据默认按“项目 → 任务”展示；用户可通过标题行的专用手柄拖拽换位，顺序在 renderer-local 偏好中持久化。两个标题始终显示并各自独立展开/收起，空列表分别显示“尚未打开项目”和“还没有任务”。
-- 拖拽手柄与折叠 trigger、右侧 action 相互独立；支持鼠标、触摸和键盘排序。空 section 或收起 section 仍可整体移动，原展开态和内容跟随 section，不清理 workspace/task 排序或缓存。
-- 标题及右侧 action 外的剩余标题行是折叠 trigger；展开显示向下箭头，收起显示向右箭头。箭头和 action 默认只在 hover 出现，键盘 `focus-within`、菜单打开和无 hover 设备保留可见回退；action 是 trigger 的 sibling，不触发折叠。
-- “任务”右侧图标调用同一 `startDraft` 流程，但 target 固定为 conversation backing workspace，不能继承当前活动项目。
-- “任务”中的任务使用普通单行 row，不显示内部 backing workspace 的 `default` 目录名，也不显示无业务含义的普通 idle 灰点；未读、错误和运行中状态继续复用共享 leading indicator。
-- “项目”右侧 `+` 菜单只含“打开文件夹”和“远程连接”，复用 Root 已有操作；按 capability 隐藏不可用项。
-- 两个 section 的展开态和 `sectionOrder` 通过 renderer-local `zcode-sidebar-purpose-section-preferences` 持久化，首次、坏数据或 storage 不可用时使用默认值；右侧 action 不改变展开态。本地偏好不进入 Host/Agent，不要求其它已打开窗口实时同步。
-- 顶部 `Expand all` / `Collapse all` 在按项目视图中同时控制“项目”section 和所有 workspace 行，不影响“任务”；section 收起不清除 workspace 行展开态、任务缓存或 DnD 顺序。
-- 顶部全局“新建任务”与快捷键仍使用当前活动 workspace。
-- conversation 列表只包含非 pinned、非 archived 的 `purpose=conversation` 任务；默认折叠数量和“显示更多”沿用单 workspace 列表。
-- pinned conversation task 只显示在“已置顶”；取消置顶后回到“任务”。archived conversation task 只显示在归档视图。
-- 原有 `按项目 / 时间线` 和 `Created / Updated` 偏好保留；时间线继续聚合所有 purpose。
+- First run, legacy preference, or corrupt data defaults to `项目 → 任务` order; the user can reorder via the dedicated drag handle on each header, persisted in a renderer-local preference. Both headers always show and collapse independently; empty lists show「尚未打开项目」and「还没有任务」respectively.
+- Drag handle, collapse trigger, and right-side actions are independent; mouse, touch, and keyboard reordering all work. Empty or collapsed sections remain movable as a whole; expansion state and content travel with the section, and workspace/task ordering or caches are not cleared.
+- The header row outside the title and right-side actions is the collapse trigger: expanded shows a down chevron, collapsed a right chevron. Chevrons and actions appear on hover by default, with `focus-within`, open-menu, and no-hover-device fallbacks keeping them visible; actions are siblings of the trigger and never collapse the section.
+- The `任务` right icon invokes the same `startDraft` flow with the target fixed to the conversation backing workspace — it never inherits the active project.
+- Tasks under `任务` use the normal single-line row, never show the internal backing workspace's `default` directory name, and never show the meaningless plain idle gray dot; unread, error, and running states reuse the shared leading indicator.
+- The `项目` right-side `+` menu contains only「打开文件夹」and「远程连接」, reusing existing Root actions; hide unavailable items by capability.
+- Section expansion state and `sectionOrder` persist in renderer-local `zcode-sidebar-purpose-section-preferences`, defaulting on first run, corrupt data, or storage failure; right-side actions never change expansion state. Local preferences do not enter Host/Agent and are not required to sync live across open windows.
+- Top `Expand all` / `Collapse all` controls the `项目` section and all workspace rows in the project view and never affects `任务`; collapsing a section does not clear workspace-row expansion, task caches, or DnD order.
+- The global「新建任务」and its shortcut keep using the current active workspace.
+- The conversation list contains only non-pinned, non-archived `purpose=conversation` tasks; default fold count and「显示更多」follow the single-workspace list.
+- A pinned conversation task shows only in「已置顶」; unpinning returns it to `任务`. An archived conversation task shows only in the archive view.
+- Existing `按项目 / 时间线` and `Created / Updated` preferences are kept; the timeline keeps aggregating all purposes.
 
-必须拆分两个 scope，禁止为了隐藏内部 workspace 而提前过滤任务源：
+Two scopes must stay split; never pre-filter task sources to hide the internal workspace:
 
 ```text
 allTaskWorkspaceTargets = project + conversation
@@ -76,38 +75,38 @@ projectWorkspaceTabs = purpose=project
   -> project section / workspace DnD / expand-collapse / empty state
 ```
 
-`workspaceTabs.length === 0` 不能作为整个任务区的早退条件。即使没有真实项目，conversation backing target 仍要参与 task 查询，Group 视图也必须挂载。
+`workspaceTabs.length === 0` is never an early-exit for the whole task area. Even with no real project, the conversation backing target still participates in task queries and the Group view still mounts.
 
-## 分组语义
+## Grouping semantics
 
-- 普通非项目任务默认是 Group 顶层未分组任务，可以通过拖拽或菜单进入任意普通分组。
-- conversation task 的 group membership、排序、重命名、归档和未读状态与项目任务使用同一 task service。
-- pinned/archived 仍按现有 membership 规则从活动 Group 列表排除；取消置顶后恢复原 group membership。
-- workspace bootstrap 只为 `purpose=project` 的 scope 生成项目组，禁止为 backing path 生成名为 `default` 或旧/新用户文案“对话 / 任务”的自动组。
-- Group 的 sessions-index、structure、membership、optimistic overlay 和 service lookup 都必须使用 `allTaskWorkspaceTargets`。
+- A normal non-project task defaults to an ungrouped top-level task in Group and can enter any normal group via drag or menu.
+- Conversation tasks use the same task service as project tasks for group membership, ordering, rename, archive, and unread state.
+- pinned/archived still leave the active Group list under existing membership rules; unpinning restores the original group membership.
+- Workspace bootstrap generates project groups only for `purpose=project`; never generate an auto-group named `default` or the old/new user copy「对话 / 任务」for the backing path.
+- Group sessions-index, structure, membership, optimistic overlay, and service lookup all use `allTaskWorkspaceTargets`.
 
-## Composer workspace 交互
+## Composer workspace interaction
 
-- workspace 菜单顺序为“打开文件夹 → 远程连接 → 不在项目中工作”。
-- conversation 状态的 trigger 显示“选择项目”，不显示关闭按钮；“不在项目中工作”显示 checked，重复选择为 no-op。
-- project 草稿态在 hover、`focus-within` 时显示独立关闭按钮；点击后切到 conversation backing workspace，不关闭项目 tab，不展开菜单。
-- 关闭按钮只作用于未发送草稿；已创建 task 不迁移 workspace。
-- 切换必须先确保目标 workspace 可用，再改变 active target。失败时保留原 workspace 和草稿，展示可重试错误。
-- 项目选择使用 `{ workspacePath, workspaceIdentity?, workspacePurpose }`，不能只按 path 匹配远程 workspace。
-- conversation purpose 隐藏 Git branch selector；文件树、终端和复制路径仍使用真实 workspacePath。
+- Workspace menu order:「打开文件夹」→「远程连接」→「不在项目中工作」.
+- The conversation state's trigger shows「选择项目」with no close button;「不在项目中工作」shows checked, and re-selecting it is a no-op.
+- The project draft state shows an independent close button on hover / `focus-within`; clicking it switches to the conversation backing workspace, keeps the project tab open, and does not open the menu.
+- The close button applies only to unsent drafts; an already created task does not migrate workspaces.
+- Switching must first ensure the target workspace is available, then change the active target. On failure, keep the original workspace and draft and show a retryable error.
+- Project selection uses `{ workspacePath, workspaceIdentity?, workspacePurpose }` — never match remote workspaces by path alone.
+- The conversation purpose hides the Git branch selector; file tree, terminal, and copy-path keep using the real workspacePath.
 
-## 多端和生命周期
+## Multi-client and lifecycle
 
-- Desktop 继续使用 `desktop-continuous`，conversation backing workspace 复用一个本地 runtime。
-- 手机 `/remote` 继续使用 `web-remote-replayable` 和 shared-host attachment，不得创建新的本地/远程 Agent runtime。
-- 手机已有 conversation attachment 时可新建对话；没有 attachment 时动作不可用，并提示先在桌面端创建。
-- relay 和 desktop main 不新增 task/session/queue/snapshot 业务状态。
-- 关闭 tab、归档或删除 task 不删除 backing workspace 或其中用户文件。
-- 多窗口 mkdir、重复点击和恢复必须幂等；路径被文件占用、权限不足或磁盘满时不得进入半激活状态。
-- conversation purpose 的任务分区/工作区标签统一显示为“任务”，不得泄露内部叶子名 `default`；对话过程、手机 workspace kind badge 等其它文案不在本次重命名范围，路径语义 UI 除外。
+- Desktop keeps `desktop-continuous`; the conversation backing workspace reuses one local runtime.
+- Mobile `/remote` keeps `web-remote-replayable` and shared-host attachment; it never creates a new local/remote Agent runtime.
+- Mobile can start a new conversation when a conversation attachment exists; without one the action is unavailable with a prompt to create it on desktop first.
+- Relay and desktop main gain no task/session/queue/snapshot business state.
+- Closing a tab, archiving, or deleting a task never deletes the backing workspace or user files inside it.
+- Multi-window mkdir, repeated clicks, and recovery must be idempotent; a path occupied by a file, insufficient permissions, or a full disk must never enter a half-activated state.
+- The task section / workspace tab label for conversation purpose uniformly shows「任务」and never leaks the internal leaf name `default`; other copy (conversation flow, mobile workspace kind badge) is out of this rename except path-semantics UI.
 
-## Accepted / Pruned
+## Accepted / pruned
 
-Accepted：首次启动直接对话、稳定共享 backing path、项目/非项目草稿切换、二级“任务/项目”sections、无项目 task 的 pinned/grouped/timeline/archive 行为、Desktop/Mobile shared-host 边界。
+Accepted: first-run direct conversation, one stable shared backing path, project/non-project draft switching, second-level `任务/项目` sections, no-project task pinned/grouped/timeline/archive behavior, Desktop/Mobile shared-host boundaries.
 
-Pruned：每条对话独立目录、已有 task 改项目、手机创建独立 runtime、把 conversation 伪装成项目 workspace、按路径前缀替代显式 purpose。
+Pruned: per-conversation directories, migrating existing tasks between projects, a mobile-created separate runtime, disguising conversation as a project workspace, path-prefix matching instead of an explicit purpose.

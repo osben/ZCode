@@ -1,66 +1,74 @@
-# Windows CUA WGC 视觉捕获设计
+# Windows CUA WGC Visual Capture Design
 
-## 背景
+## Background
 
-Windows source Helper 已具备 UI Automation 元素树、指针输入和原生文本剪贴板，但视觉链路仍是占位实现：
+The Windows source Helper already has the UIA element tree, pointer input and the native text clipboard, but
+the visual chain is a placeholder: `captureWindowImage` of `ax_native.node` returns `null`, the Windows
+`SystemSurface` declares `supportsScreenCapture=false`, `screenshot` cannot capture the selected display,
+`get_app_state(include_screenshot=true)` returns UIA state without an image, and `space:"state_image"` /
+`space:"screenshot"` have coordinate semantics but no Windows image source. macOS has a complete loop of
+"window identity verification + window image + state cache"; Windows takes the same product boundary with
+Windows Graphics Capture (WGC) as the pixel source, which supports target windows occluded by ordinary
+windows. This design covers only the local Windows source Helper; macOS, Linux, SSH, WSL, Docker, remote
+workspace, mobile `/remote` and the product packaging chain are unchanged.
 
-- `ax_native.node` 的 `captureWindowImage` 固定返回 `null`；
-- Windows `SystemSurface` 声明 `supportsScreenCapture=false`；
-- `screenshot` 无法捕获所选显示器；
-- `get_app_state(include_screenshot=true)` 只能返回 UIA 状态，不能附带窗口图像；
-- `space:"state_image"` 和 `space:"screenshot"` 已有坐标语义，却没有 Windows 图像来源。
+## Goals
 
-macOS 已经形成“窗口身份校验 + 窗口图像 + 状态缓存”的完整闭环。Windows 采用相同的产品边界，但底层像素来源使用 Windows Graphics Capture（WGC），以支持被其他普通窗口遮挡的目标窗口。
+This phase completes the Windows local visual loop in one go:
 
-本设计只覆盖本地 Windows source Helper。macOS、Linux、SSH、WSL、Docker、remote workspace、手机 `/remote` 与产品打包链路保持不变。
+1. `screenshot` captures the user-selected display, keeping the origin of a negative-coordinate display.
+2. Capture a given HWND and return the target window content even when it is fully occluded by other ordinary
+   windows.
+3. `get_app_state(include_screenshot=true)` attaches the window image of the same verified observation to the
+   state.
+4. Reuse the existing `state_id`, `space:"state_image"` and latest-screenshot visual-frame semantics; no new
+   screenshot revision protocol.
+5. Verify the display or window identity, process, executable path and bounds before and after the screenshot,
+   refusing to stitch a stale UIA tree and a new image into one state.
+6. Native capture and PNG encoding run in a background worker and do not block the N-API/V8 main thread.
+7. The capability is true only when the complete, callable WGC chain exists.
+8. Keep the existing 30 MCP tool names, parameters and tier/annotation unchanged.
 
-## 目标
+## Non-goals
 
-本阶段一次完成 Windows 本地视觉闭环：
+Refactoring the macOS/Linux/Electron visual chain; SSH, WSL, Docker, remote workspace, mobile `/remote`;
+product installer, signing, store identity, manifest, prebuilt x64/arm64 artifacts; the restricted "no yellow
+capture border" capability (source development accepts the system default WGC border); BitBlt, PrintWindow,
+PowerShell, external commands, Electron `desktopCapturer` or private binaries as fallbacks; a Rust/napi-rs
+sidecar or extra resident process; moving UIA reads into a worker; an independent `screenshotId` handle or MCP
+tool schema change; video, streaming, picture-in-picture, multi-frame diff; a "successful screenshot" promise
+for minimized windows (they fail honestly); full HDR color management (the first phase outputs SDR BGRA8 PNG).
 
-1. `screenshot` 捕获用户所选显示器，保留负坐标显示器原点；
-2. 捕获指定 HWND，即使窗口被其他普通窗口完全遮挡仍返回目标窗口内容；
-3. `get_app_state(include_screenshot=true)` 将同一次已验证观察的窗口图像附加到状态；
-4. 复用现有 `state_id`、`space:"state_image"` 和最新 screenshot visual-frame 语义，不新增截图修订协议；
-5. 截图前后验证显示器或窗口身份、进程、可执行路径与边界，拒绝把陈旧 UIA 树和新图像拼成同一状态；
-6. native 捕获和 PNG 编码在后台 worker 执行，不阻塞 N-API/V8 主线程；
-7. capability 只在完整、可调用的 WGC 链路存在时为真；
-8. 保持现有 30 个 MCP 工具名称、参数与 tier/annotation 不变。
+## Confirmed design
 
-## 非目标
+Use the existing Windows C++ addon `ax_native.node`, add a C++/WinRT + D3D11 + WIC implementation, and expose it
+to TypeScript through an N-API async Promise.
 
-本阶段明确不包含：
+Rejected alternatives:
 
-- Electron/macOS/Linux 的视觉链路重构；
-- SSH、WSL、Docker、remote workspace 或手机 `/remote`；
-- 产品安装包、签名、商店 identity、应用 manifest、预编译 x64/arm64 产物；
-- 申请或绕过“无黄色捕获边框”的受限 capability；source 开发接受系统默认 WGC 边框；
-- 用 BitBlt、PrintWindow、PowerShell、外部命令、Electron `desktopCapturer` 或私有二进制作为 fallback；
-- 新建 Rust/napi-rs sidecar 或额外常驻进程；
-- 改造现有 UIA 同步读取为独立 worker；
-- 引入独立的 `screenshotId` 截图句柄，或修改 MCP tool schema；
-- 视频、流式捕获、画中画、多帧 diff；
-- 最小化窗口的“成功截图”承诺；最小化目标必须诚实失败；
-- HDR 完整色彩管理。第一阶段输出 SDR BGRA8 PNG，HDR tone mapping 作为后续产品质量项。
+1. **Rust/napi-rs sidecar**: adds processes, toolchain, release artifacts and a protocol boundary, unsuited to
+   the fast loop of the current source Helper.
+2. **Electron `desktopCapturer`**: couples the standalone Node Helper back to the desktop renderer/main and
+   breaks the current boundary where the Helper can start independently.
+3. **BitBlt/PrintWindow/PowerShell**: cannot reliably meet the occluded-window semantics and introduces
+   different permission, color, DPI and lifecycle behavior.
 
-## 已确认方案
+Technical basis:
 
-采用现有 Windows C++ addon `ax_native.node`，增加 C++/WinRT + D3D11 + WIC 实现，并通过 N-API 异步 Promise 暴露给 TypeScript。
+- [`IGraphicsCaptureItemInterop`](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nn-windows-graphics-capture-interop-igraphicscaptureiteminterop)
+  provides `CreateForWindow` and `CreateForMonitor`, allowing a capture item to be created from an
+  HWND/HMONITOR;
+- [`Direct3D11CaptureFramePool.CreateFreeThreaded`](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframepool.createfreethreaded)
+  fires the frame event on an internal worker thread and does not require the calling thread to own a
+  `DispatcherQueue`;
+- the [Windows screen capture docs](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture)
+  require checking `GraphicsCaptureSession.IsSupported` first and describe the WGC frame-pool/session
+  lifecycle;
+- the [Windows app capability docs](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/app-capability-declarations)
+  say restricted capabilities belong to the product manifest/release boundary, so "no system border" is not
+  mixed into the source runtime acceptance in this phase.
 
-未采用的方案：
-
-1. **Rust/napi-rs sidecar**：会新增进程、工具链、发布物和协议边界，不适合当前 source Helper 的快速闭环。
-2. **Electron `desktopCapturer`**：把独立 Node Helper 反向耦合到 desktop renderer/main，破坏当前 Helper 可独立启动的边界。
-3. **BitBlt/PrintWindow/PowerShell**：不能可靠满足遮挡窗口语义，且会引入不同的权限、颜色、DPI 与生命周期行为。
-
-技术选型依据：
-
-- [`IGraphicsCaptureItemInterop`](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nn-windows-graphics-capture-interop-igraphicscaptureiteminterop) 提供 `CreateForWindow` 和 `CreateForMonitor`，允许从 HWND/HMONITOR 创建 capture item；
-- [`Direct3D11CaptureFramePool.CreateFreeThreaded`](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframepool.createfreethreaded) 使用内部 worker thread 触发 frame event，不要求调用线程拥有 `DispatcherQueue`；
-- [Windows screen capture 文档](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture) 要求先检查 `GraphicsCaptureSession.IsSupported`，并说明 WGC 的 frame-pool/session 生命周期；
-- [Windows app capability 文档](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/app-capability-declarations) 说明受限 capability 属于产品 manifest/发布边界，因此本阶段不把“无系统边框”混入 source runtime 验收。
-
-## 架构与事件顺序
+## Architecture and event order
 
 ```text
 screenshot / get_app_state(include_screenshot=true)
@@ -72,7 +80,7 @@ TypeScript capability + target identity gate
 native Promise
   |
   v
-Napi::AsyncWorker（后台 MTA）
+Napi::AsyncWorker (background MTA)
   |
   +--> IGraphicsCaptureItemInterop
   |      +--> CreateForMonitor(HMONITOR)
@@ -82,42 +90,44 @@ Napi::AsyncWorker（后台 MTA）
 Direct3D11CaptureFramePool::CreateFreeThreaded
   |
   v
-等待第一张有效帧 / target closed / deadline
+wait for the first valid frame / target closed / deadline
   |
   v
-只复制 ContentSize 到 D3D11 staging texture
+copy only ContentSize into a D3D11 staging texture
   |
   v
-WIC 内存 PNG 编码
+WIC in-memory PNG encoding
   |
   v
-再次校验 monitor/HWND/PID/exe/bounds
+verify monitor/HWND/PID/exe/bounds again
   |
-  +--> screenshot：写入最新 visual-frame
+  +--> screenshot: write the latest visual-frame
   |
-  `--> get_app_state：图像与 UIA 状态一起进入 state cache
+  `--> get_app_state: image and UIA state enter the state cache together
                          |
                          `--> state_id + space:"state_image"
 ```
 
-所有状态关联仍由现有 broker 负责：
+All state association is still owned by the existing broker:
 
 ```text
-显示器 screenshot N
-  `--> visual-frame N（原点 = 该显示器物理 bounds）
-       `--> space:"screenshot" 只允许引用当前 visual-frame
+display screenshot N
+  `--> visual-frame N (origin = physical bounds of that display)
+       `--> space:"screenshot" may reference only the current visual-frame
 
-窗口 capture_app N
+window capture_app N
   `--> UIA tree N + PNG N + capture bounds N
        `--> state_id N
-            `--> space:"state_image" 只允许引用 state_id N 的图像
+            `--> space:"state_image" may reference only the image of state_id N
 ```
 
-后一次 screenshot/zoom 会替换 session 当前 visual-frame；后一次 `get_app_state` 会生成新 `state_id`。因此现有协议已经具备截图版本边界，无需再引入 `screenshotId`。
+The next screenshot/zoom replaces the session's current visual-frame; the next `get_app_state` generates a new
+`state_id`. The existing protocol therefore already has a screenshot version boundary and needs no
+`screenshotId`.
 
 ## Native ABI
 
-在 Windows addon 上增加 additive、可选导出：
+Additive, optional exports on the Windows addon:
 
 ```ts
 type NativeScreenCaptureSuccess = {
@@ -162,77 +172,94 @@ interface AxWinNativeAddon {
 }
 ```
 
-`data` 在实现中可由 Node `Buffer` 承载，但 ABI 按 `Uint8Array` 校验，避免上层依赖 Buffer 专有方法。失败 outcome 不暴露 HRESULT、系统错误文本、窗口标题、可执行路径、图像内容、pipe 或 token。
+`data` may be carried by a Node `Buffer` in the implementation, but the ABI validates it as `Uint8Array`, so
+upper layers do not rely on Buffer-only methods. A failure outcome does not expose HRESULT, system error text,
+window title, executable path, image content, pipe or token.
 
-三个导出必须成组存在。旧 addon、半组导出、异常返回值或 rejected Promise 全部 fail closed，不允许回退到同步占位函数。
+The three exports must exist as a group. An old addon, a partial export set, an abnormal return value or a
+rejected Promise all fail closed; falling back to a synchronous placeholder function is not allowed.
 
-## 显示器定位
+## Display location
 
-broker 已选择显示器并持有其物理 bounds。native 不信任暴露给 JS 的 `HMONITOR` 数值长期有效，而是：
+The broker has already chosen the display and holds its physical bounds. Native does not trust the `HMONITOR`
+number exposed to JS to stay valid; it:
 
-1. 接收 `[x, y, width, height]`；
-2. 枚举当前显示器，寻找 bounds 精确匹配的 `HMONITOR`；
-3. 创建 WGC item 前重新读取一次 bounds；
-4. PNG 完成后再次确认显示器仍存在且 bounds 未变化；
-5. 任何不匹配都返回 `target_changed`。
+1. receives `[x, y, width, height]`;
+2. enumerates current displays and finds the `HMONITOR` whose bounds match exactly;
+3. re-reads the bounds once before creating the WGC item;
+4. after the PNG is done, confirms again that the display still exists and its bounds have not changed;
+5. returns `target_changed` for any mismatch.
 
-成功 outcome 的 `bounds` 是最终验证过的显示器物理 bounds。负 `x/y` 保留，不做归零；visual-frame 用该 bounds 作为全局到图像坐标的原点。
+The `bounds` of a success outcome are the finally verified physical bounds of the display. Negative `x/y` are
+kept and not zeroed; the visual-frame uses these bounds as the origin from global to image coordinates.
 
-## 窗口身份与边界
+## Window identity and bounds
 
-窗口捕获接收 HWND、期望 PID、规范化可执行路径以及 UIA 观察时的可选 bounds。捕获前后执行相同校验：
+Window capture receives the HWND, the expected PID, the normalized executable path and the optional bounds from
+the time of UIA observation. The same verification runs before and after capture:
 
-1. `IsWindow(hwnd)` 为真；
-2. `GetWindowThreadProcessId` 等于期望 PID；
-3. 查询到的 canonical executable path 与期望 bundle id 相同；
-4. 目标不是 Helper 自身、锁屏 shell 或已知受保护系统桌面；
-5. 目标进程不高于 Helper 完整性级别；
-6. `IsIconic(hwnd)` 为假，窗口宽高大于零；
-7. `GetWindowRect` 为有效物理坐标；
-8. 若调用方传入 UIA 观察 bounds，则捕获开始前必须相等；
-9. 捕获结束后的 HWND、PID、exe 和 bounds 必须仍与开始时一致。
+1. `IsWindow(hwnd)` is true;
+2. `GetWindowThreadProcessId` equals the expected PID;
+3. the queried canonical executable path equals the expected bundle id;
+4. the target is not the Helper itself, the lock-screen shell or a known protected system desktop;
+5. the target process is not above the Helper's integrity level;
+6. `IsIconic(hwnd)` is false and the window width/height are greater than zero;
+7. `GetWindowRect` is a valid physical coordinate;
+8. if the caller passes the UIA observation bounds, they must be equal before capture starts;
+9. after capture, the HWND, PID, exe and bounds must still equal those at the start.
 
-若窗口、进程或边界在观察期间变化，返回 `target_changed`。对于 `get_app_state`，此错误使整个观察失败并要求重新观察，不能把旧 UIA tree 和另一时刻的图像组合起来。
+If the window, process or bounds change during observation, return `target_changed`. For `get_app_state` this
+error fails the whole observation and requires a re-observation; an old UIA tree must not be combined with an
+image from another moment.
 
-WGC 的帧像素尺寸与 `GetWindowRect` 可能受系统边框或平台实现细节影响。成功 outcome 的 `bounds` 表示捕获前后已复核的桌面物理坐标范围，`width/height` 表示 PNG 像素尺寸；上层以这两组数据建立 `state_image` 坐标映射，不盲目信任先前 UIA outer bounds，也不在二者不一致时假设 1:1。
+The WGC frame pixel size and `GetWindowRect` may be affected by system borders or platform implementation
+details. The `bounds` of a success outcome are the desktop physical coordinate range re-checked before and after
+capture, and `width/height` are the PNG pixel size; the upper layer builds the `state_image` coordinate mapping
+from these two, neither blindly trusting the earlier UIA outer bounds nor assuming 1:1 when they disagree.
 
-## 像素管线
+## Pixel pipeline
 
-每个 capture worker 完成一张图后立即销毁捕获会话：
+Each capture worker destroys the capture session right after one image is done:
 
-1. 创建支持 BGRA 的 D3D11 device；
-2. 首选 hardware adapter，失败后允许 WARP device；WARP 仍是 WGC 路径，不是 BitBlt fallback；
-3. 将 DXGI device 包装为 WinRT `IDirect3DDevice`；
-4. 用 `Direct3D11CaptureFramePool::CreateFreeThreaded` 创建 2-buffer frame pool，避免依赖 DispatcherQueue；
-5. 创建 capture session 并开始；
-6. 等待第一张尺寸有效的帧，同时监听 item closed 与 deadline；
-7. 只复制 frame `ContentSize` 范围，拒绝复用纹理中的历史边缘像素；
-8. 复制到 CPU-readable staging texture，按 `RowPitch` 读取；
-9. 使用 WIC 在内存中编码 BGRA8 PNG；
-10. 关闭 session/frame pool 并释放 staging、D3D、WinRT 与事件对象。
+1. create a BGRA-capable D3D11 device;
+2. prefer a hardware adapter, allow a WARP device on failure; WARP is still the WGC path, not a BitBlt
+   fallback;
+3. wrap the DXGI device as a WinRT `IDirect3DDevice`;
+4. create a 2-buffer frame pool with `Direct3D11CaptureFramePool::CreateFreeThreaded`, avoiding the
+   DispatcherQueue dependency;
+5. create the capture session and start it;
+6. wait for the first frame of valid size while listening for item closed and the deadline;
+7. copy only the frame `ContentSize` range, refusing historical edge pixels from a reused texture;
+8. copy into a CPU-readable staging texture and read by `RowPitch`;
+9. encode a BGRA8 PNG in memory with WIC;
+10. close the session/frame pool and release the staging, D3D, WinRT and event objects.
 
-输出是非交错标准 PNG。第一阶段使用 SDR BGRA8；HDR 显示器的颜色精度是已知限制，但不得因此伪报 capture success 后返回空白图。
+The output is a non-interlaced standard PNG. The first phase uses SDR BGRA8; color precision on HDR displays is
+a known limitation, but capture success must not be falsely reported with a blank image because of it.
 
-## 线程、并发与资源上限
+## Threads, concurrency and resource limits
 
-WGC 与编码不能运行在 JS 主线程：
+WGC and encoding must not run on the JS main thread:
 
-- 每个调用使用 `Napi::AsyncWorker`；
-- worker 初始化 MTA，并在 worker 内捕获全部 C++/WinRT 异常；
-- `NAPI_DISABLE_CPP_EXCEPTIONS` 继续约束 node-addon-api；WinRT 异常不得越过 worker/native ABI；
-- 使用独立 `std::timed_mutex g_screenCaptureMutex`，一个 Helper 同时最多执行一项 WGC 捕获；
-- 等待 capture mutex 最多 250ms，超时返回 `busy`；
-- 第一张有效帧 deadline 为 2000ms，超时返回 `timeout`；
-- 最大单边 16,384 像素；
-- 最大总像素 33,554,432（覆盖单屏 8K）；
-- 最大 PNG 128 MiB；
-- 超限在分配大块 staging/PNG 内存前返回 `too_large`。
+- each call uses a `Napi::AsyncWorker`;
+- the worker initializes MTA and catches all C++/WinRT exceptions inside the worker;
+- `NAPI_DISABLE_CPP_EXCEPTIONS` keeps constraining node-addon-api; WinRT exceptions must not cross the
+  worker/native ABI;
+- a dedicated `std::timed_mutex g_screenCaptureMutex` allows at most one WGC capture per Helper at a time;
+- waiting for the capture mutex is at most 250ms, then return `busy`;
+- the first valid frame deadline is 2000ms, then return `timeout`;
+- maximum single side 16,384 pixels;
+- maximum total pixels 33,554,432 (covers a single 8K display);
+- maximum PNG 128 MiB;
+- an over-limit request returns `too_large` before allocating large staging/PNG memory.
 
-Helper 关闭时先停止新 admission。worker 在创建 session 前和取得帧后都检查 shutdown 状态；已接收的 worker 通过 RAII 关闭 session、frame pool、D3D/WinRT 对象后才完成 Promise。不得留下捕获线程、窗口、进程或磁盘临时图像。
+On Helper shutdown, stop new admission first. A worker checks the shutdown state before creating the session and
+after getting a frame; an accepted worker closes the session, frame pool and D3D/WinRT objects through RAII
+before completing the Promise. No capture thread, window, process or on-disk temp image may be left behind.
 
-## Capability 与状态
+## Capability and status
 
-Windows `supportsScreenCapture` 为真必须同时满足：
+Windows `supportsScreenCapture` is true only when all of these hold:
 
 ```text
 platform == win32
@@ -242,170 +269,166 @@ AND typeof captureMonitorPngAsync == "function"
 AND typeof captureWindowPngVerifiedAsync == "function"
 ```
 
-`isScreenCaptureSupported()` 内部使用 `GraphicsCaptureSession::IsSupported()`，并确认运行系统支持 `IGraphicsCaptureItemInterop::CreateForWindow/CreateForMonitor`。
+`isScreenCaptureSupported()` uses `GraphicsCaptureSession::IsSupported()` internally and confirms the running
+system supports `IGraphicsCaptureItemInterop::CreateForWindow/CreateForMonitor`.
 
-状态语义：
+Status semantics:
 
-- 完整链路存在：`screenCaptureStatus="granted"`；
-- 非交互 desktop、锁屏/安全桌面或启动 preflight 拒绝：`"denied"`；
-- 旧 addon、系统不支持或 ABI 不完整：`"unknown"`，同时 capability 为 false。
+- complete chain present: `screenCaptureStatus="granted"`;
+- non-interactive desktop, lock screen/secure desktop or a startup preflight rejection: `"denied"`;
+- old addon, unsupported system or incomplete ABI: `"unknown"`, with the capability false at the same time.
 
-capability 表示当前 source Helper 可执行视觉捕获，不代表产品安装包、签名或无边框 capability 已完成。
+The capability means the current source Helper can run visual capture; it does not mean the product installer,
+signing or the no-border capability is done.
 
-## TypeScript 集成
+## TypeScript integration
 
 ### Adapter
 
-`createNodeAutomationAdapter` 沿用原生剪贴板的成组 capability 模式：
+`createNodeAutomationAdapter` follows the grouped capability pattern of the native clipboard:
 
-- Windows 完整三导出存在时，直接 await native capture；
-- Windows SystemSurface 继续是无截图的 fail-closed surface，不增加外部 fallback；
-- macOS/Linux 继续使用现有 SystemSurface；
-- malformed outcome、同步 throw、Promise rejection 都映射为净化后的 broker 错误。
+- with the full Windows three exports, directly await native capture;
+- the Windows SystemSurface stays a fail-closed surface without screenshots and gets no external fallback;
+- macOS/Linux keep using the existing SystemSurface;
+- a malformed outcome, a synchronous throw and a Promise rejection all map to a sanitized broker error.
 
-`captureScreenPng(area)` 调用 monitor capture，并将成功结果转换为现有 screen capture 结构。它不缓存第二份图片；session visual-frame 仍由现有 backend 建立。
+`captureScreenPng(area)` calls monitor capture and converts a success result into the existing screen capture
+structure. It caches no second image; the session visual-frame is still built by the existing backend.
 
 ### App state
 
-`createAxWinReadOnlySource` 增加一个可注入的 verified window capture callback：
+`createAxWinReadOnlySource` gains an injectable verified window capture callback:
 
-- `includeScreenshot=false` 时不启动 WGC；
-- `includeScreenshot=true` 时，先取得 UIA snapshot 和窗口身份，再调用 verified capture；
-- 成功时附加 PNG、实际 bounds 和像素尺寸；
-- `invalid_target` / `target_changed` 使整个 observation 失败；
-- identity 稳定但 `busy`、`timeout`、`device_lost`、`capture_failed` 或 `encode_failed` 时，允许保留 UIA tree，同时 `screenshot=null`，并附加 additive、净化后的 `screenshot_error` warning；
-- 没有图像的 state 不建立 `state_image` visual target，后续 `space:"state_image"` 必须明确拒绝并要求重新观察。
+- with `includeScreenshot=false` WGC is not started;
+- with `includeScreenshot=true`, first obtain the UIA snapshot and window identity, then call verified
+  capture;
+- on success attach the PNG, the actual bounds and the pixel size;
+- `invalid_target` / `target_changed` fail the whole observation;
+- when identity is stable but there is `busy`, `timeout`, `device_lost`, `capture_failed` or `encode_failed`,
+  the UIA tree may be kept with `screenshot=null` plus an additive, sanitized `screenshot_error` warning;
+- a state without an image builds no `state_image` visual target, and a later `space:"state_image"` must be
+  rejected explicitly with a request to re-observe.
 
-这样既不因为一次只读视觉失败丢掉可用 UIA 信息，也不会让模型误以为该 state 含有图像。
+This neither drops usable UIA information because of one read-only visual failure nor lets the model believe
+the state contains an image.
 
-## 错误映射
+## Error mapping
 
-| Native error                        | Broker 语义                           | 重试规则                       |
-| ----------------------------------- | ------------------------------------- | ------------------------------ |
-| `busy` / `timeout`                  | `timeout`                             | 只读观察可由调用方显式重试     |
-| `unsupported`                       | capability false / `not_authorized`   | 不在本次 session 重试          |
-| `unavailable`                       | `internal` 或启动 capability false    | 环境恢复后显式重试             |
-| `invalid_target` / `target_changed` | `element_unavailable`，要求 reobserve | 不复用旧 state                 |
-| `too_large`                         | `invalid_request`                     | 缩小目标后重试                 |
-| `device_lost`                       | retryable `internal`                  | 不自动重放动作，只重试只读捕获 |
-| `capture_failed` / `encode_failed`  | sanitized `internal`                  | 显式重试                       |
+| Native error                        | Broker semantics                        | Retry rule                                                    |
+| ----------------------------------- | --------------------------------------- | ------------------------------------------------------------- |
+| `busy` / `timeout`                  | `timeout`                               | read-only observation may be retried explicitly by the caller |
+| `unsupported`                       | capability false / `not_authorized`     | no retry in this session                                      |
+| `unavailable`                       | `internal` or startup capability false  | retry explicitly after the environment recovers               |
+| `invalid_target` / `target_changed` | `element_unavailable`, ask to reobserve | old state not reused                                          |
+| `too_large`                         | `invalid_request`                       | retry after shrinking the target                              |
+| `device_lost`                       | retryable `internal`                    | no automatic action replay, only retry read-only capture      |
+| `capture_failed` / `encode_failed`  | sanitized `internal`                    | retry explicitly                                              |
 
-视觉捕获是只读操作，可以明确重试；任何后续点击、输入等动作仍遵循原有 delivery-state，视觉失败不能触发动作自动重放。
+Visual capture is a read-only operation and may be retried explicitly; later actions such as click and typing
+still follow the original delivery-state, and a visual failure must not trigger automatic action replay.
 
-## 坐标一致性
+## Coordinate consistency
 
-Windows 进程已使用 `PER_MONITOR_AWARE_V2`，因此 UIA、`GetWindowRect`、monitor bounds 与 WGC capture bounds 都按物理像素解释。
+The Windows process already uses `PER_MONITOR_AWARE_V2`, so UIA, `GetWindowRect`, monitor bounds and WGC capture
+bounds are all interpreted in physical pixels.
 
 ### `space:"screenshot"`
 
 ```text
-全局物理坐标 = screenshot 图片坐标 + selected monitor bounds 原点
+global physical coordinate = screenshot image coordinate + selected monitor bounds origin
 ```
 
-非主显示器的负坐标必须保留。后一次 screenshot 或 zoom 替换当前 visual-frame，旧 screenshot 坐标不得继续使用。
+Negative coordinates of a non-primary display must be kept. The next screenshot or zoom replaces the current
+visual-frame, and old screenshot coordinates must not keep being used.
 
 ### `space:"state_image"`
 
 ```text
-全局物理坐标 = state_image 图片坐标 + state capture bounds 原点
+global physical coordinate = state_image image coordinate + state capture bounds origin
 ```
 
-state cache 保存 native 成功 outcome 的实际 bounds 和像素尺寸。若实际像素尺寸与 bounds 宽高不一致，上层必须按现有 image transform 显式缩放；不得默认为 1:1 后静默点击错误位置。窗口移动、缩放、最小化、销毁或 HWND/PID 复用都使旧 state 失效。
+The state cache stores the actual bounds and pixel size of the native success outcome. If the actual pixel size
+disagrees with the bounds width/height, the upper layer must scale explicitly per the existing image transform;
+it must not default to 1:1 and silently click the wrong position. A window move, resize, minimize, destroy or
+HWND/PID reuse invalidates the old state.
 
-## 安全与隐私
+## Safety and privacy
 
-- 非交互 desktop、锁屏与安全桌面不捕获；
-- 不捕获高完整性级别目标；
-- native 与 TypeScript 日志不包含 PNG、像素摘要、窗口标题、可执行路径或用户内容；
-- 默认不把 PNG 写入磁盘；
-- 高频捕获只允许 `debug` 级生命周期统计，且只记录结果类别、耗时、尺寸，不记录内容；
-- error message 只使用固定错误码；
-- live smoke 使用非敏感 marker，输出中不打印 marker 或图像内容。
+- A non-interactive desktop, lock screen and secure desktop are not captured.
+- High-integrity-level targets are not captured.
+- Native and TypeScript logs contain no PNG, pixel digest, window title, executable path or user content.
+- PNGs are not written to disk by default.
+- High-frequency capture allows only `debug` lifecycle statistics, recording only the result category,
+  duration and size, never content.
+- Error messages use fixed error codes only.
+- The live smoke uses a non-sensitive marker and prints neither the marker nor image content.
 
-source 开发阶段接受 Windows 自带捕获边框，这是系统向用户展示捕获行为的一部分；不通过隐藏窗口、manifest 欺骗或私有 API 绕过。
+The source development phase accepts the Windows-provided capture border, which is part of how the system
+shows the user the capture behavior; it is not bypassed through hidden windows, manifest tricks or private
+APIs.
 
-## TDD 与验证策略
+## TDD and verification strategy
 
-实现阶段严格按以下顺序先写失败测试，再写最小实现：
+Failing tests first, in this order:
 
-1. **ABI/type tests**
-   - 三导出齐全才启用；
-   - 缺一项、旧 addon、非函数、malformed outcome、rejected Promise 全部 fail closed；
-   - Buffer 可按 Uint8Array 消费。
-2. **adapter tests**
-   - monitor/window success；
-   - 每个 native error 到 broker error 的映射；
-   - Windows 不回退 SystemSurface；
-   - macOS/Linux 路径不读取 Windows ABI。
-3. **state source tests**
-   - `includeScreenshot=false` 不调用捕获；
-   - 成功图像与实际 bounds 进入同一 state；
-   - identity/bounds 变化使整个 observation 失败；
-   - transient failure 保留 UIA tree，但没有 `state_image` target。
-4. **native source tests**
-   - CreateForWindow/CreateForMonitor；
-   - free-threaded frame pool；
-   - hardware/WARP device 顺序；
-   - ContentSize crop、RowPitch、WIC PNG；
-   - mutex、deadline、size guards、RAII cleanup；
-   - pre/post identity 与 bounds 校验；
-   - 固定错误码且不泄漏 HRESULT 文本。
-5. **MSVC compiled-addon checks**
-   - 三个导出存在；
-   - capability 在支持系统上真实返回；
-   - invalid bounds/HWND 返回结构化失败，不 crash。
-6. **broker/source Helper tests**
-   - `broker_info.capabilities.screen_capture`；
-   - `screenshot` 建立正确 monitor visual-frame；
-   - `get_app_state` 建立带图像的 state；
-   - 没有图像时 `state_image` fail closed；
-   - Helper 正常关闭且无 orphan。
-7. **全量门禁**
-   - zcode-cua focused/full tests、build、typecheck、lint；
-   - ZCode CUA focused tests、`pnpm typecheck`、`pnpm lint`；
-   - 现有非 CUA 基线失败如仍存在，必须单独列出，不能伪报全绿。
+1. **ABI/type:** enabled only with all three exports; a missing export, old addon, non-function, malformed
+   outcome or rejected Promise fails closed; a Buffer can be consumed as a Uint8Array.
+2. **adapter:** monitor/window success; every native error maps to a broker error; Windows never falls back to
+   the SystemSurface; macOS/Linux do not read the Windows ABI.
+3. **state source:** `includeScreenshot=false` does not capture; image and actual bounds enter the same state;
+   an identity/bounds change fails the whole observation; a transient failure keeps the UIA tree but has no
+   `state_image` target.
+4. **native source:** CreateForWindow/CreateForMonitor, free-threaded frame pool, hardware/WARP order,
+   ContentSize crop + RowPitch + WIC PNG, mutex/deadline/size guards/RAII cleanup, pre/post identity and
+   bounds checks, fixed error codes without HRESULT text.
+5. **MSVC compiled addon:** three exports present; capability truly returned on supported systems; invalid
+   bounds/HWND return structured failures without crashing.
+6. **broker/source Helper:** `broker_info.capabilities.screen_capture`; `screenshot` builds the right monitor
+   visual-frame; `get_app_state` builds a state with an image; `state_image` fails closed without an image;
+   normal Helper shutdown with no orphan.
+7. **Gates:** zcode-cua focused/full tests, build, typecheck, lint; ZCode CUA focused tests, `pnpm typecheck`,
+   `pnpm lint`; existing non-CUA baseline failures are listed separately, never reported as all green.
 
-## 实机 smoke
+## Live smoke
 
-实机 smoke 默认关闭，必须显式 opt-in，并且只在普通已解锁桌面运行。测试使用受控测试窗口或测试期间启动的普通应用，不依赖用户已有窗口内容。
+Off by default, explicit opt-in, only on an ordinary unlocked desktop, using a controlled test window or an
+ordinary app started during the test:
 
-验证顺序：
+1. Start the source Helper, confirm the capability is true; capture the selected display, parse the PNG header
+   and check width/height and monitor origin.
+2. Start an identifiable test window and record HWND/PID/bounds; capture it; fully occlude it with another test
+   window and capture by HWND again; both captures are valid, non-empty target images, not the occluder.
+3. `get_app_state(include_screenshot=true)` returns the image, a new `state_id` and the right capture bounds;
+   `state_image` coordinate conversion hits a preset safe target.
+4. Minimize the target and confirm fail closed; restore all foreground, window positions and test resources,
+   close the Helper and confirm no orphan.
 
-1. 启动 source Helper 并确认 capability 为真；
-2. 捕获所选显示器，解析 PNG header，校验宽高和 monitor 原点；
-3. 启动可识别的测试窗口并记录 HWND/PID/bounds；
-4. 首次捕获目标窗口；
-5. 用另一个测试窗口完全遮挡目标窗口，再次按 HWND 捕获；
-6. 校验遮挡前后均为有效、非空目标图像，且不是遮挡窗口内容；
-7. 调用 `get_app_state(include_screenshot=true)`，确认返回图像、新 `state_id` 和正确 capture bounds；
-8. 验证 `state_image` 坐标转换命中测试窗口内预设的安全目标；
-9. 最小化目标窗口，确认 fail closed；
-10. 恢复所有前台、窗口位置和测试资源，关闭 Helper，确认无 orphan。
+Any restore failure fails the smoke. Lock screen, LockApp, no foreground and non-interactive desktop are
+recorded as "environment not met" and never as live acceptance passed.
 
-任何恢复失败都使 smoke 失败。锁屏、LockApp、无 foreground、非交互 desktop 环境只记录为“环境不满足”，不得报告 live acceptance 通过。
+## Acceptance
 
-## 验收标准
+- The Windows source Helper's `screen_capture` capability is true under the complete WGC ABI.
+- `screenshot` returns a valid PNG of the selected display and handles negative-coordinate origins correctly.
+- A given HWND fully occluded by an ordinary window still yields the target window image.
+- `get_app_state(include_screenshot=true)` returns the UIA tree, PNG, bounds and a new `state_id` of the same
+  verified window observation.
+- `space:"state_image"` uses only the image and capture bounds of the corresponding state.
+- A change of target identity or bounds produces no mixed state.
+- Minimized, high-integrity, lock-screen/secure-desktop and invalid-HWND targets all fail closed.
+- An old/half-implemented addon does not falsely report the capability.
+- There is no BitBlt, PrintWindow, PowerShell, external command or Electron fallback.
+- The native worker does not block the JS main thread, and after Helper exit no thread, process or temp image
+  remains.
+- macOS/Linux, the 30-tool surface and remote/mobile chains have no behavior change.
+- Automated gates meet each repo's existing requirements, and the opt-in live smoke on an ordinary unlocked
+  desktop has clear evidence.
 
-- Windows source Helper 的 `screen_capture` capability 在完整 WGC ABI 下为 true；
-- `screenshot` 返回所选显示器的有效 PNG，并正确处理负坐标原点；
-- 指定 HWND 被普通窗口完全遮挡时仍可得到目标窗口图像；
-- `get_app_state(include_screenshot=true)` 返回同一已验证窗口观察的 UIA tree、PNG、bounds 与新 `state_id`；
-- `space:"state_image"` 只使用对应 state 的图像和 capture bounds；
-- 目标身份或 bounds 变化时不产生混合 state；
-- 最小化、高完整性、锁屏/安全桌面和无效 HWND 均 fail closed；
-- 旧/半实现 addon 不虚报 capability；
-- 不存在 BitBlt、PrintWindow、PowerShell、外部命令或 Electron fallback；
-- native worker 不阻塞 JS 主线程，Helper 退出后没有残留线程、进程或临时图像；
-- macOS/Linux、30-tool surface、remote/mobile 链路无行为变化；
-- 自动门禁达到各仓库既有要求，普通已解锁桌面的 opt-in live smoke 有明确证据。
+## Known risks and later product loop
 
-## 已知风险与后续产品闭环
-
-- WGC 默认系统边框可能进入视觉体验；无边框需要产品 identity/manifest/capability 评审；
-- HDR 到 SDR 的颜色与亮度可能不完全一致，需要后续 tone mapping；
-- 部分 GPU/驱动可能发生 device lost，当前只返回可识别错误，不自动隐藏；
-- WGC、`GetWindowRect` 与可见内容边界可能存在系统边框差异，必须以返回的 capture bounds/尺寸做映射；
-- 8K PNG 的峰值内存较高，已有像素与 PNG 上限保护，产品阶段仍需压力测试；
-- x64/arm64 预编译 addon、安装包签名、升级兼容和正式发布 smoke 留到后续产品闭环。
-
-这些风险不改变本阶段选择：先让源码开发环境形成可重复、可验证的 Windows WGC 视觉闭环，再进入发布与产品化。
+WGC's default system border may enter the visual experience (going borderless needs a product
+identity/manifest/capability review); HDR to SDR color needs later tone mapping; some GPUs/drivers may hit
+device lost (only a recognizable error, no automatic recovery); WGC, `GetWindowRect` and the visible content
+boundary may differ, so the mapping must use the returned capture bounds/size; 8K PNG peak memory is high
+(pixel and PNG caps protect it, product-phase stress testing still needed); x64/arm64 prebuilt addons,
+installer signing, upgrade compatibility and release smoke belong to the later product loop.

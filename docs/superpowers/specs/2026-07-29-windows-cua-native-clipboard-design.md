@@ -1,57 +1,60 @@
-# Windows CUA 原生文本剪贴板设计
+# Windows CUA Native Text Clipboard Design
 
-## 目标
+## Goal
 
-为 Windows source Helper 补齐 `read_clipboard` 和 `write_clipboard` 的真实文本实现，使
-`broker_info.capabilities.clipboard` 只在完整原生读写链路存在时为 `true`。实现必须使用
-Win32 `CF_UNICODETEXT`，不得调用 PowerShell、shell、外部命令或 Electron clipboard。
+Give the Windows source Helper a real text implementation of `read_clipboard` and `write_clipboard`, so
+`broker_info.capabilities.clipboard` is `true` only when the full native read/write chain exists. The
+implementation uses Win32 `CF_UNICODETEXT` and must not call PowerShell, a shell, external commands or the
+Electron clipboard.
 
-本阶段只覆盖本地 Windows 登录用户 Session 中的 source Helper。macOS、Linux、SSH、
-WSL、Docker、remote workspace、手机 `/remote` 与产品打包签名链路不变。
+This phase covers only the source Helper in a local Windows interactive-user Session. macOS, Linux, SSH, WSL,
+Docker, remote workspaces, mobile `/remote` and the product packaging/signing chain are unchanged.
 
-## 已确认方案
+## Confirmed design
 
-采用 additive 原生异步 ABI：
+An additive native async ABI:
 
 - `readClipboardTextAsync(): Promise<NativeClipboardReadOutcome>`
 - `writeClipboardTextAsync(text): Promise<NativeClipboardWriteOutcome>`
 
-Windows `ax_native.node` 在 libuv worker 上运行有界 Win32 clipboard 操作；
-`createNodeAutomationAdapter` 在且仅在两个导出同时存在时使用它们。旧 Windows addon
-缺任一导出时继续报告 `clipboard=false`，不允许半实现或同步 fallback。
+Windows `ax_native.node` runs bounded Win32 clipboard operations on a libuv worker. `createNodeAutomationAdapter`
+uses them if and only if both exports exist. An old Windows addon missing either export keeps reporting
+`clipboard=false`; no half implementation or sync fallback.
 
-未采用的方案：
+Rejected alternatives:
 
-1. 把 native clipboard 注入 `WindowsNodeSystemSurface`：会扩大 Helper factory 与
-   SystemSurface 构造参数，而 adapter 已同时持有 native 与 system，增加中转没有收益。
-2. TypeScript FFI：会新增运行时依赖与 ABI 风险，并重复 N-API 已有的平台隔离能力。
-3. PowerShell / `Get-Clipboard` / `Set-Clipboard`：违反 source Helper 不依赖外部命令的
-   约束，也会引入编码、进程生命周期和命令策略差异。
+1. Inject native clipboard into `WindowsNodeSystemSurface`: widens the Helper factory and SystemSurface
+   constructor parameters, while the adapter already holds both native and system, so the indirection gains
+   nothing.
+2. TypeScript FFI: adds a runtime dependency and ABI risk and duplicates the platform isolation N-API already
+   provides.
+3. PowerShell / `Get-Clipboard` / `Set-Clipboard`: violates the rule that the source Helper depends on no
+   external commands and introduces encoding, process lifecycle and command-policy differences.
 
-## 边界与非目标
+## Boundary and non-goals
 
-包含：
+Included:
 
-- 读取和写入 Windows `CF_UNICODETEXT`；
-- 空文本与空/无文本剪贴板的真实语义；
-- UTF-8 ↔ UTF-16 严格转换；
-- bounded worker、Helper 内部串行化、外部占用重试；
-- capability、broker error、delivery-state 与 source runbook 更新；
-- 显式 opt-in 的真实 broker round-trip，并在 `finally` 中恢复原文本。
+- reading and writing Windows `CF_UNICODETEXT`;
+- true semantics for empty text and an empty/no-text clipboard;
+- strict UTF-8 <-> UTF-16 conversion;
+- bounded worker, in-Helper serialization, retry on external occupation;
+- capability, broker error, delivery-state and source runbook updates;
+- an explicitly opt-in real broker round-trip that restores the original text in `finally`.
 
-不包含：
+Not included:
 
-- 图片、HTML、RTF、文件列表、延迟渲染或剪贴板历史；
-- 保留写入前的非文本 clipboard formats；
-- 跨设备或远程剪贴板同步；
-- WGC、窗口像素捕获或 UIA worker 隔离；
-- 新增、删除或重命名 MCP 工具。
+- images, HTML, RTF, file lists, delayed rendering or clipboard history;
+- preserving non-text clipboard formats present before the write;
+- cross-device or remote clipboard sync;
+- WGC, window pixel capture or UIA worker isolation;
+- adding, removing or renaming MCP tools.
 
-`write_clipboard` 的产品语义就是用纯文本替换当前剪贴板。显式实机 smoke 也会短暂执行该
-动作；它能恢复原始文本，但不能恢复原来同时存在的 HTML、图片等附加格式。因此 smoke
-默认关闭，只有设置专用 opt-in 后才能运行。
+The product semantics of `write_clipboard` is to replace the current clipboard with plain text. The explicit
+live smoke briefly performs this action too; it can restore the original text but not extra formats such as
+HTML or images that coexisted. The smoke is therefore off by default and runs only with a dedicated opt-in.
 
-## 架构与数据流
+## Architecture and data flow
 
 ```text
 read_clipboard
@@ -59,7 +62,7 @@ read_clipboard
   ▼
 broker handler ──await──> Node automation adapter
                               │
-                              ├─ win32 + 两个 native async export
+                              ├─ win32 + both native async exports
                               │       │
                               │       ▼
                               │   ClipboardReadWorker
@@ -69,7 +72,7 @@ broker handler ──await──> Node automation adapter
                               │       ├─ CF_UNICODETEXT / GlobalLock
                               │       └─ CloseClipboard → UTF-8 outcome
                               │
-                              └─ macOS/Linux 现有 SystemSurface
+                              └─ macOS/Linux existing SystemSurface
 
 write_clipboard
   │  T1_INPUT + possibly_sent
@@ -79,23 +82,24 @@ broker handler ──await──> Node automation adapter
                               ▼
                          ClipboardWriteWorker
                               │
-                              ├─ UTF-8 → UTF-16 + 预分配 HGLOBAL
+                              ├─ UTF-8 → UTF-16 + pre-allocated HGLOBAL
                               ├─ Helper clipboard mutex
                               ├─ bounded OpenClipboard retry
                               ├─ EmptyClipboard
                               ├─ SetClipboardData(CF_UNICODETEXT)
-                              └─ 成功后把 HGLOBAL 所有权交给系统
+                              └─ on success, HGLOBAL ownership passes to the system
 ```
 
-broker 的 action delivery-state 不变：`write_clipboard` 一旦进入 possibly-sent 区间，
-传输错误不得自动重放。native 在 `EmptyClipboard` 前失败时保证未修改系统状态；在
-`EmptyClipboard` 后失败时返回明确 write failure，调用方仍按 possibly-sent 处理。
+The broker's action delivery-state is unchanged: once `write_clipboard` enters the possibly-sent interval, a
+transport error must not auto-replay. Native failure before `EmptyClipboard` guarantees system state is
+unmodified; failure after `EmptyClipboard` returns an explicit write failure, and the caller still treats it
+as possibly-sent.
 
-## Native ABI 与内存所有权
+## Native ABI and memory ownership
 
 ### Outcome
 
-读结果：
+Read:
 
 ```ts
 type NativeClipboardReadOutcome =
@@ -106,7 +110,7 @@ type NativeClipboardReadOutcome =
     };
 ```
 
-写结果：
+Write:
 
 ```ts
 type NativeClipboardWriteOutcome =
@@ -117,45 +121,49 @@ type NativeClipboardWriteOutcome =
     };
 ```
 
-Outcome 不包含 clipboard 文本、pipe、token、进程路径或 Win32 原始错误消息。
+Outcomes never contain clipboard text, pipe, token, process path or raw Win32 error messages.
 
-### 串行化与时间边界
+### Serialization and time bounds
 
-- 使用独立 `std::timed_mutex g_clipboardMutex` 串行化本 Helper 的读写，不复用输入序列锁；
-- worker 最多等待 250ms 获取 Helper mutex，超时返回 `busy`，期间没有 clipboard 副作用；
-- 获取 mutex 后，`OpenClipboard(nullptr)` 最多尝试 8 次，每次间隔 10ms；
-- worker 的正常上限低于 500ms，因此 Helper graceful stop 可以等待已接收操作收尾；
-- broker freeze 后不再接收新的 clipboard 操作，无需把 clipboard worker 接入输入停止门闩。
+- A dedicated `std::timed_mutex g_clipboardMutex` serializes this Helper's reads and writes; it does not
+  reuse the input sequence lock.
+- A worker waits at most 250ms for the Helper mutex, then returns `busy` with no clipboard side effect.
+- After acquiring the mutex, `OpenClipboard(nullptr)` is tried at most 8 times, 10ms apart.
+- The normal worker upper bound is below 500ms, so Helper graceful stop can wait for already-accepted
+  operations to finish.
+- After broker freeze no new clipboard operation is accepted, so the clipboard worker need not join the input
+  stop latch.
 
-Win32 clipboard 只有同步 API；把它放到 `Napi::AsyncWorker` 是本阶段不阻塞 broker/N-API
-线程的必要条件，不允许在 JS 主线程轮询或 sleep。
+The Win32 clipboard has only synchronous APIs; running them in a `Napi::AsyncWorker` is required so the
+broker/N-API thread is not blocked. Polling or sleeping on the JS main thread is not allowed.
 
-### 读取
+### Read
 
-1. 成功打开 clipboard 后用 RAII 保证所有出口调用 `CloseClipboard`；
-2. `CF_UNICODETEXT` 不存在时返回 `{ok:true,text:""}`，表示剪贴板当前没有文本；
-3. format 存在但 `GetClipboardData` / `GlobalLock` 失败时返回 `invalid_data`；
-4. 用 `GlobalSize` 约束可读范围，在范围内寻找第一个 UTF-16 NUL，禁止无界 `wcslen`；
-5. 文本超过 8 Mi 个 UTF-16 code units 时返回 `too_large`；
-6. 严格转换成 UTF-8，转换失败返回 `invalid_data`。
+1. After opening the clipboard, RAII guarantees `CloseClipboard` on every exit.
+2. If `CF_UNICODETEXT` is absent, return `{ok:true,text:""}` (the clipboard currently has no text).
+3. If the format exists but `GetClipboardData` / `GlobalLock` fails, return `invalid_data`.
+4. Bound the readable range with `GlobalSize` and look for the first UTF-16 NUL within it; unbounded `wcslen`
+   is forbidden.
+5. Text over 8 Mi UTF-16 code units returns `too_large`.
+6. Convert strictly to UTF-8; conversion failure returns `invalid_data`.
 
-### 写入
+### Write
 
-1. N-API 线程只读取参数并复制 UTF-8 字符串，不调用 Win32 clipboard；
-2. worker 严格转换 UTF-8 到 UTF-16，最多 8 Mi 个 code units，并包含结尾 NUL；
-3. 在 `OpenClipboard` / `EmptyClipboard` 前完成 `HGLOBAL` 分配和内容复制；
-4. `SetClipboardData` 成功后由 Windows 接管 `HGLOBAL`，worker 不再释放；
-5. 任何更早的失败均由 worker 释放自己的 `HGLOBAL`；
-6. `EmptyClipboard` 后 `SetClipboardData` 失败返回 `write_failed`，不得伪报成功。
+1. The N-API thread only reads arguments and copies the UTF-8 string; it does not call the Win32 clipboard.
+2. The worker converts UTF-8 to UTF-16 strictly, at most 8 Mi code units including the trailing NUL.
+3. `HGLOBAL` allocation and content copy finish before `OpenClipboard` / `EmptyClipboard`.
+4. After `SetClipboardData` succeeds, Windows owns the `HGLOBAL`; the worker no longer frees it.
+5. Any earlier failure makes the worker free its own `HGLOBAL`.
+6. If `SetClipboardData` fails after `EmptyClipboard`, return `write_failed`; never report success falsely.
 
-## Adapter、capability 与错误语义
+## Adapter, capability and error semantics
 
-`HelperNativeAddon` 增加两个 optional async 方法和 outcome 类型。
+`HelperNativeAddon` gains two optional async methods and the outcome types.
 
-`ElectronAutomationAdapter` 的 clipboard 方法允许 sync 或 Promise 返回；backend 两个
-handler 改为 `async` 并统一 `await`，因此 macOS/Linux 的同步 SystemSurface 保持兼容。
+`ElectronAutomationAdapter` clipboard methods may return sync or Promise; the two backend handlers become
+`async` and uniformly `await`, so the sync SystemSurface on macOS/Linux stays compatible.
 
-Windows native clipboard 只有在以下条件同时满足时启用：
+Windows native clipboard is enabled only when all of these hold:
 
 ```text
 platform == win32
@@ -163,63 +171,58 @@ AND typeof native.readClipboardTextAsync == "function"
 AND typeof native.writeClipboardTextAsync == "function"
 ```
 
-capability 规则：
+Capability rules:
 
-- Windows 两个导出齐全：`supportsClipboard=true`；
-- Windows 缺任一个：沿用 `WindowsNodeSystemSurface.supportsClipboard=false`；
-- macOS/Linux：继续使用各自 SystemSurface 的现有 capability，不读取 Windows ABI。
+- Windows with both exports: `supportsClipboard=true`;
+- Windows missing either: keep `WindowsNodeSystemSurface.supportsClipboard=false`;
+- macOS/Linux: keep each SystemSurface's existing capability and do not read the Windows ABI.
 
-错误映射：
+Error mapping:
 
-- `busy` → broker `timeout`，并注明在 mutation 前失败；
-- `too_large` → `invalid_request`；
-- `unavailable` / `invalid_data` → broker `internal`，因为 Windows 没有需要用户授予的
-  clipboard 权限开关，不得误导用户修改权限；
-- `write_failed` → broker `internal`，保留 possibly-sent，不允许自动重放。
+- `busy` -> broker `timeout`, noting it failed before mutation;
+- `too_large` -> `invalid_request`;
+- `unavailable` / `invalid_data` -> broker `internal`, because Windows has no user-granted clipboard
+  permission switch and the user must not be misled into changing permissions;
+- `write_failed` -> broker `internal`, keeps possibly-sent, no auto-replay.
 
-所有日志与错误禁止包含剪贴板内容。高频调用不新增 `info` 日志。
+Logs and errors never contain clipboard content. High-frequency calls add no `info` log.
 
-## 生命周期与安全
+## Lifecycle and safety
 
-- Session 0、非交互 desktop 或 addon startup preflight 失败时不暴露 native clipboard；
-- 锁屏不等同于 Session 0。Windows 允许同一登录 Session 访问 clipboard，但 pointer
-  前台门禁仍独立 fail closed；
-- clipboard mutex 与 input state mutex 相互独立，禁止交叉持锁；
-- worker 不持有 UIA COM 对象，不需要进入 UIA apartment；
-- Helper stop 先 freeze broker admission，再 drain 已接收 worker；超时仍按现有 Helper
-  进程死亡证据 fail closed；
-- 读写工具、tier、annotation、30-tool manifest 与 broker method 名称不变。
+- In Session 0, a non-interactive desktop, or after an addon startup preflight failure, native clipboard is
+  not exposed.
+- A locked screen is not Session 0. Windows allows clipboard access in the same logon Session, while the
+  pointer foreground gate still fails closed independently.
+- The clipboard mutex and input state mutex are independent; never hold both.
+- The worker holds no UIA COM objects and need not enter the UIA apartment.
+- Helper stop first freezes broker admission, then drains accepted workers; on timeout it still fails closed on
+  the existing Helper-process-death evidence.
+- Read/write tools, tiers, annotations, the 30-tool manifest and broker method names are unchanged.
 
-## 测试策略
+## Test strategy
 
-采用 TDD：
+TDD: (1) native source/ABI tests lock worker, bounded retry, RAII close, size guard, HGLOBAL ownership and the
+two exports; (2) adapter tests cover double-export enablement, single-export rejection, macOS/Linux system
+fallback and the broker mapping of every native outcome; (3) capability truthfulness: an old addon stays false,
+the new two-export addon is true; (4) broker tests: `read_clipboard` returns a true empty string,
+`write_clipboard` awaits native success, busy/too-large/write-failed never fake success; (5) MSVC rebuild and
+compiled-addon export checks; (6) a default-off live source Helper smoke that reads the original text, writes a
+random non-sensitive marker, reads back and compares exactly, restores the original text in `finally` and
+verifies again, printing only booleans and platform; (7) full zcode-cua gates, ZCode CUA focused gates,
+typecheck and lint.
 
-1. native source/ABI tests：先锁定 worker、bounded retry、RAII close、size guard、HGLOBAL
-   ownership 和两个导出；
-2. adapter tests：覆盖双导出启用、单导出拒绝、macOS/Linux system fallback，以及每个
-   native outcome 的 broker 映射；
-3. capability truthfulness tests：旧 Windows addon 仍为 false，新双导出为 true；
-4. broker tests：`read_clipboard` 返回真实空字符串，`write_clipboard` await native 成功，
-   busy/too-large/write-failed 不伪造成功；
-5. MSVC rebuild 与 compiled-addon export checks；
-6. 默认关闭的真实 source Helper smoke：
-   - 读取原文本；
-   - 写入随机非敏感 marker；
-   - 读回精确比对；
-   - `finally` 恢复原文本并再次验证；
-   - 输出仅含布尔值和平台，不输出原文本、marker、token 或 pipe；
-7. zcode-cua 全量 gates、ZCode CUA focused gates、typecheck 与 lint。
+If the live smoke fails during restore it exits non-zero and tells the user the clipboard may still hold the
+test marker; it never reports a pass when restore is impossible.
 
-实机 smoke 若在恢复阶段失败，必须返回非零并提示用户当前剪贴板可能仍是测试 marker；
-不得在无法恢复时报告通过。
+## Acceptance
 
-## 验收标准
-
-- Windows source Helper 的 `broker_info.capabilities.clipboard === true`；
-- `read_clipboard` 能区分真实空文本与实现缺失；
-- `write_clipboard` 写入 Unicode 文本后可由同一真实 broker 精确读回；
-- live smoke 精确恢复原文本，且默认不 opt in 时不读取或修改 clipboard；
-- 旧 Windows addon 缺失 additive ABI 时继续 fail closed；
-- macOS/Linux clipboard 行为和 30-tool surface 不变；
-- 不出现 PowerShell、shell、外部命令或同步主线程 clipboard 轮询；
-- native build、focused tests、全量 zcode-cua tests、两仓 typecheck/lint 均达到各自既有门禁要求。
+- Windows source Helper `broker_info.capabilities.clipboard === true`.
+- `read_clipboard` distinguishes a true empty text from a missing implementation.
+- `write_clipboard` writes Unicode text and the same real broker reads it back exactly.
+- The live smoke restores the original text exactly, and without opt-in neither reads nor modifies the
+  clipboard.
+- An old Windows addon missing the additive ABI keeps failing closed.
+- macOS/Linux clipboard behavior and the 30-tool surface are unchanged.
+- No PowerShell, shell, external command or synchronous main-thread clipboard polling.
+- Native build, focused tests, full zcode-cua tests and typecheck/lint in both repos meet their existing
+  gates.

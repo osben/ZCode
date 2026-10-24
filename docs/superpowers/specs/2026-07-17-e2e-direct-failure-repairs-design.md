@@ -1,22 +1,22 @@
-# 11 个可直接修复 E2E 失败修复设计
+# Eleven Directly Fixable E2E Failure Repairs Design
 
-## 范围
+## Scope
 
-本次只修复 `summary.json` 中已确认可直接处理的 11 个失败：
+Only the 11 failures already confirmed as directly fixable from `summary.json`:
 
-- I35～I39、I42 共 6 个 Turbo provider case：补齐 WDIO Coding Plan mock 的 spec 识别。
-- I25、I29 共 2 个 DeepSeek case：case-local replay 同时覆盖 seed provider 的 OpenAI `/chat/completions` 与重启窗口可能先恢复到的 Anthropic `/messages`；case 只验证 provider/model，不把传输协议竞态误纳入语义。
-- `conversation-session-v4-refresh-permission`：不再依赖已按产品设计隐藏的 exact rule 文本，通过稳定的权限 option 语义定位“始终允许”。
-- `conversation-session-v4-queue`：queue 冲突 toast 断言同时接受产品支持的中英文文案。
-- `conversation-session-v4-load-older`：在触发补页时记录真实可见 turn 锚点，prepend 后按 DOM 几何差校正视口；现有总高度差保留为无 DOM 锚点时的 fallback。
+- I35–I39 and I42 (6 Turbo provider cases): fix the WDIO Coding Plan mock's spec recognition.
+- I25 and I29 (2 DeepSeek cases): the case-local replay covers both the seed provider's OpenAI `/chat/completions` and the Anthropic `/messages` a restart window may restore to first; the case validates provider/model only and never folds the transport-protocol race into semantics.
+- `conversation-session-v4-refresh-permission`: stop depending on exact rule text that the product design already hides; locate "always allow" through the stable permission option semantics.
+- `conversation-session-v4-queue`: the queue-conflict toast assertion accepts both the Chinese and English copy the product supports.
+- `conversation-session-v4-load-older`: record a real visible turn anchor when triggering pagination, then correct the viewport by the DOM geometry delta after prepend; the existing total-height delta stays as the fallback when no DOM anchor exists.
 
-I27、I28 不在本次范围内；即使共享修复使其结果变化，也不把它们声明为已修复。
+I27 and I28 stay out of scope; even if a shared repair changes their results, they are not declared fixed.
 
-## 根因与边界
+## Root causes and boundaries
 
-### Provider 启动与 replay 合同
+### Provider startup and replay contract
 
-拆分 Turbo spec 后，`shouldUseCodingPlanTeamMock` 仍只识别旧 spec，导致 provider registry 中没有可用 Coding Plan。DeepSeek 启动 provider 已使用 `anthropic-messages`，但两个旧 fixture 仍匹配 `/chat/completions` 并返回 OpenAI SSE。
+After the Turbo spec split, `shouldUseCodingPlanTeamMock` still recognized only the old specs, leaving the provider registry without a usable Coding Plan. The DeepSeek startup provider already used `anthropic-messages`, but the two legacy fixtures still matched `/chat/completions` and returned OpenAI SSE.
 
 ```text
 formal spec -> WDIO spec gate -> Coding Plan mock -> provider registry -> toolbar/session
@@ -28,13 +28,13 @@ seeded DeepSeek(apiFormat=openai-compatible)   -> POST /chat/completions
 case-local fixture                             -> 两种稳定响应合同
 ```
 
-修复只更新 E2E 基础设施和 fixture，不改变 provider 产品逻辑。
+The repair touches only E2E infrastructure and fixtures — no provider product logic changes.
 
-### 权限 option 定位
+### Permission option location
 
-exact rule 按既定产品设计不展示，因此 E2E helper 不能再用 `data-permission-rule-scopes` 推断 allow-always。`PermissionDialog` 在 option 按钮上暴露规范化后的 display kind，helper 按 `allowAlways` 选择。刷新 case 继续通过“弹窗恢复、批准成功、重复 exact 命令不再询问”证明规则恢复，不断言被隐藏的文本。
+Exact rules are not displayed by product design, so the E2E helper can no longer infer allow-always from `data-permission-rule-scopes`. `PermissionDialog` exposes the normalized display kind on the option button; the helper selects by `allowAlways`. The refresh case still proves rule recovery through "dialog restored, approval succeeds, repeated exact command no longer asks" — it never asserts hidden text.
 
-### Queue 草稿冲突提示
+### Queue draft-conflict toast
 
 ```text
 workspace locale=zh-CN -> 产品显示中文 toast
@@ -42,9 +42,9 @@ workspace locale=zh-CN -> 产品显示中文 toast
 旧 E2E 只匹配英文 ----------+-> 误报 toast 缺失
 ```
 
-运行时日志确认产品已正确阻止撤回并显示中文 toast；失败来自测试继承 workspace locale 后仍只匹配英文。断言改为接受同一 i18n key 的中英文文案，不修改 queue admission、桌面 continuous 或 Web replayable 行为。
+Runtime logs confirmed the product correctly blocked the recall and showed the Chinese toast; the failure was the test inheriting the workspace locale while matching English only. The assertion now accepts both zh-CN and en copy of the same i18n key; queue admission, desktop continuous, and Web replayable behavior are untouched.
 
-### Load older 锚点
+### Load-older anchor
 
 ```text
 用户接近顶部
@@ -55,11 +55,10 @@ workspace locale=zh-CN -> 产品显示中文 toast
   -> scrollTop += delta（绘制前）
 ```
 
-旧逻辑只比较 `virtualizer.getTotalSize()`；prepend 的新估算高度尚未进入该值时 delta 为 0，且下一 commit 已失去“首行变小”的检测窗口。真实 DOM 锚点优先，既有总高度差 fallback 兼容锚点未挂载的虚拟化窗口。
+The old logic compared only `virtualizer.getTotalSize()`; when a prepend's new estimated height had not entered that value, the delta was 0 and the next commit had already lost the "first row shrank" detection window. The real DOM anchor takes priority; the existing total-height-delta fallback covers virtualized windows where the anchor is not mounted.
 
-## 验证
+## Verification
 
-- 秒级单测覆盖 Turbo spec gate、权限 option kind 和 prepend 锚点差值。
-- 两个 model-provider spec 运行 fixture check。
-- 运行受影响 UI/desktop 定向测试。
-- 最后执行根目录 `pnpm typecheck`、`pnpm lint`。
+- Second-level unit tests for the Turbo spec gate, permission option kind, and prepend anchor delta.
+- Fixture check for the two model-provider specs.
+- Affected targeted UI/desktop tests, then root `pnpm typecheck` and `pnpm lint`.

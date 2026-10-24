@@ -1,57 +1,24 @@
-# Conversation Share Artifact Upload Implementation Plan
+# Conversation Share — Result Artifact Upload Contract
 
-> **For agentic workers:** Execute this plan task-by-task with TDD; keep the existing branch and preserve unrelated user changes.
+Shipped (2026-08-12). Implementation and tests:
+`packages/services/src/conversation-share/conversationShareArtifactSource.ts`,
+`conversationShareService.ts`, `conversationSharePublicProjection.ts` and their test files.
 
-**Goal:** Publish explicitly registered result artifacts from selected conversation turns by uploading them between preparation and confirmation.
+## Row protocol
 
-**Architecture:** Extend the formal V4 row protocol with an artifact row projected from completed tool attachments. The share service materializes only selected artifact rows through an injected async local file reader, validates capabilities and integrity, creates a preparation with the exact count, uploads multipart descriptors/files in deterministic order, then confirms the unchanged public projection.
+- The formal V4 row protocol carries an artifact row projected from completed tool attachments.
+  Text-only paths stay unrecognized.
+- The public projection replaces local artifact identity/refs with stable public IDs and returns
+  upload source metadata beside the public rows.
 
-**Tech Stack:** TypeScript, Zod, Vitest, Node async file APIs, existing ZCode V4 projection and conversation-share HTTP client.
+## Upload pipeline
 
----
-
-### Task 1: Freeze product and protocol semantics
-
-**Files:**
-- Modify: `docs/superpowers/specs/2026-08-10-conversation-share-api-integration-design.md`
-- Modify: `docs/conversation-session-case-catalog.md`
-- Modify: `docs/testing/conversation-session-e2e-coverage-matrix.md`
-
-Record source authority, state pruning, upload ordering, integrity, failure behavior, and desktop/remote boundaries before code.
-
-### Task 2: Add the formal artifact row
-
-**Files:**
-- Modify: `packages/shared/src/zcode-protocol-v4/rows.ts`
-- Modify: `packages/shared/src/conversation-share.ts`
-- Test: `packages/shared/test/conversationShareContract.test.ts`
-- Modify: `apps/zcode-cli/packages/contracts/src/events/session.events.ts`
-- Modify: `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/product-projection.ts`
-- Modify: `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts`
-- Test: `apps/zcode-cli/packages/bootstrap/tests/product-projection.test.ts`
-- Test: `apps/zcode-cli/packages/bootstrap/tests/transcript-hydration.test.ts`
-
-Write failing schema/live/cold tests, then project completed tool attachments as deterministic artifact rows. Keep text-only paths unrecognized.
-
-### Task 3: Build a safe public artifact projection
-
-**Files:**
-- Modify: `packages/services/src/conversation-share/conversationSharePublicProjection.ts`
-- Test: `packages/services/test/conversationSharePublicProjection.test.ts`
-
-Write failing tests, then replace local artifact identity/ref with stable public IDs and return upload source metadata beside the public rows.
-
-### Task 4: Materialize and upload selected artifacts
-
-**Files:**
-- Add: `packages/services/src/conversation-share/conversationShareArtifactSource.ts`
-- Add: `packages/services/test/conversationShareArtifactSource.test.ts`
-- Modify: `packages/services/src/conversation-share/conversationShareService.ts`
-- Modify: `packages/services/src/node.ts`
-- Test: `packages/services/test/conversationShareService.test.ts`
-
-Write failing tests for selected/unselected artifacts, capabilities, file integrity, prepare count, upload order, upload response verification, and no-confirm-on-failure. Implement an injected async local file source with realpath workspace containment and bounded chunk reads; upload all artifacts before confirm.
-
-### Task 5: Verify and commit
-
-Run affected tests, `pnpm typecheck`, and `pnpm lint`. Review the diff for unrelated changes and secret/file-content logs, then commit only task files with a Conventional Commit message.
+- Only artifact rows in selected turns are materialized, through an injected async local file
+  source. File IO is asynchronous, validates canonical realpath containment inside the workspace,
+  and reads in bounded chunks.
+- Capabilities and file integrity are validated; a preparation is created with the exact artifact
+  count.
+- Multipart descriptors/files are uploaded in deterministic order; all artifacts are uploaded
+  before confirm, and the public projection confirmed afterwards is unchanged.
+- Failure before confirm (selection, capability, integrity, upload) must not confirm: no confirm is
+  sent on upload failure, and upload responses are verified.

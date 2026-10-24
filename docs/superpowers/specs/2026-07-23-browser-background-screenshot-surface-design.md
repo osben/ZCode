@@ -1,150 +1,142 @@
-# 内置浏览器后台 Tab 截图表面同步设计
+# Built-in Browser Background Tab Screenshot Surface Sync Design
 
-> 状态：已实现；2026-07-30 补充 owner renderer + 目标 guest 有界 activity lease，
-> 替代永久关闭后台节流；同日补充 preparing pump 的事件循环公平性，以及 macOS /
-> Windows close-to-tray 后 hidden-born guest 的透明首帧 bootstrap。
-> 日期：2026-07-23。
-> 关联规范：
-> `docs/browser-use/2026-07-15-browser-turn-final-screenshot-spec.md`、
-> `docs/browser-use/2026-07-15-responsive-browser-viewport-spec.md`、
-> `docs/testing/browser-use-codex-parity-coverage-matrix.md`。
+> Status: implemented. 2026-07-30 added a bounded activity lease on the owner renderer + target guest, replacing
+> permanently disabled background throttling; the same day added event-loop fairness for the preparing pump and
+> a transparent first-frame bootstrap for hidden-born guests after macOS / Windows close-to-tray.
+> Date: 2026-07-23.
+> Related specs:
+> `docs/browser-use/2026-07-15-browser-turn-final-screenshot-spec.md`,
+> `docs/browser-use/2026-07-15-responsive-browser-viewport-spec.md`,
+> `docs/testing/browser-use-codex-parity-coverage-matrix.md`.
 
-## 1. 问题与运行时证据
+## 1. Problem and runtime evidence
 
-用户报告的轮尾截图原图为 `1274 × 720`。像素比对显示，内容横向以 `800px`、纵向以
-`450px` 为周期近似完全重复。持久化中只有一个 `source=browser_turn_end` 图片事实，
-因此重复不是 conversation UI 拼接或图片压缩造成的。
+The end-of-turn screenshot a user reported was `1274 × 720`. A pixel comparison showed the content repeats
+almost exactly with a period of `800px` horizontally and `450px` vertically. Only one `source=browser_turn_end`
+image fact is persisted, so the repetition is not caused by conversation UI stitching or image compression.
 
-运行时链路如下：
+The runtime chain:
 
 ```text
-browser-use tab 不是侧栏当前活动 tab
-  -> TabsContent(forceMount) 仍挂载，但 data-[state=inactive]:hidden 令其 display:none
-  -> Electron guest 保留最后一次可见时的 800 × 450 compositor surface
-  -> 页面继续运行，CDP 读取到的当前 CSS viewport 已变为 1274 × 720
-  -> Page.captureScreenshot(fromSurface=true) 按 1274 × 720 输出
-  -> Chromium 用旧 800 × 450 surface 周期性填充目标 PNG
+browser-use tab is not the sidebar's current active tab
+  -> TabsContent(forceMount) stays mounted, but data-[state=inactive]:hidden makes it display:none
+  -> the Electron guest keeps the 800 × 450 compositor surface from when it was last visible
+  -> the page keeps running; the current CSS viewport read through CDP has become 1274 × 720
+  -> Page.captureScreenshot(fromSurface=true) outputs at 1274 × 720
+  -> Chromium periodically fills the target PNG with the old 800 × 450 surface
 ```
 
-隔离 Electron `<webview>` 复现证明：
+An isolated Electron `<webview>` reproduction proved:
 
-- 普通 `BrowserWindow` 在相同 CDP 参数下不会重复；
-- `<webview>` guest 的布局尺寸、可见合成表面与 CSS viewport 不一致时可稳定复现；
-- 增加 `clip`、`captureBeyondViewport` 或 `Emulation.setVisibleSize` 不能修复；
-- `fromSurface=false` 在后台/被遮挡 guest 上可能返回黑图或错误尺寸，不能作为回退。
+- an ordinary `BrowserWindow` does not repeat with the same CDP parameters;
+- it reproduces stably when the `<webview>` guest's layout size, visible composited surface and CSS viewport
+  disagree;
+- adding `clip`, `captureBeyondViewport` or `Emulation.setVisibleSize` does not fix it;
+- `fromSurface=false` may return a black image or a wrong size on a background/occluded guest and cannot be a
+  fallback.
 
-根因是后台 guest 截图前缺少“可截图表面已按当前视口完成合成”的同步边界，而不是图片编码、
-轮尾持久化或展示层问题。
+The root cause is the missing synchronization boundary "the screenshot surface has been composited for the
+current viewport" before screenshotting a background guest, not image encoding, end-of-turn persistence or the
+display layer.
 
-### 1.1 hidden window 下的主进程活锁
+### 1.1 Main-process livelock under a hidden window
 
-2026-07-30 的真实 macOS 复现又发现一条独立失败链：用户关闭最后一个窗口后，应用按产品策略
-隐藏窗口而不退出；随后 BUA 在 hidden owner window 中发起截图。日志停在 screenshot request，
-不再出现 surface ready、backend settled 或 app quit，主进程 CPU 持续 100%，且没有 crash dump。
-对卡住的 Electron browser process 采样显示主线程持续执行 V8 Promise/microtask。
+A real macOS reproduction (2026-07-30): the user closes the last window, the app hides it per product policy, and
+BUA then triggers a screenshot in the hidden owner window. The log stops at the screenshot request, the main
+process CPU stays at 100% with no crash dump, and sampling shows the main thread running V8 Promise/microtasks.
 
 ```text
 hidden owner window
-  -> activity controller 启动 owner + guest continuous capture pump
-  -> Electron capturePage(1×1) 立即 resolve
-  -> async continuation 在 microtask 中同步创建下一份 capture
-  -> 下一份又立即 resolve，continuous 分支没有 macrotask yield
-  -> Promise microtask 永不清空
-  -> renderer Ready IPC / 1500ms timeout / 35s watchdog / second-instance 事件都无法调度
-  -> 已隐藏的单实例进程仍占锁，新窗口无法打开，用户感知为 “ZCode 崩溃打不开”
+  -> activity controller starts the owner + guest continuous capture pump
+  -> Electron capturePage(1×1) resolves immediately
+  -> the async continuation synchronously creates the next capture inside a microtask
+  -> the continuous branch has no macrotask yield, so the microtask queue never drains
+  -> renderer Ready IPC / 1500ms timeout / 35s watchdog / second-instance events can never be scheduled
+  -> the hidden single-instance process still holds the lock; no new window opens ("ZCode crashed and won't open")
 ```
 
-这不是 native crash，也不是关闭窗口清理失败；根因是 activity pump 的调度设计允许
-“立即完成的 capture”无限占用 Electron main event loop。修复边界必须放在 pump 本身，
-不能依赖 coordinator timeout 或 watchdog 兜底，因为这些 timer 与 IPC 正是被饿死的任务。
+The root cause is the pump's scheduling, which lets "immediately completing captures" occupy the Electron main
+event loop. The fix must live in the pump itself; the coordinator timeout and watchdog cannot serve as a
+fallback because those timers and the IPC are exactly the tasks being starved.
 
-### 1.2 hidden window 内新建 guest 没有首帧
+### 1.2 A newly created guest in a hidden window has no first frame
 
-事件循环公平性修复后，真实 macOS 日志暴露了后续独立问题：
+After the fairness fix, the real macOS log exposed a second problem: after the window was hidden (20:35:41),
+BUA created a tab (guest attached/navigated while the owner was hidden), the screenshot request found guest
+activity capture failing/pending, and the same screenshot succeeded only after the user reactivated ZCode
+(20:36:53). Isolated Electron 41 experiments confirmed:
 
-```text
-20:35:41.963  用户关闭窗口 -> Darwin close policy 执行 hide()
-20:36:23.173  BUA newTab；guest 在 owner 已隐藏后 attach / navigate
-20:36:31.363  screenshot request
-20:36:31.541  guest activity capture failed
-20:36:38.103  重试 screenshot，capture 一直 pending
-20:36:52.930  用户重新激活 ZCode
-20:36:53.533  同一份 screenshot 成功
-```
+- a guest created in a hidden owner may return empty on the first `capturePage()`, throw `UnknownVizError` or
+  stay pending even after navigation completes;
+- `invalidate()`, an owner full capture and CDP `Page.startScreencast` cannot establish the guest first frame;
+- `showInactive()` establishes it, but calling it directly re-shows the window the user just closed; setting
+  opacity `0` first, then `showInactive()`, then `hide()` and restoring the opacity after the first guest
+  capture yields non-empty follow-up screenshots (end state `visible=false / focused=false / opacity=original`);
+- starting two overlapping `capturePage()` calls each for owner/guest in the same synchronous turn right after
+  `showInactive()` triggers `UnknownVizError` and once an isolated-smoke `SIGSEGV`; a bounded presentation
+  grace must separate the window show event from Viz surface initialization.
 
-隔离 Electron 41 实验进一步确认：
+The root cause is that the guest was born after the owner window was hidden and never got a window-level
+compositor presentation opportunity; Electron's capturer count can only maintain an existing surface and cannot
+bootstrap a first frame from zero.
 
-- hidden owner 中新建的 guest 即使已完成导航，第一次 `capturePage()` 仍可能返回 empty、
-  抛出 `UnknownVizError` 或一直 pending；
-- `invalidate()`、owner full capture 和 CDP `Page.startScreencast` 都不能建立 guest 首帧；
-- `showInactive()` 能建立首帧，但直接调用会重新显示用户刚关闭的窗口；
-- 先把窗口 opacity 置为 `0`，再 `showInactive()`，待 guest 首帧 capture 后重新 `hide()` 并
-  恢复原 opacity，可得到非空后续截图；实测结束状态保持
-  `visible=false / focused=false / opacity=原值`。
-- `showInactive()` 后同一同步 turn 立即为 owner/guest 各启动两份重叠 `capturePage()` 会触发
-  `UnknownVizError`，隔离 Electron smoke 曾进一步导致 browser process `SIGSEGV`；窗口 show
-  事件与 Viz surface 初始化之间必须保留有界 presentation grace，不能把既有 pump 原样同步
-  接在 `showInactive()` 后。
+## 2. Goals and non-goals
 
-根因不是 capture pump 频率或 renderer capture layer，而是 guest 在 owner window 已 hidden
-后出生，从未获得过窗口级 compositor presentation opportunity。Electron 的 capturer count
-只能维持已有 surface，不能为该 guest 从零 bootstrap 首帧。
+### 2.1 Goals
 
-## 2. 目标与非目标
+1. Before screenshotting a background, non-active browser-use tab, prepare an Electron guest surface consistent
+   with the current natural CSS viewport, without switching the user's sidebar tab, stealing focus, accepting
+   mouse/keyboard events or flickering.
+2. Main must receive an explicit renderer ready acknowledgment before calling `Page.captureScreenshot`; on
+   preparation failure the screenshot terminates explicitly and never returns an old, possibly tiled surface.
+3. Success, failure, cancellation, timeout and guest rebuild all release the temporary surface state; the
+   existing screenshot, clip, fullPage, end-of-turn persistence and image budget contracts are unchanged.
+4. With no screenshot in progress the owner BrowserWindow keeps Electron's default background throttling; the
+   process-lifetime persistence of browser-use tabs must not keep waking the window renderer, guest and GPU.
+   Wake-up is phased and rate-limited: after Ready the owner no longer participates and the target guest's
+   `capturePage()` has a fixed frequency cap.
+5. Even if `capturePage()` completes synchronously in the preparing phase, the pump yields one macrotask between
+   turns; renderer IPC, cancellation, timeout, watchdog and app lifecycle events stay schedulable.
+6. After a macOS window close or a Windows close-to-tray, a guest newly created by BUA can still complete an
+   explicit or end-of-turn screenshot; the window is never visible, focused, flickering or back in the Windows
+   taskbar, stays hidden afterwards, and is not hidden again if the user reopens it during bootstrap.
 
-### 2.1 目标
+### 2.2 Non-goals
 
-1. 对后台、非活动的 browser-use tab 截图前，先准备与当前自然 CSS viewport 一致的
-   Electron guest surface。
-2. 截图准备不能切换用户当前侧栏 tab、抢焦点、接受鼠标/键盘事件或产生可见闪烁。
-3. main 必须收到 renderer 的明确 ready 回执后才调用 `Page.captureScreenshot`。
-4. 准备失败时明确终止本次截图，不能继续返回已知可能平铺的旧 surface。
-5. 成功、失败、取消、超时和 guest 重建路径都必须释放临时 surface 状态。
-6. 保持现有 screenshot、clip、fullPage、轮尾图片持久化和图片预算合同不变。
-7. 没有截图正在准备或抓取时，owner BrowserWindow 必须恢复 Electron 默认后台节流；
-   不能因为 browser-use tab 按进程生命周期持久存在而持续唤醒整窗 renderer、guest 和 GPU。
-8. activity 唤醒必须分阶段限频：surface Ready 后 owner renderer 不再参与，目标 guest 的
-   `capturePage()` 频率必须有固定上限，不能把一份最长 35s 的资源租约变成无间隔 GPU readback。
-9. preparing 阶段即使 `capturePage()` 同步或立即完成，也必须在每轮续泵之间让出一次
-   macrotask；renderer IPC、取消、timeout、watchdog 和应用生命周期事件必须保持可调度。
-10. macOS 用户关闭窗口，或 Windows 用户关闭到托盘后，BUA 新建的 guest 仍能完成显式或
-    轮尾截图；bootstrap 期间窗口不得可见、聚焦、闪烁或重新出现在 Windows taskbar，完成后
-    仍保持关闭前的 hidden 状态。若用户在 bootstrap 期间主动重新打开窗口，清理不得再次把
-    窗口隐藏。
+- Do not cover compositor errors by cropping the repeated area, image correlation detection or post-screenshot
+  resampling.
+- Do not force the browser-use tab to become the user's current active tab.
+- Do not add task/stream/snapshot business state to the relay, desktop main or mobile.
+- Do not change `@zcode/protocol`; this design only adds transient platform coordination between desktop main
+  and the owner renderer.
+- This fix does not solve the independent Electron limitation "an explicit responsive viewport larger than the
+  window's compositable area". If that scenario cannot prepare a same-size surface it must fail rather than
+  output a tiled image. Real Electron coverage of large viewports for BCP-199 stays a separate work item.
+- No opacity-based transparent window simulation on Linux: Electron Linux `setOpacity()` is a no-op and calling
+  `showInactive()` would cause real flicker. Closing the last window on Linux also enters `app.quit()`, so no
+  owner/guest remains for BUA to screenshot. The transparent bootstrap is enabled only in the macOS and Windows
+  desktop wiring, which have reversible window opacity.
 
-### 2.2 非目标
+## 3. Design choice
 
-- 不通过裁掉重复区域、图像相关性检测或截图后重采样掩盖 compositor 错误。
-- 不把 browser-use tab 强制切为用户当前活动 tab。
-- 不在 relay、desktop main 或手机端新增 task/stream/snapshot 业务状态。
-- 不修改 `@zcode/protocol`；本设计只新增 desktop main 与 owner renderer 之间的瞬时平台协调。
-- 不在本修复中解决“显式 responsive viewport 大于窗口可合成区域”的独立 Electron 限制。
-  如果该场景无法准备同尺寸 surface，必须失败而不是输出平铺图片；BCP-199 的大视口真实
-  Electron 覆盖继续作为单独工作项。
-- 不为 Linux 使用 opacity 模拟透明窗口；Electron Linux 的 `setOpacity()` 是 no-op，调用
-  `showInactive()` 会造成真实闪烁。Linux 最后窗口关闭还会进入 `app.quit()`，不会保留可供
-  BUA 截图的 owner/guest。透明 bootstrap 只在具备可逆窗口 opacity 的 macOS 与 Windows
-  desktop wiring 启用。
+Adopt "background screenshot surface preparation + renderer ACK".
 
-## 3. 方案选择
+Rejected alternatives:
 
-采用“后台截图表面准备 + renderer ACK”。
+1. `fromSurface=false`: a background webview can return a black image, and the output size no longer matches
+   the Browser API's CSS coordinate system.
+2. Activate the browser tab before the screenshot and switch back afterwards: it can make the surface update,
+   but steals the user's focus and flickers, and with concurrent multi-tasking also disturbs tab owner
+   semantics.
+3. Crop the first repeated tile and stretch it: it cannot prove the first tile covers the whole viewport,
+   lowers image quality and breaks the correspondence with later click coordinates.
 
-未采用的方案：
-
-1. `fromSurface=false`：后台 webview 可返回黑图，并且输出尺寸不再与 Browser API 的 CSS
-   坐标系一致。
-2. 截图前激活 browser tab、完成后切回：能够促使 surface 更新，但会抢用户焦点并产生闪烁，
-   多任务并发时还会扰乱 tab owner 语义。
-3. 裁剪第一块重复区域再拉伸：不能证明第一块覆盖完整 viewport，会降低图像质量并破坏点击
-   坐标对应关系。
-
-## 4. 分层设计
+## 4. Layered design
 
 ### 4.1 BrowserScreenshotSurfaceCoordinator
 
-在 desktop browser-use 域增加一个可注入的截图表面协调器。`BrowserGuestManager` 只依赖
-该接口，不直接访问 React、DOM 或具体 IPC 实现。
+Add an injectable screenshot surface coordinator in the desktop browser-use domain. `BrowserGuestManager`
+depends only on this interface and does not access React, the DOM or a concrete IPC implementation.
 
 ```ts
 interface BrowserScreenshotSurfaceCoordinator {
@@ -166,80 +158,85 @@ interface BrowserScreenshotSurfaceCoordinator {
 }
 ```
 
-- 本地 desktop wiring 使用 renderer IPC 实现。
-- 测试可注入 fake coordinator，验证调用顺序、取消和释放。
-- 没有可用 owner renderer 时，`prepare` 明确失败，不回退到旧 surface 截图。
-- `groupsByReadyRequestId` 是 Ready 关联的唯一 request registry；pending request 不再维护一份
-  从不参与查找的镜像 Map。
-- `leaseReleases` 是 group 当前有效 lease 的唯一事实源。最后一个 release closure 从 Set 移除后
-  才归还 surface/activity；不得再同步维护独立 `leaseCount`，避免 abort/watchdog/dispose 重入时
-  计数器与真实资源集合漂移。
+- Local desktop wiring uses a renderer IPC implementation.
+- Tests may inject a fake coordinator to verify call order, cancellation and release.
+- With no available owner renderer, `prepare` fails explicitly and does not fall back to an old-surface
+  screenshot.
+- `groupsByReadyRequestId` is the only request registry for Ready association; pending requests no longer keep
+  a mirror Map that never takes part in lookup.
+- `leaseReleases` is the only source of truth for a group's currently valid leases. Only after the last release
+  closure is removed from the Set are the surface/activity returned; an independent `leaseCount` must no
+  longer be maintained in sync, avoiding counter and real resource set drift when abort/watchdog/dispose
+  re-enter.
 
-### 4.2 Main 与 renderer 瞬时消息
+### 4.2 Main and renderer transient messages
 
-新增严格关联 `requestId` 的平台消息：
+New platform messages strictly correlated by `requestId`:
 
 - `BrowserViewScreenshotSurfacePrepare`
 - `BrowserViewScreenshotSurfaceReady`
 - `BrowserViewScreenshotSurfaceRelease`
 
-消息必须携带 `workspaceKey`、`sessionId`、`browserId`、`browserGeneration`、`tabId` 和
-`webContentsId`；prepare 还携带 main 当前实际 `timeoutMs`，旧 payload 缺失时 renderer 回退到
-共享默认值。renderer 只处理完整 scope 与当前 tab/guest 同时匹配的请求；main 只接受同一
-`requestId` 的 ready，迟到或旧 generation 回执直接丢弃。
+A message must carry `workspaceKey`, `sessionId`, `browserId`, `browserGeneration`, `tabId` and
+`webContentsId`; prepare also carries main's current actual `timeoutMs`, and when an old payload lacks it the
+renderer falls back to the shared default. The renderer handles only requests whose full scope matches the
+current tab/guest at once; main accepts only a ready with the same `requestId`, and a late or old-generation
+receipt is dropped.
 
-这些消息只表达瞬时渲染准备，不进入 Zustand 持久状态、conversation fact、relay 或
-replayable snapshot。
+These messages express only transient rendering preparation and do not enter persisted Zustand state,
+conversation facts, the relay or the replayable snapshot.
 
-### 4.3 Renderer 截图表面
+### 4.3 Renderer screenshot surface
 
-收到 prepare 后，目标 browser-use tab 进入临时 `preparing` 状态：
+After receiving prepare, the target browser-use tab enters a temporary `preparing` state:
 
-1. inactive `TabsContent` 不再使用 `display:none`、`visibility:hidden` 或
-   `content-visibility:hidden`；
-2. 它被放入侧栏内容区域内的后台 capture layer，保持实际布局尺寸，但位于当前活动内容之下；
-3. capture layer 禁用 pointer events、键盘焦点和可访问性暴露，不能改变当前 tab selection；
-4. 原有 responsive viewport、guest zoom 和 viewport override 不在此处重写；
-5. `ResizeObserver` 观察 webview，连续两个 animation frame 的宽高稳定且大于零后读取
-   `getBoundingClientRect()`；
-6. renderer 回传 `webContentsId` 与稳定 DOM viewport，并进入 `ready`。
+1. an inactive `TabsContent` no longer uses `display:none`, `visibility:hidden` or
+   `content-visibility:hidden`;
+2. it is placed in a background capture layer inside the sidebar content area, keeping its real layout size but
+   below the current active content;
+3. the capture layer disables pointer events, keyboard focus and accessibility exposure and cannot change the
+   current tab selection;
+4. the original responsive viewport, guest zoom and viewport override are not rewritten here;
+5. a `ResizeObserver` watches the webview, and after the width/height are stable and greater than zero for two
+   consecutive animation frames, `getBoundingClientRect()` is read;
+6. the renderer returns the `webContentsId` and the stable DOM viewport and enters `ready`.
 
-capture layer 必须建立独立 stacking context，活动 tab 保持原有背景和交互层级。具体 CSS
-必须由真实 Electron smoke 证明 guest surface 在被活动内容覆盖时仍持续合成；不能只以
-JSDOM 中元素未 `display:none` 作为完成依据。
+The capture layer must establish an independent stacking context, and the active tab keeps its original
+background and interaction level. The concrete CSS must be proven by a real Electron smoke that the guest
+surface keeps compositing while covered by active content; "the element is not `display:none` in JSDOM" alone
+is not completion evidence.
 
-### 4.4 Main 截图门禁
+### 4.4 Main screenshot gate
 
-`BrowserGuestManager` 在执行 screenshot、clip screenshot 或 fullPage screenshot 前：
+Before executing screenshot, clip screenshot or fullPage screenshot, `BrowserGuestManager`:
 
-1. 通过 CDP 读取当前 CSS viewport；
-2. 调用 coordinator `prepare`；
-3. 校验 ready 的 `webContentsId` 未变化、viewport 与当前自然 CSS viewport 在 `1px`
-   舍入容差内一致；
-4. 不一致时在 prepare 预算内继续等待一次稳定回执；
-5. 一致后才调用现有 `executeBrowserCommandOnView`；
-6. 在 `finally` 中调用 `release`。
+1. reads the current CSS viewport through CDP;
+2. calls the coordinator `prepare`;
+3. validates that the `webContentsId` of ready has not changed and the viewport equals the current natural CSS
+   viewport within a `1px` rounding tolerance;
+4. on mismatch, keeps waiting for one stable receipt within the prepare budget;
+5. only after a match calls the existing `executeBrowserCommandOnView`;
+6. calls `release` in `finally`.
 
-现有同 tab `inFlightScreenshots` 互斥仍保留。表面准备计入同一次 screenshot 请求预算，
-不能绕过 timeout/backpressure。
+The existing same-tab `inFlightScreenshots` mutual exclusion stays. Surface preparation counts toward the same
+screenshot request budget and cannot bypass timeout/backpressure.
 
-### 4.5 Owner renderer + 目标 guest activity lease
+### 4.5 Owner renderer + target guest activity lease
 
-Electron 的 `backgroundThrottling: false` 不是单 guest 隔离开关：同一个 BrowserWindow 中任一
-WebContents 禁用节流后，整个窗口及其其它 WebContents 都会持续绘制；建窗时禁用还会让
-Page Visibility 保持为 `visible`。因此不能在主窗口创建时永久关闭后台节流，也不能假装通过
-目标 webview 获得 tab 级隔离。
+Electron's `backgroundThrottling: false` is not a single-guest isolation switch: once any WebContents in a
+BrowserWindow disables throttling, the whole window and its other WebContents keep painting, and disabling it
+at window creation keeps Page Visibility at `visible`. Throttling is therefore not disabled at main window
+creation. The runtime also rejected "set false dynamically, set back to true afterwards": on a hidden
+WebContents Electron 41's `setBackgroundThrottling(true)` restores the getter but still calls
+`RenderWidgetHostImpl::WasShown()` without re-triggering `WasHidden()`, so rAF kept running and CPU did not
+fall back; the API cannot serve as a reversible lease.
 
-运行时进一步否定了“动态设为 false、结束后设回 true”的初版方案。Electron 41 在 hidden
-WebContents 上调用 `setBackgroundThrottling(true)` 时，getter 虽恢复为 `true`，但内部仍调用
-`RenderWidgetHostImpl::WasShown()`，不会重新触发 `WasHidden()`；真实 smoke 中 rAF 持续运行，
-CPU 无法回落。该 API 不能作为可逆租约。
-
-最终采用 Electron `capturePage()` 的原生 capturer-count 语义：hidden page 在 capturer count
-非零时被认为可见，capture Promise settle 后 Chromium 自动归还 count 并恢复 hidden 调度。
-`<webview>` guest 与 owner renderer 是不同的 WebContents：只 capture owner 不会唤醒 guest，
-只 capture guest 也不会驱动 owner renderer 的 `ResizeObserver + rAF` ready 握手。activity
-controller 因此按 surface 生命周期分成两个阶段，同窗其它 guest 始终不参与：
+The final design uses the native capturer-count semantics of `capturePage()`: a hidden page counts as visible
+while the capturer count is non-zero, and Chromium returns the count and restores hidden scheduling once the
+capture Promise settles. The `<webview>` guest and the owner renderer are different WebContents (capturing only
+the owner does not wake the guest, and capturing only the guest does not drive the owner's
+`ResizeObserver + rAF` ready handshake), so the activity controller works in two phases; other guests of the
+window never take part:
 
 ```text
 preparing:
@@ -257,15 +254,15 @@ release
   -> Chromium restores background scheduling
 ```
 
-`1 × 1` capture 只用于保持可逆 activity，不读取、记录或持久化页面图像。Prepare 阶段的
-重叠顺序保证 owner renderer 能连续完成 `ResizeObserver + 2 rAF`，且每个目标最多两份
-未 settle capture。每次前一份 capture settle 后必须先经一个 macrotask 边界，再进入下一轮；
-这既保留“先启动下一份”的重叠语义，也保证 Ready IPC 与有界回收 timer 可以运行。
-Ready 后 owner 已完成职责，必须立即停泵；目标 guest 只保留单 in-flight 脉冲，capture
-启动间隔至少 `200ms`。真实 Electron smoke 必须证明该频率仍能让隐藏 guest 推进渲染，
-同时 owner 和 sibling 已恢复/保持节流。
+The `1 × 1` capture only keeps the reversible activity and never reads, records or persists page images. The
+overlap in Prepare lets the owner renderer finish `ResizeObserver + 2 rAF` continuously, with at most two
+unsettled captures per target; after each capture settles the pump passes one macrotask boundary before the
+next turn, which keeps the overlap while letting the Ready IPC and the bounded reclaim timer run. After Ready
+the owner stops pumping; the target guest keeps a single-in-flight pulse with a start interval of at least
+`200ms`. The real Electron smoke must prove this frequency still lets the hidden guest advance rendering while
+the owner and sibling stay throttled.
 
-Desktop main 增加可注入的 screenshot activity controller：
+Desktop main gains an injectable controller:
 
 ```ts
 interface BrowserScreenshotActivityLease {
@@ -284,101 +281,84 @@ interface BrowserScreenshotActivityController {
 }
 ```
 
-状态归属和约束：
+State ownership and constraints:
 
-1. `desktopWindowChrome` 不再设置永久 `backgroundThrottling: false`，使用 Electron 默认
-   `true`。
-2. coordinator 激活一个 preparation group 时，必须先获得 owner renderer + 目标 guest
-   activity lease，
-   再发送 renderer `Prepare`；否则隐藏、最小化或完全遮挡的 renderer 仍可能因为 rAF 和
-   compositor 冻结而无法回 `Ready`。
-3. controller 必须校验目标 guest 的 `hostWebContents.id` 属于 owner window；不匹配时受控
-   失败，禁止跨窗口误唤醒。
-4. 第一份同 owner + guest lease 在 preparing 阶段各启动一条重叠 `1 × 1 capturePage()` pump；
-   相同目标后续 lease 只增加引用，不新增 pump。同窗其它 guest 不被唤醒。
-5. preparation group 从 prepare 开始，到所有 screenshot surface lease 真实释放为止只持有
-   一份 activity lease。同 guest 的并发请求共享 group；排队 group 不提前唤醒。
-6. renderer `Ready` 后 coordinator 必须调用 `markPrepared()`：owner pump 停止，目标 guest
-   pump 切为 `200ms` 最小启动间隔、单 in-flight 的 capturing 模式。
-7. group settle 时先发送 renderer `Release`，再释放 activity lease；最后一份 lease 停止续泵，
-   等已创建的最后 capture 自然 settle。`release()` 必须幂等。
-8. 最后一份 lease 的停泵延迟到一个 microtask；若 coordinator 同步激活下一个排队 group，新
-   acquire 取消停泵，避免 capturer count 短暂归零后重复 hidden/visible 调度。
-9. 任一 owner/guest activity capture 失败时，controller 必须使 `invalidated` signal 进入 aborted；
-   coordinator 在 Ready 前立即拒绝 prepare，Ready 后使已交付的 surface lease 失效。不能只停泵
-   然后静默等待完整的 prepare 超时预算。
-10. activity controller 属于 desktop main 瞬时资源状态，不进入 renderer Zustand、relay、
-    conversation fact 或 web remote replayable snapshot。
-11. continuous pump 每完成一轮都必须经过可唤醒的 macrotask delay；若其间发生
-    `markPrepared()`、`release()` 或 invalidation，delay 应立即结束并重新读取 phase，
-    不能额外创建下一份 capture。
+1. `desktopWindowChrome` no longer sets `backgroundThrottling: false` (Electron default `true`).
+2. When the coordinator activates a preparation group it first obtains the owner renderer + target guest
+   activity lease and only then sends renderer `Prepare`; otherwise a hidden, minimized or occluded renderer
+   could not reply `Ready` because rAF and the compositor are frozen.
+3. The controller verifies the target guest's `hostWebContents.id` belongs to the owner window and fails in a
+   controlled way otherwise (no cross-window wake-up).
+4. The first lease for an owner + guest starts one overlapping `1 × 1 capturePage()` pump each in the preparing
+   phase; later leases for the same target only add a reference. A preparation group holds a single activity
+   lease from prepare until all its surface leases are really released; concurrent requests for the same guest
+   share the group, queued groups do not wake early.
+5. After renderer `Ready` the coordinator calls `markPrepared()`: the owner pump stops and the target guest
+   pump switches to the capturing mode (`200ms` minimum start interval, single in-flight).
+6. When a group settles, send the renderer `Release` first, then release the activity lease; the last lease
+   stops the pump and waits for the last capture to settle. `release()` is idempotent. The stop of the last
+   lease is deferred by one microtask, so a synchronously activated next queued group cancels the stop (no
+   capturer count dip and repeated hidden/visible scheduling).
+7. A failure of any owner/guest activity capture makes the `invalidated` signal aborted; the coordinator
+   rejects prepare immediately before Ready and invalidates the delivered surface lease after Ready, instead
+   of silently waiting out the prepare timeout.
+8. After each completed round the continuous pump passes a wakeable macrotask delay; `markPrepared()`,
+   `release()` or invalidation ends the delay immediately and the phase is re-read, with no extra capture.
+9. The activity controller is transient desktop-main resource state; it does not enter the renderer Zustand,
+   relay, conversation fact or web remote replayable snapshot.
 
-### 4.6 macOS / Windows hidden-born guest 透明 bootstrap
+### 4.6 Transparent bootstrap for hidden-born guests on macOS / Windows
 
-capturer-count activity 对“曾经有 surface、现在被 hidden 调度”的 guest 有效，但不能建立
-hidden-born guest 的第一帧。Desktop wiring 因此在 macOS hide-close 与 Windows
-close-to-tray 两条 hidden-but-alive 生命周期启用 `transparentWindowBootstrap` capability；
-controller 不把该行为扩散到 Web、手机或 Linux。
-
-当第一份 activity lease 发现 owner window 已隐藏时，在启动 owner/guest capture pump 前：
+Capturer-count activity works for a guest that once had a surface but cannot establish the first frame of a
+hidden-born guest. Desktop wiring therefore enables the `transparentWindowBootstrap` capability on macOS
+hide-close and Windows close-to-tray only (not Web, mobile or Linux). When the first activity lease finds the
+owner window hidden, before starting the capture pumps:
 
 ```text
 snapshot originalOpacity
   -> Windows: setSkipTaskbar(true)
   -> setOpacity(0)
   -> subscribe focus
-  -> showInactive()                 # 不激活 app、不抢焦点；窗口对用户透明
-  -> 100ms presentation grace       # 禁止并发 CopyFromSurface
-  -> owner + target guest pump 建立/维持首帧
+  -> showInactive()                 # does not activate the app or steal focus; transparent to the user
+  -> 100ms presentation grace       # forbid concurrent CopyFromSurface
+  -> owner + target guest pump establishes/maintains the first frame
   -> renderer Ready
-       -> if 用户未聚焦: hide() -> restore originalOpacity
-       -> if 用户已聚焦: restore originalOpacity，保留 visible
+       -> if the user has not focused: hide() -> restore originalOpacity
+       -> if the user has focused: restore originalOpacity, stay visible
        -> Windows: setSkipTaskbar(false)
-  -> guest paced capturer 维持 surface
+  -> guest paced capturer maintains the surface
   -> Page.captureScreenshot
 ```
 
-约束：
+1. Opacity is zeroed before `showInactive()`; no exception may show an opaque window first. The original
+   opacity is restored from the snapshot, never assumed `1`.
+2. Windows temporarily `setSkipTaskbar(true)` before `showInactive()` and restores `false` on every
+   hidden/focus/error path, otherwise a pixel-free window could bring back the taskbar button or preview.
+3. Bootstrap belongs to the first owner + guest activity state; concurrent leases for the same guest reuse it
+   and never show/hide repeatedly.
+4. A `100ms` presentation grace follows `showInactive()`; no activity `capturePage()` starts inside it (avoids
+   concurrent CopyFromSurface before the Viz surface exists). A renderer Ready/actual screenshot may finish
+   inside the grace on the transparent visible window without waiting for the timer.
+5. Renderer Ready, prepare timeout, capture failure, abort, watchdog, window destroy and coordinator dispose
+   all clean up the bootstrap idempotently. If the window is already destroyed, no `hide()` / `setOpacity()` /
+   `setSkipTaskbar()` is called. A failing `showInactive()`, opacity or taskbar call fails the activity in a
+   controlled way and never falls back to a visible `show()`.
+6. An owner `focus` during bootstrap counts as the user restoring the window: restore opacity/taskbar at once
+   and forbid later cleanup from calling `hide()`; the focus decision and hide/restore happen in one
+   synchronous cleanup section.
+7. `showInactive()` only supplies a window-level presentation opportunity and does not change the Browser API
+   active tab, renderer tab selection, workspaceKey, session owner or image persistence. Bootstrap is not
+   started for an originally visible or minimized window; Linux keeps the capability off.
 
-1. opacity 必须先于 `showInactive()` 置零；任何异常都不得先显示不透明窗口。
-2. 原 opacity 必须按 snapshot 恢复，不能假设固定为 `1`。
-3. Windows 必须在 `showInactive()` 前临时 `setSkipTaskbar(true)`，并在 hidden/focus/error
-   任一路径恢复 `false`；主窗口产品合同的原始状态是显示在 taskbar。否则透明窗口虽无像素，
-   仍可能让任务栏按钮或预览重新出现。
-4. bootstrap 只属于第一份 owner + guest activity state；同 guest 并发 lease 复用，不能重复
-   show/hide。
-5. `showInactive()` 后保留 `100ms` presentation grace；grace 内不启动 activity
-   `capturePage()`，避免 Viz surface 尚未建立时并发 CopyFromSurface。renderer Ready/实际截图
-   可在 grace 内直接利用透明可见窗口完成，不需要等待该 timer。
-6. renderer Ready、prepare timeout、capture failure、abort、watchdog、window destroy 与
-   coordinator dispose 都必须幂等清理 bootstrap。
-7. bootstrap 期间若收到 owner `focus`，视为用户主动恢复窗口：立即恢复 opacity/taskbar，
-   并禁止后续
-   cleanup 调用 `hide()`。main 单线程内的 focus 判定与 hide/restore 必须在同一同步清理段
-   完成，避免反向隐藏用户窗口。
-8. `showInactive()` 只补窗口级 presentation opportunity，不改变 Browser API active tab、
-   renderer tab selection、workspaceKey、session owner 或图片持久化语义。
-9. window 原本可见或处于 minimized 状态时不启动 bootstrap，避免把最小化状态错误恢复成
-   hidden；Linux wiring 保持 capability 关闭，沿用现有 capture activity。
+The activity lease has an independent bounded reclaim: the host default screenshot transport budget is `30s`,
+the Playwright element screenshot budget at most about `32s`, and the lease safety watchdog `35s`. The
+watchdog only restores the renderer capture layer and stops the capture pump; it does not fake that the
+underlying Chromium screenshot has ended. After a caller timeout/cancel the activity lease is released at once
+(no continuous frames) while `inFlightScreenshots` is kept until the Chromium Promise really settles; CDP
+`Page.captureScreenshot` has no reliable per-request cancel API, so a same-tab retry stays blocked without
+disabling background throttling indefinitely.
 
-activity lease 必须有独立的有界回收。host 默认 screenshot transport budget 为 `30s`，
-Playwright element screenshot 预算最多约 `32s`；activity lease 的安全 watchdog 为 `35s`。
-watchdog 只强制恢复 renderer capture layer、停止 activity capture pump，不伪造底层 Chromium
-截图已结束。
-
-截图取消后可能存在两个不同事实：
-
-```text
-caller timeout / cancel
-  -> activity lease: 立即释放，停止 owner renderer 与目标 guest 后台持续跑帧
-  -> inFlightScreenshots: 继续保留，直到 Chromium Promise 真实 settle
-```
-
-CDP `Page.captureScreenshot` 没有可靠的单请求取消 API。即使调用方已经超时，底层 Promise
-仍可能继续执行；同 tab 重试必须继续被 `inFlightScreenshots` 拦截，但不能为了等待迟到结果
-无限期关闭后台节流。
-
-## 5. 时序
+## 5. Sequence
 
 ```text
 CLI/runtime screenshot(tabId)
@@ -396,7 +376,7 @@ CLI/runtime screenshot(tabId)
                       -> ready(requestId, webContentsId, DOM viewport)
                  <- ready
                  -> activityLease.markPrepared()
-                      -> 未被用户激活时 hide() + restore opacity
+                      -> if not activated by the user: hide() + restore opacity
                       -> owner stops; target guest switches to 200ms paced capture
             -> validate guest identity + viewport
             -> Page.captureScreenshot
@@ -407,136 +387,121 @@ CLI/runtime screenshot(tabId)
   <- PNG or structured screenshot failure
 ```
 
-该时序只同步渲染表面，不改变 tab owner、active Browser API tab 或用户侧栏选中项。
+The sequence only synchronizes the rendering surface and does not change the tab owner, the active Browser API
+tab or the user's sidebar selection.
 
-## 6. 错误与清理
+## 6. Errors and cleanup
 
-- prepare 最长等待 `3000ms`；该预算只用于容纳 renderer 在慢机器或后台窗口中的 surface
-  稳定过程，不能替代 guest identity、viewport、连续稳定 frame 与 raster 内容校验。窗口销毁、
-  renderer 无响应、viewport 为零、guest id 变化或
-  请求取消均返回截图失败。
-- main 必须把当前实际 `timeoutMs` 放入 prepare payload；renderer 的本地验证保险 deadline 为
-  `timeoutMs + 1000ms`（默认 `4000ms`）。正常路径仍由 main 在 prepare settle 时发送 `Release`
-  提前清理；额外 1000ms 只防止 Release 丢失后验证循环永久存活，不能截短 main 的有效预算。
-- 失败时不执行 `Page.captureScreenshot`，避免把已知损坏图片持久化为轮尾事实。
-- `release` 必须幂等，并在成功、CDP 异常、timeout、abort 和 late completion 后执行。
-- prepare 阶段 abort、timeout、send 失败、窗口销毁或 coordinator dispose 必须释放
-  activity lease；ready 后 abort 必须自动释放对应 surface lease，不能只依赖底层 CDP Promise
-  settle。
-- activity watchdog 到期后强制 settle group、停止 capture pump 并记录 `warn`；底层截图仍保留
-  `inFlightScreenshots` tombstone，直到真实 settle。
-- activity capture 自身失败时通过 lease invalidation 立即结束准备；若 surface 已 Ready，
-  manager 在返回图片前再次检查 invalidation，不能把失去活动保证后的迟到图片当成成功。
-- continuous pump 不得通过 Promise microtask 自旋等待 renderer Ready；立即完成的 capture
-  也必须让 timer、IPC、second-instance 和 window lifecycle 先获得一次调度机会。
-- 透明 bootstrap 清理时若窗口已经销毁，不再调用 `hide()` / `setOpacity()` /
-  `setSkipTaskbar()`；若窗口已被用户 focus，则只恢复 opacity/taskbar、保留窗口可见。
-  `showInactive()`、opacity 或 Windows taskbar 设置失败时，activity 必须受控失败，不能退回到
-  可见 `show()`。
-- renderer 对未知 release 直接忽略；新 prepare 可覆盖同 tab 已结束的旧请求，但不能覆盖仍
-  活跃的不同 request。
-- 高频 prepare/ready/release 只使用 UI `logger.debug` 与 service/main debug 日志；日志不记录
-  图片 base64、页面正文或完整 URL。
-- 自动轮尾截图是 best-effort：表面准备失败时沿用现有“记录并跳过图片、不影响对话完成”语义；
-  显式 screenshot API 返回结构化错误。
+- Prepare waits at most `3000ms` (for slow machines or background windows; it does not replace the guest
+  identity, viewport, consecutive stable frame and raster content checks). Window destruction, an unresponsive
+  renderer, a zero viewport, a guest id change or cancellation all return a screenshot failure, and
+  `Page.captureScreenshot` is not executed, so a known-corrupt image is never persisted.
+- Main puts its current `timeoutMs` into the prepare payload; the renderer verification deadline is
+  `timeoutMs + 1000ms` (default `4000ms`) as insurance against a lost Release only; the normal path is cleaned
+  early by main's `Release`.
+- `release` is idempotent and runs after success, CDP exception, timeout, abort and late completion; abort in
+  the prepare phase, send failure, window destruction or dispose releases the activity lease, and abort after
+  ready releases the surface lease automatically.
+- The activity watchdog forces the group to settle, stops the pump and logs `warn`; the underlying screenshot
+  keeps its `inFlightScreenshots` tombstone until it settles. Activity capture failure ends preparation
+  immediately; if the surface is already Ready, the manager re-checks invalidation before returning an image.
+- The renderer ignores an unknown release; a new prepare may overwrite an ended request of the same tab but not
+  a different active one. High-frequency prepare/ready/release uses only `debug` logs without image base64,
+  page body or full URLs.
+- The automatic end-of-turn screenshot stays best-effort (record and skip the image, conversation completion
+  unaffected); the explicit screenshot API returns a structured error.
 
-## 7. 多端与身份边界
+## 7. Multi-client and identity boundary
 
-- 桌面 `desktop-continuous` 与手机 `web-remote-replayable` 仍读取同一个成功持久化的图片事实。
-- 手机远控命令继续经 shared-host attachment 到 owner desktop window；不创建手机独立
-  browser runtime 或 host。
-- `workspaceIdentity` 继续通过
-  `workspaceKey = workspaceIdentity?.trim() || workspacePath` 隔离；远程 workspace 的 `remoteSessionId`
-  现有路由不变。
-- prepare/ready/release 不进入 relay，不携带 stream、queue、snapshot 或 clientMode 恢复语义。
-- macOS、Windows、Linux 共用同一 coordinator 合同；desktop wiring 的透明窗口 bootstrap
-  只在 Electron 支持 opacity 的 macOS/Windows 启用，Windows 还临时隐藏 taskbar entry。
-  Windows 高 DPI 是必须验证的风险面，截图 surface 与 raster 合同本身不做平台特判。
+- Desktop `desktop-continuous` and mobile `web-remote-replayable` still read the same successfully persisted
+  image fact.
+- Mobile remote control commands still reach the owner desktop window via the shared-host attachment; no
+  independent browser runtime or host for mobile is created.
+- `workspaceIdentity` is still isolated through `workspaceKey = workspaceIdentity?.trim() || workspacePath`;
+  the existing `remoteSessionId` routing of remote workspaces is unchanged.
+- prepare/ready/release do not enter the relay and carry no stream, queue, snapshot or clientMode recovery
+  semantics.
+- macOS, Windows and Linux share the same coordinator contract; the desktop wiring's transparent window
+  bootstrap is enabled only on macOS/Windows where Electron supports opacity, and Windows also temporarily
+  hides the taskbar entry. Windows high DPI is a risk surface that must be verified; the screenshot surface and
+  raster contract themselves have no platform special case.
 
-## 8. 测试与验收
+## 8. Tests and acceptance
 
-### 8.1 自动化
+### 8.1 Automated
 
-1. UI：inactive browser-use tab 收到 prepare 后不再 `display:none`，但不改变 active tab、
-   focus、pointer 和 accessibility；release 后恢复。
-2. Renderer IPC：scope、generation、tabId、webContentsId、requestId 任一不匹配时不 ready。
-3. Coordinator：ready、timeout、abort、window destroyed、late ready 与幂等 release。
-   activity lease 必须先于 prepare 获得；同 guest group 只获得一份；排队 group 不获得；
-   Ready 时切换 activity phase；activity invalidation、prepare/send/ready 后 abort、watchdog、
-   window destroyed 和 dispose 均释放。
-4. Manager：prepare 必须先于 CDP screenshot；success/error/abort 均 release；prepare 失败时
-   不调用 `Page.captureScreenshot`；surface invalidation 后不返回成功图片；prepare 必须在
-   per-tab viewport mutation queue 内获取，禁止 activity 在队列外空转。
-5. 现有 screenshot、clip、fullPage 与 in-flight backpressure 测试继续通过。
-6. 真实 Electron smoke：先让 guest 在 `800 × 450` 可见，再把 tab 置为 inactive 并将侧栏
-   调整为 `1274 × 720`；prepare 后截图必须为当前 CSS viewport，四角 sentinel 各不相同，
-   且不得出现 `800 × 450` 周期重复。
-7. 真实 Electron activity smoke：隐藏窗口下 owner renderer、目标 guest 与 sibling guest
-   均进入节流；preparing 只让 owner renderer + 目标 guest 恢复跑帧；`markPrepared()` 后
-   owner 恢复节流、目标 guest 以不高于 5Hz 的 capture 脉冲继续推进、sibling 始终节流；
-   释放且最后 capture settle 后三者再次进入节流。smoke 还必须注入一次 capture failure，
-   证明 pump 停止并显式报告 invalidation。全过程 `getBackgroundThrottling()` 保持 `true`。
-8. Controller 调度回归：令 owner/guest `capturePage()` 连续立即 resolve；在第一个 timer
-   turn 到来前，每个 target 最多只有初始重叠 capture，不得耗尽整段同步结果队列；timer
-   必须能够运行，随后 `markPrepared()` / `release()` 可停止续泵。
-9. Controller 窗口状态回归：hidden owner 在首个 capture pump 前依次执行
-   `setOpacity(0) -> showInactive()`；Ready 后未被用户激活时依次执行
-   presentation grace 到期、且目标 guest capturer 已启动后，执行
-   `hide() -> restore originalOpacity`。grace 前 owner/guest capture 数必须为零，避免
-   `UnknownVizError` / native crash。若 bootstrap 期间收到 `focus`，必须立即恢复 opacity，
-   且 Ready/release 不再 hide；visible owner 与未启用 capability 的平台均不得调用这些 API。
-   Windows 另断言 `setSkipTaskbar(true)` 发生在 `showInactive()` 前，并在 hidden/focus/error
-   清理时恢复 `false`。
-10. 真实 Electron hidden-born smoke：先隐藏 owner，再动态 attach/navigate guest；透明
-    bootstrap 前 capture 为空或失败，bootstrap 后 guest 首帧与最终截图均非空；清理后断言
-    `isVisible() === false`、`isFocused() === false`、opacity 恢复，且后续隐藏截图仍成功。
-    smoke 在 macOS 与 Windows 执行；Windows 同时覆盖临时 taskbar 隐藏。
+1. UI: after prepare an inactive browser-use tab is no longer `display:none`, but the active tab, focus, pointer
+   and accessibility do not change; restored after release.
+2. Renderer IPC: no ready if any of scope, generation, tabId, webContentsId or requestId mismatches.
+3. Coordinator: ready, timeout, abort, window destroyed, late ready and idempotent release. The activity lease
+   is acquired before prepare; a same-guest group gets one lease; queued groups get none; the activity phase
+   switches at Ready; activity invalidation, abort after prepare/send/ready, watchdog, window destroyed and
+   dispose all release.
+4. Manager: prepare precedes the CDP screenshot and is acquired inside the per-tab viewport mutation queue;
+   success/error/abort all release; on prepare failure `Page.captureScreenshot` is not called; no successful
+   image is returned after surface invalidation. Existing screenshot, clip, fullPage and in-flight backpressure
+   tests keep passing.
+5. Real Electron smoke: make the guest visible at `800 × 450`, set the tab inactive and resize the sidebar to
+   `1274 × 720`; after prepare the screenshot is the current CSS viewport, the four corner sentinels differ and
+   no `800 × 450` periodic repetition appears.
+6. Real Electron activity smoke: under a hidden window the owner renderer, target guest and sibling guest all
+   throttle; preparing wakes only the owner renderer + target guest; after `markPrepared()` the owner throttles
+   again, the target guest advances with capture pulses no higher than 5Hz and the sibling stays throttled;
+   after release and the last capture settling all three throttle again. One injected capture failure proves
+   the pump stops and invalidation is reported. `getBackgroundThrottling()` stays `true` throughout.
+7. Controller scheduling regression: with owner/guest `capturePage()` resolving immediately in succession,
+   before the first timer turn each target has at most the initial overlapping captures, the timer can run, and
+   `markPrepared()` / `release()` then stop the pump.
+8. Controller window-state regression: a hidden owner runs `setOpacity(0) -> showInactive()` before the first
+   capture pump; after Ready, if not activated by the user, once the presentation grace has expired and the
+   target guest capturer has started, run `hide() -> restore originalOpacity`. Before the grace the owner/guest
+   capture count is zero (avoids `UnknownVizError` / native crash). A `focus` during bootstrap restores opacity
+   immediately and Ready/release no longer hide; a visible owner and a platform without the capability call none
+   of these APIs. Windows additionally asserts `setSkipTaskbar(true)` precedes `showInactive()` and `false` is
+   restored on hidden/focus/error cleanup.
+9. Real Electron hidden-born smoke (macOS and Windows): hide the owner, then dynamically attach/navigate the
+   guest; before the bootstrap capture is empty or fails, after it the guest first frame and the final
+   screenshot are non-empty; after cleanup `isVisible() === false`, `isFocused() === false`, opacity restored,
+   and a later hidden screenshot still succeeds. Windows also covers temporary taskbar hiding.
 
-### 8.2 验收
+### 8.2 Acceptance
 
-- 用户保持 conversation/其他侧栏 tab 活动时，轮尾截图不切换 UI、不闪烁、不重复拼接。
-- 同一页面 active 与 background 截图内容、尺寸和滚动位置一致。
-- Windows 125%/150%/160% DPI 至少完成一次手工或真实 Electron smoke；不能只依赖 mock。
-- `pnpm typecheck` 与 `pnpm lint` 必须通过。
-- hidden-born guest 必须在 macOS 真实 Electron 上覆盖；Windows close-to-tray 需要 Windows
-  CI/手工 smoke，当前非 Windows 环境只能覆盖 taskbar 生命周期单测；Linux 不启用透明
-  bootstrap。
-- 若 CI 无法覆盖其它 macOS 版本、Windows close-to-tray、Linux 或 minimized-window
-  compositor，提交说明必须列出风险与待补项。
+- With the conversation/another sidebar tab kept active, the end-of-turn screenshot neither switches the UI,
+  flickers nor stitches repeats.
+- Active and background screenshots of the same page match in content, size and scroll position.
+- Windows 125%/150%/160% DPI gets at least one manual or real Electron smoke; mocks alone are not enough.
+- `pnpm typecheck` and `pnpm lint` must pass.
+- Hidden-born guest must be covered on real Electron macOS; Windows close-to-tray needs Windows CI/manual
+  smoke, and non-Windows environments can currently cover only the taskbar lifecycle unit tests; Linux does not
+  enable the transparent bootstrap.
+- If CI cannot cover other macOS versions, Windows close-to-tray, Linux or minimized-window compositor, the
+  commit description must list the risks and pending items.
 
-## 9. 影响面与用例剪枝
+## 9. Impact and case pruning
 
-本次属于 `commit-effect + recovery + rendering/performance + app-shutdown-policy`。activity
-lease 只改变 desktop 截图表面准备期间的 Electron 电源/合成策略，并在 macOS hide-close /
-Windows close-to-tray 后临时建立透明窗口 presentation opportunity；不改变 Browser API、
-图片事实、tab 生命周期、workspace identity 或多端恢复合同。代码图工具在当前 workspace
-不可用，调用面以精确 symbol 搜索并向上展开两层 direct caller 完成。
+The change is `commit-effect + recovery + rendering/performance + app-shutdown-policy`. Owner:
+`DesktopBrowserScreenshotActivityController` in Electron main (the renderer only receives prepare/release);
+call chain `BrowserGuestManager -> DesktopBrowserScreenshotSurfaceCoordinator -> activity controller ->
+BrowserWindow`. It affects only `desktop-continuous` local transient resources and stays isolated from
+`web-remote-replayable`, the relay and snapshots; workspaceKey, tab/session ownership, image facts, UI
+selection, protocol shape and user focus are unchanged.
 
-| 影响项        | 结论                                                                                                        |
-| ------------- | ----------------------------------------------------------------------------------------------------------- |
-| 主 capability | `capability.browser-screenshot-surface`；入口仍是显式/轮尾 browser screenshot                               |
-| 运行时 owner  | Electron main 的 `DesktopBrowserScreenshotActivityController`；renderer 只收 prepare/release                |
-| 直接调用链    | `BrowserGuestManager -> DesktopBrowserScreenshotSurfaceCoordinator -> activity controller -> BrowserWindow` |
-| 交付边界      | 只影响 `desktop-continuous` 本地瞬时资源；必须与 `web-remote-replayable`、relay、snapshot 保持隔离          |
-| 不变量        | workspaceKey、tab/session ownership、图片事实、UI selection、protocol shape、用户 focus 均不变              |
-| 证据          | controller 状态单测 + coordinator/manager 既有测试 + hidden-born 真实 Electron smoke/runtime trace          |
+| Case    | Initial state                               | Event                                         | Expected effect                                                                              | Classification                  |
+| ------- | ------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------- |
+| BAS-001 | owner window in background, no screenshot   | browser-use tab persists                      | keep default throttling, no continuous frames                                                | accepted                        |
+| BAS-002 | owner window in background                  | explicit or end-of-turn screenshot            | wake owner + target guest before prepare, stop the pump after settle                         | accepted                        |
+| BAS-003 | concurrent prepare for the same guest       | two requests ready                            | share the surface group and one activity lease                                               | accepted                        |
+| BAS-004 | requests for different guests queued        | previous screenshot not released              | only the active group's target guest is woken                                                | accepted                        |
+| BAS-005 | timeout/abort before ready                  | preparation fails                             | release renderer and activity lease, run no screenshot                                       | accepted                        |
+| BAS-006 | backend hangs after ready                   | host cancel/watchdog                          | restore throttling, keep same-tab in-flight re-entry guard                                   | accepted                        |
+| BAS-007 | owner window destroyed                      | any phase                                     | idempotent cleanup, no access to a destroyed WebContents                                     | accepted                        |
+| BAS-008 | mobile replayable recovery                  | read the persisted screenshot                 | no propagation of activity lease or new mobile runtime                                       | pruned; desktop-local invariant |
+| BAS-009 | hidden owner; capture completes immediately | preparing continuous pump continues           | yield a macrotask each round; IPC/timers can run and capture count stays bounded             | accepted; root-cause regression |
+| BAS-010 | macOS owner already hidden                  | later attach a guest and request a screenshot | transparent bootstrap first frame; screenshot succeeds and the window stays hidden/unfocused | accepted; root-cause regression |
+| BAS-011 | transparent bootstrap in progress           | user actively focuses ZCode                   | restore opacity immediately; Ready/release must not hide the user's window again             | accepted; window state race     |
+| BAS-012 | Windows owner hidden to tray                | later attach a guest and request a screenshot | transparent bootstrap; taskbar does not reappear; stays hidden to tray after the screenshot  | accepted; Windows peer path     |
+| BAS-013 | Linux or visible/minimized owner            | request a screenshot                          | no transparent bootstrap; follow the existing activity/close lifecycle                       | accepted; platform boundary     |
 
-| Case    | 初始状态                         | 事件                           | 预期 effect                                                 | 分类                         |
-| ------- | -------------------------------- | ------------------------------ | ----------------------------------------------------------- | ---------------------------- |
-| BAS-001 | owner window 后台、无截图        | browser-use tab 持久存在       | 保持默认节流，不持续跑帧                                    | accepted                     |
-| BAS-002 | owner window 后台                | 显式或轮尾截图                 | prepare 前唤醒 owner + 目标 guest，settle 后停泵            | accepted                     |
-| BAS-003 | 同 guest 并发 prepare            | 两个请求 ready                 | 共享 surface group 和一份 activity lease                    | accepted                     |
-| BAS-004 | 不同 guest 请求排队              | 前一截图未释放                 | 只有 active group 的目标 guest 被唤醒                       | accepted                     |
-| BAS-005 | ready 前 timeout/abort           | preparation 失败               | release renderer 与 activity lease，不执行截图              | accepted                     |
-| BAS-006 | ready 后 backend 挂起            | host cancel/watchdog           | 恢复节流，保留同 tab in-flight 防重入                       | accepted                     |
-| BAS-007 | owner window 销毁                | 任意阶段                       | 幂等清理，不访问 destroyed WebContents                      | accepted                     |
-| BAS-008 | 手机 replayable 恢复             | 读取已持久化截图               | 不传播 activity lease 或新增手机 runtime                    | pruned；desktop-local 不变量 |
-| BAS-009 | hidden owner；capture 立即完成   | preparing continuous pump 续泵 | 每轮让出 macrotask；IPC/timer 可运行且 capture 数量保持有界 | accepted；本次根因回归       |
-| BAS-010 | macOS owner 已 hidden            | 此后 attach guest 并请求截图   | 透明 bootstrap 首帧；截图成功且窗口保持 hidden/unfocused    | accepted；本次根因回归       |
-| BAS-011 | 透明 bootstrap 进行中            | 用户主动 focus ZCode           | 立即恢复 opacity；Ready/release 不得再次 hide 用户窗口      | accepted；窗口状态竞争       |
-| BAS-012 | Windows owner 已隐藏到托盘       | 此后 attach guest 并请求截图   | 透明 bootstrap；taskbar 不重现；截图后仍隐藏到托盘          | accepted；Windows 对等路径   |
-| BAS-013 | Linux 或 visible/minimized owner | 请求截图                       | 不启动透明 bootstrap；沿用现有 activity/close 生命周期      | accepted；平台边界           |
-
-代表组合以“活动 group × 生命周期事件”为主，不与 tab 数量、workspace 类型、
-`desktop-continuous` / `web-remote-replayable` 做全排列；完整 scope 继续由既有 coordinator
-identity 测试证明。
+Representative combinations are mainly "active group x lifecycle event" and are not permuted fully with tab
+count, workspace type or `desktop-continuous` / `web-remote-replayable`; the full scope stays proven by the
+existing coordinator identity tests.

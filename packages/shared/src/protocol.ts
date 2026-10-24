@@ -495,7 +495,7 @@ export interface AppSettings {
   zcodeEndpointOrigin?: string;
   /**
    * Where the "New task in worktree" flow creates new worktrees (spec:
-   * docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md, «Настройки Worktree»).
+   * docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md, "Worktree settings").
    * Unset means the sibling convention `<parent>/<repo>-worktrees/<branch>`.
    */
   worktreeLocationMode?: WorktreeLocationMode;
