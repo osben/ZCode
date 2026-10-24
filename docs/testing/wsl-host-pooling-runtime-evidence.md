@@ -1,23 +1,19 @@
-# WSL Host Pooling 运行态验证证据
+# WSL Host Pooling Runtime Verification Evidence
 
-## 验证范围
+## Scope
 
-- 日期：2026-07-20（Asia/Shanghai）
-- 分支：`fix/wsl-remote-process-cleanup`
-- 被测提交：`8a9f553abfcdc53ddb514fce372b118428a2a84b`
-- 平台：Windows + WSL2 `Ubuntu`，Linux user `dev`
-- App 版本：`3.4.0`
-- Electron：`41.0.3`
-- remote 资源：内网 CDN `http://intranet.example.invalid:12345/zcode/@electron/release/v3.4.0/`
-- 启动变量：`ZCODE_DEV_REMOTE_ASSET_USE_CDN=1`，并用
-  `ZCODE_REMOTE_ASSET_CDN_BASE_URL` 指向上述内网根。
+- Date: 2026-07-20 (Asia/Shanghai)
+- Branch: `fix/wsl-remote-process-cleanup`
+- Commit under test: `8a9f553abfcdc53ddb514fce372b118428a2a84b`
+- Platform: Windows + WSL2 `Ubuntu`, Linux user `dev`
+- App version `3.4.0`, Electron `41.0.3`
+- remote assets: intranet CDN `http://intranet.example.invalid:12345/zcode/@electron/release/v3.4.0/`; launch variables `ZCODE_DEV_REMOTE_ASSET_USE_CDN=1` and `ZCODE_REMOTE_ASSET_CDN_BASE_URL` pointing at that root.
 
-本次验证使用当前分支重新构建的 `packages/desktop/out`，renderer 的 Chromium 参数包含
-`--app-path="E:\GitProject\z-code\z-code\packages\desktop"`。没有使用已安装的旧版 ZCode。
+The run uses the `packages/desktop/out` rebuilt from the current branch; the renderer's Chromium arguments contain `--app-path="E:\GitProject\z-code\z-code\packages\desktop"`. No previously installed ZCode was used.
 
-## 自动化验证
+## Automated verification
 
-直接调用仓库本地 binary，避免 pnpm wrapper 在离线环境触发 install：
+Local repository binaries were called directly to avoid a pnpm wrapper install in the offline environment:
 
 ```text
 vitest desktop affected: 6 files, 54 tests passed
@@ -28,13 +24,11 @@ tsc -b ...: exit 0
 oxlint: 0 errors, 52 existing warnings
 ```
 
-覆盖了连接建立中释放、Host shutdown phase、窗口级 pool、60 秒 fake timer、running task
-阻止释放、mobile attachment owner、Docker dedicated、WSL discovery cache、remote asset installer、
-WSL backend 和 stdio lifecycle。
+Covered: release during connection establishment, Host shutdown phase, window-level pool, 60-second fake timer, running task blocking release, mobile attachment owner, Docker dedicated, WSL discovery cache, remote asset installer, WSL backend and stdio lifecycle.
 
-## 运行方式
+## How it was run
 
-桌面端从当前分支启动，通过开发态固定端口 `9229` 的 CDP 调用 preload bridge：
+The desktop app was started from the current branch and the preload bridge was called through the dev-mode fixed CDP port `9229`:
 
 ```js
 window.zcode.connectRemote(
@@ -44,33 +38,31 @@ window.zcode.connectRemote(
 );
 ```
 
-进程采样使用：
+Process sampling:
 
 ```powershell
 Get-CimInstance Win32_Process
 wsl.exe -d Ubuntu -- bash -lc "ps -eo pid,ppid,rss,lstart,args"
 ```
 
-## 共享结果
+## Sharing results
 
-### 一个 workspace
+### One workspace
 
-第一个连接成功，logical session 为
-`80b8b530-d2ca-447a-9966-9d3472f76dae`：
+First connection succeeded, logical session `80b8b530-d2ca-447a-9966-9d3472f76dae`:
 
-| 层 | PID | RSS | 启动时间 | 说明 |
+| Layer | PID | RSS | Start time | Note |
 | --- | ---: | ---: | --- | --- |
-| Windows remote UtilityProcess Host | 24868 | 未单独采集 | 17:26:13 | 第一个 WSL workspace 创建 |
-| WSL `zcode-server` | 1083 | 192188 KiB | 17:26:24 | 唯一 server |
+| Windows remote UtilityProcess Host | 24868 | not sampled separately | 17:26:13 | Created by the first WSL workspace |
+| WSL `zcode-server` | 1083 | 192188 KiB | 17:26:24 | The only server |
 
-### 两个 workspace
+### Two workspaces
 
-第二个 logical session 为 `ba41c70a-8a04-46dc-a193-aeaa9062d8f0`。连接后 Windows remote
-Host 仍为 PID `24868`，WSL `zcode-server` 仍为 PID `1083`，server 计数为 `1`。
+The second logical session is `ba41c70a-8a04-46dc-a193-aeaa9062d8f0`. After connecting, the Windows remote Host is still PID `24868`, the WSL `zcode-server` is still PID `1083` and the server count is `1`.
 
-### 五个并发 workspace
+### Five concurrent workspaces
 
-清理前一轮后重新启动 App，并发执行五次同 distro/user、不同 workspace identity 的连接：
+After cleaning the previous round and restarting the app, five connections of the same distro/user and different workspace identities ran concurrently:
 
 ```text
 elapsedMs=9985
@@ -83,58 +75,50 @@ remoteSessionId:
   0e03e8c0-213f-4966-a119-0a4ebfcf6808
 ```
 
-| 层 | PID | PPID | RSS | 计数 |
+| Layer | PID | PPID | RSS | Count |
 | --- | ---: | ---: | ---: | ---: |
-| Windows remote UtilityProcess Host | 24708 | 3596 | 未单独采集 | 1 |
-| Windows `wsl.exe` launcher | 26684 | 24708 | 未单独采集 | 1 个 launcher 链路 |
+| Windows remote UtilityProcess Host | 24708 | 3596 | not sampled separately | 1 |
+| Windows `wsl.exe` launcher | 26684 | 24708 | not sampled separately | 1 launcher chain |
 | WSL `zcode-server` | 1106 | 1105 | 198232 KiB | 1 |
 
-释放第 4、5 个 logical session、保留三个 workspace 后，Host PID 仍为 `24708`，server PID
-仍为 `1106`，server 计数仍为 `1`；当时 RSS 为 `167216 KiB`。
+After releasing logical sessions 4 and 5 and keeping three workspaces, the Host PID is still `24708`, the server PID still `1106`, the server count still `1`; RSS was `167216 KiB`.
 
-结论：同窗口、同 distro、同 user 的 1、3、5 个 logical workspace 都复用一套 Windows Host 和
-一套 WSL `zcode-server`。后续 attach 没有再创建 server。
+Conclusion: 1, 3 and 5 logical workspaces of the same window, distro and user all reuse one Windows Host and one WSL `zcode-server`. Later attaches created no new server.
 
-## 回收时间
+## Reclamation timing
 
-### 单 workspace detach
+### Single workspace detach
 
-关闭第一个 logical session 后，第二个 session 仍持有 owner：Host PID `24868` 和 server PID
-`1083` 均保持，不会误杀共享连接。
+After closing the first logical session the second session still holds the owner: Host PID `24868` and server PID `1083` both stay, so the shared connection is not killed by mistake.
 
-### 最后 owner 与 idle TTL
+### Last owner and idle TTL
 
-关闭最后一个 logical session：
+After closing the last logical session:
 
 ```text
 T+2s: Host PID 24868 present; server PID 1083 present
-约 60s 边界后: Host PID 24868 absent; zcode-server-count=0
+after about the 60s boundary: Host PID 24868 absent; zcode-server-count=0
 ```
 
-命令采样与 WSL 启动本身存在数秒调度开销，因此运行态只记录“约 60 秒边界”；精确
-`60_000ms` 由 `remoteWslHostPool.test.ts` 的 fake timer 断言。
+Command sampling and the WSL start itself add a few seconds of scheduling overhead, so the runtime only records "about the 60 s boundary"; the exact `60_000ms` is asserted with a fake timer in `remoteWslHostPool.test.ts`.
 
-### App 退出覆盖 TTL
+### App exit overrides the TTL
 
-重新连接一个 workspace 后：
+After reconnecting one workspace:
 
-| 资源 | 退出前 PID | 正常关闭后约 4.0s |
+| Resource | PID before exit | About 4.0s after normal close |
 | --- | ---: | --- |
-| Windows remote Host | 25468 | 不存在 |
-| WSL `zcode-server` | 1122 | 计数 0 |
+| Windows remote Host | 25468 | absent |
+| WSL `zcode-server` | 1122 | count 0 |
 
-主窗口调用 `CloseMainWindow()` 后，main process 在 `741ms` 退出；从发起关闭到最终 PID 检查为
-`4024ms`。第二轮仍有三个 workspace owner 时重复关闭，main 在 `396ms` 退出，`3641ms`
-检查时 Host PID `24708` 和 server PID `1106` 同样已经消失。
+After the main window called `CloseMainWindow()` the main process exited in `741ms`; from the close request to the final PID check was `4024ms`. A second round repeated the close with three workspace owners still held: main exited in `396ms` and at the `3641ms` check Host PID `24708` and server PID `1106` were also gone.
 
-结论：真实关闭整个 App 会跳过 60 秒 idle TTL，立即进入有界回收。
+Conclusion: really closing the whole app skips the 60-second idle TTL and enters bounded reclamation immediately.
 
-## 未覆盖与边界
+## Not covered and boundaries
 
-- 本次没有启动实际 task，因此没有产生 workspace Agent/MCP PID；running-task draining 由单元测试验证。
-- 没有实际执行更新安装，只验证了与更新共用的 app/window shutdown manager 路径和 App 退出运行态。
-- 没有执行手机 replayable 的真实设备连接；mobile attachment owner 边界由 desktop manager 测试覆盖。
-- Docker 没有进入本次 WSL PID 实测；代码与测试确认它仍走 dedicated `InitRemoteWorkspace`，本改动没有
-  为 Docker 增加共享 pool。
-- 不调用 `wsl --terminate` 或 `wsl --shutdown`；验证结束后 distro 可继续运行，只有 ZCode-owned server
-  被回收。
+- No actual task was started, so no workspace Agent/MCP PID was produced; running-task draining is verified by unit tests.
+- No update install was run; only the app/window shutdown manager path shared with updates and the app-exit runtime were verified.
+- No real-device mobile replayable connection was run; the mobile attachment owner boundary is covered by desktop manager tests.
+- Docker was not part of this WSL PID measurement; code and tests confirm it still uses a dedicated `InitRemoteWorkspace` and this change added no shared pool for Docker.
+- `wsl --terminate` and `wsl --shutdown` are not called; after verification the distro can keep running and only the ZCode-owned server is reclaimed.
