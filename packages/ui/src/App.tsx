@@ -67,6 +67,8 @@ import {
 } from "@/app-shell/useWorkspaceTaskNavigation.js";
 import { useTaskSidePaneMemoryBridge } from "@/app-shell/useTaskSidePaneMemoryBridge.js";
 import { resolveAppWorkspaceRpcTarget } from "@/app-shell/workspaceRpcTarget.js";
+import { selectTaskInNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
+import { toast } from "@/components/ui/toast.js";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { useWorkspaceTerminalTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { useMarketingTaskCompletionRefresh } from "@/components/marketing-touch/useMarketingTaskCompletionRefresh.js";
@@ -1032,6 +1034,27 @@ export function App({
     },
     [handleOpenAutomations],
   );
+  // The palette searches local projects whose tab is closed; handleSelectTask alone cannot show those (ISSUE-069).
+  const handleSelectCommandCenterTask = useCallback(
+    (targetWorkspacePath: string, taskId: string, targetWorkspaceIdentity?: string) => {
+      if (webRemoteControlWorkspaceSwitcher) {
+        handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
+        return;
+      }
+      selectTaskInNavigationWorkspace({
+        target: {
+          workspacePath: targetWorkspacePath,
+          taskId,
+          workspaceIdentity: targetWorkspaceIdentity,
+        },
+        activateTabByPath,
+        addLocalWorkspaceTab: (path) => addTab(path),
+        selectTask: handleSelectTask,
+        onRejected: () => toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" })),
+      });
+    },
+    [activateTabByPath, addTab, handleSelectTask, intl, webRemoteControlWorkspaceSwitcher],
+  );
   const handleOpenPluginStoreForScope = useCallback(
     (_target: PluginStoreOpenTarget = {}) => {
       // 管理范围由市场内视图持有，重复打开只重置市场导航。
@@ -1280,7 +1303,7 @@ export function App({
         activeTaskChangeSummary={activeTaskChangeSummary}
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
-        onSelectTask={handleSelectTask}
+        onSelectTask={handleSelectCommandCenterTask}
         onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}

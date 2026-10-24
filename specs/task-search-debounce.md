@@ -67,3 +67,34 @@ Task search covers the local tasks of every project listed in the sidebar. It do
 - Until the query settles, no workspace is queried: the search scope is empty for that query, so a keystroke never fans out one `listTaskList` per local workspace. Only the query that has settled is sent.
 - The empty-state wording shows during the first settle, because there is no earlier result to keep. A later keystroke keeps the previous settled results until its own query settles.
 - Clearing the input settles at once and cancels a pending settle.
+
+## Opening a result from another project (ISSUE-069)
+
+The widened scope returns tasks of local projects whose workspace tab is closed. Picking such a result must open it, the same way the sidebar opens it.
+
+### Owner and path
+
+- The tab store (`packages/ui/src/store/tabStore.ts`) owns which workspace is active. `useWorkspaceTaskNavigation.handleSelectTask` only activates an existing tab (`activateTabByPath`); when no tab matches it changes nothing visible, so on its own it cannot open a closed project.
+- `ensureTaskNavigationWorkspace` (`packages/ui/src/app-shell/taskNavigationWorkspace.ts`) is the one rule for "make the target workspace visible": activate the exact tab, else open a local tab by path, else reject a remote identity that has no attachment in this window. The sidebar and the automation run history already use it.
+- The command center's task pick (search results and recent tasks) goes through `selectTaskInNavigationWorkspace`, which runs that rule and then `handleSelectTask`. No second tab-opening path is added.
+
+### Event order
+
+```text
+palette pick → ensureTaskNavigationWorkspace
+                 ├─ exact tab exists → activate it
+                 ├─ local, no tab    → addTab(workspacePath) (activates it)
+                 └─ remote, no tab   → reject: toast, nothing selected
+             → handleSelectTask(workspacePath, taskId, workspaceIdentity) → setActiveTaskId
+→ closeDialog
+```
+
+- The web remote-control shell keeps its own switcher and does not open local tabs; there the pick goes straight to `handleSelectTask`, as before.
+- Identity rule: the tab match uses `workspaceIdentity` when the result carries one. A remote result is never matched or reopened by path alone.
+
+### Acceptance scenarios (open)
+
+1. From workspace A, picking a search result of local project B whose tab is closed opens a tab for B, makes it active, and selects the task in B.
+2. Picking a result whose workspace tab is open activates that tab and selects the task; no extra tab is added.
+3. Picking a remote result whose attachment is missing in this window adds no tab, selects nothing, and shows `automations.runs.openSessionFailed`.
+4. Removing the ensure step (calling `handleSelectTask` directly) makes scenario 1 fail: the active workspace stays A (mutation check).
