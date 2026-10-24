@@ -6,7 +6,7 @@ The Commands settings list shows user and plugin commands without exposing stora
 - User command rows do not display their backing directory path.
 - Plugin command rows and the plugin group header do not display “Registered by a plugin. Edit it in the plugin.” The plugin group heading and plugin-name label already communicate ownership.
 - Item descriptions use `text-ui-sm text-foreground-subtle` as secondary copy.
-- Commands 的顶部搜索工具栏与 `Installed` 分组统一使用内容区显式的 `mt-6`（24px）；共享 Tabs 根节点不再额外提供 `gap-2`，避免搜索框到 New 按钮叠加成 32px。
+- The Commands top search toolbar and the `Installed` group uniformly use an explicit content-area `mt-6` (24px); the shared Tabs root no longer adds `gap-2`, so the gap from search box to the New button does not stack up to 32px.
 - Command rows use the same `Terminal` icon as the Commands settings entry. Plugin artwork takes
   precedence when available; a missing or failed plugin image falls back to `Terminal`, not `Cable`.
 - Workspace scope and plugin ownership use the shared scope treatment: a `rounded-full border-border bg-surface text-ui-sm` Badge with a 14px Folder or Cable icon.

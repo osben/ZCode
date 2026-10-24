@@ -1,24 +1,19 @@
 # Streaming Tool Input Preview
 
-## 背景
+## Background
 
-部分模型会在思考或正文结束前以流式 function call 形式输出工具参数。例如 `Write`
-会先产生 `tool_input_start`，随后持续输出 `tool_input_delta`，最后才得到完整
-`tool_call`。如果 app/agent 协议只透出正文和 reasoning delta，UI 会停留在“思考”，
-直到模型回合结束后才突然出现文件工具调用。
+Some models emit tool arguments as a streaming function call before thinking or body text finishes. For example, `Write` first produces `tool_input_start`, then a stream of `tool_input_delta`, and only then the complete `tool_call`. If the app/agent protocol exposed only body and reasoning deltas, the UI would stay on "thinking" and the file tool call would appear abruptly after the model turn ends.
 
-## 目标
+## Goals
 
-- agent 在模型参数流出现时，尽早向 app 暴露工具调用占位。
-- UI 在参数流期间展示 pending 工具卡片，并用已有文件变更卡片展示文件路径和按秒采样的行数。
-- 有副作用工具仍然只在模型回合结束后的 tool execution 阶段执行，参数预览不能触发文件写入。
-- desktop `desktop-continuous` 主链路保持实时；web remote `web-remote-replayable`
-  继续以 replayable snapshot/event seq 为恢复边界。
+- The agent exposes a tool-call placeholder to the app as soon as the model argument stream appears.
+- During the argument stream the UI shows a pending tool card, reusing the existing file-change card to show the file path and per-second sampled line counts.
+- Tools with side effects still execute only in the tool execution phase after the model turn ends; argument preview must never trigger file writes.
+- The desktop `desktop-continuous` main link stays real-time; web remote `web-remote-replayable` keeps the replayable snapshot/event seq as its recovery boundary.
 
-## 协议
+## Protocol
 
-`@zcode/protocol` 增加 `model.streaming` session event。当前只对 app 暴露以下
-模型 streaming kind：
+`@zcode/protocol` adds the `model.streaming` session event. Only these model streaming kinds are exposed to the app:
 
 - `text_delta`
 - `reasoning_delta`
@@ -27,12 +22,9 @@
 - `tool_input_end`
 - `tool_call`
 
-`tool_input_delta` 在 agent runtime 层合并为较大的文本块后再进入 protocol，
-避免大文件 `Write` 参数产生每秒数百条 stdio 小包。最终工具执行结果仍以
-tool execution 阶段事件为准。
+`tool_input_delta` is merged into larger text chunks in the agent runtime layer before entering the protocol, so a large-file `Write` argument does not produce hundreds of tiny stdio packets per second. Final tool execution results still come from tool execution phase events.
 
-v4 会话不再把这组事件直接暴露给 renderer，而是在 CLI `ProductProjection` 中投影为
-`ToolCallRow`：
+V4 sessions no longer expose these events directly to the renderer; the CLI `ProductProjection` projects them into `ToolCallRow`:
 
 ```text
 model tool_input_*
@@ -47,19 +39,15 @@ model tool_input_*
        Write/Edit 路径、内容、行数按同一采样点刷新
 ```
 
-delivery profile 边界：
+Delivery profile boundaries:
 
-- `desktop-continuous` 保留 `row.delta(inputText)`，用于 active 桌面会话实时展示工具参数预览。
-- `web-remote-replayable` 过滤 `row.delta(inputText)`，只通过最终 `row.upserted`
-  或 snapshot 恢复完整 `input` / `inputText`。
-- 因为 replayable 会过滤输入流 delta，任何工具输入定稿事件都必须在不可过滤的
-  `row.upserted` 中携带完整 `inputText`，否则手机远控恢复会缺少工具输入终态。
+- `desktop-continuous` keeps `row.delta(inputText)` for real-time tool-argument preview in the active desktop session.
+- `web-remote-replayable` filters `row.delta(inputText)` and restores full `input` / `inputText` only through the final `row.upserted` or a snapshot.
+- Because replayable filters input-stream deltas, every tool-input finalization event must carry the complete `inputText` in the non-filterable `row.upserted`; otherwise mobile remote recovery loses the tool input's final state.
 
-### Write/Edit 一秒采样
+### Write/Edit one-second sampling
 
-`Write` / `Edit` 的累计参数会触发半截 JSON 恢复、diff 计算和 React 更新。模型输出很快时，
-逐 delta materialize 没有可读收益，因此 desktop continuous 的文件工具预览采用确定性的
-一秒采样；其他工具继续沿用原有增量节奏。
+Cumulative `Write` / `Edit` arguments drive partial-JSON recovery, diff computation, and React updates. When the model outputs quickly, materializing per delta has no readability benefit, so desktop-continuous file-tool preview uses deterministic one-second sampling; other tools keep their existing incremental cadence.
 
 ```text
 tool_input_start ───────────────> 立即创建 pending 工具卡
@@ -69,40 +57,25 @@ tool_input_start ───────────────> 立即创建 pen
 end / call / scheduled / cancel ─> 立即冲刷或以完整 input 定稿
 ```
 
-- 时间预算使用 `SessionEvent.timestamp`，不使用 renderer timer；同一事件账本在 live 与 replay
-  中得到相同投影。
-- 采样单位是整张文件工具预览：路径、内容、inline diff、`+N/-N` 在同一个采样点更新，
-  不分别追赶。
-- 第一个 delta 不等待一秒。正常定稿、调度、取消等终止边界也不等待一秒，且不能丢失尚未
-  发布的 suffix。
-- 采样只减少预览投影次数，不改变工具参数账本、权限检查或工具执行时机。
-- `Write` 流式预览的 `+N` 是当前已恢复 `content` 的逻辑行数；`Edit` 是
-  `old_string` 与当前部分 `new_string` 的行级 LCS 结果，所以流式过程中允许增减，最终
-  completed 文件 diff 才是实际变更事实。
+- The time budget uses `SessionEvent.timestamp`, not a renderer timer; the same event ledger yields the same projection live and in replay.
+- The sampling unit is the whole file-tool preview: path, content, inline diff, and `+N/-N` update at the same sampling point; they do not catch up separately.
+- The first delta does not wait a second. Normal finalization, scheduling, and cancel boundaries also do not wait, and must not lose an unpublished suffix.
+- Sampling only reduces preview projection frequency; it changes neither the tool argument ledger, permission checks, nor tool execution timing.
+- The `Write` streaming preview's `+N` is the logical line count of the currently recovered `content`; `Edit` is the line-level LCS of `old_string` and the current partial `new_string`, so it may grow or shrink during streaming. Only the final completed file diff is the actual change fact.
 
-## UI 投影
+## UI projection
 
-legacy service adapter 将 `model.streaming` 中的工具参数事件投影为现有
-`tool_call` / `tool_call_update`：
+The legacy service adapter projects tool-argument events from `model.streaming` into the existing `tool_call` / `tool_call_update`:
 
-- `tool_input_start` 创建 pending 工具卡片。
-- `tool_input_delta` 累积 JSON 参数片段，尽力解析出 `file_path`、`content` 等常见字段。
-- `tool_input_end` 保留最后一次参数预览。
-- `tool_call` 使用完整 input 覆盖预览 input，但仍保持 pending，直到真正的
-  `tool.updated` execution 事件到达。
+- `tool_input_start` creates the pending tool card.
+- `tool_input_delta` accumulates JSON argument fragments and best-effort parses common fields such as `file_path` and `content`.
+- `tool_input_end` keeps the last argument preview.
+- `tool_call` overwrites the preview input with the complete input but stays pending until the real `tool.updated` execution event arrives.
 
-如果后续 `tool.updated` 的 scheduled 事件与预览工具使用同一个 `toolCallId`，
-UI 需要更新已有工具卡片，而不是追加重复卡片。
+If a later `tool.updated` scheduled event shares the preview's `toolCallId`, the UI must update the existing tool card, not append a duplicate.
 
-v4 renderer 侧继续复用同一套工具卡片。`ToolCallRow.input` 是最终结构化输入；
-当它缺席且 `inputText` 仍是半截 JSON 时，adapter 使用
-`buildZCodeStreamingToolInputPreview` 尽力提取 `file_path`、`content`、
-`new_string`、`old_string`、`command` 等字段。空预览不展示为 Parameters；
-raw metadata 只保留输入长度和是否完整，不复制完整 streaming raw input。
+The v4 renderer reuses the same tool cards. `ToolCallRow.input` is the final structured input; when absent and `inputText` is still partial JSON, the adapter uses `buildZCodeStreamingToolInputPreview` to best-effort extract `file_path`, `content`, `new_string`, `old_string`, `command`, and similar fields. An empty preview is not shown as Parameters; raw metadata keeps only the input length and completeness flag, never a copy of the full streaming raw input.
 
-## 执行边界
+## Execution boundary
 
-流式参数预览不改变工具调度规则。`Read` 这类只读且并发安全的工具仍可走已有
-streaming tool coordinator；`Write`、`Edit`、`Bash` 等有副作用或需要审批的工具
-不会在参数流期间执行。文件落盘、权限请求、失败/成功状态都继续来自 tool execution
-阶段的 `tool.updated` 事件。
+Streaming argument preview does not change tool scheduling rules. Read-only, concurrency-safe tools such as `Read` keep using the existing streaming tool coordinator; `Write`, `Edit`, `Bash`, and other side-effectful or approval-requiring tools never execute during the argument stream. File writes, permission requests, and failure/success states continue to come from `tool.updated` events in the tool execution phase.

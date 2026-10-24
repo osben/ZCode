@@ -1,13 +1,10 @@
-# SSH 远端 Workspace 状态权威边界
+# SSH remote workspace state authority boundary
 
-> 当前事实文档。旧的 Desktop Provider Registry 快照下发方案已经退出；历史方案与事故轨迹只在
-> working-memory、旧 plan/spec 和事故复盘中保留。
+> Current-state document. The old Desktop Provider Registry snapshot-push design is retired; its history lives only in working-memory, old plans/specs, and incident reviews.
 
-## 核心结论
+## Core conclusion
 
-Desktop-attached SSH/Docker/WSL 只描述一种连接和操作关系，不表示 Desktop Environment 延伸到远端。
-执行 Agent 所属的 Remote Environment 拥有 Provider Config、账号事实、Credential Store、Registry 和
-ModelFactory。
+Desktop-attached SSH/Docker/WSL describes a connection and operation relationship only — it does not extend the Desktop Environment to the remote side. The Remote Environment that runs the Agent owns the Provider Config, account facts, Credential Store, Registry, and ModelFactory.
 
 ```text
 Desktop Environment                     Remote Environment
@@ -27,38 +24,34 @@ Local Registry                          Remote Credential Store
                                       Remote model request
 ```
 
-Desktop 不向 Remote Worker 注入以下内容：
+Desktop never injects into the Remote Worker:
 
-- 完整 Provider Registry 或其序列化快照；
-- Runtime Model 或 Provider/Model 静态配置快照；
-- Desktop Account Provider Config；
-- Desktop API Key、JWT、Team Runtime Key 或动态请求 Header。
+- a full Provider Registry or its serialized snapshot;
+- Runtime Model or Provider/Model static-config snapshots;
+- Desktop Account Provider Config;
+- Desktop API keys, JWTs, Team Runtime Keys, or dynamic request headers.
 
-旧 `workspace/updateProviderRegistry`、`ZCodeProviderRegistrySnapshot` 和
-`remoteWorkspaceProviderSync` 不再属于生产协议或运行链路。
+The old `workspace/updateProviderRegistry`, `ZCodeProviderRegistrySnapshot`, and `remoteWorkspaceProviderSync` are no longer part of the production protocol or runtime chain.
 
-## 状态归属
+## State ownership
 
-| 状态                                   | 权威位置                | Desktop-attached remote 的读取方式        |
-| -------------------------------------- | ----------------------- | ----------------------------------------- |
-| Workspace 文件、Git、Terminal          | Remote Environment      | 远端 Service                              |
-| Task、Session、Agent execution         | Remote Environment      | 远端 Service                              |
-| Provider Settings View（远程 runtime） | Remote Environment      | 远端 `provider-settings` Facade           |
-| Desktop 模型配置页（app-global）       | Desktop Environment     | 本地 `IProviderSettingsService`           |
-| Model Selection View（远程 runtime）   | Remote Environment      | 远端 `model-selection` Facade             |
-| Provider Config / Registry             | Remote Environment      | 不跨 Environment 传输 Registry 对象或快照 |
-| Provider Credential / Request Auth     | Remote Environment      | 不从 Desktop Credential Store 注入        |
-| Desktop 主题、窗口和本地 UI 状态       | Desktop Environment     | 本地 Service                              |
-| Desktop continuous / Mobile replayable | 各自既有 delivery owner | 不受 Provider 边界改变                    |
+| State | Authority | Read path for Desktop-attached remote |
+| --- | --- | --- |
+| Workspace files, Git, Terminal | Remote Environment | remote service |
+| Task, Session, Agent execution | Remote Environment | remote service |
+| Provider Settings View (remote runtime) | Remote Environment | remote `provider-settings` facade |
+| Desktop model settings page (app-global) | Desktop Environment | local `IProviderSettingsService` |
+| Model Selection View (remote runtime) | Remote Environment | remote `model-selection` facade |
+| Provider Config / Registry | Remote Environment | no Registry object or snapshot crosses Environments |
+| Provider Credential / Request Auth | Remote Environment | never injected from the Desktop Credential Store |
+| Desktop theme, windows, local UI state | Desktop Environment | local service |
+| Desktop continuous / Mobile replayable | their existing delivery owners | unchanged by the Provider boundary |
 
-Renderer 面对的 remote workspace ServiceCollection 可以混合本地 UI Service 与远端业务 Service，但
-混合只是 Facade 装配方式，不改变上表的事实所有权。远程 workspace 的 runtime、Session、模型执行
-仍必须使用目标 Environment 的 Provider Settings 和 Model Selection；Desktop 设置页的 app-global
-模型配置编辑是明确例外，只读写 Desktop Local Environment，不把编辑动作隐式路由到远端。
+The remote workspace ServiceCollection facing the renderer may mix local UI services with remote business services, but the mixing is only a facade assembly and never changes the ownership above. A remote workspace's runtime, session, and model execution must use the target Environment's Provider Settings and Model Selection; the Desktop settings page's app-global model-config editing is the explicit exception — it reads/writes the Desktop Local Environment only and never implicitly routes edits to the remote side.
 
-## Environment 内部同步
+## Intra-Environment sync
 
-同一个 Environment 的 Host 与 Core Worker 各自持有 Registry 实例，并共享该 Environment 的配置事实：
+Within one Environment, the Host and the Core Worker each hold a Registry instance and share that Environment's config facts:
 
 ```text
 Environment Provider Sources
@@ -74,14 +67,11 @@ Environment Provider Sources
      Settings/View       ModelFactory/Execution
 ```
 
-Host 可以通过 `provider/updateAccountConfig` 把本 Environment 的无 Secret Account Overlay 发送给自己的
-Core Worker。该协议只承载 `revision + basedOnZCodeBuiltinRevision + ProviderConfigMap`，不承载 API Key、
-JWT 或动态 Header。它是进程间一致性机制，不是 Desktop-to-remote Provider 同步。
+The Host may send its Environment's secret-free Account Overlay to its own Core Worker via `provider/updateAccountConfig`. That protocol carries only `revision + basedOnZCodeBuiltinRevision + ProviderConfigMap` — no API keys, JWTs, or dynamic headers. It is an inter-process consistency mechanism, not Desktop-to-remote Provider sync.
 
-Host 与 Worker 的 Registry 都由 Source 变化后自行重建；Registry View 不跨进程共享。已经创建的 Active
-Model 保持创建时冻结的事实，新 View 只影响后续创建的 Model。
+Both Registries rebuild themselves after Source changes; Registry views are not shared across processes. An already-created Active Model keeps the facts frozen at creation; a new view affects only Models created later.
 
-## 启动与恢复
+## Startup and recovery
 
 ```text
 Remote Host 启动
@@ -101,17 +91,13 @@ Remote Worker 启动并读取同一 Environment 的 Sources
 Remote Worker Registry ready -> 创建 Session / Model
 ```
 
-远端 Provider Runtime 未就绪时，调用方等待目标 Environment 自己的 ready barrier。不得以 Desktop Registry
-快照作为 bootstrap、fallback 或重试材料。远端重连和 Worker 换代只重建远端自己的 Runtime，不触发本地
-Registry 重放。
+While the remote Provider Runtime is not ready, callers wait on the target Environment's own ready barrier. A Desktop Registry snapshot must not serve as bootstrap, fallback, or retry material. Remote reconnects and Worker generation changes rebuild only the remote runtime and never replay the local Registry.
 
-连接断开时，RPC 客户端仍必须 reject 所有 pending 请求并清理旧 generation；这是通用 transport 生命周期
-不变量，与已退出的 Provider 同步功能无关。
+On disconnect, the RPC client must still reject all pending requests and clean up the old generation — a generic transport lifecycle invariant, unrelated to the retired Provider-sync feature.
 
-## 配置与凭据 Provisioning
+## Config and credential provisioning
 
-把配置或凭据复制到另一 Environment 是独立 Provisioning 产品能力，不属于 remote workspace runtime
-attachment；当前实现与范围见 `docs/remote/provider-provisioning.md`：
+Copying config or credentials into another Environment is a separate Provisioning capability, not part of remote workspace runtime attachment; current implementation and scope: `docs/remote/provider-provisioning.md`.
 
 ```text
 Source Environment Config / Credential
@@ -127,22 +113,18 @@ Target Sources publish change
 Target Registry rebuilds itself
 ```
 
-Provisioning 必须先写入目标 Environment 的正式 Store，再由目标 Registry 重建。它不能直接构造 Registry、
-Model、Runtime Header，也不能成为每次模型请求的在线依赖。远端设置编辑和远端登录同样应调用目标
-Environment 的正式 Service，而不是把 Desktop Credential Store 当成远端鉴权源。当前同步是显式
-Local → Remote；当前 Provisioning 在本地 allowlist 凭据保存或删除成功后自动触发，下一次成功同步会按 replace 语义撤销远端同名 allowlist 凭据，非 allowlist 凭据保持不变。离线或同步失败期间不能把本地删除反馈当作远端已经撤销的证明，详见上述当前 Provisioning 规格。
+Provisioning must write the target Environment's official Store first and let the target Registry rebuild. It must not construct Registry, Model, or Runtime headers directly, nor become an online dependency of every model request. Remote settings editing and remote login likewise call the target Environment's official Services — the Desktop Credential Store is never the remote auth source. Current sync is explicit Local → Remote; current Provisioning auto-triggers after a local allowlisted credential save or delete succeeds, and the next successful sync revokes the same-name remote allowlisted credential with replace semantics, leaving non-allowlisted credentials untouched. During offline periods or sync failures, a local deletion must not be treated as proof the remote side was revoked — see the current Provisioning spec for details.
 
-## 不变量
+## Invariants
 
-- `workspaceIdentity` 表示身份隔离，`workspacePath` 只用于文件和命令执行。
-- Desktop remote attachment 不创建第二份 Agent Runtime 或第二份 accepted-input queue。
-- Desktop `desktop-continuous` 不拼接手机 replayable 恢复消息；手机
-  `web-remote-replayable` 不绕过 gap/snapshot 恢复。
-- Provider/Model 静态事实只来自目标 Environment 的 Config 和 Registry。
-- 动态请求凭据不进入 Account Provider Config、Registry View 或 Session 持久化。
-- 已退出的完整 Registry writer 不提供兼容 fallback。
+- `workspaceIdentity` is identity isolation; `workspacePath` is for files and command execution only.
+- A Desktop remote attachment creates no second Agent Runtime and no second accepted-input queue.
+- Desktop `desktop-continuous` does not splice mobile replayable recovery messages; mobile `web-remote-replayable` does not bypass gap/snapshot recovery.
+- Provider/Model static facts come only from the target Environment's Config and Registry.
+- Dynamic request credentials never enter Account Provider Config, Registry views, or session persistence.
+- The retired full-Registry writer provides no compatibility fallback.
 
-## 相关当前设计
+## Related current designs
 
 - `docs/working-memory/provider-refactor/design/environment/environment.md`
 - `docs/working-memory/provider-refactor/design/registry/runtime.md`
@@ -150,19 +132,19 @@ Local → Remote；当前 Provisioning 在本地 allowlist 凭据保存或删除
 - `docs/remote/zcode-agent-remote-deployment.md`
 - `docs/web-remote-control/web-remote-control-architecture.md`
 
-## 设置页应用配置归属（2026-09-16 修复 A2）
+## Settings page app-config ownership (2026-09-16 fix A2)
 
-激活远程工作区只改变工作区服务，不改变 Desktop 设置的所有者。设置页必须按使用者分别加载和保存：
+Activating a remote workspace changes workspace services only, never the owner of Desktop settings. The settings page loads and saves per consumer:
 
-| 设置 | 读取与写入所有者 | 原因 |
+| Setting | Read/write owner | Reason |
 | --- | --- | --- |
-| Chromium 硬件加速、Windows 托盘、内置浏览器证书策略 | base Local Host | Desktop Main 启动时只读取本机 bootstrap 配置 |
-| 数据存储目录 | base Local Host | native picker 返回本机路径；复制和 bootstrap 指针必须在同一台机器 |
-| 集成终端 Shell 选择 | base Local Host | 候选由本机 systemService 枚举；本机 shell 路径不能写入 Source |
-| HTTP 代理、No Proxy、自定义 CA 路径 | base Local Host | 桌面渲染层、内置浏览器与本机子进程的启动配置；不隐式配置另一 Environment |
-| 终端 Profile 继承、终端字体 | 当前 workspace Environment | 由目标 terminalService 创建 PTY 时读取 |
-| 任务自动归档开关与天数 | 当前 workspace Environment | 由持有任务的目标 taskService 执行 |
-| Skills/MCP/Plugins/Hooks/Subagents | 既有目标 scope resolver | 保持 User、Source、workspace 的现有归属 |
+| Chromium hardware acceleration, Windows tray, built-in browser cert policy | base Local Host | Desktop Main reads only local bootstrap config at startup |
+| Data storage directory | base Local Host | the native picker returns a local path; the copy and bootstrap pointer must be on the same machine |
+| Integrated terminal shell choice | base Local Host | candidates come from the local systemService; a local shell path must not be written to the Source |
+| HTTP proxy, No Proxy, custom CA paths | base Local Host | startup config of the desktop renderer, built-in browser, and local subprocesses; never implicitly configures another Environment |
+| Terminal profile inheritance, terminal font | current workspace Environment | read by the target terminalService when creating the PTY |
+| Task auto-archive toggle and days | current workspace Environment | executed by the target taskService holding the tasks |
+| Skills/MCP/Plugins/Hooks/Subagents | existing target scope resolver | keeps current User / Source / workspace ownership |
 
 ```text
 Desktop 设置页（可在远程 tab 打开）
@@ -171,9 +153,9 @@ Desktop 设置页（可在远程 tab 打开）
 native picker ── 本机目录 ──> Local Host.updateDataBaseDir ──> 本机复制成功后保存指针
 ```
 
-- 修复首次错接点是 SettingsPage；不修改远程 ServiceCollection，不整体切换设置页 Provider。
-- 本机与 Source 加载相互独立；卸载或目标切换后忽略旧读取结果，防止旧 Source 覆盖新页面。
-- 写入/复制失败继续传播到现有反馈，不更新成功状态、不回落另一端、不增加重试。
-- 不自动迁移或删除先前错误写入 Source 的字段：不能据字段名判断它是否为远端用户有意配置。
-- Desktop 本地流程复用同一 base service。Web/手机保持既有 base services 和平台可见性；不新建 Host、连接或 Agent，不修改 continuous/replayable、queue、snapshot 或登录态。
-- 验证：分离 local/remote 替身的真实 SettingsPage 回调；SSH 单用例验证本机保存、Source 不被污染、Source 自动归档对照、native 目录迁移和 Electron 冷重启。Windows Shell/托盘以合同测试补充，不能等同 Windows 实机验证。
+- The first wrong wiring point fixed was SettingsPage; the remote ServiceCollection was not modified and the settings page did not switch providers wholesale.
+- Local and Source loads are independent; after unmount or target switch, old read results are ignored so a stale Source cannot overwrite the new page.
+- Write/copy failures propagate to existing feedback — no success-state update, no falling back to the other side, no added retries.
+- Fields previously mis-written to a Source are not auto-migrated or deleted: a field name cannot prove it was intentional remote user configuration.
+- The Desktop local flow reuses the same base service. Web/mobile keep existing base services and platform visibility; no new Host, connection, or Agent, and no change to continuous/replayable, queue, snapshot, or login state.
+- Verification: real SettingsPage callbacks with separated local/remote test doubles; an SSH single case covers local save, Source staying clean, Source auto-archive comparison, native directory migration, and Electron cold restart. Windows Shell/tray is covered by contract tests only, which is not real Windows machine verification.

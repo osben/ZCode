@@ -1,44 +1,36 @@
 # Settings Hook list
 
-Hooks 保持独立的设置入口，不并入插件页。页面复用 Plugins、MCPs、Skills、Commands 的
-Scope、搜索、分组标题、列表容器和空状态信息架构。
+Hooks keep their own Settings entry and are not merged into the plugins page. The page reuses the Scope, search, group titles, list container, and empty-state information architecture of Plugins, MCPs, Skills, and Commands.
 
-## Scope 与来源
+## Scope and sources
 
-- 顶部为 `<Scope> | Hooks {count}`，右侧为搜索框。
-- Scope 使用共享 `PluginScopeMenu`：User 展示 user 配置及 user 插件 Hook；Workspace 展示
-  当前 workspace 配置、兼容来源及该 workspace 安装插件提供的 Hook。
-- `workspaceIdentity?.trim() || workspacePath` 用于工作区状态隔离，`workspacePath` 只用于读写路径。
-- 读写目标只由选中的 Scope 条目决定（`resolveHookScopeTarget`）：选中本机项目时 identity 为空、走本机服务，
-  不借用活动聊天工作区的远端 identity；User 未选项目时沿用当前 workspace 路由。
-- Workspace Hook 允许管理，但按 `docs/hooks-runtime-contract.md` 的安全契约不进入 Agent runtime。
-- 新建表单继承父层 Scope；编辑表单显示持久化 Scope 且不可迁移。Scope 位于表单卡片右上角，
-  使用 `Scope + PluginScopeMenu` 的横向结构并向右对齐，与 MCP、Command 表单一致。
+- Header is `<Scope> | Hooks {count}` with a search box on the right.
+- Scope uses the shared `PluginScopeMenu`: User shows user config plus user-plugin hooks; Workspace shows the current workspace config, compatible sources, and hooks from plugins installed in that workspace.
+- `workspaceIdentity?.trim() || workspacePath` isolates workspace state; `workspacePath` is used only for read/write paths.
+- The read/write target is decided solely by the selected Scope entry (`resolveHookScopeTarget`): selecting a local project means empty identity and the local service, never borrowing the active chat workspace's remote identity; with no project selected, User keeps the current workspace routing.
+- Workspace hooks are manageable but, per the security contract in `docs/hooks-runtime-contract.md`, never enter the Agent runtime.
+- The create form inherits the parent Scope; the edit form shows the persisted Scope and it cannot be migrated. Scope sits in the top-right of the form card using the horizontal `Scope + PluginScopeMenu` layout, right-aligned, consistent with MCP and Command forms.
 
-## 分组
+## Grouping
 
-`New` 位于 `Installed` 分组标题右侧；标题行复用 Commands 的 `flex flex-wrap items-center justify-between gap-3` 布局，不使用固定高度。搜索后仅展示包含可见行的分组，不保留
-`Installed 0` 等空标题；未搜索且 Installed 为空时保留该分组作为新建入口。
+`New` sits at the right of the `Installed` group title; the title row reuses the Commands `flex flex-wrap items-center justify-between gap-3` layout with no fixed height. After a search, only groups with visible rows are shown — no empty `Installed 0` headers. With no search and an empty Installed, the group stays as the create entry.
 
-1. `Installed`：当前 Scope 下由 ZCode 直接管理的 Hook。
-2. 每个插件独立分组：标题使用插件规范化名称，行只读，启停仍由插件设置管理。
-3. `Legacy`：`.agents` / `.claude` 兼容来源，提供 Import 操作。
+1. `Installed`: hooks managed directly by ZCode in the current Scope.
+2. One group per plugin: the title is the plugin's normalized name; rows are read-only and enable/disable stays in plugin settings.
+3. `Legacy`: `.agents` / `.claude` compatible sources, with an Import action.
 
-`Installed` 与 `Legacy` 是界面分组名称，必须通过 `settings.hooks.group.*` 国际化；插件分组标题来自插件名称，不翻译。Hook Event 是配置协议标识，也保持原值。
+`Installed` and `Legacy` are UI group names and must be localized via `settings.hooks.group.*`; plugin group titles come from the plugin name and are not translated. Hook Event is a configuration protocol identifier and keeps its raw value.
 
-插件 Scope 元数据未知时，Hook 在 User 和 Workspace 中均保留，并显示“作用域未知”，避免
-伪造来源或静默丢失。
+When a plugin's Scope metadata is unknown, the hook stays visible in both User and Workspace with the "作用域未知" (unknown scope) label — never fabricate a source or silently drop it.
 
 ## Hook item
 
-- 主标题是 Hook Event（例如 `PreToolUse`），不再以 matcher 作为标题。
-- 第二行展示命令或脚本摘要，单行截断，使用 `font-mono text-ui-sm text-foreground-subtle`。
-- 直接配置和 Legacy 使用与设置菜单一致的 `Anchor` 缺省图标；插件 Hook 使用对应插件图标，
-  插件图标不可用时同样回退到 `Anchor`。
-- 直接配置右侧显示开关，点击整行进入编辑；Legacy 显示 Import；插件 Hook 只读且不显示开关。
-- Scope 和插件名称不在行内重复展示；matcher、runner 等细节留在编辑或只读详情语义中。
-- 列表使用 `rounded-xl bg-surface`，行间分割线是独立 `h-px bg-border/50` 元素。
-- 无内容、loading、搜索无结果统一使用透明背景的虚线容器。
+- The main title is the Hook Event (for example `PreToolUse`), not the matcher.
+- The second line shows the command or script summary, single-line truncated, using `font-mono text-ui-sm text-foreground-subtle`.
+- Direct config and Legacy use the default `Anchor` icon from the settings menu; plugin hooks use the plugin icon, falling back to `Anchor` when unavailable.
+- Direct config shows a toggle on the right and opens the editor on row click; Legacy shows Import; plugin hooks are read-only with no toggle.
+- Scope and plugin name are not repeated inside the row; matcher and runner details stay in the edit or read-only detail semantics.
+- The list uses `rounded-xl bg-surface`; row separators are standalone `h-px bg-border/50` elements.
+- Empty, loading, and no-search-result states use a transparent dashed container.
 
-修改 Hook 后仍关闭未使用的 deferred draft session；已经运行或历史 session 继续使用启动时
-捕获的快照。
+After a hook changes, unused deferred draft sessions still close; running or historical sessions keep the snapshot captured at their start.
