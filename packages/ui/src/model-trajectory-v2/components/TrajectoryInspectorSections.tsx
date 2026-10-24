@@ -244,6 +244,10 @@ export function RequestPayload({ row, model, intl }: { row: RowOf<"request"> } &
     ? trajectory.toolCatalogs[record.request.toolCatalogId]
     : undefined;
   const messages = fullInput ?? record.request.messages;
+  // Key each message by its position in the full input, so an expanded <details> stays on the same message when the
+  // new/full toggle prepends or drops the shared prefix. A base-missing delta reconstructs to its own messages array.
+  const keyOffset =
+    messages === record.request.messages ? (record.inputDeltaOf?.sharedPrefixCount ?? 0) : 0;
   return (
     <div data-trajectory-v2-payload="request">
       <Section title={tr(intl, "modelTrajectoryV2.payload.params")}>
@@ -337,7 +341,7 @@ export function RequestPayload({ row, model, intl }: { row: RowOf<"request"> } &
           </button>
         ) : null}
         {messages.map((message, index) => (
-          <details key={index} className="text-ui-sm">
+          <details key={keyOffset + index} className="text-ui-sm">
             <summary className="cursor-pointer font-mono text-ui-xs text-foreground-subtle">{`${index + 1}. ${message.role}`}</summary>
             <Pre text={messageText(message)} />
           </details>
