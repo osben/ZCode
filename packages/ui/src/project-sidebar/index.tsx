@@ -243,7 +243,12 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                 {/* 原因：项目侧栏迁移后普通滚动容器遗漏边缘渐隐；复用统一 mask，随实际滚动边界更新。 */}
                 <div className="relative flex min-h-0 flex-1 flex-col">
                   <div ref={setGroupedSticky} />
-                  <ScrollFadeViewport ref={scrollRef} className="overflow-x-hidden">
+                  <ScrollFadeViewport
+                    ref={scrollRef}
+                    className="overflow-x-hidden"
+                    // Bounds which expanded projects mount rows (specs/project-sidebar-deferred-rows.md).
+                    data-project-rows-viewport=""
+                  >
                     <div className="flex flex-col gap-3 pb-3">
                       {homeOnlySwitcher ? (
                         <HomeOnlyWorkspaceRows switcher={homeOnlySwitcher} />
