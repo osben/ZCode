@@ -37,7 +37,7 @@ rework.
 6. Click behavior: every visible state jumps to the settings `computerUse` section; only the session-busy
    override does not respond. (2026-08-20 change; originally "only not-enabled and permission-missing were
    clickable, other states had only a hover tooltip", see the "Click behavior" section.)
-7. Settings switch "Show the Computer Use button in the composer" (default shown; off hides it persistently).
+7. Settings switch "Show the Computer Use button in the composer" (default hidden since 2026-08-21: the schema default of `computerUseComposerEntryHidden` is `true`, see `validationAppSettings.ts` and `useCuaComposerEntry.ts`).
    (2026-08-21 changed to default hidden; since 2026-09-11 the switch is greyed out with different hint copy
    while Computer Use is off.)
 
@@ -273,8 +273,7 @@ Follows `DESIGN.md`:
 ## Settings switch
 
 - Field `AppSettings.computerUseComposerEntryHidden?: boolean`.
-- It uses `hidden` rather than `visible` semantics: `undefined` means shown by default, so old users need no
-  data migration.
+- It uses `hidden` rather than `visible` semantics: the 2026-08-21 decision made hidden the default (schema default `true`; only an explicit `false` shows the button).
 - Reads go through `useSettings()` (shared snapshot + cross-window broadcast), writes through
   `services.settingService.update()`.
 - The flag is persistent; restart and version updates do not self-heal it, and it can only be turned back on in
