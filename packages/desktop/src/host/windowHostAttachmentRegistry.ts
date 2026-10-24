@@ -31,10 +31,15 @@ export function createWindowHostAttachmentFlowForwarder(
   onForwardError: (state: WindowHostAttachmentFlowState, error: unknown) => void,
 ) {
   let chain = Promise.resolve();
+  let hostShutdown = false;
   const forward = (state: WindowHostAttachmentFlowState): Promise<void> => {
     if (!scope) return Promise.resolve();
     const update = chain.then(() => scope.setTransportFlowState(state));
-    chain = update.catch((error: unknown) => onForwardError(state, error));
+    chain = update.catch((error: unknown) => {
+      // An edge still queued when host shutdown begins is rejected by the agent disposal that
+      // follows; that cancellation is not a recoverable fault.
+      if (!hostShutdown) onForwardError(state, error);
+    });
     return update;
   };
   return {
@@ -42,6 +47,7 @@ export function createWindowHostAttachmentFlowForwarder(
     close(reason?: WindowHostAttachmentDisposeReason): Promise<void> {
       if (!scope) return Promise.resolve();
       if (reason === "host-shutdown") {
+        hostShutdown = true;
         // The Host disposes the agent right after the attachments, which rejects an in-flight
         // "closed" RPC with "ZCode Protocol client disposed" (ISSUE-061). scope.dispose() still
         // enqueues "closed" itself as silent best effort; only the reported forward is skipped.

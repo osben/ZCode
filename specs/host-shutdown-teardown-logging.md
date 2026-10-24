@@ -43,8 +43,10 @@ force-kill fallback, so they stay fire-and-forget.
    shutdown, the attachment handle does not forward its own `"closed"` flow state. It
    waits for the flow updates already queued on that attachment, then disposes the
    connection scope, which enqueues `"closed"` itself and treats a failure as silent
-   best effort. Outside host shutdown (window close, detach, replace, stale remote
-   generation) the handle keeps forwarding `"closed"` and a failure stays a `warn`.
+   best effort. A flow edge (`saturated` / `drained`) still queued on that attachment
+   whose RPC rejects after the host-shutdown close is a teardown cancellation and is not
+   reported either; a failure that settled before the close stays a `warn`. Outside host
+   shutdown (window close, detach, replace, stale remote generation) the handle keeps forwarding `"closed"` and a failure stays a `warn`.
 2. **Task index syncer.** After `disposeAll()` the syncer still sends its best-effort
    unsubscribe RPCs (late subscribe ACKs included), but a rejection that settles after
    `disposeAll()` is a teardown cancellation: it logs at `debug`, not `warn`.
@@ -60,6 +62,8 @@ force-kill fallback, so they stay fire-and-forget.
   `setTransportFlowState("closed")` itself, runs `scope.dispose()` after queued
   updates, and logs no warn when the scope's RPCs reject; on an ordinary close it
   forwards `"closed"` and warns on failure.
+- Unit: a queued `drained` edge rejected after the host-shutdown close is not reported;
+  a `saturated` failure before it is.
 - Unit: syncer `disposeAll()` with active subscriptions whose unsubscribe rejects
   logs no `订阅失败` warn; a live-path unsubscribe failure still warns.
 - Live (QA): quit the dev app with several workspaces open; the last 2 s of the log

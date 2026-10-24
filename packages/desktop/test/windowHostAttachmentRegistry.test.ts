@@ -458,6 +458,34 @@ describe("WindowHostAttachmentFlowForwarder", () => {
     expect(onForwardError).not.toHaveBeenCalled();
   });
 
+  it("host-shutdown 之后才失败的已入队 SAT/DRN 不报 warn；shutdown 之前的失败照常上报", async () => {
+    const disposedError = new Error("ZCode Protocol client disposed");
+    let rejectDrained!: (error: Error) => void;
+    const scope = {
+      setTransportFlowState: vi.fn((state: "saturated" | "drained" | "closed") =>
+        state === "saturated"
+          ? Promise.reject(new Error("live failure"))
+          : new Promise<void>((_resolve, reject) => (rejectDrained = reject)),
+      ),
+      dispose: vi.fn(async () => {}),
+    };
+    const onForwardError = vi.fn();
+    const forwarder = createWindowHostAttachmentFlowForwarder(scope, onForwardError);
+
+    await forwarder.forward("saturated").catch(() => {});
+    expect(onForwardError).toHaveBeenCalledExactlyOnceWith("saturated", expect.any(Error));
+
+    const drained = forwarder.forward("drained").catch(() => {});
+    await vi.waitFor(() => expect(scope.setTransportFlowState).toHaveBeenCalledTimes(2));
+    const closed = forwarder.close("host-shutdown");
+    rejectDrained(disposedError);
+    await drained;
+    await closed;
+
+    expect(onForwardError).toHaveBeenCalledTimes(1);
+    expect(scope.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it("普通 close 先转发 closed 再释放 scope，转发失败仍上报", async () => {
     const { scope, calls } = createScope();
     const onForwardError = vi.fn();
