@@ -72,7 +72,7 @@ type MergeStatus = {
 - Второй popup не создаётся.
 - Интерактивные overlay выше пассивных tooltip (`DESIGN.md:427`).
 - Строки через intl: новые ключи в `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`, ключи `taskList.branchMerged*`).
-- Git service, cache, store и probe hook остаются для совместимости, но `BranchMergeStatusProbes` не запускает workspace probes (`MERGE_STATUS_PROBES_ENABLED = false`). Перевключать workspace probe недостаточно для task-level UI: grouped и legacy строки не подписываются на этот store и не передают его данные в popup.
+- Git service и его кэш остаются (их использует `ComposerDestinationControl`). Workspace-level UI-проекция удалена 2026-10-23 (PR #325): `BranchMergeStatusProbes`, `useBranchMergeStatuses`, `branchMergeStatusStore` и `branchMergeStatusProbeRunner` больше не существуют; восстановление — `git show 8724e0c1:<path>`. Task-level индикация строится на отдельном task-level контракте, а не на возврате workspace probe.
 - Внешние ссылки только через `IPlatformService` (`packages/shared/src/platform.ts`), не `window.zcode`.
 - Вторая строка `packages/ui/src/TaskListItem.tsx`: бейдж добавлен в обе её цепочки статусов с тем же правилом приоритета (после pendingInteraction и внимания).
 

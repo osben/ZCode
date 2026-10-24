@@ -6,7 +6,6 @@ import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } fr
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
-import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
@@ -475,8 +474,7 @@ export function App({
   const hasGitTab = sidePaneState?.tabs.some((tab) => tab.type === "git") ?? false;
   const handleRefreshGit = useCallback(() => {
     setGitRefreshVersion((value) => value + 1);
-    // A successful git mutation (branch switch, commit) invalidates merge/PR probes; ask them to re-poll.
-    useBranchMergeStatusStore.getState().requestRefresh();
+    // A successful git mutation (branch switch, commit) invalidates PR probes; ask them to re-poll.
     usePullRequestStatusStore.getState().requestRefresh();
   }, []);
   const gitRepositoryWorkspacePath =
@@ -489,7 +487,6 @@ export function App({
       return;
     }
     setGitReviewRefreshVersion((value) => value + 1);
-    useBranchMergeStatusStore.getState().requestRefresh();
     usePullRequestStatusStore.getState().requestRefresh();
   }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
