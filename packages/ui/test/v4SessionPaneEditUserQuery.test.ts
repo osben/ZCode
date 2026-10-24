@@ -13,6 +13,7 @@ import { SessionPane } from "@/v4/SessionPane.js";
 import { ZCodeIntlProvider } from "@/i18n/IntlProvider.js";
 
 const {
+  composerProps,
   fileChangesMock,
   fileRewindPreviewMock,
   headerProps,
@@ -21,6 +22,7 @@ const {
   sendCommandMock,
   timelineProps,
 } = vi.hoisted(() => ({
+  composerProps: [] as Array<{ composerRestoreRequest?: { text?: string } | null }>,
   fileChangesMock: vi.fn(),
   fileRewindPreviewMock: vi.fn(),
   headerProps: [] as Array<{
@@ -40,7 +42,11 @@ const {
       release: vi.fn(),
     })),
   },
-  queueProps: [] as Array<{ onSendNow?: (queueItemId: string) => void }>,
+  queueProps: [] as Array<{
+    onSendNow?: (queueItemId: string) => void;
+    onEditItem?: (queueItemId: string) => Promise<void> | void;
+    onDeleteItem?: (queueItemId: string) => void;
+  }>,
   sendCommandMock: vi.fn(
     async (envelope: CommandEnvelope): Promise<CommandAck> => ({
       commandId: envelope.commandId,
@@ -172,9 +178,18 @@ vi.mock("@/v4/composer/useDraftSessionPrewarm.js", () => ({
 vi.mock("@/v4/ConversationComposer.js", async () => {
   const React = await import("react");
   return {
-    ConversationComposer: () => React.createElement("div", { "data-testid": "mock-composer" }),
+    ConversationComposer: (props: Record<string, unknown>) => {
+      composerProps.push(props as (typeof composerProps)[number]);
+      return React.createElement("div", { "data-testid": "mock-composer" });
+    },
   };
 });
+
+const toastMock = vi.hoisted(() => vi.fn());
+vi.mock("@/components/ui/toast.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui/toast.js")>()),
+  toast: toastMock,
+}));
 
 vi.mock("@/v4/ConversationHeader.js", async () => {
   const React = await import("react");
@@ -397,6 +412,8 @@ afterEach(() => {
   }));
   headerProps.length = 0;
   queueProps.length = 0;
+  composerProps.length = 0;
+  toastMock.mockReset();
   timelineProps.length = 0;
   servicesMock.highspeedCardService.prepareTurn.mockReset();
   servicesMock.highspeedCardService.prepareTurn.mockResolvedValue({
@@ -1383,5 +1400,147 @@ describe("SessionPane user query editing", () => {
     await act(async () => {
       root.unmount();
     });
+  });
+});
+
+describe("SessionPane queue commands after proto.staleRevision (ISSUE-072)", () => {
+  function snapshotWithQueue(): ConversationSnapshot {
+    const snapshot = makeSnapshot();
+    snapshot.queue = {
+      autoDrain: true,
+      items: [
+        {
+          sourceCommandId: "source-queue",
+          queueItemId: "queue-1",
+          clientId: "client-1",
+          kind: "sendText",
+          text: "qa queue item A",
+          attachments: [],
+          delivery: { requested: "queue", admitted: "queue" },
+          order: { admissionSeq: 1, queuePosition: 0 },
+          steer: { state: "notRequested" },
+          dispatch: { state: "queued" },
+          admittedAt: 1,
+        },
+      ],
+    };
+    snapshot.availability = { ...snapshot.availability, sendQueuedNow: { allowed: true } };
+    return snapshot;
+  }
+
+  function staleAck(envelope: CommandEnvelope, revisionAtDecision: number): CommandAck {
+    return {
+      commandId: envelope.commandId,
+      revisionAtDecision,
+      status: "stale",
+      reasonCode: "proto.staleRevision",
+    };
+  }
+
+  async function renderPane(): Promise<Root> {
+    projectionState.current = {
+      status: "live",
+      snapshot: snapshotWithQueue(),
+      subscriptionId: "sub-1",
+      lastError: null,
+      optimisticCommands: [],
+      loadingOlder: false,
+    };
+    const root: Root = createRoot(installMinimalDom());
+    await act(async () => {
+      root.render(
+        createElement(
+          ZCodeIntlProvider,
+          { initialLocale: "en-US" },
+          createElement(SessionPane, {
+            paneId: "workspace-main",
+            sessionId: "session-1",
+            workspacePath: "/workspace",
+          }),
+        ),
+      );
+      await flushMicrotasks();
+    });
+    return root;
+  }
+
+  function queueCalls(type: string): CommandEnvelope[] {
+    return sendCommandMock.mock.calls
+      .map((call) => call[0] as CommandEnvelope)
+      .filter((envelope) => envelope.type === type);
+  }
+
+  it("Steer re-sends once at revisionAtDecision and shows no error", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onSendNow?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    const calls = queueCalls("sendQueuedNow");
+    expect(calls.map((envelope) => envelope.baseRevision)).toEqual([7, 9]);
+    expect(calls[1]?.commandId).not.toBe(calls[0]?.commandId);
+    expect(toastMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("Steer stale twice stops after one retry and tells the user", async () => {
+    sendCommandMock
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 9))
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 10));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onSendNow?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("sendQueuedNow")).toHaveLength(2);
+    expect(toastMock).toHaveBeenCalledWith("Couldn't send the queued message now. Try again.");
+    await act(async () => root.unmount());
+  });
+
+  it("Edit re-sends the delete once and restores the queued text", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
+    const root = await renderPane();
+    await act(async () => {
+      await queueProps.at(-1)?.onEditItem?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("deleteQueueItem").map((envelope) => envelope.baseRevision)).toEqual([7, 9]);
+    expect(composerProps.at(-1)?.composerRestoreRequest?.text).toBe("qa queue item A");
+    expect(toastMock).not.toHaveBeenCalled();
+    await act(async () => root.unmount());
+  });
+
+  it("Edit stale twice keeps the item queued, restores nothing and shows the retry toast", async () => {
+    sendCommandMock
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 9))
+      .mockImplementationOnce(async (envelope) => staleAck(envelope, 10));
+    const root = await renderPane();
+    await act(async () => {
+      await queueProps.at(-1)?.onEditItem?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("deleteQueueItem")).toHaveLength(2);
+    expect(composerProps.at(-1)?.composerRestoreRequest ?? null).toBeNull();
+    expect(toastMock).toHaveBeenCalledWith(
+      "Couldn't return the queued message to the composer. Try again.",
+    );
+    await act(async () => root.unmount());
+  });
+
+  it("Delete re-sends once at revisionAtDecision", async () => {
+    sendCommandMock.mockImplementationOnce(async (envelope) => staleAck(envelope, 9));
+    const root = await renderPane();
+    await act(async () => {
+      queueProps.at(-1)?.onDeleteItem?.("queue-1");
+      await flushMicrotasks();
+    });
+
+    expect(queueCalls("deleteQueueItem").map((envelope) => envelope.baseRevision)).toEqual([7, 9]);
+    await act(async () => root.unmount());
   });
 });

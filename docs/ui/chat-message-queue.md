@@ -26,6 +26,10 @@ running 时，普通 `sendText` 与 `sendGoalCommand` 都由 CLI admission 决�
 | 排序     | `reorderQueueItem` | projection 返回新顺序                                                                                       |
 | 自动续跑 | `setAutoDrain`     | snapshot 更新 auto-drain 状态                                                                               |
 
+队列项命令（立即发送、删除、撤回编辑、排序）遇到 `stale / proto.staleRevision` 时只按 ACK 的
+`revisionAtDecision` 重发一次；仍未成功时，立即发送与撤回编辑弹出可重试提示，队列项保留原文
+（`specs/queue-command-stale-revision.md`，ISSUE-072）。
+
 UI 可对点击做短暂 pending/disabled 反馈，但不能只改本地数组。刷新、切 pane、桌面与手机同时在线时，均以 snapshot/delta 为准。
 
 第一方桌面、Web 与手机 UI 的“编辑”不是 queue 内原地改写，而是把完整输入意图撤回到发起操作的 composer：
@@ -36,6 +40,8 @@ UI 可对点击做短暂 pending/disabled 反馈，但不能只改本地数组�
        ├─ 是: 不发 command，queue 与现有草稿均不变，提示先处理当前草稿
        └─ 否: 锁定目标 queue row 与 composer
               -> deleteQueueItem(baseRevision)
+                   ├─ stale(proto.staleRevision)
+                   │    -> 保持锁定，以 ack.revisionAtDecision 重发一次（新 commandId），按重发 ACK 走下列分支
                    ├─ stale / noop / rejected / failed
                    │    -> 不恢复草稿，解锁并提示重试
                    └─ accepted / duplicate

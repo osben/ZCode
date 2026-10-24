@@ -5620,6 +5620,7 @@ const enUS: Record<string, string> = {
   "chat.queue.editDraftConflict":
     "Send or clear the current draft before editing a queued message.",
   "chat.queue.editRestoreFailed": "Couldn't return the queued message to the composer. Try again.",
+  "chat.queue.sendNowFailed": "Couldn't send the queued message now. Try again.",
   "chat.queue.remove": "Remove queued message",
   "chat.queue.turnSteer.steering": "Steering conversation",
   "chat.queue.paused.stopped": "The queue was paused because you stopped the current response",
