@@ -1,37 +1,46 @@
 # Session Title Generation
 
-## 背景
+## Background
 
-ZCode 目前在首次持久化 session 时直接从用户输入截断得到 `session.title`。这个标题稳定、便宜，但对长 prompt、带上下文的需求、中文/英文混合输入和文件附件场景不够可读。
+`session.title` is first derived by truncating the user input at first persistence: stable and cheap, but poor
+for long prompts, mixed Chinese/English input and file attachments. Core constraints:
 
-核心约束：
+- User titles and AI titles are separate. A user-set title always wins; an AI title is regenerable
+  enhancement metadata.
+- The title is generated asynchronously after the first real user message of a root session and written
+  back to session metadata.
+- Title generation is a low-risk sidecar. It must not affect the main agent loop or overwrite an explicit
+  user name, and it must reach the database and session events so the local TUI session list, resume and
+  debug can reuse it.
 
-- 用户标题和 AI 标题分开，用户手动标题永远优先，AI 标题只作为可重生成的增强元数据。
-- 在 root session 的首条真实用户消息后异步生成标题，并写回 session metadata。
-- 标题生成是低风险 sidecar 能力，不能影响主 agent loop，不能覆盖用户明确命名，必须进入数据库和 session event，方便本地 TUI 的 session list、resume 和 debug 复用。
+## Goals
 
-## 目标
+1. Only for the local TUI root interactive session, generate a more readable title after the first real
+   user message completes.
+2. Use `ModelRole.Lite`. Without `model.lite`, use the current default/main model; never error or force
+   the user to configure a second model.
+3. By default disable thinking/reasoning control fields inherited from the main session, so a short
+   sidecar request does not slow down or waste output budget on a high/max thinking tier.
+4. An AI title may overwrite only a default / first-input / older AI title, never a custom user title.
+5. The title is written through `SessionStorePort` and persisted by the SQLite adapter.
+6. A title update emits an observable session event with traceId/sessionId/turnId/modelRef/source.
+7. On failure, timeout, unparsable or invalid model output, keep the current title and leave the main
+   turn unaffected.
 
-1. 仅本地 TUI root interactive session 的首条真实用户消息完成后，自动生成更可读的标题。
-2. 标题生成使用 `ModelRole.Lite`。如果未配置 `model.lite`，必须使用当前默认/main 模型，不能报错或强制用户配置第二模型。
-3. 标题生成默认禁用继承自主会话的 thinking/reasoning 控制字段，避免短 sidecar 请求跟随 high/max 思考档位变慢或浪费输出预算。
-4. AI 生成标题只能覆盖默认/首输入/旧 AI 标题，不能覆盖用户自定义标题。
-5. 标题结果写入 `SessionStorePort`，并由 SQLite adapter 持久化。
-6. 标题更新发出可观测的 session event，包含 traceId/sessionId/turnId/modelRef/source。
-7. 生成失败、超时、不可解析或模型尝试返回无效内容时保留当前标题，不影响主 turn。
+## Non-goals
 
-## 非目标
+- No new environment variable; enablement, timeout and model selection go through runtime/session config.
+- No automatic renaming of child, subagent, workflow-child or fork sessions.
+- Title generation is not a tool and cannot call tools; the TUI does not access the model or database, it
+  only enables the runtime config and consumes the session projection/list/events.
+- ZCode app-server, headless `--prompt` and SDK/test hosts do not enable it by default. They trigger it
+  only when `runtimeConfig.titleGeneration` is passed explicitly.
+- The first version has no manual `/rename` command, but the database and port must keep the
+  non-overwritable semantics for `custom` titles.
 
-- 不新增环境变量。是否启用、超时、模型选择走 runtime config/session config。
-- 不给 child session、subagent session、workflow child、fork session 自动改名。
-- 不把标题生成做成 tool，也不允许调用工具。
-- 不在 TUI 层直接访问模型或数据库；TUI 只负责启用 runtime config，并消费 session projection/list/event。
-- 不给 ZCode app-server、headless `--prompt`、SDK/测试宿主默认开启标题生成。它们只有在显式传入 `runtimeConfig.titleGeneration` 时才会触发。
-- 不在第一版实现手动 `/rename` 命令，但数据库和 port 必须为 `custom` 标题保留不可覆盖语义。
+## Data contract
 
-## 数据契约
-
-`SessionInfo` 增加可选标题元数据：
+`SessionInfo` gains optional title metadata:
 
 ```ts
 type SessionTitleSource = "default" | "first_input" | "generated" | "custom";
@@ -46,15 +55,15 @@ interface SessionInfo {
 }
 ```
 
-SQLite `session` 表增加：
+The SQLite `session` table gains:
 
-| 字段 | 类型 | 说明 |
+| Column | Type | Description |
 | --- | --- | --- |
-| `title_source` | text not null default `first_input` | 标题来源。 |
-| `title_message_id` | text null | 生成/设置标题所依据的 user message。 |
-| `time_title_updated` | integer null | 标题最近更新时间。 |
+| `title_source` | text not null default `first_input` | Title source. |
+| `title_message_id` | text null | The user message the title was generated from or set for. |
+| `time_title_updated` | integer null | Last title update time. |
 
-`SessionStorePort.updateSession` 支持标题 CAS：
+`SessionStorePort.updateSession` supports a title CAS:
 
 ```ts
 interface UpdateSessionInput {
@@ -65,28 +74,35 @@ interface UpdateSessionInput {
 }
 ```
 
-当 `expectedTitleSources` 不为空且当前 `title_source` 不在列表中时，adapter 必须 no-op 并返回当前 session。AI 标题写入使用 `["default", "first_input", "generated"]`，因此用户自定义 `custom` 不会被迟到的 AI 结果覆盖。
+When `expectedTitleSources` is non-empty and the current `title_source` is not in the list, the adapter
+must no-op and return the current session. AI title writes use
+`["default", "first_input", "generated"]`, so a `custom` title is never overwritten by a late AI result.
 
-## 触发规则
+## Trigger rules
 
-标题生成由 core runtime 发起，但必须由外层宿主显式启用。第一版只有 CLI TUI 入口传入 `runtimeConfig.titleGeneration`；headless `--prompt`、ZCode app-server session、workflow child 和外部 SDK 宿主默认不传这个配置。
+The core runtime starts title generation, but the outer host must enable it explicitly. In the first
+version only the CLI TUI entry passes `runtimeConfig.titleGeneration`; headless `--prompt`, ZCode
+app-server sessions, workflow children and external SDK hosts do not.
 
-启用后仍需满足：
+When enabled, all of these must still hold:
 
-1. `sessionStore` 和 `modelAdapter` 都存在。
-2. `titleGeneration.enabled !== false`。
-3. 当前 session 为 root interactive session：无 `parentSessionId`，`taskType` 缺省或为 `interactive`。
-4. 当前 turn 是恢复后计数意义上的首个真实用户 turn。
-5. user prompt 不是 summary、compact、rewind、hook synthetic、slash command 展开或纯空白。
-6. 当前 session title source 不是 `custom`。
+1. Both `sessionStore` and `modelAdapter` exist.
+2. `titleGeneration.enabled !== false`.
+3. The session is a root interactive session: no `parentSessionId`, and `taskType` is absent or
+   `interactive`.
+4. The turn is the first real user turn, counted after resume.
+5. The user prompt is not a summary, compact, rewind, hook synthetic, slash-command expansion or blank.
+6. The session title source is not `custom`.
 
-第一版在主 turn 完成后启动异步 sidecar 请求；它不进入主 `TurnResult.usage`，但会发自己的 model request/model complete/session title event。
+The async sidecar request starts after the main turn completes; it stays out of the main
+`TurnResult.usage` and emits its own model request / model complete / session title events.
 
-## Bootstrap 与入口边界
+## Bootstrap and entry boundary
 
-bootstrap 不做全局自动启用。它只在已经存在 `runtimeConfig.titleGeneration` 时补齐标题模型引用和 provider options。
+Bootstrap does not auto-enable globally. It only fills in the title model reference and provider options
+when `runtimeConfig.titleGeneration` already exists.
 
-CLI TUI 入口创建 app 时传入：
+The CLI TUI entry passes this when creating the app:
 
 ```ts
 runtimeConfig: {
@@ -94,52 +110,70 @@ runtimeConfig: {
 }
 ```
 
-headless `--prompt` 和 `--target` 不传 `titleGeneration`，因此不会多发一个后台模型请求，也不会影响脚本输出和退出时机。app-server 会话同样不传 `titleGeneration`，避免协议客户端在一次 prompt 之外收到额外成本、事件和模型调用；未来若 ZCode protocol client 明确需要标题，可先设计协议能力和展示语义，再显式打开。
+Headless `--prompt` and `--target` and app-server sessions do not pass `titleGeneration`, so they send no
+extra background model request and incur no extra cost, events or model calls, and script output and exit
+timing are unaffected. If a ZCode protocol client later needs titles, design the protocol capability and
+display semantics first, then enable it explicitly. A test or external host that injects a custom
+`modelAdapter` gets no title request unless `runtimeConfig.titleGeneration` is passed explicitly.
 
-测试或外部宿主注入自定义 `modelAdapter` 时，除非显式传入 `runtimeConfig.titleGeneration`，否则不自动发起标题请求，避免破坏宿主自定义模型调用编排。
+## Model selection
 
-## 模型选择
+When an entry enables title generation explicitly, bootstrap produces `titleGeneration.modelRef`.
 
-当入口显式启用标题生成时，bootstrap 生成 `titleGeneration.modelRef`。
+Selection order:
 
-模型选择顺序：
+1. If `model.lite` is configured, use its provider/model.
+2. Otherwise use the current default/main provider/model.
+3. In both cases `modelRef.role` in events is `lite`, marking a lightweight sidecar request.
 
-1. 如果配置了 `model.lite`，使用 `model.lite` 的 provider/model。
-2. 如果没有 `model.lite`，使用当前默认/main provider/model。
-3. 两种情况下 event 中的 `modelRef.role` 都是 `lite`，表示请求用途是轻量 sidecar。
+Provider options follow the final provider/model; without `model.lite` the default/main provider options
+are reused. Before the title request is sent, a title-specific transform applies:
 
-provider options 与最终 provider/model 对齐；`model.lite` 没有配置时复用默认/main provider options。发送标题请求前会做 title 专用转换：
+- Keep endpoint, apiFormat, metadata and extra-body fields that concern the connection or non-thinking
+  behavior.
+- Read the original reasoning options first, then remove the `effort`, `reasoningEffort`,
+  `reasoning_effort` inherited from the main request; never infer model capability from the options after
+  removal.
+- Anthropic namespace with `thinking`: set `thinking.type = "disabled"` and remove effort.
+- OpenAI namespace: write `reasoningEffort = "none"` only for GPT base models that explicitly support
+  `none`; for other models only remove the inherited effort and do not fabricate a disable value the
+  provider does not support.
+- OpenAI-compatible namespace: disable in the existing shape first: `thinking.type = "disabled"` or
+  `enable_thinking = false`. For GLM-5.2 and GPT base models that explicitly support `none`, if the
+  original options only carry effort, convert to canonical `reasoningEffort = "none"`.
+- MiniMax M3 gets the official off parameter by existing `apiFormat` even without reasoning options:
+  OpenAI Chat `openaiCompatible.thinking.type = "disabled"`, Anthropic
+  `anthropic.thinking.type = "disabled"`, Responses `openai.reasoningEffort = "none"`. This affects only
+  the title sidecar, not the main request or model tier.
+- Models without a safe off contract (Kimi K3, GPT Pro/Codex, MiniMax M2.x, ...) only get the inherited
+  effort removed; no `none` or other off field is fabricated. Other models without reasoning options are
+  left as is.
 
-- 保留 endpoint、apiFormat、metadata、extra body 中与连接或非思考行为有关的字段。
-- 先读取原始 reasoning options，再移除继承自主请求的 `effort`、`reasoningEffort`、`reasoning_effort`；禁止在删除后根据空 options 反推模型能力。
-- Anthropic namespace 如果带有 `thinking`，改为 `thinking.type = "disabled"`，并移除 effort。
-- OpenAI namespace 仅对明确支持 `none` 的 GPT 基础模型写入 `reasoningEffort = "none"`；其他模型只移除继承的 effort，不伪造 provider 不支持的禁用值。
-- OpenAI-compatible namespace 优先按已有形态禁用：`thinking.type = "disabled"` 或 `enable_thinking = false`。GLM-5.2 以及明确支持 `none` 的 GPT 基础模型如果原始 options 仅有 effort，则转换为 canonical `reasoningEffort = "none"`。
-- MiniMax M3 即使没有 reasoning options，也按已有 `apiFormat` 写入官方关闭参数：OpenAI Chat 使用 `openaiCompatible.thinking.type = "disabled"`，Anthropic 使用 `anthropic.thinking.type = "disabled"`，Responses 使用 `openai.reasoningEffort = "none"`。这只影响 title sidecar，不改变主请求或模型档位。
-- Kimi K3、GPT Pro/Codex、MiniMax M2.x 等没有安全 off 合同的模型只移除 inherited effort，不伪造 `none` 或其他关闭字段。其余没有 reasoning options 的模型保持原样。
+The main conversation keeps the chosen thinking effort; the short requests sharing the title sidecar (title,
+goal summary title) do not inherit high/max thinking.
 
-这样主对话仍可使用用户选择的思考强度；标题、goal summary title 这些共享 title sidecar 的短请求不会继承主链路的 high/max thinking。
+## Prompt and output cleanup
 
-## Prompt 与输出清洗
+The system prompt requires:
 
-系统 prompt 要求：
+- A recognizable title of 3-7 words.
+- The user's main language.
+- Sentence case; keep proper nouns, file names and technical names.
+- No explanation, markdown, numbering, quotes or multi-line text.
 
-- 生成 3-7 个词的可识别标题。
-- 跟随用户主要语言。
-- 句子式大小写；保留专有名词、文件名和技术名。
-- 不输出解释、markdown、编号、引号或多行文本。
+Cleanup:
 
-清洗逻辑：
+1. Strip `<think>...</think>`. This compensates for models that ignore the disable fields; it does not
+   mean the request may inherit thinking.
+2. Prefer parsing JSON `{ "title": "..." }`; also accept JSON wrapped in a complete Markdown fenced code
+   block (language tag `json`); on failure take the first non-empty text line.
+3. Strip surrounding quotes and markdown markers.
+4. Collapse whitespace and cap the length.
+5. An empty result, short noise or punctuation-only text counts as failure.
 
-1. 去除 `<think>...</think>`。这是兼容模型未遵守禁用字段的输出清洗，不代表请求侧允许继承 thinking。
-2. 优先解析 JSON `{ "title": "..." }`；兼容模型把 JSON 包在完整 Markdown fenced code block（语言标记为 `json`）中的返回；失败则取首个非空文本行。
-3. 去除外围引号和 markdown 标记。
-4. 折叠空白，限制最大长度。
-5. 空结果、过短噪声或只包含标点时视为失败。
+## Events
 
-## 事件
-
-新增 `session_title_updated`：
+New `session_title_updated`:
 
 ```ts
 interface SessionTitleUpdatedPayload {
@@ -151,24 +185,30 @@ interface SessionTitleUpdatedPayload {
 }
 ```
 
-标题生成还应发普通 `model_request` / `model_complete`，`querySource: "session_title"`，以便 debug 和成本分析能看到这次 sidecar 请求。
+Title generation also emits ordinary `model_request` / `model_complete` with
+`querySource: "session_title"`, so debug and cost analysis can see the sidecar request.
 
-## 错误处理
+## Error handling
 
-- 模型请求失败、超时、取消、返回空内容或 CAS 失败都不影响主 turn。
-- runtime 只写结构化 warn/debug 日志，不向用户刷一条可见 assistant 消息。
-- CAS 失败不是错误，记录为 `session_title_generation.skipped`，原因是 `title_source_changed`。
+- Model request failure, timeout, cancellation, empty output or CAS failure never affects the main turn.
+- The runtime writes only structured warn/debug logs and never adds a visible assistant message.
+- A CAS failure is not an error; it is logged as `session_title_generation.skipped` with reason
+  `title_source_changed`.
 
-## 测试
+## Tests
 
-最低覆盖：
+Minimum coverage:
 
-- SQLite migration 给旧 session 默认 `first_input`。
-- `createSession` 写入 `title_source`，`updateSession` 可以更新 generated 标题。
-- generated 标题 CAS 不能覆盖 custom 标题。
-- 未配置 `model.lite` 时，标题请求使用 main provider/model 且 role 为 `lite`。
-- 配置 `model.lite` 时，标题请求使用 lite provider/model。
-- 标题请求会清洗 inherited thinking/reasoning provider options；主请求仍保留原始 provider options。
-- 标题模型失败时主 turn 仍成功，session title 保留首输入 fallback。
-- TUI 显式启用后 root interactive 首 turn 触发，child/fork/workflow/subagent 不触发。
-- headless prompt 和 ZCode app-server 默认不传 `titleGeneration`，不会触发标题模型请求。
+- The SQLite migration gives old sessions the default `first_input`.
+- `createSession` writes `title_source`; `updateSession` can update a generated title.
+- The generated-title CAS cannot overwrite a custom title.
+- Without `model.lite`, the title request uses the main provider/model with role `lite`.
+- With `model.lite`, the title request uses the lite provider/model.
+- The title request strips inherited thinking/reasoning provider options; the main request keeps its
+  original provider options.
+- When the title model fails the main turn still succeeds and the session title keeps the first-input
+  fallback.
+- With TUI explicitly enabled, the first root interactive turn triggers; child/fork/workflow/subagent do
+  not.
+- Headless prompt and ZCode app-server do not pass `titleGeneration` by default and trigger no title
+  model request.

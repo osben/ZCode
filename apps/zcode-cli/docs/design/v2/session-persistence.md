@@ -1,103 +1,115 @@
 # Session Persistence
 
-## Provider 格式升级与回滚可读性（Todo109）
+## Provider Format Upgrade and Rollback Readability (Todo109)
 
-以 `staging_backup@790884b1ce` 为旧格式对照。Agent 打开库时通过
-`0020_provider_model_selection` 一次转换；事务及回滚边界见
-[SQLite migrations](./local-setting-migrations.md)。旧 JSON 成员保留为回滚快照，
-不再由当前 Reader 解析为运行选择。配置新成员缺失不妨碍会话正文和任务内容读取，
-也不触发默认模型执行；配置恢复留给用户重选。历史来源保留当时 Provider 身份，
-只有当前 Session 选择使用既定迁移表。保存已有消息、Part 与 fork/复制都必须保留
-旧快照，但不把它恢复成当前配置。
+The old format reference is `staging_backup@790884b1ce`. When the Agent opens the database it converts once via
+`0020_provider_model_selection`; transaction and rollback boundaries are in
+[SQLite migrations](./local-setting-migrations.md).
 
-回滚或回滚后再升级，允许模型选择失效、需要重选；不能因为选择字段缺失或
-格式不合法而打不开会话/任务、丢失正文，或在浏览/读取时产生异常报告。
-存储 Reader 对 User、Timeline、Subtask 的新选择做结构校验，非法值按缺失投影，
-不报错、不删除整条内容、不回读旧字段，也不校验当前 Provider 可用性。
-Timeline 的展示 label 单独保留，不混入严格的 Selection 契约。
-已提交 migration 不修改、不重跑；这项读取保护同样覆盖回滚期间产生的缺字段记录。
-显式旧会话导入脚本也属于写入入口：User 必须补旧 Reader 所需的最小 `model` 对象；
-它不是第二份当前选择，当前 Reader 仍忽略它。Assistant 等无需兼容写入的字段不扩大双写。
+- Old JSON members stay as rollback snapshots; the current Reader no longer parses them as a run selection.
+  Saving existing messages, Parts and fork/copy preserves the old snapshot without restoring it as config.
+- A missing new config member does not block reading session bodies and task content and triggers no
+  default-model execution; recovery is the user re-selecting. Historical sources keep the Provider identity of
+  their time; only the current Session selection uses the established migration table.
+- After a rollback (or rollback then upgrade) a missing or malformed selection field must not stop a
+  session/task from opening, lose its body, or raise an error report. The storage Reader structurally
+  validates the new selection of User, Timeline and Subtask and projects an illegal value as missing: no
+  error, no deletion of the item, no fallback to old fields, no check of current Provider availability. The
+  Timeline display label is kept separately from the strict Selection contract. Committed migrations are
+  neither modified nor re-run; this protection also covers records with missing fields produced during a
+  rollback.
+- The explicit old-session import script is also a write entry point: User must add the minimal `model`
+  object the old Reader needs (not a second current selection; the current Reader ignores it). Assistant and
+  other fields that need no compatible write are not dual-written.
 
-## 结论
+## Conclusion
 
-这一版保持精简，不做额外的 operation journal、checkpoint 表、tool call 表、event store 表。
+This version stays minimal: no operation journal, checkpoint table, tool call table or event store table.
 
-核心持久化只有三层：
+Core persistence has three layers:
 
-- `session`: 会话元信息和少量会话级状态。
-- `message`: 一条用户或 assistant 消息，主体信息放 `data` JSON。
-- `part`: message 的内容块，文本、reasoning、file、tool、patch、compact 都是 part。
+- `session`: session metadata and a little session-level state.
+- `message`: one user or assistant message; the main data lives in a `data` JSON.
+- `part`: a content block of a message; text, reasoning, file, tool, patch and compact are all parts.
 
-辅助表：
+Auxiliary tables:
 
-- `todo`: session 内 todo 列表。
-- `session_entry`: v2 UI / event projection，用于更轻的 timeline 展示，不作为第一版恢复上下文的唯一来源。
-- `permission`: project 级权限规则。
-- `input_history`: project 级用户输入历史，用于交互客户端召回最近发送过的输入。
+- `todo`: the todo list within a session.
+- `session_entry`: the v2 UI / event projection for a lighter timeline; not the only source for context
+  recovery in the first version.
+- `permission`: project-level permission rules.
+- `input_history`: project-level user input history, so interactive clients can recall recently sent
+  inputs.
 
-运行中状态不落库。`SessionRunState` 是进程内 map，负责 busy、cancel、shell runner；重启后通过已经写入的 `message` / `part` 判断上一次是否半截结束。
+Running state is not persisted: `SessionRunState` is an in-process map (busy, cancel, shell runner); after a
+restart, the written `message` / `part` rows show whether the last run ended half-way.
 
-## 存储方式
+## Storage
 
-第一版使用 SQLite。TypeScript 层用运行时 schema 校验 `data` JSON，数据库只展开必要索引字段。
+The first version uses SQLite. The TypeScript layer validates the `data` JSON with a runtime schema; the
+database expands only the necessary index fields.
 
-默认物理路径由 `storage.sessionDbPath` 控制，默认值为 `~/.zcode/cli/db/db.sqlite`。用户配置和 `ZCODE_SESSION_DB_PATH` 可以覆盖该路径；为兼容早期开发入口，`ZCODE_SESSION_DB` 也作为同义环境变量解析。bootstrap 负责解析 `~` 和相对路径，业务层不得依赖 SQLite 文件名或目录结构。
+The physical path is `storage.sessionDbPath`, default `~/.zcode/cli/db/db.sqlite`. User config and
+`ZCODE_SESSION_DB_PATH` can override it; for early dev entry points `ZCODE_SESSION_DB` is also resolved
+as a synonym. Bootstrap resolves `~` and relative paths; business code must not depend on the SQLite
+file name or directory structure.
 
-不要把所有字段都拆成列。关键点是：
+Do not split every field into a column:
 
-- 可索引、可列表、可关联的字段做列。
-- 业务 shape 放 JSON。
-- message 和 part 分开，避免每次更新一个 tool/text part 时重写整条消息。
+- Indexable, listable, joinable fields become columns.
+- Business shape goes in JSON.
+- message and part are separate, so updating one tool/text part does not rewrite the whole message.
 
-## 通用字段
+## Common Fields
 
-所有带 `Timestamps` 的表都有：
+`message`, `part`, `todo` and `session_entry` also have these (not repeated in their tables below):
 
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `time_created` | integer | 创建时间，毫秒时间戳。 |
-| `time_updated` | integer | 更新时间，毫秒时间戳。 |
+| `time_created` | integer | Creation time, ms timestamp. |
+| `time_updated` | integer | Update time, ms timestamp. |
 
-## 表：`session`
+## Table: `session`
 
-一行表示一个 session。
+One row is one session.
 
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `id` | text primary key | Session ID。 |
-| `project_id` | text not null | 所属 project；删除 project 时级联删除 session。 |
-| `workspace_id` | text nullable | 所属 workspace；没有 workspace 时为空。 |
-| `parent_id` | text nullable | fork / 子 session 的父 session。 |
-| `slug` | text not null | URL、文件名或 UI 中使用的短标识。 |
-| `directory` | text not null | session 创建时的工作目录。 |
-| `path` | text nullable | project 相对路径或 UI 展示路径。 |
-| `title` | text not null | session 标题。 |
-| `title_source` | text not null default `first_input` | 标题来源：`default`、`first_input`、`generated`、`custom`。AI generated 标题只能 CAS 覆盖非 custom 来源。 |
-| `title_message_id` | text null | 生成或设置标题所依据的 user message。 |
-| `time_title_updated` | integer null | 标题最近更新时间。 |
-| `version` | text not null | 创建 session 时的 ZCode CLI 版本；来源与根 `package.json` 注入的 `__CLI_VERSION__` 保持一致。 |
-| `share_url` | text nullable | 分享后的 URL。 |
-| `summary_additions` | integer nullable | 当前 revert / diff summary 的新增行数。 |
-| `summary_deletions` | integer nullable | 当前 revert / diff summary 的删除行数。 |
-| `summary_files` | integer nullable | 当前 revert / diff summary 的文件数。 |
-| `summary_diffs` | json nullable | 文件 diff 摘要，shape 对齐 snapshot file diff。 |
-| `revert` | json nullable | 当前 rewind / revert 状态。 |
-| `permission` | json nullable | session 级权限规则覆盖。 |
-| `time_created` | integer | 创建时间。 |
-| `time_updated` | integer | 更新时间。 |
-| `time_compacting` | integer nullable | 正在 compact 的时间；用于避免重复 compact。 |
-| `time_archived` | integer nullable | 归档时间；为空表示未归档。 |
+| `id` | text primary key | Session ID. |
+| `project_id` | text not null | Owning project; deleting the project cascades to its sessions. |
+| `workspace_id` | text nullable | Owning workspace; empty without a workspace. |
+| `parent_id` | text nullable | Parent session of a fork / child session. |
+| `slug` | text not null | Short identifier for URLs, file names or UI. |
+| `directory` | text not null | Working directory when the session was created. |
+| `path` | text nullable | Project-relative path or UI display path. |
+| `title` | text not null | Session title. |
+| `title_source` | text not null default `first_input` | Title source: `default`, `first_input`, `generated`, `custom`. An AI generated title can CAS-overwrite only non-custom sources. |
+| `title_message_id` | text null | The user message the title was generated or set from. |
+| `time_title_updated` | integer null | Last title update time. |
+| `version` | text not null | ZCode CLI version at session creation; same source as `__CLI_VERSION__` injected from the root `package.json`. |
+| `share_url` | text nullable | URL after sharing. |
+| `summary_additions` | integer nullable | Added lines of the current revert / diff summary. |
+| `summary_deletions` | integer nullable | Deleted lines of the current revert / diff summary. |
+| `summary_files` | integer nullable | File count of the current revert / diff summary. |
+| `summary_diffs` | json nullable | File diff summary, shaped like the snapshot file diff. |
+| `revert` | json nullable | Current rewind / revert state. |
+| `permission` | json nullable | Session-level permission rule override. |
+| `time_created` | integer | Creation time. |
+| `time_updated` | integer | Update time. |
+| `time_compacting` | integer nullable | Time compaction started; prevents duplicate compact. |
+| `time_archived` | integer nullable | Archive time; empty means not archived. |
 
-`message` 或 `part` 写入会刷新所属 session 的 `time_updated`。`--continue` 和 TUI `/resume` 默认选择同目录下最近活动的 root session，而不是只按创建时间排序。
+Writing a `message` or `part` refreshes the owning session's `time_updated`. `--continue` and TUI
+`/resume` default to the most recently active root session in the same directory, not just ordering by
+creation time.
 
-索引：
+Indexes:
 
 - `session_project_idx(project_id)`
 - `session_workspace_idx(workspace_id)`
 - `session_parent_idx(parent_id)`
 
-`revert` 的 JSON shape：
+`revert` JSON shape:
 
 ```ts
 type SessionRevert = {
@@ -108,30 +120,22 @@ type SessionRevert = {
 };
 ```
 
-字段含义：
+`messageID` is the message kept up to after a rewind; `partID` (if only a middle part of an assistant message
+is rolled back) is where deletion starts; `snapshot` is the filesystem snapshot ID before the rewind, used by
+unrevert; `diff` is the diff text from the snapshot to the current workspace.
 
-- `messageID`: rewind 后保留到哪条 message。
-- `partID`: 如果只回退 assistant 中间某个 part，从这个 part 开始删除。
-- `snapshot`: rewind 前的文件系统快照 ID，用于 unrevert。
-- `diff`: 从 snapshot 到当前工作区的 diff 文本。
+## Table: `message`
 
-## 表：`message`
+One row is one user or assistant message. A message does not store text directly; text and tool calls are
+in the `part` table.
 
-一行表示一条 user 或 assistant message。message 不直接存文本内容，文本和工具调用都在 `part` 表。
-
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `id` | text primary key | Message ID。 |
-| `session_id` | text not null | 所属 session。 |
-| `time_created` | integer | 创建时间。 |
-| `time_updated` | integer | 更新时间。 |
-| `data` | json not null | `MessageInfo` 去掉 `id` 和 `sessionID` 后的业务字段。 |
+| `id` | text primary key | Message ID. |
+| `session_id` | text not null | Owning session. |
+| `data` | json not null | `MessageInfo` business fields without `id` and `sessionID`. |
 
-索引：
-
-- `message_session_time_created_id_idx(session_id, time_created, id)`
-
-这个索引用于稳定恢复：
+Index: `message_session_time_created_id_idx(session_id, time_created, id)`, used for stable recovery:
 
 ```sql
 select * from message
@@ -141,69 +145,57 @@ order by time_created, id;
 
 ### `MessageInfo.User`
 
-`id` 和 `sessionID` 在列上，不重复放进 `data`。
+`id` and `sessionID` are columns and not repeated in `data`.
 
-| 字段 | 用途 |
+| Field | Purpose |
 | --- | --- |
-| `role: "user"` | 消息角色。 |
-| `time.created` | 用户消息创建时间。 |
-| `format?` | 输出格式要求，例如 text 或 json schema。 |
-| `summary?` | 这条 user message 是否是 summary prompt；可带 title、body、diffs。 |
-| `agent` | 使用的 agent 名称。 |
-| `model.providerID` | provider ID。 |
-| `model.modelID` | model ID。 |
-| `model.variant?` | model 变体。 |
-| `system?` | 当次请求额外 system 文本。 |
-| `tools?` | 当次可用工具开关，`toolName -> enabled`。 |
+| `role: "user"` | Message role. |
+| `time.created` | User message creation time. |
+| `format?` | Output format requirement, e.g. text or json schema. |
+| `summary?` | Whether this user message is a summary prompt; may carry title, body, diffs. |
+| `agent` | Agent name used. |
+| `model.providerID`, `model.modelID`, `model.variant?` | Provider, model and model variant. |
+| `system?` | Extra system text for this request. |
+| `tools?` | Tool switches for this request, `toolName -> enabled`. |
 
 ### `MessageInfo.Assistant`
 
-`id` 和 `sessionID` 在列上，不重复放进 `data`。
+`id` and `sessionID` are columns and not repeated in `data`.
 
-| 字段 | 用途 |
+| Field | Purpose |
 | --- | --- |
-| `role: "assistant"` | 消息角色。 |
-| `time.created` | assistant message 创建时间。 |
-| `time.completed?` | assistant 完成时间；生成中或中断时可以为空。 |
-| `error?` | assistant 失败原因，例如 abort、context overflow、provider error。 |
-| `parentID` | 这次 assistant 回复对应的 user message。 |
-| `modelID` | 实际使用的 model ID。 |
-| `providerID` | 实际使用的 provider ID。 |
-| `mode` | 兼容字段，已 deprecated。 |
-| `agent` | 实际使用的 agent。 |
-| `path.cwd` | 运行时 cwd。 |
-| `path.root` | project root。 |
-| `summary?` | 是否是 compact 生成的 summary assistant。 |
-| `cost` | 本次调用成本。 |
-| `tokens.total?` | 总 token，可选。 |
-| `tokens.input` | 输入 token。 |
-| `tokens.output` | 输出 token。 |
-| `tokens.reasoning` | reasoning token。 |
-| `tokens.cache.read` | cache read token。 |
-| `tokens.cache.write` | cache write token。 |
-| `structured?` | 结构化输出结果。 |
-| `variant?` | model 变体。 |
-| `finish?` | provider finish reason。 |
+| `role: "assistant"` | Message role. |
+| `time.created` | Assistant message creation time. |
+| `time.completed?` | Completion time; may be empty while generating or after interruption. |
+| `error?` | Failure reason, e.g. abort, context overflow, provider error. |
+| `parentID` | The user message this reply answers. |
+| `modelID` | Model ID actually used. |
+| `providerID` | Provider ID actually used. |
+| `mode` | Compatibility field, deprecated. |
+| `agent` | Agent actually used. |
+| `path.cwd`, `path.root` | Runtime cwd and project root. |
+| `summary?` | Whether this is a compact-generated summary assistant. |
+| `cost` | Cost of this call. |
+| `tokens.{total?,input,output,reasoning}`, `tokens.cache.{read,write}` | Token counts (`total` optional). |
+| `structured?` | Structured output result. |
+| `variant?` | Model variant. |
+| `finish?` | Provider finish reason. |
 
-## 表：`part`
+## Table: `part`
 
-一行表示 message 的一个内容块。文本流、reasoning、tool 状态更新、文件、patch、compact 都写成 part。
+One row is one content block of a message. Text streams, reasoning, tool state updates, files, patches
+and compaction are all written as parts.
 
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `id` | text primary key | Part ID。 |
-| `message_id` | text not null | 所属 message。 |
-| `session_id` | text not null | 所属 session，冗余存一份方便按 session 查 part。 |
-| `time_created` | integer | 创建时间。 |
-| `time_updated` | integer | 更新时间。 |
-| `data` | json not null | `Part` 去掉 `id`、`sessionID`、`messageID` 后的业务字段。 |
+| `id` | text primary key | Part ID. |
+| `message_id` | text not null | Owning message. |
+| `session_id` | text not null | Owning session, stored redundantly to query parts by session. |
+| `data` | json not null | `Part` business fields without `id`, `sessionID`, `messageID`. |
 
-索引：
+Indexes: `part_message_id_id_idx(message_id, id)`, `part_session_idx(session_id)`.
 
-- `part_message_id_id_idx(message_id, id)`
-- `part_session_idx(session_id)`
-
-恢复一条 message：
+Recovering one message:
 
 ```sql
 select * from part
@@ -211,40 +203,43 @@ where message_id = ?
 order by id;
 ```
 
-### Part 类型
+### Part types
 
-| `type` | 关键字段 | 用途 |
+| `type` | Key fields | Purpose |
 | --- | --- | --- |
-| `text` | `text`, `synthetic?`, `ignored?`, `time?`, `metadata?` | 用户文本或 assistant 文本。 |
-| `reasoning` | `text`, `metadata?`, `time` | reasoning 流。 |
-| `file` | `mime`, `filename?`, `url`, `source?` | 用户上传文件、图片、工具附件引用。 |
-| `agent` | `name`, `source?` | 用户 prompt 中选择的 agent。 |
-| `tool` | `callID`, `tool`, `state`, `metadata?` | 工具调用及状态。 |
-| `step-start` | `snapshot?` | assistant step 开始，可记录快照。 |
-| `step-finish` | `reason`, `snapshot?`, `cost`, `tokens` | assistant step 结束。 |
-| `snapshot` | `snapshot` | 文件系统快照 ID。 |
-| `patch` | `hash`, `files` | 工作区 patch 信息，用于 revert。 |
-| `compaction` | `auto`, `overflow?`, `tail_start_id?` | compact 标记。 |
-| `retry` | `attempt`, `error`, `time.created` | provider retry 记录。 |
-| `subtask` | `prompt`, `description`, `agent`, `model?`, `command?` | subagent / 子任务描述。 |
+| `text` | `text`, `synthetic?`, `ignored?`, `time?`, `metadata?` | User text or assistant text. |
+| `reasoning` | `text`, `metadata?`, `time` | Reasoning stream. |
+| `file` | `mime`, `filename?`, `url`, `source?` | User-uploaded file, image, or tool attachment reference. |
+| `agent` | `name`, `source?` | Agent selected in the user prompt. |
+| `tool` | `callID`, `tool`, `state`, `metadata?` | Tool call and state. |
+| `step-start` | `snapshot?` | Assistant step start; may record a snapshot. |
+| `step-finish` | `reason`, `snapshot?`, `cost`, `tokens` | Assistant step end. |
+| `snapshot` | `snapshot` | Filesystem snapshot ID. |
+| `patch` | `hash`, `files` | Workspace patch info, used for revert. |
+| `compaction` | `auto`, `overflow?`, `tail_start_id?` | Compact marker. |
+| `retry` | `attempt`, `error`, `time.created` | Provider retry record. |
+| `subtask` | `prompt`, `description`, `agent`, `model?`, `command?` | Subagent / subtask description. |
 
 ### Tool state
 
-`tool` part 的 `state` 是 discriminated union。
+The `state` of a `tool` part is a discriminated union.
 
-| `state.status` | 字段 | 用途 |
+| `state.status` | Fields | Purpose |
 | --- | --- | --- |
-| `pending` | `input`, `raw` | 模型刚吐出工具调用，还没解析或执行。 |
-| `running` | `input`, `title?`, `metadata?`, `time.start` | 工具已开始执行。 |
-| `completed` | `input`, `output`, `title`, `metadata`, `time.start`, `time.end`, `time.compacted?`, `attachments?` | 工具执行成功。 |
-| `error` | `input`, `error`, `metadata?`, `time.start`, `time.end` | 工具执行失败或被取消。 |
+| `pending` | `input`, `raw` | The model just emitted the tool call; not yet parsed or executed. |
+| `running` | `input`, `title?`, `metadata?`, `time.start` | The tool started executing. |
+| `completed` | `input`, `output`, `title`, `metadata`, `time.start`, `time.end`, `time.compacted?`, `attachments?` | The tool succeeded. |
+| `error` | `input`, `error`, `metadata?`, `time.start`, `time.end` | The tool failed or was cancelled. |
 
-注意：shell/tool 输出不是运行时持续追加一行一行落库，而是在 part 状态变化时更新。对 bash 超长输出，第一版存为 `completed.output` 字符串；compact 时可以截断进入上下文，并用 `time.compacted` 标记已经被压缩过。
+Shell/tool output is not appended row by row at runtime; it is updated when the part state changes. For
+very long bash output the first version stores a `completed.output` string; compact may truncate it for
+context and mark it with `time.compacted`.
 
 #### Completed tool metadata
 
-`completed.output` 是模型可见结果，可能只是短确认文本；UI/ZCode app-server/debug 不能从它反向解析
-结构化信息。成功 tool part 的 `state.metadata` 使用版本化 JSON：
+`completed.output` is the model-visible result and may be only a short confirmation text; UI/ZCode
+app-server/debug must not parse structured information back out of it. The `state.metadata` of a
+successful tool part is versioned JSON:
 
 ```ts
 type CompletedToolPartMetadata = {
@@ -264,7 +259,8 @@ type CompletedToolPartMetadata = {
 };
 ```
 
-第一版 `display` 只定义 `file_diff`，对齐 live `tool_call_result.payload.result.display`：
+In the first version `display` defines only `file_diff`, aligned with live
+`tool_call_result.payload.result.display`:
 
 ```ts
 type ToolResultDisplayPayload = {
@@ -277,290 +273,295 @@ type ToolResultDisplayPayload = {
 };
 ```
 
-`display` 是 bounded UI 投影，不是完整 tool output。`Edit` / `Write` 的完整文件内容、
-原始输出或超长结果继续由 tool output schema、result budget 和 artifact/storage 管理；
-SQLite 里只保存可恢复的展示投影和 artifact 引用。
+`display` is a bounded UI projection, not the full tool output. The full file content, raw output or
+over-long results of `Edit` / `Write` stay under the tool output schema, result budget and
+artifact/storage; SQLite keeps only the recoverable display projection and artifact references.
 
-兼容策略：
+Compatibility:
 
-- 不需要 SQL migration：`part.data` 本来是 JSON，新增字段只改变业务 contract。
-- 旧 session 的 completed tool part 如果没有 `metadata.schemaVersion` 或 `metadata.display`，
-  resume / app-server load / TUI initial transcript 必须继续展示 legacy `output`，不得报错。
-- provider history 冷恢复只有在 `metadata.modelContentLayout` 完整有效时才使用 `attachments`
-  重建结构化 tool result；旧 part 缺少 layout、layout 非法或引用越界时必须继续回放 legacy
-  `output`。`attachments` 单独存在不代表它属于新的 provider-visible media layout。
-- 旧 Edit/Write 数据不能可靠还原当时完整 diff，尤其涉及 `replace_all`、权限面板用户修改、
-  stale file 或上下文行时；第一版不从 `old_string/new_string` 伪造历史 diff。
+- No SQL migration: `part.data` is already JSON, so the new fields only change the business contract.
+- If an old session's completed tool part lacks `metadata.schemaVersion` or `metadata.display`, resume /
+  app-server load / TUI initial transcript must keep showing the legacy `output` without error.
+- Provider history cold recovery uses `attachments` to rebuild a structured tool result only when
+  `metadata.modelContentLayout` is complete and valid. An old part with no layout, an illegal layout or
+  an out-of-range reference must keep replaying the legacy `output`. `attachments` alone does not mean
+  they belong to the new provider-visible media layout.
+- Old Edit/Write data cannot reliably restore the full diff (`replace_all`, user edits in the permission
+  panel, stale files, context lines); the first version does not forge a historical diff from
+  `old_string/new_string`.
 
-## 表：`todo`
+## Table: `todo`
 
-session 内 todo 列表。
+The todo list within a session.
 
-第一版通过 `SessionStorePort.readTodos()` / `SessionStorePort.updateTodos()` 暴露给 `TodoRead` 和 `TodoWrite`。tool handler 只依赖 port，不直接访问 SQLite；SQLite adapter 用事务先删除当前 session 的旧 todo，再按 `position` 写入完整新列表，保证“完整计划替换”语义和稳定读取顺序。
+In the first version it is exposed to `TodoRead` and `TodoWrite` through `SessionStorePort.readTodos()` /
+`SessionStorePort.updateTodos()`. Tool handlers depend only on the port, not on SQLite directly. The
+SQLite adapter uses a transaction that first deletes the session's old todos, then writes the complete
+new list by `position`, which keeps the "full plan replacement" semantics and a stable read order.
 
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `session_id` | text not null | 所属 session。 |
-| `content` | text not null | todo 内容。 |
-| `status` | text not null | 状态。 |
-| `priority` | text not null | 优先级。 |
-| `position` | integer not null | 排序位置。 |
-| `time_created` | integer | 创建时间。 |
-| `time_updated` | integer | 更新时间。 |
+| `session_id` | text not null | Owning session. |
+| `content` | text not null | Todo content. |
+| `status` | text not null | Status. |
+| `priority` | text not null | Priority. |
+| `position` | integer not null | Sort position. |
 
-主键：
+Primary key: `(session_id, position)`. Index: `todo_session_idx(session_id)`.
 
-- `(session_id, position)`
+## Table: `session_entry`
 
-索引：
+Projects session events into lighter timeline entries.
 
-- `todo_session_idx(session_id)`
+The first version may create the table but must not tie context recovery to it. Context recovery still
+follows `message + part`.
 
-## 表：`session_entry`
-
-这个表用于把 session event 投影成更轻的 timeline entry。
-
-第一版可以建表但不要把恢复上下文绑死在它上面。恢复上下文仍以 `message + part` 为准。
-
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `id` | text primary key | Entry ID。 |
-| `session_id` | text not null | 所属 session。 |
-| `type` | text not null | `user`、`synthetic`、`assistant`、`compaction`。 |
-| `time_created` | integer | 创建时间。 |
-| `time_updated` | integer | 更新时间。 |
-| `data` | json not null | `SessionEntry.Entry` 去掉 `id` 和 `type` 后的字段。 |
+| `id` | text primary key | Entry ID. |
+| `session_id` | text not null | Owning session. |
+| `type` | text not null | `user`, `synthetic`, `assistant`, `compaction`. |
+| `data` | json not null | `SessionEntry.Entry` fields without `id` and `type`. |
 
-索引：
+Indexes: `session_entry_session_idx(session_id)`, `session_entry_session_type_idx(session_id, type)`,
+`session_entry_time_created_idx(time_created)`.
 
-- `session_entry_session_idx(session_id)`
-- `session_entry_session_type_idx(session_id, type)`
-- `session_entry_time_created_idx(time_created)`
+Entry shapes:
 
-Entry shape：
-
-| `type` | 用途 |
+| `type` | Purpose |
 | --- | --- |
-| `user` | 用户输入，包含 text、files、agents。 |
-| `synthetic` | 系统合成输入。 |
-| `assistant` | assistant timeline，包含 text、reasoning、tool、retry、cost、tokens、error。 |
-| `compaction` | compact 事件展示。 |
+| `user` | User input, with text, files, agents. |
+| `synthetic` | System-synthesized input. |
+| `assistant` | Assistant timeline, with text, reasoning, tool, retry, cost, tokens, error. |
+| `compaction` | Compact event display. |
 
-## 表：`input_history`
+## Table: `input_history`
 
-一行表示一次 server 已接受的用户输入。它不是 provider-visible message 历史，不参与模型上下文恢复；TUI、ZCode app-server 或未来 GUI 只能通过 server 能力召回它，不能直接读取数据库。
+One row is one user input accepted by the server. It is not provider-visible message history and takes no
+part in model context recovery. Clients (TUI, ZCode app-server, future GUI) recall it only through server
+capabilities, never by reading the database.
 
-总表最多保留最近 100 条，按 `time_created desc, id desc` 计算，不按 project 单独保留 100 条。
+The whole table keeps at most the latest 100 rows, ordered by `time_created desc, id desc`; not 100 per
+project.
 
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `id` | text primary key | Input history entry ID。 |
-| `project_id` | text not null | 所属 project，召回默认按它过滤。 |
-| `session_id` | text nullable | 产生该输入的 session，仅用于调试/审计。 |
-| `text` | text not null | 用户原始输入，trim 后为空的不写入。 |
-| `kind` | text not null | `prompt`、`steered_input` 或 `slash_command`。 |
-| `time_created` | integer | 创建时间。 |
+| `id` | text primary key | Input history entry ID. |
+| `project_id` | text not null | Owning project; recall filters by it by default. |
+| `session_id` | text nullable | Session that produced the input; debug/audit only. |
+| `text` | text not null | Raw user input; inputs empty after trim are not written. |
+| `kind` | text not null | `prompt`, `steered_input` or `slash_command`. |
+| `time_created` | integer | Creation time. |
 
-索引：
+Indexes: `input_history_project_time_idx(project_id, time_created desc, id desc)`,
+`input_history_time_idx(time_created desc, id desc)`.
 
-- `input_history_project_time_idx(project_id, time_created desc, id desc)`
-- `input_history_time_idx(time_created desc, id desc)`
+Write semantics:
 
-写入语义：
+- Consecutive duplicates are deduplicated per project (same latest `text`: no new row).
+- A write deletes rows beyond the global 101st in the same transaction.
+- A write failure must not block prompt submission; the caller logs a structured entry and continues.
 
-- 连续重复输入按 project 去重；如果该 project 最新一条 `text` 相同，不新增记录。
-- 写入后在同一事务内删除全局第 101 条之后的旧记录。
-- 写入失败不能阻断 prompt 提交；调用方记录结构化日志并继续。
+## Table: `permission`
 
-## 表：`permission`
+Project-level permission rules. The first version has only project scope, no session/global persistence.
+`Allow once` in the approval UI is not written here; `Always allow in this project` is.
 
-project 级权限规则。第一版只做 project scope，不做 session/global 持久化。审批 UI 的 `Allow once` 不写入本表；`Always allow in this project` 写入本表。
-
-| 字段 | 类型 | 用途 |
+| Column | Type | Purpose |
 | --- | --- | --- |
-| `project_id` | text primary key | Project ID。 |
-| `time_created` | integer | 创建时间。 |
-| `time_updated` | integer | 更新时间。 |
-| `data` | json not null | Permission ruleset，形如 `{ "version": 1, "allow": [{ "toolName": "Bash", "ruleContent": "npm run:*" }], "deny": [], "ask": [] }`。 |
+| `project_id` | text primary key | Project ID. |
+| `time_created` | integer | Creation time. |
+| `time_updated` | integer | Update time. |
+| `data` | json not null | Permission ruleset, e.g. `{ "version": 1, "allow": [{ "toolName": "Bash", "ruleContent": "npm run:*" }], "deny": [], "ask": [] }`. |
 
-## 写入策略
+## Write Strategy
 
-行为边界：
+Behavior boundaries:
 
-1. 创建 session 时写 `session`。
-2. 用户提交 prompt 时写一条 `message(role=user)` 和若干 `part(text/file/agent)`。
-3. assistant 开始时写一条 `message(role=assistant)`，再写 `step-start` part。
-4. 文本和 reasoning 流更新同一个 `part`，不要每 token 新建一行。
-5. tool call 只更新同一个 `tool` part 的 state：`pending -> running -> completed/error`。
-6. assistant 完成时更新 assistant message 的 `time.completed`、cost、tokens、finish，并写 `step-finish` part。
-7. compact、retry、patch、snapshot 都是 part，不新增专门表。
+1. Creating a session writes `session`; a user prompt writes one `message(role=user)` and several
+   `part(text/file/agent)`.
+2. When the assistant starts, write one `message(role=assistant)`, then a `step-start` part; when it
+   finishes, update `time.completed`, cost, tokens, finish and write a `step-finish` part.
+3. Text and reasoning streams update the same `part`, never a new row per token; a tool call only updates
+   the same `tool` part's state: `pending -> running -> completed/error`.
+4. compact, retry, patch and snapshot are parts; no dedicated tables.
 
-性能约束：
+Performance constraints:
 
-- 流式文本更新要 debounce，例如 250-500ms 或达到固定字符阈值再写。
-- tool 输出运行中不持续写完整 stdout；完成时一次写 `completed.output`。
-- message 与 part 的同一阶段写入放进事务。
-- 停止、崩溃、进程退出前强制 flush 当前 message / part。
+- Streaming text updates are debounced (e.g. 250-500ms or a character threshold); running tool output is not
+  written continuously, `completed.output` is written once on completion.
+- Writes of message and part for the same stage go in one transaction; stop, crash and process exit
+  force-flush the current message / part.
 
-## 恢复策略
+## Recovery Strategy
 
-恢复 session 时：
+Recovering a session:
 
-1. 读 `session`。
-2. 按 `(time_created, id)` 读取 `message`。
-3. 按 `(message_id, id)` 读取每条 message 的 `part`。
-4. 拼回 `MessageWithParts`。
-5. context builder 再决定哪些 part 进模型上下文，例如忽略 `ignored`、处理 compact summary、裁剪工具输出。
+1. Read `session`.
+2. Read `message` by `(time_created, id)`.
+3. Read each message's `part` by `(message_id, id)`.
+4. Reassemble `MessageWithParts`.
+5. The context builder then decides which parts enter model context, e.g. ignore `ignored`, handle
+   compact summary, trim tool output.
 
-不要从 `session_entry` 恢复模型上下文。它可以用于 UI timeline 或轻量 API。
+Never recover model context from `session_entry`; it serves UI timeline or lightweight APIs. After
+`resume`, TUI, ZCode app-server or a future GUI must rebuild the historical `user / agent` transcript from
+the same `message + part` (not just show a "session resumed" hint); `session_entry` may only be a
+lightweight timeline / index cache, never the only source of truth.
 
-对交互客户端还要额外约束：
+### Resume v1 contract
 
-- TUI、ZCode app-server 或未来 GUI 在 `resume` 后，界面上的历史 `user / agent` transcript 也必须从同一份 `message + part` 重建，而不是只显示一条“session resumed”提示。
-- UI transcript 的恢复来源仍然是 `message + part`，`session_entry` 只能作为轻量 timeline / 索引缓存，不能成为唯一真相源。
+The first version of resume promises to restore model-visible context, keep writing into the same
+session, and give interactive clients the data to rebuild the historical transcript. It still does not
+restore the in-process runner, shell, pending permission or unfinished external I/O.
 
-### Resume v1 契约
+Entry forms:
 
-第一版 resume 承诺恢复模型可见上下文、继续写入同一个 session，并为交互客户端提供重建历史 transcript 所需的数据；它仍然不恢复进程内 runner、shell、pending permission 或未完成的外部 I/O。
+- `zcode --resume <sessionId>`: resume the given session. `sessionId` is `session.id`, usually
+  `sess_...`, from CLI `--json` output or a session list response; never pass a `traceId`, `turnId`,
+  `messageId`, `partId` or `toolCallId` to `--resume`.
+- `zcode --continue` / `zcode -c`: resume the most recent unarchived root session of the current
+  directory.
+- `--resume` and `--continue` are mutually exclusive.
+- If the given session does not exist, is archived, or its message/part data is corrupt, the CLI returns
+  a structured session error and does not silently create a new session.
 
-入口形态：
+Recovery flow:
 
-- `zcode --resume <sessionId>`：恢复指定 session。`sessionId` 是 `session.id`，通常形如 `sess_...`，来自 CLI `--json` 输出或 session list 响应；不要把 `traceId`、`turnId`、`messageId`、`partId` 或 `toolCallId` 传给 `--resume`。
-- `zcode --continue` / `zcode -c`：恢复当前目录最近一个未归档 root session。
-- `--resume` 和 `--continue` 互斥。
-- 如果指定 session 不存在、已归档或 message/part 数据损坏，CLI 返回结构化 session 错误，不静默创建新 session。
+1. Read the `session` metadata and switch the runtime `workingDirectory` to `session.directory`.
+2. Initialize the current version's system/context sections. Dynamic context such as AGENTS.md, tool
+   declarations and environment info is re-resolved on resume, not copied from the old transcript.
+3. Read `message + part` and derive the active chain by the compact rules.
+4. Convert the active chain into provider-visible `MessageHistory`.
+5. Mark `sessionPersisted = true`; later turns keep writing into the original session.
+6. Append a `session_resumed` event and a structured log recording restored message count, part count,
+   interrupted tool count and restored directory.
 
-恢复流程：
+Provider-visible recovery rules:
 
-1. 读取 `session` 元信息，并把 runtime 的 `workingDirectory` 切到 `session.directory`。
-2. 初始化当前版本的 system/context sections。AGENTS.md、工具声明、环境信息等动态上下文不从旧 transcript 复制，而是在 resume 时重新解析。
-3. 读取 `message + part`，按 compact 规则得到 active chain。
-4. 将 active chain 转成 provider-visible `MessageHistory`。
-5. 标记 `sessionPersisted = true`，后续 turn 继续写入原 session。
-6. 追加 `session_resumed` 事件和结构化日志，记录恢复的 message 数、part 数、interrupted tool 数和恢复目录。
+- A `user` message concatenates only non-`ignored` `text` parts; the first version keeps only a readable
+  placeholder for `file` parts (multimodal recovery comes later).
+- An `assistant` message concatenates `text` parts; `tool` parts convert back into assistant tool calls.
+- A `completed` tool part becomes a successful tool result; with `state.attachments`, the
+  provider-neutral media blocks are rebuilt in order from artifacts, otherwise `state.output` is used.
+- An `error` tool part becomes a failed tool result.
+- A `pending` / `running` tool part always becomes a failed tool result with content
+  `[Tool execution was interrupted before resume]`, so the provider never receives a dangling tool call.
+- An unfinished assistant message with no valid text, reasoning or tool part does not enter model
+  context.
 
-Provider-visible 恢复规则：
+Compact recovery:
 
-- `user` message 只拼接未 `ignored` 的 `text` part；第一版对 `file` part 只保留可读占位，后续再接入多模态恢复。
-- `assistant` message 拼接 `text` part；`tool` part 转回 assistant tool call。
-- `completed` tool part 转为成功 tool result；有 `state.attachments` 时从 artifact 按顺序重建
-  provider-neutral 媒体 block，没有附件时继续使用 `state.output`。
-- `error` tool part 转为失败 tool result。
-- `pending` / `running` tool part 一律转为失败 tool result，内容为 `[Tool execution was interrupted before resume]`。这样可以避免 provider 收到 dangling tool call。
-- 没有有效文本、reasoning 或 tool part 的未完成 assistant message 不进入模型上下文。
+- If a `compaction` part exists, the active chain starts at the last `compaction` message.
+- If `compaction.tail_start_id` exists, a later implementation may restore summary + tail; the first
+  version truncates at the last compaction boundary, so restarting after compact does not push old
+  history back into context.
+- If compaction metadata is corrupt, load the parseable messages conservatively and write a structured
+  warning; a later turn may compact again.
 
-Compact 恢复：
+`--continue` filters by the current directory:
 
-- 如果存在 `compaction` part，active chain 从最后一个 `compaction` message 开始。
-- 如果 `compaction.tail_start_id` 存在，后续实现可以恢复 summary + tail；第一版先按最后一个 compaction boundary 截断，保证 compact 后重启不会把旧历史重新塞回上下文。
-- 如果 compaction 元数据损坏，保守加载可解析消息并写结构化告警，后续 turn 可再次 compact。
-
-`--continue` 会按当前目录过滤：
-
-- 第一版使用 `session.directory = cwd` 的未归档 root session。
-- 后续支持 worktree / project-relative `path` 时，可扩展为按 `path` 前缀匹配。
+- The first version uses unarchived root sessions with `session.directory = cwd`.
+- Later, with worktree / project-relative `path` support, it can extend to `path` prefix matching.
 
 ## Edge Cases
 
-### 用户停止模型生成
+### User stops model generation
 
-running state 不存进数据库，进程内 `SessionRunState` 负责 cancel。
+Running state is not in the database; the in-process `SessionRunState` handles cancel. Persisted result:
 
-持久化结果：
+- Generated text/reasoning parts keep the content of the last flush.
+- The assistant message may have no `time.completed`.
+- If the interruption is handled explicitly, the assistant message gets an `error`, e.g. aborted.
+- A running tool part is updated to `error` when cancellable; if not cancellable or the process crashed,
+  recovery sees `running` with no process runner and shows it as interrupted/stale.
 
-- 已生成的 text/reasoning part 保留最后一次 flush 的内容。
-- assistant message 可以没有 `time.completed`。
-- 如果中断被显式处理，assistant message 写 `error`，例如 aborted。
-- 正在跑的 tool part 在可取消时更新为 `error`；不可取消或进程崩溃时，恢复时看到 `running` 且没有进程 runner，就展示为 interrupted/stale。
+No `run` table is needed.
 
-不需要 `run` 表。
+### Context too long, compact needed
 
-### 上下文太长需要 compact
+Compact is also message/part, not a separate table.
 
-compact 也是 message/part，不是单独表。
+Flow:
 
-流程：
+1. Set `session.time_compacting` to prevent duplicate compact.
+2. Insert a user message containing a `compaction` part, then an assistant summary message with
+   `summary: true`; `compaction.tail_start_id` points to the tail messages kept.
+3. Mark old tool output no longer needed in context with `time.compacted` on the tool state.
+4. Clear `session.time_compacting`.
 
-1. 设置 `session.time_compacting`，避免重复 compact。
-2. 插入一条 user message，包含 `compaction` part。
-3. 生成一条 assistant summary message，`summary: true`。
-4. `compaction.tail_start_id` 指向 compact 后仍保留的 tail message。
-5. 老 tool 输出如果不再需要进入上下文，在 tool state 的 `time.compacted` 上打标。
-6. 清空 `session.time_compacting`。
+When recovering context, the context builder uses the summary message plus tail messages instead of
+re-reading the full history.
 
-恢复上下文时，context builder 使用 summary message 加 tail messages，而不是重新读全量历史。
+### Multimedia resources
 
-### 多媒体资源
+Multimedia is not stuffed into message text.
 
-多媒体不塞进 message 文本。
+- User-uploaded or tool-produced files use `file` parts.
+- `file.url` points to a resource in storage/artifact.
+- `mime` decides whether the model treats it as image, text, audio, etc.
+- `source` records the origin, e.g. workspace file, symbol, MCP resource.
+- Tool results with attachments put them in `ToolStateCompleted.attachments`, also `FilePart[]`.
 
-- 用户上传或工具产生的文件用 `file` part。
-- `file.url` 指向 storage/artifact 中的资源。
-- `mime` 决定模型是否按图片、文本、音频等处理。
-- `source` 记录来源，例如 workspace file、symbol、MCP resource。
-- tool 结果带附件时放在 `ToolStateCompleted.attachments`，类型也是 `FilePart[]`。
+The database stores references and metadata; binary content goes to storage/artifact.
 
-数据库存引用和元数据，二进制内容走 storage/artifact。
+`FilePart + artifact` is the cross-provider source of truth. base64 belongs only to the current provider
+request projection and must not be the only persisted content of a message/tool part. Switching
+model or provider within a session, and cold recovery after exit, must regenerate the wire form the
+current provider needs from the artifact. A media artifact write failure therefore must not silently
+become an unrecoverable completed tool part.
 
-`FilePart + artifact` 是跨 provider 的事实源。base64 只属于当前 provider 请求投影，不得作为
-message/tool part 的唯一持久化内容。会话内切换模型或 provider，以及退出后的冷恢复，都必须从
-artifact 重新生成当前 provider 所需的 wire 形态；因此
-媒体 artifact 写入失败不能静默落成不可恢复的 completed tool part。
+### Very long Bash output
 
-### Bash 超长输出
+On completion `completed.output` is a string.
 
-tool 完成时 `completed.output` 是字符串。
+The first version adds no `tool_output` table. Rules:
 
-第一版不要新增 `tool_output` 表。处理规则：
+- While running, keep only an in-memory buffer and UI preview; do not write to the database often.
+- Write the `tool` part once on completion.
+- When entering model context, truncate by the tool output budget.
+- After compact, mark `time.compacted` to show the old output has been absorbed by the summary.
 
-- 运行中只保留内存 buffer 和 UI preview，不频繁落库。
-- 完成时一次写入 `tool` part。
-- 进入模型上下文时可以按工具输出预算截断。
-- compact 后给 `time.compacted` 打标，表示旧输出已经被 summary 吸收。
+If SQLite size becomes a real bottleneck, `output` can later become an artifact reference (not the first
+version).
 
-如果后续 SQLite 体积成为真实瓶颈，再把 `output` 扩展成 artifact 引用；这不是第一版。
+### User rewind / revert
 
-### 用户 rewind / revert
+Uses the session-level `revert` field; no table per checkpoint.
 
-采用 session 级 `revert` 字段，不给每个 checkpoint 建表。
+Revert flow:
 
-revert 流程：
+1. `assertNotBusy(sessionID)`; rewind is not allowed while busy.
+2. Find the target `messageID` / `partID`.
+3. Record the current snapshot into `session.revert.snapshot`.
+4. Collect the `patch` parts after the target and roll back the filesystem.
+5. Compute the diff summary and write `summary_additions`, `summary_deletions`, `summary_files`,
+   `summary_diffs`.
+6. If the user confirms cleanup, delete the messages after the target; with a `partID`, delete the parts
+   from that part on within the same message.
+7. Clear `session.revert`.
 
-1. `assertNotBusy(sessionID)`，busy 时不允许 rewind。
-2. 找到目标 `messageID` / `partID`。
-3. 记录当前 snapshot，写入 `session.revert.snapshot`。
-4. 收集目标之后的 `patch` part，回滚文件系统。
-5. 计算 diff summary，写入 `summary_additions`、`summary_deletions`、`summary_files`、`summary_diffs`。
-6. 如果用户确认 cleanup，删除目标之后的 message；如果有 `partID`，删除同一 message 内从该 part 开始的 parts。
-7. 清空 `session.revert`。
+Unrevert:
 
-unrevert 时：
-
-1. 如果有 `session.revert.snapshot`，恢复 snapshot。
-2. 清空 `session.revert` 和 summary。
+1. If `session.revert.snapshot` exists, restore the snapshot.
+2. Clear `session.revert` and the summary.
 
 ### Fork session
 
-fork 不需要复制复杂状态。
+The new session's `parent_id` points to the original; `directory`, `path`, `permission` may be initialized
+from the parent. Whether message/part are copied is a product choice (copy if history is edited independently
+after the fork; otherwise the context builder reads the parent chain). The first version recommends copying:
+simple, offline, easy to understand.
 
-- 新 session 的 `parent_id` 指向原 session。
-- `directory`、`path`、`permission` 可从父 session 初始化。
-- message/part 是否复制取决于产品行为：如果 fork 后要独立编辑历史，就复制到新 session；如果只是引用父历史，就由 context builder 读取父链。
+### Crash recovery
 
-第一版建议复制 message/part，简单、可离线、好理解。
+The in-process runner is not restored. An assistant message without `time.completed` is marked interrupted;
+a `running` tool part is marked stale/interrupted (the user may retry); `time_compacting` is cleared and
+compact re-evaluated; a session with `revert` shows the cleanup / unrevert state.
 
-### 崩溃恢复
+## ZCode First-Version Interface
 
-恢复时不尝试恢复进程内 runner。
-
-- assistant message 没有 `time.completed`：标记为 interrupted。
-- tool part 是 `running`：标记为 stale/interrupted，必要时允许用户重试。
-- session 有 `time_compacting`：清掉并重新判断是否需要 compact。
-- session 有 `revert`：展示可 cleanup / unrevert 的状态。
-
-## ZCode 第一版接口
-
-持久化模块只暴露这些能力：
+The persistence module exposes only:
 
 ```ts
 interface SessionStore {
@@ -586,31 +587,44 @@ interface SessionStore {
 }
 ```
 
-业务层只依赖这个接口，不直接碰 SQLite、fs 或具体 ORM。
+Business code depends only on this interface, never on SQLite, fs or an ORM.
 
-## Runtime 接入契约
+## Runtime Integration Contract
 
-`core` 的 prompt loop 只通过 `SessionStore` port 表达持久化意图，不依赖 SQLite、文件路径、表结构或 adapter 内部实现。
+The `core` prompt loop expresses persistence intent only through the `SessionStore` port. It does not
+depend on SQLite, file paths, table structure or adapter internals.
 
-- 每个 runtime 实例首次执行 turn 时调用一次 `createSession`。session 的 `directory`/`path` 来自 runtime config 的 `workingDirectory`，未配置时才退回当前进程目录。
-- 本地 TUI 显式启用后，首次真实用户 turn 完成后 runtime 可以发起 session title sidecar 请求。headless `--prompt`、`--target` 和 ZCode app-server 默认不启用，避免脚本和协议场景多出后台模型调用。标题生成使用 `ModelRole.Lite`；未配置 `model.lite` 时解析到当前默认/main 模型。写回 `session.title` 时必须带 `expectedTitleSources`，避免迟到的 generated 标题覆盖用户 custom 标题。完整契约见 [`session-title-generation.md`](./session-title-generation.md)。
-- 每个用户输入先保存一条 `user` message，再保存 text part；附件保存为 file part。message 和 part 使用同一个 `traceId`，便于和 event log、日志串起来。
-- 每次模型请求创建一条 `assistant` message，先保存未完成状态，再按响应保存 text/tool/step part，最后用同一个 message id 写回 `time.completed`、`finish` 和 token 统计。
-- 工具调用 part 以同一个 part id 依次写入 `pending`、`running`、`completed` 或 `error` 状态。这样 adapter 可以用 upsert 语义表达最终状态，也能从日志看到中间状态。
-- tool completed part 必须持久化与 live result event 同源的 bounded display metadata。
-  例如 `Edit` / `Write` 的 file diff 在 live TUI 中来自 `tool_call_result.result.display`，
-  在 resume 中来自 `part.state.metadata.display`；二者不能分叉生成。
-- `sessionStore` 未配置时，runtime 必须继续只靠 event store 工作；`sessionStore` 已配置时，持久化错误默认向上冒泡，让 CLI 入口统一格式化失败，不在 core 层吞掉半持久化问题。
-- 每次 `createSession`、`saveMessage`、`savePart` 成功后写结构化 debug 日志，至少包含 `traceId`、`sessionId`、`turnId`、message/part id 和事件名。
+- Each runtime instance calls `createSession` once, on its first turn. The session `directory`/`path`
+  come from the runtime config `workingDirectory`, falling back to the process directory only when unset.
+- With the local TUI explicitly enabled, the runtime may start a session title sidecar request after the
+  first real user turn completes. Headless `--prompt`, `--target` and ZCode app-server do not enable it by
+  default, so scripts and protocol scenarios get no extra background model call. Title generation uses
+  `ModelRole.Lite`; without `model.lite` it resolves to the current default/main model. Writing back
+  `session.title` must carry `expectedTitleSources`, so a late generated title cannot overwrite a user
+  custom title. Full contract: [`session-title-generation.md`](./session-title-generation.md).
+- Each user input first saves a `user` message, then a text part; attachments are saved as file parts.
+  The message and parts share one `traceId`, to tie them to the event log and logs.
+- Each model request creates an `assistant` message, first saved in an unfinished state, then saves
+  text/tool/step parts per the response, and finally writes back `time.completed`, `finish` and token
+  stats under the same message id.
+- A tool call part is written with the same part id through `pending`, `running`, `completed` or `error`.
+  The adapter can thus express the final state with upsert semantics, and logs show the intermediate
+  states.
+- A tool completed part must persist bounded display metadata from the same source as the live result
+  event. For example the `Edit` / `Write` file diff comes from `tool_call_result.result.display` in live
+  TUI and from `part.state.metadata.display` on resume; the two must not diverge.
+- When `sessionStore` is not configured, the runtime must keep working with the event store alone; when
+  configured, persistence errors bubble up by default so the CLI entry formats the failure uniformly, and
+  core does not swallow half-persisted problems.
+- Each successful `createSession`, `saveMessage`, `savePart` writes a structured debug log with at least
+  `traceId`, `sessionId`, `turnId`, message/part id and event name.
 
-## 实施顺序
+## Implementation Order
 
-1. 在 `docs` v2 先固定 `SessionInfo`、`MessageInfo`、`Part`、`SessionStore` schema。
-2. 实现 SQLite adapter 和 migrations。
-3. 接入 prompt loop：user message、assistant message、part update。
-4. 接入 resume：从 `message + part` 还原上下文。
-5. 接入 stop：flush 当前 part，清理内存 runner。
-6. 接入 compact：`compaction` part + summary assistant。
-7. 接入 revert：`session.revert` + snapshot + patch cleanup。
+Fix the `SessionInfo`, `MessageInfo`, `Part`, `SessionStore` schema first, then: SQLite adapter and migrations;
+prompt loop (user message, assistant message, part updates); resume from `message + part`; stop (flush the
+current part, clean the in-memory runner); compact (`compaction` part + summary assistant); revert
+(`session.revert` + snapshot + patch cleanup).
 
-这就是持久化的主线：少量表，message/part JSON 承载业务结构，运行状态留在内存，compact/revert 都通过已有 message/part/session 字段表达。
+The persistence mainline: few tables, message/part JSON carrying business structure, run state in memory, and
+compact/revert expressed through existing message/part/session fields.

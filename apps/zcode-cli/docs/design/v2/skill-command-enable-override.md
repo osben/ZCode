@@ -1,13 +1,13 @@
-# Skill / Command 可用性覆盖（config.json）
+# Skill / Command Availability Override (config.json)
 
-## 目标
+## Goal
 
-允许通过 `config.json` 按**绝对路径**禁用单个 skill 或自定义命令，被禁用项在发现阶段直接剔除，
-agent 看到的「真实可用」集合即过滤后的结果。
+`config.json` can disable a single skill or custom command by **absolute path**. Disabled entries are dropped
+during discovery, so the agent sees only the filtered "actually available" set.
 
-## 配置格式
+## Config format
 
-key 为对应 `.md` 文件的绝对路径（skill 用 `SKILL.md`，命令用命令 `.md`）：
+The key is the absolute path of the `.md` file (`SKILL.md` for skills, the command `.md` for commands):
 
 ```json
 {
@@ -20,30 +20,29 @@ key 为对应 `.md` 文件的绝对路径（skill 用 `SKILL.md`，命令用命�
 }
 ```
 
-语义：
+Semantics:
 
-- 只有显式 `"enable": false` 的条目被过滤。
-- **未列出的条目默认可用**（`enable` 缺省视为 true）。
-- 走统一 config 管道，任意 scope（user `~/.zcode/cli/config.json`、project `.zcode/config.json` 等）
-  都可写；多 scope 按路径 key 合并，高优先级覆盖低优先级。
+- Only entries with an explicit `"enable": false` are filtered; **unlisted entries stay available**.
+- The fields go through the shared config pipeline, so any scope (user `~/.zcode/cli/config.json`,
+  project `.zcode/config.json`, ...) can set them; scopes merge by path key, higher priority wins.
 
-## 实现链路
+## Implementation chain
 
-1. **schema**（`packages/adapters/src/config/schema.ts`）：`ZCodeConfigFileSchema` 新增 `skill` /
-   `command` 两个 `Record<path, { enable?: boolean }>` 字段，`parseConfigFileToRuntimePatch`
-   映射到 patch 的 `skillOverrides` / `commandOverrides`。
-2. **contracts**（`packages/contracts/src/config/index.ts`）：新增 `ConfigKey.SkillOverrides="skill"` /
-   `CommandOverrides="command"`、`RuntimeConfig.skillOverrides` / `commandOverrides`（默认 `{}`）。
-3. **store**（`packages/adapters/src/config/index.ts`、`config-merger.ts`）：merge 写入 store、
-   `getRuntimeConfig` 组装、跨 scope 按 key 深合并。
-4. **adapter 过滤**（`packages/adapters/src/skills/index.ts`、`commands/index.ts`）：新增
-   `disabledPaths` 选项，`discoverSkills` / `discoverCommands` 解析后命中即跳过。因为 `loadSkill` /
-   `loadCommand` / inspect 都复用 discover，过滤对全链路一致。
-5. **bootstrap**（`packages/bootstrap/src/skills.ts`、`custom-commands.ts`）：从
-   `config.skillOverrides` / `commandOverrides` 取出 `enable:false` 的路径集合传入 adapter。
+1. **schema** (`packages/adapters/src/config/schema.ts`): `ZCodeConfigFileSchema` has `skill` /
+   `command` fields of type `Record<path, { enable?: boolean }>`; `parseConfigFileToRuntimePatch` maps them
+   to `skillOverrides` / `commandOverrides`.
+2. **contracts** (`packages/contracts/src/config/index.ts`): `ConfigKey.SkillOverrides="skill"` /
+   `CommandOverrides="command"`, and `RuntimeConfig.skillOverrides` / `commandOverrides` (default `{}`).
+3. **store** (`packages/adapters/src/config/index.ts`, `config-merger.ts`): merge writes into the store,
+   `getRuntimeConfig` assembles them, and scopes deep-merge by key.
+4. **adapter filtering** (`packages/adapters/src/skills/index.ts`, `commands/index.ts`): a `disabledPaths`
+   option; `discoverSkills` / `discoverCommands` skip a parsed entry that matches. `loadSkill` /
+   `loadCommand` / inspect all reuse discover, so filtering is consistent across the whole chain.
+5. **bootstrap** (`packages/bootstrap/src/skills.ts`, `custom-commands.ts`): collects the paths with
+   `enable:false` from `config.skillOverrides` / `commandOverrides` and passes them to the adapter.
 
-## 测试
+## Tests
 
-- `packages/adapters/tests/config.test.ts`：JSON `skill`/`command` 字段映射到 runtime override。
-- `packages/adapters/tests/skills.test.ts`、`commands.test.ts`：`disabledPaths` 过滤掉对应项，
-  且被禁用项 `load*` 抛 not found。
+- `packages/adapters/tests/config.test.ts`: the JSON `skill`/`command` fields map to runtime overrides.
+- `packages/adapters/tests/skills.test.ts`, `commands.test.ts`: `disabledPaths` filters matching entries and
+  `load*` of a disabled entry throws not found.
