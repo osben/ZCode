@@ -1,10 +1,10 @@
 # ChatLoading Running Turn Boundary
 
-## 背景
+## Background
 
-`ChatLoading` 表达主会话当前轮仍在执行。assistant 已经输出正文、reasoning、普通工具或 Agent/SubAgent 卡片，都不代表本轮已经结束。只要最后一个主轮仍为 running 且没有等待用户或维护态 blocker，就立即显示；新的 projection 事件只更新本轮内容，不重置或延迟 loading。
+`ChatLoading` expresses that the main conversation's current turn is still executing. That the assistant has output text, reasoning, ordinary tools or Agent/SubAgent cards does not mean the turn has ended. As long as the last main turn is still running and there is no blocker waiting for the user or in a maintenance state, it shows immediately; new projection events only update the turn content and do not reset or delay loading.
 
-## 状态与时序
+## State and order
 
 ```text
 latest main turn enters running
@@ -31,58 +31,58 @@ latest main turn enters running
          hide ChatLoading
 ```
 
-## 规则
+## Rules
 
-- 只对最后一个 render turn 判断，历史轮残留的 running row 不显示 `ChatLoading`。
-- turn 存在 `turnHeader` 时，`turnHeader.state` 是 running/terminal 的权威事实；已终态 header 不能被同轮残留或迟到的 running 工作行重新推成 running。
-- 兼容旧投影缺失 `turnHeader` 时，才允许从工作行兜底推导 running；`backgrounded=true` 的 tool/subagent 属于 background-only work，不参与该兜底。
-- `ChatLoading` 视觉上只渲染 loading 动画，不展示“正在思考”或其它可见文案；无障碍名称使用通用“加载中”语义。
-- 最后一个主轮为 `running` 且无 blocker 时立即显示 `ChatLoading`，不等待静默窗口。
-- assistant text、reasoning、普通 tool、Explore、Agent/SubAgent 以及它们的 descendant tool 都不终止 loading；新的 projection revision 到达时保持当前 loading 可见性。
-- 当前 snapshot 存在普通 permission pending interaction，或 `toolName="AskUserQuestion"` 的 userInput pending interaction 时隐藏 `ChatLoading`。权限弹窗/问答框已经表达“正在等待用户”，不应同时展示“正在思考”。
-- `toolCall.status="pendingApproval"` 是 interaction 投影暂缺、恢复或乱序窗口的行级兜底，同样隐藏 `ChatLoading`。
-- interaction 解决后，如果最后一个主轮仍为 `running`，立即恢复 `ChatLoading`。
-- `control.activeWorks` 中只要存在 `compact` 或 `goalVerifier`，就隐藏 `ChatLoading`；两者已有独立 timeline/status 反馈。
-- `primaryTurn`、`foregroundSubagent`、`goalContinuation`、`turnSteer` 不属于 active-work blocker，running 时立即显示。
-- 主轮进入成功、失败、取消或停止等终态后隐藏 `ChatLoading`。
-- background task 仍运行但主轮已经 idle 时不显示 `ChatLoading`。后台任务由 background control UI 表达，不能把主聊天区永久维持在 loading。
-- 普通 assistant turn 与结构化 background-result turn 使用相同的 running 生命周期规则。
+- Judge only the last render turn; a running row left in a historical turn does not show `ChatLoading`.
+- When a turn has a `turnHeader`, `turnHeader.state` is the authoritative running/terminal fact; a header already in a terminal state cannot be pushed back to running by leftover or late running work rows of the same turn.
+- Only when an old projection lacks `turnHeader` may running be derived from work rows as a fallback; a tool/subagent with `backgrounded=true` is background-only work and takes no part in that fallback.
+- `ChatLoading` visually renders only the loading animation and shows no "thinking" text or other visible copy; the accessible name uses the generic "loading" semantics.
+- When the last main turn is `running` and there is no blocker, `ChatLoading` shows immediately without waiting for a quiet window.
+- Assistant text, reasoning, ordinary tools, Explore, Agent/SubAgent and their descendant tools do not end loading; when a new projection revision arrives the current loading visibility is kept.
+- When the current snapshot has an ordinary permission pending interaction, or a userInput pending interaction with `toolName="AskUserQuestion"`, `ChatLoading` is hidden. The permission dialog / question box already expresses "waiting for the user" and "thinking" should not be shown at the same time.
+- `toolCall.status="pendingApproval"` is the row-level fallback for windows where the interaction projection is missing, recovering or out of order, and also hides `ChatLoading`.
+- After the interaction is resolved, if the last main turn is still `running`, `ChatLoading` returns immediately.
+- If `control.activeWorks` contains `compact` or `goalVerifier`, `ChatLoading` is hidden; both already have independent timeline/status feedback.
+- `primaryTurn`, `foregroundSubagent`, `goalContinuation` and `turnSteer` are not active-work blockers and show immediately when running.
+- After the main turn reaches success, failure, cancelled or stopped, `ChatLoading` is hidden.
+- When a background task is still running but the main turn is already idle, `ChatLoading` is not shown. Background tasks are expressed by the background control UI and must not keep the main chat area in loading permanently.
+- An ordinary assistant turn and a structured background-result turn use the same running lifecycle rules.
 
-## 布局与滚动时序
+## Layout and scroll order
 
-运行中的最后一轮不能继续作为绝对定位的虚拟行承载 `ChatLoading`。历史轮保持虚拟化，最后一个 running turn 作为正常文档流的 live tail 渲染：
+The last running turn can no longer carry `ChatLoading` as an absolutely positioned virtual row. Historical turns stay virtualized, and the last running turn renders as a live tail in normal document flow:
 
 ```text
 timeline scroll viewport
 ├─ virtual history spacer
-│  └─ completed / historical turn（absolute + measured）
-├─ running live tail（normal flow）
+│  └─ completed / historical turn (absolute + measured)
+├─ running live tail (normal flow)
 │  ├─ streaming assistant / tool rows
 │  └─ ChatLoading reserved slot
 └─ sticky composer dock
 ```
 
-- projection revision 到达时，timeline 的 layout effect 先执行一次同步吸底；但 Markdown、代码块等子树可能在父 effect 之后才完成真实测高，不能假设 revision commit 已经包含最终高度。
-- live tail 的 `ResizeObserver` 是真实高度变化的最终锚定点：回调同时缓存终态切换所需高度，并在仍处于 `following=true` 时于绘制前再次同步吸底。用户已经上滚或存在尚未被 scroll event 入账的上滚时，只缓存高度，不抢回滚动权。
-- eligible running 期间 reserved slot 与 loading 动画同步可见；projection revision 不增减 slot 高度。
-- running 结束后该轮回归历史虚拟列表；终态不显示 `ChatLoading`。
+- When a projection revision arrives, the timeline's layout effect first does one synchronous bottom pin; but Markdown, code blocks and similar subtrees may only finish real height measurement after the parent effect, so it cannot be assumed that the revision commit already contains the final height.
+- The live tail's `ResizeObserver` is the final anchor for real height changes: the callback caches the height needed for the terminal-state switch and, while still `following=true`, pins to the bottom synchronously once more before paint. When the user has scrolled up, or there is an upward scroll not yet credited by a scroll event, it only caches the height and does not take back scroll control.
+- During eligible running, the reserved slot and the loading animation are visible together; a projection revision does not add or remove slot height.
+- After running ends, the turn returns to the historical virtual list; the terminal state does not show `ChatLoading`.
 
-## 决策与剪枝
+## Decisions and pruning
 
-| 候选状态                                                           | 决策                       | 理由                                                       |
-| ------------------------------------------------------------------ | -------------------------- | ---------------------------------------------------------- |
-| running + primary/foreground subagent/goal continuation/turn steer | accepted（立即显示）       | 当前主轮仍在推进，loading 直接跟随 running 事实            |
-| running 期间到达任意 projection revision                           | accepted（保持当前可见性） | projection 内容更新不改变主轮 running 事实                 |
-| permission / AskUserQuestion / pendingApproval                     | pruned                     | UI 正在等待用户操作，不表达“正在思考”                      |
-| active work 含 compact / goalVerifier                              | pruned                     | 已有专用维护/验证状态反馈                                  |
-| terminal turn 或 background-only work                              | pruned                     | 主轮已经结束，不能用后台事实维持聊天 loading               |
-| desktop continuous / web remote replayable                         | accepted（同一 UI 规则）   | 只消费各自交付链路收敛后的同一 V4 snapshot，不改变恢复协议 |
+| Candidate state | Decision | Reason |
+| --- | --- | --- |
+| running + primary/foreground subagent/goal continuation/turn steer | accepted (show immediately) | The current main turn is still advancing, so loading follows the running fact directly |
+| any projection revision arriving during running | accepted (keep current visibility) | A projection content update does not change the main turn running fact |
+| permission / AskUserQuestion / pendingApproval | pruned | The UI is waiting for user action and does not express "thinking" |
+| active work contains compact / goalVerifier | pruned | There is already dedicated maintenance/verification state feedback |
+| terminal turn or background-only work | pruned | The main turn has ended, and background facts cannot keep chat loading |
+| desktop continuous / web remote replayable | accepted (same UI rule) | Consume only the same V4 snapshot converged by each delivery chain, without changing the recovery protocol |
 
-## 多端边界
+## Multi-client boundary
 
-该规则只修改 UI 对 V4 turn `isRunning` 的展示投影，不修改 ZCode Protocol、snapshot、stream mirror、queue、owner 或 runtime 状态：
+This rule only changes the UI display projection of V4 turn `isRunning` and does not change the ZCode Protocol, snapshot, stream mirror, queue, owner or runtime state:
 
-- 桌面端仍使用 `desktop-continuous` direct realtime。
-- 手机远控仍使用 `web-remote-replayable` snapshot / gap 恢复。
-- 两端都消费同一份 turn running/terminal、`control.activeWorks` 与 `pendingInteractions` 投影，恢复后直接根据当前主轮状态和 blocker 决定是否显示 `ChatLoading`。
-- background tool/subagent 可以继续通过 background control UI、状态面板和独立结果轮更新；这些更新不得把已经 terminal 的主 turn 复活为 running，也不得因此恢复底部 `ChatLoading`。
+- Desktop still uses `desktop-continuous` direct realtime.
+- Mobile remote still uses `web-remote-replayable` snapshot / gap recovery.
+- Both consume the same turn running/terminal, `control.activeWorks` and `pendingInteractions` projections; after recovery they decide whether to show `ChatLoading` directly from the current main turn state and blockers.
+- A background tool/subagent may keep updating through the background control UI, the status panel and independent result turns; these updates must not revive an already terminal main turn to running, nor restore the bottom `ChatLoading` because of it.

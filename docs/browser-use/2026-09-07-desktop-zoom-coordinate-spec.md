@@ -1,171 +1,173 @@
-# Desktop 缩放下的 Browser Use 坐标契约
+# Browser Use Coordinate Contract Under Desktop Zoom
 
-工单：ZCT-2096856609784438784。补充 responsive-browser-viewport spec 的缩放边界，不涉及模型视觉识别。
+Ticket: ZCT-2096856609784438784. Supplements the zoom boundary of the responsive-browser-viewport spec; model visual recognition is not involved.
 
-## 行为
+## Behavior
 
-- 自由尺寸模式中，viewport、截图像素、模型坐标与 DOM 坐标保持同一 CSS 像素单位。
-- 固定 viewport 的 guest 布局补偿只在 renderer 完成，放大和缩小用同一公式：webview 布局按 `1 / desktopZoom` 缩放，再用 `scale(desktopZoom)` 合成回 frame。guest 的自然 viewport 因此在 CDP 是否 attach 时都等于目标 viewport。CDP metrics 只固定 CSS viewport 与截图 DPR，不带 `scale`；鼠标事件按 CSS 坐标原样下发（2026-10-16 起，见下文「CDP idle detach 后页面变大变小」）。
-- 设置或重放固定 viewport 时，Main 将 guest page zoom 归一为 1，避免依赖 renderer 回调与 Electron zoom 传播的先后顺序。Desktop zoom 变化时 renderer 仍重发一次当前 viewport，让 Main 在同一串行边界再次归一 guest zoom。
-- CDP idle detach 后，下一次截图即使已处于 viewport 队列内，也必须先恢复 metrics。截图临界区本身不等价于已经恢复 viewport；不得在重入时再次排队并等待自己。
-- 固定 viewport 的普通截图在预览缩小或 Desktop 放大时读取 Main 的 `guest.capturePage()`，再归一到 CSS 尺寸。renderer 上报 `surfaceScale=1` 只表示预览布局比例，不能证明 CDP raster 覆盖完整 viewport；clip / fullPage 仍由 CDP 执行。
-- 普通截图准备层的尺寸不能超过宿主可见窗口，并临时派生 Fit 预览；用户选择 100% / 200% 时也必须如此。否则 Windows 高 DPI 下 Chromium 的 guest raster 裁剪会造成图片缺边，随后归一化会把缺边误当成完整画面拉伸。临时准备层不修改用户的 viewport 或预览缩放偏好，释放后恢复原比例。录制的 `unscaled` 请求保留原有布局与 100% surface 契约。
-- 保持现有 idle detach、guest 生命周期、workspace/session 隔离以及 desktop-continuous / web-remote-replayable 路由边界。修改只发生在共用 guest 执行端。
+- In free-size mode the viewport, screenshot pixels, model coordinates and DOM coordinates share one CSS pixel unit.
+- Guest layout compensation for a fixed viewport happens only in the renderer, with the same formula for zoom-in and zoom-out: the webview layout is scaled by `1 / desktopZoom` and then composited back to the frame with `scale(desktopZoom)`. The guest's natural viewport therefore equals the target viewport whether or not CDP is attached. CDP metrics fix only the CSS viewport and the screenshot DPR and carry no `scale`; mouse events are sent in CSS coordinates unchanged (since 2026-10-16, see "Page grows and shrinks after CDP idle detach" below).
+- When setting or replaying a fixed viewport, Main normalizes the guest page zoom to 1, so nothing depends on the order of renderer callbacks and Electron zoom propagation. When Desktop zoom changes the renderer still resends the current viewport once so Main normalizes the guest zoom again at the same serialization boundary.
+- After a CDP idle detach, the next screenshot must restore the metrics first, even if it is already inside the viewport queue. The screenshot critical section is not equivalent to the viewport already being restored; on re-entry it must not queue again and wait for itself.
+- An ordinary screenshot of a fixed viewport reads Main's `guest.capturePage()` when the preview is shrunk or Desktop is zoomed in, then normalizes to the CSS size. The renderer reporting `surfaceScale=1` only means the preview layout ratio and does not prove that the CDP raster covers the whole viewport; clip / fullPage are still executed by CDP.
+- The size of the ordinary screenshot prepare layer must not exceed the host's visible window, and it temporarily derives a Fit preview; this also holds when the user selected 100% / 200%. Otherwise on Windows high DPI the Chromium guest raster crop causes an image with missing edges, and the later normalization would stretch the missing edges as if they were the full picture. The temporary prepare layer does not change the user's viewport or preview zoom preference and the original ratio is restored after release. The recording `unscaled` request keeps its original layout and 100% surface contract.
+- The existing idle detach, guest lifecycle, workspace/session isolation and the desktop-continuous / web-remote-replayable routing boundaries are kept. Changes happen only on the shared guest execution side.
 
 ```text
-Desktop zoom -> renderer: webview 布局 ×1/zoom + scale(zoom)   (自然布局 = viewport)
-             -> viewport mutation -> CDP metrics(无 scale) + guest zoom=1
+Desktop zoom -> renderer: webview layout x1/zoom + scale(zoom)   (natural layout = viewport)
+             -> viewport mutation -> CDP metrics (no scale) + guest zoom=1
                                          |
-CSS 输入 (x,y,delta) ----------------------v
-                                  原样下发
+CSS input (x,y,delta) ------------------v
+                                  sent unchanged
                                          |
                                          v
-                           Chromium -> 原 CSS 坐标事件
+                           Chromium -> event at the original CSS coordinates
 
-CDP idle detach -> 下一条截图 -> 恢复 Page / metrics / guest zoom
+CDP idle detach -> next screenshot -> restore Page / metrics / guest zoom
                                          |
                                          v
-                     窗口内临时 Fit（保留用户偏好）
+                     temporary Fit inside the window (user preference kept)
                                          |
                                          v
-                      Fit < 1 或 Desktop zoom > 1
+                      Fit < 1 or Desktop zoom > 1
                             /                 \
-                          是                   否
+                          yes                  no
                           |                    |
                   native capturePage       CDP capture
                           |                    |
-                          +--- CSS 尺寸归一 ---+
+                          +-- normalize to CSS size --+
 ```
 
-## 回归
+## Regressions
 
-### CDP idle detach 后页面变大变小（2026-10-16）
+### Page grows and shrinks after CDP idle detach (2026-10-16)
 
-现象：应用放大一档、内置浏览器处于自由尺寸（含 Agent `newTab` 带出的 1280×720）时，Browser Use 每次操作期间页面变大，命令空闲约 1.5s 后变回。普通模式不受影响。
+Symptom: with the app zoomed in one step and the embedded browser in free size (including the 1280x720 brought by Agent `newTab`), the page grows during each Browser Use operation and returns after about 1.5s of command idleness. Normal mode is not affected.
 
-根因：放大档的布局补偿原先只放在 CDP metrics 的 `scale` 里，而 metrics 是 per-session 状态。为防 UAF 加入的命令空闲 detach 会让 Chromium 清掉它，空闲时 guest 退回 webview 的自然布局（renderer 不做放大补偿，guest zoom=1），innerWidth 变成 `viewport × desktopZoom`。缩小档早就在 renderer 做 `1 / zoom` 布局补偿，所以两态一致。
+Root cause: the zoom-in layout compensation had been placed only in the CDP metrics `scale`, and metrics are per-session state. The command-idle detach added to prevent a UAF makes Chromium clear it; when idle the guest falls back to the webview's natural layout (the renderer applies no zoom-in compensation, guest zoom=1) and innerWidth becomes `viewport x desktopZoom`. Zoom-out already did the `1 / zoom` layout compensation in the renderer, so its two states agree.
 
 ```text
-修复前（zoom=1.1，viewport=1280）
-  命令期  CDP attach -> metrics(1280, scale 1.1) -> innerWidth 1280
-  空闲    idle detach -> metrics 清空 -> 自然布局 -> innerWidth 1408   <- 来回跳
-修复后
-  renderer: webview 布局 ×1/zoom + scale(zoom) -> 自然布局 innerWidth 1280
-  命令期 / 空闲都是 1280；metrics 只固定 CSS viewport 与 DPR，不再带 scale
+Before the fix (zoom=1.1, viewport=1280)
+  during command  CDP attach -> metrics(1280, scale 1.1) -> innerWidth 1280
+  idle            idle detach -> metrics cleared -> natural layout -> innerWidth 1408   <- jumps back and forth
+After the fix
+  renderer: webview layout x1/zoom + scale(zoom) -> natural layout innerWidth 1280
+  during command / idle are both 1280; metrics fix only the CSS viewport and DPR and carry no scale
 ```
 
-独立 Electron 41.0.3 实验（macOS，Retina）：布局 `vw / z` + `scale(z)` 时，z=1.1 / 1.21 / 0.9 的 guest innerWidth 都等于 vw，右、下边缘色块完整，没有留白；原放大档布局分别得到 `vw × z`。2026-07-22「放大时 transform 只扩大 webview DOM 而 raster 留白」的结论只对“不缩布局、只加 transform”成立，不适用于本方案。
+Independent Electron 41.0.3 experiment (macOS, Retina): with layout `vw / z` + `scale(z)`, the guest innerWidth equals vw for z=1.1 / 1.21 / 0.9, the right and bottom edge color blocks are complete, with no blank; the original zoom-in layout gives `vw x z`. The 2026-07-22 conclusion "on zoom-in a transform only enlarges the webview DOM while the raster is left blank" holds only for "no layout shrink, transform only" and does not apply here.
 
-保持不变：idle detach、CDP 恢复屏障、guest zoom 归一、截图 prepare/release 与 `natural | emulated` 区分。Desktop 放大时普通 viewport 截图仍走 native capture + CSS 归一（Windows 平铺缺边的既有防护）。`appliedViewportScale` 与鼠标输入倍率随 metrics scale 一起删除。
+Unchanged: idle detach, the CDP recovery barrier, guest zoom normalization, screenshot prepare/release and the `natural | emulated` distinction. On Desktop zoom-in an ordinary viewport screenshot still uses native capture + CSS normalization (the existing guard against Windows tiling and missing edges). `appliedViewportScale` and the mouse input multiplier are removed together with the metrics scale.
 
-回归：缩放坐标 E2E 每轮在 idle detach 后、首条命令前读取 guest innerWidth/innerHeight，必须等于 1280×720；manager 单测断言放大档 metrics 不带 `scale`、输入坐标不乘倍率；UI 单测断言放大档 webview 布局为 `1 / zoom`、transform 为 `zoom`。
+Regression: the zoom coordinate E2E reads guest innerWidth/innerHeight after the idle detach and before the first command in every round, and it must equal 1280x720; the manager unit test asserts that zoom-in metrics carry no `scale` and input coordinates are not multiplied; the UI unit test asserts that the zoom-in webview layout is `1 / zoom` and the transform is `zoom`.
 
-### Guest 换代后的倍率清理（CR-01）
+### Multiplier cleanup after a guest generation change (CR-01)
 
-> 2026-10-16 起 metrics 不再带 scale，本节描述的倍率状态已删除，保留作历史。
+> Since 2026-10-16 metrics carry no scale; the multiplier state described in this section has been deleted. Kept as history.
 
-`appliedViewportScale` 是当前 guest 已安装 CDP metrics 的镜像，不能随逻辑 tab 跨 guest 换代保留。普通后台 fallback 在应用放大时安装倍率；旧 guest 销毁或被替换后，新 guest 若使用自然 viewport，不会重放 metrics，残留倍率会把 (300,200) 错发为 (330,220)。
+`appliedViewportScale` mirrored the CDP metrics installed on the current guest and must not survive a guest generation change of the logical tab. A normal background fallback installed the multiplier on zoom-in; after the old guest was destroyed or replaced, a new guest using the natural viewport does not replay metrics and the leftover multiplier sent (300,200) wrongly as (330,220).
 
-在 `detachGuest` 与 fallback 状态一起清除已应用倍率。旧异步 mutation 的 guest 不匹配分支继续只返回，不得清除新 guest 的有效倍率。普通 CDP idle 重连沿用已有 metrics 重放屏障，不增加新的状态或恢复机制。
+`detachGuest` clears the applied multiplier together with the fallback state. The guest-mismatch branch of an old async mutation keeps only returning and must not clear the new guest's valid multiplier. A normal CDP idle reconnect keeps using the existing metrics replay barrier, with no new state or recovery mechanism.
 
 ```text
-旧 guest + fallback scale=1.1 -> detachGuest 清理倍率 -> 新 guest 自然 viewport -> 输入原坐标
+old guest + fallback scale=1.1 -> detachGuest clears the multiplier -> new guest natural viewport -> input at original coordinates
 ```
 
-manager 回归覆盖 fallback 安装后直接替换、destroyed 回调及再次 CDP 重连，修复前两条测试都将 (300,200) 错发为 (330,220)，修复后通过。真实 Electron 沿用缩放 E2E，增加普通模式 guest 崩溃重建、恢复前台并点击的回归。macOS 隐藏 guest 仍可能保留自然尺寸，已安装的 fallback 也可能被前台恢复清除，因此原生 E2E 仅证明真实重建和点击链路不回退，不声称完整复现旧倍率残留；后者由 manager 定向测试证明。固定 viewport、自然截图及 Windows fallback 原有回归继续保留。
+Manager regression covers replacement right after fallback install, the destroyed callback and a further CDP reconnect; before the fix both tests sent (300,200) as (330,220), after the fix they pass. The real Electron regression reuses the zoom E2E and adds a normal-mode guest crash rebuild, foreground restore and click case. On macOS a hidden guest may keep the natural size and an installed fallback may be cleared by foreground restore, so the native E2E proves only that the real rebuild and click chain do not regress and does not claim to reproduce the old multiplier leftover, which is proven by the manager-targeted test. The fixed-viewport, natural screenshot and Windows fallback regressions are kept.
 
-2026-09-08 验证：129 条 manager 单测通过；macOS arm64 / Electron 41.0.3 原生 E2E 4 case 通过（run `desktop-e2e-20260908-055435-369`，8 PNG / 20 次 trusted click）。新增场景 guest 2 → 3，viewport 保持 368×573 / DPR≈2.2，点击 (100,200) 实际落点也是 (100,200)。产物在该 run 的 `zoom-coordinates/guest-recovery.{json,png}`。typecheck、lint（43 个既有 warning）、E2E 类型与 fixture 检查通过；本次未重跑 Windows/Linux、手机远控，E2E 仍待人工 review。
+2026-09-08 verification: 129 manager unit tests; macOS arm64 / Electron 41.0.3 native E2E 4 cases passed (run `desktop-e2e-20260908-055435-369`, 8 PNG / 20 trusted clicks). In the new scenario guest 2 -> 3, the viewport stays 368x573 / DPR about 2.2, and a click at (100,200) really lands at (100,200). Artifacts are in that run's `zoom-coordinates/guest-recovery.{json,png}`. typecheck, lint (43 existing warnings), E2E type and fixture checks passed; Windows/Linux and mobile remote were not rerun and the E2E still awaits manual review.
 
-### 普通前台自然 viewport 截图（2026-09-08 macOS 复现）
+### Ordinary foreground natural-viewport screenshot (2026-09-08, macOS reproduction)
 
-在 `4b9c4d51a0` 的真实 ZCode dev / macOS 上，退出自由尺寸并将应用缩小两档（zoom≈0.826446），通过产品 Node REPL 的 `tab.screenshot()` 复现：截图前 viewport 为 508×855，prepare 期间变成 614×1034，release 后恢复 508×855。页面 media query 因此把按钮中心从 (100,200) 移到 (200,200)；截图后的 trusted click (200,200) 未命中，而 (100,200) 命中。
+On real ZCode dev / macOS at `4b9c4d51a0`, with free size exited and the app zoomed out two steps (zoom about 0.826446), the product Node REPL `tab.screenshot()` reproduced: before the screenshot the viewport was 508x855, during prepare it became 614x1034, and after release it returned to 508x855. The page media query moved the button center from (100,200) to (200,200); a trusted click at (200,200) after the screenshot missed while (100,200) hit.
 
-根因：自然 viewport 没有 CDP metrics 固定逻辑尺寸，却复用了仿真 viewport 的 `1 / desktopZoom` guest 布局扩张。ready 再除以 layout scale 后看似匹配，页面实际已经发生 reflow。
+Root cause: the natural viewport has no CDP metrics fixing the logical size, yet it reused the `1 / desktopZoom` guest layout expansion of the emulated viewport. Ready divided by the layout scale looked like a match, but the page had actually reflowed.
 
-Main 在截图临界区按实际 viewport 状态显式传递 `viewportMode: natural | emulated`。普通前台自然 viewport 仍按请求尺寸临时 Fit，但 guest 不扩张、不做反向 transform；自由尺寸和后台 fallback 保留仿真布局补偿。旧 payload 缺失该字段时保持 emulated 行为，录制 unscaled 契约不变。不同 viewport mode 不共用准备 lease，ready 必须回传匹配的 mode。
+Main explicitly passes `viewportMode: natural | emulated` inside the screenshot critical section according to the actual viewport state. An ordinary foreground natural viewport is still temporarily Fit to the requested size, but the guest is not expanded and no reverse transform is applied; free size and the background fallback keep the emulated layout compensation. An old payload without the field keeps the emulated behavior, and the recording unscaled contract is unchanged. Different viewport modes do not share a prepare lease and ready must echo the matching mode.
 
 ```text
-Main viewport 状态 -> prepare(request.viewport, viewportMode)
-  natural  -> 临时 Fit frame -> guest 原布局 -> capture -> release
-  emulated -> 临时 Fit frame -> guest 缩放补偿 + CDP metrics -> capture -> release
+Main viewport state -> prepare(request.viewport, viewportMode)
+  natural  -> temporary Fit frame -> guest original layout -> capture -> release
+  emulated -> temporary Fit frame -> guest zoom compensation + CDP metrics -> capture -> release
 ```
 
-回归必须经过真实 Browser Use 链路，记录截图前、resize 事件及释放后的 viewport / DPR / media query 目标位置，检查 PNG 中目标的实际位置和随后的 trusted click。自然模式保持原 guest、原 zoom 与用户偏好。已有自由尺寸五轮缩放、普通后台 fallback、录制 unscaled 回归继续执行。此改动只增加 Main/renderer 瞬时布局元数据，不改变 Agent 协议、Host 路由、手机远控 attachment 或 continuous/replayable 边界。
+The regression must go through the real Browser Use chain, recording the viewport / DPR / media query target position before the screenshot, at resize events and after release, and checking the target's actual position in the PNG and the following trusted click. Natural mode keeps the original guest, original zoom and user preference. The existing five-round free-size zoom, normal background fallback and recording unscaled regressions continue to run. This change adds only Main/renderer transient layout metadata and does not change the Agent protocol, Host routing, mobile-remote attachment, or the continuous/replayable boundary.
 
-本次 macOS arm64 / Electron 41.0.3 验证通过（run `desktop-e2e-20260908-042444-192`）：新增自然模式场景 viewport 始终为 531×815，没有截图引起的 resize，按钮保持 (100,200)，PNG 色块与 trusted click 一致；既有自由尺寸五轮和普通后台 fallback 一并通过，共 3 个 case、7 次截图、19 次 trusted click。244 个相关单测、typecheck、E2E 类型检查、lint（43 个既有 warning）和 fixture check 通过。证据与平台边界见 [macOS 验证记录](../testing/browser-natural-viewport-macos-regression-2026-09-08.json)。Windows/Linux、手机远控和原生录制未重跑；E2E 继续保留 pending。
+macOS arm64 / Electron 41.0.3 verification passed (run `desktop-e2e-20260908-042444-192`): in the new natural-mode scenario the viewport stayed 531x815 throughout with no screenshot-induced resize, the button stayed at (100,200), PNG color blocks and trusted clicks agreed; the existing five-round free-size and normal background fallback also passed, in total 3 cases, 7 screenshots, 19 trusted clicks. 244 related unit tests, typecheck, E2E type check, lint (43 existing warnings) and the fixture check passed. Evidence and platform boundary: [macOS verification record](../testing/browser-natural-viewport-macos-regression-2026-09-08.json). Windows/Linux, mobile remote and native recording were not rerun; the E2E stays pending.
 
-### 普通模式后台 fallback 截图（2026-09-08 P2）
+### Normal-mode background fallback screenshot (2026-09-08 P2)
 
-后台普通模式可能保留大于当前窗口的 fallback viewport。仅限制准备层尺寸并传入 Fit 不足以启用 responsive 布局；webview 仍随容器缩小，ready 无法匹配请求尺寸。所有截图 prepare 都必须临时启用 responsive 布局并采用 `request.viewport`：普通截图用 Fit，录制仍为 100%。释放后恢复原模式、逻辑尺寸和预览偏好，保持同一 webview / guest，不写入用户设置。
+A background normal-mode tab may keep a fallback viewport larger than the current window. Limiting only the prepare layer size and passing Fit is not enough to enable responsive layout: the webview still shrinks with its container and ready cannot match the requested size. Every screenshot prepare must temporarily enable responsive layout and adopt `request.viewport`: Fit for ordinary screenshots, 100% for recording. After release the original mode, logical size and preview preference are restored, with the same webview / guest and no write to user settings.
 
 ```text
-普通后台 tab + 缓存 viewport -> 小窗口 prepare
-  -> 临时 responsive(request.viewport) -> Fit -> ready -> capture
-  -> release -> 原普通模式 / 原偏好 / 同一 guest
+normal background tab + cached viewport -> small-window prepare
+  -> temporary responsive(request.viewport) -> Fit -> ready -> capture
+  -> release -> original normal mode / original preference / same guest
 ```
 
-回归覆盖宽度受限和高度受限的组件布局探针、真实 Electron 的后台普通 tab 缩窗截图及 release；既有自由尺寸缩放 E2E 和录制 unscaled 单测继续执行。
+Regression covers width-limited and height-limited component layout probes, a real Electron background normal tab with a shrunken window screenshot and release; the existing free-size zoom E2E and recording unscaled unit tests continue to run.
 
-临时 responsive 布局不等同于用户进入自由尺寸模式：普通后台 fallback 的 guest zoom 继续由 main 的 metrics 生命周期管理，release 不得恢复成 desktop zoom。组件回归检查非 100% 应用缩放下 prepare/release 不修改 guest zoom；原生回归在 110% 应用缩放下保持 CDP attach，释放后不重装 metrics，检查 viewport、guest zoom 与连续三次 trusted click。
+Temporary responsive layout is not the same as the user entering free-size mode: the guest zoom of a normal background fallback keeps being managed by main's metrics lifecycle, and release must not restore it to the desktop zoom. A component regression checks that prepare/release do not modify the guest zoom under a non-100% app zoom; the native regression keeps CDP attached at 110% app zoom, does not reinstall metrics after release, and checks the viewport, guest zoom and three consecutive trusted clicks.
 
-原生复现还表明：普通 fallback 未带应用放大补偿时，ready 虽然通过，PNG 色块仍缩至坐标的 `1 / desktopZoom`。fallback metrics 必须从 guest 所属 renderer 读取应用 zoom，复用自由尺寸的 CDP scale 与输入边界换算；初次安装、idle 重连和再次截图均保持一致。应用缩小不增加 metrics scale，guest zoom 保持 1，回到前台仍清除 fallback 恢复自然布局。
+The native reproduction also showed that without the app zoom-in compensation in the normal fallback, ready passes yet the PNG color blocks are still shrunk to `1 / desktopZoom` of the coordinates. Fallback metrics must read the app zoom from the guest's owning renderer and reuse the CDP scale and input-boundary conversion of free size (this metrics-scale design was removed by the 2026-10-16 change above); the initial install, idle reconnect and re-screenshot stay consistent. App zoom-out adds no metrics scale, guest zoom stays 1, and returning to the foreground still clears the fallback to restore natural layout.
 
-1. 同一 guest 在 100% -> 110% -> 100% -> 缩小 -> 放大之间切换，Fit / 100% / 200% / 50% 预览都覆盖；固定按钮中心 (300,200)、(600,400)、(1000,600) 的真实 trusted click 均命中，PNG 色块中心与事件坐标误差都不超过 1 CSS px。
-2. 每轮先等待 CDP idle detach，以截图作为重连后的首个命令：PNG 必须为 1280×720，页面 viewport 为 1280×720，guest zoom=1；截图内容位置与点击位置一致。
-3. 单测覆盖鼠标路径、wheel delta、tab 隔离、缩放重置与 detached 截图恢复顺序；真实 Electron E2E 验证 Chromium 的实际事件与图片像素。
-4. 运行 pnpm typecheck、pnpm lint、受影响单测；各平台验证必须注明版本、DPI 和实际执行范围，不把历史验证当作当前补丁已验证。
-5. Windows 原生回归必须同时核验 PNG 内容与 trusted click，不能仅凭图片尺寸和 DOM 命中判通过；每轮在断言前保存 PNG、页面坐标、颜色采样以及 Electron/系统/display scale 信息，失败轮也保留证据。
-6. 截图结束后 `preparing` 层必须消失，实际 `responsiveScale` 必须恢复为用户选择的 1 / 2 / 0.5；只检查下拉框文字不能证明 release 链路已完成。录制 unscaled 布局与偏好恢复继续由对应单测约束。
+Verification requirements:
 
-## Windows 补充回归
+1. The same guest switching among 100% -> 110% -> 100% -> zoom-out -> zoom-in, covering Fit / 100% / 200% / 50% previews; real trusted clicks at the fixed button centers (300,200), (600,400), (1000,600) all hit, and both the PNG color block centers and the event coordinates are within 1 CSS px.
+2. Each round first waits for the CDP idle detach and uses the screenshot as the first command after reconnect: the PNG must be 1280x720, the page viewport 1280x720, guest zoom=1; the screenshot content position agrees with the click position.
+3. Unit tests cover the mouse path, wheel delta, tab isolation, zoom reset and the detached screenshot recovery order; the real Electron E2E verifies Chromium's actual events and image pixels.
+4. Run `pnpm typecheck`, `pnpm lint` and the affected unit tests; each platform verification must state version, DPI and the actual scope executed, and history must not be counted as verification of the current patch.
+5. The Windows native regression must verify both PNG content and trusted clicks, never judging a pass by image size and DOM hits alone; each round saves the PNG, page coordinates, color samples and Electron/OS/display scale information before assertions, and failing rounds keep evidence too.
+6. After the screenshot the `preparing` layer must disappear and the actual `responsiveScale` must return to the user-selected 1 / 2 / 0.5; checking only the dropdown text does not prove the release chain completed. Recording unscaled layout and preference restoration remain constrained by their own unit tests.
 
-2026-09-07 在 Windows 11 x64 / Electron 41.0.3、系统显示缩放 125% 上复现：100% 通过，110% 时 PNG 尺寸和点击断言通过，但 CDP 将较小 native raster 周期平铺，第三个按钮中心为白色。修复沿用已有 native capture + CSS 归一化路径，把 Desktop 放大也纳入选择条件，不增加截图重试或放宽像素断言。
+## Windows supplementary regressions
 
-红灯证据：`packages/desktop/.e2e-artifacts/desktop-e2e-20260907150411437-p10372-00512ee1039753cb/zoom-coordinates/round-1.png`；新增 `surfaceScale=1` 单测在修复前返回 CDP 的 PNG，修复后读取 native PNG。每轮证据保存在 run artifact 的 `zoom-coordinates/`，包括 PNG、页面 viewport/DPR/trusted events 和 native 颜色、平台、Electron/Chromium、display scale 元数据。
+2026-09-07, Windows 11 x64 / Electron 41.0.3, system display scale 125%: 100% passed; at 110% the PNG size and click assertions passed, but CDP tiled the smaller native raster periodically and the third button center was white. The fix reuses the existing native capture + CSS normalization path and adds Desktop zoom-in to the selection condition, without screenshot retries or relaxed pixel assertions.
 
-200% DPI + Desktop 110% 另复现原生 PNG 为 2747×1584（完整尺寸应为 2816×1584），归一后按钮 x=1000 变为约 1025。Chromium 根据宿主 viewport 逆变换并扩展 30% 计算 guest compositing rect，超出范围的内容不会进入 raster。独立 Electron 实验只将窗口宽度 960 DIP 改为 1000 DIP，PNG 宽即由 2721 恢复至 2816，高度不变，确认是可见范围裁剪。准备层宽高以 `100vw` / `100vh` 为上限，使 Fit 使用可见窗口内的画布；不通过改用户窗口大小、延时重试或非等比拉伸补偿坐标。
+Red evidence: `packages/desktop/.e2e-artifacts/desktop-e2e-20260907150411437-p10372-00512ee1039753cb/zoom-coordinates/round-1.png`; the new `surfaceScale=1` unit test returned the CDP PNG before the fix and reads the native PNG after. Per-round evidence is stored in the run artifact `zoom-coordinates/`, including the PNG, page viewport/DPR/trusted events and native color, platform, Electron/Chromium and display scale metadata.
 
-影响边界：Main 的普通 viewport 截图选择和 renderer 的临时截图准备层；没有新增协议、host、runtime 或持久化状态。手机 Web 在没有 native prepare 请求时沿用原预览；远控请求仍由已有 attachment 路由到同一桌面 guest，不改变 continuous / replayable 语义。本次没有补做手机远控或原生录制 E2E；录制 `unscaled` 保持原分支行为并有单测保护。
+At 200% DPI + Desktop 110%, a native PNG of 2747x1584 (the full size should be 2816x1584) was also reproduced, and after normalization the button at x=1000 became about 1025. Chromium computes the guest compositing rect by inverse-transforming the host viewport and expanding by 30%, so content outside the range never enters the raster. An independent Electron experiment that changed only the window width from 960 DIP to 1000 DIP restored the PNG width from 2721 to 2816 with the height unchanged, confirming visible-range clipping. The prepare layer width and height are capped at `100vw` / `100vh` so Fit uses a canvas inside the visible window; coordinates are not compensated by changing the user's window size, delayed retries or non-proportional stretching.
 
-## Windows P2 修复验证（2026-09-08）
+Impact boundary: Main's ordinary viewport screenshot selection and the renderer's temporary screenshot prepare layer; no new protocol, host, runtime or persisted state. Mobile Web keeps the original preview when there is no native prepare request; remote-control requests are still routed by the existing attachment to the same desktop guest, without changing continuous / replayable semantics. Mobile remote and native recording E2E were not added; recording `unscaled` keeps its original branch behavior with unit-test protection.
 
-基于 `28f297339ad2126fdd92e0e69277e432be9ae95a` 的本次增量：普通模式后台截图临时布局、guest zoom 释放边界，以及 fallback metrics 的放大补偿。旧构建原生红灯 run `desktop-e2e-20260908-024203-610`：请求 1280×720，960×600 窗口中实际 webview 为 960×552、模式 inactive，3000ms prepare 超时。
+### Windows P2 fix verification (2026-09-08)
 
-| Windows 显示缩放 | 最终构建结果       | Artifact run ID                   |
-| ---------------- | ------------------ | --------------------------------- |
-| 系统原生 125%    | 两个 case 全部通过 | `desktop-e2e-20260908-025710-354` |
-| forced 200%      | 两个 case 全部通过 | `desktop-e2e-20260908-031302-774` |
+Increment on top of `28f297339ad2126fdd92e0e69277e432be9ae95a`: normal-mode background screenshot temporary layout, the guest zoom release boundary, and the fallback metrics zoom-in compensation (the latter removed on 2026-10-16). Old-build native red run `desktop-e2e-20260908-024203-610`: requested 1280x720, the actual webview in a 960x600 window was 960x552 and inactive, with a 3000ms prepare timeout.
 
-每档保留原有五轮应用/预览缩放截图与点击，增加一轮普通后台 960×600 窗口、应用 110% 的 prepare/capture/release，合计 12 次截图、36 次 trusted click。新增场景 ready 保持 1280×720，截图三个目标色块正确；release 后保持同一 guest、普通模式、guest zoom=1 和 1280×720 viewport，连续三次点击最大误差 1px。
+| Windows display scale | Final build result | Artifact run ID |
+| --- | --- | --- |
+| system native 125% | both cases passed | `desktop-e2e-20260908-025710-354` |
+| forced 200% | both cases passed | `desktop-e2e-20260908-031302-774` |
 
-新增原生场景直接使用生产 prepare/ready/release IPC，注入 fallback metrics，再执行真实 native capture 和 CDP 输入；没有模拟 DOM 尺寸或 ready，但不代表 manager fallback 缓存建立的全链路 E2E。manager 单测另外验证初次 fallback、热态放大、idle 重连、reset/缩小、native 路径选择及输入补偿。机器可读证据见 [本次验证记录](../testing/browser-normal-fallback-windows-regression-2026-09-08.json)。
+Each tier keeps the original five rounds of app/preview zoom screenshots and clicks and adds one round of normal background 960x600 window with app 110% prepare/capture/release, in total 12 screenshots and 36 trusted clicks. In the new scenario ready stays 1280x720 and the three target color blocks are right; after release the same guest, normal mode, guest zoom=1 and 1280x720 viewport hold, and three consecutive clicks have a max error of 1px.
 
-340 个相关单测、`pnpm typecheck`、`pnpm lint`（43 个既有 warning、0 error）、E2E 类型与 fixture 检查通过。100%/150% 显示缩放仅有下述前一提交记录；本次未重跑 macOS/Linux、手机远控或原生录制。Web 无 native prepare 时不改变布局；远控仍路由同一桌面 guest，continuous/replayable 边界不变。录制 unscaled 行为由既有单测保护。此 case 仍处于 manual-review/pending，合并/发布时须保留以上覆盖限制。
+The new native scenario uses the production prepare/ready/release IPC directly, injects fallback metrics, and then runs real native capture and CDP input; it does not simulate DOM sizes or ready, but it does not represent a full-chain E2E of the manager fallback cache establishment. Manager unit tests separately verify initial fallback, hot zoom-in, idle reconnect, reset/zoom-out, native path selection and input compensation. Machine-readable evidence: [this verification record](../testing/browser-normal-fallback-windows-regression-2026-09-08.json).
 
-## Windows 验证矩阵（2026-09-07，前一提交）
+340 related unit tests, `pnpm typecheck`, `pnpm lint` (43 existing warnings, 0 errors), E2E type and fixture checks passed. 100%/150% display scale only has the previous-commit record below; macOS/Linux, mobile remote or native recording were not rerun. With no native prepare, Web does not change layout; remote control is still routed to the same desktop guest and the continuous/replayable boundary is unchanged. Recording unscaled behavior is protected by existing unit tests. This case is still in manual-review/pending, and merge/release must keep the coverage limits above.
 
-Windows 11 x64（10.0.26200）/ Electron 41.0.3 / Chromium 146.0.7680.80。以下均为最终补丁与加强后的同一 case；每档 5 轮、15 次 trusted click、5 张 PNG，合计 20 轮 / 60 次点击。所有 PNG 和 guest viewport 均为 1280×720，页面 DPR=1、guest zoom=1，同一 guest 保持不变；图片色块中心最大误差 0 px，真实点击最大误差 1 px，截图 release 和预览恢复均通过。
+### Windows verification matrix (2026-09-07, previous commit)
 
-| Windows 显示缩放 | 执行方式                                | 结果 | Artifact run ID                   |
-| ---------------- | --------------------------------------- | ---- | --------------------------------- |
-| 125%             | 系统原生显示缩放                        | PASS | `desktop-e2e-20260907-153516-455` |
-| 100%             | Chromium forced device scale factor 1   | PASS | `desktop-e2e-20260907-153630-178` |
-| 150%             | Chromium forced device scale factor 1.5 | PASS | `desktop-e2e-20260907-153744-604` |
-| 200%             | Chromium forced device scale factor 2   | PASS | `desktop-e2e-20260907-153901-372` |
+Windows 11 x64 (10.0.26200) / Electron 41.0.3 / Chromium 146.0.7680.80. All are the same final-patch and strengthened case; each tier has 5 rounds, 15 trusted clicks and 5 PNGs, in total 20 rounds / 60 clicks. All PNGs and guest viewports are 1280x720, page DPR=1, guest zoom=1, the same guest throughout; the max image color block center error is 0 px, the max real click error 1 px, and screenshot release and preview restoration all passed.
 
-逐轮平台信息、viewport、DPR、坐标误差和 PNG SHA-256 已提交至 [机器可读验证记录](../testing/browser-zoom-windows-regression-2026-09-07.json)。原始 PNG / JSON 在 `packages/desktop/.e2e-artifacts/<run ID>/zoom-coordinates/`。
+| Windows display scale | How run | Result | Artifact run ID |
+| --- | --- | --- | --- |
+| 125% | system native display scale | PASS | `desktop-e2e-20260907-153516-455` |
+| 100% | Chromium forced device scale factor 1 | PASS | `desktop-e2e-20260907-153630-178` |
+| 150% | Chromium forced device scale factor 1.5 | PASS | `desktop-e2e-20260907-153744-604` |
+| 200% | Chromium forced device scale factor 2 | PASS | `desktop-e2e-20260907-153901-372` |
 
-本补丁验证：336 个相关单测、全量 `pnpm typecheck`、`pnpm lint`（43 个已有 warning、0 error）、E2E 类型检查和 case-local fixture check 通过。类型检查在临时隔离原有、无关的工作区改动后执行；这些改动不属于本次提交。
+Per-round platform info, viewport, DPR, coordinate error and PNG SHA-256 are committed in the [machine-readable verification record](../testing/browser-zoom-windows-regression-2026-09-07.json). Raw PNG / JSON are in `packages/desktop/.e2e-artifacts/<run ID>/zoom-coordinates/`.
 
-覆盖限制与合并/发布检查：本次解决 SG-01 的 Windows 缺口，Linux 按本次任务范围未执行；macOS 只有下述历史基线结果，不能据此把当前补丁标为三平台通过。E2E 继续保留在 `manual-review/pending`，尚未纳入自动 CI gate；合并/发布记录须保留以上平台限制，宣称 macOS/Linux 验证通过前须在对应平台重跑。单机 forced DPI 不等于多显示器跨屏实测。
+Patch verification: 336 related unit tests, full `pnpm typecheck`, `pnpm lint` (43 existing warnings, 0 errors), E2E type check and case-local fixture check passed. Typecheck ran after temporarily isolating pre-existing unrelated workspace changes that are not part of this commit.
 
-## 历史基线验证（2026-09-07）
+Coverage limits and merge/release checks: this closes the Windows gap of SG-01; Linux was not run per this task's scope; macOS has only the historical baseline below and the current patch must not be marked three-platform passed on it. The E2E stays in `manual-review/pending` and is not yet an automatic CI gate; merge/release records must keep the platform limits above, and before claiming macOS/Linux verification passed it must be rerun on those platforms. A single machine with forced DPI is not the same as a multi-monitor cross-screen test.
 
-原分支 `8a669c3b9279bf3bf55d2ae7adbe5239c7644b94` 的 macOS arm64 / Electron 41.0.3 记录：case-local 模型回放驱动真实 Node REPL -> Host/Main -> Chromium，单 guest 连续 5 轮 0/+1/0/-2/+2，Fit/50% 下 15 次 trusted click 全命中，最大误差 1 px；PNG 均为 1280×720，按钮像素坐标一致，guest zoom=1。206 个相关单测、typecheck、lint（43 个已有 warning）、E2E 类型检查和 fixture check 通过。本次 Windows 补丁尚未在 macOS 重跑。
+## Historical baseline verification (2026-09-07)
 
-## Windows 执行方式
+macOS arm64 / Electron 41.0.3 record of the original branch `8a669c3b9279bf3bf55d2ae7adbe5239c7644b94`: case-local model replay drives the real Node REPL -> Host/Main -> Chromium; a single guest over 5 consecutive rounds 0/+1/0/-2/+2, all 15 trusted clicks hit under Fit/50% with max error 1 px; all PNGs 1280x720, button pixel coordinates agree, guest zoom=1. 206 related unit tests, typecheck, lint (43 existing warnings), E2E type check and fixture check passed. The Windows patch has not been rerun on macOS.
 
-在仓库根目录的 PowerShell 中设置 case-local replay；仅模型决策回放，Electron / guest / compositor / CDP / trusted input 均为真实执行：
+## How to run on Windows
+
+In PowerShell at the repository root, set the case-local replay; only model decisions are replayed, and Electron / guest / compositor / CDP / trusted input are all real:
 
 ```powershell
 $env:ZCODE_E2E_MANUAL_REVIEW = '1'
@@ -175,7 +177,7 @@ $env:E2E_PROVIDER_REPLAY_FIXTURE_PATH = "$fixtures/common.json,$fixtures/convers
 pnpm --filter @zcode/desktop test:e2e -- --spec './test/e2e/conversation-session/manual-review/pending/conversation-session-browser-zoom-coordinates.test.ts'
 ```
 
-DPI 扩展运行在同一 Windows 原生 Electron 上使用 `--force-device-scale-factor=1/1.5/2`，不代表三台不同物理 DPI 的机器。可在 `packages/desktop/.e2e-artifacts/browser-zoom-dpi.wdio.ts` 放置以下临时配置，再用 `pnpm --filter @zcode/desktop exec wdio run ./.e2e-artifacts/browser-zoom-dpi.wdio.ts --spec <上述 spec>` 执行：
+The DPI extension runs on the same Windows native Electron with `--force-device-scale-factor=1/1.5/2`, which does not represent three different physical-DPI machines. Place the following temporary config at `packages/desktop/.e2e-artifacts/browser-zoom-dpi.wdio.ts`, then run `pnpm --filter @zcode/desktop exec wdio run ./.e2e-artifacts/browser-zoom-dpi.wdio.ts --spec <the spec above>`:
 
 ```typescript
 import { config } from "../wdio.conf.js";
@@ -187,4 +189,4 @@ for (const capability of config.capabilities as Array<Record<string, any>>) {
 export { config };
 ```
 
-已有本分支构建时可设置 `ZCODE_E2E_SKIP_BUILD=1`、`ZCODE_E2E_SKIP_AGENT_BUILD=1`；renderer 必须使用 `VITE_ZCODE_E2E_STORE_BRIDGE=1` 构建。`pnpm typecheck` 的 host 输出与 tsup bundle 共用 `out/host`，必须与原生 E2E 串行；typecheck 后若再跑 E2E，应重建 tsup，不能复用被 tsc 覆盖的 host bundle。
+With an existing build of this branch you can set `ZCODE_E2E_SKIP_BUILD=1` and `ZCODE_E2E_SKIP_AGENT_BUILD=1`; the renderer must be built with `VITE_ZCODE_E2E_STORE_BRIDGE=1`. The host output of `pnpm typecheck` and the tsup bundle share `out/host`, so it must run serially with the native E2E; if the E2E runs after typecheck, rebuild tsup and do not reuse a host bundle overwritten by tsc.
