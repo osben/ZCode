@@ -18,7 +18,7 @@ explicit action makes the current task, that task's Composer and all pending que
 This continues [Todo71](./todo-71-persistent-composer-draft-and-submission-state.md) and
 [Todo151](./todo-151-independent-plan-state-draft.md); it adds only the explicit exception that the
 dialog's full access changes queued permissions, and does not reopen model selection or ordinary queue
-semantics. Historical conflict: [C26](../design-v2/evidence-and-contradictions.md#c26-审批框完全访问是否可以修改已接纳队列的权限).
+semantics. Historical conflict: [C26](../design-v2/evidence-and-contradictions.md#c26-can-approval-dialog-full-access-modify-permissions-of-an-accepted-queue).
 
 ## 2. Dialog options and display
 

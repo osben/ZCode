@@ -2,8 +2,8 @@
 
 > Status: implemented and reviewed (2026-09-16, executed on user authorization); Pro admin SSH E2E and
 > required checks passed; verification scope and platform boundaries are in section 8.
-> Final goal: [Design V2 §4.5](../design-v2/design.md#45-start-独立-providertodo154); historical ruling:
-> [C25](../design-v2/evidence-and-contradictions.md#c25-start-独立-provider-与现行单连接语义).
+> Final goal: [Design V2 §4.5](../design-v2/design.md#45-start-independent-provider-todo154); historical ruling:
+> [C25](../design-v2/evidence-and-contradictions.md#c25-start-independent-provider-vs-current-single-connection-semantics).
 > Code facts and investigation corrections: [research](../research/todo154-start-plan-independence-impact.md).
 > Follow-up: this Todo keeps the delivery record of its round; Air feedback and the supplementary audit's
 > final fix decisions are in [Todo156](todo-156-start-plan-followup-final-decisions.md) (pending unified
