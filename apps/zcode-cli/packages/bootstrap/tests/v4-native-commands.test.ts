@@ -1810,6 +1810,64 @@ describe("v4 原生 sendText：held choice 裁决（catalog B06/B07）", () => {
     expect(calls).toEqual(["clear", "send"]);
   });
 
+  it("ISSUE-063: held + clearQueueAndSend releases the stop hold after clearing, before the turn starts", async () => {
+    const calls: string[] = [];
+    const app = makeApp({
+      clearQueueItems: vi.fn().mockImplementation(async () => {
+        calls.push("clear");
+        return 1;
+      }),
+      setQueueAutoDrain: vi.fn().mockImplementation(async (autoDrain: boolean) => {
+        calls.push(`autoDrain:${autoDrain}`);
+      }),
+      completeExternalQueueDrain: vi.fn().mockImplementation(() => {
+        calls.push("completeDrain");
+      }),
+      sendInput: vi.fn().mockImplementation(async () => {
+        calls.push("send");
+        return { completion: Promise.resolve({}), kind: "started_turn", turnId: "turn-063" };
+      }),
+    });
+    const record = makeRecord({ app });
+    const host = makeHost(record, {
+      getInputRoutingMode: () => "choice",
+      clearQueuedTurnExecutions: vi.fn(() => {
+        calls.push("clearExecutions");
+      }),
+    });
+    await new V4CommandExecutor(host).execute(
+      envelope("sendText", { text: "新问题", heldQueueDisposition: "clearQueueAndSend" }),
+    );
+    await settle();
+    expect(calls).toEqual(["clear", "clearExecutions", "autoDrain:true", "completeDrain", "send"]);
+    // Nothing is left to promote: the release must not run the queue ready hook.
+    expect(host.legacyMutations).not.toContain("queue_auto_drain_resumed");
+  });
+
+  it("ISSUE-063: a failed hold release is logged and the send still starts", async () => {
+    const warn = vi.fn();
+    const app = makeApp({
+      clearQueueItems: vi.fn().mockResolvedValue(1),
+      setQueueAutoDrain: vi.fn().mockRejectedValue(new Error("append failed")),
+      completeExternalQueueDrain: vi.fn(),
+    });
+    const record = makeRecord({ app });
+    const host = makeHost(record, {
+      getInputRoutingMode: () => "choice",
+      logger: { info: vi.fn(), warn, error: vi.fn(), debug: vi.fn() } as never,
+    });
+    await new V4CommandExecutor(host).execute(
+      envelope("sendText", { text: "新问题", heldQueueDisposition: "clearQueueAndSend" }),
+    );
+    await settle();
+    expect(warn).toHaveBeenCalledWith(
+      "v4 clearQueueAndSend failed to release queue hold",
+      expect.objectContaining({ sessionId: "s1" }),
+    );
+    expect(app.completeExternalQueueDrain).not.toHaveBeenCalled();
+    expect(app.sendInput).toHaveBeenCalledTimes(1);
+  });
+
   it("held + startNow + clearQueueAndSend → 仍先清空 queue 再起 turn", async () => {
     const calls: string[] = [];
     const app = makeApp({
@@ -1883,7 +1941,11 @@ describe("v4 原生 sendText：held choice 裁决（catalog B06/B07）", () => {
   });
 
   it("held + keepQueueAndSend → 不清 queue 直接起 turn", async () => {
-    const app = makeApp({ clearQueueItems: vi.fn().mockResolvedValue(0) });
+    const app = makeApp({
+      clearQueueItems: vi.fn().mockResolvedValue(0),
+      setQueueAutoDrain: vi.fn().mockResolvedValue(undefined),
+      completeExternalQueueDrain: vi.fn(),
+    });
     const record = makeRecord({ app });
     const host = makeHost(record, { getInputRoutingMode: () => "choice" });
     await new V4CommandExecutor(host).execute(
@@ -1891,6 +1953,9 @@ describe("v4 原生 sendText：held choice 裁决（catalog B06/B07）", () => {
     );
     await settle();
     expect(app.clearQueueItems).not.toHaveBeenCalled();
+    // ISSUE-063: keep means the queue stays paused, so the hold is kept.
+    expect(app.setQueueAutoDrain).not.toHaveBeenCalled();
+    expect(app.completeExternalQueueDrain).not.toHaveBeenCalled();
     expect(app.sendInput).toHaveBeenCalled();
   });
 
