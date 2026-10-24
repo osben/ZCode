@@ -524,6 +524,7 @@ function subagentInfoFromToolPart(
       stringField(metadata, "agentType") ??
       stringField(input, "agent") ??
       stringField(input, "agentType") ??
+      stringField(input, "subagent_type") ??
       "subagent",
     childSessionId:
       stringField(output, "childSessionId") ??
@@ -731,6 +732,9 @@ function synthesizeSubagentLifecycle(
   status: "completed" | "failed" | "cancelled",
   push: PushEvent,
   turnId: string,
+  // The persisted Agent tool part's times; without them the synthetic events sit 1 ms apart and a
+  // reloaded row shows "1s" instead of its real duration.
+  time?: { start?: number; end?: number },
 ): void {
   const agentId = info.agentId ?? `subagent-${turnId}`;
   push(
@@ -745,6 +749,7 @@ function synthesizeSubagentLifecycle(
       status: "running",
     },
     turnId,
+    time?.start,
   );
   push(
     SessionEventType.SubagentStopped,
@@ -759,6 +764,7 @@ function synthesizeSubagentLifecycle(
       status,
     },
     turnId,
+    time?.end,
   );
 }
 
@@ -816,7 +822,13 @@ function synthesizeToolPart(
 
   const subagentInfo = subagentInfoFromToolPart(part);
   if (subagentInfo && started) {
-    synthesizeSubagentLifecycle(subagentInfo, subagentStatusFromToolPart(part), push, turnId);
+    synthesizeSubagentLifecycle(
+      subagentInfo,
+      subagentStatusFromToolPart(part),
+      push,
+      turnId,
+      "time" in part.state ? part.state.time : undefined,
+    );
   }
 
   if (part.state.status === "completed") {

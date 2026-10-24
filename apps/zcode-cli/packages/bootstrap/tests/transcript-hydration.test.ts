@@ -1643,6 +1643,42 @@ describe("transcript→event 合成", () => {
     });
   });
 
+  it("restores a finished foreground subagent row's real duration and type after cold hydration", () => {
+    const toolCallId = "call-agent-explore";
+    const messages = [
+      userMessage("u1", "study the repo", 1000),
+      assistantMessageWithParts(
+        "a1",
+        "u1",
+        [
+          {
+            id: "a1-tool-agent-explore" as never,
+            sessionID: "s1" as never,
+            messageID: "a1" as never,
+            type: "tool",
+            callID: toolCallId,
+            tool: "Agent",
+            state: {
+              status: "completed",
+              input: { description: "Study CLI runtime", subagent_type: "Explore", prompt: "go" },
+              output: "agentId: agent-explore\nCLI runtime overview",
+              title: "Agent Study CLI runtime",
+              metadata: {},
+              time: { start: 1_100, end: 292_000 },
+            },
+          },
+        ],
+        1001,
+      ),
+    ];
+
+    const { projection } = reduce(messages);
+    const row = projection
+      .getSnapshot()
+      .rows.window.find((item) => item.kind === "subagent" && item.parentToolCallId === toolCallId);
+    expect(row).toMatchObject({ startedAt: 1_100, endedAt: 292_000, subagentType: "Explore" });
+  });
+
   it("selection side chat 的继承历史只进 provider context，冷恢复时间线从新问题开始", () => {
     const inheritedUser = userMessage("u_selection_parent", "父任务问题", 1000);
     const inheritedAssistant = assistantMessage(
