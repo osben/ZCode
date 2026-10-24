@@ -1,40 +1,44 @@
 # Web Remote Control Relay Message Logging (Disabled)
 
-## 目的
+## Purpose
 
-记录远控 relay 消息链路的历史设计与当前关闭策略，避免高频消息摘要继续落盘到 `~/.zcode/v2/logs/web-remote-control`。
+Records the historical design of the remote-control relay message chain trace and its current disabled
+policy, so high-frequency message summaries are not written to `~/.zcode/v2/logs/web-remote-control` again.
 
-## 生效环境
+## Where it applies
 
-桌面端当前在开发环境和生产环境都不启用 relay message trace，不再写入 `~/.zcode/v2/logs/web-remote-control/web-remote-control-relay-YYYY-MM-DD.log`。
+The desktop currently enables no relay message trace in either development or production, and no longer
+writes `~/.zcode/v2/logs/web-remote-control/web-remote-control-relay-YYYY-MM-DD.log`.
 
-普通 Web 远控生命周期日志不受影响，仍写入主日志 `~/.zcode/v2/logs/YYYY-MM-DD.log`。
+Ordinary Web remote-control lifecycle logs are unaffected and still go to the main log `~/.zcode/v2/logs/YYYY-MM-DD.log`.
 
-## 覆盖范围
+## Coverage
 
-- 桌面端：`packages/desktop/src/main/web-remote-relay/webRemoteControlTransport.ts`
+- Desktop: `packages/desktop/src/main/web-remote-relay/webRemoteControlTransport.ts`
 
-## 日志内容
+## Log content
 
-历史 trace 只允许输出消息摘要，不允许输出完整 payload。若未来要重新启用，必须先更新本文件并重新评估日志体积与敏感信息风险。
+A historical trace may output only message summaries, never the full payload. To re-enable it in the
+future, this file must be updated first and the log volume and sensitive-information risk re-evaluated.
 
-历史摘要字段包括：
+Historical summary fields:
 
 - `type`
-- `pair_status`（若有）
-- `role`（若有）
-- `code`（若有）
-- `payload` 摘要：`zcode_type` / `requestId` / `bridgeSessionId`
-- 桌面端 `recv` 额外带 `bytes`
+- `pair_status` (if any)
+- `role` (if any)
+- `code` (if any)
+- `payload` summary: `zcode_type` / `requestId` / `bridgeSessionId`
+- desktop `recv` additionally carries `bytes`
 
-## 不记录内容
+## Not logged
 
-当前不记录 relay message trace。未来即使重新启用，也必须继续禁止输出 `data.payload` 全量正文，避免：
+No relay message trace is recorded now. Even if re-enabled in the future, outputting the full `data.payload`
+body must remain forbidden, to avoid:
 
-- 日志体积随消息流线性膨胀
-- 敏感信息泄露（文本内容、路径、请求参数）
-- 生产环境 I/O 压力与性能抖动
+- log volume growing linearly with the message flow
+- sensitive-information leaks (text content, paths, request parameters)
+- production I/O pressure and performance jitter
 
-## 典型日志前缀
+## Typical log prefix
 
-- 桌面端已禁用：`[web-remote-control][relay-message]`
+- Disabled on desktop: `[web-remote-control][relay-message]`

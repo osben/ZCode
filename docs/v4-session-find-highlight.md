@@ -1,27 +1,35 @@
 # V4 Session Find Highlight
 
-本文记录 V4 对话区搜索高亮的产品语义与实现边界。该能力覆盖两条入口：
+This document records the product semantics and implementation boundary of search highlighting in the
+V4 conversation area. The capability covers two entries:
 
-- `Cmd/Ctrl+F` 打开的任务查找框中的「对话」范围。
-- Command Center 中搜索并选中对话结果后的跳转临时高亮。
+- The "Conversation" scope of the task find box opened by `Cmd/Ctrl+F`.
+- The temporary jump highlight after searching in the Command Center and selecting a conversation result.
 
-## 产品语义
+## Product semantics
 
-- 搜索内容第一版只包含 `userInput.text` 和 `assistantText.text`，不搜索 tool、reasoning、timeline marker 或折叠区内部文本。
-- 匹配为大小写不敏感的纯文本查找，不支持正则；同一文本节点内命中不重叠。
-- V4 timeline 使用虚拟滚动，计数基于已加载投影 row 的数据索引；视觉高亮只作用于当前挂载 DOM。
-- 搜索会自动补拉更早历史，但最多补到本地窗口 `1200` 个投影 row。超过上限时只更新当前已加载范围的计数，不额外显示状态文案。
-- 分屏时只有 focused pane 消费 Cmd/Ctrl+F 搜索状态并上报计数，非 focused pane 不绘制高亮、不覆盖全局计数。
-- 会话处于 `running` 或 `prewarming` 时不启动历史补拉，不随 streaming delta 实时重排结果；当前轮稳定后重新计算并恢复高亮。
-- 后台补拉旧历史导致当前命中前方插入更多结果时，当前高亮按 `rowId + row kind + row 内命中序号` 锚定，不跳到别的匹配。
+- The first version searches only `userInput.text` and `assistantText.text`; it does not search tool,
+  reasoning, timeline marker or text inside collapsed regions.
+- Matching is case-insensitive plain-text search with no regex; hits within the same text node do not overlap.
+- The V4 timeline uses virtual scrolling; counts are based on the data index of loaded projection rows,
+  and the visual highlight applies only to the currently mounted DOM.
+- Search automatically back-fills older history, but only up to `1200` projection rows in the local
+  window. Beyond that limit only the count of the currently loaded range is updated, with no extra status text.
+- In split view only the focused pane consumes the Cmd/Ctrl+F search state and reports the count;
+  non-focused panes draw no highlight and do not override the global count.
+- While the session is `running` or `prewarming`, history back-fill does not start and results are not
+  reordered in real time by streaming deltas; after the current turn stabilizes the count is recomputed
+  and the highlight restored.
+- When background back-fill of older history inserts more results before the current hit, the current
+  highlight is anchored by `rowId + row kind + hit index within the row` and does not jump to another match.
 
-## 状态链路
+## State chain
 
 ```text
 Cmd/Ctrl+F
   -> App conversationFindQuery / activeIndex
   -> focused V4 SessionPane
-  -> ConversationTimeline 建立数据级 match index
+  -> ConversationTimeline builds the data-level match index
   -> report count / rebased activeIndex
   -> virtualizer.scrollToIndex(unitIndex)
   -> mounted row DOM
@@ -31,17 +39,16 @@ Cmd/Ctrl+F
 ```text
 Command Center result
   -> App searchResultHighlightRequest
-  -> Shell 按 taskId + workspaceKey 过滤
-  -> 目标 focused/primary V4 timeline
-  -> snippet/query 定位 match
+  -> Shell filters by taskId + workspaceKey
+  -> target focused/primary V4 timeline
+  -> snippet/query locates the match
   -> virtualizer scroll + temporary CSS Highlight
-  -> 3000ms 后清理并 onSearchResultHighlightDone(requestId)
+  -> after 3000ms clear and onSearchResultHighlightDone(requestId)
 ```
 
-## 实现边界
+## Implementation boundary
 
-- 不新增 app/agent 协议，复用现有 `rowsRange` / `loadOlder`。
-- CSS 使用 `--color-find-highlight` 和 `--color-find-highlight-active`，不新增颜色 token。
-- CSS Highlight API 不可用时保留计数与滚动能力，不实现 `<mark>` fallback。
-- Command Center 跳转高亮不打开 Cmd/Ctrl+F 查找框，也不写入 `conversationFindQuery`。
-
+- No new app/agent protocol; the existing `rowsRange` / `loadOlder` is reused.
+- CSS uses `--color-find-highlight` and `--color-find-highlight-active`; no new color token is added.
+- When the CSS Highlight API is unavailable, count and scroll ability are kept and no `<mark>` fallback is implemented.
+- The Command Center jump highlight does not open the Cmd/Ctrl+F find box and does not write `conversationFindQuery`.

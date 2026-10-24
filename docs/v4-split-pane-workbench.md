@@ -1,156 +1,236 @@
-# v4 多 pane 跨 workspace 工作台（分屏二期）
+# v4 multi-pane cross-workspace workbench (split phase 2)
 
-状态：**入口已全部下线（2026-10-16）**。Task 列表拖到对话区边缘创建拆分、
-侧栏会话项「在分屏打开」两个入口随 Side Pane 完整视图（`docs/ui/side-pane-full-view.md`）
-一起移除；pane chrome 的“向右拆分 / 向下拆分”按钮自 2026-07-13 起已不显示。
-已经存在的拆分布局与 workbench group 仍按本文渲染、聚焦和关闭，不做迁移。
-Task 列表拖到项目上移动任务不受影响。
+Status: **all entries retired (2026-10-16)**. The two entries, dragging a Task-list item to the
+conversation edge to create a split and the sidebar item "Open in split", were removed together with
+the Side Pane full view (`docs/ui/side-pane-full-view.md`); the pane chrome "split right / split down"
+buttons have been hidden since 2026-07-13. Existing split layouts and workbench groups are still
+rendered, focused and closed as described here, with no migration. Dragging a Task-list item onto a
+project to move the task is unaffected.
 
-## 目标
+## Goals
 
-把 M5⑤ 的「同 workspace 1+1 左右分屏」升级为「N pane 工作台」：
+Upgrade M5(5)'s "same-workspace 1+1 left-right split" to an "N-pane workbench":
 
-- 布局从单值 `splitPane` 升级为**二叉分割树**（VS Code editor groups 模型）：任意 pane 可向右/向下拆分，嵌套即得 2x2 等网格。叶子上限 `MAX_WORKBENCH_PANES = 4`（对齐 06-ui 性能验收基线「4 pane 同时流式不掉帧」；同时是 host 内 CLI 子进程数的软上限）。
-- pane 绑定升级为 `(workspaceScope, sessionId)`：pane 自带 workspace 归属，**不再限制同 workspace**；本地与远程（SSH/WSL/Docker）workspace 任意组合。
-- 连接层新增 `workspaceConnectionRegistry`：按 `endpointKey + workspaceKey` 引用计数复用 `transport + SessionDataLayer`（与 `sessionsIndexRegistry` 同构，多一层 30s keep-warm）。
-- primary pane（`workspace-main`）保持 shell 驱动（绑 `activeTaskId`，随 workspace tab 切换）；其余 pane 归 `paneLayoutStore` 自管、**跨 tab 常驻**——tabStore 及其 ~46 个 `activeTabId` 消费者零改动。
+- The layout goes from the single-value `splitPane` to a **binary split tree** (VS Code editor groups
+  model): any pane can split right/down, and nesting gives a 2x2 grid. The leaf limit is
+  `MAX_WORKBENCH_PANES = 4` (matching the 06-ui performance baseline "4 panes streaming at once without
+  dropped frames"; also a soft cap on CLI child processes in the host).
+- A pane binding becomes `(workspaceScope, sessionId)`: a pane carries its own workspace ownership,
+  **no longer restricted to the same workspace**; local and remote (SSH/WSL/Docker) workspaces combine freely.
+- The connection layer adds `workspaceConnectionRegistry`: it reuses `transport + SessionDataLayer`
+  by `endpointKey + workspaceKey` with reference counting (isomorphic to `sessionsIndexRegistry`, plus a 30 s keep-warm).
+- The primary pane (`workspace-main`) stays shell-driven (bound to `activeTaskId`, follows workspace
+  tab switches); the other panes are owned by `paneLayoutStore` and **stay resident across tabs**;
+  tabStore and its ~46 `activeTabId` consumers need zero change.
 
-## 连接拓扑
+## Connection topology
 
 ```text
-window renderer                          host / 远程 host                  CLI 进程
+window renderer                          host / remote host                CLI process
   pane(A/s1) ─┐
   pane(A/s2) ─┼─ workspaceConnectionRegistry
   pane(B/s3) ─┘   Map<endpointKey+workspaceKey,
   pane(R/s4) ─┐       { transport, SessionDataLayer, refCount, keepWarm }>
               │        │
-              │        ├─ 本地 scope ──→ base services.zcodeAgentService ──→ base local host
+              │        ├─ local scope ──→ base services.zcodeAgentService ──→ base local host
               │        │                   └─ processesByWorkspaceKey ┬─→ agent(A)  conversation/s1,s2
-              │        │                      （每 workspace 一个 CLI）└─→ agent(B)  conversation/s3
-              │        └─ 远程 scope ──→ sessionsById[remoteSessionId].services ──→ remote host ──→ agent(R)  conversation/s4
-              └─ 远程连接不在场 → 断连代理（rejects）→ pane 进 error/等待连接态，不另起 runtime
+              │        │                      (one CLI per workspace) └─→ agent(B)  conversation/s3
+              │        └─ remote scope ──→ sessionsById[remoteSessionId].services ──→ remote host ──→ agent(R)  conversation/s4
+              └─ remote connection absent → disconnected proxy (rejects) → pane enters error/waiting-for-connection, no separate runtime
 ```
 
-要点：
+Points:
 
-- conversation topic 只含 sessionId（`conversationTopic`），workspace 隔离靠 host 按 workspaceKey 分桶到独立 CLI 进程 + 下行帧按 workspaceKey emitter 过滤——协议面**零 schema 改动**即支持同窗口并发订阅 N 个 workspace。
-- 同 workspaceKey + endpointKey 的多个 pane 共享一条 transport + 一个 SessionDataLayer（同 session 多 pane 靠 layer 内 refCount 单订阅收口，不触发 CLI `(connectionId, topic)` 重订阅替换）。
-- 远程 pane 的 services 复用 `remoteWorkspaceSessionStore.sessionsById`（既有多连接 Map）；远程连接断开时 `useWorkspaceServices` 给出断连代理（所有 RPC reject），订阅失败落在投影 store 的 error 态 → pane 显示重连/等待占位。**禁止**为 pane 另起独立 SSH/runtime（远控保护约束）。
+- The conversation topic contains only the sessionId (`conversationTopic`); workspace isolation relies
+  on the host bucketing by workspaceKey into separate CLI processes plus downstream frames filtered by
+  the workspaceKey emitter, so the protocol surface supports concurrently subscribing to N workspaces
+  in one window with **zero schema change**.
+- Multiple panes with the same workspaceKey + endpointKey share one transport + one SessionDataLayer
+  (multiple panes of the same session converge to a single subscription through the layer refCount,
+  triggering no CLI `(connectionId, topic)` resubscribe replacement).
+- A remote pane's services reuse `remoteWorkspaceSessionStore.sessionsById` (the existing multi-connection
+  Map). When the remote connection drops, `useWorkspaceServices` gives a disconnected proxy (all RPCs
+  reject), the subscription failure lands in the projection store's error state, and the pane shows a
+  reconnect/waiting placeholder. **Never** start a separate SSH/runtime for a pane (remote-control protection constraint).
 
-## Layout 层：二叉分割树（paneLayoutStore v2）
+## Layout layer: binary split tree (paneLayoutStore v2)
 
 ```text
 LayoutNode = Leaf { paneId }
            | Split { id, direction: "row"|"column", ratio, first, second }
 
-ratio = first 占比，clamp [0.25, 0.75]（沿用一期 splitRatio 语义，每个 Split 节点独立一份）
+ratio = share of first, clamp [0.25, 0.75] (phase-1 splitRatio semantics, one per Split node)
 
-单 pane:          leaf(main)
-左右分屏:         split(row){ leaf(main), leaf(pane-1) }
-2x2 网格:         split(row){ split(col){ leaf(main), leaf(pane-2) },
+single pane:      leaf(main)
+left-right split: split(row){ leaf(main), leaf(pane-1) }
+2x2 grid:         split(row){ split(col){ leaf(main), leaf(pane-2) },
                               split(col){ leaf(pane-1), leaf(pane-3) } }
 ```
 
-- 状态：`{ root: LayoutNode, panes: Record<paneId, PaneBinding>, focusedPaneId }`；primary pane（`workspace-main`）是保留叶子——**不进 `panes`**，绑定沿用 shell props（activeTaskId）。
-- `PaneBinding = { workspaceScope, sessionId | null, restoredUnvalidated? }`；
-  `workspaceScope = { workspacePath, workspaceIdentity?, remoteSessionId? }`。
-- **`workspaceScope` 语义 = session 归属的主（primary）workspace，是连接路由键**；不是「session 能触达的全部路径」（见下文跨 workspace session 兼容）。
-- workspaceKey 口径统一 `workspaceIdentity?.trim() || workspacePath`（Workspace Identity 约束）。
-- 转移函数全部纯函数、no-op 返回原引用：`splitPaneAt`（叶子数达上限 no-op）、`closePane`（primary 不可关；父 Split 塌缩为兄弟节点）、`bindPaneSession`、`setSplitNodeRatio`、`focusPane`、`confirmRestoredPaneSession`。
-- Focus 层不变：`focusedPaneId` 单值；焦点 pane 不在树中时退化为 primary。全局快捷键（Esc stop、add-to-chat）路由到 focused pane（06-ui 分屏规则 4）。
-- 一期的「split 属于别的 workspace 时不渲染」规则**删除**——pane 自带 workspace，永远渲染、跨 tab 常驻。
+- State: `{ root: LayoutNode, panes: Record<paneId, PaneBinding>, focusedPaneId }`. The primary pane
+  (`workspace-main`) is a reserved leaf, **not in `panes`**, and its binding follows shell props (activeTaskId).
+- `PaneBinding = { workspaceScope, sessionId | null, restoredUnvalidated? }`;
+  `workspaceScope = { workspacePath, workspaceIdentity?, remoteSessionId? }`.
+- **`workspaceScope` semantics = the primary workspace the session belongs to, and is the connection
+  routing key**; it is not "all paths the session can reach" (see cross-workspace session compatibility below).
+- The workspaceKey convention is uniformly `workspaceIdentity?.trim() || workspacePath` (Workspace Identity constraint).
+- Transition functions are all pure and return the original reference on no-op: `splitPaneAt` (no-op
+  when the leaf count is at the limit), `closePane` (primary cannot be closed; the parent Split
+  collapses into the sibling node), `bindPaneSession`, `setSplitNodeRatio`, `focusPane`,
+  `confirmRestoredPaneSession`.
+- Focus layer unchanged: `focusedPaneId` is a single value; when the focused pane is not in the tree it
+  degrades to primary. Global shortcuts (Esc stop, add-to-chat) route to the focused pane (06-ui split rule 4).
+- Phase 1's rule "do not render when the split belongs to another workspace" is **removed**: a pane
+  carries its own workspace and always renders, resident across tabs.
 
-### 持久化 v2 与迁移
+### Persistence v2 and migration
 
-- key `zcode-v4-pane-layout:v2`：整树 + `panes` 绑定（scope + sessionId）+ `focusedPaneId`。`restoredUnvalidated` 不持久化，恢复时对非空 sessionId 补标。
-- 兼容读取 v1（`zcode-v4-pane-layout:v1` 单值 splitPane）：v1 只存了 `workspaceKey`，仅当它是可信本地路径（`/...` 或 `X:\...`）时迁移为 `split(row){ main, split }`（scope.workspacePath = workspaceKey），否则丢弃回单 pane。损坏数据整体丢弃回初始布局（沿用一期 sanitize 哲学，不做部分救回）。
+- Key `zcode-v4-pane-layout:v2`: the whole tree + `panes` bindings (scope + sessionId) + `focusedPaneId`.
+  `restoredUnvalidated` is not persisted and is added on restore for a non-empty sessionId.
+- v1 (`zcode-v4-pane-layout:v1`, single-value splitPane) is read compatibly: v1 stored only
+  `workspaceKey`, and only when it is a trusted local path (`/...` or `X:\...`) is it migrated to
+  `split(row){ main, split }` (scope.workspacePath = workspaceKey); otherwise it is dropped back to a
+  single pane. Corrupt data is dropped wholesale back to the initial layout (phase-1 sanitize
+  philosophy, no partial rescue).
 
-## 连接层：workspaceConnectionRegistry
+## Connection layer: workspaceConnectionRegistry
 
-- 模块级注册表（与 `sessionsIndexRegistry` 同构）：key = `endpointKey(remoteSessionId ?? "__base__") + workspaceKey`。
-- `acquireWorkspaceConnection(scope, agentService)` → `{ layer, transport, release }`；首个引用创建 `createAgentConversationTransport + SessionDataLayer`，refCount 归零后 **30s keep-warm** 再 dispose（防 pane 关/开、布局拖拽抖动）。
-- 条目记住创建它的 `agentService` 引用：同 key 再次 acquire 时若 service 引用变化（远程断连→重连后 services 换新），旧条目立即失效移出注册表（存量租约继续持有直至 release），新条目用新 service 重建——重连恢复不需要手动刷新。
-- services 解析归 React 层（`V4PaneConversationProvider` 内 `useWorkspaceServices(path, remoteSessionId, identity)`）：远程目标断连时得到断连代理，订阅失败 → pane error 态 + 重试按钮；**不回落 base services**（避免远程 task 被本机 host 查询）。
+- A module-level registry (isomorphic to `sessionsIndexRegistry`): key = `endpointKey(remoteSessionId ?? "__base__") + workspaceKey`.
+- `acquireWorkspaceConnection(scope, agentService)` → `{ layer, transport, release }`; the first
+  reference creates `createAgentConversationTransport + SessionDataLayer`, and once refCount reaches
+  zero it waits a **30 s keep-warm** before dispose (guards against pane close/open and layout-drag jitter).
+- The entry remembers the `agentService` reference that created it: when the same key is acquired again
+  and the service reference changed (remote disconnect→reconnect swaps in new services), the old entry
+  is invalidated and removed from the registry at once (existing leases hold until release) and a new
+  entry is rebuilt with the new service; reconnect recovery needs no manual refresh.
+- Services resolution belongs to the React layer (`useWorkspaceServices(path, remoteSessionId, identity)`
+  inside `V4PaneConversationProvider`): a disconnected remote target gets a disconnected proxy and a
+  subscription failure becomes a pane error state + retry button; it **does not fall back to base
+  services** (so a remote task is never queried by the local host).
 
-## per-pane Provider
+## Per-pane Provider
 
-- `V4PaneConversationProvider({ scope, isShellWorkspace, children })`：per-pane 包裹。
-  - `isShellWorkspace = pane scope 的 workspaceKey === shell 当前 workspace`：成立时直接用上下文 services（与一期行为逐字节一致，web 宽屏远控 shell 也走这条），否则经 `useWorkspaceServices` 按 scope 解析（跨 workspace pane 仅桌面入口可创建）。
-  - 内层包 `ServiceProvider services={paneServices}`：pane 子树的附件上传、sessions-index 守卫等 hook 用 pane 自己的 accessor。
-  - context 形状不变（`{ layer, sendCommand, attachmentPut }`），`SessionPane` 零感知。
-- 手机 `/remote` 的 `V4ChatPane`（单 pane，无分屏）继续用原 `V4ConversationProvider`（per-workspace 直建），远控 replayable 链路不动。
+- `V4PaneConversationProvider({ scope, isShellWorkspace, children })`: wraps per pane.
+  - `isShellWorkspace = pane scope's workspaceKey === the shell's current workspace`: when true, use the
+    context services directly (byte-for-byte identical to phase 1, and the web wide-screen remote shell
+    also takes this path); otherwise resolve by scope through `useWorkspaceServices` (a cross-workspace
+    pane can only be created from the desktop entry).
+  - An inner `ServiceProvider services={paneServices}`: hooks in the pane subtree (attachment upload,
+    sessions-index guard, etc.) use the pane's own accessor.
+  - The context shape is unchanged (`{ layer, sendCommand, attachmentPut }`); `SessionPane` is unaware.
+- Mobile `/remote`'s `V4ChatPane` (single pane, no split) keeps the original `V4ConversationProvider`
+  (built directly per workspace); the remote replayable chain is untouched.
 
-## 恢复守卫（per-pane 泛化）
+## Restore guard (generalized per pane)
 
 ```text
-恢复时序（每个 restoredUnvalidated pane 独立）：
+Restore sequence (each restoredUnvalidated pane independently):
 
-localStorage ─→ paneLayoutStore(v2 恢复, 补 restoredUnvalidated)
+localStorage ─→ paneLayoutStore (v2 restore, add restoredUnvalidated)
                     │
-V4PaneWorkbench ────┼─→ pane 渲染（先渲染，不阻塞）
+V4PaneWorkbench ────┼─→ pane renders (renders first, not blocked)
                     └─→ PaneRestoredGuard(pane scope)
                           acquireSessionsIndex({ workspaceKey, endpointKey: remoteSessionId })
-                          等首个真 snapshot（workspaceId !== null）
-                            ├─ session 在场 → confirmRestoredPaneSession(paneId)
-                            ├─ session 已删 → closePane(paneId)
-                            └─ 订阅失败/远程 endpoint 不在场 → 不判定，pane 保留为
-                               error/等待连接态（交由 pane 自身 retry 兜底，不误关）
+                          wait for the first real snapshot (workspaceId !== null)
+                            ├─ session present → confirmRestoredPaneSession(paneId)
+                            ├─ session deleted → closePane(paneId)
+                            └─ subscription failed / remote endpoint absent → no verdict, pane stays
+                               in error/waiting-for-connection state (the pane's own retry handles it, no wrongful close)
 ```
 
-对数据层的契约：**session 会且只会出现在其主 workspace 的 sessions-index 里**——守卫按 pane 的主 workspace scope 查找即完备（跨 workspace session 落地后仍然成立）。
+Contract with the data layer: **a session appears, and only appears, in its primary workspace's
+sessions-index**; the guard is complete when it looks up by the pane's primary workspace scope (still
+true once cross-workspace sessions land).
 
-## 入口
+## Entries
 
-- 拖拽、侧栏会话项「在分屏打开」和普通 session 点击统一进入 `workbenchSessionPlacement`：纯 resolver 决定 current guard、focus existing、split draft、create/extend group 或 replace focused pane，executor 再按“pane/group owner 先更新，shell active 后同步”的顺序提交。拖拽只接受实际 split decision 并传入命中的 side/anchor；右键默认向右且允许 focus existing；普通点击使用 selection intent。task 项携带完整的 workspacePath/workspaceIdentity/remoteSessionId，跨 workspace 判等使用 workspaceKey。入口闸门 `V4SplitPaneEntryProvider`（桌面 shell 且非远控）语义不变。
-- pane chrome（2026-07-08 裁决）：不再渲染占布局高度的横向 header 条。拆分入口「向右拆分 / 向下拆分」（draft，绑当前 pane 的 workspaceScope）和「关闭 pane」（primary 无关闭）统一放在 pane 右上角悬浮操作组里，避免挤占对话内容首行。非 primary 且 workspace ≠ shell 当前 workspace 时，workspace 名徽标进入同一悬浮组左侧（远程加主机标识）。徽标是纯展示位，未来跨 workspace session 的「A +2」多路径徽标在此扩展。
-- **临时下线（2026-07-13）**：对话区域 pane chrome 暂不展示「向右拆分 / 向下拆分」两个按钮；保留底层二叉布局、拆分回调接口、关闭 pane、workspace 徽标及侧栏「在分屏打开」入口，后续恢复 chrome 入口时无需迁移状态或协议。
+- Drag, the sidebar item "Open in split" and ordinary session click all enter `workbenchSessionPlacement`:
+  a pure resolver decides the current guard, focus existing, split draft, create/extend group or replace
+  focused pane, and the executor then commits in the order "pane/group owner updates first, shell active syncs after".
+  Drag accepts only an actual split decision and passes the hit side/anchor; right-click defaults to
+  right and allows focus existing; ordinary click uses a selection intent. A task item carries the full
+  workspacePath/workspaceIdentity/remoteSessionId, and cross-workspace equality uses workspaceKey. The
+  entry gate `V4SplitPaneEntryProvider` (desktop shell and not remote-controlled) is unchanged.
+- Pane chrome (ruling 2026-07-08): no more horizontal header strip that takes layout height. The split
+  entries "split right / split down" (draft, bound to the current pane's workspaceScope) and "close
+  pane" (primary has no close) go into a floating action group at the pane's top right, so they do not
+  take the first line of conversation content. For a non-primary pane whose workspace differs from the
+  shell's current workspace, the workspace name badge goes into the left of the same floating group
+  (plus a host marker for remote). The badge is display only; the future cross-workspace session
+  "A +2" multi-path badge extends here.
+- **Temporarily retired (2026-07-13)**: the conversation-area pane chrome does not show the "split
+  right / split down" buttons; the underlying binary layout, split callback interface, close pane,
+  workspace badge and the sidebar "Open in split" entry are kept, so restoring chrome entries later
+  needs no state or protocol migration.
 
-## 与「跨 workspace session」的兼容（未来输入，本期预埋）
+## Compatibility with "cross-workspace session" (future input, reserved this phase)
 
-未来的跨 workspace session = 一个主 workspace + 多个辅助路径（agent 可操作的额外目录），主/辅同 endpoint，关系记录在数据层。本期钉死四条：
+A future cross-workspace session = one primary workspace + several auxiliary paths (extra directories
+the agent can operate on), primary and auxiliary on the same endpoint, with the relation recorded in
+the data layer. Four points are fixed this phase:
 
-1. `PaneBinding.workspaceScope` 语义固定为 **primary workspace**（连接路由键）；辅助路径是 session 属性（经 projection/sessions-index 下发），不进布局层——届时 `paneLayoutStore` 零 schema 变更。
-2. 连接注册表按主 workspace 路由（跨 workspace session 仍是单 agent 单连接）；不留「多 workspace 连接聚合」的 API 口子。
-3. workspaceKey 判等只用于归属/隔离，绝不用于「路径能力」推导；辅助路径的 UI 呈现是纯展示增量。
-4. 主/辅同 endpoint 约束由创建入口保证；pane 工作台不做跨 endpoint 聚合假设。
+1. `PaneBinding.workspaceScope` semantics are fixed as the **primary workspace** (connection routing
+   key); auxiliary paths are a session property (delivered through projection/sessions-index) and do
+   not enter the layout layer, so `paneLayoutStore` needs zero schema change then.
+2. The connection registry routes by primary workspace (a cross-workspace session is still one agent,
+   one connection); no API hook for "multi-workspace connection aggregation" is left.
+3. workspaceKey equality is used only for ownership/isolation, never to derive "path capability"; the
+   UI presentation of auxiliary paths is a pure display increment.
+4. The same-endpoint constraint for primary/auxiliary is guaranteed by the creation entry; the pane
+   workbench assumes no cross-endpoint aggregation.
 
-协议扩展路径（届时 additive，不改既有字段）：`createSession` payload 加 `auxiliaryPaths?`；sessions-index item 透出主/辅关系。
+Protocol extension path (additive then, existing fields unchanged): `createSession` payload gets
+`auxiliaryPaths?`; sessions-index items expose the primary/auxiliary relation.
 
-## 协议面备忘（本期结论）
+## Protocol notes (conclusions this phase)
 
-- **零 schema 改动**。已补的实现缺口：CLI `v4-bridge.createSessionRecord` 的 `workspaceId` 从「一律当本地 workspacePath」升级为经远程 identity 对偶解析（`buildRemoteWorkspaceIdentity` 家族，不手写拼接）——远程 pane 里 draft 首发建会话的前置。
-- `visibility: foreground/background` 订阅字段协议已预留、CLI 未消费；4 pane 同时流式若实测掉帧，再做 CLI flush 按 visibility 分级（additive）。
-- conversation subscribe 无 `subscriberScope`（host 进程级单 connectionId + 每 topic 单订阅已收口）；仅当未来出现「同 session 多个独立订阅消费者」需要参照 sessions-index 增补。
+- **Zero schema change.** Implementation gap already filled: the CLI `v4-bridge.createSessionRecord`
+  `workspaceId` was upgraded from "always treated as a local workspacePath" to being resolved through the
+  remote identity counterpart (the `buildRemoteWorkspaceIdentity` family, never hand-concatenated), a
+  prerequisite for the first send of a draft in a remote pane creating the session.
+- The `visibility: foreground/background` subscription field is reserved by the protocol and unconsumed
+  by the CLI; if 4 panes streaming at once drops frames when measured, add CLI flush tiering by
+  visibility (additive).
+- conversation subscribe has no `subscriberScope` (the host process-level single connectionId + one
+  subscription per topic already converges); add it by reference to sessions-index only if "multiple
+  independent subscription consumers of the same session" appear in the future.
 
-## 实施改动面清单（按落地顺序）
+## Implementation change list (in landing order)
 
-| # | 触点 | 改动 |
+| # | Touchpoint | Change |
 | --- | --- | --- |
-| 1 | `packages/ui/src/v4/paneLayoutStore.ts` | 重写为 v2：二叉分割树 + `panes: Record<paneId, PaneBinding>` + 持久化 v2（`zcode-v4-pane-layout:v2`）与 v1 迁移；删除 `splitPaneForWorkspace` 可见性规则。新 pane id 取树内 `pane-<n>` 最大序号 +1（v1 迁移保留 `split` id） |
-| 2 | `packages/ui/test/v4PaneLayoutStore.test.ts` | 单测重写：树操作/上限/塌缩/v1 迁移/focus 退化/持久化闭环 |
-| 3 | `packages/ui/src/v4/workspaceConnectionRegistry.ts`（新建） | 引用计数 + 30s keep-warm + agentService 换代失效；模式对照 `sessionsIndexRegistry.ts` |
-| 4 | `packages/ui/src/v4/V4ConversationContext.tsx` | 新增 `V4PaneConversationProvider`（注册表租约 + pane 级 `ServiceProvider` 包裹 + `isShellWorkspace` 走上下文 services）；原 `V4ConversationProvider` 保留给手机 `V4ChatPane` |
-| 5 | `packages/ui/src/v4/V4WorkspaceChatArea.tsx` | 重写为递归分割树渲染；`SplitPaneDivider` 泛化（direction 感知 + per-node CSS 变量 `--v4-split-<nodeId>`，拖动仍 rAF 直写零渲染）；per-pane 恢复守卫组件化（`PaneRestoredGuard`） |
-| 6 | `packages/ui/src/v4/SessionPane.tsx` | Esc-stop 与 add-to-chat 监听从「仅 primary」改为「focused pane」（06-ui 分屏规则 4）；新增拆分/关闭/徽标 props 透传 |
-| 7 | `packages/ui/src/v4/ConversationHeader.tsx` | 「分屏/关闭分屏」改「向右拆分/向下拆分/关闭 pane」+ workspace 徽标（非 primary 且 ≠ shell 当前 workspace 时显示，远程加主机标识）；文案进 i18n 两语言 |
-| 8 | `packages/ui/src/v4/workbenchSessionPlacement.ts` / `V4WorkspaceChatArea.tsx` / `app-shell/WorkspaceShellLayout.tsx` | 拖拽、右键分屏和普通点击共享 placement resolver/executor；入口只提供 intent、side、anchor 和完整 workspace scope，叶子达上限且目标无已有归属时禁用 |
-| 9 | subagent child 详情 | 已迁移到 workspace 右侧 tabs，不再进入 split-pane workbench；普通 session「在分屏打开」保持不变 |
-| 10 | `packages/ui/src/v4/index.ts` | 导出面更新（新旧转移函数/类型替换） |
-| 11 | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts` | `createSessionRecord` 的 `workspaceId` 经远程 identity 对偶解析（`buildRemoteWorkspaceIdentity` 家族），补单测——远程 pane draft 首发建会话的前置 |
-| 12 | 历史三条 `conversation-session-v4-split*.test.ts` | 2026-07-13 因显式按钮下线而删除；Task 列表拖拽入口的回归覆盖仍需维护 |
+| 1 | `packages/ui/src/v4/paneLayoutStore.ts` | Rewrite as v2: binary split tree + `panes: Record<paneId, PaneBinding>` + persistence v2 (`zcode-v4-pane-layout:v2`) and v1 migration; delete the `splitPaneForWorkspace` visibility rule. A new pane id is the largest `pane-<n>` in the tree plus 1 (v1 migration keeps the `split` id) |
+| 2 | `packages/ui/test/v4PaneLayoutStore.test.ts` | Rewrite unit tests: tree ops / limit / collapse / v1 migration / focus degradation / persistence round trip |
+| 3 | `packages/ui/src/v4/workspaceConnectionRegistry.ts` (new) | Ref counting + 30 s keep-warm + agentService generation invalidation; pattern after `sessionsIndexRegistry.ts` |
+| 4 | `packages/ui/src/v4/V4ConversationContext.tsx` | Add `V4PaneConversationProvider` (registry lease + pane-level `ServiceProvider` wrapper + `isShellWorkspace` using context services); keep the original `V4ConversationProvider` for mobile `V4ChatPane` |
+| 5 | `packages/ui/src/v4/V4WorkspaceChatArea.tsx` | Rewrite as recursive split-tree rendering; generalize `SplitPaneDivider` (direction-aware + per-node CSS variable `--v4-split-<nodeId>`, dragging still rAF direct write with zero render); componentize the per-pane restore guard (`PaneRestoredGuard`) |
+| 6 | `packages/ui/src/v4/SessionPane.tsx` | Esc-stop and add-to-chat listeners change from "primary only" to "focused pane" (06-ui split rule 4); add split/close/badge props pass-through |
+| 7 | `packages/ui/src/v4/ConversationHeader.tsx` | "Split/close split" becomes "split right/split down/close pane" + workspace badge (shown when non-primary and different from the shell's current workspace, plus a host marker for remote); copy goes into both i18n languages |
+| 8 | `packages/ui/src/v4/workbenchSessionPlacement.ts` / `V4WorkspaceChatArea.tsx` / `app-shell/WorkspaceShellLayout.tsx` | Drag, right-click split and ordinary click share the placement resolver/executor; entries supply only intent, side, anchor and the full workspace scope; disabled when the leaf count is at the limit and the target has no existing ownership |
+| 9 | subagent child detail | Already migrated to the workspace right tabs and no longer enters the split-pane workbench; ordinary session "Open in split" is unchanged |
+| 10 | `packages/ui/src/v4/index.ts` | Export surface update (new/old transition functions/types swapped) |
+| 11 | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts` | `createSessionRecord`'s `workspaceId` resolved through the remote identity counterpart (the `buildRemoteWorkspaceIdentity` family), with unit tests, a prerequisite for the first send of a remote-pane draft creating the session |
+| 12 | three historical `conversation-session-v4-split*.test.ts` | Deleted on 2026-07-13 when the explicit buttons were retired; regression coverage of the Task-list drag entry still needs maintaining |
 
-不动的面：`tabStore`（及其 ~46 个 `activeTabId` 消费者）、`splitPaneEntryContext` 闸门语义、手机 `/remote` 的 `V4ChatPane` 链路、`zcode-protocol-v4` schema、host/services 层（`processesByWorkspaceKey` 分桶已就绪）。
+Untouched: `tabStore` (and its ~46 `activeTabId` consumers), `splitPaneEntryContext` gate semantics,
+mobile `/remote`'s `V4ChatPane` chain, the `zcode-protocol-v4` schema, the host/services layer
+(`processesByWorkspaceKey` bucketing is already in place).
 
-已核实的关键事实（实施时可直接依赖）：
+Verified key facts (can be relied on during implementation):
 
-- host 侧 `conversationFrameEmitters` / `processesByWorkspaceKey` 均按 workspaceKey 分桶，同窗口并发订阅 N 个 workspace 无单值假设；
-- `remoteWorkspaceSessionStore` 已有 `sessionsById` 多连接 Map 与 `resolveRegisteredWorkspaceServices`；但远程目标断连时**必须**走 `useWorkspaceServices` 的断连代理路径，不得回落 base services；
-- `sessionsIndexRegistry` 已按 `endpointKey + workspaceKey` 隔离，per-pane 恢复守卫可直接复用；
-- e2e 既有契约：`v4-pane-shell-<paneId>`（`data-pane-id`/`data-focused`）、`v4-session-pane-<paneId>`、`TID_V4_SPLIT_OPEN/CLOSE/DIVIDER`、侧栏 `TID_V4_TASK_OPEN_IN_SPLIT`、localStorage key（v1→v2 需同步 helper 常量）。
+- Host-side `conversationFrameEmitters` / `processesByWorkspaceKey` are both bucketed by workspaceKey,
+  with no single-value assumption for concurrent subscription to N workspaces in one window;
+- `remoteWorkspaceSessionStore` already has the `sessionsById` multi-connection Map and
+  `resolveRegisteredWorkspaceServices`, but a disconnected remote target **must** take the
+  `useWorkspaceServices` disconnected-proxy path and must not fall back to base services;
+- `sessionsIndexRegistry` already isolates by `endpointKey + workspaceKey`, so the per-pane restore guard can reuse it directly;
+- Existing e2e contracts: `v4-pane-shell-<paneId>` (`data-pane-id`/`data-focused`), `v4-session-pane-<paneId>`,
+  `TID_V4_SPLIT_OPEN/CLOSE/DIVIDER`, sidebar `TID_V4_TASK_OPEN_IN_SPLIT`, the localStorage key (v1→v2
+  requires syncing the helper constants).
 
-## 验证基线
+## Verification baseline
 
-- 单测：paneLayoutStore v2 状态机（树操作/上限/塌缩/v1 迁移/focus 退化/持久化闭环）、workspaceConnectionRegistry（计数/keep-warm/service 换代/复用）。
-- E2E（testid 契约）：`TID_V4_PANE_SHELL`/`TID_V4_SESSION_PANE` 动态后缀 paneId 不变；分隔条 `TID_V4_SPLIT_DIVIDER` 带 data-split-id；主流程（开分屏→draft 首发绑定→拖宽→刷新恢复→关闭）沿用既有三条 split e2e。
-- 性能基线（06-ui）：4 pane 同时流式输出交互不掉帧。
-- 待补验证项：远程 pane 真机 SSH 回归（断连占位/重连恢复/远程 draft 建会话）。
+- Unit tests: paneLayoutStore v2 state machine (tree ops / limit / collapse / v1 migration / focus degradation / persistence round trip), workspaceConnectionRegistry (count / keep-warm / service generation / reuse).
+- E2E (testid contract): `TID_V4_PANE_SHELL`/`TID_V4_SESSION_PANE` dynamic paneId suffix unchanged; the divider `TID_V4_SPLIT_DIVIDER` carries data-split-id; the main flow (open split → draft first-send binding → drag wider → refresh restore → close) reuses the existing three split e2e.
+- Performance baseline (06-ui): 4 panes streaming at once without interaction frame drops.
+- Verification still to add: real-machine SSH regression for remote panes (disconnect placeholder / reconnect recovery / remote draft session creation).

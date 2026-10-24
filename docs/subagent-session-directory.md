@@ -1,14 +1,15 @@
 # Subagent Session Directory
 
-## 目标
+## Goal
 
-父 Session 的子智能体状态使用一份只读投影，同时驱动 composer 实时入口、右上角摘要、
-子智能体目录和失效 tab 清理。目录只展示当前有效 conversation branch 中能够可靠关联到
-已持久化 `subagent_child` session 的 Agent/Task 调用，不创建占位 session，也不新增数据库表。
+A parent Session's subagent state is one read-only projection that drives the composer's live entry,
+the top-right summary, the subagent directory and stale-tab cleanup. The directory shows only
+Agent/Task calls in the currently effective conversation branch that can be reliably tied to a
+persisted `subagent_child` session. It creates no placeholder session and adds no database table.
 
-Workflow activity 不进入该投影，现有 Workflow 数据结构和交互保持不变。
+Workflow activity does not enter this projection; existing Workflow data structures and interactions are unchanged.
 
-## 权威与查询
+## Authority and query
 
 ```text
 child runtime ── persist subagent_child session ── SubagentSpawned/status/stopped
@@ -16,103 +17,119 @@ child runtime ── persist subagent_child session ── SubagentSpawned/statu
                                                    ▼
 CLI ProductProjection V4 snapshot.subagents
 ├─ revision
-├─ childSessionIds[]（当前 branch manifest）
-├─ running[]（完整、不分页）
+├─ childSessionIds[] (current branch manifest)
+├─ running[] (complete, not paged)
 └─ endedTotal
        │
        ├─ desktop-continuous ────────────────┐
-       └─ web-remote-replayable snapshot/gap ├─ UI 纯消费
-                                             └─ UI 仅用 session/subagents 查询 ended 分页详情
+       └─ web-remote-replayable snapshot/gap ├─ UI is a pure consumer
+                                             └─ UI uses session/subagents only to query ended paged details
 ```
 
-- V4 `snapshot.subagents` 是当前 branch 的唯一运行态权威；composer 数量、状态摘要、运行项、
-  child tab 失效清理都直接消费该投影，不再另发 `session/subagents` 查询来重建 running 状态。
-- UI 对 `session/subagents` 仅消费已结束详情的 keyset 分页，不参与运行中成员计数或 tab
-  manifest；响应中的旧 running/manifest 字段只作协议兼容与 CLI 冷恢复校验，不再是 renderer 权威。
-- `SubagentSpawned` 对外可见前，child session 必须已经持久化且可读取为
-  `taskType=subagent_child`。run、background start 和 resume 使用同一顺序，不允许投影先公布一个
-  尚不存在的 child，也不通过 renderer 延迟、轮询或切换 Session 自愈。
-- 同一次 CLI 投影提交原子更新 `childSessionIds`、`running`、`endedTotal` 和对应 Agent row；
-  UI 不在事件和查询之间做二次拼接。`revision` 只随该投影提交递增，迟到或重复 delta 不得回退状态。
+1. V4 `snapshot.subagents` is the single running-state authority of the current branch. The composer
+   count, status summary, running items and child-tab invalidation cleanup all consume it directly; no
+   separate `session/subagents` query rebuilds running state.
+2. The UI consumes `session/subagents` only for keyset paging of ended details. It takes no part in
+   counting running members or the tab manifest; the old running/manifest fields in the response are
+   only protocol compatibility and CLI cold-recovery verification and are no longer renderer authority.
+3. Before `SubagentSpawned` becomes externally visible, the child session must already be persisted and
+   readable as `taskType=subagent_child`. run, background start and resume use the same order; the
+   projection must not announce a child that does not exist yet, and there is no self-healing through
+   renderer delays, polling or session switching.
+4. One CLI projection commit atomically updates `childSessionIds`, `running`, `endedTotal` and the
+   matching Agent row; the UI does no second stitching between events and queries. `revision` increases
+   only with that projection commit, and a late or duplicate delta must not roll back state.
+5. The active branch uses the append-only transcript's `keptMessageIDs + branchCutAfterMessageID`
+   semantics; compact compresses only the provider context and does not delete directory members.
+6. A child on an old branch removed by edit/retry leaves the projection at once; fork inherits copies of
+   reliable ended `childSessionId` references in the transcript but does not inherit the original
+   Session's running state.
+7. Association prefers the `childSessionId` in tool output/metadata. When a foreground completion result
+   has only a stable `agentId`, build the official `sess_subagent_{agentId}` identity per the Agent
+   runtime rule and verify again that the session really exists with `taskType=subagent_child`. A running
+   foreground uses the parent event log's `parentToolCallId -> childSessionId` relation and must still
+   hit an active-branch tool call; never guess by title, time or list position.
+8. A child that has run is normally already persisted after a model request, tool or cancel failure; if
+   the failure happens before the first persistence, or history cannot reliably prove the child
+   association, no stub is shown.
+9. `running` includes foreground, background, blocked and waiting; success, failed, cancelled and lost
+   all belong to `ended`, and each item keeps its concrete state.
+10. Cold recovery first rebuilds rows from the persisted transcript and then validates members against
+    the verified `taskType=subagent_child` fact in the session store; ambiguous, unpersisted or
+    branch-cut references in old history cannot enter `snapshot.subagents`. The running recovery state is
+    completed by the runtime overlay and not guessed from history titles or times.
+11. The ended query response carries an independent query `revision`, uses a stable keyset cursor, 20
+    per page, newest first. `snapshot.subagents.childSessionIds` is the current branch's tab invalidation
+    list, not a second copy of display data.
 
-- active branch 使用 append-only transcript 的 `keptMessageIDs + branchCutAfterMessageID` 语义；
-  compact 只压缩 provider context，不删除目录成员。
-- edit/retry 移除的旧分支 child 立即退出投影；fork 继承复制 transcript 中可靠的已结束
-  `childSessionId` 引用，但不继承原 Session 的运行态。
-- 关联优先读取 tool output/metadata 中的 `childSessionId`；foreground 完成结果只有稳定
-  `agentId` 时，按 Agent runtime 的正式 `sess_subagent_{agentId}` 身份规则构造并再次验证对应
-  session 确实存在且 `taskType=subagent_child`。运行中的 foreground 使用 parent event log 的
-  `parentToolCallId -> childSessionId` 关系，并且仍须命中 active branch tool call；不按标题、时间
-  或列表位置猜测。
-- 已运行 child 在模型请求、工具或取消失败后通常已经持久化；若失败发生在首次持久化之前，
-  或历史记录无法可靠证明 child 关联，则不展示 stub。
-- `running` 包含 foreground、background、blocked 和 waiting；success、failed、cancelled、lost
-  统一属于 `ended`，每项继续保留具体状态。
-- 冷恢复先从持久 transcript 重建 row，再以 session store 中已验证的
-  `taskType=subagent_child` 事实校验成员；旧历史里模糊、未持久或已被 branch cut 移除的引用不能进入
-  `snapshot.subagents`。运行中的恢复态由 runtime overlay 补齐，不能仅凭历史标题或时间猜测。
-- 已结束查询响应携带独立查询 `revision`，使用稳定 keyset cursor、每页 20 条、最新优先。
-  `snapshot.subagents.childSessionIds` 是当前 branch 的 tab 失效清单，不是第二份展示数据。
-
-## UI 合同
+## UI contract
 
 ```text
 mini capsule
-├─ subagent-only -> 只统计 running subagent；不显示 ended；显示“{count} 运行”
-└─ Bash/Subagent mixed -> 统计两类 running item；显示“{count} 运行”
+├─ subagent-only -> counts only running subagents; no ended; shows "{count} running"
+└─ Bash/Subagent mixed -> counts running items of both kinds; shows "{count} running"
 
 expanded status panel
-└─ 智能体（统一折叠分组，标题尾部显示“{count} 运行”）
-   ├─ 正在运行 -> 现有运行项，可直接打开 child 详情；可控 background 项保留 Stop
-   └─ 已结束 · N -> 打开或复用 Subagent 目录 tab
+└─ Agents (unified collapsible group, title tail shows "{count} running")
+   ├─ Running -> existing running items, child detail opens directly; controllable background items keep Stop
+   └─ Ended · N -> opens or reuses the Subagent directory tab
 
-Subagent directory（桌面 / 普通 Web）
-├─ 正在运行（不分页）
-└─ 已结束 · N
+Subagent directory (desktop / ordinary Web)
+├─ Running (not paged)
+└─ Ended · N
    ├─ newest first
-   └─ 再显示 20 个
+   └─ show 20 more
 ```
 
-- “{count} 运行”统计 `snapshot.subagents.running` 的成员数量，表达当前仍在运行的
-  subagent 数量；不得显示为“{count} 后台”，因为该集合同时包含 foreground、background、
-  blocked 和 waiting。
-- mini capsule 的计数只要包含 running subagent，也必须使用“{count} 运行”；只有纯
-  background terminal 计数继续使用“{count} 后台”。
-- 只有 ended 且没有 Git/plan/goal/running 等其它摘要内容时，mini 可以消失；不为目录增加
-  单独常驻胶囊。
-- expanded panel 中“已结束”必须位于“智能体”折叠内容内，不能与“智能体”作为两个并列的
-  顶层 section；没有 running、但 panel 因其它摘要内容存在时，仍可显示只含“已结束”的
-  “智能体”分组。
-- expanded panel 的运行项以 V4 `snapshot.subagents.running` 作为 child 身份和展示事实，但 Stop
-  控制权继续来自父 snapshot 的 `backgroundWorks`。两者只能按完全相同的 `childSessionId`
-  关联；命中 `status=running`、`kind=subagent` 且有 `workId`、`cancellable !== false` 时显示
-  Stop，并继续发送 `cancelBackgroundWork(workId)`。Stop 必须阻止详情点击冒泡；没有可靠
-  background work 关联的 foreground child 不显示伪造的单项 Stop，也不得按标题或时间猜测。
-- 目录项展示 Agent description、最终摘要或错误、相对时间、状态图标；目录只读，不新增
-  stop/cancel 控件。
-- live completion 由 V4 投影把同一项移出 running 并更新 `endedTotal`；目录随后按 ended-only
-  查询把该项合并到顶部，但保留已加载页面和滚动位置。
-- 目录 tab 稳定身份为
-  `subagent-directory:{workspaceKey}:{rootSessionId}:{parentSessionId}`；child tab 为
-  `subagent-session:{workspaceKey}:{rootSessionId}:{childSessionId}`。
-- 点击目录项复用统一 child 详情打开请求。同一 root 内重复点击复用；原 Session 与 fork
-  root 不同，因此可以各自持有指向同一历史 child 的 tab。
-- edit/retry 使 child 失效时自动关闭对应详情 tab，不进入“最近关闭”；若当前激活的是该 tab，
-  优先回到已打开的目录，否则回到前一个可见 tab。compact 不关闭 tab。
-- 目录 tab 和 child tabs 都只保存在 renderer 内存，不跨刷新恢复。
+- "{count} running" counts the members of `snapshot.subagents.running`, expressing the number of
+  subagents still running; it must not be shown as "{count} background", because the set contains
+  foreground, background, blocked and waiting together. (UI copy: zh-CN "{count} 运行" / "{count} 后台",
+  "智能体", "正在运行", "已结束 · N".)
+- Whenever the mini capsule count includes a running subagent it must use "{count} running"; only a pure
+  background terminal count keeps "{count} background".
+- Only when there is ended with no other summary content such as Git/plan/goal/running may the mini
+  disappear; no separate resident capsule is added for the directory.
+- In the expanded panel "Ended" must be inside the "Agents" collapsible content and must not be a
+  top-level section parallel to "Agents"; with no running but the panel present for other summary
+  content, an "Agents" group containing only "Ended" can still show.
+- The expanded panel's running items use V4 `snapshot.subagents.running` as the child identity and
+  display fact, but Stop control authority still comes from the parent snapshot's `backgroundWorks`. The
+  two are associated only by exactly the same `childSessionId`; Stop shows on a hit with
+  `status=running`, `kind=subagent`, a `workId` and `cancellable !== false`, and keeps sending
+  `cancelBackgroundWork(workId)`. Stop must stop the detail click from bubbling; a foreground child
+  with no reliable background-work association shows no forged per-item Stop and must not be guessed by
+  title or time.
+- A directory item shows the Agent description, final summary or error, relative time and status icon;
+  the directory is read-only and adds no stop/cancel control.
+- On live completion the V4 projection moves the item out of running and updates `endedTotal`; the
+  directory then merges the item at the top by an ended-only query while keeping the loaded pages and
+  scroll position.
+- The directory tab's stable identity is `subagent-directory:{workspaceKey}:{rootSessionId}:{parentSessionId}`;
+  a child tab is `subagent-session:{workspaceKey}:{rootSessionId}:{childSessionId}`.
+- Clicking a directory item reuses the unified child detail open request. Repeated clicks within the
+  same root reuse; the original Session and a fork root differ, so each can hold a tab pointing to the
+  same historical child.
+- When edit/retry invalidates a child, the corresponding detail tab closes automatically and does not
+  enter "recently closed"; if that tab is active, return to an open directory first, otherwise to the
+  previous visible tab. compact does not close tabs.
+- The directory tab and child tabs live only in renderer memory and are not restored across refresh.
 
-## 多端边界
+## Multi-client boundary
 
-- 桌面端与普通 Web 提供目录及分页。
-- 手机 `/remote` 不提供目录；Agent/Task 和 Running 行仍可在现有右侧抽屉打开 child 详情。
-- 桌面继续使用 `desktop-continuous`，手机继续使用 `web-remote-replayable`；两端消费同一 V4
-  `snapshot.subagents`，手机重连仍由既有 snapshot/gap 恢复。ended-only 查询通过当前 trusted host
-  attachment 到同一 CLI/runtime，不在 relay、desktop main 或 Host 增加状态。
-- remote workspace 贯穿 `workspaceIdentity` 和 `remoteSessionId`；身份 key 始终为
-  `workspaceIdentity?.trim() || workspacePath`。
+- Desktop and ordinary Web provide the directory and paging.
+- Mobile `/remote` provides no directory; Agent/Task and Running rows can still open the child detail in
+  the existing right drawer.
+- Desktop keeps `desktop-continuous` and mobile keeps `web-remote-replayable`; both consume the same V4
+  `snapshot.subagents`, and mobile reconnect still recovers via the existing snapshot/gap. The ended-only
+  query reaches the same CLI/runtime through the current trusted host attachment and adds no state in the
+  relay, desktop main or Host.
+- A remote workspace carries `workspaceIdentity` and `remoteSessionId` throughout; the identity key is
+  always `workspaceIdentity?.trim() || workspacePath`.
 
-## 可访问性、主题和国际化
+## Accessibility, theme and i18n
 
-- 目录 section 和 item 使用语义标题、button、可见 focus；状态不能只靠颜色表达。
-- 使用 `DESIGN.md` 的 surface/text/border/semantic token，兼容 Zai Light/Dark。
-- 文案通过 zh-CN/en-US locale；标题和摘要允许长文本换行或截断，不依赖中文长度。
+- The directory section and items use semantic headings, buttons and visible focus; state cannot be
+  expressed by color alone.
+- Use the surface/text/border/semantic tokens of `DESIGN.md`, compatible with Zai Light/Dark.
+- Copy goes through the zh-CN/en-US locales; titles and summaries may wrap or truncate long text and
+  must not depend on Chinese length.

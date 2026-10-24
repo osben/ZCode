@@ -1,10 +1,12 @@
 # Web App Docker Image Spec
 
-## 目标
+## Goal
 
-提供一个本地可运行的完整 Web App Docker 镜像，包含 Web 静态资源、`@zcode/server` HTTP/WS 服务和 ZCode agent app-server。镜像用于本地 Docker 验证，不替代桌面端远控 shared-host 架构。
+Provide a locally runnable, complete Web App Docker image containing the Web static assets, the
+`@zcode/server` HTTP/WS service and the ZCode agent app-server. The image is for local Docker
+verification and does not replace the desktop remote-control shared-host architecture.
 
-## 运行结构
+## Runtime structure
 
 ```text
 browser
@@ -30,38 +32,39 @@ zcode.cjs app-server
   `-- cli       agent session DB, logs, rollout
 ```
 
-## 镜像内容
+## Image contents
 
-- 基础镜像通过 `NODE_BASE_IMAGE` build arg 指定，默认 `node:26.11.1-bookworm-slim`。
-- builder 阶段执行：
+- The base image is set by the `NODE_BASE_IMAGE` build arg, default `node:26.11.1-bookworm-slim`.
+- The builder stage runs:
   - `pnpm install --frozen-lockfile`
   - `packages/desktop/scripts/prepare-agent-node-bundle.mjs`
   - `pnpm --filter @zcode/server build`
   - `pnpm --filter @zcode/web build`
-- runtime 阶段只暴露一个端口，默认 `3030`。
-- runtime 阶段保留 server 的 pnpm runtime 依赖，因为 `entry-http.js` 会外置 `ssh2`、`node-pty`、`undici` 等包。
+- The runtime stage exposes a single port, default `3030`.
+- The runtime stage keeps the server's pnpm runtime dependencies, because `entry-http.js` externalizes packages such as `ssh2`, `node-pty` and `undici`.
 
-## 数据与工作区
+## Data and workspace
 
 - `HOME=/data`
 - `ZCODE_DATA_BASE_DIR=/data`
 - `ZCODE_STORAGE_DIR=/data/.zcode`
-- 默认工作区为 `/workspace`
+- The default workspace is `/workspace`
 
-启动脚本只在 `setting.json` 缺失或 workspace 列表为空时 seed `/workspace`，不会覆盖已有 volume 中的模型、账号或任务数据。
+The startup script seeds `/workspace` only when `setting.json` is missing or the workspace list is
+empty, and does not overwrite the models, accounts or task data in an existing volume.
 
-## 本地使用
+## Local use
 
 ```bash
 pnpm docker:build:web-app
 pnpm docker:run:web-app
 ```
 
-可覆盖变量：
+Overridable variables:
 
 ```bash
 IMAGE=zcode-web-app:dev NODE_BASE_IMAGE=node:26.11.1-bookworm-slim pnpm docker:build:web-app
 PORT=3030 DATA_VOLUME=zcode-web-data WORKSPACE_DIR="$PWD" pnpm docker:run:web-app
 ```
 
-访问 `http://localhost:3030/`。
+Open `http://localhost:3030/`.

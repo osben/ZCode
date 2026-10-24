@@ -1,13 +1,13 @@
-# Windows Agent 进程树清理状态机
+# Windows Agent process-tree cleanup state machine
 
-## 背景
+## Background
 
-桌面 Host 会为每个 workspace 启动 Agent CLI。关闭 workspace、重启 runtime、Computer
-Use Helper 凭据轮换以及 App 退出时，都必须回收 Agent 根进程与它派生的 runtime/MCP
-后代。Windows 不使用 POSIX process group，而是通过 `taskkill /T` 与经身份复核后的
-`taskkill /T /F` 收口进程树。
+The desktop Host starts an Agent CLI for every workspace. Closing a workspace, restarting the runtime,
+Computer Use Helper credential rotation and App exit must all reclaim the Agent root process and the
+runtime/MCP descendants it spawned. Windows does not use POSIX process groups; it closes out the process
+tree with `taskkill /T` and the identity-rechecked `taskkill /T /F`.
 
-现有等待路径如下，禁止新增第二套等待语义：
+The existing wait path is below; do not add a second wait semantic:
 
 ```text
 ZCodeAgentProcessManager
@@ -17,34 +17,38 @@ ZCodeAgentProcessManager
   -> waitForProcessTreeTermination
 ```
 
-非等待式 `terminateProcessTree` 仍用于 best-effort dispose；等待式调用必须在同一条路径
-内取得并观察 taskkill flight。
+The non-waiting `terminateProcessTree` is still used for best-effort dispose; a waiting call must obtain
+and observe the taskkill flight within the same path.
 
-## 已确认缺陷
+## Confirmed defects
 
-运行时日志确认了三个互相叠加的竞态：
+Runtime logs confirmed three stacked races:
 
-1. 等待式回收启动 graceful `taskkill /T` 后没有暴露其 flight，等待器无法观察命令完成；
-2. `taskkill /F` 已成功且 OS PID 已消失时，Node `ChildProcess.exit` 可能晚 1-10 ms 投递；
-   等待器返回成功后，transport 又用滞后的 `exitCode` 把 root PID 追加回残留结果；
-3. 多 workspace 共用的进程表查询可能早于新 Agent spawn 启动。新 root 的 cleanup 若复用
-   这张旧表会查不到自身，随后正确地 fail-closed，却也因此无法发送 taskkill。
+1. A waiting reclaim started the graceful `taskkill /T` without exposing its flight, so the waiter could not observe command completion;
+2. When `taskkill /F` had succeeded and the OS PID was gone, the Node `ChildProcess.exit` event could be
+   delivered 1-10 ms late; after the waiter returned success, the transport appended the root PID back
+   to the residual result using the lagging `exitCode`;
+3. The process-table query shared by multiple workspaces could start before a new Agent spawn. If the
+   new root's cleanup reused that stale table, it could not find itself, then correctly failed closed,
+   and for that reason could not send taskkill.
 
-这三项均属于清理状态机实现错误，不是 app 自动更新逻辑，也不是用户仍在运行 ZCode。
+All three are cleanup state-machine implementation errors, not app auto-update logic and not the user still running ZCode.
 
-## 安全不变量
+## Safety invariants
 
-1. PID 只表示数字，不代表所有权；强杀前必须匹配进程创建身份，或由 Host 持有的受管
-   `ChildProcess` live root 句柄证明所有权。句柄例外只适用于 root，不适用于后代。
-2. 身份查询失败或超时时，未复核后代与 `unverifiedRootOnly` 必须 fail-closed，禁止向裸 PID
-   发送 `/F`。未进入 `unverifiedRootOnly` 且句柄仍确认存活的受管 root 不属于裸 PID。
-3. 生前进程树快照仍是 root 退出后认领后代的唯一依据。
-4. 非等待式回收不得阻塞 Host 事件循环。
-5. 多 workspace 回收必须并发执行，禁止恢复同步或逐 workspace 串行 taskkill。
-6. 只有绝对 deadline 到达后仍属于原进程树的 PID 才是 confirmed residual。
-7. confirmed residual 必须继续向调用方报错，禁止吞掉真实清理失败。
+1. A PID is only a number and does not prove ownership; before a force kill the process creation
+   identity must match, or ownership must be proven by the Host-held managed `ChildProcess` live root
+   handle. The handle exception applies only to the root, not to descendants.
+2. When identity query fails or times out, unverified descendants and `unverifiedRootOnly` must fail
+   closed, and `/F` must not be sent to a bare PID. A managed root not in `unverifiedRootOnly` whose
+   handle still confirms it alive is not a bare PID.
+3. The pre-exit process-tree snapshot remains the only basis for claiming descendants after the root exits.
+4. Non-waiting reclaim must not block the Host event loop.
+5. Multi-workspace reclaim must run concurrently; do not restore synchronous or per-workspace serial taskkill.
+6. Only a PID still belonging to the original process tree after the absolute deadline is a confirmed residual.
+7. A confirmed residual must keep reporting an error to the caller; a real cleanup failure must not be swallowed.
 
-## 状态机
+## State machine
 
 ```text
 running
@@ -64,16 +68,18 @@ running
                                       `-> cleanup-deadline --> confirmed-residual
 ```
 
-`graceful-taskkill-in-flight`、force flight 和 ChildProcess `exit` 必须并发观察。taskkill
-命令返回不等于 Node 已经投递 exit 事件；反之，root exit 也不等于快照中的后代均已退出。
+`graceful-taskkill-in-flight`, the force flight and the ChildProcess `exit` must be observed concurrently.
+A taskkill command returning does not mean Node has delivered the exit event; conversely, the root exiting
+does not mean all descendants in the snapshot have exited.
 
-## Deadline 契约
+## Deadline contract
 
-等待式 Windows 回收使用两个上界，最终取更早者：
+Waiting Windows reclaim uses two upper bounds and takes the earlier one:
 
-1. transport 从 `disposeAndWait` 的 cleanup 起点固定一个全链路绝对 deadline，覆盖进程表
-   快照、stdin EOF、taskkill 与 exit observation；
-2. waiter 仍按已经固定的所有权状态计算本阶段相对 deadline，避免没有信号目标时白等。
+1. The transport fixes one whole-chain absolute deadline from the cleanup start of `disposeAndWait`,
+   covering process-table snapshot, stdin EOF, taskkill and exit observation;
+2. The waiter still computes this phase's relative deadline from the ownership state already fixed, to
+   avoid waiting for nothing when there is no signal target.
 
 ```text
 transportDeadlineAt = cleanupStartedAt
@@ -89,11 +95,12 @@ waiterDeadlineAt = waiterStartedAt
 effectiveDeadlineAt = min(transportDeadlineAt, waiterDeadlineAt)
 ```
 
-waiter 的 taskkill 预算按已经固定的所有权状态分配：
+The waiter's taskkill budget is allocated by the ownership state already fixed:
 
 ```text
                          +---------------------------+
-                         | 至少一个已验证信号目标？  |
+                         | at least one verified      |
+                         | signal target?             |
                          +-------------+-------------+
                                        |
                  +---------------------+---------------------+
@@ -105,71 +112,72 @@ waiterDeadline = waiterStartedAt                waiterDeadline = waiterStartedAt
   + boundedExitObservationGraceMs
 ```
 
-- `forceAfterMs` 默认 2,000 ms。
-- 进程层默认单次 taskkill 上限为 2,000 ms；ZCode transport 的等待式路径显式使用 1,000 ms。
-- graceful taskkill 从等待开始即与 force timer 并发，不为 graceful 与 force 两条命令各叠加
-  一份 timeout；deadline 只在 force 余量后保留一份终态 taskkill 上限。
-- 身份查询不可用且没有任何已验证 identity 时，graceful 与 force 的目标集合都必然为空；此时
-  不预留没有对应命令的 taskkill timeout，只保留 force 余量与 exit 观察宽限。
-- 只要存在任何已验证目标，waiter 的相对 deadline 就保留完整 taskkill 预算。禁止根据某一时刻
-  Promise 是否已 settle 临时缩短边界；但 transport 的全链路绝对 deadline 仍是硬上限，慢快照
-  已经消耗的时间不得重新补回。
-- `boundedExitObservationGraceMs` 只用于吸收 taskkill callback 与 ChildProcess exit 事件的
-  投递差，不得演变为无条件 sleep。
-- identity recheck 仍由 force 预算覆盖，不是额外串行时段。
-- force 前必须在同一个有界窗口内并发定向复核初始 ownership 中的 root 与每个后代；只有
-  CreationDate 仍匹配的 identity 才能进入通用 `/F` 目标集。唯一例外是未进入
-  `unverifiedRootOnly`、且原始受管 `ChildProcess` 仍满足 `exitCode/signalCode` 均为 `null`、
-  句柄可发送信号并确认 PID 存活的 root：定向复核未完成时允许对该 root 执行 `/T /F`，
-  但不得沿该 PID 重新发现或认领后代。单个后代身份复核失败只跳过该 PID，不得阻止其他
-  已验证目标收口。
-- 多 workspace 共用相同相对 deadline 并行收口，总等待时间不得按 workspace 数量增长。
-- transport 在 cleanup 起点固定 `cleanupStartedAt + 2,000 + 1,000 + 250 = 3,250 ms` 的
-  deadline，并传给 waiter。即使 CIM 快照与 EOF 已经耗尽 force 窗口，waiter 也只能使用
-  这条 deadline 的剩余时间，因此全链路硬上限仍为 3,250 ms，低于 desktop Host 与 server
-  stdio lifecycle 的 3,500 ms service-dispose phase。
+- `forceAfterMs` defaults to 2,000 ms.
+- The process layer's default single-taskkill cap is 2,000 ms; the ZCode transport's waiting path explicitly uses 1,000 ms.
+- The graceful taskkill runs concurrently with the force timer from the start of the wait; no timeout is
+  stacked for each of the graceful and force commands, and the deadline keeps only one terminal taskkill
+  cap after the force margin.
+- When identity query is unavailable and there is no verified identity, the target sets of graceful and
+  force are necessarily empty; no taskkill timeout is reserved for a nonexistent command, and only the
+  force margin and the exit observation grace are kept.
+- As long as any verified target exists, the waiter's relative deadline keeps the full taskkill budget.
+  The boundary must not be shortened ad hoc by whether a Promise has settled at some moment; but the
+  transport's whole-chain absolute deadline remains the hard cap, and time already consumed by a slow
+  snapshot must not be added back.
+- `boundedExitObservationGraceMs` only absorbs the delivery gap between the taskkill callback and the
+  ChildProcess exit event and must not become an unconditional sleep.
+- The identity recheck is still covered by the force budget and is not an extra serial period.
+- Before force, the root and each descendant in the initial ownership must be rechecked in a targeted way
+  concurrently within the same bounded window; only an identity whose CreationDate still matches can enter
+  the generic `/F` target set. The one exception is a root not in `unverifiedRootOnly` whose original
+  managed `ChildProcess` still has `exitCode/signalCode` both `null`, whose handle can send signals and
+  confirm the PID is alive: if the targeted recheck did not complete, `/T /F` is allowed on that root, but
+  descendants must not be rediscovered or claimed along that PID. A failed identity recheck of a single
+  descendant only skips that PID and must not block other verified targets from closing out.
+- Multiple workspaces reclaim in parallel under the same relative deadline, and total wait time must not
+  grow with the workspace count.
+- At cleanup start the transport fixes a deadline of `cleanupStartedAt + 2,000 + 1,000 + 250 = 3,250 ms`
+  and passes it to the waiter. Even if the CIM snapshot and EOF have used up the force window, the waiter
+  can only use the remainder of this deadline, so the whole-chain hard cap stays 3,250 ms, below the
+  3,500 ms service-dispose phase of the desktop Host and the server stdio lifecycle.
 
-## 可测试性边界
+## Testability boundary
 
-Windows taskkill runner 是进程层依赖，默认实现仍使用异步 `execFile`。测试可以注入 runner
-来控制 started、completed、failed 与挂起时序，但注入不得绕过生产的 PID 身份校验。
+The Windows taskkill runner is a process-layer dependency and its default implementation still uses
+async `execFile`. Tests may inject a runner to control started, completed, failed and hung timing, but
+injection must not bypass production PID identity checks.
 
-必须覆盖：
+Must cover:
 
-- graceful taskkill 未完成时不提前报告残留；
-- taskkill 完成后 exit 晚 1-10 ms 仍成功；
-- 新 root 不复用早于自身 spawn 启动的共享进程表；
-- PID 复用或身份查询失败时不向未复核后代或 `unverifiedRootOnly` 发送 `/F`；受管 live root
-  句柄例外只能发送 root `/T /F`，不能把后代带入显式 `/F` 目标集；
-- 定向 CIM 复核失败时，受管 live root 句柄仍触发 root-only `/F`，而未复核后代被跳过；
-- graceful flight 挂起时，force 对本次仍匹配的 root 与后代分别发送 `/F`，并跳过已复用后代；
-- deadline 到达且原身份 PID 仍存活时返回 remaining PID；
-- CIM 快照耗时超过 force 窗口时，taskkill/exit observation 不得把全链路 deadline 向后重置；
-- 多 workspace taskkill 并发；
-- workspace restart、App quit 和 CUA Helper 凭据轮换复用同一状态机。
+- no early residual report while the graceful taskkill has not completed;
+- success when exit arrives 1-10 ms after taskkill completes;
+- a new root does not reuse a shared process table that started before its own spawn;
+- on PID reuse or identity query failure, no `/F` to an unverified descendant or `unverifiedRootOnly`; the
+  managed live root handle exception may only send root `/T /F` and cannot bring descendants into the explicit `/F` target set;
+- on a targeted CIM recheck failure, the managed live root handle still triggers root-only `/F` while unverified descendants are skipped;
+- while the graceful flight hangs, force sends `/F` separately to the root and descendants that still
+  match this time, and skips descendants whose PID was reused;
+- return remaining PIDs when the deadline arrives and an original-identity PID is still alive;
+- when the CIM snapshot takes longer than the force window, taskkill/exit observation must not reset the whole-chain deadline backward;
+- multi-workspace taskkill concurrency;
+- workspace restart, App quit and CUA Helper credential rotation reuse the same state machine.
 
-## 诊断
+## Diagnostics
 
-低频清理日志应记录 taskkill started/completed/failed、identity verification 结果、force
-skip 原因、exit observation、deadline 与 remaining PID。日志不得包含 prompt、token 或用户
-内容。
+Low-frequency cleanup logs should record taskkill started/completed/failed, identity verification results,
+force skip reasons, exit observation, deadline and remaining PIDs. Logs must not contain prompts, tokens or user content.
 
-## 2026-08-24 验证记录
+## Verification record (2026-08-24 and 2026-08-25, summary)
 
-- `zcodeAgentProcessManager.test.ts` 真机权限下连续 10 轮通过：360/360；
-- 进程终止器、stdio transport、manager 相关测试集：55 passed / 11 skipped；
-- 确定性用例覆盖 taskkill flight、exit 延迟、累加 deadline、PID 复用、身份查询失败与
-  共享进程表新鲜度；其中无信号目标的 unverified 分支不预留 taskkill timeout，有已验证
-  后代的 unverified 分支仍保留完整 timeout；
-- 10 连跑后未发现测试型 Node Agent 孤儿；本轮生成的临时目录在进程退出后均可删除；
-- `pnpm typecheck` 与 `pnpm lint` 通过，lint 保留 110 条与本改动无关的既有 warning；
-- 无权读取 `Win32_Process` 的受限沙箱会按安全设计进入 unverified fail-closed，Windows
-  真机进程树回归必须在具备 CIM 读取权限的测试环境运行。
-
-## 2026-08-25 force 后代回收验证记录
-
-- root 与 descendant 的定向身份复核/force 时序连续 10 轮通过：160/160；
-- 真实 Windows 权限下进程终止器、stdio transport 与 Agent manager 清理测试集：
-  59 passed / 11 skipped；
-- 后代 PID 复用用例确认：不匹配 identity 不接收 `/F`，其他匹配目标仍可并发收口，
-  未确认旧身份继续按 fail-closed 上报而不是误判成功。
+Under real Windows permissions, 10 consecutive rounds of `zcodeAgentProcessManager.test.ts` passed 360/360;
+the process terminator + stdio transport + manager test set passed (55 passed / 11 skipped, later 59 passed /
+11 skipped); the root/descendant targeted identity recheck/force timing passed 10 rounds (160/160). The
+deterministic cases cover taskkill flight, exit delay, additive deadline, PID reuse (a mismatching identity
+receives no `/F` while other matching targets still close out concurrently, and an unconfirmed old identity
+keeps failing closed instead of being judged successful), identity query failure and shared process-table
+freshness; the unverified branch with no signal target reserves no taskkill timeout, while an unverified
+branch with a verified descendant keeps the full timeout. No test-spawned Node Agent orphan was found after
+the 10 rounds. `pnpm typecheck` and `pnpm lint` passed (110 unrelated pre-existing lint warnings). A
+restricted sandbox without permission to read `Win32_Process` enters unverified fail-closed by design, so
+Windows real-machine process-tree regression must run in a test environment with CIM read permission.
+Full history: `git show 37b98ff8:docs/windows-agent-process-cleanup-state-machine.md`.

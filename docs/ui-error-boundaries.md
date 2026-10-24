@@ -1,30 +1,34 @@
 # UI Error Boundaries
 
-ZCode 的 React 错误边界分两层：
+ZCode's React error boundaries have two layers:
 
-- 根级 `AppErrorBoundary`：兜住启动、Provider、Root 级异常，避免整窗白屏。
-- 局部 `ScopedErrorBoundary`：按 workspace 内的故障域隔离 sidebar、header、chat、terminal、side pane、settings layer 等区域。
+- Root `AppErrorBoundary`: catches startup, Provider and Root-level exceptions so the whole window does not go blank.
+- Local `ScopedErrorBoundary`: isolates regions such as sidebar, header, chat, terminal, side pane and settings layer by fault domain inside a workspace.
 
-## 隔离范围
+## Isolation scope
 
-局部边界优先放在稳定布局容器内部，避免 fallback 破坏 `ResizablePanelGroup` 这类结构性组件。比如 terminal 和 side pane 的边界放在各自 `ResizablePanel` 内容层里，而不是包住整个 panel。
+Local boundaries are preferably placed inside stable layout containers so a fallback does not break
+structural components such as `ResizablePanelGroup`. For example, the terminal and side pane boundaries
+sit in the content layer of their own `ResizablePanel`, not around the whole panel.
 
-## Reset Key
+## Reset key
 
-涉及 workspace 级隔离时，统一使用：
+For workspace-level isolation, uniformly use:
 
 ```ts
 const workspaceKey = workspaceIdentity?.trim() || workspacePath;
 ```
 
-不同区域再追加自己的上下文 key：
+Each region appends its own context key:
 
-- chat：`workspaceKey + activeTaskId`
-- side pane：`workspaceKey + activeTabId`
-- terminal/sidebar：`workspaceKey`
+- chat: `workspaceKey + activeTaskId`
+- side pane: `workspaceKey + activeTabId`
+- terminal/sidebar: `workspaceKey`
 
-这样远程 workspace 能按身份隔离，本地 workspace 继续回退到真实路径。
+This way a remote workspace is isolated by identity and a local workspace falls back to the real path.
 
-## 日志
+## Logging
 
-局部边界统一通过 `packages/ui/src/logger.ts` 打 `error` 日志，日志中包含 `scope` 和 React component stack。事件回调、Promise、stream handler 等异步错误不会被 React Error Boundary 捕获，仍需要在对应 hook 或调用点显式处理。
+Local boundaries log at `error` level through `packages/ui/src/logger.ts`, and the log includes `scope`
+and the React component stack. Async errors from event callbacks, Promises and stream handlers are not
+caught by a React Error Boundary and must still be handled explicitly in the corresponding hook or call site.
