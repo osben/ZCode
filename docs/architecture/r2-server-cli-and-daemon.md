@@ -535,17 +535,19 @@ Must remain true:
 
 ## 10. Implementation Order
 
-1. Keep this document as the R2 spec and supplement it with the [R2 lifecycle test plan](./r2-server-cli-and-daemon-test-plan.md); first update the case catalog and coverage matrix for cases involving conversations/sessions.
-2. Create the CLI, IPC, runtime layout, and contract schemas in `packages/zcode-server-cli`; write tests first.
-3. Implement the single-instance lock, state files, canonical-path validation, and allowlist validation.
-4. Implement the new Server Core entry point, connect `standalone-server` services, and provide HTTP/WS ingress.
-5. Implement Supervisor, private Core child IPC, crash budget, and running-task guard.
-6. Implement adapters for macOS launchd, Linux systemd --user, and Windows Task Scheduler.
-7. Implement Server CLI command routing, lazy delegation to the TUI/existing CLI, `--json`, and confirmation flows.
-8. Implement staging for the six-platform Node runtime, node-pty, native search tools, and official plugins; do not change the `packages/server` build entry point.
-9. Implement ReleaseCatalog/Downloader/Installer, content-addressed component caches, atomic current/pending switching, and rollback on failure.
-10. Complete real OS service-manager adapters, online-download contract tests, Windows contract tests, and R1 Host RPC compatibility.
-11. Run `pnpm typecheck`, `pnpm lint`, new-package tests, and the conversation coverage audit.
+Implemented in this order; the order remains the dependency order for follow-up changes:
+
+1. This document is the R2 spec, supplemented by the [R2 lifecycle test plan](./r2-server-cli-and-daemon-test-plan.md); update the case catalog and coverage matrix first for cases involving conversations/sessions.
+2. `packages/zcode-server-cli`: CLI, IPC, runtime layout, and contract schemas, tests first.
+3. Single-instance lock, state files, canonical-path validation, and allowlist validation.
+4. New Server Core entry point connected to `standalone-server` services, with HTTP/WS ingress.
+5. Supervisor, private Core child IPC, crash budget, and running-task guard.
+6. Adapters for macOS launchd, Linux systemd --user, and Windows Task Scheduler.
+7. CLI command routing, lazy delegation to the TUI/existing CLI, `--json`, and confirmation flows.
+8. Six-platform staging of the Node runtime, node-pty, native search tools, and official plugins; the `packages/server` build entry point is unchanged.
+9. ReleaseCatalog/Downloader/Installer, content-addressed component caches, atomic current/pending switching, and rollback on failure.
+10. Real OS service-manager adapters, online-download contract tests, Windows contract tests, and R1 Host RPC compatibility.
+11. `pnpm typecheck`, `pnpm lint`, new-package tests, and the conversation coverage audit.
 
 ## 11. Acceptance Cases
 

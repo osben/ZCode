@@ -8,7 +8,7 @@
 - Core goal: each `BrowserWindow` has exactly one window-scoped Local Host, which centrally hosts local services, remote connections, window-level task projections, and client attachments
 - Explicitly excluded: standalone Server CLI, `sourceServerId`, Connection Profile, Transport Adapter, a new remote wire contract, and cross-remote Grouped capabilities; these are deferred to R2/R3/R4 respectively
 
-This is the implementation specification for R1. Current Web remote-control facts remain defined by the architecture, realtime-sync, and task-command-queue documents under `docs/web-remote-control/`; update those fact documents when this specification is complete.
+This is the implementation specification for R1. Web remote-control facts remain defined by the architecture, realtime-sync, and task-command-queue documents under `docs/web-remote-control/`; update them when this specification is complete.
 
 ## 2. Decisions
 
@@ -39,19 +39,7 @@ Existing invariants:
 
 ## 3. Process and Responsibility Model
 
-Before the refactor:
-
-```text
-Renderer ─┬─ base port ────> Local Host ─────────> Local CLI
-          ├─ remote port ──> SSH Remote Host ────> zcode-server
-          ├─ remote port ──> WSL Remote Host ────> zcode-server
-          └─ remote port ──> Docker/Server Host ─> remote service
-
-Mobile -> Relay/Main -> Local Host or standalone Remote Host
-Bot ---------------------> temporary Remote Host
-```
-
-R1:
+R1 replaces the former per-target Remote Host processes (SSH/WSL/Docker/Server, mobile, Bot) with one Local Host per window:
 
 ```text
 Renderer ───────────────────┐
@@ -123,10 +111,7 @@ WSL / Docker / Server pending cancel --------> retain the existing transport lif
 SSH online cache cancel ----------------------> retain the window cache; do not destroy the online connection
 ```
 
-An SSH remote owner staging area may already have been created when cancellation occurs. Once the old backend enters the disposal barrier, it must not reconnect for cleanup
-for a cleanup reconnect. The next SSH deployment using a new backend runs a best-effort janitor before writing, deleting only ZCode-owned
-UUID-named staging entries older than 24 hours. The current owner, canonical paths, and WSL/Docker/Server staging are outside this
-cleanup boundary.
+An SSH remote owner staging area may already exist when cancellation occurs. Once the old backend enters the disposal barrier, it must not reconnect for cleanup. The next SSH deployment using a new backend runs a best-effort janitor before writing, deleting only ZCode-owned UUID-named staging entries older than 24 hours. The current owner, canonical paths, and WSL/Docker/Server staging are outside this cleanup boundary.
 
 On remote disconnection:
 
