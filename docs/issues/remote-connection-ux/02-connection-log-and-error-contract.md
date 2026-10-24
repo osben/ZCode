@@ -1,48 +1,48 @@
-# 02 — 连接日志与错误契约
+# 02 — Connection Log and Error Contract
 
 Status: done
 
-**父规格：** [远程连接交互与视觉体验优化](./01-remote-connection-ux-optimization.md)
+**Parent spec:** [Remote Connection Interaction and Visual Experience Optimization](./01-remote-connection-ux-optimization.md)
 
-**被阻塞于：** 无，可立即开始。
+**Blocked by:** none.
 
-**要交付的行为：**
+**Behavior to deliver:**
 
-- **日志干净可读**：连接过程中，用户看到的日志只包含本次连接的内容，并且已脱敏。
-- **失败有结果**：连接被拒、超时、找不到主机时，界面会在合理时间内给出中文错误，不会一直停在"正在连接"。
-- **失败后仍能查日志**：失败后即使关掉向导，也能在设置页的设备卡上查看这台设备最近一次连接或更新的日志。
+- **Clean, readable logs**: during a connection, the user sees only logs of this connection, already redacted.
+- **Failure has a result**: refused, timed-out or host-not-found connections show a Chinese error within a reasonable time and never stay on "connecting".
+- **Logs after failure**: after a failure, even if the wizard is closed, the device card in Settings can show the log of the device's most recent connection or update.
 
-对应父规格中「连接错误分类」的契约部分和「连接日志与操作日志」一节。
+It corresponds to the "connection error classification" contract and the "connection log and operation log" section of the parent spec.
 
-范围：
+Scope:
 
-- **转发范围**：连接进度上下文只转发连接流水线主动上报的日志。同一异步上下文里其他服务打出的周边日志一律不进入用户可见日志，例如设置服务写配置时打印的完整设置内容。
-- **脱敏**：统一去掉本地绝对路径、token、凭据引用和设备标识。反馈附带的日志使用同一份过滤后的结果。
-- **日志级别**：等待用户确认安装记为 info，不记为 error。
-- **错误码契约**：扩展错误码集合。
-  - 覆盖这些情况：拒绝连接或不可达、超时、找不到主机、主机密钥变化（能可靠识别时）、下载失败、上传失败、预检失败、安装失败、远端空间或权限不足、用户取消、未知。
-  - 共享类型和运行时 schema 同步更新。
-  - `AggregateError` 取内层的错误码。
-  - 消息为空或无法识别时，归为"未知"。host 响应不能因为 schema 校验失败而被丢弃。
-- **错误文案过渡**：新错误码先接入现有的错误文案映射，中英文都要有。完整的分类展示由 [03](./03-presentation-model-states-and-glossary.md) 接管。
-- **最近操作日志**：服务层为每台设备保留最近一次连接或更新的操作日志，并新增查询接口。日志只保存在本次运行的内存里，行数有上限，设备之间互相隔离。设置页设备卡提供"查看最近日志"的入口。
+- **Forwarding scope**: the connection progress context forwards only logs that the connection pipeline reports on purpose. Surrounding logs from other services in the same async context never enter the user-visible log, for example the complete settings content printed when the settings service writes config.
+- **Redaction**: uniformly remove local absolute paths, tokens, credential references and device identifiers. Logs attached to feedback use the same filtered result.
+- **Log level**: waiting for the user to confirm installation is recorded as info, not error.
+- **Error code contract**: extend the error code set.
+  - Cover: refused or unreachable, timeout, host not found, host key changed (when reliably identifiable), download failure, upload failure, preflight failure, install failure, insufficient remote space or permission, user cancel, unknown.
+  - Shared types and runtime schema are updated together.
+  - `AggregateError` takes the inner error code.
+  - An empty or unrecognized message is classified as "unknown". A host response must not be dropped because of a schema validation failure.
+- **Error copy transition**: new error codes first plug into the existing error copy mapping, in Chinese and English. The full classified display is taken over by [03](./03-presentation-model-states-and-glossary.md).
+- **Recent operation log**: the service layer keeps the most recent connection or update operation log per device and adds a query interface. The log lives only in memory for this run, has a line limit, and is isolated between devices. The Settings device card provides a "查看最近日志" (view recent log) entry.
 
-验收标准：
+Acceptance criteria (all met):
 
-- [x] **日志不泄露**：连接测试容器的整个过程中，用户可见日志和反馈附件里都不出现设置内容、本地项目路径、连接档案和设备标识。需要主进程/host 契约层测试，E2E 也要断言。
-- [x] **等待确认不显示为错误**：等待安装确认时，日志级别是 info，界面不显示成红色错误。
-- [x] **拒绝连接不再挂起**：连接一个未被占用的端口，5 秒内显示"无法连接到主机"。
-  - 用 `AggregateError`、空消息的失败做契约层测试，断言得到已分类的错误码、消息非空，并且 host 响应能通过 schema 校验。
-- [x] **超时和找不到主机**：各自返回对应的错误码和中文文案；UI 遇到未知错误码时退回通用文案。
-- [x] **两端同步**：共享类型和运行时 schema 同步扩展，App 侧和 host 侧的校验结果一致。
-- [x] **失败后可查日志**：关掉向导后，仍能在设置页设备卡上看到这台设备最近一次连接或更新的日志；多台设备的日志不串扰。需要服务层测试和组件测试。
-- [x] **更新事实文档**：远程主链事实文档中关于连接日志、错误码、操作日志的段落改到最新行为。
-- [x] **必跑检查**：`pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响的单测、受影响的 SSH E2E 全部通过后，本地提交。
+- **Logs do not leak**: throughout the connection test container run, neither the user-visible log nor the feedback attachment contains settings content, local project paths, the connection profile or device identifiers. Needs main-process/host contract-layer tests; E2E asserts it too.
+- **Waiting for confirmation is not shown as an error**: while waiting for install confirmation the log level is info and the UI does not show red error.
+- **Refused connection no longer hangs**: connecting to an unused port shows "无法连接到主机" (cannot connect to host) within 5 seconds.
+  - Contract-layer tests with `AggregateError` and empty-message failures assert a classified error code, a non-empty message, and that the host response passes schema validation.
+- **Timeout and host not found**: each returns its own error code and Chinese copy; the UI falls back to generic copy for an unknown error code.
+- **Both ends in sync**: shared types and runtime schema are extended together; App-side and host-side validation agree.
+- **Logs after failure**: after the wizard is closed, the Settings device card still shows the device's most recent connection or update log; logs of several devices do not cross-talk. Needs service-layer tests and component tests.
+- **Update fact documents**: the paragraphs on connection logs, error codes and operation logs in the remote main-chain fact documents are updated to the latest behavior.
+- **Required checks**: `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests and affected SSH E2E all pass before the local commit.
 
-## 验证记录（2026-09-27）
+## Verification Record (2026-09-27)
 
-- 已实现并通过规范/规格双轴评审；评审发现的自动重连闭包保留、身份换代日志串扰已修复并回归。
-- `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed` 通过；15 个相关单测文件共 251 项通过，覆盖并发/迟到输出、每设备 100 行上限、身份换代、Host schema 和组件重开查询。lint 的存量警告未在本票扩大处理。
-- 真实 SSH 容器验证：错误密码后重试、首装、目录选择、全程日志过滤，以及未占用端口 5 秒内中文失败、反馈预填，最终一轮 2/2 通过（artifact `remote-log-contract-20260927-verified`）。深浅主题、1400/480px 截图已检查；480px 是桌面响应式验证，不等同于手机 replayable 实机。新增 RDUX-LOG 保持 pending，未自动人工转正。
-- **全量验证限制**：implement 技能要求执行的 `pnpm test:unit` 全量运行出现未改动模块失败及 worker 挂起，运行超过 15 分钟后停止。单独复现 `packages/services/test/repoSnapshotUploadTransport.test.ts:133` 两项失败：`ReferenceError: mode is not defined`，HEAD 基线有相同代码；`autoUpdaterReadyState.test.ts` 在 threads/forks 单独运行仍长时间不退出。本票未修改这些模块；用户知悉上述限制后，明确授权本地提交。
-- 全局 coverage audit 的新增 pending fixture 校验通过；整体 audit 因基线 D19/I74/I75 引用、既有统计与生成文档过期失败。本票新增 case 的 fixture check 和 E2E 类型检查通过。
+- Implemented and passed the dual-axis review (conventions/spec); the review findings (auto-reconnect closure retention, identity-generation log cross-talk) were fixed and regression-tested.
+- `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed` pass; 15 related unit test files with 251 tests pass, covering concurrent/late output, the per-device 100-line cap, identity generation, Host schema and component reopen queries.
+- Real SSH container verification: retry after a wrong password, first install, directory selection, full-run log filtering, and Chinese failure within 5 seconds on an unused port with prefilled feedback; the final round passed 2/2 (artifact `remote-log-contract-20260927-verified`). Dark/light themes and 1400/480px screenshots were checked; 480px is desktop responsive verification, not real-device mobile replayable. The new RDUX-LOG case stays pending and was not promoted manually.
+- **Full verification limits**: the full `pnpm test:unit` run required by the implement skill had failures in unchanged modules and a hanging worker, and was stopped after more than 15 minutes. Run alone, `packages/services/test/repoSnapshotUploadTransport.test.ts:133` fails two cases with `ReferenceError: mode is not defined` (the same code is on the HEAD baseline); `autoUpdaterReadyState.test.ts` still does not exit for a long time in threads/forks alone. This ticket changes neither module; the user, aware of these limits, explicitly authorized the local commit.
+- The global coverage audit's new pending fixture check passes; the overall audit fails on baseline D19/I74/I75 references and stale statistics and generated documents. The case fixture check and E2E type check for this ticket's new case pass.

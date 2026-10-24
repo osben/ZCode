@@ -2,149 +2,90 @@
 
 ## Document Positioning
 
-This document is an incremental design of existing Git architecture and underlying service capabilities, focusing on:
+Incremental design on top of the existing Git architecture and service layer:
 
 - Local branch list reading
 - Branch switching
 - New branch creation and switching
-- Structured blocked reason return in case of switching failure
+- Structured blocked reasons when switching fails
 
-This document only discusses Git underlying capability design, not expanding UI interaction, pop-up style, form details.
+Only the Git underlying capability is covered; UI interaction, popup style and form details are out of scope (except the UI landing section at the end).
 
-## Current Landing Status
+## Implementation Locations
 
-As of April 15, 2026, the underlying capability has been landed to the following positions according to this solution:
-
-- `packages/shared/src/git.ts`
-  - Added local branch list, branch switching / creation switching shared DTO
-- `packages/services/src/git/git.ts`
-  - `IGitService` exposes `getLocalBranches`, `switchBranch`, `createBranchAndSwitch`
-- `packages/services/src/git/repo/gitCliRepo.ts`
-  - Added `git for-each-ref` local branch reading
-  - Added `git switch --no-guess` switching and `git switch -c` creation and switching
-  - Added switching failure / in-progress operation check and failure result structured mapping
-- `packages/services/test/gitService.test.ts`
-  - Added real Git repository integration test, covering success path, no-op, dirty allowed switching, covered block, conflict, in-progress operation, illegal branch name, existing branch, worktree occupy
+- `packages/shared/src/git.ts`: local branch list and switch / create-and-switch DTOs.
+- `packages/services/src/git/git.ts`: `IGitService` exposes `getLocalBranches`, `switchBranch`, `createBranchAndSwitch`.
+- `packages/services/src/git/repo/gitCliRepo.ts`: `git for-each-ref` local branch reading; `git switch --no-guess` switching and `git switch -c` creation; failure / in-progress operation checks mapped to structured results.
+- `packages/services/test/gitService.test.ts`: real Git repository integration tests (success, no-op, dirty allowed switching, overwrite block, conflict, in-progress operation, illegal branch name, existing branch, worktree occupied).
 
 ## Background
 
-The current project already has stable Git service layered architecture:
+The Git service layering is stable:
 
-- `packages/shared/src/git.ts` defines Git DTO
-- `packages/services/src/git/git.ts` defines `IGitService`
-- `packages/services/src/git/gitService.ts` is responsible for high-layer semantics aggregation
-- `packages/services/src/git/repo/gitCliRepo.ts` is responsible for Git CLI thin encapsulation
+- `packages/shared/src/git.ts` defines Git DTOs.
+- `packages/services/src/git/git.ts` defines `IGitService`.
+- `packages/services/src/git/gitService.ts` aggregates high-level semantics.
+- `packages/services/src/git/repo/gitCliRepo.ts` is the thin Git CLI wrapper.
 
-Existing capabilities have covered:
+Existing capabilities: repository resolution, status / diff / branch comparison, stage / unstage / discard / commit, identity / refresh. Branch capability introduces no new platform-layer channel and does not bypass `GitService -> GitCliRepo -> Git CLI`.
 
-- Repository parsing
-- status / diff / branch comparison
-- stage / unstage / discard / commit
-- Identity / refresh
+## Goals
 
-Therefore, this time requirement should not introduce new platform layer channel, nor bypass existing `GitService -> GitCliRepo -> Git CLI` chain.
+- Give UI a stable data source for the project's local branches.
+- Real branch switching.
+- New branch creation and switching.
+- Structured blocked reasons on failure that can drive UI.
+- Unified abstraction across local / remote / web.
+- Keep Git native behavior; do not tighten to "dirty means no switching".
 
-## Target
+## Non-goals
 
-- For UI provide "current project pulled local branch" stable data source
-- Provide real branch switching capability
-- Provide "new branch creation and switching" capability
-- In case of switching failure return can drive UI structured blocked reason
-- Maintain local / remote / web three terminal unified abstraction
-- Keep Git native behavior, not artificially tighten for "as long as dirty does not allow switching"
+- No stash, force switch, or discard-then-switch.
+- No remote branch browsing and pull.
+- No branch rename / delete.
+- No rebase, merge, cherry-pick, submodule or other complex workflows.
+- No commit-panel UI promise.
 
-## Non-target
+## Core Decisions
 
-- Not do stash, force switch, discard changes then switch
-- Not do remote branch browsing and pull
-- Not do branch rename / delete
-- Not do rebase, merge, cherry-pick, submodule and other complex Git workflow
-- Not in this design directly promise UI submit panel
+### 1. Follow Git's native blocking model
 
-## Core Decision
+"Uncommitted changes forbid switching" is not a product rule. Git allows switching with uncommitted changes that the target branch would not overwrite; a blanket rule would be more conservative than Git and surprise users. UI needs to show the real blocked item, not "repository is not clean enough". Switching logic is based on the real `git switch` result.
 
-### 1. Follow Git native blocking model
+### 2. No boolean `canSwitch` interface
 
-This time does not adopt "as long as there are uncommitted changes does not allow switching" product rule.
+Git has no stable, complete, low-cost dry-run for switching. Pre-judging from `status` diverges from the real `git switch` result (tracked / untracked overwrite, in-progress operations and other blockers). `switchBranch` / `createBranchAndSwitch` return a structured result: success returns the new `summary`, failure returns `issues`. UI may use `summary`, `getChanges` and `getIdentity` for a weak pre-click hint but never as the final admission check.
 
-Reasons:
+### 3. Branch capability stays in the existing Git service domain
 
-- Git native allows "there are uncommitted changes, but these changes will not be covered by target branch" switching
-- If product layer one-size-fits-all, will比 Git more conservative, and user expectation inconsistent
-- UI needs prompt is "real blocked item", rather than "repository is not clean enough"
-
-Therefore, switching logic based on real `git switch` result.
-
-### 2. Not separately provide boolean type `canSwitch` interface
-
-Do not recommend adding `canSwitchToBranch(): boolean` similar interface.
-
-Reasons:
-
-- Git doesn't have stable, complete, low-cost dry-run switching command
-- Only based on `status` do pre-judgements, easy and real `git switch` result inconsistent
-- `tracked` cover, `untracked` cover, in-progress operation and other blocked items, best with real switching command result as authoritative source
-
-Therefore, recommend by `switchBranch` / `createBranchAndSwitch` directly return structured result:
-
-- Success: return new `summary`
-- Failure: return `issues`
-
-If UI needs in click before make weak prompt, can continue reuse existing `summary`, `getChanges`, `getIdentity` capability, but cannot take them as final准入 judgment.
-
-### 3. Branch capability continues placed in existing Git service domain
-
-New capability still falls in:
-
-`Types -> Config -> Repo -> Service -> Runtime -> UI`
-
-Do not newly add `IPlatformService` capability, do not newly add separate channel.
+`Types -> Config -> Repo -> Service -> Runtime -> UI`. No new `IPlatformService` capability, no separate channel.
 
 ## Capability Range
 
-### 1. Local Branch List
+### Local Branch List
 
-Used to support UI display "current repository already existed local branch".
+- Lists only `refs/heads/*`; no remote-tracking branches.
+- Branch is a repo-level concept; not trimmed by workspace subdirectory.
+- In detached HEAD, `currentBranchName` is empty but the local branch list is still returned.
 
-Restrictions:
+### Switch Branch
 
-- Only list `refs/heads/*`
-- Do not list remote-tracking branch
-- Branch is repo level concept, not按 workspace 子目录裁剪
-- If current处于 detached HEAD 时，`currentBranchName` 为空，但仍返回 local branch list
+- Input: target local branch name.
+- Success returns the latest repository summary.
+- Switching to the current branch is a successful no-op.
+- When Git natively prevents switching, a structured blocked reason is returned.
 
-### 2. Switch Branch
+### New Branch Creation and Switch
 
-Input target local branch name, try switch.
+Creates from current `HEAD` and switches. First version promises: user-supplied branch name; optional `startPoint`; no automatic remote-branch inference; no complex tracking strategy.
 
-Behavior:
-
-- Success时返回 latest repository summary
-- If switch to current branch, is considered success no-op
-- If Git native prevent switching, return structured blocked reason
-
-### 3. New Branch Creation and Switch
-
-Default from current `HEAD` create new branch and switch.
-
-First version only promise:
-
-- User input branch name
-- Optional input `startPoint`
-- Do not auto infer remote branch
-- Do not automatically set complex tracking strategy
-
-## Interface Design
-
-It is recommended to in `IGitService` newly add 3 个 methods:
+## Interface
 
 ```ts
  getLocalBranches(params: GitRepositoryRequest): Promise<GitLocalBranchListResult>;
  switchBranch(params: GitSwitchBranchRequest): Promise<GitBranchMutationResult>;
  createBranchAndSwitch(params: GitCreateBranchRequest): Promise<GitBranchMutationResult>;
 ```
-
-It is recommended newly add request types:
 
 ```ts
 export interface GitSwitchBranchRequest extends GitRepositoryRequest {
@@ -157,9 +98,7 @@ export interface GitCreateBranchRequest extends GitRepositoryRequest {
 }
 ```
 
-## Shared DTO Design
-
-It is recommended to in `packages/shared/src/git.ts` newly add following types.
+## Shared DTOs (`packages/shared/src/git.ts`)
 
 ### Branch List
 
@@ -179,10 +118,7 @@ export interface GitLocalBranchListResult {
 }
 ```
 
-Sorting recommendations:
-
-- Current branch排 first -其余按最近 submission time倒序
-- Time same again按名称升序
+Sorting: current branch first, the rest by most recent commit time descending, then name ascending.
 
 ### Switch / Create Result
 
@@ -218,15 +154,11 @@ export interface GitBranchMutationResult {
 }
 ```
 
-Semantic explanation:
+- `ok=true`, `didChange=true`: switch really completed.
+- `ok=true`, `didChange=false`: successful no-op (for example switching to the current branch).
+- `ok=false`: blocked by Git's native rules, or illegal input.
 
-- `ok=true` 且 `didChange=true`：真实完成 switch
-- `ok=true` 且 `didChange=false`：成功 no-op，例如 switch 到 current branch
-- `ok=false`：被 Git 原生 rules prevent, 或 input illegal
-
-## Repo Layer Design
-
-It is recommended to in `GitCliRepo` newly add following capability:
+## Repo Layer (`GitCliRepo`)
 
 ```ts
 listLocalBranches(workspacePath: string): Promise<GitLocalBranchListResult>;
@@ -238,284 +170,128 @@ createBranchAndSwitch(
 ): Promise<GitBranchMutationResult>;
 ```
 
-### 1. listLocalBranches
-
-It is recommended command:
+### listLocalBranches
 
 ```bash
 git for-each-ref refs/heads \
   --format=%(refname:short)%00%(upstream:short)%00%(objectname)%00%(committerdate:unix)
 ```
 
-Design key points:
+- Stable format; no parsing of human-readable output.
+- `cwd` is `repoRoot`.
+- In detached HEAD, no entry may have `isCurrent=true`.
 
-- Use stable format, avoid parsing human-readable output
-- `cwd` still 以 `repoRoot` execute
-- detached HEAD 时，`branches` 中可能没有 `isCurrent=true`
-
-### 2. switchBranch
-
-It is recommended command:
-
-```bash
-git switch --no-guess -- <branchName>
-```
-
-Actual implementation时，为避免 `--` 误伤 command 结构，推荐 use:
+### switchBranch
 
 ```bash
 git switch --no-guess <branchName>
 ```
 
-Design key points:
+(The `--` form is avoided in the actual implementation to keep the command structure intact.)
 
-- `--no-guess` 避免 Git 因 remote-tracking branch 自动 infer并创建 local branch
-- 先做 minimal 前置 verification：仓库 exists、target branch name non-empty
-- 真正的 blocked judgment based on `git switch` 的 stderr 与 exit code 为准
+- `--no-guess` stops Git from inferring a remote-tracking branch and creating a local branch.
+- Minimal pre-checks only: repository exists, target branch name non-empty.
+- The real blocked judgment is based on `git switch` stderr and exit code.
 
-### 3. createBranchAndSwitch
+### createBranchAndSwitch
 
-It is recommended first verification branch name:
+Validate the name first:
 
 ```bash
 git check-ref-format --branch <branchName>
 ```
 
-Then execute:
+Then:
 
 ```bash
 git switch --no-guess -c <branchName> [startPoint]
 ```
 
-Design key points:
-
-- Default from current `HEAD` create
-- `startPoint` 先作为底层 extension口 reserved，UI first version can not expose
-- If branch 已经存在，直接返回 structure 错误，不 do cover式 create
+- Created from current `HEAD` by default.
+- `startPoint` is a reserved extension point; the first UI does not expose it.
+- An existing branch returns a structured error; there is no overwrite-style creation.
 
 ## Blocking Model
 
-### 1. Should directly透传并 structure 化的 blocking item
+### Blockers passed through and structured
 
-#### Tracked 文件 will be cover
+- Tracked files would be overwritten. Git message: `Your local changes to the following files would be overwritten by checkout`. Code: `tracked-changes-would-be-overwritten`.
+- Untracked files would be overwritten. Git message: `The following untracked working tree files would be overwritten by checkout`. Code: `untracked-changes-would-be-overwritten`.
+- Conflicts present. Detected through `isConflicted` in `status`, with stderr parsing as fallback on failure. Code: `conflicts-present`.
+- Operation in progress (merge, rebase, cherry-pick, revert, bisect). The repo layer checks lightweight markers: `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`, `rebase-merge/`, `rebase-apply/`, `BISECT_LOG`. Code: `operation-in-progress`. `git switch` does not always give stable error semantics for these, so early identification helps UI explanation.
+- Branch checked out in another worktree. Git message contains `is already checked out at`. Code: `branch-in-other-worktree`.
 
-Git common提示：
+### Not blockers (follow Git native behavior)
 
-- `Your local changes to the following files would be overwritten by checkout`
+- Dirty repository whose changes the target branch does not overwrite.
+- Untracked files on unrelated paths that the target branch does not occupy.
+- Switching to the current branch.
 
-Mapping为：
+## Service Layer
 
-- `tracked-changes-would-be-overwritten`
+`GitService` closes high-level semantics:
 
-#### untracked 文件 will be cover
+- `getLocalBranches` returns the repo-layer result directly.
+- `switchBranch` / `createBranchAndSwitch` re-read `getStatus` after repo success.
+- Raw failure results from the repo are mapped uniformly so UI always receives stable DTOs.
+- When `workspacePath` is a monorepo subdirectory, branch operations still act on the whole `repoRoot`; the returned `summary.workspacePath` keeps the current workspace view for consistency with other Git capabilities.
 
-Git common提示：
+## Cache and Refresh
 
-- `The following untracked working tree files would be overwritten by checkout`
-
-Mapping为：
-
-- `untracked-changes-would-be-overwritten`
-
-#### Current exists conflict
-
-可以通过现有 `status` 里的 `isConflicted` 快速发现，也可以在 failure 时兜底 parse stderr。
-
-Mapping为：
-
-- `conflicts-present`
-
-#### 仓库 exists进行中操作
-
-例如 merge、rebase、cherry-pick、revert、bisect。
-
-建议 repo layer increase lightweight check:
-
-- `MERGE_HEAD`
-- `CHERRY_PICK_HEAD`
-- `REVERT_HEAD`
-- `REBASE_HEAD`
-- `rebase-merge/`
-- `rebase-apply/`
-- `BISECT_LOG`
-
-Mapping为：
-
-- `operation-in-progress`
-
-这样做 reasons 是这类 status 不一定都通过 `git switch` 给出足够 stable error semantics，提前 identify 更利于 UI 解释。
-
-#### Branch 正在 other worktree 中使用
-
-Git common提示中会出现：
-
-- `is already checked out at`
-
-Mapping为：
-
-- `branch-in-other-worktree`
-
-### 2. 不 should 作为 blocking item situation
-
-- 仓库 dirty，但这些改动不会被 target branch cover
-- 存在无关 path 的 untracked file，且 target branch 不会 occupy 这些 path
-- 切换到 current branch
-
-这几类都 should 尽量 follow Git 原生 behavior。
-
-## Service Layer Design
-
-`GitService` 继续 undertake "high-layer semantics closure" 的职责。
-
-It is recommended behavior:
-
-- `getLocalBranches` 直接返回 repo layer result
-- `switchBranch` / `createBranchAndSwitch` 在 repo success 后重新 读取 `getStatus`
-- 对 repo 返回的原始 failure result do unified mapping，保证 UI 永远 receive stable DTO
-
-It is recommended在 service 层做一次额外收口：
-
-- 如果当前 `workspacePath` 是 monorepo 子 directory， branch operation 仍然作用于整个 `repoRoot`
-- 返回的 `summary.workspacePath` 仍保留当前 workspace 视角，保持 UI 与 other Git 能力 consistent
-
-## 缓存与刷新
-
-当前 `GitCliRepo` 内部会复用进行中的：
-
-- `resolveRepository(workspacePath)`
-- `getStatus(workspacePath)`
-
-Branch switch 与 create 属于 real write operation，可能导致：
-
-- `branchName`
-- `trackingBranchName`
-- `ahead/behind`
-- `isDirty`
-- diff / branch comparison 基准
-
-全部变化。
-
-因此建议补一个 repo 级 cache 失效 method，例如：
+`GitCliRepo` reuses in-flight `resolveRepository(workspacePath)` and `getStatus(workspacePath)`. Switch and create are real writes that change `branchName`, `trackingBranchName`, `ahead/behind`, `isDirty` and the diff / branch comparison baseline. A repo-level cache invalidation method is added:
 
 ```ts
 invalidate(workspacePath: string): void;
 ```
 
-并在以下 operation 后调用：
+It is called after `stage`, `unstage`, `discard`, `commit`, `switchBranch` and `createBranchAndSwitch`, so refresh never reuses a pre-switch snapshot.
 
-- `stage`
-- `unstage`
-- `discard`
-- `commit`
-- `switchBranch`
-- `createBranchAndSwitch`
+## Call Flow
 
-这样可以避免刷新过程中复用到 switch 前 old 快照。
+1. Open branch dropdown: UI calls `getLocalBranches`, shows the list, highlights the current branch by `isCurrent`.
+2. User clicks a branch: UI calls `switchBranch`. On `ok=true`, update repository status from the returned `summary` and trigger related data refresh. On `ok=false`, choose messaging from `issues`; if the blocker relates to uncommitted changes, guide the user into the commit flow.
+3. User confirms a new branch name: UI calls `createBranchAndSwitch`; success updates repository status; failure shows the structured error.
 
-## Recommended Call Flow
+## Relation to Commit
 
-### 1. 打开 branch 下拉
+No new `commit` underlying capability is needed: the service already has `stagePaths`, `commit`, `getIdentity` and `getChanges`. A "commit then switch" guide is UI orchestration on top of "switch failure returns structured issues"; there is no combined `commitAndSwitch` action in this design.
 
-1. UI 调用 `getLocalBranches`
-2. 展示 local branch list
-3. 当前 branch 根据 `isCurrent` 高亮
+## Test Coverage
 
-### 2. 用户点击切换某个 branch
+In `packages/services/test/gitService.test.ts`:
 
-1. UI 调用 `switchBranch`
-2. 如果 `ok=true`
-   - 用返回的 `summary` 更新 repository status
-   - 触发相关 data refresh
-3. 如果 `ok=false`
-   - 根据 `issues` 决定提示文案
-   - 如果 blocking reason 与 uncommitted 改动相关，可 further guide user 进入 submit 流程
+- Lists local branches with the current-branch marker correct.
+- Clean repository: switch succeeds.
+- Switch to the current branch: successful no-op.
+- Dirty repository with changes that do not conflict with the target: switch allowed.
+- Tracked file would be overwritten: switch fails.
+- Untracked file would be overwritten: switch fails.
+- Conflicts present: structured block.
+- Merge / rebase or other in-progress state: structured block.
+- Create-and-switch succeeds.
+- Illegal new branch name.
+- Existing branch name fails.
+- Monorepo subdirectory workspace still acts on `repoRoot`.
 
-### 3. 用户输入 new branch 名并确认
+## Future Extension Points
 
-1. UI 调用 `createBranchAndSwitch`
-2. 成功则更新 repository status
-3. 失败则展示 structure 错误
+- Remote branch list and creating a local branch from a remote branch.
+- Branch rename / delete.
+- Optional stash flow before switching.
+- Richer branch metadata (ahead/behind, latest commit summary).
 
-## 与 submit 能力的关系
+These must not change the core boundaries: branch operations stay in the Git service domain; blocked judgment stays based on the real Git command result; UI guides, the service provides real, stable results.
 
-本 design 不需要 newly `commit` 底层 capability。
+## UI Landing
 
-Reasons:
+- Entry below the chat input: an independent branch pill trigger, not on the same row as model / mode selection.
+- The trigger shows the current branch; in `detached HEAD` it shows detached-state copy.
+- The expanded panel is a searchable local branch list: the current branch is highlighted; if the current branch has uncommitted changes, it shows "uncommitted changes: N files"; the bottom has a "create and check out new branch..." entry.
+- Clicking an existing branch calls `switchBranch` directly.
+- The create entry opens a lightweight form; submit calls `createBranchAndSwitch`.
+- If a switch fails with `tracked / untracked changes would be overwritten`, no toast: a blocking card lists the files that would be overwritten with +/- stats, and the user can continue into a "commit and switch branch" dialog.
+- First version of "commit and switch branch": commits all uncommitted changes in the current workspace scope; no "include unstaged changes" toggle; no push / PR / draft options; after a successful commit, `switchBranch` is retried automatically.
+- After a successful switch / create, UI refreshes the branch entry text, the header Git summary and Git side pane data.
+- On failure, UI maps structured `issues` to readable copy and does not expose raw Git errors.
 
-- Current service 已经具备 `stagePaths`
-- Current service 已经具备 `commit`
-- Current service 已经具备 `getIdentity`
-- Current service 已经具备 `getChanges`
-
-这意味着 UI subsequent 如果要做 "检测到 block 后，guide user 先 submit 再 switch"，底层能力已经足够。
-
-It is recommended practice is:
-
-- First complete "switch failure -> return structured issues"
-- Then由 UI 决定 whether popup submit guide
-
-而不是在本 design 中 directly introduce `commitAndSwitch` 这类 combination action。
-
-## 测试 recommendations
-
-It is recommended to在 `packages/services/test/gitService.test.ts` 增加 coverage：
-
-- 能 list local branch，且当前 branch marker correct
-- clean 仓库 switch branch success
-- switch 到 current branch 返回 no-op 成功
-- dirty 仓库 but 改动与 target branch 无 conflict 时 allow switch
-- tracked 文件会被 target branch cover 时 switch failure
-- untracked 文件会被 target branch cover 时 switch failure
-- 仓库 exists conflict 时 return structure 阻塞
-- 仓库 exists merge / rebase 等进行中 status 时 return structure 阻塞
-- 新建 branch 并 switch 成功
-- 新建 branch 名 illegal
-- 新建 already exists branch failure
-- monorepo 子 directory workspace 下调用仍 correct作用于 repoRoot
-
-## 后续扩展点
-
-如果后续产品继续 extension，可以在这个 design 上 natural 演进：
-
-- Support remote branch list 与 "基于远端 branch 创建 local branch"
-- Support branch rename / delete
-- Support switch 前的可选 stash 流程
-- Support more fine branch metadata，例如 ahead/behind、最近 submission 摘要
-
-这些 capability 都不 should 影响本 design 的 core boundary：
-
-- Branch operation 仍属于 Git service domain
-- 阻塞 judgment 仍尽量 based on Git 原命 command result 为 authoritative source
-- UI 负责 guide，service 负责提供真实且 stable 的 ability result
-
-## UI Landing Supplement（2026-04-15）
-
-基于本文底层 capability，当前 UI 侧补充了以下交互约定：
-
-- 功能入口放在聊天输入框下方，采用独立的 branch pill 触发器，不和模型 / 模式选择混在同一行
-- 触发器 default 显示当前 branch；`detached HEAD` 时展示 detached 状态文案
-- 展开后使用带 search 的 local branch list：
-  - 当前 branch 高亮
-  - 当前 branch exists uncommitted 改动时，展示 "uncommitted changes：N 个文件"
-  - 底部 provide "create and check out new branch..." 入口
-- 点击已有 branch 时直接调用 `switchBranch`
-- 点击 create 入口后 popup lightweight form， submit 时调用 `createBranchAndSwitch`
-- 如果 switch failure 属于 `tracked / untracked changes would be overwritten`
-  - 不再直接 toast
-  - 改为 popup 阻塞 card，列出会被 cover 文件及 +/- 统计
-  - user can continue进入 "submit and switch branch" popup
-- "submit and switch branch" popup first version do simplification:
-  - 默认 submit 当前 workspace scope 内全部 uncommitted 改动
-  - 不提供 "包含取消暂存的改动" switch
-  - 不提供 push / PR / draft 选项
-  - commit 成功后自动 retry `switchBranch`
-- 切换 / create 成功后，UI 会同时刷新：
-  - 当前 branch 入口文案
-  - header Git 摘要
-  - Git side pane 数据
-- 切换 failure 时优先根据 structure 化的 `issues` mapping user 可读提示，不直接 expose 底层 Git 原始 error
-
-这样可以 keep 责任 boundary clear：
-
-- service 继续 only 负责 return真实 Git 结果
-- UI 负责入口 layout、提示文案和刷新 chain 编排
+Responsibility boundary: the service only returns real Git results; UI owns entry layout, copy and the refresh chain.
