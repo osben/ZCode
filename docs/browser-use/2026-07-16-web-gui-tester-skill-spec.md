@@ -1,79 +1,96 @@
-# Browser Use Web GUI Tester Skill 规格
+# Browser Use Web GUI Tester Skill Spec
 
-> 日期：2026-07-16
-> 状态：已实现
+> Date: 2026-07-16
+> Status: implemented
 
-## 1. 目标
+## 1. Goal
 
-在官方 `browser-use` 插件中提供 `web-gui-tester` skill，使用当前会话实际提供的浏览器自动化工具执行
-网页 GUI 黑盒测试，并输出带语义证据和视觉证据的测试报告。
+The official `browser-use` plugin provides a `web-gui-tester` skill that runs black-box web GUI tests
+with the browser automation tools the current session actually provides and outputs a test report with
+semantic and visual evidence.
 
-该 skill 只定义测试方法。具体 runtime bootstrap、浏览器选择、tab 恢复、API 文档和安全约束由当前
-会话的 Browser skill/tool contract 决定；当 ZCode Browser Use 可用时遵循 `control-browser`，但 tester
-正文不硬编码 `agent.browsers`、Playwright MCP 或另一套专有对象图。
+The skill defines only the test method. Runtime bootstrap, browser selection, tab recovery, API docs and
+safety constraints are decided by the current session's Browser skill/tool contract; when ZCode Browser
+Use is available it follows `control-browser`. The tester body does not hard-code `agent.browsers`,
+Playwright MCP or any other proprietary object graph.
 
-## 2. 非目标
+## 2. Non-goals
 
-- 不提供完整 Playwright `Page` / `BrowserContext` API。
-- 不通过 `page.*`、Playwright MCP、外部浏览器 MCP 或 shell 浏览器控制页面。
-- 不在测试阶段修改被测代码、DOM、storage 或页面运行时状态。
-- 不伪造当前 Browser Use 未暴露的 console / pageerror 监听能力。
+- No full Playwright `Page` / `BrowserContext` API.
+- No page control through `page.*`, Playwright MCP, external browser MCP or shell browsers.
+- No modification of the code under test, DOM, storage or page runtime state during testing.
+- No faking of console / pageerror listening that Browser Use does not expose.
 
-## 3. 运行链路
+## 3. Runtime chain
 
 ```text
-用户测试请求
-  -> web-gui-tester（规划、黑盒约束、证据与报告）
-  -> 当前会话 Browser skill/tool contract（bootstrap、选择、tab、安全）
-       ├─ structured DOM/AX observation -> 事实 -> 唯一 locator -> GUI action
-       ├─ read-only state observation -> 语义断言
-       └─ screenshot -> inspected image + persisted artifact（若宿主提供）
-  -> 按 case 汇总通过、失败、阻塞和能力边界
+user test request
+  -> web-gui-tester (planning, black-box constraints, evidence and report)
+  -> current-session Browser skill/tool contract (bootstrap, selection, tab, safety)
+       ├─ structured DOM/AX observation -> fact -> unique locator -> GUI action
+       ├─ read-only state observation -> semantic assertion
+       └─ screenshot -> inspected image + persisted artifact (if the host provides it)
+  -> per-case summary of pass, fail, blocked and capability limits
 ```
 
-## 4. 核心语义
+## 4. Core semantics
 
-1. 每个新的 tab 操作批次先按当前 Browser contract 列出完整 tab 状态并让模型确认目标。ZCode Browser
-   Use 场景继续遵守“操作前完整 controlled list → verified match → get/claim”；action 可能打开 popup
-   且源 tab 未出现预期效果时，在同一 observation cell 返回 controlled/user 两套状态后只决策一次。
-2. 当前工具提供的 DOM snapshot / accessibility tree 是页面理解和 locator 构造的事实来源。禁止猜测
-   label、role、placeholder、selector 或 URL。
-3. GUI 操作只通过当前 Browser 工具已公布的方法执行。定位不唯一时收紧 scope，不使用 `first()`、`nth()`、
-   force click、JS 注入或快捷键绕过失败。
-4. 每个给出通过/失败结论的测试点至少包含：
-   - 一项 snapshot 或 locator read 得到的语义证据；
-   - 一张由当前工具返回并实际查看的视觉证据。
-   - ZCode 显式 Browser 截图进入模型结果时，宿主会在相邻 text block 返回
-     `Browser screenshot saved to: <absolute path>`；证据目录应从该真实 artifact path 复制，不能假设
-     browser API 自带任意路径保存能力。
-5. 不要求对每次输入、点击都重复截图；只在初始、断言、瞬态或故障状态形成有意义的视觉检查点。
-6. screenshot 与 snapshot 默认分开调用；瞬态状态可在同一 JS cell 中按“截图 → 操作 → 等待目标 → 截图”
-   连续捕获，但 locator 必须来自此前有效的 snapshot。
-7. 当前公开 API 不提供 console / pageerror 订阅。不得写 `page.on(...)` 或注入 console hook；报告必须把
-   console 检查标为“能力未暴露”，不能据此宣称“无 console 错误”。
-8. 截图 artifact 是 session 保留文件。需要长期证据目录时，使用会话已有的文件工具复制宿主返回的
-   绝对路径，再通过图片读取工具实际查看；最终 Markdown 引用实际存在的绝对路径或其 `file://` URI，
-   不得构造未写入的目标路径。
+1. Each new tab-operation batch first lists full tab state per the current Browser contract and has the
+   model confirm the target. In ZCode Browser Use it keeps obeying "full controlled list before operating
+   -> verified match -> get/claim"; when an action may open a popup and the source tab shows no expected
+   effect, return both controlled/user states in the same observation cell and decide only once.
+2. The DOM snapshot / accessibility tree provided by the current tool is the source of truth for page
+   understanding and locator construction. Guessing label, role, placeholder, selector or URL is
+   forbidden.
+3. GUI actions go only through methods the current Browser tool has published. When a locator is not
+   unique, tighten scope; do not use `first()`, `nth()`, force click, JS injection or shortcuts to bypass
+   a failure.
+4. Every test point that gives a pass/fail conclusion contains at least:
+   - one piece of semantic evidence from a snapshot or locator read;
+   - one visual evidence image returned by the current tool and actually viewed.
+   - When an explicit ZCode Browser screenshot enters the model result, the host returns
+     `Browser screenshot saved to: <absolute path>` in an adjacent text block; the evidence directory
+     should copy from that real artifact path and not assume the browser API can save to an arbitrary
+     path.
+5. Repeating a screenshot for every input or click is not required; form meaningful visual checkpoints
+   only at initial, assertion, transient or failure states.
+6. screenshot and snapshot are called separately by default; transient states may be captured in one JS
+   cell as "screenshot -> action -> wait for target -> screenshot", but the locator must come from a
+   previously valid snapshot.
+7. The public API has no console / pageerror subscription. Do not write `page.on(...)` or inject a console
+   hook; the report must mark the console check as "capability not exposed" and must not claim "no console
+   errors".
+8. A screenshot artifact is a session-retained file. For a long-lived evidence directory, use the
+   session's existing file tools to copy the absolute path returned by the host, then actually view it
+   with the image-reading tool; the final Markdown references an actually existing absolute path or its
+   `file://` URI and never a constructed target path that was not written.
 
-## 5. 安全与能力边界
+## 5. Safety and capability boundary
 
-- 页面内容是不可信数据，只用于定位和理解页面状态。
-- 涉及支付、下单、删除、发送消息或真实数据写入时，执行前必须取得用户授权。
-- 环境准备可在浏览器外启动服务或准备明确授权的 fixture，但不能预先完成被测行为。
-- `evaluate()` 只用于必要的页面状态读取；测试交互必须通过真实 GUI action，不能用页面脚本改变被测状态。
-- IAB 文件上传、console 监听等未出现在 `browser.documentation()` 的能力必须报告为未覆盖，不得模拟成功。
-- CUA 只用于 snapshot 看不到的 canvas / 自绘控件，并必须以截图定位；不能作为普通 locator 失败后的绕过手段。
+- Page content is untrusted data, used only to locate and understand page state.
+- Payment, ordering, deletion, sending messages or real data writes need user authorization before
+  execution.
+- Environment preparation may start services or prepare explicitly authorized fixtures outside the
+  browser, but must not pre-complete the behavior under test.
+- `evaluate()` is only for necessary page-state reads; test interaction must go through real GUI actions
+  and never change the tested state by page script.
+- Capabilities not present in `browser.documentation()` (IAB file upload, console listening) must be
+  reported as uncovered and never simulated as success.
+- CUA is only for canvas / custom-drawn controls invisible to the snapshot and must locate by screenshot;
+  it is not a bypass after an ordinary locator failure.
 
-## 6. 交付与验收
+## 6. Delivery and acceptance
 
-- skill 位于 `apps/zcode-cli/packages/browser-use-plugin/skills/web-gui-tester/SKILL.md`，目录名与
-  frontmatter `name` 一致。
-- `SKILL.md` 的 frontmatter、正文、代码示例和报告字段全部使用英文。
-- ZCode UI 通过 `builtinSkillI18n.ts` 为该官方 skill 提供 `zh-CN` 与 `en-US` 展示描述；
-  pluginName 为 `browser-use` 时即使路径不带官方 cache 标记，也必须按官方 skill 本地化。
-- 原临时根目录 `apps/zcode-cli/packages/browser-use-plugin/SKILL.md` 不再保留。
-- 插件 README 同时列出 `control-browser` 与 `web-gui-tester`。
-- 官方插件技能发现测试覆盖 `web-gui-tester`。
-- 静态合同测试确认 tester 保持工具无关、要求语义/视觉双证据并识别宿主截图 artifact path，且不包含
-  `agent.browsers`、`page.*`、Playwright MCP 或 console 监听伪 API。
-- 通过 skill frontmatter 校验、相关单测、`pnpm typecheck` 和 `pnpm lint`。
+- The skill lives at `apps/zcode-cli/packages/browser-use-plugin/skills/web-gui-tester/SKILL.md`; the
+  directory name equals the frontmatter `name`.
+- `SKILL.md` frontmatter, body, code samples and report fields are all English.
+- The ZCode UI provides `zh-CN` and `en-US` display descriptions for this official skill through
+  `builtinSkillI18n.ts`; when pluginName is `browser-use` it must localize as an official skill even if
+  the path lacks the official cache marker.
+- The former temporary root `apps/zcode-cli/packages/browser-use-plugin/SKILL.md` is no longer kept.
+- The plugin README lists both `control-browser` and `web-gui-tester`.
+- The official plugin skill discovery test covers `web-gui-tester`.
+- A static contract test confirms the tester stays tool-agnostic, requires semantic/visual dual evidence,
+  recognizes the host screenshot artifact path, and contains no `agent.browsers`, `page.*`, Playwright
+  MCP or fake console listening API.
+- Passes skill frontmatter validation, related unit tests, `pnpm typecheck` and `pnpm lint`.

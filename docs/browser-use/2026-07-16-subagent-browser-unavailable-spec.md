@@ -1,85 +1,107 @@
-# Subagent Browser Use 会话边界
+# Subagent Browser Use Session Boundary
 
-> 2026-10-09 起 subagent 可以使用 Browser Use，原先「subagent 一律 fail closed，统一报
-> `Browser is not available in subagent`」的限制已经移除。本文件沿用原路径，内容按当前实际行为编写。
+> Since 2026-10-09 subagents may use Browser Use; the earlier rule "subagents always fail closed with
+> `Browser is not available in subagent`" is removed. This file keeps its original path and describes the
+> current behavior.
 
-## 背景
+## Background
 
-宿主 `node_repl` MCP 是一个通用的 JavaScript 内核进程，主 agent 和 subagent 共用这一个 MCP 进程。
-Browser Use 需要拿到桌面窗口或 CLI managed headless runtime 的宿主控制权，所以 tab 归属、workspace
-和 clientMode 都必须能追溯到客户端认识的某个会话。
+The host `node_repl` MCP is a generic JavaScript kernel process shared by the main agent and subagents.
+Browser Use needs host control of the desktop window or the CLI managed headless runtime, so tab
+ownership, workspace and clientMode must trace back to a session the client knows.
 
-桌面判断 tab 归属、选择在哪个对话里展开浏览器面板，用的都是请求里的 `sessionId`。具体是
-`sessionId === 当前对话的 ownerTaskId`，见 `packages/ui/src/lib/workspaceSidePane.ts`
-（`applyBrowserUseSidePaneEvent`）。桌面不认识 subagent 的子会话 id。如果用子会话 id 开 tab，
-面板不会展开，这个 tab 也不会出现在任何对话里，成了一个看不见的孤儿。所以 core `Agent` 子代理的
-浏览器请求要以**当前对话（父会话）**作为 tab 归属。
+Desktop decides tab ownership and which conversation expands the browser panel by the request
+`sessionId`: `sessionId === the current conversation's ownerTaskId` (see `applyBrowserUseSidePaneEvent` in
+`packages/ui/src/lib/workspaceSidePane.ts`). Desktop does not know a subagent's child session id. A tab
+opened with a child session id would not expand the panel and would not appear in any conversation, an
+invisible orphan. So browser requests of core `Agent` subagents use the **current conversation (parent
+session)** as tab owner.
 
-## 适用范围
+## Scope
 
-- core `Agent` 子代理：`taskType: "subagent_child"`、`runtimeScope: "subagent"`，即本文的主体。
-- 动态工作流（dwf）子代理：`taskType: "workflow_child"`，仍使用子会话自己的 tab，run dispose 时
-  连 tab 一起关闭。见 `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` 的
-  「Subagent sessions」，以及 `docs/zcode-protocol-model-backed-control-requests.md` 契约 4。
+- core `Agent` subagent: `taskType: "subagent_child"`, `runtimeScope: "subagent"`; the subject of this
+  document.
+- dynamic workflow (dwf) subagent: `taskType: "workflow_child"`; keeps using the child session's own tabs
+  and closes them with the run on dispose. See "Subagent sessions" in
+  `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` and contract 4 of
+  `docs/zcode-protocol-model-backed-control-requests.md`.
 
-## 目标语义
+## Target semantics
 
-- 主 agent 的 Browser Use 行为不变。
-- subagent 可以初始化、发现、读取文档、操作 Browser Use，API 与主 agent 相同。
-- subagent 与当前对话共用同一组 tab：
-  - `tabs.list()`、`user.openTabs()` 能看到当前对话里所有的浏览器 tab，包括主 agent 开的和用户自己开的。
-  - subagent 新开或选中的 tab 会在当前对话的浏览器面板里自动展开，与主 agent 开 tab 时一样。
-- workspace（`workspaceIdentity` / `workspacePath` / `remoteSessionId`）和 `clientMode` 都取父会话，
-  所以桌面 continuous 与手机 replayable 的边界与父会话一致。
-- subagent 不主动关闭 tab：
-  - 子代理的轮次结束、运行结束（完成、失败或取消）时，都不向桌面发 `turnEnded` / `closeSession`；
-  - tab 交给父会话自己的生命周期处理（父会话 turnEnded 时释放控制权，tab 不会关闭）；
-  - 子代理运行结束只撤销子会话登记，之后再用这个子会话 id 发 Browser 请求，与从未登记一样会被拒。
-- 后续 `SendMessage` 恢复同一个 subagent 时会重新登记，并且能看到对话里还留着的 tab。
+- Main-agent Browser Use behavior is unchanged.
+- A subagent can initialize, discover, read docs and operate Browser Use, with the same API as the main
+  agent.
+- A subagent shares one tab set with the current conversation:
+  - `tabs.list()` and `user.openTabs()` see all browser tabs of the current conversation, including those
+    opened by the main agent and by the user.
+  - Tabs newly opened or selected by the subagent auto-expand in the current conversation's browser panel,
+    as when the main agent opens a tab.
+- workspace (`workspaceIdentity` / `workspacePath` / `remoteSessionId`) and `clientMode` come from the
+  parent session, so the desktop continuous and mobile replayable boundaries match the parent.
+- A subagent does not close tabs on its own:
+  - at subagent turn end and run end (completed, failed or cancelled) no `turnEnded` / `closeSession` is
+    sent to desktop;
+  - tabs are left to the parent session's own lifecycle (on parent turnEnded control is released and tabs
+    are not closed);
+  - run end only revokes the child-session registration; later Browser requests with that child id are
+    rejected as if never registered.
+- A later `SendMessage` that resumes the same subagent registers again and sees the tabs still left in
+  the conversation.
 
-## 调用链路
+## Call chain
 
 ```text
-parent runtime                  shared node_repl MCP        bootstrap broker（每 server context 一份状态）     Desktop
-  | Agent tool → spawn child          |                             |                                          |
+parent runtime                  shared node_repl MCP        bootstrap broker (one state per server context)     Desktop
+  | Agent tool -> spawn child         |                             |                                          |
   | forChildSession(child, parent,    |                             |                                          |
   |   tabOwner:"parent") ------------------------------------------>| childSessionParents[child]=parent        |
   |                                   |                             | parentTabOwnerChildren += child          |
 child runtime                         |                             |                                          |
   | js(session_id=child,              |                             |                                          |
-  |    runtime_scope=subagent) ------>| bridge 只校验 binding 未过期 |                                          |
-  |                                   | list/execute(child) ------->| requireSession(parent) → workspace/mode  |
-  |                                   |                             | 下发 sessionId=parent（tab 归属）------->| 对话 tab；面板按
-  |                                   |                             | 连接记在 parent 名下                     | ownerTaskId=parent 展开
-child turn / 运行结束                 |                             |                                          |
-  | 子端口 turnEnded / closeSession -------------------------------->| 不发生命周期；closeSession 只撤销登记    |
-parent turn 结束                      |                             |                                          |
-  | turnEnded(parent) --------------------------------------------->| 发往 parent 用过（含 child 用过）的 browser ->| 释放控制权，tab 保留
+  |    runtime_scope=subagent) ------>| bridge only validates the   |                                          |
+  |                                   | binding is unexpired        |                                          |
+  |                                   | list/execute(child) ------->| requireSession(parent) -> workspace/mode |
+  |                                   |                             | send sessionId=parent (tab owner) ------>| conversation tab; panel expands by
+  |                                   |                             | connection recorded under parent         | ownerTaskId=parent
+child turn / run end                  |                             |                                          |
+  | child port turnEnded / closeSession ------------------------------>| no lifecycle sent; closeSession only    |
+  |                                   |                             | revokes the registration                 |
+parent turn ends                      |                             |                                          |
+  | turnEnded(parent) --------------------------------------------->| sent to every browser the parent used    |
+  |                                   |                             | (including child-used) -------------->   | control released, tabs kept
 ```
 
-## 实现约束
+## Implementation constraints
 
-- `node_repl` browser bridge 和 bootstrap node_repl broker 不再按 `runtime_scope` 拒绝请求。broker
-  仍然先校验私有 socket token，sessionId 的权威校验交给 `BrowserControlPort` 的 `requireSession`。
-- 归属模式在 `BrowserControlPort.forChildSession({ childSessionId, parentSessionId, tabOwner })` 的
-  `tabOwner` 里声明：`"parent"` 给 core Agent 子代理用，`"child"`（默认）给 dwf 子代理用。子会话能否
-  解析，只取决于父 runtime 有没有调过 `forChildSession`，不根据 session id 的形状去猜父会话。
-- 在 `tabOwner: "parent"` 模式下，broker 把连接记在父会话名下，这样子代理用过的 browser 也能收到
-  父会话的 turnEnded / closeSession。
-- 端口没有 `forChildSession` 时（CLI headless CDP），子代理直接用父端口，tab 落在子会话自己的 scope 里，
-  子代理结束时关闭这个子会话的 session。headless 没有 UI 面板。
-- 收尾失败只记 warn，不阻断子代理结果回到父 agent。
-- 后台子代理和父会话可能同时操作同一组 tab，这一点与「共用对话 tab」的语义一致，不额外加锁。
-- Computer Use 的 subagent 限制不变（`docs/cua/2026-08-18-subagent-computer-use-unavailable-spec.md`）。
+- The `node_repl` browser bridge and the bootstrap node_repl broker no longer reject requests by
+  `runtime_scope`. The broker still validates the private socket token first; authoritative sessionId
+  validation is `requireSession` of `BrowserControlPort`.
+- The ownership mode is declared in `tabOwner` of `BrowserControlPort.forChildSession({ childSessionId,
+  parentSessionId, tabOwner })`: `"parent"` for core Agent subagents, `"child"` (default) for dwf
+  subagents. Whether a child session resolves depends only on whether the parent runtime called
+  `forChildSession`; never guess the parent from the session id's shape.
+- In `tabOwner: "parent"` mode the broker records the connection under the parent session, so a browser
+  used by a subagent also receives the parent's turnEnded / closeSession.
+- When the port lacks `forChildSession` (CLI headless CDP) the subagent uses the parent port directly,
+  tabs land in the child session's own scope and the child session is closed when the subagent ends.
+  Headless has no UI panel.
+- Cleanup failures only log `warn` and never block the subagent result from returning to the parent agent.
+- A background subagent and the parent session may operate the same tabs concurrently, consistent with
+  "shared conversation tabs"; no extra lock.
+- The Computer Use subagent restriction is unchanged
+  (`docs/cua/2026-08-18-subagent-computer-use-unavailable-spec.md`).
 
-## 验收
+## Acceptance
 
-- subagent scope 下调用 Browser bridge 不再抛错，初始化入口可用。
-- `forChildSession` 用 `tabOwner: "parent"` 登记后，子会话的 list/execute 下发父会话的 sessionId，
-  workspace 和 clientMode 都取父会话；子端口的 turnEnded / closeSession 不发任何桌面请求；撤销登记后
-  子会话请求被拒；父会话的 turnEnded 能发到子代理用过的 browser。
-- 父 runtime 为子代理调用 `forChildSession({ childSessionId, parentSessionId, tabOwner: "parent" })`，
-  子代理结束后对子端口调 closeSession（只撤销登记）。
-- 桌面 E2E（BAB01 / BU-E2E-012）：
-  - child 能列出主 agent 的 Tab，新开的 Tab 在当前对话面板中可见；
-  - 回到主 agent 后，原 Tab 的状态仍是 `parent-before`，child 开的 Tab 仍在 `tabs.list()` 里。
+- Calling the Browser bridge in subagent scope no longer throws and the init entry works.
+- After `forChildSession` registers with `tabOwner: "parent"`, the child session's list/execute send the
+  parent session id, workspace and clientMode come from the parent; child port turnEnded / closeSession
+  send no desktop request; after revocation child requests are rejected; the parent's turnEnded reaches
+  browsers the subagent used.
+- The parent runtime calls `forChildSession({ childSessionId, parentSessionId, tabOwner: "parent" })` for
+  the subagent, and after the subagent ends calls closeSession on the child port (revocation only).
+- Desktop E2E (BAB01 / BU-E2E-012):
+  - the child can list the main agent's tabs and newly opened tabs are visible in the current
+    conversation's panel;
+  - back in the main agent, the original tab state is still `parent-before` and the child-opened tab is
+    still in `tabs.list()`.
