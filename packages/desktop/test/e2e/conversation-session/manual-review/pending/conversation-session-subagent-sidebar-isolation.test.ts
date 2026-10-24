@@ -42,6 +42,7 @@ describe("子代理冷恢复主列表隔离", () => {
     // 真正重启 CLI 清空 detached publisher；打开历史详情必须恢复原身份。
     await restartIntoWorkspacePreservingProfile();
     await assertChildIsolated(childId);
+    await assertProjectsViewChildRow(parentId, childId);
     await activateGroupedView();
     const parent = $(`[data-grouped-task-key*="${encodeURIComponent(parentId)}"]`);
     await parent.waitForDisplayed({ timeout: 30000 });
@@ -72,6 +73,30 @@ describe("子代理冷恢复主列表隔离", () => {
     expect(readChildId(parentId)).toBe(childId);
   });
 });
+
+// Default projects view (spec sidebar-child-conversation-counts.md §7): the shared TaskListItem row
+// renders the same marker and child list as the grouped row; collapsing it leaves the grouped row
+// collapsed too because expansion has one per-parent owner.
+async function assertProjectsViewChildRow(parentId: string, childId: string) {
+  const parent = $(`[data-testid="${testId(TID_TASK_ITEM, parentId)}"]`);
+  await parent.waitForDisplayed({ timeout: 30000 });
+  await parent.click();
+  await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
+  const marker = parent.$('[data-child-sessions-marker="true"]');
+  await marker.waitForDisplayed({ timeout: 30000 });
+  await marker.click();
+  const childRow = parent.$(`[data-child-session-id="${childId}"]`);
+  await childRow.waitForDisplayed({ timeout: 30000 });
+  await childRow.click();
+  await waitForV4Pane(
+    (state) => state.sessionId === childId,
+    "projects-view child selection did not open the child as the active session",
+    30000,
+  );
+  await assertChildIsolated(childId);
+  await marker.click();
+  await childRow.waitForDisplayed({ timeout: 30000, reverse: true });
+}
 
 async function activateGroupedView() {
   const labels = ["Group", "分组"];

@@ -1,3 +1,4 @@
+import type { ChildSessionSelectOptions } from "@/components/TaskChildSessionRows.js";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
 import { memo } from "react";
 import { useDroppable } from "@dnd-kit/core";
@@ -78,7 +79,12 @@ function GroupedTaskItemComponent({
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    options?: ChildSessionSelectOptions,
+  ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onMoveTaskToGroup: (task: ZCodeTaskMeta, groupId: string | null) => void;

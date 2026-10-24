@@ -1,6 +1,6 @@
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared/test-ids";
 import type { ProjectTask as ZCodeTaskMeta } from "@/project-sidebar/contract.js";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useContext, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
@@ -19,15 +19,16 @@ import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
+import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import {
-  isChildSessionsExpanded,
-  persistChildSessionsExpanded,
-} from "@/lib/childSessionExpansionPreference.js";
-import { TaskChildSessionRows } from "@/project-sidebar/grouped/task-child-sessions.js";
+  TaskChildSessionRows,
+  useChildSessionsExpansion,
+  type ChildSessionSelectOptions,
+} from "@/components/TaskChildSessionRows.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
@@ -62,7 +63,12 @@ type GroupedTaskRowProps = {
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    options?: ChildSessionSelectOptions,
+  ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onMoveTaskToGroup: (task: ZCodeTaskMeta, groupId: string | null) => void;
@@ -389,14 +395,14 @@ function GroupedTaskInteractiveRow({
     };
   }, [archiveConfirming]);
   // Child-conversation list expansion is per parent and per device; the marker doubles as the expander.
-  const [childSessionsExpanded, setChildSessionsExpanded] = useState(() =>
-    isChildSessionsExpanded(task.taskId),
-  );
-  const handleToggleChildSessions = () => {
-    const next = !childSessionsExpanded;
-    persistChildSessionsExpanded(task.taskId, next);
-    setChildSessionsExpanded(next);
-  };
+  const [childSessionsExpanded, handleToggleChildSessions] = useChildSessionsExpansion(task.taskId);
+  // Phone rows stay unchanged (spec §7): the web remote switcher cannot open child sessions.
+  const childSessionsEnabled = !useContext(ProjectTaskListContext).isWebRemoteControl;
+  const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
+    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
+      ...options,
+      parentTaskId: task.taskId,
+    });
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",
   });
@@ -613,7 +619,7 @@ function GroupedTaskInteractiveRow({
               ) : null}
             </span>
           )}
-          {!hasPendingInteraction ? (
+          {!hasPendingInteraction && childSessionsEnabled ? (
             // Outside the hover-suppressed span: the marker is also the child-list expander and must
             // stay clickable while hover/focus swap the metadata for the action cluster.
             <ChildSessionCountsMarker
@@ -687,8 +693,8 @@ function GroupedTaskInteractiveRow({
         </span>
       </span>
       {workflowRunLinesNode}
-      {childSessionsExpanded ? (
-        <TaskChildSessionRows task={task} onSelectTask={onSelectTask} />
+      {childSessionsEnabled && childSessionsExpanded ? (
+        <TaskChildSessionRows task={task} onSelectSession={handleSelectChildSession} />
       ) : null}
     </div>
   );

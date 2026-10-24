@@ -2,6 +2,7 @@ import { Fragment, memo, useCallback, useContext, useMemo, useState } from "reac
 import type { ProjectTask, ProjectSidebarProps } from "@/project-sidebar/contract.js";
 import { TaskGroupTaskMenu } from "@/project-sidebar/TaskGroupTaskMenu.js";
 import { TaskList } from "@/TaskList.js";
+import type { ChildSessionSelectHandler } from "@/components/TaskChildSessionRows.js";
 import { Button } from "@/components/ui/button.js";
 import { useProjectTaskActions } from "@/project-sidebar/useProjectTaskActions.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
@@ -35,6 +36,19 @@ export const ProjectTaskRow = memo(function Row({
     () =>
       onSelect(task.workspacePath, task.taskId, task.workspaceIdentity, undefined, task.unreadAt),
     [onSelect, task],
+  );
+  // Children live in the parent's workspace; forward their capability (subagent → read-only).
+  const selectChild = useCallback<ChildSessionSelectHandler>(
+    (sessionId, options) =>
+      onSelect(
+        task.workspacePath,
+        sessionId,
+        task.workspaceIdentity,
+        remoteSessionId ?? undefined,
+        undefined,
+        { ...options, parentTaskId: task.taskId },
+      ),
+    [onSelect, task.workspacePath, task.workspaceIdentity, task.taskId, remoteSessionId],
   );
   const openFiles = useCallback(
     () => presentation.onOpenTaskFiles?.(task, remoteSessionId ?? undefined),
@@ -71,6 +85,8 @@ export const ProjectTaskRow = memo(function Row({
         hoverEnabled={!presentation.isWebRemoteControl}
         sortBy="updated"
         onSelectTask={select}
+        // Phone rows stay unchanged (spec §7: mobile child rows are out of scope).
+        onSelectChildSession={presentation.isWebRemoteControl ? undefined : selectChild}
         onRenameTask={rename}
         onSetTaskPinned={pin}
         onArchiveTask={archive}

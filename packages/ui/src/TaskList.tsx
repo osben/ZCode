@@ -11,6 +11,7 @@ import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { NewTaskButtonGroup } from "@/NewTaskButtonGroup.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js";
+import type { ChildSessionSelectHandler } from "@/components/TaskChildSessionRows.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import { TaskRenameDialog } from "@/TaskRenameDialog.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
@@ -54,6 +55,7 @@ export const TaskList = memo(function TaskList({
   onOpenFileTree,
   organizationActions,
   onDeleteTask,
+  onSelectChildSession,
 }: {
   organizationActions?: React.ReactNode;
   workspacePath: string;
@@ -83,6 +85,8 @@ export const TaskList = memo(function TaskList({
   onOpenFileTree?: () => void | Promise<void>;
   /** Sidebar Delete; the caller owns the confirmation dialog. */
   onDeleteTask?: (taskId: string) => void;
+  /** Child-session navigation; rows render the child marker/list only when provided. */
+  onSelectChildSession?: ChildSessionSelectHandler;
 }) {
   const { intl } = useZCodeIntl();
   const pinnedTaskIdSet = useMemo(
@@ -394,6 +398,7 @@ export const TaskList = memo(function TaskList({
         onMarkTaskAsUnread={handleMarkTaskAsUnread}
         onOpenTaskContextMenu={handleOpenTaskContextMenu}
         onOpenFileTree={onOpenFileTree}
+        onSelectChildSession={onSelectChildSession}
         actionsDisabled={Boolean(readOnlyReason)}
         actionsDisabledReason={readOnlyReason}
         intl={intl}

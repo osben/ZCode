@@ -71,6 +71,12 @@ import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
 import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
+import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
+import {
+  TaskChildSessionRows,
+  useChildSessionsExpansion,
+  type ChildSessionSelectHandler,
+} from "@/components/TaskChildSessionRows.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 
 type TaskListItemIntl = TaskWorkflowRunLinesIntl;
@@ -100,6 +106,11 @@ interface TaskListItemProps {
   intl: TaskListItemIntl;
   actionsDisabled?: boolean;
   actionsDisabledReason?: string;
+  /**
+   * Opens a child session (subagent / side chat) in this task's workspace. Only owners that pass it
+   * render the child marker and list (spec: sidebar-child-conversation-counts.md §7).
+   */
+  onSelectChildSession?: ChildSessionSelectHandler;
 }
 
 export function shouldShowRemoteConnectionOverlay(params: {
@@ -137,7 +148,11 @@ function areTaskListItemTaskFieldsEqual(left: ZCodeTaskMeta, right: ZCodeTaskMet
     resolveTaskSourceLabel(left) === resolveTaskSourceLabel(right) &&
     areJsonFieldsEqual(left.pendingInteraction, right.pendingInteraction) &&
     areJsonFieldsEqual(getTaskListRowActivity(left), getTaskListRowActivity(right)) &&
-    areJsonFieldsEqual(left.changeSummary, right.changeSummary)
+    areJsonFieldsEqual(left.changeSummary, right.changeSummary) &&
+    left.sideChatCount === right.sideChatCount &&
+    left.subagentCount === right.subagentCount &&
+    left.runningSubagentCount === right.runningSubagentCount &&
+    areJsonFieldsEqual(left.childSessions, right.childSessions)
   );
 }
 
@@ -166,7 +181,8 @@ function areTaskListItemPropsEqual(left: TaskListItemProps, right: TaskListItemP
     left.onArchiveTask === right.onArchiveTask &&
     left.onMarkTaskAsUnread === right.onMarkTaskAsUnread &&
     left.onOpenTaskContextMenu === right.onOpenTaskContextMenu &&
-    left.onOpenFileTree === right.onOpenFileTree
+    left.onOpenFileTree === right.onOpenFileTree &&
+    left.onSelectChildSession === right.onSelectChildSession
   );
 }
 
@@ -209,6 +225,7 @@ export const MemoTaskItem = memo(function TaskListItem({
   intl,
   actionsDisabled = false,
   actionsDisabledReason,
+  onSelectChildSession,
 }: TaskListItemProps) {
   const [hoverActionsVisible, setHoverActionsVisible] = useState(false);
   const [focusActionsVisible, setFocusActionsVisible] = useState(false);
@@ -445,6 +462,23 @@ export const MemoTaskItem = memo(function TaskListItem({
   // 工作流运行行：标题下的第二条通道，
   // 与前置 16px 槽（error > unread > spinner）互不占位。只在会话带 run 摘要时挂组件。
   const hasWorkflowRunLines = taskActivity?.workflowActivity !== undefined;
+  // Child-conversation marker + list (spec §7); the marker doubles as the expander.
+  const [childSessionsExpanded, toggleChildSessions] = useChildSessionsExpansion(task.taskId);
+  const childSessionMarkerNode =
+    onSelectChildSession && !hasPendingInteraction ? (
+      <ChildSessionCountsMarker
+        task={task}
+        expanded={childSessionsExpanded}
+        onToggle={toggleChildSessions}
+      />
+    ) : null;
+  const hasChildSessionRows =
+    Boolean(onSelectChildSession) && childSessionsExpanded && (task.childSessions?.length ?? 0) > 0;
+  const childSessionRowsNode =
+    hasChildSessionRows && onSelectChildSession ? (
+      <TaskChildSessionRows task={task} onSelectSession={onSelectChildSession} />
+    ) : null;
+  const hasBelowTitleLines = hasWorkflowRunLines || hasChildSessionRows;
   const workflowRunLinesNode = hasWorkflowRunLines ? (
     <TaskWorkflowRunLines
       activity={taskActivity.workflowActivity}
@@ -678,7 +712,7 @@ export const MemoTaskItem = memo(function TaskListItem({
           // 默认行 32px 时前置槽整行居中；长出工作流运行行后行体是两行的纵向列，槽改为对齐首行。
           variant === "timeline"
             ? "items-start py-1.5"
-            : hasWorkflowRunLines
+            : hasBelowTitleLines
               ? "items-start"
               : "items-center",
           isActive ? "bg-selected" : hoverEnabled && "hover:bg-surface-hover",
@@ -692,7 +726,7 @@ export const MemoTaskItem = memo(function TaskListItem({
           className={cn(
             "relative flex size-4 shrink-0 items-center justify-center",
             // 行体是纵向列（标题行 + 运行行）时前置槽对齐首行而不是整行：默认 24px 首行居中 = 上留 4px。
-            variant === "timeline" ? "mt-0.5" : hasWorkflowRunLines ? "mt-1" : undefined,
+            variant === "timeline" ? "mt-0.5" : hasBelowTitleLines ? "mt-1" : undefined,
           )}
         >
           <span
@@ -834,10 +868,13 @@ export const MemoTaskItem = memo(function TaskListItem({
                     </span>
                   </span>
                 ) : null}
+                {/* Outside the hover-suppressed metadata: the expander stays clickable on hover. */}
+                {childSessionMarkerNode}
                 {taskActionGroupNode}
               </div>
             </div>
             {workflowRunLinesNode}
+            {childSessionRowsNode}
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 flex-col">
@@ -933,9 +970,12 @@ export const MemoTaskItem = memo(function TaskListItem({
                 </span>
               ) : null}
 
+              {/* Outside the hover-suppressed metadata: the expander stays clickable on hover. */}
+              {childSessionMarkerNode}
               {taskActionGroupNode}
             </div>
             {workflowRunLinesNode}
+            {childSessionRowsNode}
           </div>
         )}
       </li>
