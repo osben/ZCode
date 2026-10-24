@@ -55,6 +55,24 @@ export function resolveProviderConfigOpenTargetPath(path: string, exists: boolea
   return parentPath || path;
 }
 
+/** Clipboard write shared by task, side-chat and Agent-row context menus; failures are logged only. */
+export async function copyTextToClipboard(label: string, value: string | null): Promise<void> {
+  if (!value) {
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(value);
+    logger.info(`[TaskListItem] ${label} 已复制: ${value}`);
+  } catch (error) {
+    logger.warn("[TaskListItem] 复制文本失败", {
+      label,
+      value,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function useTaskListItemContextActions({
   workspacePath,
   remoteSessionId,
@@ -113,22 +131,7 @@ export function useTaskListItemContextActions({
     },
   );
 
-  const handleCopyText = useCallback(async (label: string, value: string | null) => {
-    if (!value) {
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(value);
-      logger.info(`[TaskListItem] ${label} 已复制: ${value}`);
-    } catch (error) {
-      logger.warn("[TaskListItem] 复制文本失败", {
-        label,
-        value,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }, []);
+  const handleCopyText = useCallback(copyTextToClipboard, []);
 
   const handleOpenTaskPathInFileManager = useCallback(async () => {
     const hasRemoteWorkspaceScope = Boolean(

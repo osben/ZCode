@@ -401,18 +401,29 @@ it("project overlays reuse the Controller snapshot, drop offline sources, and ca
     sourceAvailability: "offline" as const,
   };
   // Idle parent: no live activity, but Host child facts must still reach the sidebar (spec §7).
+  // An older host also sends subagent rows and counters; the overlay keeps side chats only (§9).
   const idleParent = taskRow();
+  const sideChat = {
+    sessionId: "chat-1",
+    title: "side chat",
+    taskType: "selection_side_chat" as const,
+    lastActivityAt: 6,
+    running: false,
+  };
   const childFacts = {
+    sideChatCount: 1,
     subagentCount: 2,
-    runningSubagentCount: 0,
+    runningSubagentCount: 1,
     childSessions: [
       {
         sessionId: "child-1",
         title: "child",
         taskType: "subagent_child" as const,
         lastActivityAt: 5,
-        running: false,
+        running: true,
+        backgroundWorkId: "work-1",
       },
+      sideChat,
     ],
   };
   const idle = {
@@ -434,7 +445,7 @@ it("project overlays reuse the Controller snapshot, drop offline sources, and ca
   });
   expect(registry.readTaskOverlays()).toEqual([
     { address: live.address, activity: live.activity },
-    { address: idle.address, childFacts },
+    { address: idle.address, childFacts: { sideChatCount: 1, childSessions: [sideChat] } },
   ]);
   stop();
   expect(registry.readTaskOverlays()).toEqual([]);

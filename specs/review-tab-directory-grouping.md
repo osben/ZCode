@@ -1,6 +1,6 @@
 # Review tab: "Group by directory" checkbox for the changed-file list
 
-Status: revised 2026-10-18 to match the chat card (`specs/message-change-summary-tree-view.md`). Supersedes the 2026-10-16 draft and its Directory/Flatten icon toggle (commit `12eab371`), which defaulted to grouped. This document is the single source of truth for the Review pane; the chat card spec remains the source of truth for the chat card.
+Status: matches the chat card (`specs/message-change-summary-tree-view.md`); it supersedes the earlier Directory/Flatten icon-toggle draft (commit `12eab371`), which defaulted to grouped. This document is the single source of truth for the Review pane; the chat card spec remains the source of truth for the chat card.
 
 ## Problem
 
@@ -67,7 +67,7 @@ Non-interactive `div`, no `tabIndex`, no button semantics. Folder icon `size-3.5
 
 ## E2E scenario (interaction change)
 
-Case: open a workspace with mixed changes (a modified file and an untracked file in the same directory, plus a file in another directory). Open the Review pane. Check "Group by directory", assert one header per directory run and the header count, uncheck, assert flat rows, reload, assert the preference is restored. Status: unrun. This is the case definition only; the desktop E2E harness (`packages/desktop/test/e2e/`) has not been extended yet and no desktop E2E run has been performed for this feature. The component test in `packages/ui/test/gitPaneGroupByDirectoryView.test.ts` covers the same checkbox, grouping and persistence behavior in jsdom and is not a substitute for this E2E case.
+Case: open a workspace with mixed changes (a modified file and an untracked file in the same directory, plus a file in another directory). Open the Review pane. Check "Group by directory", assert one header per directory run and the header count, uncheck, assert flat rows, reload, assert the preference is restored. Status: unrun — the desktop E2E harness (`packages/desktop/test/e2e/`) has not been extended yet and no desktop E2E run has been performed for this feature. The component test in `packages/ui/test/gitPaneGroupByDirectoryView.test.ts` covers the same behavior in jsdom and is not a substitute for this E2E case.
 
 ## Tests
 

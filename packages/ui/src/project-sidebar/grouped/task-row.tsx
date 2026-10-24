@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
-import { routeChildSessionSelection } from "@/project-sidebar/child-session-navigation.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
@@ -28,7 +27,6 @@ import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
-  useStopChildBackgroundWork,
   type ChildSessionSelectOptions,
 } from "@/components/TaskChildSessionRows.js";
 import { toast } from "@/components/ui/toast.js";
@@ -302,15 +300,6 @@ function GroupedTaskInteractiveRow({
   const workspaceActionsDisabledReason = workspaceActionsDisabled
     ? intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" })
     : undefined;
-  const stopChildBackgroundWork = useStopChildBackgroundWork(
-    {
-      workspacePath: task.workspacePath,
-      ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
-      ...(remoteSessionId ? { remoteSessionId } : {}),
-      sessionId: task.taskId,
-    },
-    intl.formatMessage({ id: "taskList.childStopFailed" }),
-  );
   const snoozeInteractionAutoResolution = useTaskInteractionAutoResolutionSnooze({
     workspacePath: task.workspacePath,
     ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
@@ -410,22 +399,10 @@ function GroupedTaskInteractiveRow({
   // Phone rows stay unchanged (spec §7): the web remote switcher cannot open child sessions.
   const presentation = useContext(ProjectTaskListContext);
   const childSessionsEnabled = !presentation.isWebRemoteControl;
-  const handleSelectChildSession = (
-    sessionId: string,
-    options: ChildSessionSelectOptions,
-    title?: string,
-  ) =>
-    routeChildSessionSelection({
-      parent: task,
-      sessionId,
-      options,
-      title,
-      openSubagentSession: presentation.onOpenSubagentSession,
-      selectInMainPane: () =>
-        onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
-          ...options,
-          parentTaskId: task.taskId,
-        }),
+  const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
+    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
+      ...options,
+      parentTaskId: task.taskId,
     });
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",
@@ -717,62 +694,66 @@ function GroupedTaskInteractiveRow({
         </span>
       </span>
       {workflowRunLinesNode}
-      {childSessionsEnabled ? (
-        <TaskChildSessionRows
-          task={task}
-          expanded={childSessionsExpanded}
-          onToggle={handleToggleChildSessions}
-          onSelectSession={handleSelectChildSession}
-          onStopBackgroundWork={(workId) => void stopChildBackgroundWork(workId)}
-        />
-      ) : null}
     </div>
   );
+  // Sibling of the row's hover/press/context-menu/drag target (§9.5): each row hovers on its own.
+  const childSessionRowsNode = childSessionsEnabled ? (
+    <div className={cn("pl-2.5", dragging && "opacity-0")}>
+      <TaskChildSessionRows
+        task={task}
+        expanded={childSessionsExpanded}
+        onSelectSession={handleSelectChildSession}
+      />
+    </div>
+  ) : null;
 
   // grouped row 不能用原生 button 承载整行；行内还有菜单、关闭、文件树等 button，外层继续用 role=button，避免嵌套 button 破坏键盘和右键菜单语义。
   return (
-    <ContextMenu onOpenChange={setContextMenuOpen}>
-      {tooltipsDisabled ? (
-        // overlay 拖拽时指针下方的真实 row 仍可能被 Radix 识别为 hover，跳过 TooltipTrigger 避免底层 row 或 action 弹出悬浮提示。
-        <ContextMenuTrigger asChild>{interactiveTaskRow}</ContextMenuTrigger>
-      ) : (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ContextMenuTrigger asChild>{interactiveTaskRow}</ContextMenuTrigger>
-          </TooltipTrigger>
-          <TaskSidebarHoverCard
+    <>
+      <ContextMenu onOpenChange={setContextMenuOpen}>
+        {tooltipsDisabled ? (
+          // overlay 拖拽时指针下方的真实 row 仍可能被 Radix 识别为 hover，跳过 TooltipTrigger 避免底层 row 或 action 弹出悬浮提示。
+          <ContextMenuTrigger asChild>{interactiveTaskRow}</ContextMenuTrigger>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ContextMenuTrigger asChild>{interactiveTaskRow}</ContextMenuTrigger>
+            </TooltipTrigger>
+            <TaskSidebarHoverCard
+              task={task}
+              attentionLabel={taskAttentionDisplay}
+              activity={taskActivity}
+              intl={intl}
+            />
+          </Tooltip>
+        )}
+        {contextMenuOpen ? (
+          // 右键菜单内容带 Radix Presence/Portal，拖拽重排时常驻挂载会触发嵌套更新循环；仅在菜单打开时挂载内容，配合路径懒加载避免拖拽过程刷 task path RPC。
+          <GroupedTaskContextMenuContent
             task={task}
-            attentionLabel={taskAttentionDisplay}
-            activity={taskActivity}
+            currentGroupId={currentGroupId}
+            groups={groups}
             intl={intl}
+            fileManagerLabel={fileManagerLabel}
+            canOpenInFileManager={canOpenInFileManager}
+            taskSessionFile={taskSessionFile}
+            taskNativeSessionLogFile={taskNativeSessionLogFile}
+            providerConfigFile={providerConfigFile}
+            onMoveTaskToGroup={onMoveTaskToGroup}
+            onMoveTaskToTop={onMoveTaskToTop}
+            onStartRenameTask={onStartRenameTask}
+            onArchiveTask={onArchiveTask}
+            onMarkTaskAsUnread={onMarkTaskAsUnread}
+            onOpenTaskPathInFileManager={() => void handleOpenTaskPathInFileManager()}
+            onCopyText={(label, text) => void handleCopyText(label, text)}
+            onOpenProviderConfig={() => void handleOpenProviderConfig()}
+            onOpenTaskFeedback={() => void handleOpenTaskFeedback()}
+            disabledReason={workspaceActionsDisabledReason}
           />
-        </Tooltip>
-      )}
-      {contextMenuOpen ? (
-        // 右键菜单内容带 Radix Presence/Portal，拖拽重排时常驻挂载会触发嵌套更新循环；仅在菜单打开时挂载内容，配合路径懒加载避免拖拽过程刷 task path RPC。
-        <GroupedTaskContextMenuContent
-          task={task}
-          currentGroupId={currentGroupId}
-          groups={groups}
-          intl={intl}
-          fileManagerLabel={fileManagerLabel}
-          canOpenInFileManager={canOpenInFileManager}
-          taskSessionFile={taskSessionFile}
-          taskNativeSessionLogFile={taskNativeSessionLogFile}
-          providerConfigFile={providerConfigFile}
-          onMoveTaskToGroup={onMoveTaskToGroup}
-          onMoveTaskToTop={onMoveTaskToTop}
-          onStartRenameTask={onStartRenameTask}
-          onArchiveTask={onArchiveTask}
-          onMarkTaskAsUnread={onMarkTaskAsUnread}
-          onOpenTaskPathInFileManager={() => void handleOpenTaskPathInFileManager()}
-          onCopyText={(label, text) => void handleCopyText(label, text)}
-          onOpenProviderConfig={() => void handleOpenProviderConfig()}
-          onOpenTaskFeedback={() => void handleOpenTaskFeedback()}
-          disabledReason={workspaceActionsDisabledReason}
-        />
-      ) : null}
-    </ContextMenu>
+        ) : null}
+      </ContextMenu>
+      {childSessionRowsNode}
+    </>
   );
 }
 

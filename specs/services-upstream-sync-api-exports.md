@@ -47,3 +47,5 @@ Still missing after the additions (not added in this PR, reasons):
 - `WebRemoteControlWorkspaceSwitchOptions.openFileManager` and `taskHostId`: resolved; live members in upstream order, placeholder comment removed.
 - `ConversationShareFailureIssueCode` values `authentication_required` and `content_unavailable` and `ImportedConversationShare.contentBlocks`: shared conversation-share divergence. Adding union members changes fork-side Record maps, so this needs its own change.
 - `HooksSection` `scope` on hook trust APIs, `Locale` values (`uk-UA`), tool presentation families (`web-fetch`): UI and shared protocol features, not API names. The relay-status members `auth-required` and `device-not-owned` are present in the fork's unions.
+
+Full history: `git show 01dd23cd:specs/services-upstream-sync-api-exports.md`

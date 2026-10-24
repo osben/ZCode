@@ -258,3 +258,28 @@ it("resolves the context window once per provider and model", async () => {
   ]);
   expect(resolve).toHaveBeenCalledTimes(3);
 });
+
+it("counts a subagent session's own loop as main calls (rule 3a)", async () => {
+  const subagentCall = (requestId: string, messages: unknown[]) =>
+    rawRecord({ requestId, messages, querySource: "subagent" });
+  const result = await projectModelTrajectoryV2(
+    TASK_ID,
+    200,
+    ports([
+      subagentCall("sub-1", [{ role: "user", content: "task" }]),
+      subagentCall("sub-2", [
+        { role: "user", content: "task" },
+        { role: "assistant", content: "done" },
+        { role: "user", content: "next" },
+      ]),
+    ]),
+  );
+  expect(result.records.map((record) => record.callSource)).toEqual([
+    { kind: "main", querySource: "subagent" },
+    { kind: "main", querySource: "subagent" },
+  ]);
+  expect(result.records[1]?.inputDeltaOf).toEqual({
+    previousRequestId: "sub-1",
+    sharedPrefixCount: 1,
+  });
+});

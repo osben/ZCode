@@ -28,3 +28,5 @@
 - `pnpm typecheck` and `pnpm lint` pass with no new errors.
 - `pnpm fmt:check` passes.
 - Oversized `src/cli.ts` and `test/coreHttp.test.ts` are listed in `.staged-file-size-exemptions` until split.
+
+Full history: `git show 01dd23cd:specs/server-cli-upstream-sync.md`

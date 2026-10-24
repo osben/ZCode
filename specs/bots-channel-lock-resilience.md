@@ -1,7 +1,5 @@
 # Bot channel lock resilience
 
-Status: implemented locally (2026-10-19).
-
 ## Product contract
 
 Bot channel polling (Telegram long polling and the shared runtime lock discipline) and bot storage

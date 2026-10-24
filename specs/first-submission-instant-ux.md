@@ -1,13 +1,11 @@
 # First submission: instant chat UX (target)
 
-Status: **product target for implementation** (2026-10-21). This document tells
-agents **how the experience should feel** and what to optimize for. It does **not**
-replace durability, identity, or recovery rules in
-[`first-submission-lifecycle.md`](./first-submission-lifecycle.md) (FSL) or worktree
-contracts in [`composer-worktree-setup-steps.md`](./composer-worktree-setup-steps.md)
-and [`ui-draft-send-path.md`](./ui-draft-send-path.md). Those specs remain the
-source of truth for **correctness**; this spec is the source of truth for
-**perceived speed and non-blocking interaction**.
+Status: product target (2026-10-21), implemented in the current UI. This document defines
+**how the experience should feel** and what to optimize for. It does **not** replace durability,
+identity, or recovery rules in [`first-submission-lifecycle.md`](./first-submission-lifecycle.md)
+(FSL) or worktree contracts in [`composer-worktree-setup-steps.md`](./composer-worktree-setup-steps.md)
+and [`ui-draft-send-path.md`](./ui-draft-send-path.md). Those specs remain the source of truth for
+**correctness**; this spec is the source of truth for **perceived speed and non-blocking interaction**.
 
 ## North star (one sentence)
 
@@ -26,22 +24,18 @@ pipeline; only failures and unresolved outcomes surface under the message.
 | **P2 — Navigate** | “Am I in this task/chat?”     | **Immediately after P1** (first async beat — see _P2 bind moment_ below): pane binds to a **stable session identity** (real `sessionId`), normal chat chrome (header, timeline, composer dock), sidebar may lag but **must not gate** opening the conversation (FSL bind rule). |
 | **P3 — Model**    | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. No progress label under the message; never block P1/P2 on LLM or runtime ready.                                                                                                        |
 
-**P2 bind moment (single write point, decided 2026-10-21).** The pane binds when
-the Host reservation identity — `{sessionId, commandId}` — is durably recorded:
-the plain path binds at the `createSession` dispatch envelope (the session id is
-client-proposed and stable across the ACK), the worktree path at the reservation
-ACK. The bind is the only write point and is gated by navigation ownership
-(FSL rule 7): a late identity never steals focus, and a pane returning to the
-draft reconciles from the persisted first-submission record. IUX01's "same frame"
-promises the user turn and the chat chrome (centered draft gone) in the click
-commit; the real `sessionId` lands at P2, not in the same frame.
+**P2 bind moment (single write point).** The pane binds when the Host reservation
+identity — `{sessionId, commandId}` — is durably recorded: the plain path binds at
+the `createSession` dispatch envelope (the session id is client-proposed and stable
+across the ACK), the worktree path at the reservation ACK. The bind is the only write
+point and is gated by navigation ownership (FSL rule 7): a late identity never steals
+focus, and a pane returning to the draft reconciles from the persisted first-submission
+record. P1 promises the user turn and the chat chrome (centered draft gone) in the click
+commit; the real `sessionId` lands at P2, not in the same frame. ZCode reaches this via
+optimistic local truth reconciled with the Host later, while keeping FSL invariants (one
+session per submission, command-id reconciliation, no duplicate dispatch).
 
-Reference apps (e.g. Craft Agents / PI Desktop in Harness) optimize by treating P1+P2
-as **optimistic local truth** and reconciling with the server later. ZCode must reach
-the **same user-visible outcome** while keeping FSL invariants (one session per
-submission, command-id reconciliation, no duplicate dispatch).
-
-## What “cool” means (product)
+## Product meaning of “cool”
 
 1. **No “dead Send”** — The submit control must not stay in a global `pending` state
    for the entire Host/Git/runtime chain. At most a brief local ack (one frame) or a
@@ -80,28 +74,15 @@ User: Send (eligibility OK)
 ```
 
 Worktree and plain paths should **feel the same** at P1+P2 even if background steps
-differ. Today worktree is closer to this target than plain durable send; **plain
-must catch up**, not worktree regressing to slower plain behavior.
+differ. Plain send must not regress behind the worktree path.
 
-## Comparison anchor (Harness / Craft / PI — patterns only)
-
-| Pattern                                          | Adopt for ZCode                                 | Do not copy blindly                                                            |
-| ------------------------------------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------ |
-| Empty or immediate `sessionId` before first text | Yes — user always “in a chat” after Send        | Our prewarm/incognito/worktree markers differ; use `ui-draft-send-path` routes |
-| Optimistic user row in timeline                  | Yes — satisfies P1                              | Must reconcile with V4 projection + `commandId`; no second queue in UI         |
-| `optimisticMessageId`-style correlation          | Yes — conceptually `submissionId` + `commandId` | Protocol already has command ledger; do not bypass CommandInbox                |
-| Clear composer before network returns            | Yes — for **submitted** slice only              | FSL: next draft must not be wiped; functional updates / separate scope         |
-| `await sendMessage` for whole UI                 | **No** — that is the anti-pattern to remove     | Keep await only inside background worker, not on submit button                 |
-
-## Anti-patterns (current gaps agents should fix)
-
-These are **UX bugs relative to this target**, not permission to violate FSL:
+## Anti-patterns (UX bugs relative to this target, not permission to violate FSL)
 
 1. **Bind chat only after `sendText` accepted** on the plain durable path — violates P2.
 2. **`pending === true` for full `runSend`** — violates “no dead Send”.
 3. **`submissionReady` false for entire active first submission** — blocks next draft;
    conflicts with FSL rule 7 unless worktree-only exception.
-4. **Preview in `headerSlot` without authoritative user row** — acceptable only as
+4. **Preview in `headerSlot` without authoritative user row** — acceptable only as a
    **sub-millisecond** bridge; if it persists past P2, P1 is not met.
 5. **Centered draft layout while `hasFirstSubmission`** — user is neither in empty
    state nor full chat; minimize duration to zero.
@@ -117,11 +98,13 @@ Carry forward from FSL and related specs without reinterpretation:
 - Remote: `workspaceIdentity` end to end; no path-only matching.
 - No new `setting.json` keys; fork storage rules unchanged.
 - Desktop continuous vs mobile replayable semantics preserved.
+- Never `await sendMessage` on the submit button: the await belongs inside the
+  background worker, not the submit path.
 
 ## Acceptance (user-observable)
 
-Agents should add or extend **mounted UI tests** and desktop E2E candidates for
-these; unit tests alone are insufficient for P1/P2.
+Mounted UI tests and desktop E2E candidates are required for P1/P2; unit tests alone are
+insufficient.
 
 | ID    | Action                                | Must observe                                                                                                                                                                                                                                                                    |
 | ----- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -135,9 +118,7 @@ these; unit tests alone are insufficient for P1/P2.
 | IUX08 | Sidebar slow                          | Conversation usable before sidebar row appears                                                                                                                                                                                                                                  |
 | IUX09 | Restart mid-preparation               | Recovery without auto-dispatch; explicit continue                                                                                                                                                                                                                               |
 
-## Suggested architecture direction (for implementers)
-
-Order matters; later steps assume earlier ones.
+## Architecture direction (order matters; later steps assume earlier ones)
 
 1. **Split submit transaction** — Synchronous: freeze the submission snapshot,
    **claim the draft** (editor cleared in the same commit, persist echo suppressed),
@@ -165,8 +146,11 @@ Order matters; later steps assume earlier ones.
    worktree preparation without awaiting completion before P2; bind once at the
    P2 moment; handle failure on the bound session's timeline.
 6. **Telemetry** — Keep TTFT from admission/runtime; do not attribute setup wait
-   to “Send latency” in product analytics. This change audits existing points
-   only; no new instrumentation.
+   to “Send latency” in product analytics. Local TTFT keeps its renderer click
+   clock plus the `dispatch` checkpoint, so setup (click → dispatch) stays
+   separable from admission → first output. Known pre-existing gap: `send_result`
+   spans click → accepted including reservation and upload wait; separating it
+   needs new instrumentation.
 
 ## Flag lifetimes (decided 2026-10-21)
 
@@ -193,13 +177,13 @@ One ordering barrier stays: while the bound session's snapshot still reports
 with a visible reason instead of silently dropping the click. Without it a foreign
 input admitted first would reorder the frozen message behind it (SessionPane still
 sends the frozen `sendText` after activation, which acknowledges `input-admitted`
-without a receipt), and the bridge's `executeCommand` hook marked the preparation
+without a receipt), and the bridge's `executeCommand` hook would mark the preparation
 `active` on _any_ `sendText` to a preparing session, so reconciliation's "marker absent
-⇒ admitted" shortcut would mark a never-run frozen record `sending`. The hook now flips it
-only for a `sendText` that names its submission, and for a legacy `sendText` with no field from a
-renderer that predates the field (see _Owner of the frozen input_ below). When the record is
-settled (`failed`, or `preparing` after restart) the barrier names it as needing Retry
-or Remove, never as "still being delivered".
+⇒ admitted" shortcut would mark a never-run frozen record `sending`. The hook flips it
+only for a `sendText` that names its submission, and for a legacy `sendText` with no
+field from a renderer that predates the field (see _Owner of the frozen input_ below).
+When the record is settled (`failed`, or `preparing` after restart) the barrier names
+it as needing Retry or Remove, never as "still being delivered".
 
 **Implemented: prepared activation outcome.** The createSession ACK of a prepared
 submission carries `preparedActivation` (`materialized`, `input-pending`,
@@ -427,11 +411,13 @@ already flipped, a query `unknown` decides nothing and the copy stays held.
 Only a reserved (plain) record may treat a missing `submissionPreparation` as proof of
 admission — that marker flips when its `sendText` executes. A worktree record never has
 that marker (its `worktreePreparation` completes at activation, before any input), so it
-always goes to the command query. Residual risk, not closed here: after a CLI restart the
-command ledger may answer `unknown` for an input that was admitted but not yet projected;
-Retry then reactivates. When the record still holds the original sendText command id, the
-admitted receipt is surfaced (`preparedActivation`, see Implemented above) and the input is
-not resent; without that id the send repeats. Closing the id-less case is a CLI follow-up.
+always goes to the command query.
+
+Remaining limitation: after a CLI restart the command ledger may answer `unknown` for
+an input that was admitted but not yet projected; Retry then reactivates. When the
+record still holds the original sendText command id, the admitted receipt is surfaced
+(`preparedActivation`, see above) and the input is not resent; without that id the send
+repeats. Closing the id-less case is a CLI follow-up.
 
 ```mermaid
 sequenceDiagram
@@ -460,31 +446,10 @@ sequenceDiagram
 
 - `pnpm typecheck`, `pnpm lint`, architecture check on touched modules.
 - Focused tests: `firstSubmissionPreview`, `firstSubmissionProjection`, late ACK /
-  worktree dispatch harnesses, SessionPane bind tests — updated for IUX01–IUX09.
-- Report any E2E not run.
-
-### Telemetry audit (step 6, 2026-10-21)
-
-No attribution shifted relative to the pre-change base (`388a7944`): every telemetry
-call site in `ConversationComposer.runSend` (`recordSendClick` / `sendTime`,
-`localTtft.start`, `settleSendResult`, `sendAction.*`) and SessionPane's
-`reportDraftCreated` is unchanged. Moving `pending` and the bind earlier touches no
-telemetry: the early bind calls `handleDraftSessionCreated` without a `messageId`,
-so it reports nothing, and `session_create` still reports at `sendText` accept.
-Local TTFT keeps its renderer click clock plus the `dispatch` checkpoint, so setup
-(click → dispatch) stays separable from admission → first output. Pre-existing, not
-introduced here: `send_result`'s cost spans click → accepted and includes reservation
-and upload wait on both base and head; separating it needs new instrumentation,
-which this change does not add.
-
-### Desktop E2E status (2026-10-21)
-
-Not run. The wdio suite needs a built renderer (`packages/desktop/out`), the CLI
-bundle (`apps/zcode-cli/packages/cli/dist/zcode.cjs`) and a packaged app binary;
-none exist in the working checkout and the local E2E environment is known broken.
-No IUX-specific Desktop scenario has been authored yet; IUX01–IUX09 are covered by
-mounted composer/pane tests and component tests only, which do not prove Desktop
-rendering latency or restart behavior (FSL acceptance note).
+  worktree dispatch harnesses, SessionPane bind tests — for IUX01–IUX09.
+- Known limitation: IUX01–IUX09 are covered by mounted composer/pane and component
+  tests only. No Desktop E2E scenario for IUX exists yet; Desktop rendering latency
+  and restart behavior are not proven by tests (FSL acceptance note).
 
 ## Related documents
 
@@ -495,12 +460,3 @@ rendering latency or restart behavior (FSL acceptance note).
   activation pipeline.
 - [`docs/task-first-submit-visibility.md`](../docs/task-first-submit-visibility.md)
   — historical sidebar timing (superseded for visibility by FSL).
-
-## Agent handoff prompt (paste into task)
-
-When implementing first-send UX, read this file and FSL together. **Goal:** P1+P2
-instant, P3 async. **Do not** wait for `sendText` accepted to bind the pane on plain
-send. **Do not** hold `pending` across the full Host pipeline. **Do** show one user
-turn immediately, bind `sessionId` immediately, free the composer for the next draft,
-run reservation/worktree/upload/runtime in the background, reconcile projection by
-`commandId`, and keep all FSL failure/retry/identity rules.

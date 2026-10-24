@@ -383,12 +383,12 @@ it("SBV-CHILD: projects/timeline/pinned rows bind child-session selection to the
   const onSelect = vi.fn();
   const parent = task("parent", {
     workspaceIdentity: "remote:server:a:/parent",
-    subagentCount: 1,
+    sideChatCount: 1,
     childSessions: [
       {
         sessionId: "child-1",
         title: "child",
-        taskType: "subagent_child",
+        taskType: "selection_side_chat",
         lastActivityAt: 1,
         running: false,
       },
@@ -401,14 +401,14 @@ it("SBV-CHILD: projects/timeline/pinned rows bind child-session selection to the
     );
     const row = mocks.rowProps.find((props) => props.task.taskId === "parent");
     expect(typeof row?.onSelectChildSession).toBe("function");
-    row?.onSelectChildSession("child-1", { readOnly: true, selectionSideChat: false });
+    row?.onSelectChildSession("child-1", { selectionSideChat: true });
     expect(onSelect).toHaveBeenLastCalledWith(
       "/parent",
       "child-1",
       "remote:server:a:/parent",
       undefined,
       undefined,
-      { readOnly: true, selectionSideChat: false, parentTaskId: "parent" },
+      { selectionSideChat: true, parentTaskId: "parent" },
     );
     view.unmount();
   }
@@ -423,26 +423,4 @@ it("SBV-CHILD: projects/timeline/pinned rows bind child-session selection to the
   expect(mocks.rowProps.find((props) => props.task.taskId === "parent")?.onSelectChildSession).toBe(
     undefined,
   );
-});
-
-it("SBV-CHILD-PANE: a subagent row opens in the right pane when the shell provides it (spec §8.2)", () => {
-  const onSelect = vi.fn();
-  const onOpenSubagentSession = vi.fn();
-  const parent = task("parent", { subagentCount: 1 });
-  render(
-    createElement(
-      ProjectTaskListContext.Provider,
-      { value: { onOpenSubagentSession } },
-      createElement(ProjectTaskRows, { tasks: [parent], onSelect, refresh }),
-    ),
-  );
-  const row = mocks.rowProps.find((props) => props.task.taskId === "parent");
-  row?.onSelectChildSession("child-1", { readOnly: true, selectionSideChat: false }, "Child");
-  expect(onOpenSubagentSession).toHaveBeenCalledWith({
-    workspacePath: "/parent",
-    parentSessionId: "parent",
-    childSessionId: "child-1",
-    title: "Child",
-  });
-  expect(onSelect).not.toHaveBeenCalled();
 });

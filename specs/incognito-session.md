@@ -1,6 +1,6 @@
 # Incognito session
 
-Status: slice 6 (2026-10-18, in progress): the profile has thirteen capability keys; four of them (`identity`, `harness`, `environment`, `automationTools`) gate prompt and tool text that was core before, see "Prompt toggles". Slices 1–5 implemented: shared profile contract and fork setting; CLI storage (`session.fork_incognito`); CLI runtime overrides, inheritance, dream exclusion and the `incognitoSession` runtime capability (apps/zcode-cli/docs/design/v2/incognito-session.md); Host and renderer capability gates and the `incognito` summary/task-meta projection; UI (composer toggle and checklist, prompt-shell tint and chip, prewarm bypass, sidebar/hover-card/session-manager marker, Settings «Incognito», i18n). Draft-intent generation (scenario 18, composer half) and the serialized Settings write harden the UI races found in review. The desktop E2E scenarios (13, 17) are written but have not been run.
+Status: implemented (slices 1–6). The profile has thirteen capability keys; four of them (`identity`, `harness`, `environment`, `automationTools`) gate prompt and tool text that was core before, see "Prompt toggles". The CLI side is owned by `apps/zcode-cli/docs/design/v2/incognito-session.md`. Desktop E2E scenarios 13 and 17 are written but have not been run; dev-web end-to-end verification of the sidebar marker is pending (see "Sidebar marker durability").
 
 ## Problem
 
@@ -266,14 +266,9 @@ Ordering constraints:
 
 ## Sidebar marker durability
 
-Status: implemented (2026-10-18) for items 1-5 below; dev-web end-to-end verification is pending (see Limit). Proposed after the dev-web investigation. The marker today depends only on the live sessions-index overlay, so any client that does not observe the CLI sessions-index (dev web: the server shows no zcode-cli child and the rows carry only tasks-index meta) renders no marker, and tasks-index never stores `incognito`.
+Status: implemented for items 1-5 below; dev-web end-to-end verification is pending (see Limit).
 
-Root cause (file:line, verified in the code and in the dev web DOM):
-
-- The only writer of `incognito` on the list path is the overlay: `sessionOverlay` (`packages/services/src/window-controller/windowHostControllerService.ts:107`) → `buildSourceRows` (`windowHostControllerProjection.ts:179`) → row (`windowHostControllerService.ts:706,761`). Without an observer the row has no `incognito`.
-- Persisted meta has no field for it: the runtime snapshot upsert rebuilds meta from explicit fields (`packages/services/src/session/taskIndexRepo.ts:1700-1725`), which would drop `incognito` on every sync, and `zcodeTaskMetaSchema` (`packages/shared/src/validation.ts:1704`) has no `incognito` key.
-- Convergence exists only for the execution-worktree fact (BUG-GWT-010: `convergeExecutionWorktreeFacts`, `windowHostControllerService.ts:215`; `applyExecutionWorktreeFacts`, `taskIndexRepo.ts:2175`). It runs inside the overlay observer, so it does not help a client without one.
-- Legacy rows: `sess_f17a4862-…` has `fork_incognito` in `cli/db/db.sqlite` but no `incognito` in `tasks-index` meta_json. The desktop observer, which shares the DB, can converge it.
+The marker depends only on the live sessions-index overlay, so a client that does not observe the CLI sessions-index (dev web: the server shows no zcode-cli child and the rows carry only tasks-index meta) renders no marker, and tasks-index never stores `incognito`. The only writer of `incognito` on the list path is the overlay (`sessionOverlay` in `windowHostControllerService.ts` → `buildSourceRows`); persisted meta has no field for it, and the runtime snapshot upsert rebuilds meta from explicit fields, which would drop `incognito` on every sync. Convergence exists only for the execution-worktree fact (BUG-GWT-010: `convergeExecutionWorktreeFacts`), and it runs inside the overlay observer, so it does not help a client without one.
 
 Design (mirrors BUG-GWT-010; `incognito` is frozen per session, so a persisted `true` never goes stale and needs no clearing):
 
@@ -342,11 +337,11 @@ Scenario 23: the web sidebar (no sessions-index observer in-process) shows the i
 
 1. Shared profile schema, fork settings key, protocol fields and capabilities.
 2. CLI storage: migration `9001_fork_session_incognito`, insert, decode, `SessionInfo.incognito`.
-3. CLI runtime: `runtimeConfig.incognito`, per-capability overrides, inheritance, dream exclusion. Advertise `incognitoSession: true` only as the final step: the in-tree CLI's strict legacy schema already accepts `incognito` and ignores it, so until then the missing capability is the only fail-closed guard.
+3. CLI runtime: `runtimeConfig.incognito`, per-capability overrides, inheritance, dream exclusion. `incognitoSession: true` is advertised only as the final step: the in-tree CLI's strict legacy schema already accepts `incognito` and ignores it, so until then the missing capability is the only fail-closed guard.
 4. Host gate and projection → task meta.
 5. UI: composer toggle/checklist/highlight/prewarm bypass, sidebar marker, Settings section, i18n, DESIGN.md token.
 
-Precondition: resolve the separate audit of fork migration `0023_session_execution_worktree` (upstream numbering, unprefixed columns) first, so `9001_fork_session_incognito` does not build on a non-compliant pattern.
+Open follow-up from the original plan: the separate audit of fork migration `0023_session_execution_worktree` (upstream numbering, unprefixed columns) — `9001_fork_session_incognito` follows the compliant pattern instead.
 
 ## Non-goals (V1)
 

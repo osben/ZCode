@@ -79,15 +79,6 @@ export interface SidebarFileTreeOpenRequest {
   id: number;
   target: SidebarFileTreeTarget;
 }
-export interface SidebarSubagentSessionTarget {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  parentSessionId: string;
-  childSessionId: string;
-  title: string;
-  /** Set by the sidebar navigation after it attached the remote parent workspace. */
-  remoteSessionId?: string;
-}
 /** 项目、时间线共用同一 Host 行集合；回调只负责现有导航，不维护组织状态。 */
 export interface ProjectSidebarProps {
   workspacePath: string;
@@ -106,16 +97,8 @@ export interface ProjectSidebarProps {
       readOnly?: boolean;
       selectionSideChat?: boolean;
       parentTaskId?: string;
-      /** Sidebar-internal: after the parent navigation (incl. remote attach), open this subagent. */
-      subagentTarget?: SidebarSubagentSessionTarget;
     },
   ) => void;
-  /**
-   * Opens a subagent child in the right pane under its parent: the shell selects the parent, then
-   * opens the subagent-session tab (spec sidebar-child-conversation-counts §8.2). Absent → the
-   * child opens read-only in the main pane through onSelectTask.
-   */
-  onOpenSubagentSession?: (target: SidebarSubagentSessionTarget) => void;
   onStartDraftInWorkspace: (targetWorkspacePath: string, targetWorkspaceIdentity?: string) => void;
   onOpenCodeViewer?: (source: CodeViewerSource) => void;
   onOpenBrowserUrl?: (url: string) => void;

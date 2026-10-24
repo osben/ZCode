@@ -10,7 +10,6 @@ import {
   type ZCodeSessionEraseTreeResult,
   type ZCodeSessionTreeCountsResult,
 } from "@zcode/shared";
-import { isRecordBusy } from "../zcode-protocol-v4/child-session-facts.js";
 import { closeSession } from "./server-operations.js";
 import {
   ProtocolRequestError,
@@ -46,6 +45,21 @@ function requireTreeStore(context: ZCodeProtocolAgentServerContext) {
     throw new ProtocolRequestError(-32601, "Session tree operations are not supported");
   }
   return store;
+}
+
+interface BusyRecordView {
+  app: { runtime: { hasResidencyBlockingWork(): boolean } };
+  activeAbortController?: AbortController;
+  residencyFinalizationCount?: number;
+}
+
+/** Finished-but-resident sessions are not running; an active turn or residency-blocking work is. */
+function isRecordBusy(record: BusyRecordView): boolean {
+  return (
+    record.activeAbortController !== undefined ||
+    (record.residencyFinalizationCount ?? 0) > 0 ||
+    record.app.runtime.hasResidencyBlockingWork()
+  );
 }
 
 function findRunningSessionIds(

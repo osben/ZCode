@@ -1,14 +1,6 @@
 # MessagePort RPC: check binary payloads before control objects
 
-Status: implemented (2026-10-18). Found by the desktop performance pass and verified with an interleaved A/B benchmark against a per-metric noise floor; the numbers are in the pull request description.
-
-## Problem
-
-`MessagePortProtocol` (`packages/rpc/src/protocol.ts`) carries every RPC message between the renderer and the Host as a `Uint8Array`, plus rare connection-flow control objects (`{ __zcodeRpcControl: "connection-flow-v1", state }`). Its message handler first calls `isMessagePortFlowControl(e.data)` and only then checks `e.data instanceof Uint8Array`.
-
-`isMessagePortFlowControl` calls `Object.keys(record)` on any non-array object. A `Uint8Array` is such an object, and `Object.keys` on it allocates one string per byte. Every binary RPC message therefore costs time and garbage proportional to its size before it is delivered.
-
-Measured in the renderer CPU profile of the benchmark's S4 phase (20 task switches across seeded sessions; E2E production build): `isMessagePortFlowControl` has 418 ms self time, the largest JavaScript self time in the phase. The actual delivery under the same handler takes about 120 ms. GC adds 117 ms.
+`MessagePortProtocol` (`packages/rpc/src/protocol.ts`) carries every RPC message between the renderer and the Host as a `Uint8Array`, plus rare connection-flow control objects (`{ __zcodeRpcControl: "connection-flow-v1", state }`). Its message handler checks `isMessagePortFlowControl(e.data)` first; that function calls `Object.keys(record)` on any non-array object, and a `Uint8Array` is one — allocating one string per byte. Every binary RPC message therefore costs time and garbage proportional to its size before it is delivered.
 
 ## Product rule
 
