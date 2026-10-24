@@ -72,3 +72,13 @@ Shift+Tab moves backward into a project above the visible area. If that project'
 - Collapsing and re-expanding keeps rows mounted.
 - A project that starts collapsed and is then expanded mounts its rows immediately.
 - A collapsed project with an unread task shows the unread dot, whether or not its rows were ever mounted.
+
+## Verification
+
+- Unit tests: `packages/ui/test/projectDeferredRows.test.ts` uses a fake `IntersectionObserver` with positioned rects and counts mounted rows.
+- Desktop E2E: `packages/desktop/test/e2e/ui-shell/project-sidebar-deferred-rows.test.ts` covers these cases:
+  - SBD01: placeholder far down;
+  - SBD02: Tab from a deferred header reaches its first row;
+  - SBD03: scrolling mounts the rows, and they stay mounted;
+  - SBD04: the active task's row stays mounted off-screen and scrolls into view.
+- Setup for the E2E: it creates 12 projects through the UI. It then writes legacy-shaped task rows while the app is stopped and restarts. The Host's legacy reconcile assigns those rows to the projects.
