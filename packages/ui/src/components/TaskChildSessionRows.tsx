@@ -1,32 +1,49 @@
 /**
- * Child-conversation rows under a parent task row (spec: sidebar-child-conversation-counts.md):
- * the group nesting rail (ml-4 border-l pl-2) with one row per child — bot/message-circle glyph,
- * truncated title, spinner while running, relative time otherwise — plus the "+N more" overflow row.
- * Clicking a child opens that session through the row's regular onSelectTask path. Side chats stay
- * writable; subagents open read-only because the Host rejects child input. The overflow row opens
- * the parent conversation, where the full subagent history lives.
+ * Child-conversation rows under a parent task row (spec: sidebar-child-conversation-counts.md §4,
+ * §7): the group nesting rail (ml-4 border-l pl-2) with one row per child — bot/message-circle
+ * glyph, truncated title, spinner while running, relative time otherwise — plus the "+N more"
+ * overflow row. Shared by the grouped row and TaskListItem (projects / timeline / pinned views).
+ * Clicking a child opens that session through the owner's select path, which binds the parent's
+ * workspace. Side chats stay writable; subagents open read-only because the Host rejects child
+ * input. The overflow row opens the parent conversation, where the full subagent history lives.
  */
 import { Bot, LoaderIcon, MessageCircle } from "lucide-react";
-import type { MouseEvent } from "react";
+import { useCallback, useState, type MouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import {
+  isChildSessionsExpanded,
+  persistChildSessionsExpanded,
+} from "@/lib/childSessionExpansionPreference.js";
 import { formatTaskRelativeTime } from "@/lib/taskListItemPresentation.js";
 
-type SelectTaskHandler = (
-  workspacePath: string,
-  taskId: string,
-  workspaceIdentity?: string,
-  targetRemoteSessionId?: string,
-  expectedUnreadAt?: number,
-  options?: { readOnly?: boolean; selectionSideChat?: boolean },
+export interface ChildSessionSelectOptions {
+  readOnly?: boolean;
+  selectionSideChat?: boolean;
+}
+
+/** Opens a session in the parent task's workspace; the row owner binds workspace identity. */
+export type ChildSessionSelectHandler = (
+  sessionId: string,
+  options: ChildSessionSelectOptions,
 ) => void;
+
+/** Per-parent expansion backed by the single localStorage owner (childSessionExpansionPreference). */
+export function useChildSessionsExpansion(parentSessionId: string): [boolean, () => void] {
+  const [expanded, setExpanded] = useState(() => isChildSessionsExpanded(parentSessionId));
+  const toggle = useCallback(() => {
+    persistChildSessionsExpanded(parentSessionId, !expanded);
+    setExpanded(!expanded);
+  }, [expanded, parentSessionId]);
+  return [expanded, toggle];
+}
 
 export function TaskChildSessionRows({
   task,
-  onSelectTask,
+  onSelectSession,
 }: {
   task: ZCodeTaskMeta;
-  onSelectTask: SelectTaskHandler;
+  onSelectSession: ChildSessionSelectHandler;
 }) {
   const { intl } = useZCodeIntl();
   const listed = task.childSessions ?? [];
@@ -40,7 +57,7 @@ export function TaskChildSessionRows({
     (event: MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, undefined, undefined, {
+      onSelectSession(sessionId, {
         readOnly: taskType === "subagent_child",
         selectionSideChat: taskType === "selection_side_chat",
       });

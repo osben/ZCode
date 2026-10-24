@@ -378,3 +378,38 @@ it("同步同一控制端的跨窗口排序，同时保留当前窗口未加载�
   );
   expect(result.current.sort([project, remote]).map((p) => p.id)).toEqual(["remote", "p"]);
 });
+
+it("SBV-CHILD: projects/timeline/pinned rows bind child-session selection to the parent workspace", () => {
+  const onSelect = vi.fn();
+  const parent = task("parent", {
+    workspaceIdentity: "remote:server:a:/parent",
+    subagentCount: 1,
+    childSessions: [
+      {
+        sessionId: "child-1",
+        title: "child",
+        taskType: "subagent_child",
+        lastActivityAt: 1,
+        running: false,
+      },
+    ],
+  });
+  for (const kind of ["project", "timeline", "pinned"] as const) {
+    mocks.rowProps.length = 0;
+    const view = render(
+      createElement(ProjectTaskRows, { tasks: [parent], kind, onSelect, refresh }),
+    );
+    const row = mocks.rowProps.find((props) => props.task.taskId === "parent");
+    expect(typeof row?.onSelectChildSession).toBe("function");
+    row?.onSelectChildSession("child-1", { readOnly: true, selectionSideChat: false });
+    expect(onSelect).toHaveBeenLastCalledWith(
+      "/parent",
+      "child-1",
+      "remote:server:a:/parent",
+      undefined,
+      undefined,
+      { readOnly: true, selectionSideChat: false },
+    );
+    view.unmount();
+  }
+});

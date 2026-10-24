@@ -24,10 +24,10 @@ import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
 import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import {
-  isChildSessionsExpanded,
-  persistChildSessionsExpanded,
-} from "@/lib/childSessionExpansionPreference.js";
-import { TaskChildSessionRows } from "@/project-sidebar/grouped/task-child-sessions.js";
+  TaskChildSessionRows,
+  useChildSessionsExpansion,
+  type ChildSessionSelectOptions,
+} from "@/components/TaskChildSessionRows.js";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip.js";
@@ -62,7 +62,12 @@ type GroupedTaskRowProps = {
   activeWorkspaceIdentity?: string;
   activeTaskId: string | null;
   mobileActiveTaskKey?: string | null;
-  onSelectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onSelectTask: (
+    workspacePath: string,
+    taskId: string,
+    workspaceIdentity?: string,
+    options?: ChildSessionSelectOptions,
+  ) => void;
   onCloseTask: (task: ZCodeTaskMeta) => void;
   onOpenFileTree?: (task: ZCodeTaskMeta) => void;
   onMoveTaskToGroup: (task: ZCodeTaskMeta, groupId: string | null) => void;
@@ -389,14 +394,9 @@ function GroupedTaskInteractiveRow({
     };
   }, [archiveConfirming]);
   // Child-conversation list expansion is per parent and per device; the marker doubles as the expander.
-  const [childSessionsExpanded, setChildSessionsExpanded] = useState(() =>
-    isChildSessionsExpanded(task.taskId),
-  );
-  const handleToggleChildSessions = () => {
-    const next = !childSessionsExpanded;
-    persistChildSessionsExpanded(task.taskId, next);
-    setChildSessionsExpanded(next);
-  };
+  const [childSessionsExpanded, handleToggleChildSessions] = useChildSessionsExpansion(task.taskId);
+  const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
+    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, options);
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",
   });
@@ -688,7 +688,7 @@ function GroupedTaskInteractiveRow({
       </span>
       {workflowRunLinesNode}
       {childSessionsExpanded ? (
-        <TaskChildSessionRows task={task} onSelectTask={onSelectTask} />
+        <TaskChildSessionRows task={task} onSelectSession={handleSelectChildSession} />
       ) : null}
     </div>
   );
