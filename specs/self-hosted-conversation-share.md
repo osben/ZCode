@@ -3,13 +3,8 @@
 Conversation sharing currently publishes to the vendor platform (`zcode.z.ai`): the desktop
 client resolves its API base from the runtime ZCode endpoint origin and the share landing page
 requires Z.ai OAuth before viewing. This spec replaces the vendor round-trip with a small
-fork-owned storage service. Decisions confirmed with the user 2026-10-16: link TTL is **1 day**,
-and the "Only me" access option is **hidden** whenever a non-vendor share endpoint is
-configured.
-
-Revision note 2026-10-16 (adversarial review pass): the earlier "zero client changes" claim was
-refuted — credential gating, publish auth, and config plumbing all require client changes.
-They are now specified explicitly.
+fork-owned storage service. User decisions: link TTL is **1 day**, and the "Only me" access
+option is **hidden** whenever a non-vendor share endpoint is configured.
 
 ## Current state (verified)
 
@@ -91,7 +86,7 @@ nofollow` and no auth header (the importer uses bare `fetch`). Artifact URLs exp
    `authentication_required`/401/3213, so the viewer's login card never renders. No viewer
    code change is required for the gate itself.
 
-## Client changes (explicit — the old "zero changes" claim was wrong)
+## Client changes
 
 1. **Credential boundary (blocker fix).** When the self-hosted endpoint is configured, both
    http-client construction sites swap `tokenProvider`: publish routes authenticate with a

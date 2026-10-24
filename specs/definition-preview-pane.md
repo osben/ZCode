@@ -8,10 +8,7 @@ Term: a **definition** is a skill, command, subagent or plugin defined by files 
 "resource" is avoided because `packages/ui/src/resource-manager` already uses it for system
 resource usage; "builtin" follows CONTEXT.md (**Builtin Plugin**) and means shipped with the app.
 
-Design agreed in chat review 2026-10-22 (mockup: right side pane, folder tree on the left, file
-content on the right).
-
-## Current state (verified 2026-10-22)
+## Current state
 
 - Sent messages render mentions as styled `<span>` chips with no click behaviour
   (`packages/ui/src/v4/ConversationUserInputContent.tsx`).
@@ -47,9 +44,9 @@ content on the right).
     they are not persisted across reloads, so a new tab type adds no storage format;
   - Code Viewer reuses one tab per `sourceKey` and renders `.md` as rendered markdown.
 - `fileService.readTextFile` and the other file read methods accept any absolute path, with no root
-  confinement. The separate audit of 2026-10-22 rated this a pre-existing debt; the real exposure is
-  the unauthenticated loopback `/ws` of the standalone web server, which is tracked separately. This
-  feature must not add another unconfined read path.
+  confinement. This is pre-existing debt (the real exposure is the unauthenticated loopback `/ws` of
+  the standalone web server, tracked separately). This feature must not add another unconfined read
+  path.
 - The primary modifier is already platform-scoped in `matchesPrimaryModifier`
   (`packages/ui/src/lib/keyboardShortcuts.ts`): Cmd on Apple platforms, Ctrl elsewhere, and both
   pressed together do not count. It is not exported yet.
@@ -335,12 +332,12 @@ the `ui` module, using the existing `@/` aliases.
    service module with `IDefinitionPreviewService` (`resolve`, `readFile`), containment and limits,
    and the registrations listed above. The `plugin` kind resolves to "not found" until slice 4.
 
-   Status (2026-10-22): implemented in `packages/shared/src/definition-preview` and
+   Status: implemented in `packages/shared/src/definition-preview` and
    `packages/services/src/definition-preview`, and wired into `createLocalServices`, the accessor,
    the client proxy, the remote workspace collections and the mobile allowlist. The service has no
    UI consumer until slice 2.
 
-   Verified catalog behaviour:
+   Catalog behaviour:
    - `subagentsService.list` defaults to `allRuntimeScopes`, and `agents` is the runtime-effective
      set after `applyRuntimePrecedence`, including plugin and disabled agents. For subagents the
      preview therefore shows the runtime winner, and shadowed agents do not appear.
@@ -348,9 +345,9 @@ the `ui` module, using the existing `@/` aliases.
    - `skillsService.list` ignores the provider argument (discovery is fixed to `glm`), so the ref
      needs no provider field.
 
-   The lists are not cached. One `resolve` costs one discovery pass, measured at 75–220 ms with
-   188 skills on the development machine, and every `readFile` pays the same again. That's
-   acceptable per click; revisit only if profiling shows otherwise.
+   The lists are not cached. One `resolve` costs one discovery pass (measured 75–220 ms with 188
+   skills), and every `readFile` pays the same again. Acceptable per click; revisit only if
+   profiling shows otherwise.
 
    Carried into slice 2:
    - Verify that mention and `Skill` tool labels use the same name as the catalog, especially for

@@ -7,8 +7,8 @@ committing on a detached HEAD.
 ## Problem
 
 On a detached HEAD, the commit dialog (`GitActionMenu`) commits without saying so. The new commit
-belongs to no branch. It disappears from branch history as soon as the user switches away and can
-be garbage-collected later. Push already refuses with a visible toast ("Committed, but push failed:
+belongs to no branch, disappears from branch history as soon as the user switches away and can be
+garbage-collected later. Push already refuses with a visible toast ("Committed, but push failed:
 Cannot push while HEAD is detached."), but by then the commit has been created.
 
 ## Contract
@@ -42,6 +42,5 @@ Cannot push while HEAD is detached."), but by then the commit has been created.
 
 ## Validation
 
-Mounted `GitActionMenu` tests with a mocked `gitService` cover scenarios 1–4. `pnpm typecheck`,
-`pnpm lint`, `pnpm architecture:check --changed` and `pnpm fmt:check` pass. A live check in the
+Mounted `GitActionMenu` tests with a mocked `gitService` cover scenarios 1–4; a live check in the
 isolated QA instance uses the `detached` fixture.

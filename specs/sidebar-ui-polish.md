@@ -26,7 +26,7 @@ The sidebar has two task-creation entry points with different destinations:
 - The top "New task" control (`taskList.newThread` in the sidebar, `sidebar.newTask` on the collapsed-sidebar overlay) starts a draft in the active workspace (the project the user is working in).
 - The "Tasks" section's add button (`TID_VIRTUAL_PROJECT_NEW_TASK`, rendered as `virtual-project-new-task`) starts a draft in the app-owned conversation workspace. The composer then shows "Select project" and no Git destination chip, by design.
 
-Both used to carry the same accessible name and tooltip ("New task"). Screen readers, keyboard users, and automation that select by role and name could not tell them apart. Clicking `button "New task"` (the only button with that exact name) reproduces the QA MINOR-3 symptom (RT3-C7obs): after a reload, the composer shows "Select project" with no destination chip. The QA harness did not record which control it clicked.
+Both used to carry the same accessible name and tooltip ("New task"), so screen readers, keyboard users and automation that select by role and name could not tell them apart (the QA MINOR-3 symptom, RT3-C7obs, was clicking the conversation button by that name).
 
 ### Contract
 
@@ -39,7 +39,7 @@ Both used to carry the same accessible name and tooltip ("New task"). Screen rea
 - With each locale's real message table, the mounted sidebar's conversation button has an accessible name that differs from that locale's `taskList.newThread` and `sidebar.newTask`.
 - Clicking the button still calls the conversation-task handler.
 
-## Project menu: Open on GitHub and Manage sessions (restored after the project-tree sync)
+## Project menu: Open on GitHub and Manage sessions
 
 Both entries extend the upstream project menu in `ProjectNodeContent` (context and "more" menus share one
 action list). Wiring lives in `ProjectSidebarNode`, next to the existing device-settings action.

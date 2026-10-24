@@ -1,14 +1,12 @@
 # Relay V2 migration (web remote control)
 
 Status: V2 landed. Desktop client (S2, `2fffbdd7`), web client (S3, `packages/web/src/web-remote-control`) and
-self-hosted server (S4, `a00b0dd2`) are merged via PR #243. The relay-v1 cleanup removes the remaining V1 shared
-code (heartbeat module, proof vectors, V1 message schemas, V1 task-list sync). Sections 2 and 7 are historical.
-Base: `origin/integration` (`cccf1977`, upstream 3.16.1 merged via PR #228).
-Upstream reference: `0a1fc56d`. Upstream protocol reference: `docs/web-remote-control/relay-v2-pairing.md`
-(contract taken from zcode-server `origin/staging` `5a947cae`: `docs/remote-relay.md`,
-`internal/domain/relay_v2/*`, `internal/interfaces/web/{dto,controller}/remote_v2.go`).
+self-hosted server (S4, `a00b0dd2`) are merged via PR #243; the relay-v1 cleanup removed the remaining V1 shared
+code (heartbeat module, proof vectors, V1 message schemas, V1 task-list sync). Sections 2, 5 and 7 are historical.
+Upstream reference: `0a1fc56d`. Protocol reference: `docs/web-remote-control/relay-v2-pairing.md` (contract taken
+from zcode-server `origin/staging` `5a947cae`). User decision (final): the relay is V2 only; no dual stack.
 
-User decision (final): migrate the web remote relay to V2. No dual stack.
+Full history: `git show 37b98ff8:specs/relay-v2-migration.md`
 
 ## 1. Product rules
 
@@ -25,69 +23,45 @@ User decision (final): migrate the web remote relay to V2. No dual stack.
 - Fork-only behavior survives: OAuth callback page (`specs/oauth-callback-page.md`), self-hosted
   conversation share, bots `/remote`, deep links, English copy and comments.
 
-## 2. Inventory of V1 (historical: the fork tree before the migration)
+## 2. Inventory of V1 (historical)
 
-Historical snapshot taken before the migration. The Status line lists what has since been removed.
+Snapshot of the fork tree before the migration: the fork Node V1 relay (`packages/remote-relay`, V1 contract with
+HMAC proof and `pass_hash` device store), V1 shared heartbeat constants and proof vectors, desktop V1 auth
+providers and WS transport, flat V1 web modules, the `/web-remote/callback` route, and the V1 deployment doc.
+Every item was replaced or removed by S1-S4 and the relay-v1 cleanup; nothing in that inventory describes
+current code.
 
-Server (fork self-hosted relay, Node, V1 protocol):
+## 3. What V2 requires (client contract)
 
-- `packages/remote-relay/**` (25 files): `src/contract.ts` (V1 `RelayServerOptions`, `RelayCrypto.verify`
-  with HMAC proof, `RelayDeviceStore` with `mid`/`key`), `src/app/relay.ts`, `src/adapters/*`
-  (auth, config, deviceStore, nodeServer), `src/domain/connectionState.ts`, tests `relay.test.ts`,
-  `clientCompatibility.test.ts`, `deviceStore.test.ts`, `sendPressure.test.ts`, `bundleSmoke.mjs`.
-- Protocol package `remote-relay-protocol` (architecture module, see `architecture-policy.yaml`).
-
-Shared (`packages/shared`):
-
-- `src/web-remote-control-heartbeat.ts` (V1 heartbeat constants).
-- V1 proof vectors and message types (to be deleted by the upstream shared change).
-- `src/zcodeEndpoint.ts` (fork restored V1 values: `ws://…/ws` default, `/web-remote/callback`).
-- Tests asserting V1 endpoints/proofs (`packages/shared/test/*`).
-
-Desktop (`packages/desktop`):
-
-- `src/main/webRemoteControlRelayAuthProvider.ts`, `webRemoteControlRelayAuthStorageProvider.ts`
-  (V1 pass-hash / nonce storage), `webRemoteControlTransport.ts` (V1 WS framing),
-  `webRemoteControlWorkspaceOpen.ts`, plus the Main wiring in `src/main/index.ts`.
-- Tests: `webRemoteControlRelayAuthProvider.test.ts`, `…StorageProvider.test.ts`,
-  `webRemoteControlWorkspaceOpen.test.ts`, `webRemoteControlManagerExternalRelay.test.ts`.
-- e2e: four upstream-only relay-v2 files excluded in `packages/desktop/tsconfig.e2e.json`
-  (`TEMPORARY(relay-decision)`).
-
-Web (`packages/web`):
-
-- Flat V1 files: `src/webRemoteControlRelayAuthProvider.ts`, `webRemoteControlTransport.ts`,
-  `webRemoteControlWorkspaceOpen.ts`, `webRemoteControlWorkspaceBridgeSession.ts`, `webRemoteControlDeviceInfo.ts`, `webRemoteControlLifecycle.ts`, `webRemoteControlRoute.ts`, `webRemoteControlTaskRead.ts`, `webRemoteControlThemeSeed.ts`, `webRemoteControlVersion*.tsx|ts`, `webRemoteControlFailureScreen.tsx`.
-- Login/OAuth callback: `/web-remote/callback` route (V1).
-- Upstream v2 layout (not yet in fork): `src/web-remote-control/**` (adapters, app, domain, ui, contracts, `CONTRACT.md`), and `/remote/v4` callback.
-
-Other packages touched by relay UI: `packages/ui` (`WebRemoteControlTaskIndexRow.tsx`,
-`lib/webRemoteControlMobileTaskHome.ts`, `lib/webRemoteControlTaskIndex.ts`, `lib/webRemoteControlTaskSync.ts`) and `packages/client` (`webRemoteControlRelayProtocol.ts`, acknowledged relay batch queue). These are V1-shaped and are in the upstream UI merge scope (`specs/ui-upstream-sync*.md`); the relay part of them must follow this migration.
-
-Docs: `docs/web-remote-control/self-hosted-remote-relay.md` (fork, V1 deployment), `docs/web-remote-control/relay-v2-pairing.md` (upstream V2 contract, present in the fork tree), `docs/issues/web-remote-control-relay-v2/01..07*.md` (upstream issue set).
-
-Counts: `grep -rln "webRemoteControl|web-remote" packages/*/src packages/*/test` = 225 files on the fork side (includes non-relay UI); the 86 relay-deferred web paths are in `specs/upstream-sync-final-ledger.md`.
-
-## 3. What V2 requires (client contract, derived from the repo)
-
-The V2 contract is fully specified in `docs/web-remote-control/relay-v2-pairing.md`. Summary:
+Fully specified in `docs/web-remote-control/relay-v2-pairing.md`. Summary:
 
 HTTP (`Authorization: Bearer <jwt>`, envelope `{code, msg, data}`, `code === 0` success):
 
-- `POST /api/v1/remote/device` `{device_mid}` → device record (`device_sid`, `device_mid`, `online`, `created_at`, `meta`). Each register yields a new SID for the same MID.
-- `GET /api/v1/remote/device` → device array (per user).
-- `POST /api/v1/remote/device/delete` `{device_sid}`: only own offline devices. Unknown SID is idempotent success. Other account's device: HTTP 200 `code 1006`. Online device: HTTP 400 `code 3005`. Bad params: HTTP 400 `code 3001`.
-- `POST /api/v1/remote/token` `{role: device|terminal}` → `{token, expires_in}`. Token is 16 random bytes, 22 Base64URL chars, bound to user and role (not SID), `Cache-Control: no-store`, valid 60 s, consumed atomically at WS upgrade, not restored on failure.
+- `POST /api/v1/remote/device` `{device_mid}` → device record (`device_sid`, `device_mid`, `online`,
+  `created_at`, `meta`). Each register yields a new SID for the same MID.
+- `GET /api/v1/remote/device` → the user's device array.
+- `POST /api/v1/remote/device/delete` `{device_sid}`: only own offline devices. Unknown SID is idempotent
+  success. Other account's device: HTTP 200 `code 1006`. Online device: HTTP 400 `code 3005`. Bad params:
+  HTTP 400 `code 3001`.
+- `POST /api/v1/remote/token` `{role: device|terminal}` → `{token, expires_in}`. Token is 16 random bytes,
+  22 Base64URL chars, bound to user and role (not SID), `Cache-Control: no-store`, valid 60 s, consumed
+  atomically at WS upgrade, not restored on failure.
 
-WebSocket `/api/v1/remote/ws2?token=…` (optional gateway hint `mid`). Missing/invalid/expired/duplicate token → 401 before upgrade. JSON text only, max 1 MiB.
+WebSocket `/api/v1/remote/ws2?token=…` (optional gateway hint `mid`). Missing/invalid/expired/duplicate
+token → 401 before upgrade. JSON text only, max 1 MiB.
 
-- client→relay: `auth_init {device_sid, meta?, client_ts?}`, `pair_status_query {client_ts?}`, `data {payload, client_ts?}`.
-- relay→client: `auth_ack {device_sid, terminal_sid, pair_status, server_ts?}`, `pair_status_ack`, `data {payload, server_ts?}`, `error {code, message?, server_ts?}`.
-- All `client_ts` and `server_ts` values are Unix seconds; the relay rejects a millisecond `client_ts` with `WRONG_PARAM`.
-- Error codes: `AUTH_FAILED | WRONG_PARAM | KICKED | INTERNAL | DEVICE_OFFLINE`. Pair status: `waiting | matched`.
+- client→relay: `auth_init {device_sid, meta?, client_ts?}`, `pair_status_query {client_ts?}`,
+  `data {payload, client_ts?}`.
+- relay→client: `auth_ack {device_sid, terminal_sid, pair_status, server_ts?}`, `pair_status_ack`,
+  `data {payload, server_ts?}`, `error {code, message?, server_ts?}`.
+- All `client_ts` and `server_ts` values are Unix seconds; the relay rejects a millisecond `client_ts`
+  with `WRONG_PARAM`.
+- Error codes: `AUTH_FAILED | WRONG_PARAM | KICKED | INTERNAL | DEVICE_OFFLINE`. Pair status:
+  `waiting | matched`.
 - Heartbeat: 5000 ms ±1000 ms jitter, ACK deadline 15000 ms.
 
-Known protocol gaps (from the same doc, section 7): `KICKED` is ambiguous (replacement vs owner loss); a stale `/remote/v4` page from an older app_version stays on V1 and cannot be corrected automatically.
+Known protocol gaps (`relay-v2-pairing.md` section 7): `KICKED` is ambiguous (replacement vs owner loss); a
+stale `/remote/v4` page from an older `app_version` stays on V1 and cannot be corrected automatically.
 
 ## 4. Sequence (target)
 
@@ -118,85 +92,58 @@ sequenceDiagram
 
 Reconnect: tokens are never reused. Every reconnect requests a new token (60 s window) before WS upgrade.
 
-## 5. Decisions the user must make before implementation
+## 5. Decisions before implementation (historical, superseded)
 
-1. Server ownership. The V2 server is `zcode-server` (Go, external repo). It is NOT in this tree.
-   The upstream 0a1fc56d tree contains no relay server. `packages/remote-relay` is the fork's own
-   Node V1 server. Option (c) in the design note (implement the V2 API in `packages/remote-relay`) is
-   the only one consistent with "the fork's self-hosted relay keeps working". This requires:
-   - JWT verification for the device and terminal login. The V2 API is authenticated by an account
-     JWT from the BigModel/ZAI account service. The self-hosted relay has no account system today.
-     Unknown: which issuer, signing key or JWKS the self-hosted server should trust, or whether
-     self-hosted deployments must run against zcode-server V2 instead.
-   - Gateway routing hint `mid` and the 401-before-upgrade rule.
-2. Endpoint for fork releases. Shared `zcodeEndpoint` currently ships V1 values (`ws://…/ws`,
-   `/web-remote/callback`). Upstream uses `wss://…/api/v1/remote/ws2` and `/remote/v4`. The question
-   "which host do fork releases use (`wss://zcode.z.ai/ws` was the open item)" is unresolved. Proposal:
-   make the relay base URL configurable from the fork release config (`zcodeEndpoint` override plus
-   a build-time default), default to the zcode-server host that the fork release actually deploys to.
-3. Rollout / re-pair. V1-paired devices hold no V2 device record. Proposal: all paired devices must
-   re-pair after upgrade. QR links from before the upgrade are rejected (`hash`/`t` present). Old
-   `/remote/v4` or `/web-remote` pages keep the V1 page until the gateway is updated (documented
-   limitation).
-4. OAuth. Mobile login needs the BigModel OAuth redirect `…/remote/v4` registered. Whether the fork's
-   `/web-remote/callback` is still accepted by the OAuth provider is unverified. This is an external dependency (section 6).
+All four original questions — server ownership and JWT source, the fork release endpoint, rollout/re-pair, and
+the OAuth redirect — are decided in section 10, refined in sections 11 and 14, and extended by the identity
+modes in section 15.
 
-## 6. External dependencies (from `relay-v2-pairing.md`, section "外部依赖与发布顺序")
+## 6. External dependencies (from `relay-v2-pairing.md`, section "外部依赖与发布顺序" — external dependencies and release order)
 
 Production gates, all owned outside this repo:
 
-- zcode-server prod deploys V2 HTTP/WS. Acceptance: token without JWT returns 401; valid account registers a device and pairs with a one-time token.
+- zcode-server prod deploys V2 HTTP/WS. Acceptance: token without JWT returns 401; valid account registers a
+  device and pairs with a one-time token.
 - Gateway routes `/api/v1/remote/ws2` exactly, and the same MID lands on the same instance.
-- Gateway serves `/remote/v4` per `app_version`, release manifest is JSON.
+- Gateway serves `/remote/v4` per `app_version`; the release manifest is JSON.
 - OAuth whitelist for the `/remote/v4` callback.
-  Release order: prod server V2, gateway WS and OSS rules, OAuth whitelist, mobile page version directory, then same-version desktop app.
+
+Release order: prod server V2, gateway WS and OSS rules, OAuth whitelist, mobile page version directory, then
+same-version desktop app.
 
 ## 7. Implementation slices (historical: all landed)
 
-Done. S1 (shared) landed in `48d740d7` and the merge `56929f62`; its V1 leftovers (heartbeat module, proof
-vectors, V1 schemas) were removed by the relay-v1 cleanup. S2, S3 and S4 landed as listed in the Status line.
-The slice text below is kept as the original plan.
-
-Each slice must be green alone (typecheck, lint, architecture, tests) and ledgered.
-
-- S0 (this PR): spec only.
-- S1 shared: take upstream `packages/shared/src/web-remote-relay/**` (contract, heartbeat domain/adapters, retry) and the `testing/fake-relay-v2` fixture; delete V1 proof vectors and `web-remote-control-heartbeat.ts`; make `zcodeEndpoint` configurable per section 5.2. Test: `packages/shared/test/webRemoteControlRelayV2*.test.ts`, `fakeRelayV2.test.ts`.
-- S2 desktop: `main/web-remote-relay/` (device storage, V2 HTTP, transport, auth gate), replace V1 auth providers; wire in `main/index.ts`; re-enable the 12 `webAuthService` skips; remove the e2e exclusion in `tsconfig.e2e.json`.
-- S3 web: `src/web-remote-control/**` (V2 transport, token fetch, device list, switch account, QR), keep the OAuth callback page and English copy; update `packages/ui` and `packages/client` relay bits.
-- S4 server: `packages/remote-relay` V2 implementation (only after section 5.1 is decided), with V2 contract tests.
-- S5 e2e and docs: re-enable four e2e tests (or delete with ledger reason), update `self-hosted-remote-relay.md`, architecture policy modules for `web-remote-relay` / `web-remote-control` (upstream has them; fork dropped them).
-
-Forbidden in all slices: `it.skip`, deleting tests without a ledger reason, weakening assertions,
+S0 (spec) through S5 (e2e and docs) landed: S1 shared (`48d740d7`, merge `56929f62`), S2 desktop, S3 web, S4
+server, merged via PR #243. Rules that applied to every slice: green alone (typecheck, lint, architecture,
+tests) and ledgered; no `it.skip`, no deleting tests without a ledger reason, no weakened assertions, no
 editing `scripts/check-test-copy.mjs`.
 
 ## 8. Open unknowns (cannot be determined from this repo)
 
-- Whether the self-hosted relay must accept zcode-server JWTs, and from which issuer/key set (5.1).
-- Which production host and path fork releases target (5.2).
-- Whether `KICKED` ambiguity needs a new error code from the server (relay-v2-pairing.md section 7).
-- Whether upstream's Go server returns any additional fields the client must read (the contract ignores unknown response fields, so this is non-blocking).
+- Whether the `KICKED` ambiguity needs a new error code from the server (`relay-v2-pairing.md` section 7).
+- Whether upstream's Go server returns additional fields the client must read (non-blocking: the contract
+  ignores unknown response fields).
+- Resolved by later sections: the self-hosted relay issues and validates its own JWTs (10.1, 14.1, 15), and
+  the relay host comes from environment/release config, never hardcoded (11.1).
 
-## 9. Verification (for the implementation PRs)
+## 9. Verification (relay area changes)
 
 `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --full`, `node scripts/check-test-copy.mjs`,
 `pnpm fmt:check`, and vitest for `packages/shared`, `packages/desktop/test` (excluding e2e),
-`packages/web/test`, `packages/remote-relay` tests. Report real results only.
+`packages/web/test`, `packages/remote-relay`. Report real results only.
 
 ## 10. Owner decisions (final, supersede section 5)
 
 1. Server and JWT. `packages/remote-relay` is the V2 server. It issues and validates its OWN account and
-   device JWTs. The fork owns the key set: signing keys or a JWKS come from environment config
-   (`ZCODE_REMOTE_RELAY_JWT_*`, exact names fixed in the S4 PR), with a documented rotation story
-   (multiple active `kid`s, old key removed after max token lifetime). There is no dependency on the
-   ZAI/BigModel account service and none on zcode-server. Mobile login keeps the fork's existing
-   identity flow (`specs/oauth-callback-page.md`); the relay exchanges that identity for relay JWTs.
-   Trust boundary: the relay trusts only tokens it signed; the OAuth identity is verified once at
-   login, then the relay JWT is the only credential used on `/api/v1/remote/*` and `ws2`.
-2. Endpoint. Relay base URL comes from environment/release config, never a hardcoded production host.
-   Env var: `ZCODE_REMOTE_RELAY_URL` (WebSocket base, e.g. `wss://relay.example.com`), read through the
-   existing runtime env helper (`packages/shared/src/runtimeEnv.ts`, `readRuntimeEnvValue`). Dev default:
-   the self-hosted relay on `ws://127.0.0.1:<port>` (fork default). Shared endpoint builders read this
-   base and append `/api/v1/remote/ws2` and the HTTP paths.
+   device JWTs. The fork owns the key set: signing keys come from environment configuration
+   (`ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS`, section 14.4) with the rotation story in 14.2. There is no
+   dependency on the ZAI/BigModel account service and none on zcode-server. Mobile login keeps the fork's
+   existing identity flow (`specs/oauth-callback-page.md`); the relay exchanges that identity for relay JWTs.
+   Trust boundary: the relay trusts only tokens it signed; the OAuth identity is verified once at login, then
+   the relay JWT is the only credential used on `/api/v1/remote/*` and `ws2`.
+2. Endpoint. Relay base URL comes from environment/release config, never a hardcoded production host. The
+   variable is the existing `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` (section 11.1). Shared endpoint builders
+   read this base and append `/api/v1/remote/ws2` and the HTTP paths.
 3. Re-pair. All paired devices must re-pair after upgrade. The app shows an explicit "needs re-pair"
    state (not a silent failure) when a stored device is unknown to the relay or the relay returns
    `AUTH_FAILED`/401 for a stored SID.
@@ -215,129 +162,145 @@ Compatibility: the desktop and web clients must remain compatible with upstream'
   `.github/workflows/fork-release.yml` (`vars.*`, build time), read at runtime by
   `packages/shared/src/env.ts` (`ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT`) and
   `packages/desktop/src/main/index.ts`, and for web as `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL`.
-- Semantics change: the value is a relay ORIGIN (`https://host` or `wss://host`) or an explicit V2 WS URL.
-  A bare origin (`wss://host`, `wss://host/`) and the legacy V1 endpoint (`wss://host/ws`) are normalized to
-  `wss://host/api/v1/remote/ws2`; for those origin-only values `https:`/`http:` become `wss:`/`ws:`. Any other path is an
-  explicit WS URL and is kept verbatim, scheme included (upstream override semantics). Release notes must say so.
-- Owner: `normalizeConfiguredWebRemoteControlRelayWsUrl` in `packages/shared/src/zcodeEndpoint.ts` (pure), called
-  once by Desktop main when it reads the runtime env override and the baked release default. When a value is
-  rewritten, Main logs one warning naming only the old and new path (never the host). The build script and
-  `resolveWebRemoteControlRelayWsUrl` do not normalize, so there is a single rewrite point.
-- Why: release builds baked `wss://host/ws` (the V1 path) while the V2 relay accepts only
-  `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH` and answers any other WS path with 400, so pairing could not connect.
+- Semantics: the value is a relay ORIGIN (`https://host` or `wss://host`) or an explicit V2 WS URL. A bare
+  origin (`wss://host`, `wss://host/`) and the legacy V1 endpoint (`wss://host/ws`) are normalized to
+  `wss://host/api/v1/remote/ws2`; for those origin-only values `https:`/`http:` become `wss:`/`ws:`. Any other
+  path is an explicit WS URL and is kept verbatim, scheme included (upstream override semantics). Release
+  notes must say so.
+- Owner: `normalizeConfiguredWebRemoteControlRelayWsUrl` in `packages/shared/src/zcodeEndpoint.ts` (pure),
+  called once by Desktop main when it reads the runtime env override and the baked release default. When a
+  value is rewritten, Main logs one warning naming only the old and new path (never the host). The build
+  script and `resolveWebRemoteControlRelayWsUrl` do not normalize, so there is a single rewrite point.
+- Reason: release builds baked `wss://host/ws` (the V1 path) while the V2 relay accepts only
+  `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH` and answers any other WS path with 400, so pairing could not connect;
   HTTP calls were unaffected because `relayHttpOriginFromWsUrl` keeps only the origin.
 - Acceptance: (1) `wss://host/ws`, `wss://host/ws/`, `wss://host`, `https://host` resolve to
-  `wss://host/api/v1/remote/ws2`; (2) `wss://host/api/v1/remote/ws2` and `ws://localhost:8787/custom` are unchanged;
-  (3) empty input yields no configured value (endpoint-derived fallback applies); (4) the V2 path constant in
-  `zcodeEndpoint.ts` equals `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH`.
-- Derived from the origin, never separately configured:
-  HTTP `${origin}/api/v1/remote/{device,device/delete,token}`,
-  WS `${wsOrigin}/api/v1/remote/ws2?token=…`,
-  OAuth callback `${endpointOrigin}/remote/v4`.
+  `wss://host/api/v1/remote/ws2`; (2) `wss://host/api/v1/remote/ws2` and `ws://localhost:8787/custom` are
+  unchanged; (3) empty input yields no configured value (endpoint-derived fallback applies); (4) the V2 path
+  constant in `zcodeEndpoint.ts` equals `WEB_REMOTE_CONTROL_RELAY_V2_WS_PATH`.
+- Derived from the origin, never separately configured: HTTP
+  `${origin}/api/v1/remote/{device,device/delete,token}`, WS `${wsOrigin}/api/v1/remote/ws2?token=…`, OAuth
+  callback `${endpointOrigin}/remote/v4`.
 - Fallback when unset: the zcode endpoint origin (upstream behavior). No hardcoded production relay host.
 
 ### 11.2 Bearer for relay HTTP (the JWT seam)
 
-- Upstream's client already takes the bearer as a parameter (`register(deviceMid, jwt, signal)`).
-  That signature is kept byte-identical, so the wire matches upstream.
-- The caller supplies a relay JWT from a `RelayBearerProvider` (desktop Main and web), which is the only
-  new seam. The provider obtains the JWT by exchanging the account identity.
+- Upstream's client takes the bearer as a parameter (`register(deviceMid, jwt, signal)`); that signature is
+  kept byte-identical, so the wire matches upstream.
+- The caller supplies a relay JWT from a `RelayBearerProvider` (desktop Main and web), the only new seam.
+  The provider obtains the JWT by exchanging the account identity.
 - Exchange endpoint (self-hosted relay): `POST ${origin}/api/v1/remote/session`, body
   `{identity_token: string}`, response `{code: 0, msg, data: {jwt, expires_in}}`. The relay verifies the
   identity token once against the configured identity provider (issuer and JWKS from env, fork-owned
-  config), then signs its own JWT with a fork-owned key (`kid`, rotation per 8.1).
-- Trust boundary: the identity provider is trusted only at the exchange. Relay JWTs are the only
-  credential for `/api/v1/remote/*` and `ws2`. Relay JWTs never go into QR codes or business messages.
-- OPEN (owner to confirm): which identity provider is "the fork's existing identity" for mobile login
-  (the desktop login session, or the OAuth provider used by `/remote/v4`). Until confirmed, the exchange
-  accepts an identity token from the configured issuer only.
+  config), then signs its own JWT with a fork-owned key (rotation per 14.2).
+- Trust boundary: the identity provider is trusted only at the exchange. Relay JWTs are the only credential
+  for `/api/v1/remote/*` and `ws2`. Relay JWTs never go into QR codes or business messages.
+- The identity input is fixed by 14.1 (the existing login JWT; production issuer/JWKS/user claim are
+  operator config). Mobile without a z.ai login uses the device-key and pairing modes (section 15).
 
-### 11.3 Staging (advisor review)
+### 11.3 Staging (historical: executed)
 
-- PR1 (shared): add V2 exports next to V1 (`WebRemoteControlRelayV2*` names do not collide). Add
-  `adapters/` and `domain/`, fill `./testing/fake-relay-v2`, add V2 tests. V1 kept. Architecture policy entries for the new subdirectories.
-- PR2 (desktop + web + endpoint builders): switch to V2, remove V1 transport and auth providers,
-  add the re-pair state. `zcodeEndpoint.test.ts` change is ledgered as an intentional behavior change.
-- PR3 (server + e2e): `packages/remote-relay` V2, remove the `tsconfig.e2e.json` exclusion, re-enable
-  the 12 `webAuthService` skips if they depend on the server (check first), delete remaining V1.
-- Every upstream comment and test copy is translated to English on import. `check-test-copy.mjs` must pass.
+The PR1 (shared) / PR2 (desktop + web + endpoint builders) / PR3 (server + e2e) staging plan was executed as
+the landed slices. Standing rule from it: every upstream comment and test copy is translated to English on
+import; `check-test-copy.mjs` must pass.
 
-## 12. S2 desktop implementation notes (branch claude/relay-v2-desktop)
+## 12. Desktop client (S2)
 
-Decisions taken while implementing the desktop client. Each one is a deviation or an interpretation of sections 10-11.
+Current state of the desktop client; each item interprets sections 10-11.
 
-1. Main relay code: `packages/desktop/src/main/web-remote-relay/` taken from upstream `0a1fc56d` (contract, device storage, V2 HTTP, WS transport), CJK comments translated. New file `webRemoteControlRelaySession.ts` holds the bearer exchange.
-2. Bearer (11.2): `createWebRemoteControlRelayBearer` exchanges the account identity JWT at `POST {relayOrigin}/api/v1/remote/session` (body `{identity_token}`, response `{code:0,data:{jwt,expires_in}}`). The relay JWT is cached per relay origin and identity until 30 s before expiry, concurrent exchanges are shared, `auth-required` drops the cache. The exchange endpoint is owned by the S4 server; it does not exist in upstream zcode-server, so desktop builds that point at upstream zcode-server cannot pair until that endpoint or a passthrough is decided (open, see the PR body).
-3. Relay HTTP origin: the origin of the relay WS URL (`wss`→`https`, `ws`→`http`). Previously upstream used the endpoint origin for HTTP. Self-hosted relays configured through `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` therefore receive HTTP and WS on the same origin.
-4. Relay URL (11.1): superseded by the §11.1 owner rule. Desktop main normalizes configured values with `normalizeConfiguredWebRemoteControlRelayWsUrl` (origin or legacy `/ws` → `/api/v1/remote/ws2`, other paths verbatim); `resolveWebRemoteControlRelayWsUrl` itself does not rewrite paths. The removed `wss://zcode.z.ai/ws` default and the test-endpoint special case are gone. `buildZCodeEndpointUrls` returns `relayWsUrl` on ws2 and `webRemoteCallbackUrl` on `/remote/v4`.
-5. QR (V2): `buildWebRemoteControlExternalQrUrl` no longer takes `passHash`/`timestamp` and removes stale `hash`/`t` from the base URL. The parser `parseWebRemoteControlExternalQrParams` is unchanged here; packages/web still uses the V1 parser until S3 lands.
-6. Re-pair (10.3): `deviceStorage.clearLegacy()` resolves to `true` when pre-V2 pairing material was found. The manager then sets `repairRequired` on the status. The dialog shows `webRemoteControl.failure.repairRequired` (en-US, uk-UA, zh-CN). The flag clears only when a phone pairs. It is not persisted, so a later restart that finds no legacy data drops the notice; the QR still works.
-7. Refresh QR (fork feature `ResetWebRemoteControlPairing`): `resetPairing` closes the runtime and calls `start` with `forceRegistration`, which deletes the stored device and registers a new SID. The channel was missing from `packages/shared/src/channels.ts` on the base branch and is restored.
-8. Bots `/remote` (fork feature): `findLinkForWorkspace` returns the current connect URL from a live runtime that is QR-ready (`qrUrl` set) and bridgeable for the workspace. Its V2 URL carries `sid` and routing hints only.
-9. Fork workspace-open (`workspace-open-request` → `openWorkspace`) is kept as it was on the fork.
-10. Task-list sync (`syncWebRemoteControlTasks`, bootstrap `tasks`) is removed. Upstream V2 replaced it with the mobile task view. The bootstrap result returns `tasks: []` so older phone clients still parse it. The renderer never called the desktop task sync, so no caller was broken.
-11. Shared additions (additive, needed by upstream's manager): mobile task view payload types and union members, `WebRemoteControlWindowBootstrapResult.mobileTaskViewEpoch`, bridge-open `project`/`taskHostId`/`fileTreeTaskId`, external remote bridge `capabilities`, bridge-degraded reason `source-session-replaced`, nullable status `mobileTaskView`, and `WebRemoteControlStatus.repairRequired`. No V1 type was removed, because packages/web and the fork server still compile against them until S3/S4.
-12. e2e: the `tsconfig.e2e.json` exclusion is removed. The four relay-v2 files compile after the shared additions and the upstream `web-remote-control-session-events-fixture` helper and its fixture JSON were copied in. Their scenarios are not run here (e2e needs a built Electron app).
-13. Not ported: upstream `webRemoteControlAuthGateFixture.test.ts` (imports the upstream auth-gate e2e helper; that flow belongs to the web client slice S3).
+1. Main relay code: `packages/desktop/src/main/web-remote-relay/` (from upstream `0a1fc56d`: contract, device
+   storage, V2 HTTP, WS transport), English comments. `webRemoteControlRelaySession.ts` holds the bearer
+   exchange.
+2. Bearer (11.2): `createWebRemoteControlRelayBearer` exchanges the account identity JWT at
+   `POST {relayOrigin}/api/v1/remote/session` (body `{identity_token}`, response
+   `{code:0,data:{jwt,expires_in}}`). The relay JWT is cached per relay origin and identity until 30 s before
+   expiry, concurrent exchanges are shared, `auth-required` drops the cache. Open: the exchange endpoint is
+   owned by the self-hosted server (14.3) and does not exist in upstream zcode-server, so desktop builds
+   pointed at upstream zcode-server cannot pair until that endpoint or a passthrough is decided.
+3. Relay HTTP origin: the origin of the relay WS URL (`wss`→`https`, `ws`→`http`). Self-hosted relays
+   configured through `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` therefore receive HTTP and WS on the same
+   origin (upstream used the endpoint origin for HTTP).
+4. Relay URL (11.1): Desktop main normalizes configured values with
+   `normalizeConfiguredWebRemoteControlRelayWsUrl` (origin or legacy `/ws` → `/api/v1/remote/ws2`, other
+   paths verbatim); `resolveWebRemoteControlRelayWsUrl` itself does not rewrite paths.
+   `buildZCodeEndpointUrls` returns `relayWsUrl` on ws2 and `webRemoteCallbackUrl` on `/remote/v4`.
+5. QR (V2): `buildWebRemoteControlExternalQrUrl` no longer takes `passHash`/`timestamp` and removes stale
+   `hash`/`t` from the base URL. `parseWebRemoteControlExternalQrParams` returns V2 hints or null for legacy
+   credentials (13).
+6. Re-pair (10.3): `deviceStorage.clearLegacy()` resolves to `true` when pre-V2 pairing material was found;
+   the manager then sets `repairRequired` on the status. The dialog shows
+   `webRemoteControl.failure.repairRequired` (en-US, uk-UA, zh-CN). The flag clears only when a phone pairs.
+   It is not persisted, so a later restart that finds no legacy data drops the notice; the QR still works.
+7. Refresh QR (fork feature `ResetWebRemoteControlPairing`): `resetPairing` closes the runtime and calls
+   `start` with `forceRegistration`, which deletes the stored device and registers a new SID.
+8. Bots `/remote` (fork feature): `findLinkForWorkspace` returns the current connect URL from a live runtime
+   that is QR-ready (`qrUrl` set) and bridgeable for the workspace. The V2 URL carries `sid` and routing
+   hints only.
+9. Fork workspace-open (`workspace-open-request` → `openWorkspace`) is kept.
+10. Task-list sync (`syncWebRemoteControlTasks`, bootstrap `tasks`) is removed; upstream V2 replaced it with
+    the mobile task view. The bootstrap result returns `tasks: []` so older phone clients still parse it. The
+    renderer never called the desktop task sync.
+11. Shared additions: mobile task view payload types and union members,
+    `WebRemoteControlWindowBootstrapResult.mobileTaskViewEpoch`, bridge-open `project`/`taskHostId`/
+    `fileTreeTaskId`, external remote bridge `capabilities`, bridge-degraded reason
+    `source-session-replaced`, nullable status `mobileTaskView`, `WebRemoteControlStatus.repairRequired`. No
+    V1 type was removed.
+12. e2e: the `tsconfig.e2e.json` exclusion is removed. The four relay-v2 files compile after the shared
+    additions and the upstream `web-remote-control-session-events-fixture` helper and its fixture JSON were
+    copied in. Their scenarios are not run in unit CI (e2e needs a built Electron app).
+13. Not ported: upstream `webRemoteControlAuthGateFixture.test.ts` (imports the upstream auth-gate e2e
+    helper; that flow belongs to the web client).
 
-Verification on this branch (see the PR body for the exact outputs): `pnpm typecheck` 0, `pnpm lint` 0 errors, `architecture:check --full` 0 violations, `check-test-copy` passes, `fmt:check` passes, desktop unit tests (excluding e2e) 367 files passed. `tsconfig.main.json` still reports pre-existing errors in autoUpdater, desktopDictationSystemAudio, resourceManagerStorage and the bot reconnect wiring in index.ts. Those areas are not touched by this change and the main project is not in the typecheck gate.
+## 13. Web client (S3)
 
-## 13. S3 web client (branch `claude/relay-v2-web`)
-
-Status: implemented on this branch; desktop (`claude/relay-v2-desktop`) and server (`claude/relay-v2-server`) are separate PRs.
-
-- The web remote control client is upstream's V2 tree `packages/web/src/web-remote-control/**`
-  (entry, device list, switch account, V2 token exchange, `ws2` transport, bridge recovery). The
-  V1 flat modules `webRemoteControl{RelayAuthProvider,Transport,WorkspaceBridgeSession}.ts` and their
-  tests are removed. Fork modules kept: `webRemoteControlWorkspaceOpen.ts` (`docs/specs/web-remote-workspace-open.md`),
-  now driven by a V2 `workspace-open-request` over the relay.
-- Relay origin: `ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` (web: `VITE_` variant) is an origin; the path
-  `/api/v1/remote/ws2` is derived in `resolveWebRemoteControlRelayWsUrl`. Unset falls back to the
-  endpoint origin. No production host is hardcoded in the web client.
-- Relay HTTP origin (web): same rule as Desktop §12.3. `resolveWebRemoteControlRelayEndpoints` resolves
-  the WS URL once from `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` (normalized by
-  `normalizeConfiguredWebRemoteControlRelayWsUrl`) and derives the HTTP origin from it with
-  `resolveWebRemoteControlRelayHttpOrigin`. The pairing (`/session`), token and device clients and the
-  `ws2` transport all use that one result, so a web page hosted on its own domain (Railway
-  `zcode-web-remote`) reaches a relay on another domain. Unset keeps the page origin for both.
-  Acceptance: with the variable set to `wss://relay.example`, a QR `pk` exchange posts to
+- The web remote control client is upstream's V2 tree `packages/web/src/web-remote-control/**` (entry, device
+  list, switch account, V2 token exchange, `ws2` transport, bridge recovery). The V1 flat modules
+  `webRemoteControl{RelayAuthProvider,Transport,WorkspaceBridgeSession}.ts` and their tests are removed. Fork
+  module kept: `webRemoteControlWorkspaceOpen.ts` (`docs/specs/web-remote-workspace-open.md`), now driven by
+  a V2 `workspace-open-request` over the relay.
+- Relay endpoints: owner is `resolveWebRemoteControlRelayEndpoints`
+  (`app/webRemoteControlRelayEndpoints.ts`). It resolves the WS URL once from
+  `VITE_ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL` (normalized by
+  `normalizeConfiguredWebRemoteControlRelayWsUrl`, 11.1) and derives the HTTP origin with
+  `resolveWebRemoteControlRelayHttpOrigin` (same rule as 12.3). The pairing (`/session`), token and device
+  clients and the `ws2` transport all use that one result, so a web page hosted on its own domain (Railway
+  `zcode-web-remote`) reaches a relay on another domain. Unset keeps the page origin for both; no
+  production host is hardcoded in the web client. Acceptance:
+  with the variable set to `wss://relay.example`, a QR `pk` exchange posts to
   `https://relay.example/api/v1/remote/session`, never to the page origin.
-- Bearer seam: `getToken` and `token(jwt)` are injected by `WebRemoteControlEntry` from the logged-in
-  account (`webAuthService.getZCodeJwtToken()`). Relay JWTs are never placed in URLs or payloads.
-- Login callback: `webRemoteCallbackUrl` is `${origin}/remote/v4`. The fork's `/web-remote/callback`
-  route is dropped; the OAuth whitelist must register `/remote/v4` (owner action, listed in the PR).
+- Bearer seam: `getToken` and `token(jwt)` are injected by `WebRemoteControlEntry` from the logged-in account
+  (`webAuthService.getZCodeJwtToken()`). Relay JWTs are never placed in URLs or payloads.
+- Login callback: `webRemoteCallbackUrl` is `${origin}/remote/v4`. The fork's `/web-remote/callback` route is
+  dropped; the OAuth whitelist must register `/remote/v4` (owner action, section 6).
 - Re-pair: QR links carrying the V1 `hash`/`t` credential show the re-pair notice (en-US, uk-UA;
-  `domain/webRemoteControlRepairNotice.ts`) instead of a generic failure. A stored device the relay no
-  longer knows (`AUTH_FAILED`) is reported by the device-side transport as before.
-- QR contract (shared): `buildWebRemoteControlExternalQrUrl` emits only `sid`, `mid`, `name`,
-  `app_version` and strips `hash`/`t`; `parseWebRemoteControlExternalQrParams` returns V2 hints or null
-  for legacy credentials.
-- Deferred to later PRs (not in S2): the desktop-side mobile task view publisher and the relay
-  `KICKED` ambiguity (`docs/web-remote-control/relay-v2-pairing.md` section 7).
+  `domain/webRemoteControlRepairNotice.ts`) instead of a generic failure. A stored device the relay no longer
+  knows (`AUTH_FAILED`) is reported by the device-side transport.
+- QR contract (shared): `buildWebRemoteControlExternalQrUrl` emits only `sid`, `mid`, `name`, `app_version`
+  and strips `hash`/`t`; `parseWebRemoteControlExternalQrParams` returns V2 hints or null for legacy
+  credentials.
+- Open follow-ups: the desktop-side mobile task view publisher, and the relay `KICKED` ambiguity
+  (`relay-v2-pairing.md` section 7).
 
-## 14. S4 server: self-hosted relay V2 (`packages/remote-relay`)
+## 14. Self-hosted relay V2 server (`packages/remote-relay`)
 
-Status: implemented in PR "feat(relay): self-hosted relay v2 server (own JWT issuer)" (branch
-`claude/relay-v2-server-final`). Sections 10 and 11 remain the owner decisions; this section fixes the
-server details they leave open. Client slices (desktop, web) consume the wire contract below.
+Sections 10 and 11 are the owner decisions; this section fixes the server details they leave open. The client
+slices (12, 13) consume this wire contract.
 
 ### 14.1 Login identity and the trust boundary
 
-What the clients hold today (verified in code, not assumed):
+Clients today (verified in code): the desktop and web login session carries a backend JWT under the credential
+key `zcodejwttoken` (`packages/services/src/oauth/oauthService.ts`,
+`packages/web/src/auth/browserOAuthCredentialRepo.ts`). The fork reads only its `exp` claim locally
+(`resolveJwtExpiration` in `packages/shared/src/oauth.ts`); no signature is checked anywhere in this tree. V1
+relay auth did not use the login identity (per-device `pass_hash` secret).
 
-- The desktop and web login session carries a backend JWT under the credential key
-  `zcodejwttoken` (`packages/services/src/oauth/oauthService.ts`,
-  `packages/web/src/auth/browserOAuthCredentialRepo.ts`). The fork reads only its `exp` claim locally
-  (`resolveJwtExpiration` in `packages/shared/src/oauth.ts`); no signature is checked anywhere in this tree.
-- V1 relay auth did not use the login identity. It used a per-device `pass_hash` secret.
+Exchange input (`identity_token`):
 
-Decision for the exchange input (`identity_token`):
-
-- The input is the existing login JWT (`zcodejwttoken`). It is the only identity the owner already has on
-  desktop and mobile, so no new login flow is introduced.
-- The relay verifies it locally, with no network call at runtime. Verification uses a public JWK set and
-  an issuer string from environment configuration (section 14.4). The relay never calls the account
-  service, zcode-server or any OAuth endpoint.
+- The input is the existing login JWT (`zcodejwttoken`), the only identity the owner already has on desktop
+  and mobile; no new login flow is introduced.
+- The relay verifies it locally, with no network call at runtime, using a public JWK set and an issuer string
+  from environment configuration (14.4). The relay never calls the account service, zcode-server or any OAuth
+  endpoint.
 - Accepted algorithms: `EdDSA` (Ed25519), `ES256`, `RS256`. `none` and HMAC algorithms are rejected, so no
   shared secret with the account service is needed.
 - Required claims: `exp` (not expired, 30 s clock skew), `iss` equal to the configured issuer, and a
@@ -346,20 +309,20 @@ Decision for the exchange input (`identity_token`):
   holds exactly one key.
 
 Open and external (owner): the issuer string, the public JWK set and the user claim of the production
-`zcodejwttoken` are not in this repository. The relay refuses to start without them (fail closed). This PR
-asserts nothing about whether production tokens verify; tests use an issuer the test creates.
+`zcodejwttoken` are not in this repository. The relay refuses to start without them (fail closed). Tests use
+an issuer the test creates.
 
-Rejected alternative: a desktop-minted HMAC or Ed25519 assertion signed with a per-device key pair. The
-desktop would choose its own account identity: the relay could check that the desktop holds its key, but
-not which account it belongs to. Mobile would also need that key pair, which the login session does not carry.
+Rejected alternative: a desktop-minted HMAC or Ed25519 assertion signed with a per-device key pair. The relay
+could check that the desktop holds its key, but not which account it belongs to, and mobile would need that
+key pair, which the login session does not carry.
 
-Trust boundary (explicit):
+Trust boundary:
 
 1. The account identity is trusted only at `POST /api/v1/remote/session`, and only through the configured
    public key set.
 2. After the exchange, the relay JWT is the only credential for `/api/v1/remote/*`. The one-time WS token is
    minted from it. The login JWT is never sent to `ws2`, never placed in a QR code and never logged.
-3. The relay trusts only tokens it signed itself (section 14.2).
+3. The relay trusts only tokens it signed itself (14.2).
 
 ### 14.2 Relay JWT (fork-owned issuer)
 
@@ -368,9 +331,9 @@ Trust boundary (explicit):
   token, `iat`, `exp = iat + ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS` (default 3600, maximum 86400).
 - Signing keys are private Ed25519 JWKs in `ZCODE_REMOTE_RELAY_JWT_SIGNING_KEYS` (JSON array). The first
   entry signs new tokens; every entry verifies. A `kid` not in the array is rejected.
-- Rotation: prepend the new key and restart. Keep the old key in the array for at least one TTL, then
-  remove it. The private keys live in memory only. Multi-replica deployments need the same array on every
-  replica; this PR is single-replica.
+- Rotation: prepend the new key and restart. Keep the old key in the array for at least one TTL, then remove
+  it. The private keys live in memory only. Multi-replica deployments need the same array on every replica;
+  the server is single-replica.
 - Expired or invalid relay JWTs return HTTP 401 before any handler runs.
 
 ### 14.3 HTTP and WebSocket contract (server side)
@@ -491,7 +454,7 @@ user_id TEXT NOT NULL, device_mid TEXT NOT NULL, created_at INTEGER NOT NULL)` w
 and `(user_id, device_mid)`. Delete removes the row, so the SID stops authenticating. Plaintext at rest by
 design, since no secret is stored; the package README requires the file to be readable only by the relay user.
 
-### 14.7 Verification (S3 acceptance)
+### 14.7 Verification
 
 Unit: JWT sign/verify (algorithm allowlist, `kid`, expiry, issuer, audience, user claim); identity
 verification for each accepted algorithm; one-time token rules; device store operations and restart
@@ -503,10 +466,10 @@ V2 schemas in the tests.
 
 ## 15. Identity modes (`ZCODE_REMOTE_RELAY_IDENTITY_MODE`)
 
-Problem: section 14.1 makes the relay depend on a z.ai login JWT and its JWKS. The fork owner does not
-operate z.ai, and fork users may have no z.ai login (API-key only). The relay therefore supports two
-identity modes, chosen by environment, with identical relay JWT format, routes, `ws2` protocol and device
-lifecycle. Only the way a client proves who it is at `POST /api/v1/remote/session` differs.
+Section 14.1 makes the relay depend on a z.ai login JWT and its JWKS; the fork owner does not operate z.ai,
+and fork users may have no z.ai login (API-key only). The relay therefore supports two identity modes, chosen
+by environment, with identical relay JWT format, routes, `ws2` protocol and device lifecycle. Only the way a
+client proves who it is at `POST /api/v1/remote/session` differs.
 
 ### 15.1 Modes and selection
 
@@ -515,14 +478,15 @@ lifecycle. Only the way a client proves who it is at `POST /api/v1/remote/sessio
 | `zai-jwt`    | z.ai login JWT in `{identity_token}` (sections 14.1 to 14.3) | the configured user claim, unchanged      |
 | `device-key` | Ed25519 device key plus enrollment secret (15.2)             | `dk:` + base64url(sha256(raw public key)) |
 
-- `ZCODE_REMOTE_RELAY_IDENTITY_MODE` is `zai-jwt` or `device-key`. Unknown values stop startup, naming the variable.
+- `ZCODE_REMOTE_RELAY_IDENTITY_MODE` is `zai-jwt` or `device-key`. Unknown values stop startup, naming the
+  variable.
 - Unset: `zai-jwt` when `ZCODE_REMOTE_RELAY_IDENTITY_ISSUER` or `_JWKS` is present (the existing per-variable
   errors keep applying); otherwise startup fails closed naming `ZCODE_REMOTE_RELAY_IDENTITY_MODE`. There is
   no silent fallback to an open relay.
 - `ISSUER`, `JWKS`, `AUDIENCE`, `USER_CLAIM` are required (ISSUER, JWKS) only in `zai-jwt` mode. In
   `device-key` mode they are ignored and the relay logs one warning that names the variables, never values.
-- `device-key` requires `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`, at least 32 characters. Missing or short stops
-  startup, naming the variable only.
+- `device-key` requires `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`, at least 32 characters. Missing or short
+  stops startup, naming the variable only.
 - `zai-jwt` behavior is unchanged. The `dk:` prefix is reserved: `zai-jwt` mode rejects login subjects that
   start with `dk:` and rejects relay JWTs whose `sub` starts with `dk:`; `device-key` mode rejects relay JWTs
   whose `sub` lacks it. Switching modes on one relay (same signing keys) therefore invalidates every
@@ -589,10 +553,11 @@ identity through a short-lived pairing code carried by the QR.
 
 QR: `buildWebRemoteControlExternalQrUrl` accepts an optional `pairingCode` and writes it as `pk` in the
 URL fragment (`#pk=...`, 15.6), never in the query string, so it does not reach web-host access logs. Absent
-option means a URL byte-identical to today's, so `zai-jwt` QR codes stay compatible with upstream.
+option means a URL byte-identical to the `zai-jwt` QR, so those stay compatible with upstream.
 `parseWebRemoteControlExternalQrParams` returns `pairingCode` only when `pk` is non-empty; a QR is
 valid with or without it. The web entry reads `pk` from the fragment (and, for QRs made by older Desktops,
-from the query string), removes it from the address bar (`replaceHref`) as soon as it has read it, and never logs it.
+from the query string), removes it from the address bar (`replaceHref`) as soon as it has read it, and never
+logs it.
 
 ### 15.4 Clients
 
@@ -626,21 +591,21 @@ and tokens. With a z.ai JWT present, behavior is unchanged.
 
 Relay (tests in `packages/remote-relay/test`): valid enrollment then re-login without secret; replayed
 nonce; expired and future `ts`; wrong secret with equal and unequal length; unenrolled key without secret
-(4012); signature by key B under key A's public key; modified `ts`/`nonce` after signing; login-JWT body
-in `device-key` mode and device-key body in `zai-jwt` mode; relay JWT crossing modes in both directions with
+(4012); signature by key B under key A's public key; modified `ts`/`nonce` after signing; login-JWT body in
+`device-key` mode and device-key body in `zai-jwt` mode; relay JWT crossing modes in both directions with
 the same signing key; replay-cache full; pairing code reuse, expiry, unknown code, per-user cap, `/pairing`
 without bearer and in `zai-jwt` mode; startup failures (no mode and no zai variables, unknown mode, missing
 and short secret); ignored zai variables warn by name only; secrets absent from responses and logs;
 `zai-jwt` suite unchanged. Bundle smoke covers both modes. Client: bearer unit tests for device-key
-exchange, 4012 retry, single-flight key generation; shared QR builder/parser tests for `pk`; web entry test for
-pairing exchange and address-bar cleanup.
+exchange, 4012 retry, single-flight key generation; shared QR builder/parser tests for `pk`; web entry test
+for pairing exchange and address-bar cleanup.
 
 ### 15.6 Open enrollment (`ZCODE_REMOTE_RELAY_ENROLLMENT_MODE=open`)
 
-Problem: `device-key` mode needs `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`, which cannot ship in a public
-release build. Open enrollment lets any install enroll its own key without a shared secret, bounded so one
-caller cannot exhaust the relay. A read-only review confirmed cross-user isolation (the user id is derived
-from the proven key); this section adds the abuse bounds.
+`device-key` mode needs `ZCODE_REMOTE_RELAY_ENROLLMENT_SECRET`, which cannot ship in a public release build.
+Open enrollment lets any install enroll its own key without a shared secret, bounded so one caller cannot
+exhaust the relay. Cross-user isolation is confirmed (the user id is derived from the proven key); this
+section adds the abuse bounds.
 
 Owners: enrollment decision and PoW verification in `adapters/session.ts` (stateless except the replay cache
 and the breaker); per-identity limits in `domain/identityLimits.ts` (in memory, clock injected); persisted key
@@ -652,11 +617,11 @@ Desktop client (`webRemoteControlDeviceKey.ts`).
 `open`. In `open` the secret is optional; when set (at least 32 characters) it keeps working as the owner path.
 Without it, enrollment by secret is denied. Unknown value stops startup naming the variable.
 
-**Tiers.** Every enrolled key has a tier: `owner` (enrolled with the secret, and every key enrolled before this
-change, i.e. a missing usage row) or `open` (enrolled by PoW). Owner limits are 4x the open limits. The tier is
-carried in the relay JWT claim `tier` (`owner` or `open`) in `device-key` mode only; a `device-key` JWT without
-the claim (issued before this change, at most one TTL old) is treated as `open`. `zai-jwt` mode has no tier and
-no per-identity limits. A pairing JWT inherits the tier of the JWT that minted its code.
+**Tiers.** Every enrolled key has a tier: `owner` (enrolled with the secret, and every key enrolled before
+this change, i.e. a missing usage row) or `open` (enrolled by PoW). Owner limits are 4x the open limits. The
+tier is carried in the relay JWT claim `tier` (`owner` or `open`) in `device-key` mode only; a `device-key`
+JWT without the claim (issued before this change, at most one TTL old) is treated as `open`. `zai-jwt` mode
+has no tier and no per-identity limits. A pairing JWT inherits the tier of the JWT that minted its code.
 
 **Body.** `POST /session` accepts exactly one of: `{device_key}`, `{device_key, enrollment_secret}`,
 `{device_key, work}`; secret and work together are a 400. `work` is `{challenge, nonce}` (exact keys): the
@@ -728,19 +693,22 @@ sockets are not closed at JWT expiry: the Desktop refreshes its JWT without reco
 Desktop socket would drop the paired phone (the relay closes the terminal when the device disconnects).
 Consequence: a phone session now lasts at most `ZCODE_REMOTE_RELAY_JWT_TTL_SECONDS` (default 1 hour, maximum 24).
 
-**IPv6.** The anonymous per-IP limiter (15.2) buckets IPv6 addresses by their /64 prefix, so rotating the low 64
-bits does not bypass it. Trusted-proxy matching still uses the full address.
+**IPv6.** The anonymous per-IP limiter (15.2) buckets IPv6 addresses by their /64 prefix, so rotating the low
+64 bits does not bypass it. Trusted-proxy matching still uses the full address.
 
 **QR fragment.** `pk` moves from the query string to the fragment (`#pk=`) so web hosts never log it. The web
 entry reads the fragment first and the query second (QRs from older Desktops), then strips both. Deploy
 order: ship the web host (reads both) before the Desktop release (writes only the fragment).
 
-**Clients.** The Desktop in `device-key` mode with a baked mode and no secret ( `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE=device-key`
-at build time) sends `{device_key}`; on 4012 with a `challenge` it solves the PoW and retries once, and
-with a configured secret it keeps the old path. On 4503 it reports `relay-unavailable`. PoW runs on the main
-process in chunks of 20000 hashes separated by `setImmediate`, abortable by the start signal.
+**Clients.** The Desktop in `device-key` mode with a baked mode and no secret
+(`ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE=device-key` at build time) sends `{device_key}`; on 4012 with a
+`challenge` it solves the PoW and retries once, and with a configured secret it keeps the old path. On 4503 it
+reports `relay-unavailable`. PoW runs on the main process in chunks of 20000 hashes separated by
+`setImmediate`, abortable by the start signal.
 
-**Release.** `.github/workflows/fork-release.yml` passes the repository variable `ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE` to both desktop builds (a public input, never a secret); the owner sets it to `device-key` and sets `ZCODE_REMOTE_RELAY_ENROLLMENT_MODE=open` on the relay.
+**Release.** `.github/workflows/fork-release.yml` passes the repository variable
+`ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE` to both desktop builds (a public input, never a secret); the
+owner sets it to `device-key` and sets `ZCODE_REMOTE_RELAY_ENROLLMENT_MODE=open` on the relay.
 
 **Acceptance scenarios** (tests in `packages/remote-relay/test`, `packages/desktop/test`, `packages/shared`):
 valid PoW enrolls an `open` key and a later exchange needs no work; wrong nonce, insufficient zeros, a
