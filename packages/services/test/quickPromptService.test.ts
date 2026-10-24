@@ -13,7 +13,10 @@ import { createQuickPromptService } from "../src/quick-prompts/index.js";
 // Spec: specs/composer-quick-prompts.md (product rules 2, 12, 13, 16-19; storage and event order).
 
 const P1: QuickPromptProjectRef = { hostId: "local", projectId: "project:one" };
-const P2: QuickPromptProjectRef = { hostId: "remote-a", projectId: "project:two" };
+const P2: QuickPromptProjectRef = {
+  hostId: "remote-a",
+  projectId: "project:two",
+};
 
 function paragraph(...children: unknown[]): unknown {
   return { type: "paragraph", version: 1, children };
@@ -44,7 +47,10 @@ describe("quick prompt service", () => {
   }
 
   function createService(database = openConnection()) {
-    return createQuickPromptService({ database: async () => database, afterChange });
+    return createQuickPromptService({
+      database: async () => database,
+      afterChange,
+    });
   }
 
   beforeEach(async () => {
@@ -106,10 +112,15 @@ describe("quick prompt service", () => {
       for (const project of [P1, P2, null]) {
         const snapshot = await service.read({ project });
         expect(snapshot.globals).toEqual([
-          expect.objectContaining({ promptId: global.promptId, hiddenInProject: false }),
+          expect.objectContaining({
+            promptId: global.promptId,
+            hiddenInProject: false,
+          }),
         ]);
       }
-      expect(await service.read({ project: P1 })).toMatchObject({ projectPrompts: [] });
+      expect(await service.read({ project: P1 })).toMatchObject({
+        projectPrompts: [],
+      });
     });
 
     it("returns the stored body markdown and nodes unchanged", async () => {
@@ -166,7 +177,13 @@ describe("quick prompt service", () => {
     it("rejects an empty name and an over-long name with stable codes", async () => {
       const service = createService();
       await expect(
-        service.create({ scope: "project", project: P1, name: "   ", body: body(), pinned: true }),
+        service.create({
+          scope: "project",
+          project: P1,
+          name: "   ",
+          body: body(),
+          pinned: true,
+        }),
       ).rejects.toThrow("quick-prompt.name-required");
       await expect(
         service.create({
@@ -254,10 +271,22 @@ describe("quick prompt service", () => {
     it("keeps scope and project consistent: global has no project, project has one", async () => {
       const service = createService();
       await expect(
-        service.create({ scope: "global", project: P1, name: "G", body: body(), pinned: true }),
+        service.create({
+          scope: "global",
+          project: P1,
+          name: "G",
+          body: body(),
+          pinned: true,
+        }),
       ).rejects.toThrow("quick-prompt.scope-mismatch");
       await expect(
-        service.create({ scope: "project", project: null, name: "P", body: body(), pinned: true }),
+        service.create({
+          scope: "project",
+          project: null,
+          name: "P",
+          body: body(),
+          pinned: true,
+        }),
       ).rejects.toThrow("quick-prompt.scope-mismatch");
       expect(afterChange).not.toHaveBeenCalled();
     });
@@ -328,7 +357,11 @@ describe("quick prompt service", () => {
         pinned: true,
       });
       await expect(
-        service.update({ promptId: project.promptId, scope: "global", project: null }),
+        service.update({
+          promptId: project.promptId,
+          scope: "global",
+          project: null,
+        }),
       ).rejects.toThrow("quick-prompt.global-mention-blocked");
     });
 
@@ -420,10 +453,18 @@ describe("quick prompt service", () => {
         pinned: true,
       });
       await expect(
-        service.duplicate({ promptId: globalPrompt.promptId, scope: "project", project: P1 }),
+        service.duplicate({
+          promptId: globalPrompt.promptId,
+          scope: "project",
+          project: P1,
+        }),
       ).rejects.toThrow("quick-prompt.limit-reached");
       await expect(
-        service.update({ promptId: globalPrompt.promptId, scope: "project", project: P1 }),
+        service.update({
+          promptId: globalPrompt.promptId,
+          scope: "project",
+          project: P1,
+        }),
       ).rejects.toThrow("quick-prompt.limit-reached");
     });
   });
@@ -453,7 +494,10 @@ describe("quick prompt service", () => {
         pinned: true,
       });
 
-      const renamed = await service.update({ promptId: a.promptId, name: "A2" });
+      const renamed = await service.update({
+        promptId: a.promptId,
+        name: "A2",
+      });
       expect(renamed).toMatchObject({ name: "A2", position: 0 });
 
       const moved = await service.update({ promptId: a.promptId, project: P2 });
@@ -484,7 +528,11 @@ describe("quick prompt service", () => {
         body: body(),
         pinned: true,
       });
-      await service.update({ promptId: first.promptId, scope: "global", project: null });
+      await service.update({
+        promptId: first.promptId,
+        scope: "global",
+        project: null,
+      });
 
       const snapshot = await service.read({ project: P1 });
       expect(snapshot.projectPrompts.map((p) => p.promptId)).toEqual([second.promptId]);
@@ -526,8 +574,16 @@ describe("quick prompt service", () => {
         body: body(),
         pinned: true,
       });
-      await service.setHidden({ promptId: global.promptId, project: P1, hidden: true });
-      await service.update({ promptId: global.promptId, scope: "project", project: P1 });
+      await service.setHidden({
+        promptId: global.promptId,
+        project: P1,
+        hidden: true,
+      });
+      await service.update({
+        promptId: global.promptId,
+        scope: "project",
+        project: P1,
+      });
       const probe = openConnection();
       expect(probe.prepare("SELECT COUNT(*) AS n FROM fork_quick_prompt_hidden").get()?.n).toBe(0);
     });
@@ -548,7 +604,11 @@ describe("quick prompt service", () => {
         body: body(),
         pinned: true,
       });
-      await service.setHidden({ promptId: first.promptId, project: P1, hidden: true });
+      await service.setHidden({
+        promptId: first.promptId,
+        project: P1,
+        hidden: true,
+      });
       afterChange.mockClear();
 
       await service.delete({ promptId: first.promptId });
@@ -617,7 +677,11 @@ describe("quick prompt service", () => {
         pinned: true,
       });
       await expect(
-        service.duplicate({ promptId: project.promptId, scope: "global", project: null }),
+        service.duplicate({
+          promptId: project.promptId,
+          scope: "global",
+          project: null,
+        }),
       ).rejects.toThrow("quick-prompt.global-mention-blocked");
     });
 
@@ -649,11 +713,19 @@ describe("quick prompt service", () => {
         pinned: true,
       });
 
-      await service.setHidden({ promptId: global.promptId, project: P1, hidden: true });
+      await service.setHidden({
+        promptId: global.promptId,
+        project: P1,
+        hidden: true,
+      });
       expect((await service.read({ project: P1 })).globals[0]?.hiddenInProject).toBe(true);
       expect((await service.read({ project: P2 })).globals[0]?.hiddenInProject).toBe(false);
 
-      await service.setHidden({ promptId: global.promptId, project: P1, hidden: false });
+      await service.setHidden({
+        promptId: global.promptId,
+        project: P1,
+        hidden: false,
+      });
       expect((await service.read({ project: P1 })).globals[0]?.hiddenInProject).toBe(false);
     });
 
@@ -667,7 +739,11 @@ describe("quick prompt service", () => {
         pinned: true,
       });
       await expect(
-        service.setHidden({ promptId: project.promptId, project: P1, hidden: true }),
+        service.setHidden({
+          promptId: project.promptId,
+          project: P1,
+          hidden: true,
+        }),
       ).rejects.toThrow("quick-prompt.not-global");
       await expect(
         service.setHidden({ promptId: "missing", project: P1, hidden: true }),
@@ -836,7 +912,13 @@ describe("quick prompt service", () => {
     it("does not broadcast a failed write", async () => {
       const service = createService();
       await expect(
-        service.create({ scope: "global", project: P1, name: "G", body: body(), pinned: true }),
+        service.create({
+          scope: "global",
+          project: P1,
+          name: "G",
+          body: body(),
+          pinned: true,
+        }),
       ).rejects.toThrow();
       await expect(service.setPinned({ promptId: "missing", pinned: true })).rejects.toThrow();
       expect(afterChange).not.toHaveBeenCalled();
@@ -854,6 +936,105 @@ describe("quick prompt service", () => {
       await service.setPinned({ promptId: created.promptId, pinned: false });
       await service.update({ promptId: created.promptId, name: "Q" });
       expect(afterChange).toHaveBeenCalledTimes(3);
+    });
+  });
+  describe("color label", () => {
+    const rawColor = (promptId: string) =>
+      (
+        handles[0]
+          ?.prepare("SELECT color FROM fork_quick_prompts WHERE prompt_id=?")
+          .get(promptId) as { color: unknown } | undefined
+      )?.color;
+
+    async function createProject(service: ReturnType<typeof createService>, color?: "blue" | null) {
+      return service.create({
+        scope: "project",
+        project: P1,
+        name: "Colored",
+        body: body(),
+        pinned: true,
+        ...(color !== undefined ? { color } : {}),
+      });
+    }
+
+    it("defaults to none and stores a palette hue on create", async () => {
+      const service = createService();
+      expect((await createProject(service)).color).toBeNull();
+      const blue = await createProject(service, "blue");
+      expect(blue.color).toBe("blue");
+      expect((await service.read({ project: P1 })).projectPrompts.map((p) => p.color)).toEqual([
+        null,
+        "blue",
+      ]);
+    });
+
+    it("update changes the color only when the field is present; null clears it", async () => {
+      const service = createService();
+      const created = await createProject(service, "blue");
+      expect((await service.update({ promptId: created.promptId, name: "Renamed" })).color).toBe(
+        "blue",
+      );
+      expect((await service.update({ promptId: created.promptId, color: "pink" })).color).toBe(
+        "pink",
+      );
+      expect((await service.update({ promptId: created.promptId, color: null })).color).toBeNull();
+      expect(rawColor(created.promptId)).toBeNull();
+    });
+
+    it("reads an unknown stored value as none and keeps the raw value through rename and duplicate", async () => {
+      const service = createService();
+      const created = await createProject(service, "blue");
+      handles[0]
+        ?.prepare("UPDATE fork_quick_prompts SET color='teal' WHERE prompt_id=?")
+        .run(created.promptId);
+
+      const [read] = (await service.read({ project: P1 })).projectPrompts;
+      expect(read?.color).toBeNull();
+
+      const renamed = await service.update({
+        promptId: created.promptId,
+        name: "Renamed",
+      });
+      expect(renamed.color).toBeNull();
+      expect(rawColor(created.promptId)).toBe("teal");
+
+      const copy = await service.duplicate({
+        promptId: created.promptId,
+        scope: "project",
+        project: P1,
+      });
+      expect(copy.color).toBeNull();
+      expect(rawColor(copy.promptId)).toBe("teal");
+    });
+
+    it("duplicate copies a palette color", async () => {
+      const service = createService();
+      const created = await createProject(service, "blue");
+      const copy = await service.duplicate({
+        promptId: created.promptId,
+        scope: "global",
+        project: null,
+      });
+      expect(copy.color).toBe("blue");
+    });
+
+    it("degrades an unknown hue in a write to none instead of rejecting the write", async () => {
+      const service = createService();
+      const created = await service.create({
+        scope: "project",
+        project: P1,
+        name: "Odd",
+        body: body(),
+        pinned: true,
+        color: "chartreuse",
+      } as never);
+      expect(created.color).toBeNull();
+      const colored = await createProject(service, "blue");
+      const updated = await service.update({
+        promptId: colored.promptId,
+        color: "chartreuse",
+      } as never);
+      expect(updated.color).toBeNull();
     });
   });
 });

@@ -15,3 +15,6 @@ Invariants:
 - Project identity is the (hostId, projectId) pair from the session's task or the draft. It is never derived from a
   path.
 - Mobile shells never create, edit, hide or delete; they only insert and send.
+- Color labels (spec rules 22-24) render only as the decorative `QuickPromptColorDot`; token names come from the
+  static map in `model.ts`, never from data. The editor sends `color` only when the picker changed it, so a stored
+  value this build cannot read is not overwritten by an unrelated edit.

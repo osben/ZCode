@@ -152,6 +152,11 @@ Default light and dark CSS variables still exist as fallback foundations, but ne
   Use for the composer incognito toggle and the prompt-shell border while an incognito draft is
   active (always paired with the «Incognito» trigger label, never color-only). The sidebar incognito marker
   (VenetianMask) is intentionally un-colored, like the worktree marker (specs/incognito-session.md).
+- **Quick prompt label colors**: `--color-quick-prompt-red` / `-orange` / `-yellow` / `-green` / `-blue` / `-violet` / `-pink`
+  Categorical, user-chosen labels (a fixed seven-hue palette, spec `specs/composer-quick-prompts.md` rules 22-24), not
+  states. They paint only a 6px dot before a quick prompt name and the editor's color swatches; the name keeps the
+  standard text color, so no contrast pairing is needed. Never alias or reuse `--color-success`, `--color-warning` or
+  `--color-destructive` for them, and never build the token name from data without a static map.
 - **Diff Added**: `--color-diff-added` with `--color-diff-added-foreground`
 - **Diff Removed**: `--color-diff-removed` with `--color-diff-removed-foreground`
 - **Pull request status**: `--color-pr-open` / `--color-pr-draft` / `--color-pr-merged` / `--color-pr-closed`

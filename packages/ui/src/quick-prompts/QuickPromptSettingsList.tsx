@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu.js";
 import { Switch } from "@/components/ui/switch.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { QuickPromptColorDot } from "@/quick-prompts/QuickPromptColorDot.js";
 import { quickPromptPreviewText } from "@/quick-prompts/model.js";
 import { SettingsGroupCard } from "@/settings/SettingsPageParts.js";
 
@@ -62,7 +63,9 @@ export function QuickPromptSettingsList(props: QuickPromptSettingsListProps) {
   const { intl } = useZCodeIntl();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   );
   const sortable = !props.readOnly && props.items.length > 1;
   const ids = props.items.map((item) => item.promptId);
@@ -204,7 +207,9 @@ function QuickPromptSettingsRow({
           type="button"
           ref={setActivatorNodeRef}
           data-testid="quick-prompts-settings-drag"
-          aria-label={intl.formatMessage({ id: "quickPrompts.settings.reorder" })}
+          aria-label={intl.formatMessage({
+            id: "quickPrompts.settings.reorder",
+          })}
           title={intl.formatMessage({ id: "quickPrompts.settings.reorder" })}
           className="flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-foreground-subtlest hover:bg-surface-hover hover:text-foreground active:cursor-grabbing"
           {...attributes}
@@ -214,7 +219,10 @@ function QuickPromptSettingsRow({
         </button>
       ) : null}
       <div className="min-w-0 flex-1 basis-48">
-        <div className="truncate text-ui-base font-medium text-foreground">{prompt.name}</div>
+        <div className="flex min-w-0 items-center gap-2 text-ui-base font-medium text-foreground">
+          <QuickPromptColorDot color={prompt.color} />
+          <span className="truncate">{prompt.name}</span>
+        </div>
         {preview ? (
           <div className="truncate text-ui-base text-foreground-subtle">{preview}</div>
         ) : null}
@@ -253,7 +261,9 @@ function QuickPromptSettingsRow({
                 variant="ghost"
                 size="icon-sm"
                 data-testid="quick-prompts-settings-menu"
-                aria-label={intl.formatMessage({ id: "quickPrompts.settings.more" })}
+                aria-label={intl.formatMessage({
+                  id: "quickPrompts.settings.more",
+                })}
               >
                 <EllipsisIcon aria-hidden="true" />
               </Button>

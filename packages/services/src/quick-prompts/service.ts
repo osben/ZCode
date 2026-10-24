@@ -4,6 +4,7 @@ import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import {
   IQuickPromptService,
   QUICK_PROMPT_BODY_MAX_LENGTH,
+  QUICK_PROMPT_COLORS,
   QUICK_PROMPT_LIST_LIMIT,
   QUICK_PROMPT_NAME_MAX_LENGTH,
 } from "#src/quick-prompts/contract.js";
@@ -39,6 +40,8 @@ const bodySchema = z
 const projectSchema = z
   .object({ hostId: z.string().min(1), projectId: z.string().min(1) })
   .strict();
+// An unknown hue degrades to none instead of failing the whole write (spec "Color value contract").
+const colorSchema = z.enum(QUICK_PROMPT_COLORS).nullable().catch(null);
 const scopeSchema = z.enum(["global", "project"]);
 const idSchema = z.string().min(1);
 const scopeMismatch = "quick-prompt.scope-mismatch";
@@ -52,6 +55,7 @@ const createSchema = z
     project: projectSchema.nullable(),
     name: nameSchema,
     body: bodySchema,
+    color: colorSchema.optional(),
     pinned: z.boolean(),
   })
   .strict()
@@ -61,12 +65,17 @@ const updateSchema = z
     promptId: idSchema,
     name: nameSchema.optional(),
     body: bodySchema.optional(),
+    color: colorSchema.optional(),
     scope: scopeSchema.optional(),
     project: projectSchema.nullable().optional(),
   })
   .strict();
 const duplicateSchema = z
-  .object({ promptId: idSchema, scope: scopeSchema, project: projectSchema.nullable() })
+  .object({
+    promptId: idSchema,
+    scope: scopeSchema,
+    project: projectSchema.nullable(),
+  })
   .strict()
   .refine(consistent, scopeMismatch);
 const deleteSchema = z.object({ promptId: idSchema }).strict();

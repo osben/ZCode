@@ -1,6 +1,7 @@
 // Composer quick prompts (specs/composer-quick-prompts.md): acceptance scenarios 1, 2, 4, 5 and 7, and the
 // insert-only half of scenario 3. None of them submits a prompt, so this case makes no provider request
 // (providerRequestPolicy "none"; afterEach asserts the capture is empty).
+// Scenario 14 (color label) is the editor round trip: pick a hue, see the dot, clear it.
 // The send half of scenario 3 (empty draft + Cmd-click submits) needs a recorded provider fixture and lives in
 // manual-review/pending/quick-prompts-composer-send.test.ts. Scenario 10 (mobile remote) is not covered here.
 import { readFile, writeFile } from "node:fs/promises";
@@ -13,6 +14,7 @@ import {
   setInputValueByTestIdDom,
 } from "../helpers/desktop-app.js";
 import {
+  chipColor,
   chipLabels,
   clickChip,
   composerMentionCount,
@@ -163,6 +165,27 @@ describe("composer quick prompts", () => {
         ),
       { timeout: 10000, timeoutMsg: "Escape did not close the quick prompt editor" },
     );
+  });
+
+  it("scenario 14: picking a color in the editor shows a dot on the chip", async () => {
+    expect(await chipColor(GLOBAL_PROMPT_NAME)).toBeNull();
+    await openChipContextMenu(GLOBAL_PROMPT_NAME);
+    await clickTestIdByDom("quick-prompt-menu-edit");
+    await clickTestIdByDom("quick-prompt-editor-color-green");
+    await clickTestIdByDom("quick-prompt-editor-save");
+    await browser.waitUntil(async () => (await chipColor(GLOBAL_PROMPT_NAME)) === "green", {
+      timeout: 10000,
+      timeoutMsg: "the chip did not show the green color dot after saving",
+    });
+
+    await openChipContextMenu(GLOBAL_PROMPT_NAME);
+    await clickTestIdByDom("quick-prompt-menu-edit");
+    await clickTestIdByDom("quick-prompt-editor-color-none");
+    await clickTestIdByDom("quick-prompt-editor-save");
+    await browser.waitUntil(async () => (await chipColor(GLOBAL_PROMPT_NAME)) === null, {
+      timeout: 10000,
+      timeoutMsg: "the chip kept its color dot after choosing no color",
+    });
   });
 });
 

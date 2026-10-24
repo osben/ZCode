@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type {
   IQuickPromptService,
   QuickPrompt,
+  QuickPromptColor,
   QuickPromptProjectRef,
   QuickPromptScope,
   QuickPromptSnapshot,
@@ -24,6 +25,7 @@ import { ChatPromptEditor } from "@/prompt-editor/ChatPromptEditor.js";
 import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
 import type { SerializedPromptBody } from "@/prompt-body/index.js";
 import { logger } from "@/logger.js";
+import { QuickPromptColorPicker } from "@/quick-prompts/QuickPromptColorPicker.js";
 import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import {
   isQuickPromptBodyPresent,
@@ -85,6 +87,9 @@ export function QuickPromptEditorDialog({
     editing?.body.nodes ?? (target.mode === "create" ? target.initialBody?.nodes : undefined);
   const [name, setName] = useState(initialName);
   const [scope, setScope] = useState<QuickPromptScope>(initialScope);
+  const initialColor = editing?.color ?? null;
+  const [color, setColor] = useState<QuickPromptColor | null>(initialColor);
+  const colorChanged = color !== initialColor;
   const [bodyMarkdown, setBodyMarkdown] = useState(editing?.body.markdown ?? "");
   // An empty editor is not the stored body: until the load succeeds, Save may not write a body at all.
   const [bodyLoad, setBodyLoad] = useState<BodyLoadState>(initialBodyNodes ? "pending" : "loaded");
@@ -144,7 +149,10 @@ export function QuickPromptEditorDialog({
     !(scope === "project" && !project);
   // Rename-only path after a failed load: the stored body stays untouched, so the scope cannot change either.
   const nameOnlySavable =
-    editing !== null && bodyFailed && isValidQuickPromptName(name) && name.trim() !== editing.name;
+    editing !== null &&
+    bodyFailed &&
+    isValidQuickPromptName(name) &&
+    (name.trim() !== editing.name || colorChanged);
   const canSave = !busy && isValidQuickPromptName(name) && (bodyWritable || nameOnlySavable);
 
   const save = async () => {
@@ -153,7 +161,11 @@ export function QuickPromptEditorDialog({
     setError(null);
     try {
       if (editing && bodyFailed) {
-        await service.update({ promptId: editing.promptId, name: name.trim() });
+        await service.update({
+          promptId: editing.promptId,
+          name: name.trim(),
+          ...(colorChanged ? { color } : {}),
+        });
         await refresh();
         onClose();
         return;
@@ -165,6 +177,8 @@ export function QuickPromptEditorDialog({
           promptId: editing.promptId,
           name: name.trim(),
           body: scope === "global" ? toPortableGlobalBody(next) : next,
+          // Sent only when the picker changed it, so a stored value this build cannot read is never overwritten.
+          ...(colorChanged ? { color } : {}),
           scope,
           project: scope === "project" ? project : null,
         });
@@ -174,6 +188,7 @@ export function QuickPromptEditorDialog({
           project: scope === "project" ? project : null,
           name: name.trim(),
           body: scope === "global" ? toPortableGlobalBody(next) : next,
+          color,
           pinned: true,
         });
       }
@@ -321,7 +336,9 @@ export function QuickPromptEditorDialog({
                 variant="ghost"
                 onClick={() => setBannerDismissed(true)}
               >
-                {intl.formatMessage({ id: "quickPrompts.banner.editEverywhere" })}
+                {intl.formatMessage({
+                  id: "quickPrompts.banner.editEverywhere",
+                })}
               </Button>
             </div>
           </div>
@@ -337,6 +354,12 @@ export function QuickPromptEditorDialog({
             onChange={(event) => setName(event.target.value)}
           />
         </label>
+        <div className="flex flex-col gap-1">
+          <span className="text-ui-caption text-foreground-subtle">
+            {intl.formatMessage({ id: "quickPrompts.editor.color" })}
+          </span>
+          <QuickPromptColorPicker value={color} onChange={setColor} disabled={busy} />
+        </div>
         <div className="flex flex-col gap-1">
           <span className="text-ui-caption text-foreground-subtle">
             {intl.formatMessage({ id: "quickPrompts.editor.scope" })}
@@ -370,7 +393,9 @@ export function QuickPromptEditorDialog({
               data-testid="quick-prompt-editor-mentions-hint"
               className="text-ui-caption text-foreground-subtle"
             >
-              {intl.formatMessage({ id: "quickPrompts.editor.mentionsUnavailable" })}
+              {intl.formatMessage({
+                id: "quickPrompts.editor.mentionsUnavailable",
+              })}
             </p>
           )}
           {/* Panels portal into this container so the dialog's scroll area never clips them. */}
@@ -393,7 +418,9 @@ export function QuickPromptEditorDialog({
             showMentionButton={mentionPanelEnabled}
             showSlashButton
             enableMentionPanel={mentionPanelEnabled}
-            placeholder={intl.formatMessage({ id: "quickPrompts.editor.body.placeholder" })}
+            placeholder={intl.formatMessage({
+              id: "quickPrompts.editor.body.placeholder",
+            })}
           />
           <p className="text-ui-caption text-foreground-subtlest">
             {intl.formatMessage(
