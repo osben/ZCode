@@ -1,56 +1,48 @@
-# Browser Use 完整行为规格
+# Browser Use full behavior spec
 
-> 状态：目标规格；以行为和职责同构为准，采用 clean-room 实现。
-> 范围：Browser Use 的 backend、对象图、选择、生命周期、Playwright facade、安全与 response meta 合同；旧版本轨迹只作历史背景。
-> 优先级：先保证效果与边界正确，再替换/扩展 backend 实现；禁止伪造“可用”能力。
-> 实施记录：2026-07-10 已完成 Slice A；Slice B 的 IAB scope/generation/lifecycle/response meta 与 Slice C 的 member-level capability manifest 已实现。Chrome extension/CDP producer 当前只保留注册口，不纳入本轮交付。
-> DOM-first 增量：2026-07-10 已完成默认提示/示例回显、screenshot guidance lookup、IAB 有界语义 DOM 和对应合同测试；common `Tab.playwright` 对象图与 IAB clean-room executor 已进入 Slice C，跨源 frame/shadow DOM 仍需真实页 E2E 收口。
-> IAB 行为收口：2026-07-10 起不再把“方法名齐全”视为 Playwright 行为完成。本轮以同一份
-> Playwright injected runtime 驱动 snapshot 与 locator，以 CDP `Input` 驱动可信 click/type/press，
-> 并把 `BrowserUser`、`Tabs.finalize({ keep })`、真实 tab identity、URL 脱敏和 backend cancel
-> 作为 IAB 完成门槛。Chrome extension 与独立 CDP provider 继续只保留接口，不计入本轮。
-> 2026-07-12 语义收口：URL、CUA/DOM CUA、Locator media download、undocumented helper、正则 guidance、
-> `networkidle` 与 `expectNavigation` 按动态有效面重新冻结，详见
-> `2026-07-12-browser-use-codex-runtime-semantics-alignment-spec.md`。
-> 2026-07-14 pointer action 收口：`click` / `dblclick` / `setChecked` 不再依赖单个
-> `checkElementStates()` probe。实现必须按以下顺序完成 selector target identity、
-> visible/enabled、滚动、连续 bounding rect 稳定、frame chain 顶层坐标换算、逐层 hit-target
-> 检查和 CDP trusted input；缺失或畸形的 CDP payload 必须作为结构化执行错误返回。
+> Status: target spec; behavior and responsibility isomorphism are the standard, implemented clean-room.
+> Scope: backend, object graph, selection, lifecycle, Playwright facade, security and response-meta contracts of Browser Use. Older trajectories are historical background only.
+> Priority: get the effect and boundaries right first, then replace/extend backend implementations; never fake an "available" capability.
+> Implementation record: Slice A done 2026-07-10; Slice B (IAB scope/generation/lifecycle/response meta) and Slice C (member-level capability manifest) are implemented. The Chrome extension / CDP producers keep only a registration hook and are outside this round.
+> DOM-first increment (2026-07-10): default prompt/example echo, screenshot guidance lookup, bounded IAB semantic DOM and contract tests are done; the common `Tab.playwright` object graph and the IAB clean-room executor are in Slice C; cross-origin frame / shadow DOM still need real-page E2E.
+> IAB behavior completion (2026-07-10 on): a complete method-name set is no longer "Playwright behavior done". One Playwright injected runtime drives both snapshot and locators, CDP `Input` drives trusted click/type/press, and `BrowserUser`, `Tabs.finalize({ keep })`, real tab identity, URL redaction and backend cancel are IAB completion gates. The Chrome extension and standalone CDP provider keep interfaces only.
+> 2026-07-12 semantics: URL, CUA/DOM CUA, Locator media download, undocumented helpers, regex guidance, `networkidle` and `expectNavigation` are re-frozen by the dynamic effective surface; see `2026-07-12-browser-use-codex-runtime-semantics-alignment-spec.md`.
+> 2026-07-14 pointer actions: `click` / `dblclick` / `setChecked` no longer rely on a single `checkElementStates()` probe (see the frozen semantics in section 8).
 
-## 1. 产品目标
+## 1. Product goal
 
-ZCode Browser Use 最终应让同一份 browser-use skill/browser-client 在以下三类 backend 上工作：
+The same browser-use skill/browser-client must work on three backends:
 
-- `iab`：ZCode in-app browser。
-- `extension`：ZCode 自有 Chrome extension + native host，控制用户 Chrome。
-- `cdp`：独立、受 feature/security gate 的 CDP backend。
+- `iab`: the ZCode in-app browser.
+- `extension`: a ZCode-owned Chrome extension + native host controlling the user's Chrome.
+- `cdp`: a standalone CDP backend gated by feature/security.
 
-Playwright 是三类 backend 之上的统一 `Tab.playwright` facade，不是 backend。模型对 `agent.browsers` 的选择、对象图、错误、capability、安全确认、tab 生命周期和 response meta，由本规格统一冻结，三类 backend 保持一致。
+Playwright is a unified `Tab.playwright` facade above the backends, not a backend. The model's selection of `agent.browsers`, the object graph, errors, capabilities, security confirmation, tab lifecycle and response meta are frozen here and identical across the three backends.
 
-## 2. 已确认的边界决策
+## 2. Confirmed boundary decisions
 
-| 决策               | 结论                                                             | 原因                                                                        |
-| ------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------------------- | -------------- | --------------------------------- |
-| backend enum       | `iab                                                             | extension                                                                   | cdp`           | 三类 backend 共用同一 observable contract |
-| Playwright         | Tab API 层                                                       | 避免错误建成第四 backend                                                    |
-| Chrome 资产        | ZCode clean-room 自研                                            | 不依赖任何第三方私有插件或二进制                                            |
-| IAB transport      | 保留 ZCode Protocol adapter                                      | 兼容 local/remote shared-host 架构                                          |
-| browser identity   | descriptor 的 runtime id，不用 type 代替                         | 支持多个 Chrome profile/window/peer                                         |
-| workspace identity | `workspaceIdentity?.trim()                                       |                                                                             | workspacePath` | 遵守隔离语义                      |
-| client mode        | 每次 request 必带                                                | 保持 desktop continuous / web replayable 边界                               |
-| API 支持           | capability/API manifest 动态裁剪                                 | 不暴露必定抛错的假方法                                                      |
-| 低层结果           | protocol 保留结构化 result                                       | facade 才 direct-return/throw                                               |
-| 安全               | command/action-time policy 独立于 js gate                        | 防止一次批准后无限副作用                                                    |
-| 页面观察           | 普通导航/阅读/交互默认使用可见语义 DOM                           | DOM 比图片便宜且能提供稳定定位依据                                          |
-| 模型截图           | 仅在用户明确要求视觉结果、布局/渲染判断或 DOM 无法表示目标时发送 | 禁止“打开页面后顺手截图”和 snapshot+screenshot 双观察                       |
-| 文档装载           | screenshot guidance 为按需 lookup，不进入默认完整 API            | 避免通用提示反复强化 `emitImage(screenshot())`                              |
-| response meta      | 不自动生成客户端预览截图；模型截图仍按视觉分支显式获取           | 产品明确选择：避免普通导航生成大体积截图元数据                              |
-| 实现来源           | clean-room 自研，不复制任何第三方私有源码                        | 合规与可维护性                                                              |
+| Decision | Conclusion | Reason |
+| --- | --- | --- |
+| backend enum | `iab \| extension \| cdp` | one observable contract for all three |
+| Playwright | a Tab API layer | do not build it as a fourth backend |
+| Chrome assets | ZCode clean-room | no third-party private plugin or binary |
+| IAB transport | keep the ZCode Protocol adapter | compatible with the local/remote shared-host architecture |
+| browser identity | the descriptor's runtime id, never the type | supports several Chrome profiles/windows/peers |
+| workspace identity | `workspaceIdentity?.trim() \|\| workspacePath` | isolation semantics |
+| client mode | carried on every request | keeps the desktop continuous / web replayable boundary |
+| API support | trimmed dynamically by capability/API manifest | no fake methods that always throw |
+| low-level result | protocol keeps a structured result | only the facade direct-returns/throws |
+| security | command/action-time policy independent of the js gate | one approval must not allow unlimited side effects |
+| page observation | ordinary navigation/reading/interaction defaults to visible semantic DOM | DOM is cheaper and gives stable locating evidence |
+| model screenshots | only when the user asks for visual results, layout/rendering judgment is needed, or DOM cannot represent the target | no "screenshot after opening" and no snapshot+screenshot double observation |
+| documentation loading | screenshot guidance is an on-demand lookup, not in the default full API | avoid reinforcing `emitImage(screenshot())` |
+| response meta | no automatic client preview screenshot; model screenshots are still explicit in the visual branch | product choice: avoid large screenshot metadata for ordinary navigation |
+| implementation source | clean-room, no third-party private source copied | compliance and maintainability |
 
-## 3. 目标分层
+## 3. Target layering
 
 ```text
-Node REPL runtime（通用、与 browser-use plugin 解耦）
+Node REPL runtime (generic, decoupled from the browser-use plugin)
   └─ plugin browser-client bootstrap
       ├─ BackendDiscovery
       ├─ BrowserRegistry / selection
@@ -58,7 +50,7 @@ Node REPL runtime（通用、与 browser-use plugin 解耦）
       ├─ Documentation composer
       ├─ SecurityPolicy / confirmation
       ├─ ResponseMeta collector
-      └─ Browser → Tabs → Tab common APIs
+      └─ Browser -> Tabs -> Tab common APIs
           ├─ playwright
           ├─ cua
           ├─ dom_cua
@@ -68,18 +60,18 @@ Node REPL runtime（通用、与 browser-use plugin 解耦）
 
 Backend providers
   ├─ IabBackendConnection
-  │   └─ ZCode Protocol → shared host → desktop main → webview guest/CDP
+  │   └─ ZCode Protocol -> shared host -> desktop main -> webview guest/CDP
   ├─ ExtensionBackendConnection
-  │   └─ native pipe → ZCode native host → Chrome extension
+  │   └─ native pipe -> ZCode native host -> Chrome extension
   └─ CdpBackendConnection
-      └─ native pipe/direct gated host → CDP targets
+      └─ native pipe/direct gated host -> CDP targets
 
 Official plugins
   ├─ browser: shared client/API/docs + IAB-oriented entry
   └─ chrome: same shared client/API/docs + extension host/install/diagnostics
 ```
 
-## 4. Backend-neutral 契约
+## 4. Backend-neutral contract
 
 ### 4.1 Descriptor
 
@@ -105,12 +97,9 @@ interface BrowserBackendDescriptor {
 }
 ```
 
-约束：
-
-- `id` 是 runtime connection identity，可同时存在多个同 type backend。
-- `type` 只表示 backend family。
-- `list()` 只返回真实可达、完成 handshake 的 backend；不允许 facade 伪造 available。
-- metadata 不包含 secret；Chrome 可包含 profile/instance/window selection 所需的非敏感标识。
+- `id` is the runtime connection identity; several backends of the same type may coexist. `type` only means the backend family.
+- `list()` returns only backends that are actually reachable and finished the handshake; the facade must never fake availability.
+- metadata contains no secret; Chrome may carry non-sensitive identifiers needed for profile/instance/window selection.
 
 ### 4.2 Session context
 
@@ -130,19 +119,11 @@ interface BrowserSessionContext {
 }
 ```
 
-约束：
-
-- requestId 从 browser-client 到 backend 端到端不变。
-- requestId 是进程内请求生命周期的 correlation key，不是可覆盖的 latest-value 状态。只要同一
-  host bridge 或 main manager 中仍有该 ID 的运行中 entry，任何同 scope 或跨 scope 的重复请求都必须
-  在 backend dispatch 前以 `duplicate_request_id`、`sideEffect: "none"` 失败；随机 UUID 只负责生成，
-  不能替代状态所有者边界的机械唯一性校验。
-- pending/running entry 的 timeout、transport failure、result 和 `finally` 清理必须 compare-and-delete：
-  只有 Map 当前仍指向闭包捕获的同一 entry 时才能删除，旧请求的迟到清理不得删除后来登记的状态。
-- workspaceKey 只用于身份/隔离；文件和命令 cwd 用 workspacePath。
-- remote workspace 必须带 workspaceIdentity 和 remoteSessionId。
-- AbortSignal/timeout 必须能取消尚未开始的请求，并尽可能终止 backend 动作；若动作可能已发生，错误必须明确“不确定是否已产生副作用”。
-- stale connection/generation 不能接收新请求。
+- `requestId` stays unchanged from browser-client to backend. It is the correlation key of an in-process request lifecycle, not an overwritable latest-value state: while the same host bridge or main manager still has a running entry with that ID, any duplicate request, same-scope or cross-scope, must fail before backend dispatch with `duplicate_request_id` and `sideEffect: "none"`. Random UUID generation does not replace mechanical uniqueness checks at the state owner boundary.
+- The timeout, transport failure, result and `finally` cleanup of a pending/running entry must compare-and-delete: delete only when the Map still points to the entry captured by the closure; late cleanup of an old request must not delete state registered later.
+- `workspaceKey` is for identity/isolation only; file and command cwd use `workspacePath`. A remote workspace must carry `workspaceIdentity` and `remoteSessionId`.
+- AbortSignal/timeout must cancel not-yet-started requests and, as far as possible, abort the backend action; if the action may have happened, the error must state that side effects are uncertain.
+- A stale connection/generation cannot receive new requests.
 
 ### 4.3 Port
 
@@ -159,567 +140,389 @@ interface BrowserBackendPort {
 }
 ```
 
-首切面只注册 IAB adapter，但协议、facade 和 registry 不允许再依赖单一 IAB 常量。
+The first slice registers only the IAB adapter, but the protocol, facade and registry must not depend on a single IAB constant.
 
-### 4.4 IAB scope 与 generation 冻结
+### 4.4 IAB scope and generation freeze
 
-IAB 的可见性、默认 tab、活动 tab、pending request 和 cleanup 均按以下 scope 隔离：
+IAB visibility, default tab, active tab, pending requests and cleanup are isolated by this scope:
 
 ```text
 (browserId, browserGeneration, windowId, workspaceKey, remoteSessionId?, sessionId, clientMode)
 ```
 
-- `tabId` 是 main 分配的 opaque runtime id，不再使用 `sessionId` 或 renderer pane id 冒充 tab identity。
-- renderer attach 必须命中 main 已登记、属于同一 `windowId` 且 generation 未过期的 tab；closed/stale/跨窗口 attach 一律拒绝。
-- descriptor generation 改变后，旧 Browser/Tab 对象必须失败，不能自动漂移到新 connection。
-- `BrowserViewReady` 是 renderer 创建或恢复 logical shell 的唯一 authority，也是可重放的
-  create/ready 请求：guest 未 attach 时可再次发送；`BrowserViewAttachGuest` 是 ready ack。
-  `visibility=show` 不是 ready 的别名，不具有创建或恢复 authority。
-- `list/get/selected` 只能观察当前 scope 的 tab。
-- human IAB tab 从 renderer attach 起按 `windowId/workspaceKey/sessionId` 归属；只有 owner session 能通过
-  `BrowserUser.openTabs()` 发现并 claim，空 URL 与精确 `about:blank` 不进入 user tab 结果。释放控制权仍保留
-  原 session ownership，不能发布给其它对话。完整边界见
-  `docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md`。
+- `tabId` is an opaque runtime id allocated by main; `sessionId` or a renderer pane id no longer stands in for tab identity.
+- A renderer attach must hit a tab already registered by main, in the same `windowId`, with an unexpired generation; closed/stale/cross-window attaches are rejected.
+- After the descriptor generation changes, old Browser/Tab objects must fail and not drift to the new connection.
+- `BrowserViewReady` is the only authority for the renderer to create or restore a logical shell, and a replayable create/ready request: it may be sent again while the guest has not attached; `BrowserViewAttachGuest` is the ready ack. `visibility=show` is not an alias for ready and has no create/restore authority.
+- `list/get/selected` observe only tabs of the current scope.
+- A human IAB tab belongs to `windowId/workspaceKey/sessionId` from renderer attach on; only the owner session can discover and claim it through `BrowserUser.openTabs()`; empty URLs and exactly `about:blank` do not enter user-tab results. Releasing control keeps the original session ownership and cannot be published to other conversations. Full boundary: `docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md`.
 
-### 4.5 IAB lifecycle 冻结
+### 4.5 IAB lifecycle freeze
 
-- `tabs.new()` 必须通过 backend 分配 tabId、请求 renderer 创建 guest、等待 ready ack 后返回。
-- `BrowserViewReady` 到达时，renderer 必须按事件携带的 identity
-  `(workspaceKey, remoteSessionId?, sessionId, browserId, browserGeneration, tabId)` 幂等创建或恢复对应
-  `browser-use` logical shell，不能用事件
-  到达瞬间的 active workspace / active session 回填归属。若 origin session 仍是当前作用域，则激活 tab
-  并展开右侧栏，让用户看到正在使用的 IAB；若用户已经切到其它 session/workspace，则只在后台创建并
-  mount `<webview>`，以便 `dom-ready` 产生 ready ack，不得抢占当前右侧栏，切回 origin session 后再
-  恢复显示。面板内容是否 mount 仍不能只依赖可见状态，否则后台 ready 会因收不到 attach ack 而超时。
-- `visibility=show` 只是现存 logical shell 的选择信号。renderer 只能激活上述 scope、generation 与
-  `tabId` 完全匹配的 shell；未命中时必须忽略，不得创建、恢复或 mount shell。`visibility=hide` 也只能
-  隐藏同一 scope/generation 当前激活的 shell。inactive guest 的 attach 不得把 scope visibility 回放成
-  该 tab 的 show；scope 可见与 tab active 是两个独立状态。
-- create/selection 的有序边界冻结为：
+- `tabs.new()` must allocate a tabId through the backend, ask the renderer to create a guest and return after the ready ack.
+- When `BrowserViewReady` arrives the renderer must idempotently create or restore the matching `browser-use` logical shell by the identity carried in the event `(workspaceKey, remoteSessionId?, sessionId, browserId, browserGeneration, tabId)`, and must not backfill ownership from the active workspace/session at arrival time. If the origin session is still the current scope, activate the tab and expand the right sidebar so the user sees the IAB in use; if the user has switched to another session/workspace, only create and mount the `<webview>` in the background so `dom-ready` can produce the ready ack, without taking over the current right sidebar, and restore display after switching back to the origin session. Whether the panel content is mounted must not depend on visibility alone, otherwise a background ready would time out without an attach ack.
+- `visibility=show` is only a selection signal for an existing logical shell. The renderer may activate only a shell whose scope, generation and `tabId` all match; on a miss it must ignore it and not create, restore or mount a shell. `visibility=hide` may only hide the currently active shell of the same scope/generation. Attaching an inactive guest must not replay scope visibility as a show of that tab; scope visibility and tab active are separate states.
+- The ordered create/selection boundary:
 
   ```text
-  main 创建 logical tab
+  main creates logical tab
       |
       v
-  BrowserViewReady(scope + generation + tabId)  -- 可重放至 attach ack
+  BrowserViewReady(scope + generation + tabId)  -- replayable until attach ack
       |
       v
-  renderer 幂等创建/恢复 shell + mount webview
+  renderer idempotently creates/restores shell + mounts webview
       |
       v
   BrowserViewAttachGuest                         -- ready ack
       |
       v
-  visibility=show/hide                           -- 只选择/隐藏现存 shell
+  visibility=show/hide                           -- only selects/hides an existing shell
       |
       v
   close                                           -- terminal
       |
-      +--> delayed visibility 必须忽略，禁止重建 shell
+      +--> delayed visibility must be ignored; never rebuild the shell
   ```
 
-  同一 sender 必须先投递 Ready、再投递首次 visibility；renderer 即使在同一 React batch 内接收两者，
-  也必须按接收顺序更新 lifecycle state，不能依赖上一轮 render 才刷新的 ref。renderer 状态丢失或需要
-  恢复时，producer 必须先重放 Ready，再重放 visibility，禁止只用 visibility 恢复 shell。旧
-  `browserGeneration`、不同 `remoteSessionId` 或已经 close 的 tab 的 visibility 一律忽略。
+  The same sender must deliver Ready before the first visibility; even when the renderer receives both in one React batch it must update lifecycle state in receive order and not depend on a ref refreshed only by the previous render. When renderer state is lost or must be restored, the producer must replay Ready first and then visibility, never restore a shell with visibility alone. Visibility of an old `browserGeneration`, a different `remoteSessionId` or an already closed tab is ignored.
 
-- ZCode 在这里采用“browser use 对其所属对话可见”的产品语义；visibility capability 只控制现存
-  logical shell 的显隐，不承担 logical shell 恢复。
-- `close()` 把 tab 标记为 closed、detach CDP、取消 waiter 并只通知 owner window；迟到 attach 不得复活 tab。
-- `finalize()` 把 tab 标记为 deliverable；IAB 页面在 session 存续期间保持可见。
-- `turnEnded()` 取消该 turn 尚未完成的 request/waiter；已下发动作按 uncertain side-effect 语义返回。
-  ZCode IAB 采用进程内默认持久语义：所有 agent-created active/handoff tab 都继续可见、可控，不能因
-  模型漏调 finalize、已有 handoff、turn 成功/失败而自动关闭。显式 deliverable 和 claimed user tab
-  在 turn end 释放给用户，但仍保持可见。
-- `tabs.finalize({ keep })` 只给列入 `keep` 的 tab 应用 `handoff`/`deliverable` 状态；未列入的 tab
-  保持原 lifecycle，遗漏不具有关闭语义。只有模型显式 `tab.close()` 或用户手动关闭才关闭单个 tab。
-- `closeSession()` 取消该 scope 的 pending request，清理 session 级配置并把仍存活的 IAB tabs 释放给
-  原 session 的 user-tab 集合，不关闭 webview，也不允许其它 session 枚举或 claim。进程生命周期见
-  `docs/browser-use/2026-07-12-browser-tab-process-lifetime-spec.md`，对话隔离见
-  `docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md`。
-- window close 额外执行 window-scope cleanup，避免 main singleton 残留 owner/guest。
-- host bridge 与 main manager 都必须覆盖同 scope、跨 scope 的并发重复 requestId 回归；断言重复请求
-  不下发、原请求的结果/取消/turn/session cleanup 关联保持不变。
-- renderer lifecycle 测试必须走真实 hook 订阅并覆盖相邻事件：同一 batch 的 `Ready(A) → Ready(B) →
-visibility(B)` 保留两份 shell 且激活 B；`close(B) → delayed visibility(B)` 不得重建 B；旧 generation
-  与不同 remote session 的 visibility 不得改变当前 active tab。main 测试必须覆盖
-  `attachGuest({ active: false })` 不产生 show 事件。
+- ZCode's product semantics: browser use is visible to the conversation that owns it; the visibility capability only controls show/hide of an existing logical shell and does not restore logical shells.
+- `close()` marks the tab closed, detaches CDP, cancels waiters and notifies only the owner window; a late attach must not revive the tab.
+- `finalize()` marks a tab deliverable; IAB pages stay visible for the session lifetime.
+- `turnEnded()` cancels the turn's unfinished requests/waiters; actions already dispatched return with uncertain side-effect semantics. ZCode IAB uses in-process default persistence: all agent-created active/handoff tabs stay visible and controllable and must not close automatically because the model forgot to call finalize, because a handoff exists, or because a turn succeeded/failed. Explicit deliverable and claimed user tabs are released to the user at turn end but stay visible.
+- `tabs.finalize({ keep })` applies `handoff`/`deliverable` only to tabs listed in `keep`; unlisted tabs keep their lifecycle and omission has no close semantics. Only an explicit model `tab.close()` or a manual user close closes a single tab.
+- `closeSession()` cancels the scope's pending requests, clears session-level config and releases still-alive IAB tabs to the original session's user-tab set; it closes no webview and no other session may enumerate or claim them. Process lifetime: `docs/browser-use/2026-07-12-browser-tab-process-lifetime-spec.md`; conversation isolation: `docs/browser-use/2026-07-14-browser-tab-conversation-isolation-spec.md`.
+- Window close additionally runs window-scope cleanup so no owner/guest remains in the main singleton.
+- Both the host bridge and the main manager must be covered by same-scope and cross-scope concurrent duplicate requestId regressions, asserting the duplicate is not dispatched and the original request's result/cancel/turn/session cleanup association is unchanged.
+- Renderer lifecycle tests must go through the real hook subscription and cover adjacent events: in the same batch `Ready(A) -> Ready(B) -> visibility(B)` keeps two shells and activates B; `close(B) -> delayed visibility(B)` must not rebuild B; visibility of an old generation or a different remote session must not change the current active tab. Main tests must cover that `attachGuest({ active: false })` produces no show event.
 
-## 5. Discovery 与 selection
+## 5. Discovery and selection
 
-BrowserRegistry 每次需要时刷新或按 TTL/peer event 更新 descriptor。选择规则冻结为：
+BrowserRegistry refreshes descriptors when needed or by TTL/peer event. Selection rules:
 
 ### 5.1 `get(idOrType)`
 
-- 优先按精确 id。
-- 未命中时按 type alias。
-- 同 type 多实例时使用 preferred instance 规则，否则稳定选择第一项。
-- 无匹配抛 `BrowserBackendUnavailableError`，列出当前可用 descriptor，不静默降级到另一 backend。
+- Exact id first; then type alias; with several instances of one type use the preferred-instance rule, otherwise stably the first.
+- No match throws `BrowserBackendUnavailableError` listing the currently available descriptors; never silently degrade to another backend.
 
 ### 5.2 `getDefault()`
 
-1. IAB。
-2. preferred extension instance/window。
-3. 任一 extension。
-4. 其余第一个 backend。
-5. 空列表抛 unavailable。
+1. IAB. 2. Preferred extension instance/window. 3. Any extension. 4. The first remaining backend. 5. An empty list throws unavailable.
 
 ### 5.3 `getForUrl(url)`
 
-- 单 backend 直接返回。
-- local/file target 优先 IAB。
-- 用现有 IAB/extension tabs 做 exact → origin+pathname → hostname → hostname hierarchy 匹配。
-- 多候选优先 IAB，再 preferred extension。
-- fallback：IAB → extension → 其余。
-- 只有一个 backend 时走快路径直接返回；多 backend 下 URL parse 失败明确报错，不把原串发送给任意 backend。
-- `file:` 只属于选择提示：它可以让多 backend 选择 IAB，但 `Tab.goto()` 仍只允许 http/https/about:blank。
+- A single backend returns directly. local/file targets prefer IAB.
+- Match existing IAB/extension tabs by exact -> origin+pathname -> hostname -> hostname hierarchy. Several candidates: IAB first, then preferred extension. Fallback: IAB -> extension -> the rest.
+- With one backend take the fast path; with several backends a URL parse failure errors explicitly and the raw string is not sent to any backend.
+- `file:` is only a selection hint: it may make multi-backend selection pick IAB, but `Tab.goto()` still allows only http/https/about:blank.
 
-所有选择规则必须做纯函数单测，并覆盖多个同 type backend、peer 消失和 preferred instance 变化。
+All selection rules need pure-function unit tests, covering several same-type backends, peer disappearance and preferred-instance changes.
 
-## 6. Browser-client 与插件边界
+## 6. Browser-client and plugin boundary
 
-最终状态：
+Final state:
 
-- Node REPL 是通用 runtime，不因 browser-use plugin 被禁用而消失。
-- browser/chrome plugin 携带同一 build 产物的 browser-client、API manifest 和 docs manifest。
-- skill 在 fresh kernel 中显式 import 并执行一次 setup；重复 setup 幂等。
-- ZCode 可保留内部自动 bootstrap 作为迁移兼容，但模型文档和稳定 contract 以插件 asset 为准；迁移期结束后移除 core 私有 facade 实现。
-- plugin disable 只移除相应 skill/client/backend 产品入口，不应破坏通用 Node REPL。
-- official asset staging 的 SEA/Desktop/remote/prebuild 四条链必须包含 `scripts` 和必要平台资产。
+- Node REPL is a generic runtime and does not disappear when the browser-use plugin is disabled.
+- The browser/chrome plugins carry the browser-client, API manifest and docs manifest of the same build artifact.
+- The skill explicitly imports and runs setup once in a fresh kernel; repeated setup is idempotent.
+- ZCode may keep an internal auto-bootstrap for migration compatibility, but model docs and the stable contract follow plugin assets; after the migration period the core private facade implementation is removed.
+- Disabling a plugin only removes the corresponding skill/client/backend product entries and must not break the generic Node REPL.
+- All four official-asset staging chains (SEA/Desktop/remote/prebuild) must include `scripts` and the needed platform assets.
 
-## 7. API manifest 与对象图
+## 7. API manifest and object graph
 
-需要 clean-room 定义覆盖完整 observable signatures 的 manifest。运行时必须：
+A clean-room manifest covering the full observable signatures is required. At runtime:
 
-1. 按 backend `unsupportedByDefaultIn` 建立基础支持集。
-2. 合并 backend overrides、capability 和产品 feature gate。
-3. 从对象 graph 隐藏 unsupported member。
-4. 生成当前 backend 的有效 API 文档。
-5. 条件拼装安全、上传、Chrome、IAB、capability guidance。
-6. 自动测试 manifest、facade、docs 和 backend command mapping 不漂移。
+1. Build the base support set from the backend `unsupportedByDefaultIn`.
+2. Merge backend overrides, capabilities and product feature gates.
+3. Hide unsupported members from the object graph.
+4. Generate the effective API documentation for the current backend.
+5. Conditionally assemble security, upload, Chrome, IAB and capability guidance.
+6. Automatically test that manifest, facade, docs and backend command mapping do not drift.
 
-本轮 manifest 采用 member 级结构，每项至少包含 `name/kind/signature`，可选包含 `command`、`unsupportedByDefaultIn` 与 `requiresCapabilities`。interpreter 的合并顺序冻结为：
+This round's manifest is member-level; each item has at least `name/kind/signature` and optionally `command`, `unsupportedByDefaultIn` and `requiresCapabilities`. The interpreter merge order is frozen:
 
-1. `unsupportedByDefaultIn` 建立 backend family 基线。
-2. `requiresCapabilities` 校验 descriptor 的 browser/tab capability id。
-3. `apiSupportOverrides["Object.member"]` 做 connection 级最终覆盖。
-4. unsupported member 同时从 runtime proxy、`in` 结果和有效 documentation 中隐藏。
+1. `unsupportedByDefaultIn` sets the backend-family baseline.
+2. `requiresCapabilities` checks the descriptor's browser/tab capability ids.
+3. `apiSupportOverrides["Object.member"]` is the final connection-level override.
+4. An unsupported member is hidden from the runtime proxy, from `in` results and from the effective documentation.
 
-manifest 不再声明某个 backend 固定可用，也不允许文档列出 runtime object graph 已隐藏的方法。
+The manifest no longer declares a backend as always available, and the docs must not list methods already hidden from the runtime object graph.
 
-必备对象族：
+Required object families:
 
-- Browsers/Browser/BrowserUser/Tabs/Tab。
+- Browsers/Browser/BrowserUser/Tabs/Tab.
+- Playwright API, Locator, FrameLocator, Download, FileChooser.
+- CUA/DOM_CUA.
+- Content, Clipboard, Dev logs, Dialog.
+- Browser/tab capability collections and documentation.
 
-## 8. Locator pointer action 冻结语义
+## 8. Locator pointer action frozen semantics
 
-`click`、`dblclick` 和需要切换状态的 `setChecked` 共用以下 pointer-target pipeline：
+`click`, `dblclick` and `setChecked` (when it needs to toggle state) share this pointer-target pipeline:
 
-1. 在 Playwright isolated world 中严格解析 selector；零匹配进入 routine wait，多匹配立即 strict
-   violation，不能用 `first()` / `last()` / `nth()` 自动消歧。
-2. 非 `force` 操作检查 `visible`、`enabled`；`force` 只跳过这两个 actionability state 和最终
-   receives-events 拒绝，不跳过 selector 唯一性、可点击矩形、frame identity 与 trusted input。
-3. 按候选 scroll alignment 滚动后，至少观察两个连续 animation frame；只有 bounding rect 完全
-   相同时才可进入点击。元素 detach、重新解析到不同节点或 execution context 被销毁时重新解析，
-   直到 routine timeout。
-4. target 必须携带实际 CDP target/session/frame identity。子 frame 中的本地坐标逐层映射到顶层，
-   每层 iframe owner 都执行 hit-target 检查；同 frame 内继续使用 Playwright injected
-   `expectHitTarget`。OOPIF 不得仅依赖累计 `getBoundingClientRect()` 偏移。
-5. 最终动作只通过 CDP `Input.dispatchMouseEvent` 产生 trusted input；点击前后的 target/context
-   失效必须返回带明确恢复指引的结构化错误，不能伪装成功。
-6. `Runtime.evaluate` / `DOM.*` 的成功 response 必须经过运行时 payload 校验。缺少 `result.value`、
-   `count`、坐标或 frame owner 的返回属于 backend execution error，不得降级为 locator 未命中。
+1. Strictly resolve the selector in the Playwright isolated world: zero matches enter the routine wait; multiple matches are an immediate strict violation and must not be disambiguated by `first()` / `last()` / `nth()`.
+2. Non-`force` operations check `visible` and `enabled`; `force` skips only these two actionability states and the final receives-events rejection, not selector uniqueness, the clickable rect, frame identity or trusted input.
+3. After scrolling with a candidate scroll alignment, observe at least two consecutive animation frames; proceed to the click only when the bounding rect is identical. If the element detaches, re-resolves to a different node, or the execution context is destroyed, re-resolve until the routine timeout.
+4. The target must carry the actual CDP target/session/frame identity. Local coordinates in child frames are mapped layer by layer to the top level, every iframe owner runs a hit-target check, and within one frame Playwright's injected `expectHitTarget` continues to be used. An OOPIF must not rely only on accumulated `getBoundingClientRect()` offsets.
+5. The final action produces trusted input only through CDP `Input.dispatchMouseEvent`; target/context invalidation before or after the click must return a structured error with explicit recovery guidance and must not pretend success.
+6. Successful `Runtime.evaluate` / `DOM.*` responses must pass runtime payload validation. A response missing `result.value`, `count`, coordinates or frame owner is a backend execution error and must not be downgraded to "locator not found".
 
-验收必须包含真实 Electron/CDP 页面，不得只用 mock `Runtime.evaluate`：普通 link/button、标题内嵌
-link、持续动画、overlay、同源 iframe、OOPIF、navigation/context-destroyed race、空 payload 和
-畸形 payload 均为必测状态。
-
-- Playwright API、Locator、FrameLocator、Download、FileChooser。
-- CUA/DOM_CUA。
-- Content、Clipboard、Dev logs、Dialog。
-- Browser/tab capability collections 和 documentation。
+Acceptance must include real Electron/CDP pages, not only mocked `Runtime.evaluate`: ordinary link/button, link nested in a heading, continuous animation, overlay, same-origin iframe, OOPIF, navigation/context-destroyed race, empty payload and malformed payload are all required states.
 
 ## 8. Playwright facade
 
-### 8.1 语义
+### 8.1 Semantics
 
-- 这是受限 Playwright-like API，不暴露任意 Playwright BrowserContext/process。
-- wait API 属于 `tab.playwright`，不属于 `Tab` 根对象；固定等待的准确签名是
-  `waitForTimeout(timeoutMs: number): Promise<void>`，因此禁止在 `Tab` 根对象增加
-  `tab.waitForTimeout(...)` 兼容别名。
-- `waitForTimeout` 接受非负整数，先校验目标 tab 仍属于当前 scope，再执行可取消的固定等待；
-  transport 的命令预算为 `timeoutMs + 2000ms`。固定 sleep 只用于没有更具体页面状态可等待的场景，
-  常规流程仍优先 fresh snapshot 或后续的 targeted wait API。
-- locator 构造是纯描述；调用 action/query 时才下发 backend command。
-- 最新相关 `domSnapshot()` 是 locator 构造与失败恢复的唯一事实源。snapshot 未出现的 label、
-  accessible name、placeholder、text、attribute 或 selector 禁止猜测，也禁止把猜测 locator 当成页面探针。
-- click/fill/press/select/check 前，若 selector 本身不能证明唯一，必须先 `count()`；`count() === 0`
-  时不得继续等待或执行该 locator，必须重新 snapshot 并基于新事实重建；大于 1 时必须收紧 scope，
-  不得用 `first()/last()/nth()` 掩盖歧义。
-- locator timeout、strict-mode 或 selector parse 失败后，禁止原样重试 locator；先获取 fresh snapshot，
-  再使用更稳定的 role/name、`data-*`、`href` 或 scoped selector。
-- 常规 Playwright operation timeout 冻结为：默认 3000ms，显式 timeout 也最多
-  3000ms；下载事件是例外，仍默认 3000ms、最大 120000ms。`waitForTimeout()` 是用户明确请求的
-  固定等待，不受常规 operation timeout 上限影响。
-- locator strictness、frame scope、timeout、load state、download/file chooser 和 navigation wait 有统一语义。
-- `evaluate` 在页面上下文执行传入脚本；调用方负责控制脚本范围并验证预期结果。
-- locator/action 错误必须携带可操作信息，不泄漏 backend 内部 secret；client 添加操作上下文时不得
-  把原始 error message/stack 重复拼接到最终错误。
+- A restricted Playwright-like API; no arbitrary Playwright BrowserContext/process is exposed.
+- Wait APIs belong to `tab.playwright`, not the `Tab` root; the exact fixed-wait signature is `waitForTimeout(timeoutMs: number): Promise<void>`, so adding a `tab.waitForTimeout(...)` compatibility alias on `Tab` is forbidden.
+- `waitForTimeout` accepts a non-negative integer, first verifies the target tab still belongs to the current scope, then runs a cancelable fixed wait; the transport command budget is `timeoutMs + 2000ms`. A fixed sleep is only for cases with no more specific page state to wait for; the normal flow still prefers a fresh snapshot or a targeted wait API.
+- Locator construction is a pure description; a backend command is dispatched only when an action/query is called.
+- The latest relevant `domSnapshot()` is the only fact source for locator construction and failure recovery. A label, accessible name, placeholder, text, attribute or selector not present in the snapshot must not be guessed, and a guessed locator must not be used as a page probe.
+- Before click/fill/press/select/check, if the selector itself cannot prove uniqueness, call `count()` first; with `count() === 0` do not keep waiting or execute that locator, take a new snapshot and rebuild from the new facts; with more than 1 tighten the scope and never mask ambiguity with `first()/last()/nth()`.
+- After a locator timeout, strict-mode or selector parse failure, never retry the locator unchanged; take a fresh snapshot first and then use a more stable role/name, `data-*`, `href` or scoped selector.
+- Routine Playwright operation timeout is frozen: default 3000 ms, and an explicit timeout is at most 3000 ms; the download event is the exception, default 3000 ms, max 120000 ms. `waitForTimeout()` is a fixed wait the user asked for and is not bound by the routine operation timeout cap.
+- Locator strictness, frame scope, timeout, load state, download/file chooser and navigation wait have unified semantics.
+- `evaluate` runs the given script in the page context; the caller controls the script scope and verifies the expected result.
+- Locator/action errors must carry actionable information without leaking backend secrets; when the client adds operation context it must not append the original error message/stack again.
 
 ### 8.2 Backend adapter
 
-- IAB：基于 webview guest CDP 实现 DOM snapshot、Runtime、DOM/Accessibility/Input/Page 组合。
-- extension：通过 `chrome.debugger` 转发同一受控 CDP/DOM command contract。
-- cdp：直接执行允许列表内的 CDP command。
-- 不允许把 IAB DOM snapshot 的简化 ref API冒充完整 Playwright locator。
+- IAB: DOM snapshot, Runtime, and DOM/Accessibility/Input/Page combinations built on webview guest CDP.
+- extension: forwards the same controlled CDP/DOM command contract through `chrome.debugger`.
+- cdp: executes allowlisted CDP commands directly.
+- The simplified ref API of the IAB DOM snapshot must not pose as the full Playwright locator.
 
-### 8.3 当前 Playwright 交付边界
+### 8.3 Current Playwright delivery boundary
 
-IAB 本轮按冻结的静态接口交付了以下 **method-name object graph**：
+IAB delivered the following **method-name object graph** for the frozen static interface this round:
 
-- `PlaywrightAPI` 16 个 member：DOM snapshot、坐标元素信息/标注截图、页面脚本 evaluate、navigation/load/URL/fixed wait、download/filechooser event，以及 locator/frame locator builders。
-- `PlaywrightLocator` 32 个 member：builder/filter/集合、严格 action、读取、状态、select/check、evaluate 与 media download。
-- `PlaywrightFrameLocator` 7 个 builder member、`PlaywrightDownload.path()`、`PlaywrightFileChooser.isMultiple()/setFiles()`。
+- `PlaywrightAPI` 16 members: DOM snapshot, coordinate element info / annotated screenshot, page-script evaluate, navigation/load/URL/fixed wait, download/filechooser events, and locator/frame-locator builders.
+- `PlaywrightLocator` 32 members: builders/filters/collections, strict actions, reads, state, select/check, evaluate and media download.
+- `PlaywrightFrameLocator` 7 builder members, `PlaywrightDownload.path()`, `PlaywrightFileChooser.isMultiple()/setFiles()`.
 
-locator builder 只组合 selector，终结操作才跨协议下发；IAB 的
-`waitForEvent("filechooser")` 和 `setFiles` 保持明确 unsupported 行为；download 通过 guest
-session 的 `will-download` 生命周期生成受 tab scope 约束的 download object。
+Locator builders only compose selectors and only terminal operations cross the protocol; IAB `waitForEvent("filechooser")` and `setFiles` keep explicit unsupported behavior; downloads create a tab-scope-bound download object through the guest session's `will-download` lifecycle.
 
-2026-07-10 深度审计确认：这只证明 **接口集合和部分 client-side contract**，不能写成“完整 common
-object graph 已行为对齐”。当前 executor 仍是页面内 clean-room selector/runtime，不是本规格 8.2
-要求的 CDP DOM/Accessibility/Input/Page 组合，至少存在以下未收口项：
+The 2026-07-10 deep audit confirmed this proves only **the interface set and part of the client-side contract**; it must not be written as "common object graph behavior aligned". The executor was still an in-page clean-room selector/runtime, not the CDP DOM/Accessibility/Input/Page combination required by 8.2, with at least these open items:
 
-- locator click/press/fill/check/select 使用 synthetic DOM event/property mutation，不具备可信输入和完整 actionability。
-- role/accessible name 是手写子集；不穿透 shadow DOM，只能访问同源 iframe。
-- 当前 IAB 明确拒绝 `networkidle`。`expectNavigation` 无 URL 时允许旧页面已完成 load
-  立即满足；传 URL 时才以目标 URL + waitUntil 证明导航。不得把当前 IAB 行为误写成 upstream Playwright 保证。
-- `evaluate` 直接在页面上下文执行传入脚本；root `Tab.evaluate` 与 Playwright evaluate 均属于可执行页面脚本的能力。
-- root `screenshot({ref})` 接受 ref 但 executor 忽略；这不是已实现能力。
+- Locator click/press/fill/check/select used synthetic DOM events/property mutation, without trusted input and full actionability.
+- role/accessible name was a hand-written subset; it did not pierce shadow DOM and could reach only same-origin iframes.
+- Current IAB explicitly rejects `networkidle`. `expectNavigation` without a URL may be satisfied immediately when the old page has already finished load; with a URL it proves navigation by target URL + waitUntil. Current IAB behavior must not be written as an upstream Playwright guarantee.
+- `evaluate` runs the given script in the page context; root `Tab.evaluate` and Playwright evaluate are both capabilities that run page scripts.
+- Root `screenshot({ref})` accepts a ref but the executor ignores it; this is not an implemented capability.
 
-因此跨源 iframe、shadow DOM、AX、trusted input、actionability、navigation wait、页面脚本执行和真实
-download 都必须经合同/E2E 验证；在这些用例通过前，只能宣称“Playwright 方法名集合齐全”。
+Therefore cross-origin iframe, shadow DOM, AX, trusted input, actionability, navigation wait, page-script execution and real download must be verified through contract/E2E; until those pass, only "the Playwright method-name set is complete" may be claimed.
 
-### 8.4 DOM-first 观察与截图兜底
+### 8.4 DOM-first observation and screenshot fallback
 
-观察策略按“能回答下一步问题的最便宜证据”冻结：
+Observation follows "the cheapest evidence that can answer the next question":
 
-1. 普通打开、导航、阅读、搜索、表单定位和状态确认，locator 流程先返回
-   `playwright.domSnapshot()`；只有 ref/dom_cua 兼容流程才先返回 `snapshot()`。页面打开本身不是截图理由。
-2. REPL 示例必须让观察结果成为最后表达式（默认例如 `await tab.playwright.domSnapshot()`；兼容 ref 路径可用 `await tab.snapshot()`），或显式 `nodeRepl.write(...)`。只把结果赋给局部变量不算模型已观察。
-3. 默认禁止在同一观察单元同时调用 DOM 观察（`playwright.domSnapshot()` 或兼容 `snapshot()`）与
-   `screenshot()`；若 DOM 已经足以回答问题，不再用截图重复确认。
-4. 只有三类情况进入模型 image block：用户明确要求截图/视觉检查；需要判断布局、样式、像素或图片内容；DOM snapshot 无法表示 canvas、自绘控件等目标且需要视觉坐标兜底。
-5. screenshot 的选项教程不进入默认 documentation，只有满足上述视觉分支时才按名称 lookup；但
-   “截图结果必须进入 image block”的输出契约必须留在默认工具说明和 API semantics 中。模型一旦决定
-   调用 `screenshot()`，必须在同一个 JS cell 中使用
-   `nodeRepl.emitImage(await tab.screenshot())`，禁止把 `screenshot()` 作为最终表达式或把
-   `Uint8Array` 直接回灌模型。
-6. IAB 兼容接口 `snapshot()` 在保留可动作 `elements/ref` 的同时，还要返回有界的可见语义 DOM 节点，
-   至少覆盖 heading、paragraph、list、landmark、table、image alt 和稳定定位属性。它不替代第 8.5 节的
-   Playwright AI/ARIA 字符串合同。
-7. `dom_cua.get_visible_dom()` 复用同一份丰富 DOM 观察，不得只是名称像 DOM、结果仍只有可交互元素。
-8. ZCode 不在导航/点击后自动抓取客户端 preview screenshot。普通 browser command 的 response meta 只携带 marker、backend、browserId、tab/open-tab、sessionEnded 与脱敏 URL；截图只能由模型在视觉分支显式调用。`tab.screenshot()` 只产生内部 PNG bytes，模型调用必须写成 `nodeRepl.emitImage(await tab.screenshot())`，只有该路径才成为模型 image block。
-9. `nodeRepl.emitImage(...)` 产生的图片除进入 provider-visible image block 外，还必须通过有界的
-   `ToolResult.display` 图片元数据进入工具卡片。UI 在实时 `desktop-continuous` 事件与
-   `web-remote-replayable` snapshot/replay 中都直接渲染图片，不再只显示
-   `[Attached image/*: MCP image]`；该占位仅用于模型文本投影，工具卡片拿到真实图片时必须隐藏它。
-   display 图片载荷必须限制单图、总量和数量，不能绕过 tool result budget 形成无界协议消息；relay/main
-   仍只透传，不保存或解释图片业务状态。
-10. `nodeRepl.emitImage(...)` 产生的 browser screenshot 在 MCP bridge 进入模型前必须受 200 KiB
-    base64 单图预算约束：不超预算时保持原图；超预算时复用统一 `ImageProcessorPort`，按 2000 最长边、
-    153600 B decoded binary、204800 B base64 预算生成可见 image block。只有压缩失败时才把原图保存为
-    artifact 并返回文本引用，禁止把 `Uint8Array` 展开成数字 JSON，也禁止因通用 MCP 阈值直接丢失
-    browser use 的视觉观察。
-11. 模型显式调用 `tab.screenshot()` 并按第 5 条通过 `nodeRepl.emitImage(...)` 返回截图时，
-    工具结果必须同时包含 image block 和原始截图 artifact 的绝对文件路径文本。路径文本必须是
-    独立的 provider-visible text block，使不支持多模态的模型仍可把该路径交给图片识别 MCP；
-    路径对应的文件保留 browser backend 返回的原始 PNG bytes，不受第 10 条模型可见图片压缩策略影响。
-    截图来源必须在 Node REPL 结果中显式标记，普通 `nodeRepl.emitImage(...)` 不得因此额外落盘。
-    截图失败时不生成空文件或虚假路径。轮尾自动截图属于 UI 展示链路，不进入模型对话、
-    不计入 token，也不生成本条的 artifact 路径文本。
+1. For ordinary open, navigation, reading, search, form locating and state confirmation, the locator flow returns `playwright.domSnapshot()` first; only the ref/dom_cua compatibility flow returns `snapshot()` first. Opening a page is not a reason for a screenshot.
+2. REPL examples must make the observation the last expression (by default e.g. `await tab.playwright.domSnapshot()`; the compatible ref path may use `await tab.snapshot()`) or explicitly `nodeRepl.write(...)`. Merely assigning the result to a local variable does not count as the model having observed.
+3. By default, DOM observation (`playwright.domSnapshot()` or compatible `snapshot()`) and `screenshot()` must not both be called in one observation unit; if DOM already answers the question, do not confirm again with a screenshot.
+4. Only three cases enter a model image block: the user explicitly asks for a screenshot/visual check; layout, style, pixels or image content must be judged; DOM snapshot cannot represent the target (canvas, custom-drawn controls) and a visual coordinate fallback is needed.
+5. The screenshot option tutorial is not in the default documentation and is looked up by name only in those visual branches; but the output contract "a screenshot result must enter an image block" stays in the default tool description and API semantics. Once the model decides to call `screenshot()`, it must use `nodeRepl.emitImage(await tab.screenshot())` in the same JS cell; it must not make `screenshot()` the final expression or feed a `Uint8Array` back to the model.
+6. The IAB compatible `snapshot()` keeps actionable `elements/ref` and also returns bounded visible semantic DOM nodes covering at least heading, paragraph, list, landmark, table, image alt and stable locating attributes. It does not replace the Playwright AI/ARIA string contract of 8.5.
+7. `dom_cua.get_visible_dom()` reuses the same rich DOM observation and must not merely be DOM by name while returning only interactive elements.
+8. ZCode does not auto-capture a client preview screenshot after navigation/click. Response meta of an ordinary browser command carries only the marker, backend, browserId, tab/open-tab, sessionEnded and redacted URL; screenshots are explicitly called by the model in the visual branch. `tab.screenshot()` produces internal PNG bytes only; the model must write `nodeRepl.emitImage(await tab.screenshot())` and only that path becomes a model image block.
+9. Images produced by `nodeRepl.emitImage(...)` enter the provider-visible image block and must also enter the tool card through bounded `ToolResult.display` image metadata. The UI renders the image directly in both live `desktop-continuous` events and `web-remote-replayable` snapshot/replay, no longer showing only `[Attached image/*: MCP image]`; that placeholder is for the model text projection only and the tool card hides it when it has the real image. Display image payloads must bound single image, total size and count so they cannot bypass the tool-result budget into unbounded protocol messages; relay/main still only pass through and neither store nor interpret image business state.
+10. A browser screenshot produced by `nodeRepl.emitImage(...)` must obey a 200 KiB base64 per-image budget before entering the model through the MCP bridge: within budget keep the original; over budget reuse the unified `ImageProcessorPort` to produce a visible image block within the 2000 longest edge, 153600 B decoded binary and 204800 B base64 budgets. Only if compression fails is the original saved as an artifact and a text reference returned; never expand a `Uint8Array` into numeric JSON, and never lose browser use's visual observation because of the generic MCP threshold.
+11. When the model explicitly calls `tab.screenshot()` and returns it through `nodeRepl.emitImage(...)` per item 5, the tool result must contain both the image block and the absolute file path text of the original screenshot artifact. The path text must be an independent provider-visible text block, so that non-multimodal models can still hand the path to an image-recognition MCP; the file keeps the original PNG bytes returned by the browser backend and is unaffected by the compression policy of item 10. The screenshot source must be explicitly marked in the Node REPL result, and an ordinary `nodeRepl.emitImage(...)` must not write extra files. A failed screenshot creates no empty file or fake path. The automatic end-of-turn screenshot belongs to the UI display chain, does not enter the model conversation, is not counted in tokens and generates no artifact path text of this item.
 
-显式截图与轮尾展示的边界固结如下：
+Boundary between explicit screenshot and end-of-turn display:
 
 ```text
-模型 js cell
+model js cell
   -> tab.screenshot()
-  -> Browser backend 返回原始 PNG
+  -> Browser backend returns the original PNG
   -> nodeRepl.emitImage(PNG)
-  -> Node REPL 标记对应 image index
-  -> core artifact store 保存原始 PNG
-  -> 模型工具结果: [绝对路径 text] + [有界 image block]
+  -> Node REPL marks the image index
+  -> core artifact store saves the original PNG
+  -> model tool result: [absolute path text] + [bounded image block]
 
 turn ended
-  -> 自动截图
+  -> automatic screenshot
   -> UI display only
-  -X-> Node REPL / MCP 模型内容 / artifact 路径文本
+  -X-> Node REPL / MCP model content / artifact path text
 ```
 
-本边界来自 2026-07-10 轨迹回归：模型在“访问 baidu.com”中同时调用 `snapshot()` 和 `screenshot()`，但 snapshot 仅赋值未回显，最终工具结果为 `(no output)` + image，导致模型只能依赖截图。该行为分类为 `bug-candidate`，目标行为分类为 `accepted`。
+This boundary comes from a 2026-07-10 trajectory regression: while "visiting baidu.com" the model called both `snapshot()` and `screenshot()`, but the snapshot was only assigned and not echoed, so the final tool result was `(no output)` + image and the model had to rely on the screenshot. That behavior was classified as `bug-candidate` and the target behavior as `accepted`. A same-prompt runtime recheck after the fix produced only `navigate + snapshot`, no `screenshot`/`emitImage`, and 0 image blocks in the final provider request; the Baidu snapshot returned 30 action elements and 54 semantic DOM nodes, and large-result previews show `dom` first and then `elements` in schema order.
 
-实现后的同提示运行时复验只产生 `navigate + snapshot`，没有 `screenshot`/`emitImage`，最终 provider request 的 image block 数为 0。百度 snapshot 返回 30 个 action elements 与 54 个 semantic DOM nodes；大结果预览按 schema 顺序优先展示 `dom`，再展示 `elements`。
+### 8.5 `playwright.domSnapshot()` contract
 
-### 8.5 `playwright.domSnapshot()` 合同
+`tab.snapshot()` is a structured interface z-code keeps for the early ref/action workflow and is not part of the common Playwright API. The fact source of the locator workflow must be `tab.playwright.domSnapshot(): Promise<string>`; the two must not share one "snapshot contract" wording.
 
-`tab.snapshot()` 是 z-code 为兼容早期 ref/action 工作流保留的结构化接口，不属于 common
-Playwright API。locator 工作流的事实源必须是
-`tab.playwright.domSnapshot(): Promise<string>`；两者不得再共用同一“snapshot 合同”的表述。
+IAB `playwright.domSnapshot()` is frozen as:
 
-IAB 的 `playwright.domSnapshot()` 冻结为以下可观察合同：
+1. Generate a Playwright `mode: "ai"` ARIA semantic tree from `document.body || document.documentElement`; returning `outerHTML`, whole-page `textContent` or hand-written role/name guesses is forbidden.
+2. Use a fixed-version Playwright injected runtime executed in a CDP isolated world, so the page overriding native objects or modifying globals cannot pollute the snapshot.
+3. Expand only iframes that the Playwright ARIA snapshot rendered, that are not `aria-hidden` and are visible; when a child frame fails keep the iframe itself and do not let one cross-origin/OOPIF frame fail the whole snapshot.
+4. The total IAB iframe expansion budget is 1000 ms and 500 ms per child frame; frames at the same level are read concurrently and recursive results are inserted indented in place of the iframe row of the original ARIA tree.
+5. Before returning to the model remove Playwright's internal `[ref=...]` and `[cursor=...]`; delete `img` rows without own semantics; flatten anonymous `generic` / `listitem` / `group` that serve only structure while keeping their children.
+6. The public API gains no `maxElements` / `includeHidden` parameters. A top-level failure goes through the existing structured `execution_error`; abort/timeout reuse the browser command lifecycle.
+7. `tab.snapshot()` keeps providing `elements/ref` compatible actions; the default locator docs and retry decisions use `playwright.domSnapshot()`, and `tab.snapshot()` is only called when entering the ref/dom_cua compatibility path.
 
-1. 从 `document.body || document.documentElement` 生成 Playwright `mode: "ai"` 的 ARIA 语义树，
-   禁止返回 `outerHTML`、整页 `textContent` 或手写 role/name 猜测结果。
-2. 使用固定版本的 Playwright injected runtime，在 CDP isolated world 中执行，避免页面覆盖原生对象或
-   修改全局变量污染快照结果。
-3. 只展开 Playwright ARIA snapshot 已渲染、未 `aria-hidden` 且可见的 iframe；子 frame 失败时保留
-   iframe 本身，不让单个跨源/OOPIF frame 使整个快照失败。
-4. IAB iframe 展开总预算为 1000ms，单个子 frame 最多 500ms；同层 frame 并发读取，递归结果按原
-   ARIA tree 的 iframe 行原位缩进插入。
-5. 返回模型前删除 Playwright 内部 `[ref=...]` 与 `[cursor=...]`；删除没有自身语义的 `img` 行；
-   对只有结构作用的匿名 `generic` / `listitem` / `group` 压平但保留其 children。
-6. public API 不增加 `maxElements` / `includeHidden` 参数。顶层失败走现有结构化
-   `execution_error`，abort/timeout 继续复用 browser command 生命周期。
-7. `tab.snapshot()` 继续提供 `elements/ref` 的兼容操作能力；默认 locator 文档与
-   重试决策改用 `playwright.domSnapshot()`，只有进入 ref/dom_cua 兼容路径时才调用
-   `tab.snapshot()`。
+Acceptance must cover ARIA role/name/state, hidden nodes, open shadow root, same-origin iframe, cross-origin/OOPIF degradation, ref/cursor cleaning, anonymous container flattening, empty image deletion, child frame timeout and large DOM not returning an HTML dump. The extension/CDP backends later reuse the same Playwright command/result and normalization function; no backend-specific return format.
 
-验收必须覆盖：ARIA role/name/state、隐藏节点、open shadow root、同源 iframe、跨源/OOPIF 可降级、
-ref/cursor 清洗、匿名容器压平、空图片删除、子 frame 超时和大 DOM 不返回 HTML dump。extension/CDP
-backend 后续复用同一个 Playwright command/result 与归一化函数，不允许再引入 backend-specific
-返回格式。
+The 2026-07-10 comparison of the injected runtime string sets and real-page behavior across Playwright `1.57.0`-`1.61.1` showed that representative role/name/state/shadow DOM output on `playwright-core@1.59.1` meets this contract; `1.61.1` additionally outputs `[invalid]`, so IAB pins `1.59.1` and does not follow newer versions. A recheck with the real `webContents.debugger` of Electron `41.0.3` and Chromium site isolation showed the main-document heading, the button inside an open shadow root, and the heading/button inside a cross-site OOPIF all enter the same ARIA text; hidden text, HTML dumps and internal refs do not. The recheck also found a race where, on OOPIF navigation, target registration lags behind the iframe node frameId; IAB now refreshes the target by the same aria-ref and retries, expanding child frames stably in two consecutive real runs.
 
-2026-07-10 对 Playwright `1.57.0`—`1.61.1` 的 injected runtime 做字符串集合和真实页面行为比对，
-代表性 role/name/state/shadow DOM 输出在 `playwright-core@1.59.1` 上符合本节合同；`1.61.1` 会额外输出
-`[invalid]`，因此 IAB 固定使用 `1.59.1`，不追随最新版漂移。随后使用 Electron `41.0.3` 的真实
-`webContents.debugger` 与 Chromium site isolation 复验：主文档
-heading、open shadow root 内 button、跨站 OOPIF 内 heading/button 均进入同一 ARIA 文本；hidden 文本、HTML
-dump 与内部 ref 均未进入结果。复验同时发现 OOPIF 导航时 target 注册晚于 iframe node frameId 的竞态，IAB
-现按同一 aria-ref 刷新 target 后重试，并在两次连续真实运行中稳定展开子 frame。
+### 8.6 Locator evidence and failure-budget regression
 
-### 8.6 Locator evidence 与失败预算回归
+In a 2026-07-10 Bilibili trace, the first `domSnapshot()` showed only a nameless `textbox`, yet the model guessed `getByPlaceholder("搜索")`. The real placeholder is a dynamic recommendation, so the selector correctly returned 0 nodes, but the old IAB polled on the 30000 ms default budget, and the same timeout message was then printed twice by the client stack wrapper. The model then used `getByRole("textbox")`, which the snapshot clearly supported, and succeeded, proving that the issue was not a missing placeholder selector API but three independent defects: locator evidence discipline, timeout budget and error wrapping.
 
-2026-07-10 的 Bilibili 运行轨迹中，首次 `domSnapshot()` 只出现无名称 `textbox`，模型却猜测
-`getByPlaceholder("搜索")`。真实页面 placeholder 是动态推荐词，因此 selector 正确返回 0 个节点，但 IAB
-旧实现按 30000ms 默认预算持续轮询，最终同一 timeout message 又被 client stack 包装重复输出。后续模型改用
-snapshot 已明确支持的 `getByRole("textbox")` 后成功，证明问题不是 placeholder selector API 缺失，而是
-locator evidence discipline、timeout 预算与错误包装三个独立缺陷。
+Frozen acceptance:
 
-该回归冻结以下验收：
+1. Default docs and the browser skill must explicitly forbid guessing locators and give the immediate rebuild flow for `count() === 0`.
+2. IAB locator, URL/load-state wait and evaluate routine timeouts all go through a 3000 ms normalizer: explicit values above 3000 ms are truncated, values below are kept.
+3. After the locator client wraps an error, the original timeout message appears only once in `message/stack` while the operation context is kept.
+4. The fix is not made by adding fuzzy matching or a success fallback for dynamic placeholders; failing to match when the page has no `placeholder="搜索"` is correct semantics.
 
-1. 默认文档和 browser skill 必须明确禁止猜测 locator，并给出 `count() === 0` 的立即重建流程。
-2. IAB locator、URL/load-state wait 和 evaluate 的 routine timeout 统一经
-   3000ms normalizer；大于 3000ms 的显式值被截断，小于 3000ms 的值保留。
-3. locator client 包装后，原始 timeout message 在 `message/stack` 中只出现一次，同时保留操作上下文。
-4. 不通过给动态 placeholder 增加模糊匹配或兜底成功来修复；页面没有 `placeholder="搜索"` 时匹配失败是
-   正确语义。
+### 8.7 IAB locator/action execution contract
 
-### 8.7 IAB locator/action 执行合同
+IAB locators and `domSnapshot()` must share the fixed-version Playwright injected selector runtime; maintaining a second hand-written role/name/text/label selector is forbidden:
 
-IAB 的 locator 与 `domSnapshot()` 必须共享固定版本的 Playwright injected selector runtime，禁止继续
-维护第二套手写 role/name/text/label selector：
+1. `parseSelector/querySelectorAll/elementState` run in a CDP isolated world; observation and locating results for an open shadow root must be consistent; frame locators resolve segment by segment at frame boundaries, and same-origin frames and OOPIFs each use their own execution context, never relying on the main world's `iframe.contentDocument`.
+2. click/check actions repeatedly check strictness, visible, stable, enabled and hit target within the full routine timeout; an element that exists but is still covered, animating or unavailable keeps waiting instead of failing falsely and at once. fill/type check only visible/enabled/editable, do not wait for stable and do not use click's hit-target/receives-events condition.
+3. click/dblclick and press for non-clipboard shortcuts use CDP `Input` to produce browser trusted input; type and the `needsinput` branch of fill resolve the current focused frame inside the given tab and dispatch a virtual `paste` in that CDP target / execution context. Top-level `Input.insertText` must no longer be used, because the Electron embedder's composer may regain app focus between the click and type commands, sending text across the guest boundary. DOM mutations that Playwright itself lets the injected script do, such as `selectOption`, must still reuse the injected runtime and verify the final state.
+4. Locator query and evaluate execution contexts follow their own API contracts; the page overriding native objects, polluting globals or CSP must not change selector results.
+5. Selector parse, strict, timeout and abort keep returning unified structured errors; a cancel after the action was dispatched must be marked `sideEffect: "uncertain"`.
+6. Selector resolve rules for single-element action/query/frame locators: 0 raw matches keeps "not found"; exactly 1 raw match is used directly; more than 1 allows only "exactly one visible element" as the unique fallback. Zero or several visible elements must stay strict violations, and automatically choosing `first/last/nth` is forbidden. Collection operations `count()` / `allTextContents()` keep returning the raw matching set and do not apply this fallback.
+7. A strict violation must reuse the fixed-version injected runtime's `strictModeViolationError`, so the model sees a bounded candidate DOM preview and recommended selectors; returning only `resolved to N elements` and leaving the model to guess is forbidden. The element selected by the fallback must carry through actionability, DOM mutation/read and frame owner resolution; a visible element probed must not later fall back to the first element of the raw set.
 
-1. `parseSelector/querySelectorAll/elementState` 在 CDP isolated world 中执行，open shadow root 的观察与
-   定位结果必须一致；frame locator 按 frame boundary 逐段解析，同源 frame 和 OOPIF 都使用各自 execution
-   context，不能依赖页面主 world 的 `iframe.contentDocument`。
-2. click/check 类 action 在完整 routine timeout 内重复检查 strictness、visible、stable、
-   enabled 和 hit target；元素已存在但仍被遮挡、动画中或不可用时继续等待，而不是
-   立即假失败。fill/type 只检查 visible/enabled/editable，不等待 stable，
-   也不使用 click 的 hit-target/receives-events 条件。
-3. click/dblclick 与非 clipboard shortcut 的 press 使用 CDP `Input` 产生 browser trusted input；type 以及
-   fill 的 `needsinput` 分支在指定 tab 内解析当前 focused frame，并在该
-   CDP target / execution context 中派发虚拟 `paste`。禁止继续使用顶层 `Input.insertText`，因为 Electron
-   embedder 的 composer 可能在 click 与 type 两条命令之间重新取得 app focus，导致文本越过 guest 边界。
-   `selectOption` 等 Playwright 本身允许由 injected script 完成的 DOM mutation，仍必须复用 injected runtime
-   并验证最终状态。
-4. locator query 与 evaluate 的执行上下文按各自 API 合同处理；页面覆盖原生对象、污染全局变量或 CSP 不能
-   改变 selector 结果。
-5. selector parse、strict、timeout 和 abort 继续返回统一结构化错误；动作已下发后取消必须标记
-   `sideEffect: "uncertain"`。
-6. 单元素 action/query/frame locator 的 selector resolve 规则：原始匹配为 0 时
-   保持未找到语义，原始匹配为 1 时直接使用；原始匹配大于 1 时仅允许“恰好一个可见元素”作为唯一
-   fallback。零个或多个可见元素都必须保持 strict violation，禁止自动选择 `first/last/nth`。集合操作
-   `count()` / `allTextContents()` 继续返回原始匹配集合，不应用该 fallback。
-7. strict violation 必须复用固定版本 Playwright injected runtime 的 `strictModeViolationError`，让模型看到
-   有界的候选 DOM preview 与推荐 selector；禁止只返回 `resolved to N elements` 后让模型继续猜测。
-   fallback 选中的元素必须贯穿 actionability、DOM mutation/read 与 frame owner 解析，不能 probe 选中
-   可见元素后又在后续阶段退回原始集合的第一个元素。
+Acceptance corresponds to BCP-066/067/094/095/096/190/191; until the real shadow DOM, same-origin iframe, OOPIF, overlay, disabled, animation and `event.isTrusted` cases pass, IAB Playwright behavior must not be declared done.
 
-本节验收对应 BCP-066/067/094/095/096/190/191；在真实 shadow DOM、同源 iframe、OOPIF、overlay、disabled、
-动画和 `event.isTrusted` 用例通过之前，不得宣称 IAB Playwright 行为完成。
+### 8.8 fill timeout and kernel reset
 
-### 8.8 fill 超时与 kernel reset
+In a 2026-07-14 z.ai trace, `count()` had proved the input exists uniquely, but `fill()` kept waiting inside injected `checkElementStates(["stable", ...])`. That single CDP probe was not interrupted by the locator's 3000 ms budget and finally hit the outer MCP 30000 ms hard timeout with `AbortError: aborted`. The Node REPL rebuilt the kernel, but the error did not tell the model the old bindings were cleared, so it kept using `browser` / `zaiTab` and produced consecutive `ReferenceError`s.
 
-2026-07-14 z.ai 轨迹中，`count()` 已经证明输入框唯一存在，但 `fill()` 在 injected
-`checkElementStates(["stable", ...])` 内持续等待。该单次 CDP probe 没有被 locator 的 3000ms
-预算中断，最终命中外层 MCP 30000ms hard timeout，并返回 `AbortError: aborted`。Node REPL
-虽已重建 kernel，但错误没有告诉模型旧 binding 已清除，因此后续继续使用 `browser` / `zaiTab`，
-又产生连续 `ReferenceError`。
+Frozen fix boundary (confirmed by the user):
 
-本次修复边界经用户确认，冻结如下：
+1. Only split the actionability of fill/type from click/check; click/check keep their stable and receives-events semantics, and click safety is not relaxed in the name of "fixing fill".
+2. Every async probe of locator actionability must be bounded by the remaining locator budget; the underlying `Runtime.evaluate.timeout` cannot replace a host-side deadline race. A single stuck probe must return a locator timeout within at most 3000 ms and not spill into the MCP 30000 ms timeout.
+3. The stability constraint of pointer actions applies to the visible target geometry currently hit by the locator, not to the DOM node identity of the first hit. When a responsive table or similar replaces an old node with an equivalent new node in adjacent animation frames, the probe must re-resolve the same selector; as long as the new target remains unique, visible, enabled, geometrically stable and passes hit-target, trusted CDP input continues. It must not return zero matches repeatedly for the full 3000 ms because the old node detached.
+4. An AbortSignal timeout must keep `signal.reason`, so MCP hard timeout and user cancel are distinguishable. After a cancel or timeout causes a kernel reset, the current tool error must explicitly state that the kernel was reset and old bindings cleared and tell the model to re-establish the browser/tab bindings; it must not reset silently and let the model keep using stale variables.
+5. Acceptance combination: fill works under continuous animation; a covered but editable input can still fill; disabled / readonly still fail; click under animation/overlay still waits; an undecided probe times out structurally within 3000 ms; after the MCP hard timeout the error explicitly includes kernel-reset recovery guidance.
 
-1. 仅拆分 fill/type 与 click/check 的 actionability；click/check 已有 stable 和 receives-events 语义
-   保持不变，不以“解决 fill”为由放宽点击安全条件。
-2. locator actionability 的每个异步 probe 都必须受剩余 locator 预算约束；底层
-   `Runtime.evaluate.timeout` 不能代替 host 侧 deadline race。单个 probe 卡住时必须在最大
-   3000ms 内返回 locator timeout，不能外溢到 MCP 30000ms timeout。
-3. pointer action 的稳定性约束作用于 locator 当前命中的可见目标几何，而不是首次命中的 DOM node
-   身份。响应式表格等页面在相邻 animation frame 用等位新节点替换旧节点时，probe 必须重新解析
-   同一 selector；只要新目标保持唯一、可见、enabled、几何稳定且通过 hit-target，就继续派发可信
-   CDP input。不得因为旧 node detach 而在完整 3000ms 内反复返回零匹配。
-4. AbortSignal timeout 必须保留 `signal.reason`，使 MCP hard timeout 与用户主动取消可区分。
-   取消或超时导致 kernel reset 后，当前 tool error 必须显式说明 kernel 已重置、旧
-   binding 已清除，并指示重新建立 browser/tab binding；不得静默重置后让模型继续使用旧变量。
-5. 验收组合为：fill 遇持续动画仍可输入；被覆盖但可编辑的输入框仍可 fill；disabled /
-   readonly 仍失败；click 遇动画/覆盖仍等待；未决 probe 在 3000ms 内结构化超时；MCP
-   hard timeout 后错误明确包含 kernel reset 恢复指引。
+### 8.9 Input target ownership and virtual clipboard
 
-### 8.9 输入目标所有权与虚拟 clipboard
+A 2026-07-15 runtime log recorded a type executed about 501 ms after a successful click on the same IAB tab; that gap allowed the ZCode composer's requestAnimationFrame autofocus to take Electron window focus back. The old executor then called `Input.insertText` without re-resolving the page's active element, frame target or input identity, so text could really leak into the embedder's main input.
 
-2026-07-15 运行日志记录到同一 IAB tab 的 click 成功后约 501ms 才执行 type；这段空窗允许 ZCode
-composer 的 requestAnimationFrame autofocus 抢回 Electron window focus。旧 executor 随后调用
-`Input.insertText`，没有重新解析网页 active element、frame target 或 input identity，因此存在文本进入
-embedder 主输入框的实际串写风险。
+The input contract of the type and fill `needsinput` branches is frozen:
 
-type 与 fill `needsinput` 分支的输入合同冻结如下：
+1. `cua_type` and `dom_cua_type` share a type handler that does not call `Input.insertText`; the handler first builds browser-scoped clipboard items and then runs a virtual paste inside the given `tab_id`.
+2. The focused target starts from the current document's `activeElement` and recursively crosses open shadow roots and same-origin iframes; on an OOPIF it switches to the corresponding CDP target/session, and on a same-process frame it creates an isolated execution context for that frame.
+3. The paste builds `DataTransfer` and `ClipboardEvent("paste")` only in the final target/context. If the page does not handle the event, the fallback updates input/textarea by selection, or inserts text into a contenteditable and dispatches `input`. No branch calls the OS clipboard or sends keyboard text to the embedder renderer.
+4. When Playwright fill/press focuses a locator it writes a one-time target token on the actual input element; before the virtual paste it must verify the current active element still holds the same token. If the target has drifted, fail explicitly and never send the text to the new focus.
+5. CDP attached OOPIF sessions, isolated worlds and object handles must be released after the command; a frame cycle, an uninspectable focused frame or an invalid Runtime result returns a structured execution error and never falls back to top-level `Input.insertText`.
 
-1. `cua_type` 与 `dom_cua_type` 共用 type handler，不调用 `Input.insertText`；handler 先构造 browser-scoped
-   clipboard items，再在指定 `tab_id` 内执行 virtual paste。
-2. focused target 从当前 document 的 `activeElement` 开始，递归穿透 open shadow root 与同源 iframe；遇到
-   OOPIF 时切换到对应 CDP target/session，遇到同进程 frame 时创建该 frame 的 isolated execution context。
-3. paste 只在最终 target/context 中构造 `DataTransfer` 与 `ClipboardEvent("paste")`。页面未处理事件时，
-   fallback 按 selection 更新 input/textarea，或向 contenteditable 插入文本并派发 `input`。任何分支都不
-   调用 OS clipboard，也不向 embedder renderer 发送键盘文本。
-4. Playwright fill/press 在聚焦 locator 时给实际输入元素写入一次性 target token；virtual paste 前必须校验
-   当前 active element 仍持有同一 token。目标已经漂移时明确失败，禁止把文本发送给新焦点。
-5. CDP attached OOPIF session、isolated world 与 object handle 必须在命令结束后释放；frame cycle、无法检查
-   focused frame、无效 Runtime result 都返回结构化 execution error，不能回退到顶层 `Input.insertText`。
-
-状态与时序冻结为：
+State and timing:
 
 ```text
 embedder composer autofocus                 browser command(tabId)
           │                                            │
           │                                   resolve tab guest
           │                                            │
-          └──── 不参与 browser 输入 ────────► activeElement
+          └──── takes no part in browser input ──► activeElement
                                                        │
                                      shadow root / iframe / OOPIF
                                                        │
                                              target + context
                                                        │
-                                     locator token 校验（若存在）
+                                     locator token check (if present)
                                                        │
                                                virtual paste
 ```
 
-验收覆盖 plain input、textarea、contenteditable、open shadow root、同源 iframe、OOPIF、locator target token
-漂移、无 editable focus，以及“host composer 已重新 focus 但 type 仍只能修改 guest page”。desktop 与手机
-remote 共用同一 shared-host executor；本变更不新增 runtime，不改变 `desktop-continuous` /
-`web-remote-replayable` 或 workspace identity 边界。
+Acceptance covers plain input, textarea, contenteditable, open shadow root, same-origin iframe, OOPIF, locator target token drift, no editable focus, and "the host composer has regained focus but type can still modify only the guest page". Desktop and phone remote share the same shared-host executor; this change adds no runtime and does not change `desktop-continuous` / `web-remote-replayable` or the workspace identity boundary.
 
-2026-07-15 使用 Electron `41.0.3` 真实 `BrowserWindow + <webview> + webContents.debugger` 复验：guest input
-先获得 DOM focus、随后 host composer 抢回 app focus 时，旧 `Input.insertText("OLD")` 的结果为
-`guest="" / host="OLD"`；新 virtual paste 的结果为 `guest="NEW" / host=""`。同源 iframe 与跨站 OOPIF
-分别得到 `frame="FRAME" / host=""`、`frame="OOPIF" / host=""`。OOPIF 首次 attach 还复现了
-`DOM frameId` 先于 `Target.getTargets` 注册的竞态；实现现在有界等待目标出现后 attach，并在 paste 后 detach。
+A 2026-07-15 recheck with Electron `41.0.3` real `BrowserWindow + <webview> + webContents.debugger`: when the guest input first got DOM focus and the host composer then regained app focus, old `Input.insertText("OLD")` gave `guest="" / host="OLD"`, while the new virtual paste gave `guest="NEW" / host=""`; same-origin iframe and cross-site OOPIF gave `frame="FRAME" / host=""` and `frame="OOPIF" / host=""`. The first OOPIF attach also reproduced the race where the `DOM frameId` precedes `Target.getTargets` registration; the implementation now waits boundedly for the target to appear before attaching and detaches after the paste.
 
-## 9. IAB adapter 改造
+## 9. IAB adapter rework
 
-现有 BrowserGuestManager 只作为 IAB provider 内部实现。必须修复：
+The existing BrowserGuestManager is only an internal implementation of the IAB provider. Required fixes:
 
-- guest key 加 browserId/window/workspaceKey/session/tab 归属，禁止全局 activeKey 跨窗口命中。
-- list/get/selected 只返回当前 context 可见 tabs。
-- `tabs.new()` 真实创建并等待 guest ready ack。
-- close 通知贯穿 main → preload → platform → UI，且不可重新 attach 已关闭 tab。
-- finalize/handoff/deliverable 和 session/turn cleanup。
-- ready 使用 request/ack 或可重放状态，不依赖一次性广播。
-- session close 释放 REPL、pending request、dialog、guest/lease。
-- screenshot(ref)、实时 url/title、完整 wait/capability 与文档保持一致。
+- Guest keys add browserId/window/workspaceKey/session/tab ownership; a global activeKey must not hit across windows.
+- list/get/selected return only tabs visible to the current context.
+- `tabs.new()` truly creates and waits for the guest ready ack.
+- Close notification runs through main -> preload -> platform -> UI, and a closed tab can never be re-attached.
+- finalize/handoff/deliverable and session/turn cleanup.
+- ready uses request/ack or replayable state, not a one-shot broadcast.
+- Session close releases the REPL, pending requests, dialogs and guest/lease.
+- screenshot(ref), live url/title, complete wait/capability and documentation stay consistent.
 
-IAB 的 desktop-continuous 主链继续 direct continuous；手机 web remote 只通过 shared host attachment 使用同一 IAB provider，并保持 replayable 边界。
+The IAB desktop-continuous main chain stays direct continuous; phone web remote uses the same IAB provider only through shared-host attachment and keeps the replayable boundary.
 
 ## 10. Extension backend
 
-ZCode 自研内容：
+ZCode-owned content:
 
-- MV3 Chrome extension，使用自有 extension id。
-- 三平台 native messaging manifest 安装器。
-- 自有签名 native host 与版本化 registry。
-- native host ↔ extension 的 framing/JSON-RPC、重连和 heartbeat。
-- Chrome profile/instance/window preference。
-- debugger attach/detach、tab lease/claim/group/finalize。
-- user tabs/history 的授权和最小权限读取。
-- downloads/file chooser/clipboard/dev logs。
-- plugin、extension、native host 的 install/upgrade/remove/stale process reconcile。
-- 安装/权限/运行/profile 的诊断命令和产品 UI。
+- MV3 Chrome extension with its own extension id.
+- Native messaging manifest installers for three platforms.
+- Own signed native host and a versioned registry.
+- framing/JSON-RPC, reconnect and heartbeat between native host and extension.
+- Chrome profile/instance/window preference.
+- debugger attach/detach, tab lease/claim/group/finalize.
+- Authorization and minimal-privilege reading of user tabs/history.
+- downloads/file chooser/clipboard/dev logs.
+- install/upgrade/remove/stale-process reconcile of plugin, extension and native host.
+- Diagnostic commands and product UI for install/permission/run/profile.
 
-禁止：
-
-- 使用任何第三方 extension/native host id。
-- 分发或启动第三方签名二进制。
-- 复制第三方 service worker/native host/browser-client 源码。
+Forbidden: using any third-party extension/native host id; distributing or launching third-party signed binaries; copying third-party service worker / native host / browser-client source.
 
 ## 11. CDP backend
 
-- 独立 backend，不等于“IAB 内部碰巧用 CDP”。ZCode 首选把它建成可插拔远端/cloud provider，而不是把 Playwright 进程改名为 CDP。
-- 默认 feature-gated；只连接明确配置/授权的 endpoint。
-- target/context 生命周期独立管理。
-- raw full CDP 是单独 capability，受 allow/block policy 和 enterprise/product gate。
-- 无 full CDP capability 时，common Playwright/CUA API 仍只能用受控 command contract。
-- 不能自动扫描并接管任意本机 debugging port。
+- A standalone backend, not "IAB happens to use CDP internally". ZCode prefers building it as a pluggable remote/cloud provider rather than renaming a Playwright process to CDP.
+- Feature-gated by default; connects only to explicitly configured/authorized endpoints.
+- Target/context lifecycles are managed independently.
+- Raw full CDP is a separate capability governed by allow/block policy and enterprise/product gates.
+- Without the full CDP capability, the common Playwright/CUA APIs still use only the controlled command contract.
+- It must not auto-scan and take over arbitrary local debugging ports.
 
-## 12. 安全模型
+## 12. Security model
 
-安全检查位置在 browser-client/backend command boundary，独立于 `js` 工具 gate。
+Security checks sit at the browser-client/backend command boundary, independent of the `js` tool gate.
 
-### 12.1 必须确认
+### 12.1 Confirmation required
 
-- 外发通讯、提交表单和对外发布。
-- 购买、付款、下单、金融交易。
-- 删除数据、取消服务、权限/账户/密钥/扩展变更。
-- 上传本地文件、传输敏感或个人数据。
-- 登录或使用已保存身份执行有副作用动作。
-- camera/mic/location/notification 等 browser permission。
+- Outbound communication, form submission, publishing externally.
+- Purchase, payment, ordering, financial transactions.
+- Deleting data, canceling services, permission/account/key/extension changes.
+- Uploading local files, transmitting sensitive or personal data.
+- Logging in or using saved identity to perform side-effect actions.
+- Browser permissions such as camera/mic/location/notification.
 
-### 12.2 允许或按策略预授权
+### 12.2 Allowed or pre-authorizable by policy
 
-- 页面读取、DOM snapshot、普通截图。
-- 用户明确要求的导航和无副作用查询。
-- download 是否确认按产品策略冻结，但必须安全命名、隔离路径并可审计。
+- Page reads, DOM snapshot, ordinary screenshots.
+- User-requested navigation and side-effect-free queries.
+- Whether a download needs confirmation is frozen by product policy, but it must be named safely, path-isolated and auditable.
 
-### 12.3 防绕过
+### 12.3 Anti-bypass
 
-- policy deny 后，raw CDP、evaluate、另一 backend、CUA 或页面脚本都不能绕过同一意图。
-- 网页内容不能授予权限，也不能要求模型忽略 policy。
-- credential UI 注入 secret 时不得把 secret 回传模型或日志。
+- After a policy deny, raw CDP, evaluate, another backend, CUA or page scripts cannot bypass the same intent.
+- Web content cannot grant permissions or tell the model to ignore policy.
+- When credential UI injects a secret, the secret must not be returned to the model or logs.
 
-## 13. Response meta 与观测性
+## 13. Response meta and observability
 
-每次 browser command 更新 tool response meta：
+Every browser command updates the tool response meta:
 
-- browser-use marker。
-- backend type、browserId、openTabIds。
-- 当前 URL。
-- 不因普通动作附加 screenshot；只有模型显式调用 screenshot API 时才返回图像结果。
-- tab ownership/lifecycle 状态（如需要）。
+- the browser-use marker, backend type, browserId, openTabIds, the current URL;
+- no screenshot attached by ordinary actions; an image result is returned only when the model explicitly calls the screenshot API;
+- tab ownership/lifecycle state where needed.
 
-内部归一化字段冻结为 `browserUse/backendType/browserId/browserGeneration/openTabIds/tabId/currentUrl/lifecycle`；Node REPL 对模型/客户端暴露时还必须形成 `browser_use`、`zcode/browserUse` 和 `zcode/toolSurface` 外层 marker。`currentUrl` 进入 meta 前必须移除 credential、query 和 hash。失败结果同样带不含敏感数据的 meta。取消发生在 backend action 下发前时错误标记 `sideEffect: "none"`；下发后无法证明动作未发生时标记 `sideEffect: "uncertain"`。
+Internal normalized fields are frozen as `browserUse/backendType/browserId/browserGeneration/openTabIds/tabId/currentUrl/lifecycle`; when the Node REPL exposes them to the model/client it must also form the outer markers `browser_use`, `zcode/browserUse` and `zcode/toolSurface`. `currentUrl` must have credentials, query and hash removed before entering meta. Failure results also carry meta without sensitive data. A cancel before the backend action was dispatched marks the error `sideEffect: "none"`; after dispatch, when it cannot be proven the action did not happen, mark `sideEffect: "uncertain"`.
 
-ZCode **不在**成功的导航/点击/输入等 side-effect cell 结束后自动截图，也不把截图放进 `zcode/toolSurface` 供工具面板预览：不得因普通页面动作调用 screenshot，也不得把显式 screenshot 结果自动复制成 preview meta。这一取舍只影响工具面板预览，不改变 DOM-first 观察、显式视觉截图或 tab 生命周期。
+ZCode **does not** auto-screenshot after a successful navigation/click/type or other side-effect cell, and does not put a screenshot into `zcode/toolSurface` for tool-panel preview: ordinary page actions must not call screenshot, and an explicit screenshot result must not be auto-copied into preview meta. This trade-off affects only the tool-panel preview and does not change DOM-first observation, explicit visual screenshots or tab lifecycle.
 
 ### 13.1 Provider-visible IAB ambient context
 
-2026-07-12 复盘两轮图灵社区轨迹后，新增以下冻结语义：
+Frozen after reviewing two Turing-community trajectories on 2026-07-12:
 
-1. 每个普通输入在进入 agent runtime 前，由 desktop shared host 以只读命令读取当前 window/workspace 的
-   IAB tab 摘要。`feat/web-app` 的无附件主路径由 v4 `command/sendText` 收集并随 payload 传递；仍处于兼容期的
-   附件路径继续走 legacy `session/send`。两条路径都至少合并当前 session 的 controlled tabs 与可 claim 的
-   user tabs，去重后只保留 tab 数量和当前 URL；不得读取 cookie、storage、页面正文或敏感表单值。
-2. 结果通过 strict `browserAmbientContext` 字段传递，字段有界且可选。v4 handler 必须把该字段继续传给
-   `sendInput`，由 core 仅在本轮 provider input 中投影；不得因为主发送链路迁移到 v4 而静默丢失。desktop 使用
-   `desktop-continuous`，手机远控仍通过 shared-host attachment 使用 `web-remote-replayable`，并继续携带
-   `workspaceIdentity` / `remoteSessionId`；不得为手机另起 browser runtime。
-3. core 将它只投影到本轮 provider-visible user content：
+1. Before each ordinary input enters the agent runtime, the desktop shared host reads, with a read-only command, a summary of the current window/workspace's IAB tabs. The attachment-free main path of `feat/web-app` is collected by v4 `command/sendText` and carried in the payload; the attachment path still in the compatibility period keeps going through legacy `session/send`. Both merge at least the current session's controlled tabs and claimable user tabs, dedupe, and keep only the tab count and current URL; they must not read cookies, storage, page body or sensitive form values.
+2. The result is passed through a strict `browserAmbientContext` field, bounded and optional. The v4 handler must pass the field on to `sendInput`, and core projects it into this turn's provider input only; moving the main send chain to v4 must not silently lose it. Desktop uses `desktop-continuous`; phone remote still uses `web-remote-replayable` through shared-host attachment and keeps carrying `workspaceIdentity` / `remoteSessionId`; no separate browser runtime is started for the phone.
+3. Core projects it only into this turn's provider-visible user content:
 
    ```text
    <in-app-browser-context source="ambient-ui-state">
@@ -730,175 +533,132 @@ ZCode **不在**成功的导航/点击/输入等 side-effect cell 结束后自�
    </in-app-browser-context>
 
    ## My request for ZCode:
-   <真实用户输入>
+   <actual user input>
    ```
 
-   session store、UI message、标题生成、输入历史与 repo snapshot sidecar 继续使用真实用户输入，不保存或展示
-   ambient wrapper。读取失败、无 IAB backend 或无 tab 时不注入；失败不阻断 prompt，也不记录完整 URL。
+   The session store, UI message, title generation, input history and repo snapshot sidecar keep using the actual user input and neither save nor show the ambient wrapper. On read failure, no IAB backend or no tab, it is not injected; failure does not block the prompt and the full URL is not logged.
 
-4. ambient context 只是事实，不是 browser selection 指令。模型仍按用户正文决定是否使用 Browser；一旦需要
-   延续当前页面，操作前应先复用已有 browser binding，检查 `tabs.list()`，再检查
-   `browser.user.openTabs()` 并 claim。该逐步流程只用于操作前选择目标 tab；若 action 可能打开
-   popup/new tab 且源 tab 未出现预期效果，必须在同一个 observation cell 中无条件读取并统一返回
-   controlled/user 两套 tab 状态，不能在两次查询之间让模型重新决策。
-5. model docs、skill 与 `js` tool description 必须一致禁止循环猜 URL/path/resource ID。允许一次由用户条件直接
-   推导出的 focused URL；失败或无法验证后切到 fresh DOM、站内搜索，或目的型 connector/API/CLI，并在得到
-   权威 ID/URL 后直接验证目标页。
-6. App 与 Agent 允许短暂版本错位。旧 Agent 对 `browserAmbientContext` 返回 `-32602` 时，App 必须同时识别
-   `Invalid params` 与带字段摘要的 `Invalid params — ...`，从结构化 Zod issues 确认只有可降级字段后，删除该字段
-   重试一次；不得把兼容错误直接暴露为用户第二轮发送失败。`dev:local-cli` 启动前必须重建 desktop agent bundle，
-   不能因为仓库里存在旧 `dist/zcode.cjs` 就优先启动过期协议实现。
+4. The ambient context is a fact, not a browser-selection instruction. The model still decides whether to use Browser from the user text; once it needs to continue the current page, before operating it should reuse an existing browser binding, check `tabs.list()`, then check `browser.user.openTabs()` and claim. This step-by-step flow is only for choosing the target tab before operating; if an action may open a popup/new tab and the source tab shows no expected effect, the same observation cell must unconditionally read and return both controlled/user tab states together, and the model must not decide again between two queries.
+5. Model docs, skill and the `js` tool description must consistently forbid looping through guessed URLs/paths/resource IDs. One focused URL directly derived from the user's conditions is allowed; if it fails or cannot be verified, switch to a fresh DOM, in-site search, or a purpose-built connector/API/CLI, and verify the target page directly once an authoritative ID/URL is obtained.
+6. App and Agent may briefly be version-skewed. When an old Agent returns `-32602` for `browserAmbientContext`, the App must recognize both `Invalid params` and `Invalid params — ...` with a field summary, confirm from the structured Zod issues that only degradable fields are involved, then delete the field and retry once; the compatibility error must not surface as a failure of the user's second send. `dev:local-cli` must rebuild the desktop agent bundle before starting, and must not prefer an outdated protocol implementation just because an old `dist/zcode.cjs` exists in the repo.
 
 ### 13.2 Electron navigation already committed
 
-Electron `<webview>` 在站点把 `www` 重定向到移动域名或由 SPA 接管路由时，`loadURL()` 可能以
-`ERR_ABORTED (-3)` reject，但 guest 已经提交新 document。导航结果按以下顺序判定：
+When a site redirects `www` to a mobile domain or an SPA takes over routing, Electron `<webview>` `loadURL()` may reject with `ERR_ABORTED (-3)` while the guest has already committed the new document. The navigation result is decided in this order:
 
-1. 非 `ERR_ABORTED`、超时、取消和真实网络错误保持原结构化失败语义。
-2. 仅对 `ERR_ABORTED` 做有界复核：当前 URL 必须不再是导航前 URL，当前 document 的 `location.href` 必须
-   与 webContents 当前 URL 一致且 `readyState` 已到 `interactive | complete`，目标 URL 与最终 URL 必须相同，
-   或仅存在受支持的 `www.` / `m.` host alias 且 path/search 相同。
-3. 满足复核条件则按成功返回最终 state；否则仍返回 `execution_error` + `sideEffect:"uncertain"`。禁止只看
-   error 文本或只因 URL 改变就吞掉失败。
+1. Non-`ERR_ABORTED` errors, timeouts, cancels and real network errors keep the original structured failure semantics.
+2. Only for `ERR_ABORTED` do a bounded re-check: the current URL must no longer be the pre-navigation URL; the current document's `location.href` must equal the webContents current URL with `readyState` at `interactive | complete`; and the target URL must equal the final URL, or differ only by a supported `www.` / `m.` host alias with the same path/search.
+3. If the re-check passes, return success with the final state; otherwise still return `execution_error` + `sideEffect:"uncertain"`. Swallowing a failure based only on the error text or only because the URL changed is forbidden.
 
-## 13.3 轨迹验收序列
+## 13.3 Trajectory acceptance sequence
 
-IAB 应支持以下序列：
+IAB must support the following sequence:
 
-1. fresh kernel 建立 browser runtime 后，skill 必须统一把当前选择结果绑定到 `globalThis.browser`：显式 IAB
-   使用 `get("iab")`，带目标 URL 使用 `getForUrl(url)`，两者都不得先创建 `iab` alias 再调用
-   `browser.*`。绑定成功后一次读取完整 `browser.documentation()`；额外文档通过
-   `agent.documentation.get(name)` 读取。`js` 的模型可见结果预算至少为 64 KiB，当前有效 API 文档在该
-   预算内不得转成 artifact 预览。
-2. `tabs.new()` 会自动展开并激活 IAB；仅当任务明确需要隐藏或再次显示浏览器时，才读取并调用
-   `browser.capabilities.get("visibility").set(false | true)`。
-3. `browser.user.openTabs()` 只返回未被当前 run 控制的用户 tab。每个新的逻辑 tab 操作批次都必须先用
-   一条独立 JS 调用把完整 `browser.tabs.list()` 结果返回给模型，检查 id/url/title/active；下一条 JS
-   调用才按稳定 id 或明确 URL/title 匹配并调用 `tabs.get(info.id)`。SDK 内部静默 list 或在同一 cell
-   隐藏结果不算模型已观察；多 tab 时禁止按数组位置猜目标。
-4. `tabs.get(info.id)` 不只是创建 agent binding：backend 必须把目标设为该 scope 唯一 active tab，并通知
-   renderer。仅当 origin workspace/session 当前在前台时才展开并展示；后台对话只更新自己的 selected/
-   preferred tab，不能切换用户当前对话或右侧栏。JS timeout/reset 后仍按 list→match→get 恢复，不得直接把
-   `TabInfo` 当作 tab，也不得在未检查 controlled tabs 与 user tabs 前创建重复 tab。
-5. action 可能打开 popup/new tab 且源 tab 未出现预期 URL/title/state 时，必须在一个 JS observation
-   cell 中用 `Promise.all([browser.tabs.list(), browser.user.openTabs()])` 读取两套状态，并把
-   `{ controlledTabs, userTabs }` 作为最终结果统一返回；模型只能在完整结果上做一次效果判断，再在下一
-   cell 执行 `tabs.get` 或 `user.claimTab`。禁止先返回 controlled list，再决定是否查询 user tabs。
-6. 导航成功后用 `playwright.domSnapshot()` 获取 AI/ARIA 页面状态，不主动截图。
-7. 可用 `tabs.finalize({ keep: [{ tab, status: "deliverable" }] })` 标记交付/接续状态；ZCode IAB 不再
-   清理未列入 `keep` 的 tab。无论模型是否调用 finalize，所有未被模型或用户显式关闭的 tab 都在当前
-   ZCode 进程内持续保留；退出 ZCode 后不承诺恢复。
-8. 所有 browser command 都携带 session/turn/sessionContext，并返回脱敏的 browser-use meta；ZCode 不附加自动 preview screenshot。
-9. stale/missing tab、locator strict violation、locator timeout 的模型可见错误必须给出可执行且有界的
-   恢复动作：先刷新 DOM 或枚举并重新取得 tab，再重建 locator；禁止重试同一 locator、用
-   `first/last/nth` 掩盖歧义或在没有 snapshot 证据时猜 selector。JS 工具只输出一次错误标题与
-   message，stack 只追加 frames，不能把同一错误正文重复两遍。
-10. 每条能够对应到真实 tab 的 browser-use 命令都向 origin renderer 发送带
-   `workspaceKey + sessionId + browserId + browserGeneration + tabId` 的 operation 事件。对应 browser-use 标签在事件到达后 5 秒内用
-   鼠标图标替代 favicon，并在图标外层容器执行 900ms 一次的透明度 + 缩放呼吸动画；不得只给 SVG 套用通用
-   `animate-pulse`，以免 14px 图标仅有缓慢透明度变化而无法被用户感知。同一 tab 的后续操作刷新 5 秒截止时间。截止后恢复
-   已缓存的页面真实 favicon（缺省仍回退地球图标），不得为了状态提示覆盖或清空 favicon。动画必须遵守
-   `prefers-reduced-motion`，且后台 workspace/session 的事件不得误标其它同路径 tab。
-10. 第二个真实用户 turn 如果 IAB 仍可见，provider request 必须带有 bounded ambient context；模型不应先把
-    finalize 后的空 `tabs.list()` 当成 backend 断线，也不应在没有证据时猜详情页 ID。
-11. `ERR_ABORTED` 且最终 document 已提交到等价 redirect/SPA URL 时 `goto()` 返回成功；同错误但仍停旧页时
-    返回失败。
+1. After establishing the browser runtime in a fresh kernel, the skill must uniformly bind the current selection to `globalThis.browser`: explicit IAB uses `get("iab")`, a target URL uses `getForUrl(url)`; neither may first create an `iab` alias and then call `browser.*`. After binding, read the full `browser.documentation()` once; extra documents are read through `agent.documentation.get(name)`. The model-visible result budget of `js` is at least 64 KiB, and the current effective API documentation must not turn into an artifact preview within it.
+2. `tabs.new()` automatically expands and activates IAB; only when the task explicitly needs to hide or show the browser again, read and call `browser.capabilities.get("visibility").set(false | true)`.
+3. `browser.user.openTabs()` returns only user tabs not controlled by the current run. Every new batch of logical tab operations must first return the complete `browser.tabs.list()` result to the model in a separate JS call to inspect id/url/title/active; only the next JS call matches by stable id or explicit URL/title and calls `tabs.get(info.id)`. A silent list inside the SDK or hiding the result in the same cell does not count as the model having observed; with several tabs, guessing the target by array position is forbidden.
+4. `tabs.get(info.id)` is not just creating an agent binding: the backend must make the target the only active tab of that scope and notify the renderer. Only when the origin workspace/session is currently in the foreground is it expanded and shown; a background conversation only updates its own selected/preferred tab and must not switch the user's current conversation or right sidebar. After a JS timeout/reset, recover with list -> match -> get; do not treat `TabInfo` as a tab, and do not create a duplicate tab before checking controlled tabs and user tabs.
+5. When an action may open a popup/new tab and the source tab shows no expected URL/title/state, one JS observation cell must read both states with `Promise.all([browser.tabs.list(), browser.user.openTabs()])` and return `{ controlledTabs, userTabs }` as the final result; the model judges the effect once on the full result and then runs `tabs.get` or `user.claimTab` in the next cell. Returning the controlled list first and then deciding whether to query user tabs is forbidden.
+6. After successful navigation use `playwright.domSnapshot()` to get the AI/ARIA page state; do not take a screenshot proactively.
+7. `tabs.finalize({ keep: [{ tab, status: "deliverable" }] })` may mark delivery/handoff state; ZCode IAB no longer cleans up tabs not listed in `keep`. Whether or not the model calls finalize, all tabs not explicitly closed by the model or the user stay for the lifetime of the current ZCode process; restore after quitting ZCode is not promised.
+8. All browser commands carry session/turn/sessionContext and return redacted browser-use meta; ZCode attaches no automatic preview screenshot.
+9. The model-visible errors of stale/missing tab, locator strict violation and locator timeout must give executable, bounded recovery actions: first refresh the DOM or enumerate and re-obtain the tab, then rebuild the locator; never retry the same locator, mask ambiguity with `first/last/nth`, or guess a selector without snapshot evidence. The JS tool prints the error title and message once, and the stack only appends frames; the same error body must not be repeated twice.
+10. Every browser-use command that maps to a real tab sends an operation event with `workspaceKey + sessionId + browserId + browserGeneration + tabId` to the origin renderer. Within 5 seconds of the event the matching browser-use tab replaces its favicon with a mouse icon and runs a 900 ms opacity + scale breathing animation on the icon's outer container (a generic SVG `animate-pulse` alone gives a 14 px icon only a slow opacity change the user cannot perceive). Subsequent operations on the same tab refresh the 5-second deadline. After the deadline restore the cached real page favicon (globe icon as default fallback); the status hint must not overwrite or clear the favicon. The animation must respect `prefers-reduced-motion`, and events of a background workspace/session must not mislabel other tabs with the same path.
+10. If IAB is still visible on the second real user turn, the provider request must carry a bounded ambient context; the model should not treat the empty `tabs.list()` after finalize as a backend disconnect, and should not guess a detail-page ID without evidence.
+11. `goto()` with `ERR_ABORTED` whose final document committed to an equivalent redirect/SPA URL returns success; the same error that still stays on the old page returns failure.
 
-日志：
+Logging:
 
-- 高频 command、CDP、stream trace 用 debug。
-- backend connect/disconnect、session create/close、extension host lifecycle 用 info。
-- retry/degrade 用 warn，handshake/crash/security invariant 失败用 error。
-- 不记录 credential、敏感输入或完整页面私密内容。
+- High-frequency command, CDP and stream traces use debug.
+- Backend connect/disconnect, session create/close and extension host lifecycle use info.
+- retry/degrade use warn; handshake/crash/security invariant failures use error.
+- Credentials, sensitive input and full private page content are not logged.
 
-## 14. 多端、workspace 与远程约束
+## 14. Multi-end, workspace and remote constraints
 
-- `workspaceKey = workspaceIdentity?.trim() || workspacePath` 用于 backend cache、tab ownership、queue、request correlation 和持久化。
-- workspacePath 仅用于 cwd、文件和路径展示。
-- remote workspace 的 browser context 必须带 workspaceIdentity + remoteSessionId。
-- desktop `desktop-continuous` 不拼接 web replayable 运行态恢复。
-- mobile `web-remote-replayable` 不能绕过 snapshot/gap 恢复和阻塞确认。
-- relay/main 不持有 browser task/stream/queue 业务状态；backend registry/lease 属于 shared host/provider。
-- owner/lease 仍用于运行中 task、跨 host command、blocking interaction 和 stale run 防护。
+- `workspaceKey = workspaceIdentity?.trim() || workspacePath` is used for backend cache, tab ownership, queues, request correlation and persistence.
+- `workspacePath` is only for cwd, files and path display.
+- A remote workspace's browser context must carry workspaceIdentity + remoteSessionId.
+- Desktop `desktop-continuous` does not splice web replayable runtime recovery.
+- Mobile `web-remote-replayable` cannot bypass snapshot/gap recovery and blocking confirmation.
+- relay/main hold no browser task/stream/queue business state; the backend registry/lease belongs to the shared host/provider.
+- owner/lease still serve running tasks, cross-host commands, blocking interactions and stale-run protection.
 
-## 15. 交付切面
+## 15. Delivery slices
 
-### Slice A：Backend foundation（本规格首个实现切面）
+### Slice A: Backend foundation
 
-- shared/contracts 定义 descriptor/type/context/list result。
-- BrowserControlPort 支持真实 list/discovery 和 browserId-aware execute。
-- ZCode Protocol 新增严格 schema 的 browser list，execute 带 browserId/context。
-- services/host 暴露 IAB adapter descriptor；facade 通过 registry，不再硬编码 IAB。
-- 实现第 5 节 selection 纯函数与单测。
-- 当前只发现 IAB，不宣称 extension/cdp available。
+- shared/contracts define descriptor/type/context/list result.
+- BrowserControlPort supports real list/discovery and browserId-aware execute.
+- ZCode Protocol adds a strict-schema browser list; execute carries browserId/context.
+- services/host expose the IAB adapter descriptor; the facade goes through the registry and no longer hard-codes IAB.
+- Implement the section 5 selection pure functions with unit tests.
+- Only IAB is discovered for now; extension/cdp availability is not claimed.
 
-实施结果：上述项目已完成。兼容期 execute context 为 optional，但新 broker 始终发送；`remoteSessionId` 因现有 session workspace ref 没有该字段而只能先预留 schema，实际贯穿移入 Slice B。desktop IAB descriptor 的 runtime id 在 host 生命周期内稳定，stale id 会在进入 main 前被拒绝。
+Result: done. During the compatibility period the execute context is optional but the new broker always sends it; `remoteSessionId` is only reserved in the schema because the existing session workspace ref has no such field, and its end-to-end threading moved to Slice B. The desktop IAB descriptor's runtime id is stable for the host lifetime, and a stale id is rejected before reaching main.
 
-### Slice B：IAB correctness
+### Slice B: IAB correctness
 
-- workspace/window/session 隔离、真实 tabs.new/close/finalize、ready ack、cleanup。
-- requestId/turnId/AbortSignal/clientMode 贯穿。
-- response meta 和 command logging 修正。
+- workspace/window/session isolation, real tabs.new/close/finalize, ready ack, cleanup.
+- requestId/turnId/AbortSignal/clientMode threading.
+- response meta and command logging fixes.
 
-实施结果：IAB provider 已完成 scope/generation、真实 tab ready/close、显式 user tab claim、agent-created 与 claimed-user 生命周期、`Tabs.finalize({ keep })`、handoff/deliverable、turn/session/window cleanup、abort 反向取消、browser-use 外层 meta 与 URL 脱敏。kernel reset 后通过单调 runtime generation 拒绝旧 binding，同时保留 backend 受控 tab 供新 runtime 恢复。产品按本规格第 13 节明确不生成自动 preview screenshot。extension/CDP 继续只保留 descriptor/registry/manifest 扩展口。
+Result: the IAB provider has scope/generation, real tab ready/close, explicit user-tab claim, agent-created and claimed-user lifecycles, `Tabs.finalize({ keep })`, handoff/deliverable, turn/session/window cleanup, abort reverse cancel, browser-use outer meta and URL redaction. After a kernel reset a monotonic runtime generation rejects old bindings while the backend keeps controlled tabs for the new runtime to recover. Per section 13 the product explicitly generates no automatic preview screenshot. extension/CDP keep only the descriptor/registry/manifest extension hooks.
 
-### Slice C：Manifest + common API
+### Slice C: Manifest + common API
 
-- clean-room API manifest/interpreter/proxy/docs。
-- 默认 documentation 只装载 included guidance，截图等视觉说明按需 lookup。
-- IAB snapshot 补充有界可见语义 DOM；模型提示和示例强制 DOM-first、观察结果回显。
-- Playwright locator/wait/download/file chooser、clipboard/dev/content/capabilities。
-- action-time confirmation。
+- Clean-room API manifest/interpreter/proxy/docs.
+- Default documentation loads only included guidance; visual notes such as screenshots are looked up on demand.
+- IAB snapshot adds bounded visible semantic DOM; model prompts and examples enforce DOM-first and echoing the observation.
+- Playwright locator/wait/download/file chooser, clipboard/dev/content/capabilities.
+- action-time confirmation.
 
-实施结果：member-level manifest/interpreter/runtime proxy/docs 已与当前 IAB capability 动态绑定，补齐 common Playwright 的方法名集合、locator/frame locator、受信任 CDP input 与 IAB download object；IAB file chooser 明确不支持。`playwright.domSnapshot()` 已使用 AI/ARIA 输出及 3000/1000/500ms 顶层/iframe 预算，navigation wait 与 `expectNavigation` 采用并发等待语义，`networkidle` 按 IAB 实现明确拒绝。`tab.snapshot()` 仍是 z-code ref/action 兼容入口但不进入有效 common manifest；clipboard/dev/content/pageAssets/raw CDP 等未由 IAB descriptor 宣称，未来 backend 只能在真实实现后通过 capability/override 暴露。
+Result: the member-level manifest/interpreter/runtime proxy/docs are dynamically bound to the current IAB capabilities, completing the common Playwright method-name set, locator/frame locator, trusted CDP input and the IAB download object; IAB file chooser is explicitly unsupported. `playwright.domSnapshot()` uses AI/ARIA output and the 3000/1000/500 ms top-level/iframe budgets; navigation wait and `expectNavigation` use concurrent-wait semantics; `networkidle` is explicitly rejected per the IAB implementation. `tab.snapshot()` remains the z-code ref/action compatibility entry but does not enter the effective common manifest; clipboard/dev/content/pageAssets/raw CDP and others are not claimed by the IAB descriptor, and future backends may expose them via capability/override only after real implementation.
 
-### Slice D：Plugin/runtime 解耦
+### Slice D: Plugin/runtime decoupling
 
-- Node REPL 独立化和 browser-use plugin 解耦。
-- shared browser-client 产物进入 browser/chrome plugin 与四条打包链。
-- fresh kernel 显式 bootstrap、lazy/deferred tool surface。
+- Standalone Node REPL, decoupled from the browser-use plugin.
+- The shared browser-client artifact enters the browser/chrome plugins and the four packaging chains.
+- Fresh-kernel explicit bootstrap, lazy/deferred tool surface.
 
-### Slice E：Extension
+### Slice E: Extension
 
-- ZCode Chrome extension/native host、安装/升级/诊断/profile selection。
-- user tabs/history/claim/finalize 和安全确认。
+- ZCode Chrome extension/native host, install/upgrade/diagnostics/profile selection.
+- user tabs/history/claim/finalize and security confirmation.
 
-### Slice F：CDP
+### Slice F: CDP
 
-- P0：CLI 显式 `--browser-use=headless` 创建 managed CDP provider；真实 launch/handshake 后发现 backend，
-  按 session 隔离 BrowserContext，turn 保留 tab，session/app close 回收自己启动的 Chromium。
-- P0 只宣称真实实现的 navigation/DOM/Playwright/CUA/screenshot/viewport/dialog 子集；user
-  profile/history/claim、file chooser/download、clipboard/dev/raw CDP 等通过 manifest override 隐藏。
-- P1：gated external CDP attach、target lifecycle、完整 CDP capability/security；外部 browser ownership
-  与 managed launch 分开定义，禁止 attach 模式关闭用户 browser。
+- P0: CLI explicit `--browser-use=headless` creates a managed CDP provider; after a real launch/handshake the backend is discovered, BrowserContext is isolated per session, tabs are kept across turns, and the Chromium it launched is reclaimed on session/app close.
+- P0 claims only the really implemented navigation/DOM/Playwright/CUA/screenshot/viewport/dialog subset; user profile/history/claim, file chooser/download, clipboard/dev/raw CDP and others are hidden through manifest overrides.
+- P1: gated external CDP attach, target lifecycle, full CDP capability/security; external browser ownership and managed launch are defined separately, and attach mode must not close the user's browser.
 
-### Slice G：完整性收口
+### Slice G: Completeness wrap-up
 
-- 三 backend E2E、跨 backend 黑盒合同、desktop/mobile/remote 回归。
-- API/docs/capability contract snapshot。
-- plugin lifecycle/upgrade/disable/extension removal 回归。
+- Three-backend E2E, cross-backend black-box contracts, desktop/mobile/remote regressions.
+- API/docs/capability contract snapshots.
+- Plugin lifecycle/upgrade/disable/extension removal regressions.
 
-## 16. 非目标与禁止的临时方案
+## 16. Non-goals and forbidden stopgaps
 
-- 不增加名为 `playwright` 的 backend。
-- 不让 `get("extension")` 返回 IAB 或 stub。
-- 不在 list 中报告未 handshake 的 backend。
-- 不以 workspacePath 代替 remote workspace identity。
-- 不把手机 remote browser runtime独立启动在 relay/main。
-- 不通过 unrestricted evaluate 快速伪装 Playwright API。
-- 不复制或 vendor 任何第三方私有资产。
+- No backend named `playwright`.
+- `get("extension")` never returns IAB or a stub.
+- Never report a backend that has not handshaken in the list.
+- Never use workspacePath in place of a remote workspace identity.
+- Never start the phone remote browser runtime standalone in relay/main.
+- Never fake the Playwright API quickly through unrestricted evaluate.
+- Never copy or vendor any third-party private asset.
 
-## 17. 完成定义
+## 17. Definition of done
 
-“Browser Use 完整交付”只有在以下条件全部满足时才能宣称：
+"Browser Use fully delivered" may be claimed only when all of the following hold:
 
-- 三 backend descriptor/discovery/selection 行为通过跨 backend 黑盒合同测试。
-- manifest 声明的 observable API interfaces/members 均为 implemented 或按 capability 条件隐藏；没有公开但必定抛 NotImplemented 的 member。
-- Playwright/CUA/DOM_CUA、tabs/user/content/clipboard/dev/dialog/capability 行为通过合同测试。
-- action-time confirmation 和防绕过用例通过。
-- response meta、timeout/kernel reset、turnEnded/finalize/cleanup 通过。
-- Desktop local、remote workspace、mobile replayable 都通过隔离与恢复验证。
-- browser/chrome plugin install/disable/upgrade 与 extension/native-host 状态机通过。
-- `pnpm typecheck`、`pnpm lint`、相关 unit/integration/E2E 全部通过。
+- Descriptor/discovery/selection of the three backends pass cross-backend black-box contract tests.
+- Every observable API interface/member declared by the manifest is implemented or conditionally hidden by capability; there is no public member that always throws NotImplemented.
+- Playwright/CUA/DOM_CUA, tabs/user/content/clipboard/dev/dialog/capability behaviors pass contract tests.
+- action-time confirmation and anti-bypass cases pass.
+- response meta, timeout/kernel reset, turnEnded/finalize/cleanup pass.
+- Desktop local, remote workspace and mobile replayable all pass isolation and recovery verification.
+- browser/chrome plugin install/disable/upgrade and the extension/native-host state machine pass.
+- `pnpm typecheck`, `pnpm lint` and the related unit/integration/E2E all pass.
 
-在此之前，版本说明必须明确当前完成的 slice 和未实现能力，不能用“Browser Use 已完整交付”。
+Until then release notes must state the slices completed and the capabilities not implemented, and must not say "Browser Use is fully delivered".

@@ -1,79 +1,59 @@
-# agent→host→main browser 执行通道规格（T4）
+# agent -> host -> main browser execution channel spec (T4)
 
-> 状态：已实现。
-> 上位：`2026-07-07-browser-use-cdp-node-repl-spec.md`；依赖 T3 的 `BrowserControlPort` + `interaction/browserExecute` 协议。
-> 范围：打通 agent 的 `BrowserControlPort.execute` → ZCode Protocol → host router → parentPort → main 的三腿通道。T4 不含 main 侧 CDP 执行（T5 提供 executor，T4 桥先返回 stub/透传到一个可注入的 main handler）。
+> Status: implemented.
+> Parent: `2026-07-07-browser-use-cdp-node-repl-spec.md`; depends on the T3 `BrowserControlPort` and the `interaction/browserExecute` protocol.
+> Scope: the three-leg channel `BrowserControlPort.execute` (agent) -> ZCode Protocol -> host router -> parentPort -> main. Main-side CDP execution is T5; T4 returns a stub or passes through to an injectable main handler.
 
-## 1. 三腿链路
+## 1. Three-leg path
 
 ```
 agent: BrowserControlPort.execute(cmd)   [ProtocolBrowserControlBroker]
-  → context.requestClient("interaction/browserExecute", {requestId,sessionId,command}, resultSchema)
-      │ stdio JSON-RPC 反向请求
+  -> context.requestClient("interaction/browserExecute", {requestId,sessionId,command}, resultSchema)
+      | stdio JSON-RPC reverse request
 host: zcodeAgentService client.onRequest case interactionBrowserExecute
-  → 校验 params → browserControlMainBridge.execute({sessionId,command}) → client.respondResult/respondError
-  （纯 RPC 中继：不 emitSessionEvent、不 pending sessionEvent，区别于 permission）
-      │ parentPort.postMessage(BrowserExecuteRequest{requestId,payload}) + pending map
+  -> validate params -> browserControlMainBridge.execute({sessionId,command}) -> client.respondResult/respondError
+  (pure RPC relay: no emitSessionEvent, no pending sessionEvent; unlike permission)
+      | parentPort.postMessage(BrowserExecuteRequest{requestId,payload}) + pending map
 main: desktopHostProcess child.on("message") case BrowserExecuteRequest
-  → browserCommandExecutor.execute(...)  [T5 提供；T4 先接一个可注入 executor]
-  → child.postMessage(BrowserExecuteResult{requestId,ok,result|error})
-      │ host pending map resolve
+  -> browserCommandExecutor.execute(...)  [T5; T4 uses an injectable executor]
+  -> child.postMessage(BrowserExecuteResult{requestId,ok,result|error})
+      | host pending map resolve
 ```
 
-## 2. Leg A：agent broker
+## 2. Leg A: agent broker
 
-- 文件：`apps/zcode-cli/packages/bootstrap/src/zcode-protocol/browser-control-broker.ts`（新）。
-  ```ts
-  export function createProtocolBrowserControlBroker(
-    context: ZCodeProtocolAgentServerContext,
-  ): BrowserControlPort {
-    return {
-      async execute({ sessionId, command }) {
-        return context.requestClient(
-          zcodeProtocolMethods.interactionBrowserExecute,
-          { requestId: randomUUID(), sessionId, command },
-          zcodeBrowserExecuteResultSchema,
-        );
-      },
-    };
-  }
-  ```
-- 注入：`server-operations.ts` 的 `createWorkspaceZCodeApp(context, workspace, { ... })` options 对象里，与 `permissionBroker: createProtocolInteractionBroker(context)` 并列加
-  `browserControlPort: createProtocolBrowserControlBroker(context)`。`createWorkspaceZCodeApp` 已 `...options` 透传给 createApp（同 providerRuntimeHeadersPort 模式）。
+- File: `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/browser-control-broker.ts`. `createProtocolBrowserControlBroker(context)` returns a `BrowserControlPort` whose `execute({ sessionId, command })` calls `context.requestClient(zcodeProtocolMethods.interactionBrowserExecute, { requestId: randomUUID(), sessionId, command }, zcodeBrowserExecuteResultSchema)`.
+- Injection: in `server-operations.ts`, the options object of `createWorkspaceZCodeApp(context, workspace, { ... })` gets `browserControlPort: createProtocolBrowserControlBroker(context)` next to `permissionBroker: createProtocolInteractionBroker(context)`; `createWorkspaceZCodeApp` already spreads `...options` into createApp (same as `providerRuntimeHeadersPort`).
 
-## 3. Leg B：host router + host↔main bridge
+## 3. Leg B: host router and host <-> main bridge
 
-### host router（`packages/services/src/zcode-agent/zcodeAgentService.ts` onRequest）
-- 在末尾 `respondError(-32601)` 前加 case `request.method === zcodeProtocolMethods.interactionBrowserExecute`：
-  - `zcodeBrowserExecuteParamsSchema.safeParse(request.params)`，失败 `respondError(-32602)`。
-  - 调 `browserControlMainBridge.execute({sessionId, command})`（注入的可选依赖）。
-  - 成功 `client.respondResult(request.id, result)`；异常 `client.respondError(request.id, {code:-32000,message})`。
-  - **不** emitSessionEvent、**不**进 pending sessionEvent map（纯 RPC 中继，与 permission 的 UI 阻塞语义不同）。
-  - bridge 缺省（非桌面/远控无 main）→ 返回结构化 `{ok:false, error:{code:"backend_unavailable"}}`（不 throw，模型可读）。
-- `browserControlMainBridge` 作为 `createZCodeAgentService` 的可选依赖注入（`ZCodeAgentServiceDeps` 加字段），desktop host 装配时传入。
+Host router (`packages/services/src/zcode-agent/zcodeAgentService.ts`, `onRequest`): a case for `zcodeProtocolMethods.interactionBrowserExecute` before the final `respondError(-32601)`:
 
-### host↔main bridge（`packages/desktop/src/host/browserControlMainBridge.ts` 新，或并入 host/index.ts）
-- 仿 `createFullFeedbackLogArchiveViaMain`：`pendingBrowserExecute = Map<requestId,{resolve,reject,timer}>`；`execute(payload)` → `parentPort.postMessage({type:HostResponseTypes.BrowserExecuteRequest, requestId, payload})` + 超时（默认 30s，navigate/screenshot 可长）。
-- `requestId` 是 pending Promise 的 correlation key。Map 已存在同 ID 时必须立即返回
-  `duplicate_request_id`，不得覆盖；该规则不按 session/scope 放宽，因为结果回包只携带裸 requestId。
-- timeout、发送异常与结果回传只能 compare-and-delete 自己捕获的 `PendingEntry`，不得无条件删除同 key。
-- main 回 `HostMessageTypes.BrowserExecuteResult{requestId, ok, result, error}` → host `parentPort.on("message")` 分派 resolve/reject（并入 host/index.ts 现有 message 分派）。
-- `channels.ts`：`HostResponseTypes` 加 `BrowserExecuteRequest:"browser-execute-request"`；`HostMessageTypes` 加 `BrowserExecuteResult:"browser-execute-result"`。
+- `zcodeBrowserExecuteParamsSchema.safeParse(request.params)`; on failure `respondError(-32602)`.
+- Call the injected optional `browserControlMainBridge.execute({sessionId, command})`; success -> `client.respondResult(request.id, result)`; exception -> `client.respondError(request.id, {code:-32000,message})`.
+- Never `emitSessionEvent`, never enter the pending sessionEvent map (pure RPC relay, different from the UI-blocking permission semantics).
+- Bridge absent (non-desktop / remote control without main) -> structured `{ok:false, error:{code:"backend_unavailable"}}`, not a throw, so the model can read it.
+- `browserControlMainBridge` is an optional dependency of `createZCodeAgentService` (`ZCodeAgentServiceDeps`), passed by the desktop host wiring.
 
-## 4. Leg C：main 接收（T4 占位，T5 实现 executor）
+Host <-> main bridge (`packages/desktop/src/host/browserControlMainBridge.ts`, or inside host/index.ts), modeled on `createFullFeedbackLogArchiveViaMain`:
 
-- `packages/desktop/src/main/desktopHostProcess.ts` 的 `child.on("message")` 加 case `BrowserExecuteRequest`：
-  - T4：调一个注入的 `browserCommandExecutor?.execute(sessionId, command)`；缺省返回 `{ok:false,error:{code:"backend_unavailable",message:"browser executor not ready"}}`。
-  - `child.postMessage({type:HostMessageTypes.BrowserExecuteResult, requestId, ...})`。
-  - T5 提供真正的 executor（WebContentsView+CDP）。
+- `pendingBrowserExecute = Map<requestId,{resolve,reject,timer}>`; `execute(payload)` posts `{type:HostResponseTypes.BrowserExecuteRequest, requestId, payload}` via `parentPort.postMessage` with a timeout (default 30 s; navigate/screenshot may be long).
+- `requestId` is the correlation key of the pending Promise. If the Map already holds the ID, return `duplicate_request_id` immediately and never overwrite; this is not relaxed per session/scope because the result reply carries only the bare requestId.
+- Timeout, send exception and result delivery may only compare-and-delete the `PendingEntry` they captured, never delete the same key unconditionally.
+- Main replies `HostMessageTypes.BrowserExecuteResult{requestId, ok, result, error}`; host `parentPort.on("message")` dispatches resolve/reject (merged into the existing message dispatch in host/index.ts).
+- `channels.ts`: `HostResponseTypes.BrowserExecuteRequest = "browser-execute-request"`, `HostMessageTypes.BrowserExecuteResult = "browser-execute-result"`.
 
-## 5. 验证点（T4 单测，逻辑层，不起 Electron）
+## 4. Leg C: main receive (T4 placeholder, T5 executor)
 
-- agent broker：假 `requestClient`（记录 method+params，返回预设 result）→ `execute(cmd)` 发出 `interaction/browserExecute`，requestId 存在、command 透传、result 原样返回。
-- host router：假 client（onRequest 触发）+ 假 bridge → browserExecute 命中 bridge.execute、respondResult 被调；params 非法 → respondError(-32602)；bridge 缺省 → backend_unavailable。
-- host↔main bridge：假 parentPort（记录 postMessage + 手动回 result）→ execute resolve；超时 → reject/结构化 timeout；requestId 关联正确（并发两条不串）；同 scope 与跨 scope 的并发重复
-  requestId 都立即失败且不影响原 entry。
+`packages/desktop/src/main/desktopHostProcess.ts` `child.on("message")` handles `BrowserExecuteRequest`: T4 calls an injected `browserCommandExecutor?.execute(sessionId, command)`, and when absent returns `{ok:false,error:{code:"backend_unavailable",message:"browser executor not ready"}}`; then `child.postMessage({type:HostMessageTypes.BrowserExecuteResult, requestId, ...})`. T5 provides the real executor (WebContentsView + CDP).
 
-## 6. 边界
-- browser/execute 不改变 desktop-continuous / web-remote-replayable 语义：它是 agent→app 的一次性 RPC，不进 stream/snapshot。远控无 main 时 backend_unavailable。
-- 单一真相：params/result 用 T3 的 shared zod schema 校验（host router 侧）。
+## 5. Verification (T4 unit tests, logic layer, no Electron)
+
+- Agent broker: fake `requestClient` records method+params and returns a preset result; `execute(cmd)` emits `interaction/browserExecute` with a requestId, passes command through and returns the result unchanged.
+- Host router: fake client + fake bridge; browserExecute hits `bridge.execute` and calls `respondResult`; invalid params -> `respondError(-32602)`; absent bridge -> `backend_unavailable`.
+- Host <-> main bridge: fake parentPort; `execute` resolves; timeout rejects / structured timeout; requestId correlation is correct (two concurrent calls do not cross); duplicate requestIds, same-scope and cross-scope, fail immediately without affecting the original entry.
+
+## 6. Boundaries
+
+- browser/execute does not change desktop-continuous / web-remote-replayable semantics: it is a one-shot agent -> app RPC outside stream/snapshot. Remote control without main gives `backend_unavailable`.
+- Single source of truth: params/result are validated with the shared T3 zod schemas (host router side).
