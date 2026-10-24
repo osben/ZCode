@@ -263,7 +263,6 @@ export function App({
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
     handleOpenSubagentSession,
-    handleQueueSubagentSessionOpen,
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
     handleSyncSubagentSessionTabs,
@@ -1454,7 +1453,6 @@ export function App({
           handleOpenCodeViewer={handleOpenCodeViewerIfWritable}
           handleAutoOpenAssistantPptx={handleAutoOpenAssistantPptx}
           handleOpenSubagentSession={handleOpenSubagentSession}
-          handleQueueSubagentSessionOpen={handleQueueSubagentSessionOpen}
           handleOpenBackgroundBash={handleOpenBackgroundBash}
           handleOpenSubagentDirectory={handleOpenSubagentDirectory}
           handleSyncSubagentSessionTabs={handleSyncSubagentSessionTabs}

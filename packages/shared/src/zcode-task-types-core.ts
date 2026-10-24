@@ -273,18 +273,19 @@ export interface ZCodeTaskPendingInteraction {
   autoResolution?: ZCodeTaskInteractionAutoResolution;
 }
 
-/** One child conversation (side chat or subagent) listed under its parent task row. */
+/**
+ * One child conversation listed under its parent task row. The sidebar shows side chats only (spec
+ * sidebar-child-conversation-counts §9); `subagent_child`, `running` and `backgroundWorkId` remain for
+ * older fork CLIs and are dropped by the renderer mapping.
+ */
 export interface ZCodeTaskChildSession {
   sessionId: string;
   title: string;
   taskType: "selection_side_chat" | "subagent_child";
   lastActivityAt: number;
-  /** True while the child's runtime is alive in the CLI host (subagents executing work). */
+  /** @deprecated Always false from current hosts. */
   running: boolean;
-  /**
-   * Parent background-work id while the child runs as cancellable background work; the sidebar
-   * Stop sends cancelBackgroundWork{workId} to the parent (spec sidebar-child-conversation-counts §8.3).
-   */
+  /** @deprecated Never sent by current hosts. */
   backgroundWorkId?: string;
 }
 
@@ -387,7 +388,9 @@ export interface ZCodeTaskMeta {
    * absent for sessions without children.
    */
   sideChatCount?: number;
+  /** @deprecated Sidebar lists side chats only (§9); the renderer mapping drops subagent facts. */
   subagentCount?: number;
+  /** @deprecated See subagentCount. */
   runningSubagentCount?: number;
   childSessions?: ZCodeTaskChildSession[];
 

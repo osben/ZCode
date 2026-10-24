@@ -11,6 +11,7 @@ import type {
   ZCodeTrajectoryV2Record,
 } from "../contract.js";
 import { createTrajectoryInterner, type TrajectoryInterner } from "../domain/dedupe.js";
+import { promoteSubagentSessionLoop } from "../domain/subagentLoop.js";
 import {
   extractCacheBreakpoints,
   extractRequestParams,
@@ -31,7 +32,9 @@ export async function projectModelTrajectoryV2(
   const window = await ports.modelIo.read(taskId, limit);
   const interner = createTrajectoryInterner();
   // projectModelTrajectoryInputDeltas maps one-to-one, so index i of the projection is raw record i.
-  const projected = projectModelTrajectoryInputDeltas(window.records.map(mapModelTrajectoryRecord));
+  const projected = projectModelTrajectoryInputDeltas(
+    promoteSubagentSessionLoop(window.records.map(mapModelTrajectoryRecord)),
+  );
   const records = projected.map((record, index) =>
     enrichRecord(record, window.records[index] ?? {}, interner),
   );

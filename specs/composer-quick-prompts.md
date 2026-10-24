@@ -32,7 +32,10 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
    in new-session drafts and existing sessions, so it follows the composer's hide and width rules. Chips show the
    name only. The row scrolls horizontally on every platform; an edge fade shows only on a side that has hidden
    content (left once scrolled away from the start, right while more chips are off-screen), so a row that fits
-   shows no fade. There is no overflow popover and no collapse control.
+   shows no fade. There is no overflow popover and no collapse control. The composer dock floats over the
+   scrolling transcript, so every chip, the `+` chip included, carries an opaque card fill (`bg-card`; hover and
+   open menu `bg-card-selected`) and transcript text never shows through a chip. The row itself stays without a
+   background strip (user decision 2026-10-24): text may still show between chips.
 2. **Row content** for a session's project P: pinned global quick prompts not hidden in P, in global order, then
    pinned project quick prompts of P, in their order. A session with no project (`projectId === null`) or in a
    legacy single-root project shows pinned globals only.

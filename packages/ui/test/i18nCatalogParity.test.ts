@@ -17,7 +17,6 @@ const EN_ONLY_KEYS = [
   "settings.memory.viewer.disabled",
   "taskList.childSideChatsCount.one",
   "taskList.childSubagentsCount.one",
-  "taskList.childSubagentsRunningCount.one",
 ];
 
 const PLURAL_CATEGORIES = ["zero", "one", "two", "few", "many", "other"];
