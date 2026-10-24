@@ -28,6 +28,7 @@ import {
   createErrorResult,
   createPermissionErrorResult,
   createToolHandlerFailureError,
+  hasProviderFailureModelContent,
   isToolHandlerFailure,
   isToolHandlerFailureError,
 } from "./errors.js";
@@ -716,7 +717,8 @@ async function executeToolCallImpl(
         durationMs,
       );
       const baseModelContent = result.error
-        ? isToolHandlerFailureError(error) && typeof result.modelContent === "string"
+        ? (isToolHandlerFailureError(error) || hasProviderFailureModelContent(result)) &&
+          typeof result.modelContent === "string"
           ? result.modelContent
           : result.error.message
         : undefined;

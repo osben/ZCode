@@ -1,4 +1,8 @@
-import type { ToolSearchExecutionContext, ModelCallWrapper } from "@zcode/contracts";
+import type {
+  ErrorAttribution,
+  ModelCallWrapper,
+  ToolSearchExecutionContext,
+} from "@zcode/contracts";
 import type { McpToolUiDescriptor } from "@zcode/shared/mcp-apps";
 // ============================================================
 // Tool Types - Core tool types for registry and executor
@@ -471,6 +475,8 @@ export interface ToolExecutionResult {
   /** Internal performance facts aggregated by the executor; not part of model-visible Tool Output. */
   performance?: ToolExecutionTelemetry;
   error?: {
+    /** Safe provider facts only; never ids, URLs or credentials. */
+    attribution?: ToolErrorAttribution;
     code?: string;
     detail?: string;
     type: string;
@@ -482,6 +488,11 @@ export interface ToolExecutionResult {
   startedAt: Date;
   completedAt: Date;
 }
+
+export type ToolErrorAttribution = Pick<
+  ErrorAttribution,
+  "providerErrorCode" | "retryable" | "statusCode"
+>;
 
 export interface ToolExecutionFollowUpUserInput {
   input: string;
