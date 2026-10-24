@@ -18,7 +18,7 @@ endpoint default as is (local dev builds keep working against production).
 ## Product rules
 
 1. The menu's test origin is `ZCODE_TEST_BASE_URL` (process env first, then the local `.env` files the
-   host already loads), normalized to an origin. Without it the fallback is
+   host already loads), normalized to an origin; the first source that parses wins. Without one the fallback is
    `TEST_ZCODE_ENDPOINT_ORIGIN`.
 2. The test endpoint is available only when that origin differs from `DEFAULT_ZCODE_ENDPOINT_ORIGIN`.
    When it is not available, the Test radio is not shown; Production, Custom and Reset stay.

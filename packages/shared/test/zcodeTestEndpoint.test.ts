@@ -43,6 +43,15 @@ describe("resolveZCodeTestEndpointOrigin", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("an invalid process value falls back to a valid local .env value", () => {
+    expect(
+      resolveZCodeTestEndpointOrigin({
+        processEnv: { ZCODE_TEST_BASE_URL: "not a url" },
+        localEnv: { ZCODE_TEST_BASE_URL: "https://local.example.com" },
+      }),
+    ).toBe("https://local.example.com");
+  });
 });
 
 describe("selectZCodeEndpointMenuEntry", () => {

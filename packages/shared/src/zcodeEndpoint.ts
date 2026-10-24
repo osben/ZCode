@@ -473,17 +473,23 @@ export function resolveZCodeTestEndpointOrigin(options: {
   processEnv: ZCodeTestEndpointEnvSource;
   localEnv: ZCodeTestEndpointEnvSource;
 }): string | undefined {
-  const configured =
-    options.processEnv["ZCODE_TEST_BASE_URL"]?.trim() ||
-    options.localEnv["ZCODE_TEST_BASE_URL"]?.trim() ||
-    TEST_ZCODE_ENDPOINT_ORIGIN;
-  let origin: string;
-  try {
-    origin = normalizeZCodeEndpointOrigin(configured);
-  } catch {
-    return undefined;
+  // The first candidate that parses wins, so a malformed process value does not hide a valid .env one.
+  const candidates = [
+    options.processEnv["ZCODE_TEST_BASE_URL"],
+    options.localEnv["ZCODE_TEST_BASE_URL"],
+    TEST_ZCODE_ENDPOINT_ORIGIN,
+  ];
+  for (const candidate of candidates) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) continue;
+    try {
+      const origin = normalizeZCodeEndpointOrigin(trimmed);
+      return origin === DEFAULT_ZCODE_ENDPOINT_ORIGIN ? undefined : origin;
+    } catch {
+      // Try the next source.
+    }
   }
-  return origin === DEFAULT_ZCODE_ENDPOINT_ORIGIN ? undefined : origin;
+  return undefined;
 }
 
 export function selectZCodeEndpointMenuEntry(options: {
