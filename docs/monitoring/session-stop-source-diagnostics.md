@@ -1,28 +1,36 @@
-# Session 停止来源诊断
+# Session stop-source diagnostics
 
-Todo103 G13-B；来源 `8e3e10df4d`、`ee30f2ad33`。
+Todo103 G13-B; sources `8e3e10df4d`, `ee30f2ad33`.
 
-## 契约
+## Contract
 
-- Composer 停止按钮标记 `button`，当前聚焦 Pane 的 Esc 标记 `escape`。
-- 沿用现有 `canStop`、弹窗 / 已消费 Esc、只读 Pane 和前台执行 ID 防护，不增加停止入口，不改变命令协议。
-- 发出命令与无可停执行而跳过两条路径均走 `logger.lifecycle.info`；发送失败走 `logger.lifecycle.warn`。普通 `logger.info` 在生产构建禁用，不能承担误停归因。
-- 仅记录来源、Session ID 和已存在的前台执行 ID，不记录提示词、模型凭据或消息正文。一次停止操作记录一次，不按流式事件打印。
-- 日志表示“尝试发出命令”，不表示 Agent 已接受或已终止；最终状态仍由原有命令 ACK / Session 投影负责。
+- The Composer stop button is marked `button`, and Esc on the currently focused Pane is marked `escape`.
+- The existing `canStop`, dialog / consumed-Esc, read-only Pane and foreground execution ID guards are kept; no
+  stop entry is added and the command protocol is unchanged.
+- Both paths, command issued and skipped because nothing is stoppable, go through `logger.lifecycle.info`; a send
+  failure goes through `logger.lifecycle.warn`. Ordinary `logger.info` is disabled in production builds and cannot
+  carry mistaken-stop attribution.
+- Only the source, Session ID and the already existing foreground execution ID are recorded; no prompt, model
+  credential or message text. One stop operation logs once, not per streaming event.
+- The log means "attempted to issue the command", not that the Agent accepted or terminated; final state is still
+  owned by the original command ACK / Session projection.
 
 ```text
-停止按钮 / 未被消费的 Esc
+stop button / unconsumed Esc
              |
              v
-现有 Pane / canStop 防护
-   ├─ 不可停止 -> 跳过日志，不发命令
-   └─ 可停止 -> 来源日志 -> 原 stop 命令（原执行 ID）
-                               └─ 发送失败 -> 生命周期 warning
+existing Pane / canStop guard
+   ├─ not stoppable -> skipped log, no command
+   └─ stoppable -> source log -> original stop command (original execution ID)
+                               └─ send failure -> lifecycle warning
 ```
 
-## 验证
+## Verification
 
-1. 真实挂载 SessionPane，点击 Composer 回调：命令仍携投影中的执行 ID，并记录 button 来源。
-2. 不可停止的 Session：不得发 stop 命令，记录 skipped 来源。
-3. Logger 生产分支测试：lifecycle 经桌面桥转发，普通 info 不转发；无桌面桥不抛错。
-4. 既有停止 / 队列 E2E 保留，最终整合时复验；本项不改变桌面 continuous 或手机 replayable 的路由及状态语义。
+1. Mount SessionPane for real and click the Composer callback: the command still carries the projected execution
+   ID and a button source is logged.
+2. A non-stoppable Session: no stop command is sent and a skipped source is logged.
+3. Logger production-branch test: lifecycle is forwarded through the desktop bridge, ordinary info is not; no
+   desktop bridge does not throw.
+4. The existing stop / queue E2E stays and is re-verified at final integration; this item changes neither the
+   routing nor the state semantics of desktop continuous or mobile replayable.

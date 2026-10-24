@@ -1,6 +1,6 @@
 # `/event/report` Login Address & Error Body Privacy Boundary
 
-## Objectives & Trade-offs (2026-09-18)
+## Objectives & trade-offs
 
 Old implementation wrote complete OAuth authorizeUrl into `app_login_ck.login_url`, and allowed arbitrary events' `error_msg` original text into HTTP body; automated local regex would miss values after Bearer and unknown-format keys.
 User confirmed first phase prioritizes privacy: do not encrypt-upload error original text, do not rely on regex guessing which segments are secrets.
@@ -40,18 +40,15 @@ future unknown events also cleaned; original object unchanged; network retry reu
 header maintained; verify actual received body with local controlled HTTP receiver does not contain synthetic sensitive markers.
 Run related unit tests, pnpm typecheck, pnpm lint; uncovered real Electron/mobile/cross-OS real machine records in commit description.
 
-## Validation Record
+## Verification limits
 
-- New regression first run on old implementation: 33 failures, covering original URL, original error body, logs and final HTTP body.
-- After modification, related 15 test files, 202 items passed, including real local HTTP receiver, retry body,
-  normal auth header, OAuth original address, parent/child agent, workflow, automation, mobile session_create boundary.
-- macOS + Node 24.14.0 execution; no real account, production network reporting or real user privacy samples.
-- Windows/Linux paths covered as input cases, did not run Windows/Linux real machine, real Electron login or mobile browser E2E.
-- architecture:check passed; shared/ui/services are legacy/unmanaged modules for current strategy,
-  passing does not automatically prove all their runtime boundaries. Shared cleaning is I/O-free pure function, did not change business state owner.
-
-Full `pnpm typecheck`, `pnpm lint` (55 non-modified file warnings, 0 errors),
-modified file oxfmt check and `git diff --check` passed.
+The new regression was first run against the old implementation and failed (original URL, original error body,
+logs and final HTTP body); it passes now, including a real local HTTP receiver, retry body, normal auth header,
+OAuth original address, parent/child agent, workflow, automation and the mobile `session_create` boundary. Windows/
+Linux paths are covered as input cases only; no Windows/Linux real machine, real Electron login, mobile browser
+E2E, real account or production network reporting was run. `architecture:check` passing does not prove all runtime
+boundaries of the legacy/unmanaged shared/ui/services modules; the shared cleaning is an I/O-free pure function and
+changes no business state owner.
 
 ## Field Table & Report Migration
 
