@@ -1,59 +1,68 @@
-# 页面不可见时暂停 CSS 动画
+# Pause CSS Animations While the Page Is Hidden
 
-## 问题
+## Problem
 
-窗口不可见（最小化、切到其他桌面、锁屏熄屏、手机浏览器切后台）时，Chromium 不再产出动画帧，
-`DocumentTimeline` 上的 CSS transition / animation 无法结算。此时若带动画的元素被移除
-（虚拟列表回收、切 task、流式重挂），`HTMLDocument → DocumentTimeline → CSSTransition`
-仍强引用该元素，并经 parent 指针拖住整棵已卸载的消息子树，直到页面重新可见才释放。
+When the window is not visible (minimized, on another desktop, screen locked, mobile browser in the
+background), Chromium produces no animation frames and CSS transitions / animations on the
+`DocumentTimeline` cannot settle. If an animated element is removed meanwhile (virtual list recycling,
+task switch, streaming remount), `HTMLDocument → DocumentTimeline → CSSTransition` still strongly
+references the element and, through parent pointers, holds the whole unmounted message subtree until
+the page becomes visible again.
 
-实测（2026-09-29，隔离 HOME + mock provider 流式压测，GC 后）：
+Measured (2026-09-29, isolated HOME + mock provider streaming stress, after GC):
 
-| 状态               | DOM 节点 | JS 监听器 | renderer footprint |
-| ------------------ | -------- | --------- | ------------------ |
-| hidden 期间        | 235,382  | 12,071    | 498 MB             |
-| 恢复 visible 1s 后 | 45,297   | 1,943     | 379 MB             |
+| State                      | DOM nodes | JS listeners | renderer footprint |
+| -------------------------- | --------- | ------------ | ------------------ |
+| while hidden               | 235,382   | 12,071       | 498 MB             |
+| 1s after becoming visible  | 45,297    | 1,943        | 379 MB             |
 
-受控实验：hidden 下触发 transition 再移除 → 100% 留存（先 `cancel()` 也留存）；
-不触发 transition → 0 留存。主要入口是 markdown 表格随测量变化的
-`transition-[max-width]` / `transition-[width,opacity]`，但机制对所有 CSS 动画成立。
+Controlled experiment: triggering a transition while hidden and then removing the element retains 100%
+(even after `cancel()` first); without triggering a transition 0 is retained. The main entry is the
+markdown table's `transition-[max-width]` / `transition-[width,opacity]` that change with measurement,
+but the mechanism applies to all CSS animations.
 
-## 约定
+## Contract
 
 ```
 visibilitychange ──► document.visibilityState === "hidden"
-                        │ 是                         │ 否
+                        │ yes                        │ no
                         ▼                            ▼
-          <html data-document-hidden>        移除 data-document-hidden
+          <html data-document-hidden>        remove data-document-hidden
                         │
                         ▼
-   *, ::before, ::after { transition: none; animation: none }（!important）
-   → hidden 期间不会创建新的 CSSTransition / CSSAnimation，被移除元素可正常 GC
+   *, ::before, ::after { transition: none; animation: none } (!important)
+   → no new CSSTransition / CSSAnimation is created while hidden, removed elements can be GC'd
 ```
 
-- 唯一数据源是 `document.visibilityState`；安装时立即同步一次，之后只响应 `visibilitychange`，不引入定时器。
-- 桌面 renderer 与 Web（含手机 `/remote`）入口在 `createRoot` 前各调用一次
-  `installDocumentHiddenMotionPause()`（`packages/ui/src/lib/documentHiddenMotionPause.ts`）。
-- 页面不可见时用户看不到画面，关闭动画无可见影响；恢复可见后样式立即回到终态，后续变化照常过渡。
-- 附带收益：Radix Presence 等“等 `animationend` 才卸载”的退出动画在 hidden 下读到 `animation-name: none`，
-  会同步卸载，不再滞留遮罩。
+- The only data source is `document.visibilityState`; it syncs once at install time and then reacts
+  only to `visibilitychange`, with no timers.
+- The desktop renderer and Web (including mobile `/remote`) entries each call
+  `installDocumentHiddenMotionPause()` (`packages/ui/src/lib/documentHiddenMotionPause.ts`) before
+  `createRoot`.
+- While the page is hidden the user sees nothing, so disabling animations has no visible effect; after it
+  becomes visible styles return to the final state immediately and later changes transition normally.
+- Side benefit: exit animations that wait for `animationend` before unmounting (Radix Presence, etc.)
+  read `animation-name: none` while hidden and unmount synchronously, so no overlay lingers.
 
-## 验证结果
+## Verification result
 
-同一压测脚本、窗口最小化（hidden）下连续 15 轮，GC 后对比：
+Same stress script, window minimized (hidden), 15 consecutive rounds, compared after GC:
 
-| 指标                          | 修复前  | 修复后 |
-| ----------------------------- | ------- | ------ |
-| DOM 节点（Memory counters）   | 175,224 | 22,361 |
-| JS 监听器                     | 12,071  | 1,213  |
-| heap snapshot detached 节点   | 109,407 | 3,819  |
-| 受控实验留存（20,050 个节点） | 100%    | ~2%    |
+| Metric                                | Before  | After  |
+| ------------------------------------- | ------- | ------ |
+| DOM nodes (Memory counters)           | 175,224 | 22,361 |
+| JS listeners                          | 12,071  | 1,213  |
+| heap snapshot detached nodes          | 109,407 | 3,819  |
+| controlled-experiment retention (20,050 nodes) | 100% | ~2% |
 
-剩余 detached 由 TanStack virtual `elementsCache` 经挂起的 rAF 闭包持有，恢复可见后结算，有界。
+The remaining detached nodes are held by TanStack virtual `elementsCache` through a pending rAF closure,
+settle after the page becomes visible and are bounded.
 
-## 边界
+## Boundaries
 
-- 只覆盖 CSS transition / animation；`motion` 等 JS 驱动（Web Animations API）的动画不受影响。
-- 进入 hidden 瞬间正在进行的过渡会被取消（触发 `transitioncancel` 而非 `transitionend`），
-  依赖 `transitionend` 收口的逻辑需自带兜底（现有 `useAnimatedResizablePanel`、
-  `HighspeedActivationVisual` 已有超时兜底）。
+- Covers only CSS transitions / animations; JS-driven (Web Animations API) animations such as `motion`
+  are unaffected.
+- A transition in progress at the moment of entering hidden is canceled (firing `transitioncancel`
+  rather than `transitionend`), so logic that relies on `transitionend` to close out must bring its own
+  fallback (the existing `useAnimatedResizablePanel` and `HighspeedActivationVisual` already have
+  timeout fallbacks).

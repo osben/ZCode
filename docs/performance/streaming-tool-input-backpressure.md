@@ -1,76 +1,125 @@
 # Streaming Tool Input Backpressure
 
-## 背景
+## Background
 
-ZCode Protocol 已经把工具参数流拆成 `tool_input_start` / `tool_input_delta` / `tool_input_end`，这是流式 function call 的基础能力。2026-06-13 的双任务现场显示，renderer CPU 被打满并不是 agent 计算过载，而是 UI 在每个 `tool_input_delta` 上把累计 `rawInput` 重新解析成完整预览，再写入 task message store 并触发 React render。
+ZCode Protocol already splits the tool-argument stream into `tool_input_start` / `tool_input_delta` /
+`tool_input_end`, the basis of streaming function calls. A two-task field case on 2026-06-13 showed that
+the renderer CPU being pegged was not agent compute overload: on every `tool_input_delta` the UI
+re-parsed the accumulated `rawInput` into a full preview, wrote it to the task message store and
+triggered a React render.
 
-典型 case 是一个约 36KB 的 `Write` 输入被拆成 785 个 delta。真实网络 delta 内容不大，但 UI 每个 delta 都扫描越来越长的累计字符串，形成近似 O(n²) 的解析和渲染成本。后台任务也同频写 store，两个任务并发时会叠加到主 renderer。
+A typical case is a `Write` input of about 36KB split into 785 deltas. Each real network delta is small,
+but the UI scanned an ever longer accumulated string on every delta, an approximately O(n²) parse and
+render cost; background tasks also wrote the store at the same frequency, and two concurrent tasks
+stacked onto the main renderer.
 
-## 目标
+## Goals
 
-- 保留流式 function call：active 任务仍能尽快看到工具卡和参数预览。
-- 非 active 任务不再每个工具参数 delta 都 materialize 到消息树。
-- 大 `Write` / `Edit` 输入不再每个 delta 全量解析、全量写 store。
-- 切回运行中的后台任务时，继续沿用已经累计的工具输入 buffer，不丢前半段参数。
-- 工具状态事件不再因为 queued/started/closed/committed 重复把同一份 input 写进 UI store。
-- 不改变 desktop `desktop-continuous` 与 mobile `web-remote-replayable` 的交付语义边界。
+- Keep streaming function calls: an active task still sees the tool card and argument preview as fast as
+  possible.
+- Non-active tasks no longer materialize every tool-argument delta into the message tree.
+- Large `Write` / `Edit` inputs no longer fully parse and fully write the store on every delta.
+- Switching back to a running background task keeps using the already accumulated tool-input buffer and
+  loses no earlier argument segment.
+- Tool status events no longer write the same input into the UI store repeatedly on
+  queued/started/closed/committed.
+- The delivery-semantics boundary between desktop `desktop-continuous` and mobile
+  `web-remote-replayable` is unchanged.
 
-## 设计
+## Design
 
-### Active Live
+### Active live
 
-active 任务继续消费完整 continuous stream，但工具参数预览需要预算：
+The active task keeps consuming the full continuous stream, but the tool-argument preview is budgeted:
 
-- `tool_input_start` 立即创建工具卡。
-- 第一个 `tool_input_delta` 立即预览，用于快速识别 `Write` / `Edit` / `Bash` 等工具形态。
-- `Write` / `Edit` 的后续 delta 只按 `SessionEvent.timestamp` 的 1000ms 预算预览，并把期间 suffix 合并成一次更新；累计字节增长不能绕过这个时间预算。
-- 其他工具继续沿用既有时间/字节预算，不因文件工具降频而降低命令等参数的反馈速度。
-- `tool_input_end` 只作为轻量边界更新工具卡状态，不再解析完整 raw input；最终 `tool_call` 携带完整 input 时只 materialize 一次，避免 end/call 连续重复解析大 JSON。
-- 预览事件的 `raw` 只保留 `streamingRawInputLength`，不把完整 `streamingRawInput` 写进 message store。
+- `tool_input_start` creates the tool card immediately.
+- The first `tool_input_delta` previews immediately, to quickly recognize the tool shape of
+  `Write` / `Edit` / `Bash` etc.
+- Later `Write` / `Edit` deltas preview only on a 1000ms budget by `SessionEvent.timestamp`, merging the
+  suffix of that period into one update; cumulative byte growth cannot bypass the time budget.
+- Other tools keep the existing time/byte budget, so file-tool throttling does not slow the feedback of
+  command arguments.
+- `tool_input_end` is only a lightweight boundary update of tool-card state and no longer parses the
+  complete raw input; the final `tool_call` carrying the full input materializes once, avoiding
+  repeated parsing of big JSON across end/call.
+- The `raw` of a preview event keeps only `streamingRawInputLength` and never writes the full
+  `streamingRawInput` into the message store.
 
-### Background Summary
+### Background summary
 
-非 active 任务的后台 monitor 使用 summary profile：
+The background monitor of a non-active task uses a summary profile:
 
-- `tool_input_start` 可创建轻量工具卡，保证后台任务看起来仍在推进。
-- `tool_input_delta` 只进入 projection state 的 tombstone buffer，不写 message store、不触发 React render。
-- tombstone buffer 记录 `rawInput`、`deltaCount`、最近预览位置和完整 input 状态。
-- `tool_input_end` 仍立即传递轻量状态；最终 `tool_call`、tool result、permission、elicitation、task terminal 仍然立即传递。
-- 切回 active 时，foreground subscription 继承 background projection state，下一次 delta/end/tool_call 可以用完整累计 buffer materialize。
+- `tool_input_start` may create a lightweight tool card so the background task still looks like it is
+  advancing.
+- `tool_input_delta` enters only the tombstone buffer of the projection state; no message store write,
+  no React render.
+- The tombstone buffer records `rawInput`, `deltaCount`, the latest preview position and the full-input
+  state.
+- `tool_input_end` still passes lightweight state immediately; the final `tool_call`, tool result,
+  permission, elicitation and task terminal are still delivered immediately.
+- On switching to active, the foreground subscription inherits the background projection state and the
+  next delta/end/tool_call can materialize from the full accumulated buffer.
 
-### Tool Input Dedup
+### Tool input dedup
 
-工具状态流里同一个 tool call 的 input 可能在 `tool_call_closed`、`scheduled`、`tool_queued`、`tool_started`、`tool_result_committed` 等事件中重复出现。UI projection 维护 tool input materialized 状态：
+The input of one tool call may repeat in tool status events such as `tool_call_closed`, `scheduled`,
+`tool_queued`, `tool_started`, `tool_result_committed`. UI projection maintains the tool-input
+materialized state:
 
-- 首次看到完整 input 时发 `tool_call` 并缓存。
-- 后续带同样 input 的状态事件只发 `tool_call_update`，不再携带 input。
-- duplicate raw payload 中移除完整 input，仅保留 `inputOmitted: true` 和 `inputRef: "tool_call"` 便于调试。
+- The first time a full input is seen it emits `tool_call` and caches it.
+- Later status events with the same input emit only `tool_call_update`, without the input.
+- The duplicate raw payload drops the full input and keeps only `inputOmitted: true` and
+  `inputRef: "tool_call"` for debugging.
 
-### Protocol Payload Backpressure
+### Protocol payload backpressure
 
-ZCode Protocol 边界也需要避免重复全量：
+The ZCode Protocol boundary must also avoid repeating the full payload:
 
-- 连续的 `model.streaming:tool_input_delta` 在 protocol server 边界合并成较大的 diff 包；首个 delta 立即 flush，后续按既有事件时间戳预算或确定性字节预算 flush，任何非 delta 控制事件到达前也必须先 flush。`Write` / `Edit` 的 UI 可见投影在 ProductProjection / 兼容 projection 再收敛到 1000ms，不能由 protocol 字节阈值绕过。
-- 连续的 `model.streaming:text_delta` / `reasoning_delta` 也在同一协议边界合并。第一个 delta 立即 flush 保留“模型已经开始输出”的体感，后续按事件时间戳预算和确定性字节预算 flush，避免 provider 把思考流按 1-5 字符切包时唤醒 renderer 上万次，同时不能让用户感觉正文不再流式输出。
-- `streaming_tool_ledger_updated` 是 runtime replay 账本，只给 agent reducer 恢复运行态使用，不再映射成 app `session.updated`。
-- `model.streaming:tool_call` 已经交付过完整 input 后，同一 `toolCallId` 的 `tool.updated:scheduled` 不再重复携带 input。
-- scheduled tombstone 保留 `inputOmitted: true`、`inputRef: "model_stream"` 和 `inputByteLength`，便于日志确认省略行为。
-- 如果 scheduled 在 `tool_call` 之前出现，或没有可证明已交付的完整 input，协议仍保留原始 input，避免破坏恢复。
+- Consecutive `model.streaming:tool_input_delta` events are merged into larger diff packets at the
+  protocol server boundary; the first delta flushes immediately, later ones flush on the existing event
+  timestamp budget or a deterministic byte budget, and any non-delta control event flushes first when it
+  arrives. The UI-visible projection of `Write` / `Edit` converges to 1000ms again in ProductProjection
+  / the compatible projection and cannot be bypassed by the protocol byte threshold.
+- Consecutive `model.streaming:text_delta` / `reasoning_delta` events are merged at the same boundary.
+  The first delta flushes immediately to keep the feel that "the model has started output"; later ones
+  flush on the event-timestamp budget and the deterministic byte budget, avoiding waking the renderer
+  tens of thousands of times when a provider cuts the reasoning stream into 1-5 character packets,
+  without making the body feel non-streaming.
+- `streaming_tool_ledger_updated` is a runtime replay ledger only for the agent reducer to restore run
+  state and is no longer mapped to app `session.updated`.
+- After `model.streaming:tool_call` has already delivered the full input, `tool.updated:scheduled` of
+  the same `toolCallId` no longer carries the input again.
+- The scheduled tombstone keeps `inputOmitted: true`, `inputRef: "model_stream"` and `inputByteLength`
+  so logs can confirm the omission.
+- If scheduled appears before `tool_call` or there is no provably delivered full input, the protocol
+  keeps the original input to avoid breaking recovery.
 
-## 边界
+## Boundaries
 
-- renderer projection/store、services 兼容 task projection 与 ZCode Protocol payload 都参与降频/去重；runtime 内部 eventStore 仍保留完整账本。
-- desktop continuous 仍订阅 `deliveryKind: "desktop-continuous"`，只是确定性 projection 对 `Write` / `Edit` 的 UI 可见输入更新降频。
-- protocol coalescing 仍保持 diff 语义，只合并相邻 `tool_input_delta` / `text_delta` / `reasoning_delta` 的 `delta` 字段，不把累计 full input 放回 delta 事件；batch 边界只由首包 eager、事件时间戳预算、字节预算和事件顺序决定。时间预算必须基于 `SessionEvent.timestamp` 而不是 live 定时器，保证 live 与 replay 的 `afterSeq` 恢复边界一致。
-- web remote replayable 的 snapshot/gap recovery 语义不变；如果未来把 background summary 下沉到服务层，必须显式带上 `clientMode` / `deliveryKind`。
-- 权限请求、用户输入请求、任务完成/失败、stream gap snapshot 不能被节流。
+- Renderer projection/store, the services compatible task projection and the ZCode Protocol payload all
+  take part in throttling/dedup; the runtime's internal eventStore keeps the complete ledger.
+- Desktop continuous still subscribes with `deliveryKind: "desktop-continuous"`; only the deterministic
+  projection throttles the UI-visible input updates of `Write` / `Edit`.
+- Protocol coalescing keeps diff semantics and merges only the `delta` field of adjacent
+  `tool_input_delta` / `text_delta` / `reasoning_delta`, never putting accumulated full input back into a
+  delta event; batch boundaries are decided only by eager first packet, event-timestamp budget, byte
+  budget and event order. The time budget must use `SessionEvent.timestamp`, not a live timer, so live
+  and replay share the same `afterSeq` recovery boundary.
+- The snapshot/gap recovery semantics of web remote replayable are unchanged; if background summary is
+  later pushed down into the service layer it must explicitly carry `clientMode` / `deliveryKind`.
+- Permission requests, user-input requests, task completion/failure and stream-gap snapshots must not be
+  throttled.
 
-## 验收
+## Acceptance
 
-- 双任务并发、大 Write 输入时 renderer CPU 峰值显著低于优化前，不再长时间 100%。
-- CDP profile 中 `streaming-tool-input-preview.ts` 不再随着每个 delta 成为主热点。
-- active 任务能立即看到 `Write` / `Edit` 工具卡和首段参数；运行期间昂贵预览最多每秒 materialize 一次，收尾立即显示精确终态。
-- `+N/-N` 在每个采样点原子跳到该次真实统计值，不使用逐行 `requestAnimationFrame` 追赶。
-- background 任务切回后能显示完整工具 input。
-- 最终 snapshot 与消息工具卡 input/result 一致。
-- `pnpm lint` 与 `pnpm typecheck` 通过。
+- With two concurrent tasks and large Write input the renderer CPU peak is clearly below the
+  pre-optimization level and no longer sits at 100% for a long time.
+- In the CDP profile `streaming-tool-input-preview.ts` is no longer the main hotspot on every delta.
+- An active task sees the `Write` / `Edit` tool card and the first argument segment immediately; the
+  expensive preview materializes at most once per second while running, and the exact final state
+  appears immediately at the end.
+- `+N/-N` jumps atomically to the true statistic at each sampling point; no per-line
+  `requestAnimationFrame` catch-up.
+- A background task shows the complete tool input after switching back.
+- The final snapshot matches the message tool-card input/result.
+- `pnpm lint` and `pnpm typecheck` pass.
