@@ -26,6 +26,7 @@ export interface ChildSessionSelectOptions {
 export type ChildSessionSelectHandler = (
   sessionId: string,
   options: ChildSessionSelectOptions,
+  title?: string,
 ) => void;
 
 /** Per-parent expansion backed by the single localStorage owner (childSessionExpansionPreference). */
@@ -38,29 +39,53 @@ export function useChildSessionsExpansion(parentSessionId: string): [boolean, ()
   return [expanded, toggle];
 }
 
+/**
+ * Children shown under the parent row: every listed child while expanded, otherwise only the
+ * running ones (spec §8: live subagents stay visible without a click; finished ones collapse).
+ */
+export function visibleChildSessions(
+  task: Pick<ZCodeTaskMeta, "childSessions">,
+  expanded: boolean,
+): NonNullable<ZCodeTaskMeta["childSessions"]> {
+  const listed = task.childSessions ?? [];
+  return expanded ? listed : listed.filter((child) => child.running);
+}
+
 export function TaskChildSessionRows({
   task,
+  expanded,
+  onToggle,
   onSelectSession,
 }: {
   task: ZCodeTaskMeta;
+  expanded: boolean;
+  onToggle: () => void;
   onSelectSession: ChildSessionSelectHandler;
 }) {
   const { intl } = useZCodeIntl();
-  const listed = task.childSessions ?? [];
+  const listed = visibleChildSessions(task, expanded);
   if (listed.length === 0) return null;
   const overflow = Math.max(
     0,
     (task.sideChatCount ?? 0) + (task.subagentCount ?? 0) - listed.length,
   );
   const openSession =
-    (sessionId: string, taskType: "subagent_child" | "selection_side_chat" | null = null) =>
+    (
+      sessionId: string,
+      taskType: "subagent_child" | "selection_side_chat" | null = null,
+      title?: string,
+    ) =>
     (event: MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      onSelectSession(sessionId, {
-        readOnly: taskType === "subagent_child",
-        selectionSideChat: taskType === "selection_side_chat",
-      });
+      onSelectSession(
+        sessionId,
+        {
+          readOnly: taskType === "subagent_child",
+          selectionSideChat: taskType === "selection_side_chat",
+        },
+        title,
+      );
     };
   return (
     <div className="ml-4 border-l border-border py-px pl-2" data-child-sessions-list="true">
@@ -69,7 +94,7 @@ export function TaskChildSessionRows({
           key={child.sessionId}
           data-child-session-id={child.sessionId}
           type="button"
-          onClick={openSession(child.sessionId, child.taskType)}
+          onClick={openSession(child.sessionId, child.taskType, child.title)}
           aria-label={intl.formatMessage(
             {
               id:
@@ -108,7 +133,17 @@ export function TaskChildSessionRows({
       {overflow > 0 ? (
         <button
           type="button"
-          onClick={openSession(task.taskId)}
+          // Collapsed: reveal the finished children; expanded: beyond the cap, open the parent.
+          aria-expanded={expanded ? undefined : false}
+          onClick={
+            expanded
+              ? openSession(task.taskId)
+              : (event: MouseEvent<HTMLButtonElement>) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onToggle();
+                }
+          }
           className="flex h-5 w-full items-center rounded-sm px-1.5 pl-[22px] text-left text-ui-xs text-foreground-subtlest hover:bg-surface-hover hover:text-foreground-subtle focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
         >
           {intl.formatMessage({ id: "taskList.childMoreLabel" }, { count: overflow })}

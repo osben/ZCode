@@ -75,6 +75,7 @@ import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
+  visibleChildSessions,
   type ChildSessionSelectHandler,
 } from "@/components/TaskChildSessionRows.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
@@ -473,10 +474,15 @@ export const MemoTaskItem = memo(function TaskListItem({
       />
     ) : null;
   const hasChildSessionRows =
-    Boolean(onSelectChildSession) && childSessionsExpanded && (task.childSessions?.length ?? 0) > 0;
+    Boolean(onSelectChildSession) && visibleChildSessions(task, childSessionsExpanded).length > 0;
   const childSessionRowsNode =
     hasChildSessionRows && onSelectChildSession ? (
-      <TaskChildSessionRows task={task} onSelectSession={onSelectChildSession} />
+      <TaskChildSessionRows
+        task={task}
+        expanded={childSessionsExpanded}
+        onToggle={toggleChildSessions}
+        onSelectSession={onSelectChildSession}
+      />
     ) : null;
   const hasBelowTitleLines = hasWorkflowRunLines || hasChildSessionRows;
   const workflowRunLinesNode = hasWorkflowRunLines ? (

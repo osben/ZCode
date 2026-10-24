@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
+import { routeChildSessionSelection } from "@/project-sidebar/child-session-navigation.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
@@ -397,9 +398,22 @@ function GroupedTaskInteractiveRow({
   // Child-conversation list expansion is per parent and per device; the marker doubles as the expander.
   const [childSessionsExpanded, handleToggleChildSessions] = useChildSessionsExpansion(task.taskId);
   // Phone rows stay unchanged (spec §7): the web remote switcher cannot open child sessions.
-  const childSessionsEnabled = !useContext(ProjectTaskListContext).isWebRemoteControl;
-  const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
-    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, options);
+  const presentation = useContext(ProjectTaskListContext);
+  const childSessionsEnabled = !presentation.isWebRemoteControl;
+  const handleSelectChildSession = (
+    sessionId: string,
+    options: ChildSessionSelectOptions,
+    title?: string,
+  ) =>
+    routeChildSessionSelection({
+      parent: task,
+      sessionId,
+      options,
+      title,
+      openSubagentSession: presentation.onOpenSubagentSession,
+      selectInMainPane: () =>
+        onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, options),
+    });
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",
   });
@@ -690,8 +704,13 @@ function GroupedTaskInteractiveRow({
         </span>
       </span>
       {workflowRunLinesNode}
-      {childSessionsEnabled && childSessionsExpanded ? (
-        <TaskChildSessionRows task={task} onSelectSession={handleSelectChildSession} />
+      {childSessionsEnabled ? (
+        <TaskChildSessionRows
+          task={task}
+          expanded={childSessionsExpanded}
+          onToggle={handleToggleChildSessions}
+          onSelectSession={handleSelectChildSession}
+        />
       ) : null}
     </div>
   );

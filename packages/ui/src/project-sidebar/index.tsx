@@ -117,6 +117,7 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
       mobileActiveTaskKey,
       onPin: pin,
       onOpenTaskFiles: openTaskFiles,
+      onOpenSubagentSession: props.onOpenSubagentSession,
     }),
     [
       props.isWebRemoteControl,
@@ -125,6 +126,7 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
       mobileActiveTaskKey,
       pin,
       openTaskFiles,
+      props.onOpenSubagentSession,
     ],
   );
   const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
