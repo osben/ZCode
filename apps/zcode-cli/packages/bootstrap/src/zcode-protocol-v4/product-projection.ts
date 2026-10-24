@@ -2598,7 +2598,11 @@ export class ProductProjection {
               at: this.ms(event),
               // 旧投影把所有 TurnError 都写成 runtime，丢失 adapter 已识别的 provider/network 事实。
               source: payload.error.attribution?.source ?? "runtime",
-              traceId: String(event.traceId),
+              // Cold hydration stamps a shared sentinel trace id; surfacing it would make
+              // error reports carry "hydrate-trace" instead of a traceable request id.
+              ...(String(event.traceId) !== HYDRATION_TRACE_ID
+                ? { traceId: String(event.traceId) }
+                : {}),
               ...(payload.error.detail ? { detail: payload.error.detail } : {}),
               ...(payload.error.underlyingErrorMessage
                 ? { underlyingErrorMessage: payload.error.underlyingErrorMessage }
