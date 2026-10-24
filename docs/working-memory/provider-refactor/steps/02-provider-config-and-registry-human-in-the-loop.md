@@ -4,9 +4,7 @@
 >
 > Last updated: 2026-08-20
 
-This document records the architecture, product, and public contract decisions submitted to human review during M2 implementation. It differs from the implementation log: the latter saves reversible decisions the Agent made autonomously to keep moving forward; this document saves decisions that change target abstractions or implementation boundaries and must be confirmed by a human.
-
-Each entry describes the background when the question was raised, the human's decision, target design, and implementation impact. Confirmed conclusions are synchronized to the corresponding Design node; this document retains the decision background and the distance between current implementation and the target.
+This file records the architecture, product, and public contract decisions submitted to human review during M2. Unlike the implementation log, which saves reversible decisions the Agent made autonomously, this file saves decisions that change target abstractions or implementation boundaries and require human confirmation. Confirmed conclusions are synced to the corresponding Design node; this file keeps the decision background and the gap between current implementation and target.
 
 ## 1. Account Access Reuses Provider Config Overlay
 
@@ -14,15 +12,13 @@ Each entry describes the background when the question was raised, the human's de
 
 ### Background
 
-A Provider's access method and public API are two independent dimensions: `access.type = "api-key"` uses a static API Key, `access.type = "zhipu-account"` uses the current login, plan, or team connection; `api.type` describes Anthropic Messages, OpenAI Responses, or OpenAI Chat Completions. Different access methods can use the same API.
+A Provider's access method and public API are two independent dimensions: `access.type = "api-key"` uses a static API Key; `access.type = "zhipu-account"` uses the current login, plan, or team connection. `api.type` describes Anthropic Messages, OpenAI Responses, or OpenAI Chat Completions; different access methods can use the same API.
 
-The initial new Registry still placed account state in a separate `AccountProviderAccessEntry[]`, which the Resolver then拼接 by `providerId` to construct `modelIds` and `accessId`. The first adjustment renamed it to Runtime Overlay, yet it established `AccountProviderOverlay`, `AccountProviderAccess`, and `allowedModelIds`, which is essentially a second Provider data structure.
-
-This conflicts with the Config Overlay goal: Official, Personal, and account state are all supplementing fields for the same Provider; there is no need for three shapes and a special filtering algorithm.
+Early Registry designs placed account state in a separate `AccountProviderAccessEntry[]`, later renamed to a Runtime Overlay with `AccountProviderOverlay`, `AccountProviderAccess`, and `allowedModelIds` — in effect a second Provider data structure. This conflicts with the Config Overlay goal: Official, Personal, and account state all supplement fields of the same Provider, so three shapes and a special filtering algorithm are unnecessary.
 
 ### Decision
 
-Account state directly outputs a sparse third-layer `ProviderConfigMap`, using the exact same Provider Config Overlay data structure and algorithm as Official and Personal:
+Account state directly outputs a sparse third-layer `ProviderConfigMap`, using the same Provider Config Overlay data structure and algorithm as Official and Personal:
 
 ```text
 Official ProviderConfigMap
@@ -39,7 +35,7 @@ Account ProviderConfigMap
 Final ProviderConfigMap
 ```
 
-Ownership of the three layers remains different: Official is managed by the platform, Personal by the user, and Account is generated in real time from account and plan state. The Account layer is not persisted and is not edited by the settings page; these differences are expressed by Source and lifecycle, not by another set of domain types.
+Ownership of the three layers stays different: Official is platform-managed, Personal is user-managed, Account is generated in real time from account and plan state. The Account layer is not persisted and not edited by the settings page; these differences are expressed by Source and lifecycle, not by another set of domain types.
 
 ### Access Config
 
@@ -63,11 +59,11 @@ class ZhipuAccountAccessConfig extends ConfigOverlay {
 }
 ```
 
-`accessId` is a non-sensitive account connection identity, used to distinguish Start Plan, Personal Coding Plan, and specific Team Plan. It is not JWT, API Key, or Header.
+`accessId` is a non-sensitive account connection identity used to distinguish Start Plan, Personal Coding Plan, and a specific Team Plan. It is not a JWT, API Key, or Header.
 
 ### Account Layer Provides Model Members
 
-Official Account Provider is responsible for `api.type`, `api.baseURL`, static Headers, and other managed definitions; it does not need to list the current account's ultimately available models in advance. The Account layer also provides the current connection's account-level `accessId` and `models`:
+The Official Account Provider manages `api.type`, `api.baseURL`, static Headers, and other definitions; it does not pre-list the current account's finally available models. The Account layer supplies the current connection's account-level `accessId` and `models`:
 
 ```text
 Official
@@ -96,23 +92,13 @@ A -> {
 }
 ```
 
-`models` follows standard field Overlay rules: when the Account layer provides this field, it completely overrides the preceding layer, directly determining final members and order. There is no longer `allowedModelIds`, and no "intersection of configured models and allowed models" computation. Model Properties, Option Specs, and Reasoning Mapping continue to be resolved by ModelConfigRules, which is a separate concern from the Provider's model member list.
+`models` follows standard field Overlay rules: when the Account layer provides this field, it completely overrides the preceding layer and directly determines final members and order. There is no `allowedModelIds` and no "intersection of configured models and allowed models" computation. Model Properties, Option Specs, and Reasoning Mapping continue to be resolved by ModelConfigRules, a separate concern from the Provider's model member list.
 
 ### Registry and Authentication Boundaries
 
-The Registry only handles Config:
+The Registry only handles Config: the three-layer `ProviderConfigMap` enters it after `overlay + validateComplete`. The final `ProviderConfig` has complete `access.type`, account-level `accessId`, and `models`. The Registry does not verify whether `accessId` corresponds to actual entitlement and does not establish an `accessAllowed` gate based on the Account Source's member relationships.
 
-```text
-Three-layer ProviderConfigMap
-        |
-        | overlay + validateComplete
-        v
-Provider Registry
-```
-
-The final `ProviderConfig` has complete `access.type`, account-level `accessId`, and `models`; it can then enter the Registry. The Registry does not verify whether `accessId` corresponds to actual entitlement, nor does it establish an additional `accessAllowed` gate based on the Account Source's member relationships.
-
-Even if someone manually writes an invalid `accessId`, it will not obtain actual credentials. The final authority for request authentication is the Account Request Auth Service:
+A manually written invalid `accessId` obtains no actual credentials. The final authority for request authentication is the Account Request Auth Service:
 
 ```text
 Provider.config.access.accessId
@@ -129,7 +115,7 @@ Account Request Auth Service
         └─ Cannot resolve or no permission        -> Request fails
 ```
 
-The Registry and Model do not store account Secrets. Tokens or Runtime Keys inside account identity can be refreshed, but already-created Models do not follow global current connection switches to another Personal or Team Plan.
+The Registry and Model store no account Secrets. Tokens or Runtime Keys inside account identity can be refreshed, but already-created Models do not follow global current-connection switches to another Personal or Team Plan.
 
 ### Final Provider
 
@@ -143,16 +129,16 @@ interface Provider {
 }
 ```
 
-When `provider.config.access.type === "zhipu-account"`, TypeScript narrows the Access Config to `ZhipuAccountAccessConfig`, and the ModelFactory directly reads `provider.config.access.accessId`. `ProviderRegistryProvider` is renamed to the domain name `Provider`.
+When `provider.config.access.type === "zhipu-account"`, TypeScript narrows the Access Config to `ZhipuAccountAccessConfig`, and the ModelFactory reads `provider.config.access.accessId` directly. `ProviderRegistryProvider` is renamed to the domain name `Provider`.
 
 ### Impact on Current Implementation
 
-- Account Source's output is changed to sparse `ProviderConfigMap`, no longer outputting `AccountProviderAccessEntry[]` or `AccountProviderOverlay[]`.
-- Provider Config Snapshot adds Account Provider Config layer; the Resolver calls the same Overlay in the order: Official, Personal, Account.
-- Delete `AccountProviderAccess`, `allowedModelIds`, `accessAllowed`, and flattened `accountAccessId` from the Registry. The request protocol still uses `accountAccessId` to pass the Model's fixed identity to the dynamic authentication Service.
-- `ZhipuAccountAccessConfig` includes `accessId`; the final completeness check requires that Account Providers have the Config fields needed for execution.
-- The ModelFactory fixes `accessId` from the final `ProviderConfig.access`; the existing request-period dynamic authentication chain remains unchanged.
-- Early in this decision's implementation, the old Snapshot was temporarily allowed to project the formal Account `ProviderConfigMap`. M2.8 subsequently deleted this production compatibility chain; the current Account Source directly produces formal Config, and this document no longer considers Snapshot projection as a viable implementation path.
+- Account Source output is a sparse `ProviderConfigMap`; it no longer outputs `AccountProviderAccessEntry[]` or `AccountProviderOverlay[]`.
+- Provider Config Snapshot adds the Account Provider Config layer; the Resolver applies the same Overlay in the order Official, Personal, Account.
+- `AccountProviderAccess`, `allowedModelIds`, `accessAllowed`, and flattened `accountAccessId` are deleted from the Registry. The request protocol still uses `accountAccessId` to pass the Model's fixed identity to the dynamic authentication Service.
+- `ZhipuAccountAccessConfig` includes `accessId`; the final completeness check requires Account Providers to carry the Config fields needed for execution.
+- The ModelFactory fixes `accessId` from the final `ProviderConfig.access`; the existing request-period dynamic authentication chain is unchanged.
+- Early in this decision's implementation, the old Snapshot was temporarily allowed to project the formal Account `ProviderConfigMap`. M2.8 deleted this production compatibility chain; the Account Source now directly produces formal Config, and Snapshot projection is no longer a viable implementation path.
 
 ## 2. Last-known-good View Retained on Source Refresh Failure
 
@@ -160,33 +146,17 @@ When `provider.config.access.type === "zhipu-account"`, TypeScript narrows the A
 
 ### Background
 
-The Registry aggregates Official, Personal, and Account three-channel Provider Config into a single complete View. When any channel changes, the Registry re-reads, parses, and validates all inputs on the side, then atomically publishes the new View.
+The Registry aggregates Official, Personal, and Account Provider Config into a single complete View. When any source changes, it re-reads, parses, and validates all inputs off to the side, then atomically publishes the new View.
 
-```text
-Current complete View v1
-        |
-        Source changes
-        |
-        v
-Read Official / Personal / Account
-        |
-        v
-Build and validate View v2
-        |
-        | All succeed
-        v
-Atomically publish v2
-```
+Source refresh may fail from temporarily unreadable files, JSON or Schema parsing failures, abnormal Official sources, or account and plan service timeouts. At that point the system only knows "cannot obtain the latest facts"; it cannot infer that the user deleted Personal Config, the platform removed the Provider, or the account logged out.
 
-Source refresh may fail due to temporarily unreadable files, JSON or Schema parsing failures, abnormal Official sources, or account and plan service timeouts. At this point, the system can only confirm "unable to obtain the latest facts"; it cannot infer that the user deleted Personal Config, the platform removed the Provider, or the account has logged out.
+Each Overlay layer saves only the fields it owns. Publishing a partial result that drops the failing Source would misread a read exception as a business deletion: Personal failure could erase API Keys and user Providers; Official failure could leave sparse Personal Config unable to form a complete Provider; Account failure could make all Plan models vanish instantly.
 
-Each Overlay layer typically only saves the fields it is responsible for. Publishing partial results that remove the failing Source would incorrectly interpret read exceptions as business deletions: Personal failure might cause API Keys and user Providers to disappear; Official failure might cause sparse Personal Config to fail to form a complete Provider; Account failure might cause all Plan models to instantly vanish.
-
-During implementation, `ProviderRegistryService` had already autonomously adopted Last-known-good: on read or parsing failure, do not replace the current Snapshot, reject the current explicit refresh, and emit a refresh error event; the next successful refresh can still publish a new View normally. Corresponding tests already cover the old View remaining available after failure and subsequent recovery. The Design at that time still marked "retain old View vs. publish partial results" as pending; therefore, human review of this implementation choice as a formal design was required.
+`ProviderRegistryService` had already autonomously adopted Last-known-good: on read or parse failure, keep the current Snapshot, reject the current explicit refresh, and emit a refresh error event; the next successful refresh publishes a new View normally. Because the Design still marked "retain old View vs. publish partial results" as pending, this choice required formal human confirmation.
 
 ### Decision
 
-Human agrees to retain the Last-known-good strategy adopted by the current implementation and elevates it to formal design: after the Registry already has a successful View, read, parse, or refresh failure for any Source retains the previous complete View, without publishing partial results missing that Source.
+Once the Registry holds a successful View, a read, parse, or refresh failure of any Source retains the previous complete View; no partial result missing that Source is published.
 
 ```text
 Refresh succeeds
@@ -198,13 +168,13 @@ Refresh fails
 └─ Wait for watcher, explicit refresh, or subsequent state changes to recover
 ```
 
-"Refresh failure" and "successfully obtained empty state" must be strictly distinguished. When a Source successfully returns deletion, disable, empty Config Map, or account invalidation state, these are all clear new facts; the Registry must construct and publish a new View normally; Last-known-good cannot block valid state changes.
+"Refresh failure" and "successfully obtained empty state" are strictly distinguished. When a Source successfully returns deletion, disable, an empty Config Map, or account invalidation, these are clear new facts; the Registry must build and publish a new View normally. Last-known-good must not block valid state changes.
 
-On first startup with no successful View to retain. When the first build fails, the Registry startup fails and exposes the error; it cannot disguise unknown state as a determined empty View.
+On first startup there is no successful View to retain. If the first build fails, Registry startup fails and exposes the error; unknown state must not be disguised as a determined empty View.
 
 ### Relationship with Request Authentication
 
-The Last-known-good View may briefly retain an Account Provider that is still displayed in the model list, but it does not extend account permissions. The Account Request Auth Service still obtains current credentials for each request by the Model's fixed `accessId`, and is the final authority on account permissions:
+A Last-known-good View may briefly retain an Account Provider still shown in the model list, but it does not extend account permissions. The Account Request Auth Service still obtains current credentials per request by the Model's fixed `accessId` and remains the final authority:
 
 ```text
 Old Registry View still has Account Provider
@@ -218,23 +188,23 @@ Account Request Auth Service
 └─ Logged out or no permission  -> Request fails
 ```
 
-The Registry's Last-known-good is responsible for avoiding剧烈的 jitter in the projection caused by transient faults; it does not cache, restore, or forge JWT, Runtime Key, one-time security verification Headers, or other request authentication materials.
+The Registry's Last-known-good only avoids violent projection jitter from transient faults; it does not cache, restore, or forge JWT, Runtime Key, one-time security verification Headers, or other request authentication material.
 
 ### Impact on Current Implementation
 
 - The Registry only publishes complete Views built and validated by all Sources together.
-- Refresh failure retains the current revision and View, while exposing the failure reason through error events and logs.
-- Explicit refresh, file watchers, and Account Source updates continue to enter the same refresh chain; revision deduplication avoids publishing the same change repeatedly.
-- Successful empty states, deletions, disables, and account invalidations must be published and cannot be classified as refresh failures.
-- The pending decision wording in the Design "retain old View vs. publish partial results" should be updated to this conclusion.
+- Refresh failure retains the current revision and View while exposing the failure reason through error events and logs.
+- Explicit refresh, file watchers, and Account Source updates enter the same refresh chain; revision deduplication avoids republishing the same change.
+- Successful empty states, deletions, disables, and account invalidations must be published and must not be classified as refresh failures.
+- The Design's pending wording "retain old View vs. publish partial results" is updated to this conclusion.
 
 ## 3. No Longer Supporting Arbitrary Model Options
 
-> Decision Status: Confirmed; Agent autonomous compatibility plan has been withdrawn
+> Decision Status: Confirmed; Agent autonomous compatibility plan withdrawn
 
 ### Background
 
-Both the old CLI configuration and Desktop Provider configuration use the same underlying format (`provider` → `models` nested), so both allow writing arbitrary `options` in model configuration:
+Old CLI and Desktop Provider configuration share the same underlying format (`provider` → `models` nesting), so both allow writing arbitrary `options` into model configuration:
 
 ```json
 {
@@ -248,34 +218,20 @@ Both the old CLI configuration and Desktop Provider configuration use the same u
 }
 ```
 
-This common underlying format can easily cause misjudgment: it is not a CLI-exclusive format, nor does it represent CLI or Desktop having established arbitrary Model Options as a formal product capability.
+The shared format invites misjudgment: it is neither CLI-exclusive nor evidence that CLI or Desktop established arbitrary Model Options as a formal product capability. The old CLI passes some `model.options` as Provider parameters; Desktop's physical Schema preserves `model.options`, but the formal `ModelProviderModelConfig` and settings page provide no arbitrary Options capability — Desktop explicitly interprets mainly `options.max_tokens`, converging it to the formal `maxOutputTokens`. Internal evaluation configs use only Provider-level `apiKey`, `baseURL`, and model capacity fields. Arbitrary Model Options are an extension port left by the underlying format, not a public contract the new Provider architecture must inherit.
 
-The old CLI passes some `model.options` as Provider parameters into model requests. Desktop's physical configuration Schema also accepts and preserves `model.options`, but the formal `ModelProviderModelConfig` and settings page do not provide arbitrary Options capability; Desktop currently explicitly interprets the compatible field primarily as `options.max_tokens`, converging it to the formal `maxOutputTokens`. Current internal evaluation configurations only use Provider-level `apiKey`, `baseURL`, and model capacity fields, with no dependency on arbitrary `model.options`.
-
-Therefore, arbitrary Model Options belong to an extension port left by the underlying format, not a public contract that the new Provider architecture needs to inherit.
-
-### Agent Autonomous Plan
-
-To avoid losing arbitrary `model.options` after old CLI configuration migration, the Agent added during implementation:
-
-```ts
-ModelConfig.requestParameters?: Record<string, unknown>;
-```
-
-This field passes through Config Overlay, Personal Config projection, and Model creation chains, ultimately forming another arbitrary Provider request parameter channel. This solution increases the degree of old configuration compatibility, but bypasses the strongly-typed boundaries already established by `ModelOptionSpecs`, `ModelOptions`, and `reasoningMapping`, and also solidifies historical extension capabilities that have not yet formed product commitments into the new architecture.
+During implementation the Agent added `ModelConfig.requestParameters?: Record<string, unknown>`, passed through Config Overlay, Personal Config projection, and Model creation, forming another arbitrary request-parameter channel. Human rejected it: it bypasses the strongly-typed boundaries already established by `ModelOptionSpecs`, `ModelOptions`, and `reasoningMapping`, and freezes a historical extension that never became a product commitment into the new architecture.
 
 ### Decision
 
-Human rejects the above compatibility plan. The new Provider architecture no longer supports arbitrary Model Options, nor does it retain the generic `requestParameters`.
-
-The new model configuration only carries formally defined common options:
+The new Provider architecture does not support arbitrary Model Options and does not keep generic `requestParameters`. New model configuration carries only formally defined common options:
 
 ```text
 reasoningLevel
 maxOutputTokens
 ```
 
-They respectively complete capability declaration, user selection, request-level override, and Provider protocol conversion through `ModelOptionSpecs`, `ModelOptions`, and `reasoningMapping`. Fields with clear formal semantics in old configurations can be migrated:
+They complete capability declaration, user selection, request-level override, and Provider protocol conversion through `ModelOptionSpecs`, `ModelOptions`, and `reasoningMapping`. Old-config fields with clear formal semantics migrate:
 
 ```text
 options.max_tokens
@@ -284,55 +240,32 @@ options.max_tokens
 maxOutputTokens
 ```
 
-Other arbitrary `model.options` are not migrated, not passed through, and do not enter the new Model Config. Internal evaluation users can adjust CLI configurations that are not yet publicly released; there is no need to design lossless migration for this historical extension channel.
+Other arbitrary `model.options` are not migrated, not passed through, and do not enter the new Model Config. Internal evaluation users can adjust not-yet-public CLI configurations; lossless migration for this historical extension channel is not required.
 
 ### Impact on Current Implementation
 
-- Delete `ModelConfig.requestParameters` and its Schema, Overlay, projection, tests, and runtime passing logic.
-- Delete the old CLI Personal Config importer's migration for arbitrary `model.options`.
-- Retain the semantic migration from `options.max_tokens` to the formal `maxOutputTokens`.
-- Desktop old storage can temporarily preserve unknown `model.options` as-is, but the new Config, Registry, and Model execution chain do not read them.
-- Provider-level `options` that historically stored `apiKey` and `baseURL` are unrelated to this decision; they should be migrated to formal Provider Config fields.
-- When adding new model options in the future, first define fixed fields, Option Specs, validation rules, and Adapter mapping, then enter the new architecture as a public capability.
+- `ModelConfig.requestParameters` and its Schema, Overlay, projection, tests, and runtime passing logic are deleted.
+- The old CLI Personal Config importer's migration of arbitrary `model.options` is deleted.
+- The semantic migration from `options.max_tokens` to formal `maxOutputTokens` is retained.
+- Desktop old storage may temporarily preserve unknown `model.options` as-is, but the new Config, Registry, and Model execution chain do not read them.
+- Provider-level `options` that historically stored `apiKey` and `baseURL` are unrelated to this decision; they migrate to formal Provider Config fields.
+- New model options in the future must first define fixed fields, Option Specs, validation rules, and Adapter mapping, then enter the new architecture as a public capability.
 
 ## 4. Static Headers Belong Only to Provider Config
 
-> Decision Status: Confirmed; Agent autonomous compatibility plan has been withdrawn
+> Decision Status: Confirmed; Agent autonomous compatibility plan withdrawn
 
 ### Background
 
-Both the old CLI and Desktop use the same underlying Provider configuration format, thus simultaneously allowing Provider-level Headers and Model-level Headers:
+Old CLI and Desktop share the underlying Provider format, allowing both Provider-level Headers (`provider.headers`, `provider.options.headers`) and Model-level Headers (`provider.models.<modelId>.headers`). The old CLI merges them by layer for model requests; Desktop's physical format accepts model-level Headers, but the formal model types and settings page never established them as a product capability, and Official Config and main product paths do not use them.
 
-```text
-Provider-level Header
-├─ provider.headers
-└─ provider.options.headers
+Provider-level Headers have clear connection semantics: fixed HTTP Headers carried with every request to a specific Provider — enterprise proxy tenant/project routing, additional organization identity, client source and protocol version. They are a constrained `Record<string, string>`, distinct from arbitrary Provider Options without public semantics. Dynamic account authentication Headers (JWT, one-time security material, dynamic Runtime Headers) are obtained per request by the Account Request Auth Service and never enter persistent Provider Config.
 
-Model-level Header
-└─ provider.models.<modelId>.headers
-```
-
-The old CLI merges these Headers by layer and uses them for model requests. Desktop's physical configuration format also accepts model-level Headers, but the formal model types and settings page have not established this as a product capability. The current Official Config, internal evaluation configurations, and main product paths do not use model-level Headers.
-
-Provider-level Headers have clear connection semantics: fixed HTTP Headers that must be carried with every request when accessing a specific Provider. They can express enterprise proxy tenant and project routing, additional organization identity, client source and protocol version. This is a constrained `Record<string, string>`, distinct from arbitrary Provider Options without public semantics.
-
-Dynamic account authentication Headers belong to a separate category of data. JWT, one-time security verification materials, and dynamic Runtime Headers are obtained by the Account Request Auth Service for each request, and do not enter persistent Provider Config.
-
-### Agent Autonomous Plan
-
-To maintain compatibility with the old CLI's `model.headers`, the Agent added during implementation:
-
-```ts
-class ModelConfig {
-  headers?: Record<string, string>;
-}
-```
-
-The Registry creates Models by fixing these Headers within the Adapter, overriding same-name Provider Headers. The public `Model` and `ModelRequest` do not expose Headers. This solution does not leak request details in its abstraction encapsulation, but it brings model-level connection differences, which have not yet formed a formal product use case, into the new Model Config.
+During implementation the Agent added `class ModelConfig { headers?: Record<string, string> }`, fixed within the Adapter and overriding same-name Provider Headers, to keep old CLI `model.headers` compatible. Human rejected it: it brings model-level connection differences, which have no formal product use case, into the new Model Config.
 
 ### Decision
 
-Human confirmed to retain Provider-level static Headers and delete Model-level Headers:
+Provider-level static Headers are retained; Model-level Headers are deleted:
 
 ```text
 ProviderConfig.headers
@@ -345,11 +278,9 @@ ModelConfig
 └─ does not contain Headers
 ```
 
-Old configuration's `provider.headers` and `provider.options.headers` are unifiedly migrated to `ProviderConfig.headers`. Old configuration's `provider.models.<modelId>.headers` are not migrated, and do not enter the new Config, Registry, or Model execution chain.
+Old `provider.headers` and `provider.options.headers` migrate together to `ProviderConfig.headers`. Old `provider.models.<modelId>.headers` are not migrated and do not enter the new Config, Registry, or Model execution chain. If two models truly need different fixed connection Headers, configure them as two separate Providers; when genuine model-level routing needs emerge that Provider boundaries cannot express, redesign from the specific use case.
 
-If two models truly need different fixed connection Headers, they should be configured as two separate Providers. When genuine model-level routing requirements emerge in the future that cannot be expressed through Provider boundaries, redesign based on specific use cases.
-
-During request execution, dynamic authentication materials can override same-name static fields:
+During request execution, dynamic authentication material may override same-name static fields:
 
 ```text
 ProviderConfig.headers
@@ -364,21 +295,19 @@ Final HTTP Request Headers
 
 ### Impact on Current Implementation
 
-- Retain `ProviderConfig.headers` and its Schema, Overlay, migration, and Adapter projection.
-- Migrate old `provider.headers` and `provider.options.headers` together to `ProviderConfig.headers`.
-- Delete `ModelConfig.headers` and its Schema, Overlay, projection, and tests.
-- Delete old CLI Personal Config importer's migration for `model.headers`.
-- Delete settings page migration bridge's implicit retention of model-level Headers.
-- Retain Account Request Auth Service's request-period dynamic Header mechanism.
-- Provider static Headers can temporarily be provided only through config files; the settings page does not need an advanced Header editor immediately.
+- `ProviderConfig.headers` and its Schema, Overlay, migration, and Adapter projection are retained.
+- Old `provider.headers` and `provider.options.headers` migrate together to `ProviderConfig.headers`.
+- `ModelConfig.headers` and its Schema, Overlay, projection, and tests are deleted.
+- The old CLI Personal Config importer's migration of `model.headers` is deleted.
+- The settings page migration bridge no longer implicitly retains model-level Headers.
+- The Account Request Auth Service's request-period dynamic Header mechanism is retained.
+- Provider static Headers may temporarily be provided only through config files; the settings page does not need an advanced Header editor immediately.
 
 ## 5. OpenAI Compatible Fixed Request Streaming Usage
 
-> Decision Status: Confirmed and implemented; Config close switch has been withdrawn
+> Decision Status: Confirmed and implemented; Config close switch withdrawn
 
-### Background
-
-OpenAI Compatible streaming protocol requires carrying in the request:
+The OpenAI Compatible streaming protocol requires carrying in the request:
 
 ```json
 {
@@ -388,44 +317,28 @@ OpenAI Compatible streaming protocol requires carrying in the request:
 }
 ```
 
-For the Provider to return accurate Token Usage at the end of the stream. Usage is part of the model execution result and will be used for usage statistics, Trace, and context budget system capabilities.
+so the Provider returns accurate Token Usage at the end of the stream. Usage is part of the model execution result, feeding usage statistics, Trace, and the context budget system.
 
-Historical code considered that some compatible services may not accept `stream_options.include_usage`, so the Provider configuration added:
+Historical code added `includeUsage?: boolean` to Provider config for compatible services that might not accept `stream_options.include_usage`; no Provider, formal product use case, or user configuration in the repository depends on this close capability. During M2 the Agent carried the old `includeUsage` through the new `ProviderConfig` chain, making "whether to request Usage" a user-closeable config — inconsistent with Usage's semantics in the execution chain.
 
-```ts
-includeUsage?: boolean;
-```
-
-When set to `false`, the Adapter does not send this field. No specific Provider, formal product use case, or user configuration depending on this close capability was found in the repository.
-
-### Agent Autonomous Plan
-
-During M2 implementation, the Agent included the old `includeUsage` as a compatibility field in the new `ProviderConfig` and continued to pass it through configuration migration, Overlay, Registry, and Model creation chains.
-
-This solution preserves the old configuration's expressiveness, but simultaneously makes "whether to request Usage" into a user-closeable Provider config. When closed, the system may not obtain accurate actual usage, which is inconsistent with Usage's fundamental semantics in the execution chain.
-
-### Decision
-
-Human confirms that OpenAI Compatible requests always explicitly enable `includeUsage: true`. Usage is part of the execution result and does not belong to user-closeable Provider config. The new Provider Config does not contain `includeUsage`; the old config's field is not migrated. Compatible services that do not support `stream_options.include_usage` are not within the formal support scope, and no fallback path is provided to retry after removing this field.
+Human confirms: OpenAI Compatible requests always explicitly enable `includeUsage: true`. Usage is part of the execution result and does not belong to user-closeable Provider config. The new Provider Config does not contain `includeUsage`, and the old config's field is not migrated. Compatible services that do not support `stream_options.include_usage` are outside the formal support scope; no fallback path retries after removing this field.
 
 ## 6. Plan Entitlement Cache Requires Account-level Non-sensitive Identity
 
-> Decision Status: Confirmed; `accessId` identifies specific account connection
+> Decision Status: Confirmed; `accessId` identifies a specific account connection
 
-### Background
-
-Usage / Entitlement already uses Account Provider's non-sensitive `accessId` to construct cache identity, no longer projecting API Key or JWT to the Renderer. Current Personal and Start Plan `accessId` only express connection type:
+Usage / Entitlement already uses the Account Provider's non-sensitive `accessId` to build cache identity, no longer projecting API Key or JWT to the Renderer. The previous Personal and Start Plan `accessId`s expressed only connection type:
 
 ```text
 start-plan:<providerId>
 coding-plan:<providerId>
 ```
 
-It does not contain specific account identity. When two accounts log in sequentially on the same machine, both get the same cache key. The Usage page first displays a ten-second short TTL cache, then silently refreshes; if the new account refresh fails, to avoid network jitter clearing the page, the current Hook continues to retain the already-displayed old cache. Therefore, relying solely on background refresh cannot guarantee account isolation.
+without specific account identity, so two accounts logging in sequentially on the same machine shared one cache key. The Usage page first shows a ten-second short-TTL cache, then silently refreshes; if the new account's refresh fails, the current Hook keeps the already-displayed old cache to avoid network jitter clearing the page. Background refresh alone therefore cannot guarantee account isolation.
 
 ### Decision
 
-`accessId` identifies a specific account connection, not just Start Plan, Personal Coding Plan, or Team Plan connection types. When the specific logged-in account changes, `accessId` must change; JWT, API Key, Runtime Key, or OAuth Token refresh within the same account does not change `accessId`.
+`accessId` identifies a specific account connection, not just a Start Plan, Personal Coding Plan, or Team Plan connection type. When the specific logged-in account changes, `accessId` must change; JWT, API Key, Runtime Key, or OAuth Token refresh within the same account does not change it.
 
 ```text
 Account A's connection
@@ -443,32 +356,28 @@ Account B's connection
    └─ New created Model's request identity
 ```
 
-Account Source generates `accessId` using non-sensitive stable identity provided by the account service. It cannot contain JWT, API Key, dynamic Headers, and does not use Secret hashing as Renderer identity. Team Plan continues to include specific organization and project connections; if the same organization/project under different accounts should not share connection identity, simultaneously incorporate account scope.
+Account Source generates `accessId` from non-sensitive stable identity provided by the account service. It must not contain JWT, API Key, or dynamic Headers, and must not use Secret hashing as Renderer identity. Team Plans keep including specific organization and project connections; if the same organization/project under different accounts must not share connection identity, incorporate account scope as well.
 
-Login, logout, and connection switching can still proactively clear old Usage cache, but clearing is only an auxiliary measure to reduce stale data and storage usage, and does not bear identity isolation correctness.
+Login, logout, and connection switching may still proactively clear old Usage cache, but clearing is only an auxiliary measure reducing stale data and storage use; it does not carry identity-isolation correctness.
 
 ### Implementation Impact
 
-- Account Source must obtain non-sensitive account identity when generating Personal, Start, and Team `accessId`.
-- Usage / Entitlement cache continues to use `providerId + accessId`, without adding parallel `accountCacheIdentity`.
-- Account Credential Store isolates credentials by new account-level `accessId`. The current provider-level stable key is an intermediate M2 implementation not yet released; no migration is designed for it; Personal Coding Plan Key is obtained for the current account, Team Key is obtained or cached by account and organization/project.
-- Created Models fix old `accessId`. After account switching, it cannot silently use new account credentials; new Agent Loop creates new Model from the latest Account Config.
+- Account Source must obtain non-sensitive account identity when generating Personal, Start, and Team `accessId`s.
+- Usage / Entitlement cache continues to use `providerId + accessId`, without a parallel `accountCacheIdentity`.
+- Account Credential Store isolates credentials by account-level `accessId`. The provider-level stable key was an unreleased intermediate M2 implementation with no migration designed for it; the Personal Coding Plan Key is obtained for the current account, the Team Key per account and organization/project.
+- Created Models fix the old `accessId`. After an account switch they cannot silently use the new account's credentials; a new Agent Loop creates a new Model from the latest Account Config.
 - Account Provider Config, Usage Source, Credential Store, and Request Auth share the same connection identity.
-- Request Auth not only looks up credentials by `accessId` but also verifies the current credentials' belonging account. Old Model's `accessId(account-A)` cannot be combined with post-switching `credential(account-B)` to initiate requests.
+- Request Auth looks up credentials by `accessId` and also verifies the credentials' owning account. An old Model's `accessId(account-A)` cannot be combined with post-switch `credential(account-B)` to initiate requests.
 
 ## 7. desktop-attached remote Uses Remote Provider Authority
 
 > Decision Status: Confirmed; step one incorporated into M2.8, continuous sync and remote settings operations as subsequent features
 
-### Background
-
-Online `desktop-attached-remote` is read by Desktop from the local complete Provider Registry Snapshot, then sent to Remote Host/Worker via `workspace/updateProviderRegistry`. The Snapshot can carry API Key, JWT, Team Plan Key, and Header; the remote Agent's startup gate also reads the Desktop base Host's model View.
-
-M2 once expressed the remaining issue as "how does Remote Worker cross-host request Desktop Account Request Auth", with candidates being Renderer relay or Local Host to Remote Host's Auth Broker. Both solutions default to Remote Worker belonging to Desktop Provider Environment.
+Online `desktop-attached-remote` was read by Desktop from the local complete Provider Registry Snapshot and sent to the Remote Host/Worker via `workspace/updateProviderRegistry`. The Snapshot carried API Key, JWT, Team Plan Key, and Header, and the remote Agent's startup gate read the Desktop base Host's model View. Earlier framing ("how does Remote Worker cross-host request Desktop Account Request Auth", via Renderer relay or Host-to-Host Auth Broker) both assumed Remote Worker belongs to the Desktop Provider Environment.
 
 ### Decision
 
-Remote Environment is an independent Provider Environment. It has its own Config, Credential, Account Source, Registry, and ModelFactory. Desktop only remotely controls Session, displays Remote View, and submits ModelSelection; it does not provide Remote Worker's Provider facts or request credentials.
+The Remote Environment is an independent Provider Environment with its own Config, Credential, Account Source, Registry, and ModelFactory. Desktop only remotely controls the Session, displays the Remote View, and submits ModelSelection; it does not provide the Remote Worker's Provider facts or request credentials.
 
 ```text
 Desktop Entry
@@ -485,53 +394,35 @@ Remote Host
 
 ### Phased Migration
 
-Step one first switches runtime authority and deletes Desktop -> Remote's complete Registry, runtimeModel, Account Config, and Secret Snapshot injection. If Remote Environment has no available configuration, the product should clearly report that the remote has not yet configured Provider, and cannot fall back to Desktop facts.
+Step one switches runtime authority and deletes Desktop → Remote injection of the complete Registry, runtimeModel, Account Config, and Secret Snapshots. If the Remote Environment has no available configuration, the product must clearly report that the remote has not yet configured a Provider and must not fall back to Desktop facts.
 
-Step two uses independent sync functionality to continuously write local Config and Credential to Remote Store. The sync function is only responsible for Provisioning; Remote Source listens to its own Store, publishes new revision, and rebuilds Remote Registry. Registry objects, Account Overlay, Model, and request Headers are not transmitted through this sync link.
+Step two uses independent sync functionality to continuously write local Config and Credential to the Remote Store. The sync function is only responsible for Provisioning; the Remote Source listens to its own Store, publishes a new revision, and rebuilds the Remote Registry. Registry objects, Account Overlay, Model, and request Headers are not transmitted over this sync link.
 
-Step three allows the App to directly call Remote Settings / OAuth Service, remotely editing Remote Personal Config, initiating remote login, and viewing Remote Settings / Selection View. Credential exchange and persistence occur in the Remote Environment.
+Step three lets the App directly call Remote Settings / OAuth Service, remotely editing Remote Personal Config, initiating remote login, and viewing Remote Settings / Selection View. Credential exchange and persistence happen in the Remote Environment.
 
 ### Implementation Impact
 
-- Delete `desktop-attached-remote` disabling its own Provider Registry authority special case.
-- Remote Workspace's readiness, model menu, and settings read Remote Facade.
-- Remote Worker only creates long-term Model from Remote Registry.
-- Remote Request Auth only reads Remote Credential Store.
-- Delete Renderer Auth relay and Host-to-Host Auth Broker topics.
-- `provider/updateAccountConfig` is only used between Host and Worker within the same Environment.
-- Local-to-remote continuous sync and App remote settings capability does not block step one's authority switch.
+- The `desktop-attached-remote` special case disabling its own Provider Registry authority is deleted.
+- Remote Workspace readiness, model menu, and settings read the Remote Facade.
+- The Remote Worker creates long-term Models only from the Remote Registry.
+- Remote Request Auth reads only the Remote Credential Store.
+- Renderer Auth relay and Host-to-Host Auth Broker topics are deleted.
+- `provider/updateAccountConfig` is used only between Host and Worker within the same Environment.
+- Local-to-remote continuous sync and App remote settings capability do not block step one's authority switch.
 
 ## 8. Usage / Entitlement Exits Old Provider Config and Provider Service
 
-> Decision Status: Confirmed and implemented; Usage has exited old Provider Service, internal abstraction to be organized subsequently
+> Decision Status: Confirmed and implemented; Usage has exited the old Provider Service, internal abstraction to be organized subsequently
 
-### Current Behavior
+Product behavior is unchanged: the settings page Usage lists the Personal Coding Plan and all subscribed Team Projects the current account can query, viewable separately; the sidebar and Composer show only the quota of the current model connection.
 
-Settings page Usage lists Personal Coding Plan and all subscribed Team Projects that the current account can query, allowing separate viewing; the sidebar and Composer only display quota corresponding to the current model connection. This product behavior remains unchanged.
-
-The source list is already primarily produced by Account Config, Entitlement, and Team Products in `ProviderSettingsView`, but Host's `BigModelUsageQuotaProvider` still reads old `ModelProviderService.getAllCached()`, then re-finds Provider from `ModelProviderConfig[]`, determines enabled state, reads API Key, infers request address, and refreshes Coding Plan Key. It causes the old Provider large object, which has already exited the UI main chain, to continue being the execution fact source for Usage, and also blocks deletion of old Config and old Provider Service.
-
-```text
-Current UI Selected Usage Source
-├─ providerId
-├─ accessId
-├─ organizationId?
-└─ projectId?
-        |
-        |  Identity is lost or incomplete in the existing chain
-        v
-BigModelUsageQuotaProvider
-        |
-        v
-Old ModelProviderService / ModelProviderConfig
-└─ Re-guessing query source and request credentials
-```
+The source list is already produced by Account Config, Entitlement, and Team Products in `ProviderSettingsView`, but Host's `BigModelUsageQuotaProvider` still read old `ModelProviderService.getAllCached()`, re-found the Provider in `ModelProviderConfig[]`, determined enabled state, read the API Key, inferred the request address, and refreshed the Coding Plan Key — keeping the old Provider object, already exited from the UI main chain, as Usage's execution fact source and blocking deletion of old Config and old Provider Service.
 
 ### Decision
 
-Usage / Entitlement must exit old `ModelProviderService`, old `ModelProviderConfig`, and old Config. This migration's first goal is to flatten the fact source: as long as the call chain fully uses new Provider Config, Account Config, and Credential facts, do not retain old dependencies waiting for final Usage domain abstraction; internal responsibility issues discovered after migration can continue as independent refactoring.
+Usage / Entitlement exits old `ModelProviderService`, old `ModelProviderConfig`, and old Config. The migration's first goal is to flatten the fact source: once the call chain fully uses new Provider Config, Account Config, and Credential facts, do not retain old dependencies waiting for a final Usage domain abstraction; internal responsibility issues found afterwards can be refactored independently.
 
-When UI has already selected Usage Source, the request should carry complete, non-sensitive source identity:
+When the UI has already selected a Usage Source, the request carries complete, non-sensitive source identity:
 
 ```text
 Usage Source
@@ -553,33 +444,31 @@ Request Period Authentication
 Usage / Entitlement API
 ```
 
-Host no longer selects sources based on old Provider arrays. Whether a Provider is used for model selection, whether it is selectable in Registry, and which model the current Session is using, are not used as filtering conditions for settings page Usage Source. When Account Provider disables model entry for the user, Usage can still query as long as the account connection still exists.
+Host no longer selects sources from old Provider arrays. Whether a Provider is used for model selection, is selectable in the Registry, or which model the current Session uses are not filtering conditions for the settings page Usage Source. When an Account Provider disables model entry for the user, Usage can still be queried as long as the account connection exists.
 
-Regular API Provider if still needing to participate in monitor/usage queries, only reads the new Effective API Provider Config; Account Provider's Secret is always obtained by request-period Credential/Account service. Any migration adapter can only project narrow input from the new Config, Account, and Credential facts, cannot read old Config or old Provider Snapshot.
+A regular API Provider that still needs to participate in monitor/usage queries reads only the new Effective API Provider Config; an Account Provider's Secret is always obtained by the request-period Credential/Account service. Any migration adapter may project narrow input only from the new Config, Account, and Credential facts, never reading old Config or old Provider Snapshots.
 
-Known Account Plan's Usage routing can continue using existing providerId/family and service address construction logic in this round, but no longer guesses account plan type through model Endpoint. Whether Usage routing further enters Official Config is left for Usage domain's subsequent refactoring and does not block old Provider fact source exit.
+Known Account Plan Usage routing keeps the existing providerId/family and service address construction logic in this round, but no longer guesses account plan type from the model Endpoint. Whether Usage routing further enters Official Config is left to the Usage domain's later refactoring and does not block the old Provider fact source exit.
 
 ### This Round Implementation Boundaries
 
-- Add `accessId` for Coding Plan Usage / Entitlement request, preserve existing Team organization/project context.
-- Delete `IModelProviderService` dependency from `BigModelUsageQuotaProvider`, as well as `getAllCached()`, `refreshCodingPlanApiKey()`, and `ModelProviderConfig[]` reading.
-- Personal, Team, Start Plan respectively reuse existing Credential Store, Team Key Resolver, and OAuth Token Store; do not copy new Secret cache.
+- Add `accessId` to Coding Plan Usage / Entitlement requests; preserve the existing Team organization/project context.
+- Delete the `IModelProviderService` dependency from `BigModelUsageQuotaProvider`, along with `getAllCached()`, `refreshCodingPlanApiKey()`, and `ModelProviderConfig[]` reading.
+- Personal, Team, and Start Plans reuse the existing Credential Store, Team Key Resolver, and OAuth Token Store; no new Secret cache copies.
 - Maintain settings page, sidebar, Composer, plan reset, and existing cache refresh behavior.
-- This round does not require forming a perfect, general Usage Source/Authorization framework. After flattening, if `BigModelUsageQuotaProvider` still mixes too many responsibilities, split it separately.
+- This round does not require a perfect, general Usage Source/Authorization framework; after flattening, split `BigModelUsageQuotaProvider` separately if it still mixes too many responsibilities.
 
-Completion criterion: when deleting old Provider Config and Provider Service, Usage / Entitlement no longer constitutes a blockage, nor does it re-introduce old fact source through compatibility fallback.
+Completion criterion: when old Provider Config and the Provider Service are deleted, Usage / Entitlement no longer blocks and does not reintroduce an old fact source through compatibility fallback.
 
 ## 9. Provider Access, API, and Model API Adapter Layering
 
 > Decision Status: Partially replaced; Provider `access/api` layering remains valid, `ModelConfig.apiAdapter` withdrawn by decision item 11
 
-### Background
-
-Previously, Provider Config used a `kind` to simultaneously express API Key or account access method, while `apiFormat` and `baseURL` were flattened on the Provider; the model side placed `reasoningMapping` directly on ModelConfig. This mixes "how to obtain calling qualification", "which public API to use", and "what fixed adapter behaviors does that model have on that API" into one layer.
+Previously Provider Config used a single `kind` to express both API Key and account access, with `apiFormat` and `baseURL` flattened on the Provider, and `reasoningMapping` sitting directly on ModelConfig — mixing "how to obtain calling qualification", "which public API to use", and "what fixed adapter behaviors the model has on that API" into one layer.
 
 ### Decision
 
-Provider Config is split into two orthogonal sub-configurations:
+Provider Config splits into two orthogonal sub-configurations:
 
 ```text
 ProviderConfig
@@ -592,56 +481,23 @@ ProviderConfig
    └─ openai-chat-completions
 ```
 
-The discriminant field uniformly uses `type`. `access` expresses calling qualification source, `api` expresses public request protocol; internal Adapter type is still execution implementation and does not enter external Config.
+The discriminant field is uniformly `type`. `access` expresses the calling-qualification source; `api` expresses the public request protocol; the internal Adapter type remains an execution implementation and does not enter external Config. The old `kind/apiFormat/baseURL` structure converges into `access/api`; Official, Personal, and Account keep using the same ProviderConfig Overlay, with the Account layer supplementing only account connection and current model members, never persisting request credentials. Schema versions used on the development branch are not a release contract; the final version number is handled by item 10.
 
-This item further decided at the time to converge the fixed behaviors related to model and API combination into `ModelConfig.apiAdapter`. Subsequent audits of AI SDK, GLM real interfaces, and various vendors' official Anthropic compatible interfaces showed that this layer mixes inherent protocol behaviors, vendor reasoning parameter mapping, and message replay, and ultimately only `reasoningMapping` remains as a configurable field. This decision has been withdrawn; the following structure is retained only as decision evolution history, with the current design subject to item 11:
+This item also initially converged model-and-API fixed behaviors into a `ModelConfig.apiAdapter` wrapper (carrying `reasoningMapping`, `preserveThinking`, `reasoningContentField`, matched via `providerMatch`/`modelMatch`/`apiMatch` rules). Subsequent audits of AI SDK, GLM real interfaces, and vendor Anthropic-compatible interfaces showed that wrapper mixes inherent protocol behaviors, vendor reasoning parameter mapping, and message replay; the decision was withdrawn — see item 11 for the current design.
 
-```ts
-interface ModelConfigRule {
-  providerMatch?: string;
-  modelMatch: string;
-  apiMatch?: string;
-  config: ModelConfig;
-}
+GLM-5.2 and GLM-5.3's Anthropic API use standard `adaptive thinking + effort` expression and send no budget. The interim conclusion in this item that GLM-5-Turbo retains a 1024 fixed budget was withdrawn by items 11 and 13.
 
-class ModelConfig extends ConfigOverlay {
-  properties?: ModelPropertiesConfig | null;
-  optionSpecs?: ModelOptionSpecsConfig | null;
-  apiAdapter?: ModelApiAdapterConfig | null;
-}
-
-class ModelApiAdapterConfig extends ConfigOverlay {
-  reasoningMapping?: ReasoningMappingConfig | null;
-  preserveThinking?: boolean | null;
-  reasoningContentField?: string | null;
-}
-```
-
-`apiMatch` and `providerMatch`, `modelMatch` use the same pattern matching semantics; rules execute in order, with later matching items continuing to override previous results. `preserveThinking` and `reasoningContentField` are fixed API adapter behaviors, not user-selectable Model Options.
-
-Provider Config converges the old `kind/apiFormat/baseURL` structure into `access/api`, and converges `apiFormatMatch/reasoningMapping` into `apiMatch/apiAdapter`. Official, Personal, and Account still use the same ProviderConfig Overlay; the Account layer only supplements account connection and current model members, without persisting request credentials. The Schema version used in the development branch does not constitute a release contract; the final version number is uniformly handled by the next decision item.
-
-GLM-5.2 and GLM-5.3's Anthropic API use standard `adaptive thinking + effort` expression, not sending budget. GLM-5-Turbo temporarily retains the existing 1024 fixed-budget compatibility behavior. OpenAI Chat under reasoning dialect and reasoning replay are written into `apiAdapter` through precise `apiMatch` rules; Anthropic Messages and OpenAI Responses prioritize following their respective official protocols.
-
-## 10. Personal Config Maintains Original Path, Released as Schema Version 1
+## 10. Personal Config Keeps the Original Path and Ships as Schema Version 1
 
 > Decision Status: Confirmed; supersedes the independent file path and version migration chain from the development phase
 
-### Background
+The M2 development phase wrote new Personal Provider Config to an independent `provider-config.json` and used internal Schema versions v1–v4 consecutively, preparing v5 for the next structural change. This allowed validating adjacent version migrations during development, but those formats were never released and need not become long-term maintained historical versions.
 
-The M2 development phase once wrote the new Personal Provider Config to an independent `provider-config.json`, and consecutively used v1, v2, v3, v4 with internal Schema adjustments, preparing to use v5 for the next round of structure changes. This allows validating adjacent version migrations during development, but these formats were never officially released and do not need to become historical versions the product maintains long-term.
-
-Meanwhile, the Desktop's formal user's existing model Provider configuration is already at:
-
-```text
-~/.zcode/v2/config.json
-```
-
-Creating a new `provider-config.json` would change the user's familiar physical path and produce the problem of switching authority between two files. The final architecture does not need to express domain boundaries by changing the file name.
+Desktop's formal user model Provider configuration already lives at `~/.zcode/v2/config.json`. Creating a new `provider-config.json` would change the user's familiar physical path and create authority switching between two files; the final architecture does not need to express domain boundaries through a file name.
 
 ### Decision
 
-Personal Provider/Model Config continues to use the original `config.json` file name and path, without introducing a formal `provider-config.json`:
+Personal Provider/Model Config continues to use the original `config.json` file name and path; no formal `provider-config.json` is introduced:
 
 ```text
 Old format ~/.zcode/v2/config.json
@@ -652,7 +508,7 @@ Same path ~/.zcode/v2/config.json
 └─ New ProviderConfigDocument
 ```
 
-Before migration begins, the user's original configuration must be completely copied as a backup in the same directory. Successful backup is a prerequisite for modifying the original file; backup failure stops the migration without overwriting the original configuration. The backup file must not silently overwrite existing backups; specific suffixes and conflict naming can be determined by the Repository in implementation.
+Before migration begins, the user's original configuration must be completely copied as a backup in the same directory. Successful backup is a prerequisite for modifying the original file; backup failure stops the migration without overwriting the original configuration. The backup must not silently overwrite existing backups; specific suffixes and conflict naming are up to the Repository implementation.
 
 When completing M2 and preparing the first release, the new Provider Config document uses:
 
@@ -662,29 +518,25 @@ When completing M2 and preparing the first release, the new Provider Config docu
 }
 ```
 
-The v1-v5 that appeared during development are all unpublished intermediate formats. At M2 closeout, delete the long-term compatibility branches and public version narratives reserved for these internal versions, using the final complete Schema as the formal v1. Subsequent real post-release format changes then migrate from v1 to v2.
+The v1–v5 from development are unpublished intermediate formats. At M2 closeout, the long-term compatibility branches and public version narratives reserved for them are deleted, and the final complete Schema becomes the formal v1. Subsequent real post-release format changes migrate from v1 to v2.
 
-This decision does not require designing lossless compatibility for the Standalone CLI history format that is not yet officially open. Internal evaluation users can adjust configurations; if Entry performs migration on existing files, it must also comply with the data safety order of "backup first, then atomic replacement."
+This decision requires no lossless compatibility for the Standalone CLI history format that is not officially open. Internal evaluation users can adjust configurations; if an Entry migrates existing files, it must follow the data-safety order of "backup first, then atomic replacement".
 
 ## 11. Withdraw Model API Adapter Config Layer, Reasoning Mapping Directly Belongs to ModelConfig
 
-> Decision Status: Partially supplemented by items 12 and 13; the conclusion to withdraw `ModelConfig.apiAdapter` remains valid, the required conditions and semantics of `reasoningMapping` are subject to item 12, GLM-5-Turbo's specific tiers are subject to item 13
+> Decision Status: Partially supplemented by items 12 and 13; the withdrawal of `ModelConfig.apiAdapter` remains valid, the required conditions and semantics of `reasoningMapping` follow item 12, and GLM-5-Turbo's specific tiers follow item 13
 
-### Background
+Item 9's decision added `apiAdapter` to `ModelConfig` to carry `reasoningMapping`, `preserveThinking`, and `reasoningContentField`. Subsequent audits confirmed the three are different concerns:
 
-Item 9's decision once added `apiAdapter` to `ModelConfig`, with plans for it to carry `reasoningMapping`, `preserveThinking`, and `reasoningContentField`. Subsequent audits confirmed that the three actually belong to different concerns:
+- `reasoningMapping` describes how the user's selected Reasoning tier forms the request parameters required by a specific Provider/Model/API.
+- Anthropic Thinking Block, Signature, and OpenAI Responses Reasoning Item saving and replay are inherent behaviors of their protocols.
+- GLM OpenAI Chat's `clear_thinking` is a specific request parameter that can directly be `reasoningMapping` output.
 
-- `reasoningMapping` describes how the user's selected Reasoning tier forms request parameters required by specific Provider/Model/API;
-- Anthropic Thinking Block, Signature, and OpenAI Responses Reasoning Item saving and replay are inherent behaviors of the respective protocols;
-- GLM OpenAI Chat's `clear_thinking` is a specific request parameter that can directly become the output of `reasoningMapping`.
-
-AI SDK can already convert `reasoning_content` between OpenAI Compatible messages and standard Reasoning Parts, and the Anthropic Adapter is also responsible for protocol replay of Thinking Blocks and Signatures. Therefore, the config layer no longer needs to declare response field names or repeatedly express message replay strategies.
-
-Audits of vendors' official Anthropic interfaces simultaneously show that the base Messages structure is already relatively unified, but Reasoning control is not unified: DeepSeek, Kimi, MiniMax, Qwen, and MiMo each use different switches, tiers, or budget semantics. `reasoningMapping` therefore still has value, but it is a protocol parameter mapping selected by Model Config Rules, not an independent Model API Adapter config object.
+AI SDK already converts `reasoning_content` between OpenAI Compatible messages and standard Reasoning Parts, and the Anthropic Adapter handles protocol replay of Thinking Blocks and Signatures, so the config layer no longer declares response field names or restates message replay strategies. Vendor Anthropic-compatible interfaces have a fairly unified base Messages structure but ununified Reasoning control — DeepSeek, Kimi, MiniMax, Qwen, and MiMo each use different switches, tiers, or budget semantics. `reasoningMapping` therefore stays valuable, but as a protocol parameter mapping selected by Model Config Rules, not an independent Model API Adapter config object.
 
 ### Decision
 
-Withdraw the unpublished `ModelConfig.apiAdapter` and `ModelApiAdapterConfig`. `ModelConfig` remains flattened, with optional `reasoningMapping` placed directly within it:
+The unpublished `ModelConfig.apiAdapter` and `ModelApiAdapterConfig` are withdrawn. `ModelConfig` stays flattened, with optional `reasoningMapping` directly inside it:
 
 ```ts
 class ModelConfig extends ConfigOverlay {
@@ -694,35 +546,23 @@ class ModelConfig extends ConfigOverlay {
 }
 ```
 
-`ModelConfigRule.apiMatch` continues to be retained. Together with `providerMatch` and `modelMatch`, it determines which Provider, model, and public API a particular `reasoningMapping` applies to:
+`ModelConfigRule.apiMatch` is retained. Together with `providerMatch` and `modelMatch`, it decides which Provider, model, and public API a `reasoningMapping` applies to; rules execute in order, later matches overriding earlier ones. The runtime Provider Adapter continues to exist; this withdrawal removes the `apiAdapter` wrapper in the config Schema and does not change the execution boundaries of the Anthropic, OpenAI Responses, and OpenAI Compatible Adapters.
 
-```text
-providerMatch + modelMatch + apiMatch
-                    |
-                    v
-            ModelConfig Overlay
-                    |
-                    v
-             reasoningMapping
-```
-
-The runtime Provider Adapter continues to exist. This withdrawal is of the `apiAdapter` wrapper layer in the config Schema, not changing the execution boundaries of Anthropic, OpenAI Responses, and OpenAI Compatible Adapters.
-
-Item 12 further confirms: the Reasoning parameter mapping for standard OpenAI Responses, Anthropic Messages, and OpenAI Compatible should also be explicitly provided by Official Config. The runtime Adapter continues to be responsible for protocol execution and message replay, without hiding a default strategy for generating request parameters from `reasoningLevel`.
+Item 12 further confirms: the Reasoning parameter mappings for standard OpenAI Responses, Anthropic Messages, and OpenAI Compatible are explicitly provided by Official Config. The runtime Adapter stays responsible for protocol execution and message replay, with no hidden default strategy generating request parameters from `reasoningLevel`.
 
 `preserveThinking` and `reasoningContentField` exit the target Config:
 
-- The `clear_thinking` needed by GLM OpenAI Chat is directly written into the corresponding tier's `reasoningMapping`;
-- Reasoning content parsing and replay are completed by the message model and Adapter, not by the Config specifying field names;
-- Historical DeepSeek/MiMo empty `reasoning_content` compatibility patches continue to be audited separately, not expressed through the above fields.
+- The `clear_thinking` needed by GLM OpenAI Chat is written directly into the corresponding tier's `reasoningMapping`.
+- Reasoning content parsing and replay are done by the message model and Adapter, not by Config specifying field names.
+- Historical DeepSeek/MiMo empty `reasoning_content` compatibility patches continue to be audited separately, not expressed through these fields.
 
-GLM-5.2 and GLM-5.3's Anthropic API use modern `adaptive thinking + effort`. GLM-5-Turbo also uses adaptive thinking, but does not publicly commit to effort tiers; specific basis and mapping see item 13. All three do not send fixed budget. GLM-5-Turbo has been verified through the BigModel Coding Plan real interface, covering single-request, current AI SDK parsing, Tool Call, Thinking Block, Signature, and second-round replay after Tool Result. Therefore, the temporary conclusion to retain `1024 fixed budget` for GLM-5-Turbo in item 9 is withdrawn.
+GLM-5.2, GLM-5.3, and GLM-5-Turbo all use adaptive thinking and send no fixed budget; GLM-5.2 and GLM-5.3 follow their official effort tiers, GLM-5-Turbo's specifics follow item 13. GLM-5-Turbo has been verified against the BigModel Coding Plan real interface, covering single request, current AI SDK parsing, Tool Call, Thinking Block, Signature, and second-round replay after Tool Result. The interim conclusion to retain a `1024 fixed budget` for GLM-5-Turbo in item 9 is withdrawn.
 
 ## 12. Reasoning Mapping is a Required AI SDK Provider Options Mapping
 
 > Decision Status: Confirmed; when a model declares `reasoningLevel`, complete `reasoningMapping` must be provided
 
-ZCode internally uses AI SDK to call models. OpenAI Responses, Anthropic Messages, and OpenAI Compatible are each executed by their corresponding AI SDK Provider. Users select a unified `reasoningLevel`; `reasoningMapping` is responsible for converting this tier into the Options received by the current AI SDK Provider:
+ZCode internally uses AI SDK to call models; OpenAI Responses, Anthropic Messages, and OpenAI Compatible each run on their corresponding AI SDK Provider. Users select a unified `reasoningLevel`; `reasoningMapping` converts the tier into the Options received by the current AI SDK Provider:
 
 ```text
 reasoningLevel
@@ -738,9 +578,7 @@ AI SDK Provider
 Model API
 ```
 
-When `ModelConfig.optionSpecs.reasoningLevel` declares optional tiers, the ultimately effective `ModelConfig` must simultaneously provide `reasoningMapping`, covering all optional tiers. The default mapping for standard APIs is also written into Official Config, not hidden in Adapter code.
-
-For example:
+When `ModelConfig.optionSpecs.reasoningLevel` declares selectable tiers, the finally effective `ModelConfig` must simultaneously provide `reasoningMapping` covering all selectable tiers. Default mappings for standard APIs are also written into Official Config, not hidden in Adapter code. For example:
 
 ```jsonc
 // OpenAI Responses
@@ -773,38 +611,28 @@ For example:
 }
 ```
 
-`reasoningMapping[level]` is the inner object of AI SDK Provider Options related to Reasoning, passed to the current runtime Provider Adapter. It does not contain `openai`, `anthropic` and other AI SDK namespaces, nor is it the final HTTP Request Body. The runtime Adapter places it in the correct Provider Options namespace based on the current API type, and the AI SDK Provider encodes it into actual protocol fields.
+`reasoningMapping[level]` is the inner object of AI SDK Provider Options related to Reasoning, passed to the current runtime Provider Adapter. It contains no AI SDK namespaces such as `openai` or `anthropic`, and is not the final HTTP Request Body. The runtime Adapter places it into the correct Provider Options namespace based on the current API type, and the AI SDK Provider encodes it into actual protocol fields.
 
-`reasoningMapping` directly belongs to `ModelConfig`:
-
-```ts
-class ModelConfig extends ConfigOverlay {
-  properties?: ModelPropertiesConfig | null;
-  optionSpecs?: ModelOptionSpecsConfig | null;
-  reasoningMapping?: ReasoningMappingConfig | null;
-}
-```
-
-This mapping only carries Reasoning-related Provider Options, such as `reasoningEffort`, `effort`, `thinking`, `enable_thinking`, and `clear_thinking`. API Keys, Headers, Base URLs, and other model request parameters do not belong to this mapping.
+`reasoningMapping` belongs directly to `ModelConfig` (see the type in item 11) and carries only Reasoning-related Provider Options, such as `reasoningEffort`, `effort`, `thinking`, `enable_thinking`, and `clear_thinking`. API Keys, Headers, Base URLs, and other model request parameters do not belong to this mapping.
 
 ## 13. GLM-5-Turbo Only Provides Thinking Switch
 
 > Decision Status: Confirmed; supersedes the "GLM-5-Turbo uses effort" portion of item 11
 
-Zhi's official documentation explicitly states that GLM-5-Turbo supports `thinking.type = enabled | disabled`, with default enabled; when enabled, the model dynamically determines whether thinking is needed. The formal support range for `reasoning_effort` starts from GLM-5.2 and does not include GLM-5-Turbo. A real interface being able to accept a parameter does not mean that parameter has become the model's public contract.
+Zhipu's official documentation states that GLM-5-Turbo supports `thinking.type = enabled | disabled`, default enabled; when enabled, the model dynamically decides whether to think. Formal `reasoning_effort` support starts from GLM-5.2 and does not include GLM-5-Turbo. A real interface accepting a parameter does not make that parameter part of the model's public contract.
 
-Therefore GLM-5-Turbo's `reasoningLevel` only includes:
+GLM-5-Turbo's `reasoningLevel` therefore includes only:
 
 ```text
 enabled
 disabled
 ```
 
-OpenAI Compatible API's mapping uses `thinking.type`. ZCode, as a long-chain Coding Agent, simultaneously uses `clear_thinking: false` when thinking is enabled, and the message model and Adapter fully and verbatim replay historical `reasoning_content` in order. This behavior is a fixed protocol configuration, not exposed as a user Option.
+The OpenAI Compatible API mapping uses `thinking.type`. ZCode, as a long-chain Coding Agent, also sends `clear_thinking: false` when thinking is enabled, and the message model and Adapter fully and verbatim replay historical `reasoning_content` in order. This behavior is fixed protocol configuration, not exposed as a user Option.
 
-Anthropic Messages API's mapping is `adaptive` and `disabled`. When enabled, do not send `effort`; the server adopts the default reasoning strategy; simultaneously do not send fixed budget. The `budgetTokens: 1024` previously used to compatibly handle old AI SDK does not enter the new Official Config.
+The Anthropic Messages API mapping is `adaptive` and `disabled`. When enabled, send no `effort` — the server applies its default reasoning strategy — and send no fixed budget. The `budgetTokens: 1024` previously used for old AI SDK compatibility does not enter the new Official Config.
 
-GLM-5.2 and GLM-5.3 continue to provide effort tiers according to their respective official support scope, unaffected by this decision.
+GLM-5.2 and GLM-5.3 continue to provide effort tiers within their respective official support scopes, unaffected by this decision.
 
 ## 14. Idle Tasks Use Builtin Provider and Per-Turn Authentication Materials
 
@@ -812,13 +640,11 @@ GLM-5.2 and GLM-5.3 continue to provide effort tiers according to their respecti
 
 ### Background
 
-Current idle tasks are assembled by the Host before each dispatch as a `turnRuntimeModel`. It contains both static configuration of the Provider and Model, as well as the API Key, Ticket, and Headers used by the current execution. The Core Worker temporarily adds it to the Registry Overlay, creates an execution Model for the current Turn, then restores the previous Runtime Model and cleans up the Overlay when the Turn ends.
-
-This chain already has the running semantics of "each Turn uses a fixed authentication snapshot," but it assembles and transmits static Provider facts together with dynamic authentication materials, and relies on temporary `setModel`/restore logic.
+Idle tasks were assembled by the Host before each dispatch as a `turnRuntimeModel` carrying both the Provider/Model static configuration and the API Key, Ticket, and Headers for the current execution. The Core Worker temporarily added it to the Registry Overlay, created an execution Model for the Turn, then restored the previous Runtime Model and cleaned up the Overlay. The chain had per-Turn fixed-authentication-snapshot semantics, but it assembled and transmitted static Provider facts together with dynamic authentication material, relying on temporary `setModel`/restore logic.
 
 ### Decision
 
-Normal Account Provider authentication takes its fact source from the Core Worker / CLI process's own Account Request Auth Service. The Host or other Entries only submit `ModelSelection`, not passing or overriding normal Account Provider's API Key, Headers, Provider Config, or Model Config along with the Submission. The CLI creates Models based on its own Registry, and when the real request occurs, obtains the current connection's dynamic credentials through its own authentication Service.
+Normal Account Provider authentication takes its fact source from the Core Worker / CLI process's own Account Request Auth Service. The Host and other Entries submit only `ModelSelection`; they do not pass or override a normal Account Provider's API Key, Headers, Provider Config, or Model Config with the Submission. The CLI creates Models from its own Registry and obtains the current connection's dynamic credentials through its own authentication Service when the real request occurs:
 
 ```text
 Host / Entry
@@ -834,11 +660,11 @@ CLI Account Request Auth Service
 Model Request
 ```
 
-The current Desktop Worker obtains normal Account authentication materials through protocol callbacks to the Host, which is a migration chain that needs to be exited; it does not constitute a second fact source in the target architecture.
+The current Desktop Worker obtaining normal Account authentication material through protocol callbacks to the Host is a migration chain to be exited; it is not a second fact source in the target architecture.
 
-The idle task's Provider is changed to a Builtin Provider managed by Official Config. Its Provider identity, API type, Base URL, model list, Model Properties, and Option Specs and other static facts enter the formal Registry. This Provider is used for idle task execution and does not appear in normal model selection and settings interactions.
+The idle task's Provider becomes a Builtin Provider managed by Official Config. Its Provider identity, API type, Base URL, model list, Model Properties, and Option Specs enter the formal Registry. It is used for idle task execution and does not appear in normal model selection or settings interactions.
 
-When the Host dispatches each idle Turn, it only additionally passes the dynamic authentication materials needed for the current execution:
+When the Host dispatches each idle Turn, it additionally passes only the dynamic authentication material for the current execution:
 
 ```text
 Builtin Provider (Official Config / Worker Registry)
@@ -854,27 +680,13 @@ Host dispatches Turn
    └─ Other Headers needed for this execution
 ```
 
-The Core Worker creates a normal `Model` using the Builtin Provider from the Registry, the current `ModelSelection`, and the passed authentication materials. This Model is explicitly given to the current Agent Loop, and the Loop's Model Steps and auto-Compact continue to use the same Model and authentication materials.
+The Core Worker creates a normal `Model` from the Registry's Builtin Provider, the current `ModelSelection`, and the passed material, explicitly handed to the current Agent Loop; the Loop's Model Steps and auto-Compact keep using the same Model and material.
 
-```text
-Builtin Provider in Worker Registry
-        +
-ModelSelection
-        +
-Current Turn's API Key / Headers
-        |
-        v
-      Model
-        |
-        v
-   Agent Loop
-```
-
-Authentication materials are not written to Official Config, Personal Config, Registry View, or Session persistence state. They are only valid for the current Turn and must not be used by subsequent executions after the Turn ends. The idle Model also does not modify the user's Session Model Selection or App Recent.
+Authentication material is not written to Official Config, Personal Config, Registry View, or Session persistence. It is valid only for the current Turn and must not be used by subsequent executions after the Turn ends. The idle Model also does not modify the user's Session Model Selection or App Recent.
 
 ### Ticket Expiry and Continuation
 
-Current `3102` Ticket expiry semantics are retained:
+The current `3102` Ticket expiry semantics are retained:
 
 ```text
 Current Turn receives 3102
@@ -895,11 +707,11 @@ Submit Resume Turn in the same Session
 New Turn creates new Model with newly passed API Key / Headers
 ```
 
-This is a new Turn / Agent Loop for the same idle task and same Session, not replacing the Ticket within a running Model. Normal JWT or API Key authentication failure does not automatically equal `3102`; whether it needs automatic continuation is not within this decision's scope.
+This is a new Turn / Agent Loop for the same idle task and same Session, not a Ticket replacement inside a running Model. Normal JWT or API Key authentication failure does not automatically equal `3102`; whether it needs automatic continuation is outside this decision's scope.
 
 ### Execution Model Switch Banner
 
-The model switch banner is determined by the Model actually used by adjacent execution segments. Each Agent Loop holds its own Execution Model; the Guide switching Models within the Loop forms a new execution segment. When a new execution segment begins, the system compares its `providerId/modelId` with the previous execution segment: if the identity differs, display the model switch banner; if the identity is the same, do not display it. Changes to the reasoning tier alone are not treated as model identity changes.
+The model switch banner is determined by the Model actually used by adjacent execution segments. Each Agent Loop holds its own Execution Model; the Guide switching Models within the Loop forms a new execution segment. When a new execution segment begins, compare its `providerId/modelId` with the previous segment's: different identities display the model switch banner; identical identities display none. A reasoning-tier change alone is not a model identity change.
 
 ```text
 Previous segment's Execution Model
@@ -912,7 +724,7 @@ Current segment's Execution Model
               `-- Different: display model switch banner
 ```
 
-Idle models enter the execution model sequence by the same rule and do not require idle-task-specific banner state:
+Idle models enter the execution model sequence by the same rule, with no idle-task-specific banner state:
 
 ```text
 Normal Turn A
@@ -924,9 +736,9 @@ Idle Turn Idle       -> A vs Idle differ, display A -> Idle
 Next normal Turn B   -> Idle vs B differ, display Idle -> B
 ```
 
-If no new execution segment begins after the idle task ends, the system does not preemptively display "restore to A." At this point, no Model is executing; after the next round truly creates A or B, generate the banner based on the actual Execution Model. This way, when users change the Session Selection from A to B during the idle task, the timeline naturally shows `Idle -> B`, without passing through an A that was never truly executed.
+If no new execution segment begins after the idle task ends, the system does not preemptively display "restore to A": no Model is executing, and the banner is generated from the actually created A or B after the next round truly creates one. When the user changes the Session Selection from A to B during the idle task, the timeline naturally shows `Idle -> B`, without passing through an A that never truly executed.
 
-Session Model Selection is only responsible for creating Models for subsequent execution, not serving as the banner's fact source. Each Turn needs to persist the actual Execution Model identity; real-time projection and cold recovery both derive banners from the same execution sequence. `lastExecutionModel` only represents the previous actual execution model and does not bear Session Selection's persistence state.
+Session Model Selection only creates Models for subsequent execution; it is not the banner's fact source. Each Turn persists the actual Execution Model identity; real-time projection and cold recovery derive banners from the same execution sequence. `lastExecutionModel` represents only the previous actually executed model and does not carry Session Selection's persistence state.
 
 The banner uses an explicit public entry:
 
@@ -937,92 +749,88 @@ recordExecutionModelChangeMarker({
 });
 ```
 
-This entry only compares the current Execution Model of this Session with `lastExecutionModel`, and persists a `model_change` Marker when `providerId/modelId` changes. It is called when the normal main Agent Loop starts, idle main Agent Loop starts, and the Guide's new Model truly takes effect from the next Model Step. If Subagents reuse this entry, it only writes to their own Child Session. Title, Memory, Wiki, Verifier, and other independent model tasks do not call it.
+This entry only compares this Session's current Execution Model with `lastExecutionModel` and persists a `model_change` Marker when `providerId/modelId` changes. It is called when the normal main Agent Loop starts, the idle main Agent Loop starts, and the Guide's new Model truly takes effect from the next Model Step. Subagents reusing this entry write only to their own Child Session; Title, Memory, Wiki, Verifier, and other independent model tasks do not call it. The entry creates and switches no Models and modifies no Session Selection, Provider Config, or Registry.
 
-This entry does not create or switch Models, nor does it modify Session Selection, Provider Config, or Registry.
+The Execution Model takes effect when the Model is successfully created and formally enters the main Agent Loop, or when the Guide formally enters a new Model Step; call `recordExecutionModelChangeMarker()` at that point. If Model creation fails, or Submission is blocked by admission, hooks, or other boundaries before entering the Agent Loop, no new execution model baseline is established. After entering the Loop, even if cancelled before the first Model Request is sent, this Model is still the Execution Model that took effect in this segment and can produce a banner.
 
-The Execution Model takes effect when the Model is successfully created and formally enters the main Agent Loop, or when the Guide formally enters a new Model Step. At this point, call `recordExecutionModelChangeMarker()`. If Model creation fails, or Submission is prevented by admission, hooks, or other boundaries before entering the Agent Loop, no new execution model baseline is established. After entering the Loop, even if canceled before the first Model Request is sent, this Model is still the Execution Model that has taken effect in this execution segment and can produce a banner.
-
-`3102` resumption is a new Turn for the same idle task. If the new Turn continues to use the same Idle Model, the execution model identity does not change, and no intermediate banner is added; the next execution segment that truly starts after the entire idle task is compared with Idle.
+`3102` resumption is a new Turn of the same idle task. If the new Turn keeps using the same Idle Model, the execution model identity does not change and no intermediate banner appears; the next execution segment truly started after the whole idle task is compared with Idle.
 
 ### Authentication Boundaries
 
-Idle tasks do not extend the normal Account Request Auth Service's responsibilities. It first reuses the static facts of the Builtin Provider in the CLI Registry; if it is difficult for the CLI to naturally obtain the full set of dynamic materials required by the idle service at this stage, the Host can pass execution-scoped Request Auth along with the current Turn. This input only expresses the authentication materials and Ticket for this idle execution, not Provider or Model static config.
-
-If the CLI can naturally obtain JWT, Coding Plan Key, and other materials in the future, the Host's input can continue to be narrowed; this optimization does not change the already confirmed boundaries and does not block the current migration. Off-Peak Tickets are obtained by the Host scheduling service and continue to be passed along with the current Turn.
+Idle tasks do not extend the normal Account Request Auth Service's responsibilities. They reuse the Builtin Provider's static facts from the CLI Registry; if the CLI cannot yet naturally obtain the full set of dynamic material the idle service needs, the Host may pass execution-scoped Request Auth with the current Turn — an input expressing only this execution's authentication material and Ticket, never Provider or Model static config. If the CLI can later naturally obtain JWT, Coding Plan Key, and other material, the Host's input can be narrowed further; that optimization changes no confirmed boundary and does not block the current migration. Off-Peak Tickets are obtained by the Host scheduling service and keep being passed with the current Turn.
 
 Execution-period authentication must satisfy:
 
-- Normal Account Providers always use the CLI Account Request Auth Service and do not accept external authentication overrides;
-- Idle tasks allow the Host to pass API Key, Headers, and Tickets along with the current Turn;
-- Authentication materials between different Turns and concurrent executions must be isolated;
-- A Model uses fixed authentication materials within one Agent Loop;
-- After the Turn ends, fails, or is cancelled, the current authentication materials must exit the available state;
-- Providers and Models continue to be executed through the unified ModelFactory and Adapter chain, without establishing idle-task-specific model request protocols.
+- Normal Account Providers always use the CLI Account Request Auth Service and accept no external authentication override.
+- Idle tasks allow the Host to pass API Key, Headers, and Tickets with the current Turn.
+- Authentication material between different Turns and concurrent executions must be isolated.
+- A Model uses fixed authentication material within one Agent Loop.
+- After the Turn ends, fails, or is cancelled, the current authentication material must leave the available state.
+- Providers and Models keep executing through the unified ModelFactory and Adapter chain; no idle-task-specific model request protocol is established.
 
 ## 15. After Process Registry is Enabled, Old Workspace Catalog Exits Provider Authority
 
 > Decision Status: Confirmed and completed
 
-The process Registry has already constructed Providers and Models from Official, Personal, and Account Config. At this point, the old Workspace Catalog continuing to participate in member judgment, property synchronization, or projection merging would cause the Host Snapshot to once again become a second fact source. This issue cannot be postponed simply because the code resides in the old protocol compatibility layer; anything that affects normal long-term Providers falls within the current high-priority closeout scope of M2.
+The process Registry builds Providers and Models from Official, Personal, and Account Config. If the old Workspace Catalog kept participating in member judgment, property synchronization, or projection merging, the Host Snapshot would again become a second fact source. This cannot be deferred merely because the code lives in the old protocol compatibility layer; anything affecting normal long-term Providers is within M2's current high-priority closeout scope.
 
-The confirmed boundary is:
+The confirmed boundary:
 
 ```text
 Process Registry is enabled
 ├─ Provider / Model members        -> Registry View
-├─ Model Properties / Options     -> Registry Model
-├─ Model switch availability      -> App Registry View
-├─ Context window of current exec -> Current App Runtime / Model
-└─ Provider revision              -> No longer use old Workspace Catalog revision
+├─ Model Properties / Options      -> Registry Model
+├─ Model switch availability       -> App Registry View
+├─ Context window of current exec  -> Current App Runtime / Model
+└─ Provider revision               -> No longer use old Workspace Catalog revision
 
 Workspace Settings
 └─ Workspace default / last-used / mode and other interactive states
 ```
 
-The `runtimeModel` carried by the old protocol along with the Host is no longer written to the Workspace Catalog in the Registry process, nor is it used to supplement normal long-term Providers. The migration-period idle `runtimeModel` is narrowed by subsequent slices to ModelSelection, Request Auth, and Tickets; it does not constitute a reason to retain normal Workspace Provider Snapshots.
+The `runtimeModel` carried by the old protocol with the Host is no longer written to the Workspace Catalog in the Registry process, nor used to supplement normal long-term Providers. The migration-period idle `runtimeModel` is narrowed by subsequent slices to ModelSelection, Request Auth, and Tickets; it is no reason to retain normal Workspace Provider Snapshots.
 
-This item simultaneously confirms the following implementation principles:
+Implementation principles confirmed by this item:
 
-- `syncAppWorkspaceModelCatalog()` no longer installs old Overlays or overwrites Runtime in process Registry mode;
-- App initialization no longer generates `bootstrapModelConfig` from the old Workspace Catalog;
-- Session preflight and cross-Provider switches determine current members from Registry-backed `app.listModels()`;
-- `workspace/readState` only returns `settings.model`; old `modelCatalog` protocol fields, Provider projections, and revision have been deleted;
-- The App no longer exposes `setModelCatalogOverlay`, nor does it save Workspace-level Provider/Model Overlays; idle and other single executions still enter through independent Turn Overlays and do not restore long-term Workspace Catalogs;
-- `createZCodeApp` must inject the process Registry; tests and internal tools use explicit test Registries, without entering old Runtime Model Config assembly by omitting optional parameters;
-- Cold recovery usage's context window uses the model properties already fixed by the current App Runtime;
-- `workspace/readState` is a pure projection interface, does not accept `runtimeModel`, and does not modify the Active Session;
-- `workspace/setDefaultModel` only writes ModelSelection, does not accept Provider runtime snapshots;
-- V4 `createSession` and `switchModelConfig` only submit ModelSelection; the target Provider is validated by the Worker Registry, without accepting Host `runtimeModel` fallback;
-- The Repo Snapshot bypass only uses the Selection or execution-scoped Model explicitly carried by the current command; when missing, allow model metadata to be empty, without guessing the Provider by reading `workspace/readState`;
-- default, last-used, mode, and other selection/interactive states can still remain in Workspace Settings, subsequently converged by Interaction design, and not mixed with Provider static facts.
+- `syncAppWorkspaceModelCatalog()` installs no old Overlays and overwrites no Runtime in process Registry mode.
+- App initialization generates no `bootstrapModelConfig` from the old Workspace Catalog.
+- Session preflight and cross-Provider switches determine current members from Registry-backed `app.listModels()`.
+- `workspace/readState` returns only `settings.model`; the old `modelCatalog` protocol fields, Provider projections, and revision are deleted.
+- The App no longer exposes `setModelCatalogOverlay` and saves no Workspace-level Provider/Model Overlays; idle and other single executions still enter through independent Turn Overlays and do not restore long-term Workspace Catalogs.
+- `createZCodeApp` must inject the process Registry; tests and internal tools use explicit test Registries, not old Runtime Model Config assembly through omitted optional parameters.
+- Cold recovery usage's context window uses the model properties already fixed by the current App Runtime.
+- `workspace/readState` is a pure projection interface: it accepts no `runtimeModel` and modifies no Active Session.
+- `workspace/setDefaultModel` writes only ModelSelection and accepts no Provider runtime snapshots.
+- V4 `createSession` and `switchModelConfig` submit only ModelSelection; the target Provider is validated by the Worker Registry, with no Host `runtimeModel` fallback.
+- The Repo Snapshot bypass uses only the Selection or execution-scoped Model explicitly carried by the current command; when missing, allow model metadata to be empty instead of guessing the Provider from `workspace/readState`.
+- default, last-used, mode, and other selection/interactive states can remain in Workspace Settings, converged later by Interaction design, never mixed with Provider static facts.
 
-Cleansing unrelated to the current Registry Authority can be deferred, such as deleting old hot-update helper functions with no callers, refactoring idle authentication, atomic Submission, and Guide/Loop-switch semantics. The criterion is whether it can reduce the current dual-track, not which phase it was originally marked in.
+Cleanup unrelated to the current Registry Authority can be deferred — deleting caller-less old hot-update helpers, refactoring idle authentication, atomic Submission, and Guide/Loop-switch semantics. The criterion is whether it reduces the current dual-track, not which phase it was originally marked for.
 
 ## 16. Product Semantic Retrospective for M1/M2 Autonomous Decisions
 
 > Decision Status: Confirmed
 
-Five autonomous decisions that emerged during implementation and review are now formally retrospectively recognized according to product semantics.
+Five autonomous decisions from implementation and review are formally recognized by product semantics.
 
 ### Model Properties are a Unified Check before Request Sending
 
-Callers can read Properties in advance to select execution strategies; the Model still checks the actual Request before sending. When the model explicitly declared as unsupporting is used for images, PDFs, videos, Tool Calls, or Structured Output, the Model returns a clear error.
+Callers can read Properties in advance to choose execution strategies; the Model still checks the actual Request before sending. When a model declared as unsupporting is used for images, PDFs, videos, Tool Calls, or Structured Output, the Model returns a clear error.
 
-The target Registry's ModelConfig must be complete, with `unknown` no longer retained. The current image, PDF, and video fields allow `undefined`, simply because default configurations and user-provided settings capabilities are not yet complete: during the transition, only explicit `false` blocks requests, and default values temporarily pass through. After the corresponding configuration migration is complete, the fields become required and this compatibility semantics is deleted.
+The target Registry's ModelConfig must be complete, with no `unknown` retained. The image, PDF, and video fields currently allow `undefined` only because default configuration and user settings capabilities are incomplete: during the transition, only explicit `false` blocks requests, and default values pass through temporarily. After the corresponding configuration migration completes, the fields become required and this compatibility semantics is deleted.
 
 ### Independent Model Tasks Continue Existing Reasoning Behavior
 
-Title, Git Commit Message, and Memory Selector had already closed reasoning before refactoring, so they continue to use the derived Model with reasoning closed. This refactoring does not change these tasks' product strategies, nor does it allow them to bypass Models to directly modify Provider parameters.
+Title, Git Commit Message, and Memory Selector had closed reasoning before the refactor and continue using the derived Model with reasoning closed. The refactor does not change these tasks' product strategies and does not let them bypass Models to modify Provider parameters directly.
 
 ### Account Queries Per-Provider Retain Last-known-good
 
-Remote queries for Start Plan, Personal Coding Plan, and Team Plan each produce `available`, `unavailable`, or `unknown`. When one channel is `unknown`, only retain the previous successful result for that Provider; other Providers' already-obtained definite results continue to be published. Explicit `unavailable` deletes the corresponding Provider.
+Remote queries for Start Plan, Personal Coding Plan, and Team Plan each produce `available`, `unavailable`, or `unknown`. When one channel is `unknown`, retain the previous successful result for that Provider only; other Providers' already-obtained definite results continue to be published. Explicit `unavailable` deletes the corresponding Provider.
 
 ### Target Design Does Not Retain Temporary Providers
 
-Idle tasks select Official Builtin Providers from the CLI Registry and receive necessary Request Auth and Off-Peak Tickets along with Turns. Submissions do not carry complete ProviderConfig or ModelConfig. The idle `runtimeModel` still present in M2 is a compatibly narrowed input and does not constitute a new fact source.
+Idle tasks select Official Builtin Providers from the CLI Registry and receive the necessary Request Auth and Off-Peak Tickets with Turns. Submissions carry no complete ProviderConfig or ModelConfig. The idle `runtimeModel` still present in M2 is a compatibly narrowed input, not a new fact source.
 
 ### Account Provider's User-visible Behavior Remains the Same
 
-This refactoring maintains the current number of Providers, Personal/Team connection switching, and model visibility, without introducing new product forms such as multiple Teams and Personal simultaneously appearing in the model selector. Internal convergence of Config, Registry, and Request Auth must not change this behavior.
+The refactor maintains the current number of Providers, Personal/Team connection switching, and model visibility, without introducing new product forms such as multiple Teams and Personal simultaneously appearing in the model selector. Internal convergence of Config, Registry, and Request Auth must not change this behavior.

@@ -2,12 +2,13 @@
 
 > Status: Historical implementation contract
 >
-> Scope: Impact assessment, boundaries, and test handoff when M2's first pure domain slice began work
->
-> This document preserves the当时的 planning evidence; therefore, "this batch", "subsequent integration", and open items in the body do not represent M2's current state.
+> Scope: Impact assessment, boundaries, and test handoff when M2's first pure domain slice began work.
+> This document preserves the planning evidence from that time; "this batch", "subsequent integration", and open items in the body do not represent M2's current state.
 > Current implementation status is in [`02-provider-config-and-registry.md`](./02-provider-config-and-registry.md), remaining retirement items are in
 > [`02-provider-config-and-registry-cleanup.md`](./02-provider-config-and-registry-cleanup.md), and current design is in
 > [`../design/registry/registry.md`](../design/registry/registry.md).
+>
+> Full history: git show 45f808f7:docs/working-memory/provider-refactor/steps/02-provider-config-and-registry-impact.md
 
 ## Feature Summary
 
@@ -22,7 +23,7 @@
 
 ## UI Surface Matrix
 
-This batch does not integrate with UI. The table below records the consumption boundaries that must be maintained for subsequent integration.
+This batch does not integrate with UI. The table below records the consumption boundaries that subsequent integration must maintain.
 
 | User scenario | UI entry                                          | Shared implementation                                    | Display/draft owner      | Default/inherit source                       | Validation/gating                        | Commit action                            | Authority/persistence              | Mode boundary                       | Must remain isolated from                   |
 | ------------- | ------------------------------------------------- | -------------------------------------------------------- | ------------------------ | -------------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------- | ----------------------------------- | ------------------------------------------- |
@@ -32,7 +33,7 @@ This batch does not integrate with UI. The table below records the consumption b
 
 ## Shared And Divergent Behavior
 
-| Concern              | Shared across surfaces                             | Deliberately different                                                                       | Why it matters for this change                                               |
+| Concern              | Shared across surfaces                             | Deliberately different                                                                       | Why it matters                                                               |
 | -------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | Option source        | ProviderConfigResolver and Registry View           | Settings page also needs invalid items and explicit Personal values                          | Registry must not retain grayed-out unavailable models for the settings page |
 | Validation           | Schema, three-layer Overlay, and integrity check   | accessId authentication, quotas, and network errors are still handled by the execution chain | Registry does not handle account permission judgment                         |
@@ -71,62 +72,14 @@ This batch does not integrate with UI. The table below records the consumption b
 | Registry replacing View does not change the old View/Model already held by callers                       | Active Loop                   | Immutable snapshot unit tests | runtime design                              |
 | This batch's code does not read/write files, make network requests, or depend on UI/Services/SDK         | All processes                 | Package dependency review     | User-confirmed pure domain package boundary |
 
-## Codegraph Evidence
-
-The current environment has no callable codegraph tool; per skill convention, fall back to the seeds declared by the feature graph and check direct callers via `rg`, with a depth limit of 2.
-
-| Seed                                           | Query                     | Direct callers / key path                              | Depth | Interpretation                                                                                                      |
-| ---------------------------------------------- | ------------------------- | ------------------------------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------- |
-| `IModelProviderService`                        | declarations / callers    | Settings, model selection hook, Host registry snapshot | 2     | Current service mixes config, Registry, and runtime projection; gradually integrate new domain package subsequently |
-| `ModelProviderConfig`                          | references                | shared schema, services storage, protocol projection   | 2     | Current full copy structure is migration input, not directly becoming new Overlay type                              |
-| `ModelConfigSelect` / `buildModelSelectGroups` | graph seeds + references  | Conversation, Automation, Subagent, Repo Wiki          | 2     | Candidate source can be shared, draft/commit must be separated                                                      |
-| M1 `Model`                                     | declarations / references | Core, Bootstrap, Adapter wrapper                       | 2     | M2-A does not change execution contract; M2.4 integrates ModelFactory                                               |
-
-## Graph Drift Candidates
-
-| Candidate                    | Live-code evidence                   | Missing/stale graph relation                         | Proposed follow-up                                                         |
-| ---------------------------- | ------------------------------------ | ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| Pure Provider domain package | This batch's new `packages/provider` | `capability.provider-registry` has no such code seed | Add the package seed to existing capability/service nodes after code lands |
-
-## Graph Delta
-
-| Status    | Node/edge                                                                 | Semantic reason                                                 | Evidence                       | Action                                                                 |
-| --------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------- |
-| confirmed | `capability.provider-registry` adds `packages/provider/src/index.ts` seed | New package carries shared Config/Resolver/Registry domain core | User-confirmed and implemented | Update graph seed after implementation, do not add new product surface |
-
-## Unresolved Questions
-
-| Question                               | Candidate answers                                                                         | Scope difference                                                                                           | Owner                        |
-| -------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `reasoningMapping` final static Schema | Continue current compatible structure / Replace with formal structure after Adapter topic | Does not block Properties, Option Specs, Resolver, and Registry; blocks M2.4 ModelFactory full integration | Subsequent Adapter design    |
-| Source failure publication strategy    | Keep last-known-good / Publish partial results                                            | Belongs to Source and Registry Service assembly, not this batch's pure Registry                            | M2 subsequent implementation |
-
-## Planning Handoff
-
-| Item             | Destination                          | Status     |
-| ---------------- | ------------------------------------ | ---------- |
-| Spec update      | `02-provider-config-and-registry.md` | complete   |
-| Case catalog     | Accepted cases below this document   | complete   |
-| Coverage matrix  | Pure domain package unit tests       | complete   |
-| Decision backlog | M2 step open items                   | complete   |
-| E2E handoff      | No UI/protocol behavior changes      | not-needed |
-
-## Clarification Log
-
-| Round | Question                    | User answer                                                                                       | Boundary fixed                            | Follow-up needed |
-| ----- | --------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------- | ---------------- |
-| 1     | Where to place shared code  | New pure domain package                                                                           | Host/Worker/CLI/TUI shared implementation | no               |
-| 2     | JSON and runtime form       | JSON/RPC normal Object; parsed after ConfigOverlay Class + ordered Map                            | Serialization and runtime boundary        | no               |
-| 3     | Account Personal override   | Domain layer does not special-restrict; Settings page expected to not provide partial interaction | Resolver does not hardcode UI strategy    | no               |
-| 4     | Whether Registry is IO-free | Yes; Source Service handles IO, Registry maintains memory View                                    | IO ownership                              | no               |
-
 ## Boundary Decisions
 
-| Boundary              | Decision                                          | Includes                                             | Excludes / prunes                                               | Source      |
-| --------------------- | ------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------- | ----------- |
-| M2-A                  | Config + Resolver + Memory Registry               | schema, overlay, order, filter, issues, index, event | storage, watcher, account request, UI, ModelFactory             | user/design |
-| Registry availability | Only contains fully configured and enabled models | complete, enabled, three-layer Provider Config       | accessId authentication, network health, quota, transient token | user/design |
-| View ownership        | Registry atomic replace immutable View            | New queries use new View                             | Modify old View / active Model                                  | user/design |
+| Boundary              | Decision                                                               | Includes                                             | Excludes / prunes                                               | Source             |
+| --------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------- | ------------------ |
+| M2-A                  | Config + Resolver + Memory Registry                                    | schema, overlay, order, filter, issues, index, event | storage, watcher, account request, UI, ModelFactory             | user/design        |
+| Registry availability | Only contains fully configured and enabled models                      | complete, enabled, three-layer Provider Config       | accessId authentication, network health, quota, transient token | user/design        |
+| View ownership        | Registry atomic replace immutable View                                 | New queries use new View                             | Modify old View / active Model                                  | user/design        |
+| Serialization form    | JSON/RPC normal Object; parsed after ConfigOverlay Class + ordered Map | wire and runtime representation                      | re-parsing per consumer                                         | user clarification |
 
 ## Accepted Cases
 
@@ -140,8 +93,8 @@ The current environment has no callable codegraph tool; per skill convention, fa
 | M2A-REGISTRY-01  | Registry already holds v1                                  | replace v2             | revision/event updated; old v1 snapshot remains unchanged                               | unit             | not-needed |
 | M2A-SELECTION-01 | provider/model exists or missing                           | validate               | Returns stable success/error result                                                     | unit             | not-needed |
 | M2B-SOURCE-01    | Config/Account Source both have current snapshot           | service start          | Subscribe first, then read; publish one complete Registry Snapshot                      | unit             | not-needed |
-| M2B-REFRESH-01   | Read v1期间 Source updates to v2                           | source invalidation    | Discard outdated generation, only publish v2                                            | unit             | not-needed |
-| M2B-REFRESH-02   | Two Source revisions both unchanged                        | 重复 invalidation      | Do not rebuild View, do not increase Registry revision                                  | unit             | not-needed |
+| M2B-REFRESH-01   | Source updates to v2 while reading v1                      | source invalidation    | Discard outdated generation, only publish v2                                            | unit             | not-needed |
+| M2B-REFRESH-02   | Two Source revisions both unchanged                        | repeated invalidation  | Do not rebuild View, do not increase Registry revision                                  | unit             | not-needed |
 | M2B-FAILURE-01   | v1 published, next Source read fails                       | source invalidation    | v1 remains available; report refresh error; subsequent success can recover to v2        | unit             | not-needed |
 | M2C-SETTINGS-01  | Official, Personal, invalid, and Account filtered items    | project settings       | Returns Personal explicit value, Effective value, issues, and reorderable flag          | unit             | not-needed |
 | M2C-SELECTION-01 | Settings still contains non-publishable items              | project selection      | Selection View only contains Provider/Model published by Registry                       | unit             | not-needed |
@@ -153,10 +106,7 @@ The current environment has no callable codegraph tool; per skill convention, fa
 | M2E-MIGRATE-03   | File version is higher than current program support range  | repository read        | Report error and do not overwrite original file                                         | unit             | not-needed |
 | M2E-MIGRATE-04   | Old config conversion or new file atomic write fails       | repository read        | Report error and keep old file; do not publish half-migrated Snapshot                   | integration      | not-needed |
 
-## E2E Handoff Notes
+## Formerly Open Questions
 
-- Provider fixture: not-needed
-- File-system fixture: not-needed
-- Timing strategy: synchronous pure-domain unit tests
-- Docker preset: not-needed
-- Review risks: Current production chain is not yet integrated; subsequent integration must re-scan Host/Worker/remote impact
+Both questions from planning are resolved: `reasoningMapping`'s final Schema follows
+[`02-provider-config-and-registry-human-in-the-loop.md`](./02-provider-config-and-registry-human-in-the-loop.md) items 11–12, and the Source failure publication strategy (Last-known-good) is item 2 of the same document.

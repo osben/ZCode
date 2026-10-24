@@ -1,110 +1,71 @@
-# Bugfix 08: Auxiliary Model Calls Uniformly Use the Lowest Reasoning Tier
+# Bugfix 08: Auxiliary Model Calls Use the Lowest Reasoning Tier
 
 > Status: Completed
 >
 > Date: 2026-08-28
 >
-> Source: The GLM-5.3 Flash does not carry the public Reasoning tier when generating the title
+> Source: GLM-5.3 Flash carried no public Reasoning tier when generating a title
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/bugfix-08-auxiliary-model-lowest-reasoning.md`
 
 ## 1. Problem
 
-The Session title, the Goal title, the Git Commit Message, the Memory Recall Selector, and the Provider connectivity test all belong to the short, low-cost auxiliary model calls. These entries currently do not share the "low-cost Reasoning" semantics; instead, they look up the `disabled`, `off`, `nothink`, or `none` Mapping through `reasoningMode: "disabled"` respectively.
+Session title, Goal title, Git Commit Message, Memory Recall Selector and the Provider connectivity test are short,
+low-cost auxiliary calls. Each looked up a `disabled` / `off` / `nothink` / `none` Mapping through
+`reasoningMode: "disabled"`. A model that cannot close Reasoning but publicly offers `low / high / max` ended up
+with no Reasoning Mapping, and business code that meant "lowest cost" implemented "force closed" by guessing
+provider-specific tier names.
 
-This produces two issues:
+## 2. Semantics
 
-- The model that does not allow closing the Reasoning, but publicly provides `low / high / max`, ultimately carries no Reasoning Mapping; the title request is inconsistent with the model's public capabilities;
-- The business code expresses "lowest cost," but the implementation expresses "force closed," relying on the provider-specific tier name guessing.
+`reasoningLevel.values` is an ordered list from lowest to highest reasoning intensity; `default` is the tier for
+normal requests (not necessarily the lowest). "Lowest" is not "closed":
 
-## 2. The Correct Semantics
+- public `off / low / high` -> lowest is `off`;
+- public `low / high / max` -> lowest is `low`;
+- no Reasoning Option Spec -> no tier is synthesized or guessed.
 
-The `values` of the Reasoning Enum is an ordered list, sorted from the lowest reasoning intensity to the highest:
+Normal conversations, Compact, Subagent, Repo Wiki, etc. keep using the user's explicit selection or `default`. Only
+entries explicitly declared as auxiliary low-cost requests change.
 
-```text
-reasoningLevel.values[0]             The lowest public tier
-reasoningLevel.values[1..n]          Step by step increase
-reasoningLevel.default               The default tier for normal requests (it may not be the lowest)
-```
+## 3. Rules
 
-"The lowest tier" is not equal to "closed":
+1. Auxiliary calls read `Model.optionSpecs.reasoningLevel.values[0]` and bind it through `Model.bind` /
+   `ModelRequest.reasoningLevel`; the normal `reasoningMapping` / Adapter chain applies. No new Policy, Resolver,
+   Factory Input or Request Option.
+2. Entries:
 
-- When the model publicly provides `off / low / high`, the lowest tier is `off`;
-- When the model only publicly provides `low / high / max`, the lowest tier is `low`;
-- When the model has no Reasoning Option Spec, do not synthesize or guess any tier.
+| Entry                      | Behavior                                                                                                                                                                                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session Title / Goal Title | Auxiliary Model created with the lowest public tier (shared implementation)                                                                                                                                                                                                |
+| Git Commit Message         | Auxiliary Model uses the lowest tier regardless of the current session's tier                                                                                                                                                                                              |
+| Memory Recall Selector     | Single request passes `reasoningLevel: values[0]`; Active Model options unchanged (immutable); output budget inherited from the Active Model                                                                                                                               |
+| Provider Connectivity Test | Formal Model from the current Registry bound to `values[0]` through the same Registry, ModelFactory, runtime headers and Adapter chain; nothing bound without a Spec; provider-neutral user message, no Start Plan-specific body, Provider ID branch or test-specific auth |
 
-The normal conversations, Compact, Subagent, Repo Wiki, etc., still use the user's explicit selection or the `default`. This Bugfix only changes the entries explicitly declared as the auxiliary low-cost request.
+3. `reasoningMode`, its dedicated Model Request Options, Factory Input, hidden closed-Mapping scanning and
+   `resolveReasoningDisabledMappingKey` are removed. The old "closed reasoning fixes 256 tokens" assumption, the
+   Git Commit Message fake 256 Token parameter, the Core special ignore branch and Adapter Telemetry closed-tier
+   name scanning are also removed (Todo 42).
+4. Model selection, Session persistence, Registry, Account/Personal Overlay, normal request defaults and
+   desktop/mobile recovery are unchanged.
+5. Schema and authoring: the Provider Model Config Schema documents `reasoningLevel.values` as "sorted from the
+   lowest reasoning intensity to the highest"; the TypeScript Contract, Provider Config Design, Model Contract and
+   Built-in author specification state the same order. Built-in values are sorted low to high with `default`
+   unchanged. The Schema validates only non-empty and `default` in `values`; order correctness and duplicate
+   avoidance are the config publisher's responsibility, not client validation.
 
-## 3. Unified Execution Chain
+## 4. Verification Targets
 
-```text
-The auxiliary call reads the Model.optionSpecs
-                    |
-                    v
-          reasoningLevel.values[0]
-                    |
-                    v
-      Model.bind / ModelRequest.reasoningLevel
-                    |
-                    v
-          The normal reasoningMapping / Adapter
-```
+`values[0]` taken when a Spec exists, no tier otherwise; Title/Git Commit bind it on the created Model without
+touching Selection; single Memory Recall uses it without changing Active Model options; connectivity test binds only
+with a Spec; Adapter sends the lowest tier through normal Reasoning Mapping; GLM-5.3/Flash integrity test confirms
+public order `low / high / max`, normal default `max`, lowest mapping `low`. Core, Bootstrap, Adapters, Contracts,
+Provider Node tests, root `typecheck` and `lint` passed (12,720 unit tests passed at the time).
 
-- The title and the Git Commit Message directly bind the `values[0]` to the created Model;
-- The Memory Recall directly passes the `reasoningLevel: values[0]` in a single request;
-- The Provider connectivity test directly binds the `values[0]` to the formal Model, and continues to initiate the request through the same Registry, ModelFactory, runtime headers, and Adapter chain;
-- Delete the `reasoningMode: "disabled"` and its hidden closed Mapping scanning used for selecting the auxiliary tier;
-- Do not add the Policy, the Resolver, the Factory Input, or the Request Option; the Adapter only consumes the normal `reasoningLevel`;
-- The Active Model remains immutable; the single Memory Recall request cannot modify its `options`.
+## 5. Open Items
 
-## 4. Impact Scope
-
-| Entry                      | New Behavior                                                                                                                                                   |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Session Title              | Create the auxiliary Model using the lowest public Reasoning tier                                                                                              |
-| Goal Title                 | Share the same implementation with the Session Title                                                                                                           |
-| Git Commit Message         | Regardless of the tier of the current session, the auxiliary Model uses the lowest public tier                                                                 |
-| Memory Recall Selector     | The single request uses the current Model's lowest public tier; the Active Model remains unchanged; the total output budget is inherited from the Active Model |
-| Provider Connectivity Test | Test the formal Model in the current Registry, and use the lowest public tier; do not synthesize the tier when there is no Spec                                |
-
-This does not change the model selection, Session persistence, Provider Registry, Account/Personal Overlay, normal request default, or the desktop/mobile recovery semantics.
-
-## 5. Schema and Configuration Author Constraints
-
-- The Provider Model Config Schema annotates the `reasoningLevel.values` as "sorted from the lowest reasoning intensity to the highest";
-- The TypeScript Contract, Provider Config Design, Model Contract, and Built-in author specification synchronously explain the order semantics;
-- The existing Reasoning values in the Built-in Config are sorted from the lowest to the highest; the `default` retains the original value, so the normal request behavior remains unchanged;
-- The Schema only validates non-empty and that the `default` belongs to the `values`. The order correctness and the avoidance of duplicate values are the responsibility of the configuration publisher, not the client repeatedly establishing complex validation.
-
-## 6. Test
-
-Write the failure tests first, then implement:
-
-- The `values[0]` is directly taken when there is the Reasoning Spec; no tier is synthesized when there is no Spec;
-- The Session/Goal Title and the Git Commit Message both bind the `values[0]` on the created Model; the Selection is not changed;
-- The single Memory Recall request uses the lowest tier; the Active Model options remain unchanged;
-- The Provider connectivity test binds the `values[0]` when there is the Reasoning Spec; it does not bind when there is no Spec;
-- The Provider connectivity test continues to use the provider-neutral user message; it does not restore the Start Plan-specific request body, the Provider ID branch, or the test-specific authentication;
-- The Memory Recall inherits the total output budget of the Active Model; the old assumption of "closed reasoning is fixed to 256" is not retained;
-- The Adapter sends the lowest tier through the normal Reasoning Mapping, without scanning the hidden closed alias;
-- The Built-in Config review confirms that the Reasoning values are sorted from low to high; the client does not maintain another set of known tiers or order validation;
-- The Core, Bootstrap, Adapters, Provider targeted tests, and the root `typecheck`, `lint` pass.
-
-## 7. Completion Criteria
-
-- All known auxiliary model entries have only one lowest-tier implementation;
-- No new Reasoning Policy, Resolver, Factory Input, or Request Option is added;
-- There is no `reasoningMode` in the production code; the auxiliary tier selection does not call the `resolveReasoningDisabledMappingKey`;
-- The auxiliary request of the GLM-5.3/Flash uses the `low`, not the no Reasoning parameter;
-- The normal request continues to use the explicit selection or the `reasoningLevel.default`;
-- The documentation, Schema, Built-in order, and the test give the consistent explanation for "the Reasoning values are ordered."
-
-## 8. Implementation and Verification Record
-
-- The implementation only reads the `optionSpecs.reasoningLevel.values[0]` directly in three places: the Session/Goal Title shared chain, the Git Commit Message, and the Memory Recall;
-- Delete the `reasoningMode`, the dedicated Model Request Options, the Factory Input, and the internal Mapping entry; no alternative abstraction is added;
-- The GLM-5.3/Flash integrity test confirms the public order is `low / high / max`, the normal default is still `max`, and the lowest tier mapping is `low`;
-- The Contracts, Adapters, Bootstrap, Core, and Provider Node targeted tests pass;
-- The root `typecheck`, the CLI affected package typecheck, and the `lint` pass;
-- The full unit test: 1491 test files pass, 1 skip; 12,720 tests pass, 25 skip.
-- The format check of this round's 26 modified files and the `git diff --check` pass; the full workspace `fmt:check` is still blocked by the existing Electron example HTML syntax and the `apps/zcode-cli/tests/gb2312.js` read issue; the scope is not expanded to fix this round.
-- The Todo 42 further deletes the invalid 256 Token fake parameter of the Git Commit Message, the Core's corresponding special ignore branch, and the Adapter Telemetry's closed tier name scanning; the Title, Git Commit, and Recall without the Reasoning Spec all have direct tests.
-- The 2026-08-30 review discovers that the Provider connectivity test still misses the lowest tier binding; this Bugfix incorporates it into the same direct `values[0]` rule. The 3012 risk control rejection that cannot be reproduced after the Experience Plan activity ends is not changed to the Provider special case by guessing.
+- Full-workspace `fmt:check` was blocked by pre-existing Electron example HTML and `apps/zcode-cli/tests/gb2312.js`
+  issues; not expanded here.
+- The 2026-08-30 review found the connectivity test still missed lowest-tier binding; it was folded into the same
+  `values[0]` rule. The 3012 risk-control rejection could not be reproduced after the Experience Plan activity ended
+  and is deliberately not turned into a Provider special case.

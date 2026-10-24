@@ -1,26 +1,23 @@
-# Todo 105：精简个人／团队 Account Provider 预设模型名单
+# Todo 105: Trim the Personal / Team Account Provider Preset Model List
 
-> 状态：实现、配置/Registry 验证及逐项复审完成。2026-09-10。实施/测试证据、逐条边界复审及真实环境限制见 [本批交付复审](./provider-todos-105-113-delivery-review.md)。
+> Status: Completed (2026-09-10): implementation, config/Registry verification and per-item review. Evidence, boundary
+> review and real-environment limits: [delivery review](./provider-todos-105-113-delivery-review.md).
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-105-account-provider-model-list-trim.md`
 
-## 已确认要求
+## Rules
 
-- 个人和团队 Account Provider 的预设模型名单移除 `GLM-5-Turbo`、`GLM-5.2`。
-- 范围覆盖 BigModel 与 Z.ai 的个人／团队 Account Provider。
+1. The preset model lists of the personal and team Account Providers (BigModel and Z.ai, four Providers) no longer
+   contain `GLM-5-Turbo` and `GLM-5.2`.
+2. Only those Providers' preset members change. No general model capability rule is deleted; Start Plan, Off-Peak and
+   ordinary API Key Provider lists are untouched; user-added models and saved Model Selections of history sessions and
+   tasks are not cleaned or rewritten.
 
-## 范围边界
+## Result
 
-- 本项只调整上述 Provider 的预设成员，不扩大为删除通用模型能力规则。
-- 不顺带调整 Start Plan、Off-Peak 或普通 API Key Provider 的名单。
-- 不清理用户自行添加的模型，不改写历史会话、任务等保存的 Model Selection。
-
-## 待执行
-
-- [x] 定位上述 Provider 的预设名单来源，移除这两个型号。
-- [x] 更新名单测试，检查其余预设模型和范围外 Provider 不受影响。
-- [x] 复审设置页与模型选择列表的结果；实现、验证完成后再关闭本项。
-
-## 实施证据
-
-- 仅改四个个人／团队 `builtinModelIds`，未删除任何模型能力/覆盖规则或改动 Start/Off-Peak 模板名单。
-- `account-model-membership.test.ts` 对四 Provider 验证预设精简，同时显式 Personal 添加 5.2/Turbo 仍进入 Registry。修复前名单断言失败，修复后通过；Builtin 完整性 14 条通过。
-- 文档维护清单同步。历史/任务/用户配置没有写入或迁移；设置与选择器共用解析名单，不新增 UI 过滤。
+- Only the four personal/team `builtinModelIds` changed; no capability/override rule and no Start/Off-Peak template list changed.
+- `account-model-membership.test.ts` verifies the trimmed preset for the four Providers and that an explicit Personal
+  add of 5.2/Turbo still enters the Registry (the list assertion failed before the fix and passes now); Builtin
+  integrity: 14 cases pass.
+- The maintenance checklist is synced. No history/task/user-config write or migration; settings and selector share the
+  resolved list, so no UI filter was added.

@@ -1,144 +1,67 @@
-# 11A Provider Runtime 完整释放功能性修复
+# 11A Provider Runtime Complete Disposal Functional Fix
 
-> 状态：已完成
+> Status: Completed (2026-08-25)
 >
-> 日期：2026-08-25
+> Nature: functional fix found while reviewing [`Todo 11`](./todo-11-provider-runtime-composition-boundary-cleanup.md)
 >
-> 任务性质：[`Todo 11`](./todo-11-provider-runtime-composition-boundary-cleanup.md) 审查中发现的功能性修复
+> Related design: [`../design/registry/runtime.md`](../design/registry/runtime.md)
 >
-> 关联设计：[`../design/registry/runtime.md`](../design/registry/runtime.md)
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-11a-provider-runtime-disposal-functional-fix.md`
 
-## 0. 任务定位
+## 0. Positioning
 
-本文只修复 Agent Protocol 进程没有释放完整 Provider 进程资源的问题。它是 Todo 11 审查发现的功能性缺陷，
-但不依赖 Todo 11 对 Runtime 组合边界、命名和公共 API 的后续裁决，可以单独实施。
+Fixes only the Agent Protocol process not releasing all Provider process resources. It does not depend on Todo 11's
+rulings on composition boundary, naming or public API and was implemented independently. It restores the complete
+disposal semantics the existing lifecycle object already declares while Todo 11 is shelved; if Todo 11 later reorganizes
+the composition root, the new outermost owner carries the same release responsibility.
 
-本任务不是用临时兜底掩盖架构问题。“临时”的含义是：在 Todo 11 整体搁置期间，先恢复当前既有生命周期对象
-已经声明的完整释放语义；未来 Todo 11 若重组组合根，再由新的最外层 owner 继续承担同一释放责任。
+## 1. Confirmed Problem
 
-## 1. 已确认问题
+The outer result of `startProcessProviderRegistryRuntime()` owns: Credential Store subscription (standalone Prompt/TUI
+only), Model Selection Config Repository (Node `fs.watch`), and the Node Provider Registry Runtime (Provider Registry
+Service, Provider Config watchers/repositories). Outer `dispose()` releases everything by ownership; inner
+`runtime.dispose()` releases only Registry and Provider Config resources.
 
-`startProcessProviderRegistryRuntime()` 返回的最外层结果拥有以下资源：
+| Entry          | Disposal call (before)                            | Result                                |
+| -------------- | ------------------------------------------------- | ------------------------------------- |
+| Prompt CLI     | outer `providerRegistryRuntime.dispose()`         | complete                              |
+| TUI            | outer `providerRegistryRuntime.dispose()`         | complete                              |
+| Protocol Agent | inner `providerRegistryRuntime.runtime.dispose()` | misses the Model Selection Repository |
 
-```text
-Process Provider Registry Runtime
-|- Credential Store subscription（仅 Standalone Prompt/TUI）
-|- Model Selection Config Repository
-|  `- Node fs.watch
-`- Node Provider Registry Runtime
-   |- Provider Registry Service
-   `- Provider Config watchers/repositories
-```
+The normal Protocol Agent start provides a Model Selection Config file path; after the first `read()` the Repository
+creates a persistent `fs.watch` that inner disposal never closes. So after the Protocol transport closed, the Model
+Selection `fs.watch` stayed alive, the Node event loop could not drain, and the CLI exit watchdog had to force
+`process.exit`. This did not change selection results or corrupt config but turned a normal Protocol Agent exit into a
+watchdog-dependent forced exit.
 
-外层 `dispose()` 会按所有权释放全部资源；内层 `runtime.dispose()` 只释放 Registry 与 Provider Config 资源。
+## 2. Rules
 
-当前入口行为不一致：
+1. Protocol Agent exit calls the outermost `dispose()` of the `startProcessProviderRegistryRuntime()` result
+   (`providerRegistryRuntime?.dispose()` instead of `providerRegistryRuntime?.runtime.dispose()`), still run through
+   `runProtocolCleanupStep` so one failing step neither skips later Telemetry shutdown nor overrides the original error.
+2. One call releases the Model Selection Repository, Registry and Config file resources; Prompt CLI, TUI and Host
+   lifecycles are unchanged; after exit this task's Model Selection watcher no longer keeps the event loop alive.
+3. The existing disposal order is unchanged: stop receiving Standalone Credential changes, close the Model Selection
+   Repository watcher, release Registry and Provider Config. Protocol creates no Standalone Credential subscription, so the
+   confirmed leak is only the Model Selection watcher; calling the full owner also guards future outer resources.
+4. Tests use the outer owner as the release entry (not manual `repository.dispose()` + `runtime.dispose()`), and do not
+   rely on the CLI's one-second exit watchdog to judge cleanup.
 
-| 入口           | 当前释放调用                                     | 结果                            |
-| -------------- | ------------------------------------------------ | ------------------------------- |
-| Prompt CLI     | 外层 `providerRegistryRuntime.dispose()`         | 完整                            |
-| TUI            | 外层 `providerRegistryRuntime.dispose()`         | 完整                            |
-| Protocol Agent | 内层 `providerRegistryRuntime.runtime.dispose()` | 遗漏 Model Selection Repository |
+## 3. Non-Goals
 
-Protocol Agent 的正常启动环境会提供 Model Selection Config 文件路径。Repository 首次 `read()` 后创建持久
-`fs.watch`；只释放内层 Runtime 不会关闭该 watcher。
+No Todo 11 candidate flattening, renaming or composition-root refactor; no deletion of `NodeProviderConfigRuntime`,
+`NodeProviderRegistryRuntime` or the Services Runtime; no ruling on the final public API of Node Config resources; Host
+and Agent keep their own in-process Registries; no change to Model Selection read/save/sync/default semantics; the CLI
+exit watchdog stays as the last resort for unknown handles and cannot replace normal owner disposal; the limited async
+window of a Standalone Credential refresh racing shutdown is not handled unless tests show an independent functional failure.
 
-因此当前退出链路实际是：
+## 4. Acceptance and Result (done)
 
-```text
-Protocol transport 关闭
-        |
-        v
-Protocol finally 清理内层 Registry/Config
-        |
-        v
-Model Selection fs.watch 仍存活
-        |
-        v
-Node event loop 无法自然耗尽
-        |
-        v
-CLI exit watchdog 到期后强制 process.exit
-```
-
-这不会改变模型选择结果或损坏配置，但会把正常 Protocol Agent 退出错误地变成依赖 watchdog 的强制退出。
-
-## 2. 修复目标
-
-1. Protocol Agent 退出时调用 `startProcessProviderRegistryRuntime()` 返回结果的最外层 `dispose()`；
-2. 一次调用同时释放 Model Selection Repository、Registry 与 Config 文件资源；
-3. 保持 Prompt CLI、TUI 和 Host 现有生命周期行为不变；
-4. 退出后不再由本任务涉及的 Model Selection watcher 阻止事件循环自然耗尽；
-5. 测试以最外层 owner 为释放入口，不再通过手工分别释放 Repository 和内层 Runtime 掩盖所有权错误。
-
-## 3. 实施要点
-
-### 3.1 先补失败测试
-
-- 为 Process Provider Registry Runtime 增加组合释放测试，证明外层 `dispose()` 会释放 Model Selection
-  Repository，并继续释放内层 Registry/Config；
-- 为 Protocol Agent cleanup 增加断言，证明 finally 调用的是完整 owner 的 `dispose()`，而不是只释放其
-  `runtime` 成员；
-- 将现有测试中的 `modelSelectionConfigRepository.dispose()` + `runtime.dispose()` 手工组合改为外层
-  `dispose()`，让测试遵守生产所有权契约；
-- 测试不应依赖 CLI 的一秒 exit watchdog 来判定清理成功。
-
-### 3.2 修正 Protocol 清理入口
-
-把 Protocol Agent finally 中的内层释放：
-
-```ts
-providerRegistryRuntime?.runtime.dispose();
-```
-
-改为最外层 owner 释放：
-
-```ts
-providerRegistryRuntime?.dispose();
-```
-
-继续通过现有 `runProtocolCleanupStep` 执行，确保单项失败不会跳过后续 Telemetry shutdown，也不覆盖原始错误。
-
-### 3.3 保持现有释放顺序
-
-本次不重新设计外层 `dispose()`。维持当前顺序：
-
-1. 停止接收新的 Standalone Credential 变化；
-2. 关闭 Model Selection Repository watcher；
-3. 释放 Registry 与 Provider Config 资源。
-
-Protocol 入口当前不创建 Standalone Credential subscription，因此本次已确认的实际泄漏只有 Model Selection
-watcher；调用完整 owner 同时保证未来新增外层资源时不会再次被 Protocol 绕过。
-
-## 4. 非目标
-
-- 不执行 Todo 11 候选的 Runtime 扁平化、改名或组合根重构；
-- 不删除 `NodeProviderConfigRuntime`、`NodeProviderRegistryRuntime` 或 Services Runtime；
-- 不裁决 Node Config resources 的最终公共 API；
-- 不改变 Host 与 Agent 各自维护进程内 Registry 的现状；
-- 不改变 Model Selection 的读取、保存、同步和默认值语义；
-- 不调整 CLI exit watchdog；watchdog 继续作为未知残留句柄的最后兜底，不能替代资源 owner 的正常释放；
-- 不扩展处理 Standalone Credential refresh 已经开始后与 shutdown 并发的有限异步窗口，除非实施测试证明其形成
-  独立的功能性故障。
-
-## 5. 验收标准
-
-- Protocol Agent finally 只调用 Process Provider Registry Runtime 的最外层 `dispose()`；
-- 配置了 Model Selection 文件路径并执行过 `read()` 后，完整 dispose 会关闭对应 watcher；
-- dispose 后 Model Selection Repository 不再可读写，内层 Registry/Config 同样已释放；
-- Prompt CLI 与 TUI 的现有外层释放行为保持不变；
-- cleanup 中某个其他资源失败时，Provider 完整释放与 Telemetry shutdown 仍按现有旁路规则执行；
-- 相关单元测试通过；
-- `pnpm typecheck`、`pnpm lint`、`pnpm fmt:check` 通过；
-- 完成后提交 Conventional Commit。
-
-## 6. 实施结果
-
-- Protocol cleanup 已改为释放 `startProcessProviderRegistryRuntime()` 返回的完整 owner，不再绕过
-  Model Selection Repository；
-- 生命周期测试包裹真实 Process Runtime，分别观测外层与内层 dispose，证明 Protocol 只调用外层 owner；
-- 组合测试证明完整 dispose 后 Model Selection Repository 与 Node Provider Registry Runtime 均拒绝再次使用；
-- 现有测试中的手工 `repository.dispose() + runtime.dispose()` 已统一为 owner dispose；
-- Review 同时发现 Standalone CLI importer 仍引用 Todo 35 已删除的 Effective→Personal projection，现已同步按
-  Todo 35 收口并补齐独立测试，避免真实 CLI legacy 迁移静默变为空配置；
-- Bootstrap 定向测试 27 条、Bootstrap typecheck、根 lint、目标文件格式检查与 `git diff --check` 均通过。
+- Protocol Agent cleanup now disposes the full owner. The lifecycle test wraps the real Process Runtime and observes outer
+  and inner dispose separately, proving Protocol calls only the outer owner.
+- A composition test proves that after full dispose the Model Selection Repository and Node Provider Registry Runtime both
+  refuse reuse; the file watcher closes after a configured path was `read()`. Manual `repository.dispose() +
+runtime.dispose()` combinations in existing tests were unified to owner dispose.
+- Review also found the Standalone CLI importer still referencing the Effective->Personal projection deleted by Todo 35;
+  it now follows Todo 35 with independent tests so real CLI legacy migration does not silently become an empty config.
+- Bootstrap targeted tests (27 cases), Bootstrap typecheck, root lint, target-file format check and `git diff --check` pass.

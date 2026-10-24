@@ -1,8 +1,6 @@
 # Provider Model Members, Enable/Disable, and Ordering
 
-> Status: Current effective design
->
-> Last updated: 2026-08-26
+> Status: Current effective design (last updated 2026-08-26)
 
 ## Goal
 
@@ -17,7 +15,8 @@ Model Config
 └─ enabled                     -> whether a member can execute
 ```
 
-Provider member arrays cannot declare model capabilities or enable/disable; Model Rules cannot create members or decide member ownership.
+Provider member arrays cannot declare model capabilities or enable/disable; Model Rules cannot create
+members or decide member ownership.
 
 ## Member Ownership
 
@@ -29,7 +28,7 @@ interface ProviderConfig {
 }
 ```
 
-`builtinModelIds` is managed by ZCode Built-in or Account Built-in; `modelIds` is managed by Personal. After completing Overlay,
+`builtinModelIds` is managed by ZCode Built-in or Account Built-in; `modelIds` by Personal. After Overlay,
 the Resolver normalizes missing or `null` to `[]`, then produces a source-aware inventory.
 
 Member IDs are compared case-sensitively after trimming leading/trailing whitespace:
@@ -37,25 +36,34 @@ Member IDs are compared case-sensitively after trimming leading/trailing whitesp
 - Duplicates within the same array: keep the first occurrence, ignore later items;
 - Built-in and Personal same ID: Built-in-wins, producing only one Built-in member;
 - Normal Settings prohibit Personal from adding IDs already existing in Built-in;
-- User-handwritten duplicate configs can still be deterministically read; duplicates and stale items are removed from the Personal array the next time the related Provider is saved;
+- User-handwritten duplicate configs still read deterministically; duplicates and stale items are removed
+  from the Personal array the next time the related Provider is saved;
 - No conflict objects, suspended identities, or second models with the same name are created.
 
-Model Config Rules hitting a non-existent ID do not create members; they only participate in resolution when a Provider truly owns that member in the future.
+Model Config Rules hitting a non-existent ID create no members; they participate in resolution only when a
+Provider truly owns that member in the future.
 
 ## Explicit Built-in Source
 
-Providers use complete `builtin: boolean` in Effective/Registry/Settings DTOs. The Host explicitly returns the `builtin` field for Model rows based on the final source-aware inventory; Renderers do not guess by ID, Preset whitelists, Personal Map membership, or UI grouping.
+Providers use complete `builtin: boolean` in Effective/Registry/Settings DTOs. The Host explicitly returns
+the `builtin` field for Model rows from the final source-aware inventory; Renderers do not guess by ID,
+Preset whitelists, Personal Map membership, or UI grouping.
 
-Builtin Model IDs are read-only and do not show delete buttons. Personal Model IDs can be modified through atomic rename; Personal Models can be deleted.
+Builtin Model IDs are read-only and show no delete buttons. Personal Model IDs can be modified through
+atomic rename; Personal Models can be deleted.
 
 ## Model Config `enabled`
 
 ### Provider Rule Outer Enable/Disable (Todo107 subsequent decision)
 
-`ProviderConfigRule.enabled?: boolean` is at the same level as providerId and providerName; it is not placed inside config or Access.
-The Resolver uniformly interprets defaults as true. Personal switches only write the outer `enabled`; they do not change Keys, members, model switches, or account connections.
-Facades return normalized enabled and existing executables; UI only maps gray (disabled), yellow (enabled but not executable), and green (ready). Account groups use the current connection's corresponding Provider's public results and cannot substitute plan menu statusActive for execution eligibility.
-Bound Models are not retroactively revoked by config switches; historical selections remain; subsequent execution follows existing resolution and admission.
+`ProviderConfigRule.enabled?: boolean` sits at the same level as providerId and providerName; it is not
+placed inside config or Access. The Resolver uniformly interprets defaults as true. Personal switches write
+only the outer `enabled`; they do not change Keys, members, model switches, or account connections. Facades
+return normalized enabled and existing executables; UI only maps gray (disabled), yellow (enabled but not
+executable), and green (ready). Account groups use the current connection's corresponding Provider's public
+results and cannot substitute the plan menu statusActive for execution eligibility. Bound Models are not
+retroactively revoked by config switches; historical selections remain; subsequent execution follows
+existing resolution and admission.
 
 ```ts
 interface ModelConfig {
@@ -78,21 +86,26 @@ AND Model Config complete
 Executable Model
 ```
 
-Only Executable Models enter Registry, and thus can be used by fallback, tests, internal exact IDs, or ModelFactory. Normal user candidates additionally require Provider `visibility=visible`. Models do not have independent visibility, nor do they save selectable/executable.
+Only Executable Models enter Registry, and thus can be used by fallback, tests, internal exact IDs, or
+ModelFactory. Normal user candidates additionally require Provider `visibility=visible`. Models have no
+independent visibility and save no selectable/executable.
 
-disabled Models:
+Disabled Models:
 
 - Remain in Settings;
 - Retain Properties, Options, Reasoning, and ordering;
-- Can be edited or re-enabled; the model list does not provide an enabled "restore default";
+- Can be edited or re-enabled; the model list provides no enabled "restore default";
 - Cannot test, fallback, select, or create by exact ID;
-- Do not provide bypass gates for internal tasks.
+- Provide no bypass gates for internal tasks.
 
-Already-created immutable Models are not interrupted by config refreshes; subsequent creations use the new enabled state.
+Already-created immutable Models are not interrupted by config refreshes; subsequent creations use the new
+enabled state.
 
 ## Built-in Defaults and Personal Overrides
 
-Built-in general Rules provide complete default `enabled=true`. More specific, later-positioned Built-in Rules can default淘汰 or no-longer-recommended models to `false`. This allows ZCode to adjust official defaults when publishing new configs, without changing Provider members.
+Built-in general Rules provide complete default `enabled=true`. More specific, later-positioned Built-in
+Rules can default deprecated or no-longer-recommended models to `false`. ZCode can thereby adjust official
+defaults when publishing new configs, without changing Provider members.
 
 Personal Rules come after all Built-in Rules:
 
@@ -109,7 +122,10 @@ Personal provider-model enabled=true/false
 Effective Model Config enabled
 ```
 
-Users toggling switches only write Personal `enabled` leaves and save explicit boolean values; the model list does not provide a "restore default" entry. When normally creating a new Personal Model, `enabled=true` is explicitly written to avoid relying on implicit guesses for new flows. Schema and Overlay still allow deleting this leaf through config editing, but this is not a product operation of the model list switch.
+Users toggling switches write only Personal `enabled` leaves and save explicit boolean values; the model
+list provides no "restore default" entry. Normally creating a new Personal Model writes `enabled=true`
+explicitly, avoiding implicit guesses for new flows. Schema and Overlay still allow deleting this leaf
+through config editing, but that is not a model list switch operation.
 
 ## Provider/Model-specific Rules
 
@@ -133,9 +149,10 @@ type ModelConfigRule =
     };
 ```
 
-`provider-model` targets a precise Provider/Model combination. It can belong to two Sources:
+`provider-model` targets a precise Provider/Model combination and can belong to two Sources:
 
-- Built-in specific Rules are managed by the ZCode Built-in Release and can declare official specializations for Built-in Provider/Model combinations;
+- Built-in specific Rules are managed by the ZCode Built-in Release and can declare official
+  specializations for Built-in Provider/Model combinations;
 - Personal specific Rules are managed by Settings and can override Built-in or Personal Models.
 
 Only Personal-specific Rules participate in user lifecycles:
@@ -146,11 +163,14 @@ Only Personal-specific Rules participate in user lifecycles:
 - All specific Rules for that Provider are deleted when deleting the Provider's Personal Overlay;
 - Empty Rules are deleted after restoring the last field.
 
-`match` Rules can also belong to Built-in or Personal Sources, used for common facts across groups of models/APIs/Providers/Endpoints. Any Provider/Model rename, delete, or deduplication does not guess or rewrite Match Rules; Built-in specific Rules are also unaffected by user operations. Specific Rules use structured IDs, not escaping precise IDs to regex, and do not add `exclusive` flags.
+`match` Rules can also belong to Built-in or Personal Sources, for common facts across groups of
+models/APIs/Providers/Endpoints. Any Provider/Model rename, delete, or deduplication guesses or rewrites no
+Match Rules; Built-in specific Rules are likewise unaffected by user operations. Specific Rules use
+structured IDs — no escaping precise IDs to regex, no `exclusive` flags.
 
 ## Model Ordering
 
-Basic ordering is divided into three segments:
+Basic ordering has three segments:
 
 ```text
 Built-in not appearing in modelOrder
@@ -160,7 +180,9 @@ Members still valid in modelOrder
 Personal not appearing in modelOrder
 ```
 
-This ensures that newly released online config Built-in Models that users have not yet sorted default to the front. When normal Settings adds Personal Models, a complete `modelOrder` and initial specific Rule are atomically updated in the same atomic operation, so unsorted Personal comes only from handwritten or abnormal inputs.
+Newly released online-config Built-in Models the user has not yet sorted thereby default to the front. When
+normal Settings adds Personal Models, a complete `modelOrder` and initial specific Rule are atomically
+updated in the same operation, so unsorted Personal comes only from handwritten or abnormal input.
 
 When users save by dragging:
 
@@ -170,7 +192,8 @@ When users save by dragging:
 4. Fill in all missing members;
 5. Save the complete `modelOrder`.
 
-Disabled Models still appear in Settings by `modelOrder`. After Selection filters disabled models, other models maintain their relative ordering.
+Disabled Models still appear in Settings by `modelOrder`. After Selection filters disabled models, other
+models keep their relative ordering.
 
 ## Lifecycle Operations
 
@@ -186,46 +209,36 @@ atomic write
 └─ provider-model rule { enabled: true }
 ```
 
-If the ID duplicates a Built-in or existing Personal member, normal saves are rejected.
+Normal saves are rejected when the ID duplicates a Built-in or existing Personal member.
 
 ### Renaming Personal Models
 
-Atomic replacement:
+Atomic replacement of: the old ID in `modelIds`; the old ID in `modelOrder`; the old `provider-model`
+specific Rule's target ID.
 
-- The old ID in `modelIds`;
-- The old ID in `modelOrder`;
-- The old `provider-model` specific Rule's target ID.
-
-Preview must first move the Personal-specific Rule, then resolve Built-in Rules using the new ID and Effective Provider API/Endpoint, then overlay the original Personal sparse values. User-entered explicit values remain unchanged; inherited defaults update with the new ID. Generic Match Rules do not rewrite.
+Preview must first move the Personal-specific Rule, then resolve Built-in Rules using the new ID and the
+Effective Provider API/Endpoint, then overlay the original Personal sparse values. User-entered explicit
+values remain unchanged; inherited defaults update with the new ID. Generic Match Rules do not rewrite.
 
 ### Deleting Personal Models
 
-Atomic deletion:
-
-- The member in `modelIds`;
-- The position in `modelOrder`;
-- The corresponding `provider-model` specific Rule.
-
-Generic Match Rules are not deleted. Builtin Models have no such operation.
+Atomic deletion of: the member in `modelIds`; the position in `modelOrder`; the corresponding
+`provider-model` specific Rule. Generic Match Rules are not deleted. Builtin Models have no such operation.
 
 ### Deleting Provider Personal Overlays
 
-Delete the Provider's Personal Overlay, and delete all `provider-model` specific Rules for that Provider; Generic Match Rules are retained.
-Built-in Providers fall back to the Built-in baseline; Personal-only Providers naturally disappear without other root definitions.
+Delete the Provider's Personal Overlay and all `provider-model` specific Rules for that Provider; Generic
+Match Rules are retained. Built-in Providers fall back to the Built-in baseline; Personal-only Providers
+naturally disappear without other root definitions.
 
 ## Settings and Selection
 
-Settings returns complete members of all visible Providers, including disabled/incomplete Models, and explicitly provides:
+Settings returns complete members of all visible Providers, including disabled/incomplete Models, and
+explicitly provides: `builtin`; Effective `enabled`; whether Personal explicitly overrides enabled;
+Effective/Personal Model Config; completeness issues; derived executable/selectable; unified ordering.
 
-- `builtin`;
-- Effective `enabled`;
-- Whether Personal explicitly overrides enabled;
-- Effective/Personal Model Config;
-- Completeness issues;
-- Derived executable/selectable;
-- Unified ordering.
-
-Selection returns only executable models from visible Providers, maintaining Registry order. Renderers no longer filter, sort, Overlay, or manufacture candidates from Connections/Presets/Catalogs.
+Selection returns only executable models from visible Providers, maintaining Registry order. Renderers no
+longer filter, sort, Overlay, or manufacture candidates from Connections/Presets/Catalogs.
 
 ## Acceptance Cases
 
@@ -247,9 +260,11 @@ Selection returns only executable models from visible Providers, maintaining Reg
 ## Non-adopted Approaches
 
 - A single `models[]`: Personal snapshots would obscure later-released Built-in members;
-- `enabledModelIds`: Complete positive collections cannot simultaneously express official future defaults and user-per-model overrides;
-- Provider-level default + per-model enablement policy: Duplicate Model Rule overlay capabilities;
-- Model visibility: Overlaps with Provider visibility/Model enabled, creating a second set of hidden semantics;
-- Duplicate member conflict DTOs: Normal UI already prohibits duplicates; handwritten input can be handled by Built-in-wins + save normalization;
-- Encoding UI exact Rules with regex: Lifecycle ownership is unclear; rename/delete must be guessed;
-- Generic equality/identity abstraction: Member judgment using explicit providerId/modelId comparison is sufficient.
+- `enabledModelIds`: complete positive collections cannot simultaneously express official future defaults
+  and user-per-model overrides;
+- Provider-level default + per-model enablement policy: duplicates Model Rule overlay capabilities;
+- Model visibility: overlaps Provider visibility/Model enabled, creating a second hidden semantics;
+- Duplicate member conflict DTOs: normal UI already prohibits duplicates; handwritten input is handled by
+  Built-in-wins + save normalization;
+- Encoding UI exact Rules with regex: lifecycle ownership is unclear; rename/delete must be guessed;
+- Generic equality/identity abstraction: explicit providerId/modelId comparison is sufficient.

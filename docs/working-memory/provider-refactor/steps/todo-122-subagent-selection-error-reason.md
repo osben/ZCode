@@ -1,58 +1,82 @@
-# Todo122：保留并展示 Subagent 模型选择失败的具体原因
+# Todo122: Preserve and Show the Specific Reason a Subagent Model Selection Fails
 
-> 状态：2026-09-11 本轮授权后实现并完成局部 review；84 项 Core 测试、两项浏览器详情/复制用例通过，整批最终验收待执行。未确认的启动现场根因仍不在本项修复范围。
+> Status (2026-09-11): implemented after this round's authorization with local review done; 84 Core tests and two browser
+> detail/copy cases pass; whole-batch final acceptance was pending. The root cause of the unconfirmed on-site start
+> failure is still outside this fix.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-122-subagent-selection-error-reason.md`
 
-## 本轮实现与证据
+## Problem
 
-- 只改选择错误构造：六种公共原因进入既有 `context.reason`，短双语说明同时进入 message，兼容后台仅保留 message 的路径。原选择只以 selection 标注；有效身份仅取解析结果，不伪装成已执行模型。没有改解析、继承、override、持久化、权限或调度。
-- 先在正确的 Core Vitest 入口确认新增七项断言失败，再实现。六原因经真实公共投影/工具结果/父模型内容验证；真实前后台 runner 在启动前失败并保留原因，不发模型请求。五文件 84 tests 通过。
-- 真实 ToolLayout 的详情和复制在 390 中文浅色、1200 英文深色浏览器用例通过，复制包含稳定原因及完整身份。fixture 的工具错误由测试注入，并非跨进程实机故障；未测真实手机 shared-host/Electron。截图沿用三行截断，复制保留全文；Linux 缺中文字形不算字体视觉验收。
-- Core typecheck、变更文件 lint、架构检查通过。Core 全量 lint 仍有既有超长文件错误，未为此扩修。review 确认公共错误与后台 message 两条消费均不再丢原因，无 Key/Header/配置全文写入。
+`resolveSubagentSelection` threw every failure as `Select an available model before starting a subagent`, with the
+specific reason only in `context.selectionIssue`. The public error projection reads `code`, `reason` and similar fields but
+not `selectionIssue`, so the specific reason never reached the tool result and UI detail, and the parent model only saw a
+generic configuration error. Offline runs of the real selection check and projection confirmed that account-connection
+unavailable, Provider missing, model missing, level missing and level unsupported all ended with the same message and
+`CONFIGURATION_ERROR`. The raw CLI `tool.call.failed` file log can still keep `error.context.selectionIssue`, so it is not
+true that all logs lose it.
 
-## 已确认的问题
-
-`resolveSubagentSelection` 将不同失败统一抛成 `Select an available model before starting a subagent`，具体原因仅放在 `context.selectionIssue`。公共错误投影读取 `code`、`reason` 等字段，但不读取 `selectionIssue`，因此具体原因没有进入工具结果与 UI 详情；父模型也只能看到笼统的配置错误。
-
-离线调用真实选择检查及错误投影，确认账号连接不可用、Provider 不存在、模型不存在、档位缺失、档位不支持五种原因最终得到相同的消息和 `CONFIGURATION_ERROR`，没有可区分的详情。原始 CLI `tool.call.failed` 文件日志仍可保留 `error.context.selectionIssue`，不能描述为所有日志都丢失。
-
-## 目标与实现约束
+## Rules
 
 ```text
-公共选择解析的实际失败原因
-  → Subagent 错误构造
-  → 既有公共错误投影／工具结果
-  → 父模型、桌面和手机远控错误展示
+public selection resolution's actual failure reason -> Subagent error construction -> existing public error projection / tool result
+  -> parent model, desktop and phone remote-control error display
 ```
 
-- 复用公共解析已返回的原因，不在 UI 或错误层重新判断账号、Provider、模型或档位是否可用。
-- 优先在 Subagent 错误构造处对齐既有错误契约，例如稳定原因进入已有 `context.reason`，必要身份进入已有 Provider／Model 字段；避免为单个工具扩展一套专用错误协议或在通用错误层硬编码 Subagent。
-- 用户能区分：未选择模型、当前账号连接不可用、Provider 不可用、模型不存在／不可用、未选择思考档位、思考档位不支持。面向用户的文案兼顾中英文；稳定原因供机器判断，不能依赖展示文案解析。
-- 前台和后台启动失败均保留原因，错误详情及复制内容不能再次退化为单一句“先选择可用模型”；父模型的工具结果也应拿到具体原因，不只改 UI。
-- 只使用失败时已有的事实补充上下文，区分原选择与有效选择，不把原 Provider 冒称为重映射后的执行 Provider。不额外查询账号或发模型请求，不输出 Key、Header、配置全文或会话正文。
-- 不改变失败条件、有效选择解析、继承及内部 override 的优先级；不自动补档位、不回退父模型、不替换 Provider、不改持久化数据。
-- 实施前更新对应 spec，并遵循工具变更链路要求；先补有区分力的测试再改代码。保持小范围修复，不重做整个错误系统。
+1. Reuse the reason the public resolution already returns; the UI or error layer does not re-judge account, Provider,
+   model or level availability.
+2. Align with the existing error contract at the Subagent error construction: the stable reason goes into the existing
+   `context.reason`, necessary identity into the existing Provider/Model fields; no tool-specific error protocol and no
+   Subagent hardcoding in the generic error layer.
+3. Users can tell apart: no model selected, current account connection unavailable, Provider unavailable, model missing /
+   unavailable, no thinking level selected, thinking level unsupported. Copy is bilingual; the stable reason serves machine
+   judgment (never parse display copy).
+4. Foreground and background start failures both keep the reason; error detail and copied content do not regress to the
+   single sentence, and the parent model's tool result also carries the specific reason, not only the UI.
+5. Only facts available at failure time supplement the context, distinguishing original from effective selection (the
+   original Provider is not passed off as a remapped execution Provider); no extra account query or model request; no Key,
+   Header, config body or session text is output.
+6. Failure conditions, effective-selection resolution, inheritance and internal override priority are unchanged: no
+   automatic level, no parent-model fallback, no Provider replacement, no persisted-data change.
+7. Spec and tool-change chain updated first; discriminating tests first; small-scope fix, no rewrite of the error system.
 
-## 验收与 review
+## Acceptance (done) and Review
 
-- [ ] 覆盖上述全部选择失败原因，检查稳定原因、可读信息及必要身份；正常显式选择、继承和内部 override 行为不变。
-- [ ] 通过真实公共错误投影和工具结果链路验证，不只断言抛出的 Error.context；前台／后台均有覆盖。
-- [ ] UI 交互 E2E 验证失败提示、详情及复制内容；兼顾桌面与手机远控、双语，不改变现有实时传输边界。未执行的验证如实记录，不据此关闭。
-- [ ] 确认原始日志仍可定位、不会泄露敏感信息；失败后不偷偷启动其他模型或写回选择。
-- [ ] 合批运行相关测试、类型检查、lint，并完整 review 本项要求后再标记完成。
+All selection-failure reasons are covered with stable reason, readable information and necessary identity; normal explicit
+selection, inheritance and internal override behavior unchanged; verified through the real public error projection and
+tool-result chain (not just the thrown `Error.context`), foreground and background; UI interaction E2E for failure
+notice, detail and copied content, covering desktop and phone remote control and both languages without changing the
+real-time transport boundary (unexecuted verification recorded, not used to close); original logs still locate the
+failure without leaking secrets, and no other model is started or selection written back after failure; related tests,
+typecheck and lint in one batch.
 
-## 现场调查背景（不属于本项修复）
+Result: only the selection-error construction changed. Six public reasons enter the existing `context.reason` and a short
+bilingual explanation enters the message (compatible with background paths that keep only the message); the original
+selection is only labeled as selection and the effective identity comes only from the resolution result, not disguised as
+an executed model. Resolution, inheritance, override, persistence, permissions and scheduling are untouched. Seven new
+assertions were confirmed failing in the correct Core Vitest entry first; the six reasons are verified through the real
+public projection / tool result / parent-model content, and the real foreground/background runner fails before start while
+preserving the reason, with no model request. Five files / 84 tests pass. The real ToolLayout detail and copy pass in
+browser cases (390 Chinese light, 1200 English dark); copy contains the stable reason and full identity. The fixture's tool
+error is injected by the test (not a cross-process on-device fault); real phone shared-host/Electron untested; the
+screenshots keep the three-line truncation while copy keeps the full text; missing Linux Chinese glyphs is not a font-visual
+acceptance. Core typecheck, changed-file lint and architecture check pass; Core-wide lint still has existing oversized-file
+errors that were not widened. Review confirms the public error and the background message consumers both keep the reason
+and no Key/Header/config body is written.
 
-报告条件：新版本、本地工作区；截图中内置 general-purpose 显示 GLM-5.3／最高，启动却报上述错误。尚未取得该机器失败时的实际选择和 `selectionIssue`，不能宣布已找到现场根因。
+## On-Site Investigation Background (Not Part of This Fix)
 
-两条待核实线索：已有 Runtime 未读取后来保存的 Subagent 配置；用户／项目同名 profile 覆盖了设置页展示的内置 profile，项目配置还可能保留未迁移的旧 Provider。若确实是保存后新建的 Runtime，第一条不解释首次失败。两者均不作为已确认 Bug 在本项顺带修复，也不在此重议配置刷新策略。
+Report conditions: new version, local workspace; the built-in general-purpose showed GLM-5.3 / highest in the screenshot
+yet start failed with the error above. The actual selection and `selectionIssue` at failure time on that machine were not
+obtained, so no on-site root cause is declared. Two leads to verify: an existing Runtime did not read a Subagent config
+saved later; a user/project profile of the same name overrides the built-in profile shown by settings (the project config
+may also keep an unmigrated old Provider). If a Runtime was created after the save, the first does not explain the first
+failure. Neither is treated as a confirmed bug here, and the config refresh policy is not reopened. The missing implicit
+default level after migrating an old version is another conditional repro that cannot directly explain the current-version
+"highest" screenshot; this item does not define or implement level backfill.
 
-旧版隐式默认档位迁移后缺失是另一个条件性复现，但不能直接解释当前新版本截图显示“最高”的情况。本项不顺带制定或实施档位补值迁移。
+## Code Entries
 
-## 代码入口
-
-- `apps/zcode-cli/packages/core/src/runtime/helpers/subagent-selection.ts`
-- `apps/zcode-cli/packages/core/src/errors/error-payload.ts`
-- `apps/zcode-cli/packages/core/src/tool/executor/errors.ts`
-- `apps/zcode-cli/packages/core/src/subagent/runner.ts`
-- `apps/zcode-cli/packages/adapters/src/logging/serialize.ts`
-- `packages/ui/src/ToolCallBlocks/ToolLayout.tsx`
+`apps/zcode-cli/packages/core/src/runtime/helpers/subagent-selection.ts`, `core/src/errors/error-payload.ts`,
+`core/src/tool/executor/errors.ts`, `core/src/subagent/runner.ts`, `adapters/src/logging/serialize.ts`,
+`packages/ui/src/ToolCallBlocks/ToolLayout.tsx`.

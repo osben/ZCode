@@ -2,15 +2,11 @@
 
 ## 1. Conclusion Summary
 
-On the MacBook Pro standard repository directory, current branch commit `21c38683e1`, all 37 cases from the issue list have been stably reproduced:
+On the MacBook Pro standard repository directory, branch commit `21c38683e1`, all 37 cases from the issue list reproduced stably: no flaky tests; no Electron, WebDriver, build, or machine environment failures; 37 surface failures consolidate into 7 categories of shared root cause.
 
-- No flaky tests;
-- No Electron, WebDriver, build, or machine environment failures;
-- 37 surface failures can be consolidated into 7 categories of shared root cause;
-- Current evidence does not prove that all 37 product behaviors have regressed. The vast majority of cases are blocked by outdated E2E fixtures, deleted old persistence fields, or incorrect Account Config injection methods before reaching their actual business behavior;
-- These tests cannot be simply deleted. Except for 3 cases explicitly verifying "unreleased old format migration," the remaining business goals still have value and need to be migrated to the current Provider/Account/Registry contracts before re-running to determine whether real product bugs still exist.
+Current evidence does not prove that all 37 product behaviors regressed: the vast majority of cases are blocked by outdated E2E fixtures, deleted old persistence fields, or incorrect Account Config injection methods before reaching their actual business behavior. These tests cannot simply be deleted: except 3 cases explicitly verifying "unreleased old format migration," the remaining business goals still have value and need migration to the current Provider/Account/Registry contracts before re-running to determine whether real product bugs remain.
 
-The current production facts chain is:
+Current production facts chain:
 
 ```text
 ZCode Built-in Provider Config
@@ -37,31 +33,11 @@ Process-owned Provider Registry
 Model Selection / Active Model
 ```
 
-The old chain still repeatedly used by failing tests is:
-
-```text
-legacy family mode / selectedKey
-              +
-Writing Account Provider as Personal API-Key Provider to disk
-              +
-Waiting for workspace_update_provider_registry.completed
-              |
-              v
-Old test considers Provider available
-```
-
-This old chain no longer exists, which causes numerous cascade failures like "page has no Coding Plan," "actual fallback to DeepSeek," "Registry revision not applied."
+The old chain still used by failing tests — `legacy family mode / selectedKey` + writing Account Provider as Personal API-Key Provider to disk + waiting for `workspace_update_provider_registry.completed` — no longer exists, causing cascades like "page has no Coding Plan," "actual fallback to DeepSeek," "Registry revision not applied."
 
 ## 2. Reproduction Baseline and Artifacts
 
-### 2.1 Baseline
-
-- Samantha workspace: independent worktree
-- MacBook Pro standard repo: `/Users/dev/Desktop/projects/Z.AI/z-code`
-- Both commits: `21c38683e1 test(ui): remove stale built-in model label assertion`
-- MacBook Pro uses existing standard bootstrap/build results; `ZCODE_E2E_SKIP_BUILD=1` and `ZCODE_E2E_SKIP_AGENT_BUILD=1` are set during execution, with no system configuration modifications.
-
-### 2.2 Four Rounds of Native Desktop E2E
+Baseline: Samantha workspace independent worktree; MacBook Pro standard repo `/Users/dev/Desktop/projects/Z.AI/z-code`; both at commit `21c38683e1 test(ui): remove stale built-in model label assertion`. Runs used existing bootstrap/build results with `ZCODE_E2E_SKIP_BUILD=1` and `ZCODE_E2E_SKIP_AGENT_BUILD=1`, no system configuration modifications.
 
 | Run | Scope                                                       | Result                                      | Artifact                          |
 | --- | ----------------------------------------------------------- | ------------------------------------------- | --------------------------------- |
@@ -70,69 +46,27 @@ This old chain no longer exists, which causes numerous cascade failures like "pa
 | C   | I20, CW, OTB, I08                                           | 0 pass / 4 fail                             | `desktop-e2e-20260831-095111-677` |
 | D   | Restart, Selected-key migration, Settings transition, Turbo | 1 pass / 15 fail; all 14 from the list fail | `desktop-e2e-20260831-095400-329` |
 
-Artifact root directory:
-
-```text
-/Users/dev/Desktop/projects/Z.AI/z-code/packages/desktop/.e2e-artifacts/
-```
-
-All four reports show `0 flaky`, `0 infra failure`.
+Artifact root: `/Users/dev/Desktop/projects/Z.AI/z-code/packages/desktop/.e2e-artifacts/`. All four reports show `0 flaky`, `0 infra failure`.
 
 ## 3. Seven Categories of Shared Root Causes
 
 ### R1. Bot Synthetic Harness Does Not Provide Target Host's Preferred Selection
 
-Current Bot submissions must fix the target Host's model at the Submission boundary: when not explicitly selected, it reads `ModelSelectionView.preferredSelection`, and refuses to create tasks if it cannot be parsed. The production boundary is at `packages/services/src/bots/botsService.ts`.
-
-But both Bot E2E Harnesses still return empty Views:
+Bot submissions fix the target Host's model at the Submission boundary: without explicit selection it reads `ModelSelectionView.preferredSelection` and refuses to create tasks if unparseable (`packages/services/src/bots/botsService.ts`). Both Bot E2E Harnesses still return empty Views:
 
 ```ts
 getView: async () => ({ revision: 0, providers: [] });
 ```
 
-Locations:
-
-- `packages/desktop/test/e2e/bots/helpers/bots-service-harness.ts`
-- `packages/desktop/test/e2e/bots/feishu-streaming-card-lifecycle.test.ts`
-
-Therefore message processing throws "Bot cannot resolve Submission model from target Host" before creating a Task or establishing a subscription. Subsequent terminal events, AskUserQuestion cards, and streaming card lifecycles naturally do not exist.
-
-Judgment: Test Harness is outdated, not four independent Bot product regressions.
-
-Correct handling: Inject a minimal but real `ModelSelectionView` (with Provider, Model, and preferred selection) into the Harness, and continue verifying the original Bot behavior; do not restore old fallbacks or bypass formal Model Selection.
+(`packages/desktop/test/e2e/bots/helpers/bots-service-harness.ts`, `packages/desktop/test/e2e/bots/feishu-streaming-card-lifecycle.test.ts`.) Message processing therefore throws "Bot cannot resolve Submission model from target Host" before creating a Task or subscription; terminal events, AskUserQuestion cards, and streaming card lifecycles never occur. Test Harness is outdated — not four independent Bot product regressions. Fix: inject a minimal but real `ModelSelectionView` (Provider, Model, preferred selection) into the Harness and re-verify the original Bot behavior; do not restore old fallbacks or bypass formal Model Selection.
 
 ### R2. Coding Plan E2E Still Uses Old family mode / selectedKey as Authority
 
-The scene preparation of `coding-plan-team-usage.test.ts` still writes:
-
-```ts
-modelProviderFamilyModes;
-modelProviderFamilySelectedKeys;
-```
-
-The current production fields are only:
-
-```ts
-providerFamilyConnectionSelections;
-```
-
-Its structured union definition is in `packages/shared/src/provider-family-connection-selection.ts`. The old fields and their migration were explicitly deleted in commit `8c55290f1f refactor(provider): finish model abstraction cleanup`; the reason is that they had not been released and no longer bear compatibility migration.
-
-Strict App Settings parsing discards old fields. Tests subsequently assert Team Plan identity using old fields, causing:
-
-- No personal/Team Coding Plan in connection options;
-- No Coding Plan tab on Usage page;
-- Context usage trigger and quota reminder not appearing;
-- "selectedKey overwritten" after OAuth recovery;
-- I29/I30 actually wrote new structured selections, but tests still assert old `mode=oauth`, causing false failures.
-
-Judgment: This is a cascade failure caused by the same old settings fixture.
-
-Correct handling: Scene inputs and assertions should only use `providerFamilyConnectionSelections`; Team Plan directly asserts complete `productId/organizationId/projectId`, no longer generating or checking string selectedKeys.
+`coding-plan-team-usage.test.ts` scene preparation still writes `modelProviderFamilyModes` / `modelProviderFamilySelectedKeys`. The current production field is only `providerFamilyConnectionSelections` (structured union in `packages/shared/src/provider-family-connection-selection.ts`); the old fields and their migration were explicitly deleted in `8c55290f1f refactor(provider): finish model abstraction cleanup` — unreleased, no compatibility migration. Strict App Settings parsing discards old fields, and tests assert Team Plan identity via them, causing: no personal/Team Coding Plan in connection options; no Coding Plan tab on Usage page; context usage trigger and quota reminder not appearing; "selectedKey overwritten" after OAuth recovery; I29/I30 actually wrote the new structured selections but tests assert old `mode=oauth`, giving false failures. Same old-settings-fixture cascade. Fix: scene inputs and assertions use only `providerFamilyConnectionSelections`; Team Plan asserts complete `productId/organizationId/projectId`, no string selectedKeys.
 
 ### R3. E2E Treats Account Provider as Personal API-Key Provider
 
-The current Account Provider responsibility boundary is:
+Current Account Provider responsibility boundary:
 
 ```text
 Built-in: declares Provider static identity, API, model members
@@ -140,38 +74,11 @@ Account Overlay: declares access.entitled, account dynamic members/access facts
 Personal Overlay: does not own Account access, cannot fake entitlement with enabled
 ```
 
-The Resolver only considers a Provider executable when `access.type !== zhipu-account` or `access.entitled === true`.
-
-Failing tests still use old injection methods:
-
-- `coding-plan-team-usage.test.ts` writes Personal `apiKey`, `enabled`, Endpoint, and models for `account:bigmodel-individual-coding-plan`;
-- Restart/Turbo helpers use `seedReplayProvider()` to write Personal Providers for `account:*`, without establishing Account Overlay entitlement;
-- Upgrade Webview tests read Personal Config through `readModelProvider()`, expecting `apiKey` and `enabled` in Account Providers.
-
-Two outcomes result:
-
-1. Account Provider is not executable due to `entitled !== true`, and Selection legally falls back to DeepSeek;
-2. Tests read the Personal Source and naturally cannot see dynamic Keys or entitlement from the Account/credential chain.
-
-Judgment: This is a test fixture/error observation point after crossing the configuration layering boundary, not fixable by relaxing production Schema.
-
-Correct handling:
-
-- Account Cases provide `entitled=true` and corresponding model members at the Account Source/account API mock boundary;
-- OAuth/credential keys continue to be provided by Credential fixtures;
-- Personal Config only retains truly allowed Personal Model Overlays;
-- When testing Provider availability, read Effective Settings/Selection Views or formal request results, do not read Personal files to guess Account status.
+The Resolver considers a Provider executable only when `access.type !== zhipu-account` or `access.entitled === true`. Failing tests still use old injection: `coding-plan-team-usage.test.ts` writes Personal `apiKey`, `enabled`, Endpoint, and models for `account:bigmodel-individual-coding-plan`; Restart/Turbo helpers use `seedReplayProvider()` writing Personal Providers for `account:*` without Account Overlay entitlement; Upgrade Webview tests read Personal Config via `readModelProvider()` expecting `apiKey`/`enabled` in Account Providers. Results: (1) the Account Provider is not executable due to `entitled !== true` and Selection legally falls back to DeepSeek; (2) tests reading the Personal Source cannot see dynamic Keys or entitlement from the Account/credential chain. This is a fixture/observation-point error after crossing the configuration layering boundary, not fixable by relaxing production Schema. Fix: Account Cases provide `entitled=true` and model members at the Account Source/account API mock boundary; OAuth/credential keys come from Credential fixtures; Personal Config keeps only truly allowed Personal Model Overlays; when testing Provider availability, read Effective Settings/Selection Views or formal request results, not Personal files.
 
 ### R4. I20 Already Writes New agents-state Structure, But E2E Still Reads Old Fields
 
-The Subagent Service can currently read the old:
-
-```text
-builtInModelOverrides
-builtInThoughtLevelOverrides
-```
-
-as compatible input, but unifies writes during save:
+The Subagent Service reads old `builtInModelOverrides` / `builtInThoughtLevelOverrides` as compatible input but unifies writes on save:
 
 ```text
 builtInModelSelectionOverrides[agentName] = {
@@ -181,62 +88,19 @@ builtInModelSelectionOverrides[agentName] = {
 }
 ```
 
-I20 still polls the original JSON's `builtInThoughtLevelOverrides.Explore` after selecting `high`, reporting "nothing written." This does not prove save failure; it only proves the saved file no longer maintains the old dual map structure.
-
-Judgment: Observation assertion is outdated. This Case has not yet reached the core assertion of cold-start child requests.
-
-Correct handling: E2E should read and assert `builtInModelSelectionOverrides`; if old file input compatibility needs verification, set up a one-time importer/reader unit test separately, not letting normal E2E continue requiring writes back to old formats.
+I20 polls the original JSON's `builtInThoughtLevelOverrides.Explore` after selecting `high` and reports "nothing written" — the saved file no longer maintains the old dual map structure. Observation assertion outdated; the Case has not reached its core cold-start child-request assertion. Fix: E2E reads and asserts `builtInModelSelectionOverrides`; if old-file input compatibility needs verification, use a separate one-time importer/reader unit test.
 
 ### R5. CW / OTB / I08 Wait for a Deleted workspace Registry Push Log
 
-All three tests treat the following log as a readiness barrier:
-
-```text
-zcode_protocol.workspace_update_provider_registry.completed
-```
-
-Current production code no longer has this event; only these three E2E tests in the repo search for it. After the Provider refactor, the Registry is a process-owned runtime, and the startup event is:
-
-```text
-zcode_protocol.provider_registry.ready
-```
-
-Personal Config updates are also handled by formal Runtime/Registry sources, no longer pushing Registry snapshots to each workspace.
-
-Therefore all three tests time out at old log polling, without checking context window, output token budget, or new Provider initial requests.
-
-Judgment: Test synchronization barrier is outdated, does not represent that Registry updates truly were not applied.
-
-Correct handling: Delete the workspace Registry push log parsing helper, and switch to current formal Registry ready/Selection View/final request capture as observable completion conditions. Do not recover the deleted workspace Registry protocol for the sake of E2E.
+All three treat `zcode_protocol.workspace_update_provider_registry.completed` as a readiness barrier; production code no longer emits this event (only these E2E tests search for it). After the Provider refactor the Registry is process-owned; the startup event is `zcode_protocol.provider_registry.ready`, and Personal Config updates are handled by formal Runtime/Registry sources without pushing Registry snapshots to each workspace. The three tests time out at old log polling without ever checking context window, output token budget, or new Provider initial requests — a stale synchronization barrier, not proof that Registry updates were not applied. Fix: delete the workspace Registry push log parsing helper; use current formal Registry ready/Selection View/final request capture as observable completion. Do not recover the deleted workspace Registry protocol for E2E.
 
 ### R6. I32-I34 Specifically Verify Ruled-Deleted Unreleased Migrations
 
-The titles and implementations of these three Cases require startup-time fixing:
-
-```text
-modelProviderFamilyModes + modelProviderFamilySelectedKeys
-                         -> new selectedKey
-```
-
-But the current design no longer has a "new selectedKey"; the target is structured `providerFamilyConnectionSelections`. The old migration was already deleted under the ruling of "unreleased, no compatible read."
-
-Judgment: The goals of these 3 Cases have become invalid and should not be fixed by modifying production code to pass them again.
-
-Correct handling: Delete these three old migration Cases. If startup recovery coverage is still needed, replace with "structured selection JSON round-trip identity unchanged," do not test old string fixes.
+These three Cases require startup-time fixing of `modelProviderFamilyModes + modelProviderFamilySelectedKeys -> new selectedKey`. The design no longer has a "new selectedKey"; the target is structured `providerFamilyConnectionSelections`, and the old migration was deleted under "unreleased, no compatible read." Their goals are invalid and must not be re-passed by modifying production code. Fix: delete the three old migration Cases; if startup recovery coverage is still needed, replace with "structured selection JSON round-trip identity unchanged."
 
 ### R7. CPUW-03's Webview Mock Assumption Is Also Outdated
 
-`triggerCodingPlanWebviewPurchaseComplete()` first reads the visible Webview origin, then treats this origin as a local upgrade mock server to call "mark purchase complete." The current actual Webview URL is the formal ZCode Endpoint:
-
-```text
-https://zcode.z.ai/coding-plan...
-```
-
-It is not a local mock server, so CPUW-03 fails before triggering the bridge. This Case also reads Personal Provider `enabled` after purchase, same as R3.
-
-Judgment: The current failure point is Webview E2E mock wiring and Account status assertion outdated; no proof that the purchase completion bridge or refresh logic has failed.
-
-Correct handling: Mock control plane addresses must come from the WDIO-started upgrade mock, not deduced from the Webview visible origin; Webview pages/navigation can continue using the trusted ZCode Endpoint fixture. Observe refresh results through formal Provider Settings/Account entitlement after purchase.
+`triggerCodingPlanWebviewPurchaseComplete()` reads the visible Webview origin and treats it as a local upgrade mock server. The actual Webview URL is the formal ZCode Endpoint (`https://zcode.z.ai/coding-plan...`), not a local mock server, so CPUW-03 fails before triggering the bridge; it also reads Personal Provider `enabled` after purchase (same as R3). The failure point is mock wiring and assertion staleness, not proof of purchase-bridge or refresh failure. Fix: mock control plane addresses come from the WDIO-started upgrade mock, not deduced from the Webview visible origin; Webview pages/navigation can keep the trusted ZCode Endpoint fixture; observe refresh via formal Provider Settings/Account entitlement after purchase.
 
 ## 4. 37 Cases Itemized Conclusions
 
@@ -282,17 +146,17 @@ Correct handling: Mock control plane addresses must come from the WDIO-started u
 
 ## 5. Recommended Fix Order
 
-### Phase 1: Fix Test Foundation Facts First, Do Not Touch Production Semantics
+Phase 1 — fix test foundation facts, do not touch production semantics:
 
 1. Bot Harness provides formal `ModelSelectionView`.
-2. Establish unified Account E2E fixture: publish `access.entitled` and dynamic models from Account Source/account API mock; do not write Account access to Personal Config anymore.
+2. Unified Account E2E fixture: publish `access.entitled` and dynamic models from Account Source/account API mock; stop writing Account access to Personal Config.
 3. Switch all Coding Plan scenes to `providerFamilyConnectionSelections`.
-4. Change Subagent E2E to read `builtInModelSelectionOverrides`.
+4. Subagent E2E reads `builtInModelSelectionOverrides`.
 5. Delete the three old selectedKey migration Cases, or change to structured round-trip.
 6. Delete the three E2E dependencies on `workspace_update_provider_registry.completed`, using current formal observation points.
 7. Fix Upgrade Webview mock control plane and status observation points.
 
-### Phase 2: Re-run Each Group, Then Rule Product Bugs
+Phase 2 — re-run each group, then rule product bugs:
 
 ```text
 Base fixture corrections
@@ -309,18 +173,11 @@ Did the Case reach the original business assertion?
             `-- Fail --> Fix as real product regression, then minimal production code fix
 ```
 
-Re-run priority:
-
-1. Bot 4 cases (minimal changes, fastest feedback);
-2. CW / OTB / I08 (only replace readiness barrier first);
-3. Restart / Settings Transition / Turbo (share Account fixture);
-4. Coding Plan / Quota Reset (share structured selection + Account fixture);
-5. Upgrade Webview;
-6. I20 full cold-start child request.
+Re-run priority: (1) Bot 4 cases (minimal changes, fastest feedback); (2) CW / OTB / I08 (replace readiness barrier first); (3) Restart / Settings Transition / Turbo (share Account fixture); (4) Coding Plan / Quota Reset (share structured selection + Account fixture); (5) Upgrade Webview; (6) I20 full cold-start child request.
 
 ## 6. This Round's Non-Actions
 
-- No production code was modified;
-- No legacy settings, workspace Registry snapshots, or Personal Account access were restored to make tests pass;
-- No failing cases were marked skip/pending;
-- No claim that underlying business behavior has passed. The current report only rules "earliest failure point and root cause at present"; original assertions must still be fully re-run after test migration.
+- No production code modified;
+- No legacy settings, workspace Registry snapshots, or Personal Account access restored to make tests pass;
+- No failing cases marked skip/pending;
+- No claim that underlying business behavior passed: this report rules only "earliest failure point and root cause at present"; original assertions must be fully re-run after test migration.

@@ -1,18 +1,20 @@
-# Builtin Provider 历史维护清单
+# Builtin Provider Historical Maintenance List
 
-> 本文保留原调查时点的目标清单与裁决，不代表当前配置或上游实时状态。
-> 2026-10-14 起，日常维护见[维护入口](../../../builtin-provider-maintenance/README.md)，
-> 已配置成员和默认启停见[当前状态](../../../builtin-provider-maintenance/current-state.md)。
-> 本文表格与删除段本身也有历史差异；不要直接据此恢复或删除模型。
+> Snapshot of the target list and rulings at the original investigation time (2026-09-10, updated for
+> Todo105/111/112/113; Todo 76/79 maintenance baseline). It does not represent current configuration or
+> upstream live state. Since 2026-10-14, daily maintenance lives in the
+> [maintenance entry](../../../builtin-provider-maintenance/README.md); configured members and default
+> enable/disable live in [current state](../../../builtin-provider-maintenance/current-state.md). The tables
+> and removal sections below have historical drift — do not restore or delete models from them directly.
 
-> 历史状态：Todo 76/79 当时的 Builtin 维护基线；后续库存已移到新维护目录。
->
-> Date: 2026-09-10 (updated for Todo105/111/112/113)
+This document answers only "which entrances ZCode provides built-in, and which models each maintains." It is
+not a copy of Provider Config and does not describe reasoning maps, capability fields, request Headers, or
+Personal Provider Instances.
 
-This document only answers "which entrances does ZCode provide built-in, and which models does each entrance maintain." It is not a copy of Provider Config, and does not describe
-reasoning maps, capability fields, request Headers, or Personal Provider Instances.
-
-Protocol selection follows a unified principle: when a vendor or specific model/Endpoint supports Anthropic Messages, the official template preferentially uses Anthropic; otherwise, select another API Schema that the entrance actually supports and has the most validation for. When different models require different protocols, split template identities; do not disguise as a single fixed protocol entrance.
+Protocol selection principle: when a vendor or specific model/Endpoint supports Anthropic Messages, the
+official template prefers Anthropic; otherwise select another API Schema the entrance actually supports and
+has the most validation for. When different models need different protocols, split template identities; do not
+disguise them as one fixed-protocol entrance.
 
 ## Maintenance Levels
 
@@ -22,13 +24,15 @@ Standard maintenance: default enabled=false, still providing full configuration 
 No maintenance: does not enter Builtin Template, no compatibility migration
 ```
 
-"Standard maintenance" is not a Legacy/Compatibility layer; it only indicates that the entrance still has practical value in the official offering, but is not the current default recommendation.
+"Standard maintenance" is not a Legacy/Compatibility layer; it only means the entrance still has practical
+value in the official offering but is not the current default recommendation.
 
 ## Entrance List
 
-Model IDs in the table represent the product maintenance scope. Standard API entrances use `templateId`; account entrances use specific `providerId`.
-The `account:zai-*` / `account:bigmodel-*` in the table are merely documentation shorthand for merging the same vendor's plan entrances; actual configuration still preserves
-each specific Account Provider ID.
+Model IDs in the table are the product maintenance scope. Standard API entrances use `templateId`; account
+entrances use specific `providerId`. The `account:zai-*` / `account:bigmodel-*` rows are documentation
+shorthand merging the same vendor's plan entrances; actual configuration preserves each specific Account
+Provider ID.
 
 | Vendor                   | Type             | ID                               | Base URL                                                 | Product-Maintained Models                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------------ | ---------------- | -------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -48,25 +52,39 @@ each specific Account Provider ID.
 | Anthropic                | API Template     | `anthropic`                      | `https://api.anthropic.com/v1`                           | `claude-fable-5-1`★, `claude-fable-5`★, `claude-opus-5`★, `claude-sonnet-5`★, `claude-haiku-4-5-20251001`★                                                                                                                                                                                                                                                                                                              |
 | xAI                      | API Template     | `xai`                            | `https://api.x.ai/v1`                                    | `grok-4.6`★, `grok-build-0.1`★, `grok-4.3`○                                                                                                                                                                                                                                                                                                                                                                             |
 
-`★` indicates priority maintenance, enabled by default; `○` indicates standard maintenance, disabled by default.
+`★` = priority maintenance, enabled by default; `○` = standard maintenance, disabled by default.
 
-### OpenRouter
+Z.ai, BigModel, Kimi, MiniMax, and Qwen "standard maintenance" models use the officially available model
+list at implementation time for each specific API entrance as the final gate; if an ID is no longer accepted
+by that entrance, it is deleted from both the table and the corresponding Template. Maintenance does not
+continue merely because the vendor's website still hosts historical materials.
 
-OpenRouter is a standard API Template, currently using `templateId=openrouter`. Official templates uniformly adopt Anthropic Messages, with Base URL
-`https://openrouter.ai/api`. This round assumes all models in this list support this entrance; no separate OpenRouter Chat/Responses template is created; only when clear counter-evidence appears in the future will subsequent Todo handle other schemas.
+## OpenRouter
 
-Model coverage spans all maintained models across every vendor's standard API Template in this list; as long as OpenRouter currently actually provides them, all are included, no longer selecting only a few
-"representative models." Each upstream vendor has at least one priority model enabled by default, with other models from the same vendor under standard maintenance, disabled by default. OpenRouter's own full
-dynamic catalog is not copied into Builtin Config; models not listed in ZCode maintenance scope continue to be used by users through custom Providers.
+OpenRouter is a standard API Template, `templateId=openrouter`, Base URL `https://openrouter.ai/api`, using
+Anthropic Messages. All models in this list are assumed to support the entrance; no separate OpenRouter
+Chat/Responses template is created unless clear counter-evidence appears (a subsequent Todo would handle
+other schemas).
 
-OpenRouter model IDs are registered by the values it actually returns. For example, `openai/gpt-5.6-sol` may currently appear, corresponding to the upstream `gpt-5.6-sol`; this is
-only OpenRouter's naming fact, not a universal format for all aggregating vendors, and does not require the runtime to strip prefixes. OpenRouter's configuration remains independently maintained, without reusing upstream
-Provider capabilities or Option configurations.
+- The maintenance set is the intersection of "upstream models maintained in this table" and what OpenRouter
+  currently actually provides: every vendor's maintained models that OpenRouter provides are included; each
+  vendor ("each vendor" = the standard API Template vendors in this table, not duplicating Account Providers)
+  has at least one priority model enabled by default, other models under standard maintenance, disabled by
+  default. Do not copy OpenRouter's full dynamic catalog into Builtin Config, and do not narrow the curation
+  to a few brands. Models outside ZCode's maintenance scope remain reachable through custom Providers.
+- Model IDs are registered by the values OpenRouter actually returns — e.g. `openai/gpt-5.6-sol` corresponds
+  to upstream `gpt-5.6-sol`. That is only OpenRouter's naming fact, not a universal aggregator format, and
+  requires no runtime ID stripping. IDs with suffixes like `/`, `:free` are saved as-is. Model Rules and
+  Model+API Rules can express known variants with prefix/suffix patterns; Template Model, Provider Model, and
+  Site Rules do not use this model wildcard. The set is a slowly-updating closed maintenance scope; new or
+  renamed models append an explicit `modelMatch` rule.
+- OpenRouter's configuration is independently maintained, without reusing upstream Provider capabilities or
+  Option configurations.
 
-The current target maintenance list (based on actual IDs existing in the 2026-09-04 Models API) grouped by upstream vendor is as follows:
-
-The list only registers model IDs directly usable for standard conversation/Agent requests; OpenRouter's `:batch` and other batch processing variants are not individually listed as model members; `:free`
-and other variants affecting actual routing or billing are only registered separately when independent configuration is needed.
+Target maintenance list (based on actual IDs in the 2026-09-04 Models API), grouped by upstream vendor. Only
+model IDs directly usable for standard conversation/Agent requests are registered; `:batch` variants are not
+listed as members; `:free` and other routing/billing variants are registered separately only when independent
+configuration is needed.
 
 - OpenAI: `openai/gpt-6-astra`★, `openai/gpt-5.6-sol`★, `openai/gpt-5.6-terra`★, `openai/gpt-5.6-luna`★, `openai/gpt-5.3-codex`○;
 - Anthropic: `anthropic/claude-fable-5.1`★, `anthropic/claude-fable-5`★, `anthropic/claude-opus-5`★, `anthropic/claude-sonnet-5`★, `anthropic/claude-haiku-4.5`★,
@@ -83,17 +101,23 @@ and other variants affecting actual routing or billing are only registered separ
 - Xiaomi MiMo: `xiaomi/mimo-v2.5-pro`★, `xiaomi/mimo-v2.5`★;
 - xAI: `x-ai/grok-4.6`★, `x-ai/grok-build-0.1`○, `x-ai/grok-4.3`○.
 
-### OpenCode Zen
+## OpenCode Zen
 
-OpenCode here refers to the OpenCode Zen API, not the OpenCode Agent runtime. Zen uses the same site
-`https://opencode.ai/zen/v1`, but models are divided into three Templates by official Endpoint/Schema:
+"OpenCode" here is the OpenCode Zen API, not the OpenCode Agent runtime. Zen uses one site
+`https://opencode.ai/zen/v1`, but models distribute across three Templates by official Endpoint/Schema,
+because `ProviderTemplate.api.type` is single-valued — do not disguise different-schema models as one fixed
+template, and do not extend a temporary field set before a type design exists:
 
 - `opencode-zen-responses`: GPT 5.6 Sol, Terra, Luna, and other GPT Responses models;
 - `opencode-zen-messages`: Claude, Qwen, and other Anthropic Messages models;
 - `opencode-zen-chat`: Kimi, DeepSeek, MiniMax, GLM, and Zen's free Chat models.
 
-OpenCode Zen's maintenance scope covers all vendors' models still valid in the official model table, without omitting other brands just because one brand has a priority model. Each upstream brand entering the list
-has at least one priority model enabled by default; other official models from the same brand under standard maintenance, disabled by default. The current target list expanded by protocol:
+Zen's maintenance scope covers all vendors' models still valid in the official model table, without omitting
+other brands because one brand already has a priority model; each upstream brand entering the list has at
+least one priority model enabled by default, other official models under standard maintenance, disabled by
+default. The list is ZCode's maintenance list, not Zen's full dynamic catalog; the final gate remains Zen's
+official `/zen/v1/models` return value and protocol verification before formal writing. The ★/○ marks express
+only ZCode's default enable strategy, not Zen's billing or recommendation levels.
 
 - Responses: `gpt-6-astra`★, `gpt-5.6-sol`★, `gpt-5.6-terra`★, `gpt-5.6-luna`★, `gpt-5.5`○, `gpt-5.5-pro`○,
   `gpt-5.4`○, `gpt-5.4-pro`○, `gpt-5.4-mini`○, `gpt-5.4-nano`○, `gpt-5.3-codex`○, `gpt-5.3-codex-spark`○,
@@ -107,42 +131,29 @@ has at least one priority model enabled by default; other official models from t
   `ling-3.0-flash-fin-free`○, `nemotron-3-ultra-free`○, `nemotron-3.5-lightning-free`○,
   `muse-spark-1.2-contributor-free`○.
 
-The above is ZCode's maintenance list, not Zen's full dynamic catalog; the final gate remains Zen's official `/zen/v1/models` return value and protocol verification results before formal writing.
-
-Z.ai, BigModel, Kimi, MiniMax, and Qwen "standard maintenance" models use the officially available model list at the time of implementation for each specific API entrance as the final gate;
-if a particular ID is no longer accepted by that entrance, it is deleted from both the table and the corresponding Template. We do not continue maintenance simply because the vendor's website still hosts historical materials.
-
 ## Removal Scope
 
-- Z.ai / BigModel Personal/Team Account and manual Coding Plan templates only preset `GLM-5.3`, `GLM-5.3-Flash`; do not delete other model rules or user-saved selections.
-- Standard Z.ai / BigModel API templates retain other official GLM models under maintenance, non-priority members disabled by default; do not merge it with Coding Plan API as one entrance.
-- Kimi: delete `moonshot-v1-*`; K2.5/K2.6 under standard maintenance as long as the official API still supports them, not deleted directly due to older version numbers.
-- MiniMax: delete M2.1 and earlier models; M2.7/M2.5 still listed in official release documents, retained as standard maintenance candidates.
-- MiMo: delete `mimo-v2-pro`, `mimo-v2-omni`, `mimo-v2-flash`; vendors have announced these old models retired as of 2026-06-30, migration target is the V2.5 series.
-- Anthropic: delete retired Claude 3.x, Sonnet 4, Opus 4, and Opus 4.1; Opus 4.8/4.7, Sonnet 4.6, etc. still retained under standard maintenance.
+- Z.ai / BigModel Personal/Team Account and manual Coding Plan templates preset only `GLM-5.3`,
+  `GLM-5.3-Flash`; other model rules and user-saved selections are not deleted.
+- Standard Z.ai / BigModel API templates retain other official GLM models under maintenance, non-priority
+  members disabled by default; they are not merged with Coding Plan API as one entrance.
+- Kimi: delete `moonshot-v1-*`; K2.5/K2.6 stay under standard maintenance as long as the official API still
+  supports them — not deleted merely for older version numbers.
+- MiniMax: delete M2.1 and earlier; M2.7/M2.5 still listed in official release documents, retained as
+  standard maintenance candidates.
+- MiMo: delete `mimo-v2-pro`, `mimo-v2-omni`, `mimo-v2-flash`; the vendor announced these retired as of
+  2026-06-30, migration target is the V2.5 series.
+- Anthropic: delete retired Claude 3.x, Sonnet 4, Opus 4, and Opus 4.1; Opus 4.8/4.7, Sonnet 4.6, etc.
+  remain under standard maintenance.
 
 ## This Round's Boundaries
 
-- This round modifies existing Builtin Provider template members and Model Rules, and incorporates OpenRouter and OpenCode Zen as two additional standard API entrances per this table.
-- Azure, Volcano Ark, and AWS Bedrock are still handled separately by Todo 22, not written into this round's entrance table.
-- Google Gemini continues to be excluded from this table due to its native API Schema being independent.
-- Vendor models not appearing in the table do not enter Builtin Template; users may still fill them in through custom Providers.
-
-### OpenRouter / OpenCode List Policy
-
-- OpenRouter is a dynamic aggregation catalog; do not copy its full catalog into Builtin Config; but also do not make a narrow curation covering only a few brands. The maintenance set is the intersection of "upstream models maintained in this table" and OpenRouter's currently actually provided models: as long as each vendor's maintained models are provided by OpenRouter, all are included; at least one priority model per vendor is enabled by default, with other models under standard maintenance, disabled by default. "Each vendor" here refers to the standard API Template vendors in this table, not duplicating the same vendor's Account
-  Providers. IDs with suffixes like `/`, `:free`, etc. are saved as-is.
-- OpenRouter's model list is registered by the actual model IDs it returns; in the current example, upstream `gpt-5.6-sol` corresponds to `openai/gpt-5.6-sol`, but this is only
-  OpenRouter's naming fact, not a universal format for all aggregating vendors, and does not require the runtime to perform ID stripping. Model Rules and Model+API Rules can
-  express known variants with prefix/suffix patterns; Template Model, Provider Model, and Site Rule do not use this model wildcard. The model set is a slowly-updating closed maintenance
-  scope; when new models are added or renamed, directly append an explicit `modelMatch` rule.
-- OpenCode Zen's official models use the same site, but different models actually distribute across Responses, Anthropic Messages, and OpenAI-compatible Chat
-  three Endpoints/Schemas. The current `ProviderTemplate`'s `api.type` is single-valued, so the list is first registered by three
-  template identities: `responses`, `messages`, `chat`; during implementation, do not disguise models with different schemas as a single fixed template, and do not extend a temporary field set before a type design exists.
-- OpenCode's model list is subject to Zen's official `/zen/v1/models` and documentation; the ★/○ in the table only express ZCode's default enable strategy, not Zen's billing or
-  recommendation levels.
-- OpenCode Zen's maintenance set covers all vendors' models still valid in its official model table, without omitting other brands just because one brand already has a priority model; each upstream brand with models entering
-  the list has at least one model enabled by default, with other official models under standard maintenance, disabled by default.
+- This round modifies existing Builtin Provider template members and Model Rules, and adds OpenRouter and
+  OpenCode Zen as two standard API entrances per this table.
+- Azure, Volcano Ark, and AWS Bedrock stay with Todo 22, not written into this round's entrance table.
+- Google Gemini stays excluded due to its independent native API Schema.
+- Vendor models not in the table do not enter Builtin Templates; users may still add them through custom
+  Providers.
 
 ## Reference Materials
 

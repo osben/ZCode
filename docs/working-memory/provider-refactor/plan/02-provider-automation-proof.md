@@ -1,89 +1,75 @@
 # Stage B: Provider Refactor Automated Proof Wrap-up
 
-> Status: Automation implementation completed; key E2E awaiting manual review and available graphics/Docker environment
+> Status: automation complete; four key E2Es await manual review and a graphics/Docker environment. Last updated: 2026-08-25.
 >
-> Last updated: 2026-08-25
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/plan/02-provider-automation-proof.md`
 
 ## 1. Objective
 
-This stage only completes automated evidence that directly proves the correctness of the Provider refactor. It does not改造 (modify) the full repository CI, workspace, Node, lockfile, or formatter baseline.
+Prove the Provider refactor's correctness with automated evidence only. This stage does not modify the full-repository CI, workspace, Node, lockfile, or formatter baseline.
 
-```text
-Real Built-in Config completeness
-            |
-            v
-Real Config to Active Model vertical integration
-            |
-            v
-Runtime branch coverage audit and gap-filling
-            |
-            v
-Provider key E2E promotion
-            |
-            v
-Targeted and full regression verification
-```
+Chain: real Built-in Config completeness → real Config-to-Active-Model vertical integration → Runtime branch coverage audit and gap-filling → Provider key E2E promotion → targeted and full regression verification.
 
 ## 2. Automated Proofs
 
-1. Directly read the real `config/provider/zcode-builtin.json`, add the minimal execution-period access materials for API Key, Account, and Request Auth Providers respectively, proving that each Built-in Provider and model member can resolve into a complete Registry Config.
-2. Use real Built-in Config to traverse Overlay, Resolver, Registry, ModelFactory, and Adapter, proving that the final Provider/Model Config is not re-inferred.
-3. Review that normal requests, Compact, Memory, Subagent, and Off-Peak all consume the same Active Model; linkages with existing direct evidence do not duplicate test creation.
-4. Complete fixture, replay, and manual review gates for the four pending E2Es on Provider identity, Registry cold-start, idle-time sub-agents, and candidate filtering; not promoted without manual confirmation.
+1. Read the real `config/provider/zcode-builtin.json`, add minimal execution-period access materials for API Key, Account, and Request Auth Providers, and prove every Built-in Provider and model member resolves into a complete Registry Config.
+2. Traverse Overlay, Resolver, Registry, ModelFactory, and Adapter with the real Built-in Config, proving the final Provider/Model Config is never re-inferred.
+3. Verify that normal requests, Compact, Memory, Subagent, and Off-Peak all consume the same Active Model; linkages with existing direct evidence are not duplicated.
+4. Complete fixture, replay, and manual-review gates for the four pending E2Es; no promotion without manual confirmation.
 
 ## 3. Test Boundaries
 
-- Completeness tests do not fix Provider, Rule, or Model total counts, nor do they require universal Rules to hit Built-in members.
-- Built-in API Key Provider is injected with test Key by Personal Overlay; Account Provider is injected with accessId and necessary Team scope by Account Overlay; Request Auth maintains request-period injection.
-- Tests may reference real model IDs as fixed configuration facts; production code must not branch on specific model IDs.
+- Completeness tests fix no Provider, Rule, or Model total counts and never require universal Rules to hit Built-in members.
+- The Built-in API Key Provider gets a test key via Personal Overlay; the Account Provider gets accessId and Team scope via Account Overlay; Request Auth keeps request-period injection.
+- Tests may reference real model IDs as fixed configuration facts; production code never branches on specific model IDs.
 - `support_pdf: false` and `support_audio: false` are confirmed inputs in this stage; configuration facts are not modified.
-- Remote Provisioning, real accounts, production artifacts, historical data upgrades, queue, and recovery semantics are not part of this stage.
+- Remote Provisioning, real accounts, production artifacts, historical-data upgrades, queue, and recovery semantics are out of scope.
 
 ## 4. E2E Decisions
 
-The first batch candidates are:
+First-batch candidates:
 
 - `conversation-session-same-model-draft-provider-identity`
 - `conversation-session-provider-registry-prewarm`
 - `conversation-session-offpeak-subagent-model-inheritance`
 - `conversation-session-model-provider-list-filtering`
 
-This stage does not promote `model-switch-compact`, `model-switch-queue`, or `model-provider-session-isolation`. The first two have known transport/product state issues and broader Queue cross-faces; the latter is reserved for a session lifecycle special project.
+Not promoted in this stage: `model-switch-compact` and `model-switch-queue` (known transport/product state issues, broader Queue cross-faces) and `model-provider-session-isolation` (reserved for a session lifecycle project).
 
-Manual review on 2026-08-25 confirmed the following proof boundaries:
+Manual review on 2026-08-25 confirmed the proof boundaries:
 
-- Same-name model identity uses the existing `same-model-draft-provider-identity`: two Providers expose the exact same modelId, with different Provider IDs and Base URLs; composite selection values, menu selected state, draft configuration, and real request URLs must all maintain the target Provider. The old `same-model-provider-identity` actually uses different modelIds and can only serve as ordinary cross-Provider switching coverage, not bearing this stage's same-name identity isolation proof.
-- Candidate filtering E2E uses representative negative samples to prove that hidden Providers, hidden Models under visible Providers, disabled or incomplete Providers do not enter normal candidates; simultaneously covered by real ZCode Built-in Provider + Personal same modelId to prove that Built-in members remain selectable and sendable during conflicts. Repeated arrangements and issue codes continue to be proven by Resolver unit tests; E2E does not duplicate Resolver's full state space.
-- In normal tasks, Subagents without explicit models inherit the parent ModelFactory; explicit models create their own Models; Off-Peak is an execution scope constraint, all foreground children must continue to use this round's idle-time Provider/Ticket/Request Auth; background children are rejected before sending requests; idle-time rotation ends and normal messages resume the user Provider.
-- Registry prewarm, beyond provider/model, toolbar, and last-selected, must also prove through case-local Base URLs that the first request actually hits the cold-start configured custom Provider.
+- Same-name model identity uses the existing `same-model-draft-provider-identity`: two Providers expose the exact same modelId with different Provider IDs and Base URLs; composite selection values, menu selected state, draft configuration, and real request URLs must all keep the target Provider. The old `same-model-provider-identity` uses different modelIds and covers only ordinary cross-Provider switching — it does not carry this stage's same-name identity isolation proof.
+- Candidate filtering proves with representative negative samples that hidden Providers, hidden Models under visible Providers, and disabled or incomplete Providers stay out of normal candidates; it also covers real ZCode Built-in Provider + Personal same modelId to prove Built-in members remain selectable and sendable during conflicts. Repeated arrangements and issue codes stay proven by Resolver unit tests; the E2E does not duplicate Resolver's full state space.
+- In normal tasks, Subagents without an explicit model inherit the parent ModelFactory; explicit models create their own Models. Off-Peak is an execution-scope constraint: all foreground children keep this round's idle-time Provider/Ticket/Request Auth; background children are rejected before any request; when idle-time rotation ends and normal messages resume, the user Provider returns.
+- Registry prewarm must prove — beyond provider/model, toolbar, and last-selected — via case-local Base URLs that the first request hits the cold-start configured custom Provider.
 
 ## 5. Completion Criteria
 
-- All Providers and model members of real Built-in Config are protected by permanent tests.
-- Three paths — API Key, Account, Request Auth — all have real config-to-Active Model vertical evidence.
-- Normal requests, Compact, Memory, Subagent, Off-Peak all have clear automated evidence.
-- Four E2Es complete auto-executable fixture/replay verification; only manually reviewed cases enter the formal directory and Docker preset.
+- Every Provider and model member of the real Built-in Config is protected by permanent tests.
+- API Key, Account, and Request Auth paths each have real config-to-Active-Model vertical evidence.
+- Normal requests, Compact, Memory, Subagent, and Off-Peak have clear automated evidence.
+- The four E2Es pass auto-executable fixture/replay verification; only manually reviewed cases enter the formal directory and Docker preset.
 - Provider targeted tests, related package typecheck, root typecheck, lint, and full unit tests pass.
-- Old Provider/Model abstractions, specific model runtime hardcoding, or second model fact sources are not restored.
+- No old Provider/Model abstractions, specific-model runtime hardcoding, or second model fact sources are restored.
 
 ## 6. Implementation Results
 
 ### 6.1 Permanent Automated Evidence
 
-| Proof Layer                       | Automated Evidence                                                                        | Result                                                                                                                                        |
-| --------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Real Built-in Config completeness | `packages/provider-node/test/zcode-builtin-integrity.test.ts`                             | Real JSON's Provider, model members, access material Overlays, complete Model Config, hidden idle-time models, and old field zeroing all pass |
-| API Key vertical chain            | `apps/zcode-cli/packages/bootstrap/tests/zcode-builtin-model-runtime-integration.test.ts` | `builtin:zai` flows from Built-in + Personal Overlay through Resolver/Registry/ModelFactory natively into Adapter                             |
-| Account vertical chain            | Same as above                                                                             | Start Plan's Account member constraints take effect; Personal Provider Overlay retains last-override                                          |
-| Request Auth vertical chain       | Same as above                                                                             | Hidden idle-time Providers can be precisely created by normal Registry; Request Auth Source binds only during execution                       |
-| Request Auth missing              | `apps/zcode-cli/packages/adapters/tests/model.test.ts`                                    | generate/stream both return `ModelRequestAuthMissing` before network calls                                                                    |
-| Model freeze                      | `apps/zcode-cli/packages/bootstrap/tests/provider-registry-model-runtime.test.ts`         | Registry updates only affect subsequently created Models                                                                                      |
+| Proof Layer                       | Automated Evidence                                                                        | Result                                                                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Real Built-in Config completeness | `packages/provider-node/test/zcode-builtin-integrity.test.ts`                             | Real JSON's Providers, model members, access material Overlays, complete Model Config, hidden idle-time models, and old-field zeroing all pass |
+| API Key vertical chain            | `apps/zcode-cli/packages/bootstrap/tests/zcode-builtin-model-runtime-integration.test.ts` | `builtin:zai` flows from Built-in + Personal Overlay through Resolver/Registry/ModelFactory natively into Adapter                              |
+| Account vertical chain            | Same as above                                                                             | Start Plan Account member constraints take effect; Personal Provider Overlay keeps last-override                                               |
+| Request Auth vertical chain       | Same as above                                                                             | Hidden idle-time Providers are precisely creatable via normal Registry; Request Auth Source binds only at execution                            |
+| Request Auth missing              | `apps/zcode-cli/packages/adapters/tests/model.test.ts`                                    | generate/stream both return `ModelRequestAuthMissing` before network calls                                                                     |
+| Model freeze                      | `apps/zcode-cli/packages/bootstrap/tests/provider-registry-model-runtime.test.ts`         | Registry updates affect only subsequently created Models                                                                                       |
 
-Real Built-in integration tests only capture Adapter's creation parameters, do not send network requests, and add no execution Registry, capability DTO, Provider snapshot, or test-specific production API.
+The real Built-in integration tests capture only Adapter creation parameters, send no network requests, and add no execution Registry, capability DTO, Provider snapshot, or test-specific production API.
 
 ### 6.2 Runtime Branch Coverage Audit
 
-| Runtime Branch  | Direct Evidence                                                                                                                                                          |
+| Runtime branch  | Direct evidence                                                                                                                                                          |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Normal requests | `packages/adapters/tests/model.test.ts`, `packages/core/tests/runtime-model-lifecycle.test.ts`                                                                           |
 | Compact         | `packages/core/tests/compact-media-capability.test.ts`, `packages/core/tests/compact-summary-model-request.test.ts`                                                      |
@@ -91,21 +77,19 @@ Real Built-in integration tests only capture Adapter's creation parameters, do n
 | Subagent        | `packages/core/tests/subagent-inherited-model-factory.test.ts`                                                                                                           |
 | Off-Peak        | `packages/core/tests/runtime-model-selection.test.ts`, `packages/bootstrap/tests/v4-native-commands.test.ts`, `packages/services/test/offPeakModelSelectionView.test.ts` |
 
-The above tests have directly read the same Active Model or ModelFactory, without discovering gaps requiring new production branches or second model fact sets. Relevant CLI targeted collections total 9 files, 203 tests passed.
+All read the same Active Model or ModelFactory; no gaps required new production branches or a second model fact set. CLI targeted collections: 9 files, 203 tests passed.
 
 ### 6.3 Key E2E Gate Status
 
-The case-local manifests and replay fixtures for all four pending cases have passed mechanical validation. The existing non-blocking warnings are that three title fixtures have no E2E marker, and Off-Peak fixture's two markers are uncovered; these do not change the fixture contract pass conclusion, and are left for manual review to determine whether additional observation points are needed.
-
-Local pending replay has completed Desktop, CLI, Adapter, and Bootstrap builds. The first run exposed a Zod resolution conflict caused by old dependency install state, which recovered after using the repository-standard `pnpm bootstrap`; re-running bypassed builds, but the host lacks `xvfb-run`, Docker/Podman, and Chrome WebDriver sessions exit before the business pages and case assertions. Therefore this is recorded as a verification environment blocker, not as a product failure, and does not disguise itself as green replay. The four cases remain in `manual-review/pending`, without execution promotion or Docker admission.
+All four pending cases' case-local manifests and replay fixtures passed mechanical validation. Remaining non-blocking warnings: three title fixtures lack an E2E marker, and the Off-Peak fixture has two uncovered markers; they do not change the fixture-contract pass and are left to manual review. Local pending replay built Desktop, CLI, Adapter, and Bootstrap; the first run hit a Zod resolution conflict from old dependency install state, recovered by the repository-standard `pnpm bootstrap`; re-runs bypassed builds, but the host lacks `xvfb-run` and Docker/Podman, so Chrome WebDriver sessions exit before business pages and case assertions. This is a verification environment blocker, not a product failure, and is not reported as green replay. The four cases remain in `manual-review/pending` — no execution promotion, no Docker admission.
 
 ### 6.4 Regression Results
 
 - `@zcode/provider`: 13 files, 115 tests passed; typecheck passed.
-- `@zcode/provider-node`: 4 files, 20 tests passed; typecheck passed. Concurrent package tests previously caused existing file watcher tests to additionally receive one `watch-error`; serial re-runs pass stably, new integrity tests always pass.
+- `@zcode/provider-node`: 4 files, 20 tests passed; typecheck passed. Concurrent package tests once caused an existing file-watcher test to see an extra `watch-error`; serial re-runs pass stably and the new integrity tests always pass.
 - Services targeted: 5 files, 30 tests passed.
 - Real Built-in Bootstrap integration: 1 file, 3 tests passed.
-- Root `pnpm typecheck`, `pnpm lint`, Desktop E2E typecheck all passed; lint retains repository existing warnings, zero errors.
-- Root `pnpm test:unit`: 1467 files passed, 1 skipped; 12418 tests passed, 25 skipped.
+- Root `pnpm typecheck`, `pnpm lint`, and Desktop E2E typecheck passed; lint keeps repository-existing warnings, 0 errors.
+- Root `pnpm test:unit`: 1467 files, 12418 tests passed (25 skipped).
 
-The remaining gate is the manual review, formal replay, and Docker admission for the four pending E2Es. They need graphics/Docker runtime conditions to continue; no Provider production code modification is needed or permitted to bypass them.
+Remaining gate: manual review, formal replay, and Docker admission of the four pending E2Es. They need graphics/Docker runtime conditions; no Provider production-code change is needed or permitted to bypass them.

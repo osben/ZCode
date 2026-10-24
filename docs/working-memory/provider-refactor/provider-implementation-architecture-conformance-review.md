@@ -4,42 +4,25 @@
 
 - Status: Discussion draft
 - Review baseline: `bcb119437370b74b6460b89975afae2ef5cdea33..6ddf899d6863d7cdede91a47fa6d718541284326`
-- Review target: Production implementation of Provider Refactor that has been committed
-- Out of scope: Pre-baseline legacy code cleanup, M4 Model Execution Cutover, uncommitted changes in current worktree, remote config sync product capabilities
-- Purpose: Document current implementation's conformance to confirmed Design, structural bridging, and unresolved boundary disputes; this document does not directly approve the final scheme
+- Review target: committed production implementation of the Provider Refactor
+- Out of scope: pre-baseline legacy code cleanup, M4 Model Execution Cutover, uncommitted worktree changes, remote config sync product capabilities
+- Purpose: record the implementation's conformance to confirmed Design, structural bridging, and unresolved boundary disputes; this document does not directly approve the final scheme
 
-"Clean" is easily misunderstood as code style, file size, or subjective neatness. This document uses "architecture conformance" to specifically check whether implementation贯彻s confirmed state ownership, Overlay ordering, Source/Repository, Registry, Facade, and Account boundaries.
+"Clean" here means architecture conformance: whether the implementation carries through confirmed state ownership, Overlay ordering, Source/Repository, Registry, Facade, and Account boundaries — not code style, file size, or subjective neatness.
 
 ## Division of Labor with Legacy Code Cleanup Review
 
-A separate review focusing on "cleaning existing legacy code" currently exists. The two reviews divide labor as follows:
-
-```text
-Legacy Code Cleanup Review
-└─ Legacy implementations, entry points, and compatibility chains existing before the baseline
-
-This Review
-└─ Provider Refactor new code
-   ├─ Whether it directly expresses the target Design
-   ├─ Whether it introduces long-term reasonable boundary Adapters
-   └─ Whether it repackages old problems as new bridging layers
-```
-
-This review does not enumerate or plan deletion of pre-baseline legacy code. If a new code segment connects to the old system, this review only determines "whether this new connection is a reasonable temporary Adapter, whether it leaks into the target domain, and whether it has a clear exit boundary"; the connected legacy implementation belongs to the legacy code cleanup review.
-
-The ~2,850 lines of explicit legacy/transition glue in this document are for explaining the total composition of new code and avoiding statistical misunderstanding; they do not constitute this review's legacy code remediation list. The two reviews can cross-reference each other but cannot claim the same cleanup task.
+A separate review covers pre-baseline legacy implementations, entry points, and compatibility chains. This review covers Provider Refactor new code only: whether it directly expresses the target Design, whether it introduces long-term reasonable boundary Adapters, and whether it repackages old problems as new bridging layers. If new code connects to the old system, this review only judges whether the connection is a reasonable temporary Adapter with a clear exit boundary and no leakage into the target domain. The ~2,850 lines of explicit legacy/transition glue listed below are composition statistics, not this review's remediation list; the two reviews cross-reference but never claim the same cleanup task.
 
 ## Review Objectives
 
-This review answers the following questions:
-
 1. Which parts of new production code are genuine target-domain implementations?
 2. Which parts are cross-process, serialization, file, and network boundary Adapters still needed long-term?
-3. Which code, though on the formal main path, is structurally bridging caused by authoritative state or abstract boundaries not being贯彻?
+3. Which code on the formal main path is structural bridging caused by authoritative state or abstract boundaries not being carried through?
 4. Which problems are direct Design-implementation conflicts, and which still require product or architectural rulings?
 5. What should be deleted, rewritten, and which reasonable boundaries must be preserved in subsequent cleanup?
 
-The review does not judge by file names. A file without `legacy` or `compat` in its name might still reverse-derive state, duplicate parsing implicit protocols, or patch cross-layer holes. An Adapter file might also be a formally necessary part of the target architecture.
+File names are not the criterion: a file without `legacy`/`compat` in its name may still reverse-derive state or duplicate-parse implicit protocols; an Adapter file may be a formally necessary part of the target architecture.
 
 ## Classification Criteria
 
@@ -53,24 +36,22 @@ The review does not judge by file names. A file without `legacy` or `compat` in 
 
 ## Current Quantity Assessment
 
-Previously ~19,250 lines were classified as "core Design implementation." After semantic-link review, the current estimate:
+Semantic estimates, not mechanically calculable LOC:
 
 | Category                                         | Estimated New Lines | Description                                 |
 | ------------------------------------------------ | ------------------: | ------------------------------------------- |
-| Genuine target Design贯彻                        |      ~14,000–15,000 | Still the main body of new implementation   |
+| Genuine target Design conformance                |      ~14,000–15,000 | Still the main body of new implementation   |
 | Long-term reasonable boundary Adapter            |        ~1,400–1,900 | Should not be deleted to reduce line count  |
 | Structural bridging from abstract incompleteness |        ~2,100–2,800 | This document's focus                       |
 | Mechanical abstract boilerplate                  |            ~600–900 | Optimizable, but not architecture deviation |
 
-These are semantic estimates, not mechanically calculable LOC from paths. ~4,000–4,800 lines of formal implementation are within the affected code surface, but the same files typically contain correct domain logic alongside bridging logic; estimated truly deletable or significantly reducible structural bridging is ~2,100–2,800 lines.
-
-Explicit legacy/transition glue is ~2,850 lines, outside the above 19,250 lines. Combined, the total migration or structural debt in production new code is ~5,000–5,700 lines.
+The same files typically mix correct domain logic with bridging logic; estimated truly deletable or significantly reducible structural bridging is ~2,100–2,800 of ~4,000–4,800 affected lines. Explicit legacy/transition glue is ~2,850 lines outside the above ~19,250; total migration or structural debt in production new code is ~5,000–5,700 lines.
 
 ## Feature Summary
 
 | Field            | Value                                                                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Developer intent | Review whether Provider Refactor formal implementation贯彻s confirmed architecture, and build an issue list for subsequent rulings               |
+| Developer intent | Review whether Provider Refactor formal implementation conforms to confirmed architecture, and build an issue list for subsequent rulings        |
 | Capability       | Provider Config, Account Overlay, Registry, Settings/Selection Facade, Repository                                                                |
 | Change layer     | option-source / validation / commit-effect / persistence                                                                                         |
 | Operating mode   | Impact-only; records findings and candidate directions only                                                                                      |
@@ -79,7 +60,7 @@ Explicit legacy/transition glue is ~2,850 lines, outside the above 19,250 lines.
 
 ## Confirmed Target Structure
 
-Provider Overlay order preserves both existing rulings:
+Provider Overlay order:
 
 ```text
 ZCode Built-in Provider Config
@@ -108,81 +89,25 @@ Both invariants hold simultaneously:
 
 ### F1. Settings Save Chain Rebuilds Personal from Effective
 
-Status: `must-inspect`, Design conflict candidate, highest priority.
+Status: ruled 2026-08-24; highest priority.
 
-Current chain:
+The pre-ruling chain cloned the full Effective Draft in the Renderer, passed it to `saveEffectiveProvider()` (`packages/ui/src/lib/providerSettingsFormProjection.ts`, `packages/ui/src/lib/providerPersonalSave.ts`), which computed only a Personal diff relative to Built-in/Official (`packages/provider/src/config-service.ts`) with manual exclusions such as `zhipu-account.accessId` (`packages/provider/src/personal-config-projection.ts`). Risks were: Account-returned Built-in model members persisted into Personal from unrelated saves; later account member changes obscured by Personal's full list; a new blacklist per Account dynamic field; save baseline inconsistent with Effective Config generation. This contradicted `registry/configuration.md` (Personal stays sparse; no reverse contamination) vs `registry/settings.md` (diff against ZCode Built-in baseline).
 
-```text
-Effective Provider Config
-          |
-          v
-Renderer clones full Effective Draft
-          |
-          v
-saveEffectiveProvider()
-          |
-          v
-Only computes Personal diff relative to Built-in/Official
-          |
-          +--> Special case discards Account accessId
-          `--> Other Account results may enter Personal
-```
+Ruling (official facts at [`design/registry/model-membership-and-enablement.md`](./design/registry/model-membership-and-enablement.md) and [`design/registry/configuration.md`](./design/registry/configuration.md)):
 
-Evidence:
-
-- `packages/ui/src/lib/providerSettingsFormProjection.ts` copies `effectiveConfig` and model `effectiveConfig` in full as form state.
-- `packages/ui/src/lib/providerPersonalSave.ts` passes full Draft to `saveEffectiveProvider()`.
-- `packages/provider/src/config-service.ts` only reads Built-in/Official Source on save.
-- `packages/provider/src/personal-config-projection.ts` can only manually exclude `zhipu-account.accessId`.
-
-Risks:
-
-- Account-returned Built-in model members may be persisted into Personal when users modify unrelated fields.
-- Subsequent account model member changes will be obscured by Personal's full list.
-- Each new Account dynamic field adds another field blacklist.
-- Save baseline and Effective Config generation baseline are inconsistent.
-
-Internal Design contradictions also need ruling:
-
-- `registry/configuration.md` requires Personal to remain sparse; Effective View must not reverse-contaminate Personal.
-- `registry/settings.md` states compute Personal relative to ZCode Built-in baseline.
-
-Candidate directions, not directly ruled in this document:
-
-1. Save complete Effective Draft, but compute Personal relative to the same revision of `Effective Built-in Provider Config`.
-2. Renderer or Facade submits sparse Personal intent directly, without reverse-diffing complete Effective Draft.
-3. Keep current Built-in diff and continue maintaining Account field exceptions; this plan perpetuates structural bridging and is not recommended as target state.
-
-#### Subsequent Ruling (2026-08-24)
-
-This item has been formally ruled in official Design; the above three-way choice is no longer held:
-
-- Settings directly perceives `Effective Built-in Provider Config` and sparse Personal Config, submitting only user-modified sparse Personal Overlay; Renderer does not reverse-derive Personal from Effective Config;
-- Individual config items fully exposed to users continue as full replacement; untouched inherited values must not materialize from unrelated saves;
-- Provider model members no longer use three-layer shared coverage `models[]`; split into `builtinModelIds` (Owned by Built-in/Account Built-in) and `modelIds` (Owned by Personal);
-- Two member fields with identical names form explicit Model ID conflicts. The old Personal config for conflicting models is non-executable; Settings, model selector, and model editor jointly display diagnostics and require user rename or deletion;
+- Settings directly perceives `Effective Built-in Provider Config` and sparse Personal Config, submitting only user-modified sparse Personal Overlay; the Renderer does not reverse-derive Personal from Effective Config.
+- Config items fully exposed to users continue as full replacement; untouched inherited values must not materialize from unrelated saves.
+- Provider model members no longer use three-layer shared coverage `models[]`; split into `builtinModelIds` (Owned by Built-in/Account Built-in) and `modelIds` (Owned by Personal).
+- Two member fields with identical names form explicit Model ID conflicts. The old Personal config for conflicting models is non-executable; Settings, model selector, and model editor jointly display diagnostics and require user rename or deletion.
 - Model Config adds `enabled`; Provider pages directly provide enable/disable operations. Built-in IDs are undeletable; users manage candidate sets in ordinary model selectors via `enabled`.
-
-Official facts at
-[`design/registry/model-membership-and-enablement.md`](./design/registry/model-membership-and-enablement.md)
-and [`design/registry/configuration.md`](./design/registry/configuration.md).
 
 ### F2. `Config Document` Has Entered Provider Domain Layer
 
 Status: `must-inspect`, confirmed inconsistent with Design.
 
-Design specifies: Config Map, Rules, and Effective Config are domain objects; `schemaVersion`, JSON envelope, file name, and migration belong to Source/Repository.
+Design: Config Map, Rules, and Effective Config are domain objects; `schemaVersion`, JSON envelope, file name, and migration belong to Source/Repository. Current implementation exposes `ProviderConfigDocument` (`packages/provider/src/config/document.ts`), `ModelSelectionConfigDocument` (`packages/provider/src/model-selection-config.ts`), Personal projection functions returning `ProviderConfigDocument`, and Node Repository / Official Source / Importer passing Documents around.
 
-Current implementation exposes:
-
-- `ProviderConfigDocument` in `packages/provider/src/config/document.ts`;
-- `ModelSelectionConfigDocument` in `packages/provider/src/model-selection-config.ts`;
-- Personal projection functions returning `ProviderConfigDocument`;
-- Node Repository, Official Source, and Importer around Document passing.
-
-Version migration, JSON validation, backup, and atomic write are long-term needed persistence capabilities. The problem is not these code existing, but the Repository envelope shaped as a Provider Domain public object.
-
-Candidate target boundary:
+Version migration, JSON validation, backup, and atomic write are long-term needed persistence capabilities; the problem is the Repository envelope shaped as a Provider Domain public object. Target boundary:
 
 ```text
 Provider Domain
@@ -197,23 +122,13 @@ Repository Boundary
 └─ atomic write
 ```
 
-The unresolved point is the final form of public API and migration order, not whether versioned storage is retained.
+The unresolved point is the final form of the public API and migration order, not whether versioned storage is retained.
 
 ### F3. `accessId` Resolved as Product Protocol by Multiple Layers
 
 Status: `must-inspect`, boundary design awaiting ruling.
 
-`accessId`'s established responsibility is stable, non-sensitive account connection identity. Currently it is also used by multiple layers to derive:
-
-- Start / Individual / Team Plan;
-- Provider Family;
-- organization/project;
-- Credential key;
-- UI grouping, labels, and Badges.
-
-Current Account Resolver, Request Auth, Team Plan Runtime Key, and UI separately parse `start-plan:`, `coding-plan:`, `team-plan:` prefixes. Notably `packages/ui/src/lib/modelSelectionGroups.ts` directly decides product display via `accessId.startsWith(...)`.
-
-This turns accessId from an opaque identity into a cross-layer string protocol without a centralized type definition.
+`accessId`'s established responsibility is stable, non-sensitive account connection identity. It is also used by multiple layers to derive: Start / Individual / Team Plan; Provider Family; organization/project; credential key; UI grouping, labels, and Badges. The Account Resolver, Request Auth, Team Plan Runtime Key, and UI separately parse `start-plan:`, `coding-plan:`, `team-plan:` prefixes; notably `packages/ui/src/lib/modelSelectionGroups.ts` decides product display via `accessId.startsWith(...)`. This turns accessId into a cross-layer string protocol without a centralized type definition.
 
 Candidate direction:
 
@@ -229,68 +144,43 @@ Account/Product Facade View
 └─ presentation label/badge
 ```
 
-This candidate does not require adding plan display fields to Provider Config, nor establishing a new Registry Source. The discussion is: which existing Service/Facade owns the typed Account/Product projection, and how the request auth side guarantees a single accessId parser.
+This candidate needs no plan display fields on Provider Config and no new Registry Source. Open: which existing Service/Facade owns the typed Account/Product projection, and how request auth guarantees a single accessId parser.
 
 ### F4. Account Last-Known-Good Uses Full Atomic Snapshot (Ruled)
 
-Account Built-in Provider Config is an atomic snapshot from a single Settings, current account, connection choice, and entitlement resolution. Full refresh succeeds → whole batch published; any external dependency fails → partial new results not published, continues keeping full previous successful Snapshot.
+Account Built-in Provider Config is an atomic snapshot from a single Settings, current account, connection choice, and entitlement resolution. Full refresh succeeds → whole batch published; any external dependency fails → partial new results not published, the full previous successful Snapshot is kept. No per-Family or per-Provider partial last-known-good; temporary staleness is restored by subsequent refreshes; dynamic credentials still go through Request Auth and server-side auth — displaying an old Snapshot cannot bypass authorization. Full snapshot semantics require no account generation, selection revision, or dependency failure scope maintenance.
 
-This round does not implement per-Family or per-Provider partial last-known-good. Temporary staleness restored by subsequent refreshes; dynamic credentials still by Request Auth and server-side auth; cannot bypass authorization by displaying old Snapshot. Full snapshot semantics are simpler than mixed multiple resolution generations, and require no account generation, selection revision, and dependency failure scope maintenance.
+Current `unknown + previousProviders` per-Provider branching is a half-set recovery mechanism overlapping with target semantics; Todo 07's modification of Account Resolver can simplify alongside, without independent fault-isolation tasks.
 
-Current `unknown + previousProviders` per-Provider branching is a half-set recovery mechanism overlapping with target semantics; Todo 07 modification of Account Resolver can simplify alongside, without creating independent tasks for fault isolation.
+### F5. Selection Facade View and Validation Boundary Inconsistent (Ruled)
 
-### F5. Selection Facade View and Validation Boundary Inconsistent
-
-Status: Ruled, entered
-[`steps/todo-12-model-selection-validation-boundary-cutover.md`](./steps/todo-12-model-selection-validation-boundary-cutover.md).
-
-`ModelSelectionFacade.getView()` filters hidden Providers, but `validate()` directly delegates the full Registry. Therefore, hidden Providers not visible in the candidate View may still pass through the user Facade's validation.
-
-This is inconsistent with existing design:
-
-- User candidates and user selection validation use Selection Facade's visible candidates;
-- Internal product capabilities use exact ID for full Registry lookup.
-
-Further code review confirmed that ordinary UI only consumes View; Facade `validate()`'s main production caller is actually hidden Off-Peak dispatch. Final ruling: do not retain execution validation on user Facade; delete Facade/Service `validate()`; Off-Peak uses internal Registry narrow advance check; all Selection finalized by current Agent Registry/ModelFactory upon real task submission and Model building.
+`ModelSelectionFacade.getView()` filtered hidden Providers, but `validate()` delegated the full Registry, so hidden Providers could pass user Facade validation. Further review: ordinary UI only consumes View; the main production caller of Facade `validate()` was hidden Off-Peak dispatch. Ruling (entered [`steps/todo-12-model-selection-validation-boundary-cutover.md`](./steps/todo-12-model-selection-validation-boundary-cutover.md)): user candidates and user selection validation use the Selection Facade's visible candidates; do not retain execution validation on the user Facade — delete Facade/Service `validate()`; Off-Peak uses internal Registry narrow advance check with exact ID; all Selection is finalized by the current Agent Registry/ModelFactory at real task submission and Model building.
 
 ### F6. Provider Runtime Composition Has Duplicate Shells
 
-Status: Entered draft at
-[`steps/todo-11-provider-runtime-composition-boundary-cleanup.md`](./steps/todo-11-provider-runtime-composition-boundary-cleanup.md), must not implement.
+Status: draft saved at [`steps/todo-11-provider-runtime-composition-boundary-cleanup.md`](./steps/todo-11-provider-runtime-composition-boundary-cleanup.md); must not implement before item-by-item ruling.
 
-The following implementations wrap similar Config/Registry lifecycles:
+Four implementations wrap similar Config/Registry lifecycles: `packages/provider-node/src/provider-config-runtime.ts`, `packages/provider-node/src/provider-registry-runtime.ts`, `packages/services/src/model-provider/providerRuntime.ts`, `packages/services/src/model-provider/providerConfigRuntime.ts`. File path injection, watcher, RPC Facade, and Account Source are reasonable boundaries; the problem is Empty Account Source, start/dispose, ready promise, and Config/Registry assembly duplication.
 
-- `packages/provider-node/src/provider-config-runtime.ts`
-- `packages/provider-node/src/provider-registry-runtime.ts`
-- `packages/services/src/model-provider/providerRuntime.ts`
-- `packages/services/src/model-provider/providerConfigRuntime.ts`
+Further review: these four layers correspond to two real composition roots — Host manages Settings/Selection; the Agent process manages ModelFactory/execution; both sides owning Registry is the correct boundary. The draft records shared Node Config resources plus two explicit composition-root candidates, with unified Runtime as an alternative, awaiting ruling.
 
-File path injection, watcher, RPC Facade, and Account Source are all reasonable boundaries. The problem is Empty Account Source, start/dispose, ready promise, and Config/Registry assembly duplication.
+Specific lifecycle bug candidate recorded (not fixed at draft stage): `startProcessProviderRegistryRuntime()`'s outer `dispose()` also manages the Model Selection Repository and Credential subscription in Standalone mode; the Protocol entrypoint directly calls inner `runtime.dispose()`, bypassing outer Repository cleanup.
 
-Further code review confirmed these four layers correspond to two different real composition roots: Host manages Settings/Selection; Agent process manages ModelFactory/execution; both sides owning Registry is the correct boundary. The draft records shared Node Config resources plus two explicit composition root candidates, while preserving current structure and unified Runtime as alternative plans, awaiting item-by-item ruling.
+### F7. Physical `official` Naming Still Spreading to Domain API (Ruled)
 
-Also discovered a specific lifecycle bug candidate: `startProcessProviderRegistryRuntime()`'s outer `dispose()` also manages Model Selection Repository and manages Credential subscription in Standalone mode; Protocol entrypoint directly calls inner `runtime.dispose()`, bypassing outer Repository cleanup. Draft stage only records, does not fix along the way.
-
-### F7. Physical `official` Naming Still Spreading to Domain API
-
-Status: Ruled, entered
-[`steps/todo-10-zcode-builtin-provider-config-naming-cutover.md`](./steps/todo-10-zcode-builtin-provider-config-naming-cutover.md).
-
-Current `officialProviders`, `officialSource`, and `OfficialProviderConfigSource` still widely exist. Domain semantics unified as ZCode Built-in Provider Config.
-
-Domain types, services, Source, Facade, variables, physical files, environment variables, and SEA assets must be unifiedly migrated to `zcodeBuiltin*` / `zcode-builtin` semantics in the same switch. This branch has not shipped; no old fields, old paths, aliases, fallbacks, or importers retained.
+`officialProviders`, `officialSource`, and `OfficialProviderConfigSource` are superseded naming; domain semantics are unified as ZCode Built-in Provider Config. Ruling (entered [`steps/todo-10-zcode-builtin-provider-config-naming-cutover.md`](./steps/todo-10-zcode-builtin-provider-config-naming-cutover.md)): domain types, services, Source, Facade, variables, physical files, environment variables, and SEA assets migrate to `zcodeBuiltin*` / `zcode-builtin` semantics in the same switch. This branch has not shipped; no old fields, old paths, aliases, fallbacks, or importers retained.
 
 ### F8. Complete Model Properties Still Propagated as Unknown State Cross-Layer
 
-Status: `must-inspect`, Design confirmed, awaiting implementation.
+Status: `must-inspect`, Design confirmed, awaiting implementation (plan in [`steps/todo-03-provider-model-ownership-and-property-totality.md`](./steps/todo-03-provider-model-ownership-and-property-totality.md)).
 
-Target `ModelProperties` has defined all `support_*` as required booleans, Built-in general Model Rule also provides complete defaults. However, the Resolver still publishes sparse `ModelConfig` type directly to Registry after `validateComplete()` succeeds, causing downstream to repeatedly adapt an "unknown capability" state that should not actually exist:
+Target `ModelProperties` defines all `support_*` as required booleans and Built-in generic Model Rules provide complete defaults. But the Resolver still publishes the sparse `ModelConfig` type after `validateComplete()` succeeds, forcing downstream to adapt an "unknown capability" state that should not exist:
 
 - Bootstrap Runtime re-checks each field with `requireCompleteProperties()` and copies;
-- Selection only sends Protocol `properties` when all fields exist; otherwise silently omits;
+- Selection only sends Protocol `properties` when all fields exist, otherwise silently omits;
 - Protocol's format leaf is required, but `ZCodeModelOption.properties` is overall optional;
-- Settings Draft uses `support_text ?? true`, other formats `?? false` to fill defaults;
-- Adapter already-resolved models and message conversion still accept optional `properties/input_format`;
+- Settings Draft uses `support_text ?? true`, other formats `?? false`;
+- Adapters still accept optional `properties/input_format`;
 - Old Catalog merge hardcodes true/false on missing capabilities.
 
 ```text
@@ -307,10 +197,7 @@ resolve + validateComplete
                        `--> Adapter optional
 ```
 
-Target is to close type boundary at Resolver/Registry publish point: Rules and Personal Overlay can be sparse, but Effective/Registry Model and Protocol, Active Model, Runtime, and Adapter must only see complete booleans. Missing fields are config errors, not `unknown`; downstream must not fill defaults or silently omit.
-
-This does not involve TypeScript `unknown` for open JSON. Legacy importers may still read old formats at one-time boundaries, but can only produce sparse Personal Config from defined old facts; missing items inherit Built-in Rules, cannot add migration defaults or form general Runtime fallback. After mandatory upgrades cross the compatibility window, versionless old-format importers, parsers, Catalog dependencies, and tests are all deleted. Implementation plan per
-[`steps/todo-03-provider-model-ownership-and-property-totality.md`](./steps/todo-03-provider-model-ownership-and-property-totality.md).
+Target: close the type boundary at the Resolver/Registry publish point. Rules and Personal Overlay can be sparse; Effective/Registry Model and Protocol, Active Model, Runtime, and Adapter must only see complete booleans. Missing fields are config errors, not `unknown`; downstream must not fill defaults or silently omit. This does not involve TypeScript `unknown` for open JSON. Legacy importers may read old formats at one-time boundaries but can only produce sparse Personal Config from defined old facts; missing items inherit Built-in Rules, with no migration defaults or general Runtime fallback. After mandatory upgrades cross the compatibility window, versionless old-format importers, parsers, Catalog dependencies, and tests are all deleted.
 
 ## UI Surface Matrix
 
@@ -378,32 +265,13 @@ The following code must not be deleted merely because it is "glue" even if line 
 - Protocol runtime Schema;
 - Config three-state Overlay and completeness checks.
 
-`ModelPropertiesConfig` and similar Config Classes have obvious mechanical boilerplate, but this is the implementation cost from insufficient declarative Overlay tooling, not automatically architecture deviation.
+`ModelPropertiesConfig` and similar Config Classes have mechanical boilerplate, but this is the implementation cost from insufficient declarative Overlay tooling, not automatically architecture deviation.
 
 ## Evidence And Limitations
 
-This round inspected to depth 2 along the following paths:
+Inspected to depth 2 along: Provider Settings UI → Settings Service/Facade → `ProviderConfigService` → Personal projection → Personal Repository; Built-in Config → Account connection resolver → Account Provider Service → Resolver/Registry → Settings/Selection Facade; accessId → Account Config → Request Auth → Product UI presentation.
 
-```text
-Provider Settings UI
-  -> Provider Settings Service/Facade
-  -> ProviderConfigService
-  -> Personal projection
-  -> Personal Repository
-
-Built-in Config
-  -> Account connection resolver
-  -> Account Provider Service
-  -> Provider Resolver/Registry
-  -> Settings/Selection Facade
-
-accessId
-  -> Account Config
-  -> Request Auth
-  -> Product UI presentation
-```
-
-Current environment does not provide callable codegraph interfaces; direct callers and state chains verified against current code, `rg`, target Design, and test evidence. Run codegraph impact/affected-tests again before implementation to confirm no new callers.
+Current environment provides no callable codegraph interfaces; direct callers and state chains were verified against current code, `rg`, target Design, and test evidence. Run codegraph impact/affected-tests before implementation to confirm no new callers.
 
 ## Graph Drift Candidates
 
@@ -415,7 +283,7 @@ Current environment does not provide callable codegraph interfaces; direct calle
 | Model member ownership / id conflict          | New Design confirmed                             | Graph originally lacked Built-in/Personal members and conflict edges                             | Added capability invariants and Settings/Selection edges already         |
 | Complete Properties → Runtime                 | Optional/default compatibility after Registry    | Target edge exists, but implementation did not close Sparse Rule to Complete Model type boundary | Tighten Registry publish type per TODO 03 and delete downstream fallback |
 
-This document is in impact-only stage; it does not directly modify feature graph.
+This document is impact-only; it does not directly modify the feature graph.
 
 ## Topics for Discussion and Ruling
 
@@ -427,34 +295,34 @@ This document is in impact-only stage; it does not directly modify feature graph
 
 ### D2. Save-time Account Baseline Consistency (Ruled)
 
-Saves carry Settings View revision; Service applies Personal Overlay on current Effective Built-in; expired responses must not overwrite updated Draft. Account/Built-in model members enter `builtinModelIds`, user members enter `modelIds`; upstream refresh no longer needs rebase on a shared member list. Name conflicts handled by explicit `id-conflict`.
+Saves carry Settings View revision; Service applies Personal Overlay on current Effective Built-in; expired responses must not overwrite an updated Draft. Account/Built-in model members enter `builtinModelIds`, user members enter `modelIds`; upstream refresh no longer rebases on a shared member list. Name conflicts are handled by explicit `id-conflict`.
 
-### D3. Repository envelope API
+### D3. Repository envelope API (open)
 
-Need to confirm whether `ProviderConfigDocument` and `ModelSelectionConfigDocument` move to `provider-node` private implementation, or remain as Repository package-internal non-domain serialization helpers; neither plan should continue as Provider Domain public state.
+Confirm whether `ProviderConfigDocument` and `ModelSelectionConfigDocument` move to `provider-node` private implementation, or remain as Repository package-internal non-domain serialization helpers; neither plan continues as Provider Domain public state.
 
-### D4. Account/Product Typed Projection Owner
+### D4. Account/Product Typed Projection Owner (open)
 
-Need to choose owner between existing Account Service, Provider Settings Facade, or independent product Facade. UI display semantics must not continue encoded into accessId; product UI fields must not be stuffed into Provider Config.
+Choose an owner among existing Account Service, Provider Settings Facade, or an independent product Facade. UI display semantics must not stay encoded in accessId; product UI fields must not be stuffed into Provider Config.
 
 ### D5. Account Restorable Failure Granularity (Ruled)
 
-No partial failure granularity established. Account Built-in Config published atomically on success; whole previous successful Snapshot retained on failure.
+No partial failure granularity. Account Built-in Config publishes atomically on success; the whole previous successful Snapshot is retained on failure.
 
-### D6. Selection Facade validate Caller Semantics
+### D6. Selection Facade validate Caller Semantics (Ruled)
 
-Ruled: User Facade only projects visible candidates, `validate()` no longer public. Ordinary tasks authorizedly validated at ModelFactory build boundary; Off-Peak and other internal products use Registry's exact validation directly; visibility does not become permission or special execution identity.
+User Facade only projects visible candidates; `validate()` is no longer public. Ordinary tasks are validated at the ModelFactory build boundary; Off-Peak and other internal products use Registry exact validation directly; visibility does not become permission or special execution identity.
 
-### D7. Runtime Composition Wrap-up Timing
+### D7. Runtime Composition Wrap-up Timing (deferred)
 
-Draft for Todo 11 saved current state, two process composition roots, candidate plans, and unresolved items. Currently deferred; it can be independent of preceding semantic rulings, but must not update formal Design or implement before manual understanding and item-by-item confirmation.
+Todo 11's draft saved current state, two process composition roots, candidate plans, and unresolved items. Deferred; it can be independent of preceding semantic rulings, but must not update formal Design or implement before manual understanding and item-by-item confirmation.
 
 ## Suggested Discussion Order
 
-1. D1 + D2 completed; implementation review should delete Effective-to-Personal reverse projection and shared `models[]` bridging based on this.
-2. D3: Confirm domain-Repository serialization boundary.
-3. D4: Confirm Account identity and product projection; D5 ruled as full atomic Snapshot.
-4. D6: Ruled and entered Todo 12, awaiting implementation.
-5. D7: Todo 11 saved draft, awaiting future resumption of discussion, not entering current implementation sequence.
+1. D1 + D2 completed; the implementation review should delete the Effective-to-Personal reverse projection and shared `models[]` bridging based on this.
+2. D3: confirm the domain-Repository serialization boundary.
+3. D4: confirm Account identity and product projection; D5 ruled as full atomic Snapshot.
+4. D6: ruled and entered Todo 12, awaiting implementation.
+5. D7: Todo 11 draft awaiting future resumption, not in the current implementation sequence.
 
-After each ruling, first write back to Provider Design, then制定测试 and implementation plans. This document preserves review trajectory and should not replace final Design.
+After each ruling, first write back to Provider Design, then set test and implementation plans. This document preserves the review trajectory and does not replace final Design.

@@ -1,190 +1,111 @@
-# Bugfix 05: Self-Recovery of the Worker Registry on Personal Config Refresh
+# Bugfix 05: Worker Registry Self-Recovery on Personal Config Refresh
 
 > Status: Completed
 >
 > Date: 2026-08-27
 >
-> Source: macOS Provider Settings real-machine connectivity test long-term report `provider-not-found`
+> Source: macOS Provider Settings real-machine connectivity test long-term `provider-not-found`
+>
+> Lock boundary revision (2026-09-15): pure polling and standard-format normal reads no longer take exclusive locks;
+> import, normalized rewrite and update still use the original write lock. Current lock scope and concurrency
+> constraints: [Pure Read Lock Removal TODO](../../../analysis/2026-09-15-provider-config-read-lock-todo.md).
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/bugfix-05-personal-config-worker-refresh.md`
 
-> 2026-09-15 Lock boundary revision: pure polling and standard-format normal reads no longer use exclusive locks; import, normalized rewrite, and update still use the original write lock.
-> The following records the historical solution; the current lock scope and concurrency constraints are documented at [Pure Read Lock Removal TODO](../../../analysis/2026-09-15-provider-config-read-lock-todo.md).
+## 1. Problem and Root Cause
 
-## 1. Problem
+After saving a new Personal Provider, the Host Settings View showed it, but the model connectivity test could
+long-term return `Provider not found in the Provider Registry: <providerId>`; clicking again did not help; a Worker
+or app restart, or a later file change, recovered it.
 
-After the user saves a new Personal Provider in the Provider Settings, the Host Settings View already displays that Provider, but the model connectivity test can long-term return:
+The Host and the Core Worker each hold an in-process Provider Registry. The Host refreshes its own after saving; the
+Worker refreshed only when it observed the external Personal Config change, and the only cross-process observation
+was `fs.watch` on the directory. Production save is atomic (write same-directory temp file, `rename` to
+`config.json`), and the repository scheduled a re-read only when `fileName` was `null` or exactly the target name.
+`fs.watch` event forms differ across macOS / Windows / Linux, so a missed event left the Worker serving the old
+Registry forever. Amplifiers: a watcher `error` only published an error (no cleanup or rebuild); a read failure
+after a trigger had no retry; the connectivity test synchronized only Account Config, not Personal Config. The old
+test used direct `writeFile(config.json)` and never covered two independent Runtimes with the formal atomic write or
+total event loss.
 
-```text
-Provider not found in the Provider Registry: <providerId>
-```
+## 2. Decision
 
-Repeatedly clicking the connectivity test does not recover; the Worker restart, application restart, or a subsequent file change may recover.
-
-This is not normal asynchronous refresh delay. The Host and the Core Worker each hold an in-process Provider Registry: the Host actively refreshes its own Registry after saving, but the Worker only refreshes when the Personal Config external change is observed. The only cross-process observation method currently is `fs.watch`; once an event is missed, the Worker has no polling, active re-read, or other self-recovery entry, and will indefinitely serve the old Registry.
-
-## 2. Root Cause
-
-The production save uses atomic write: first writes to the same-directory temporary file, then `rename`s to `config.json`. The current Personal Repository monitors the directory and only schedules a re-read when the `fileName` is `null` or exactly matches the target file name.
-
-```text
-Host
-├─ write .config.json.<pid>.<time>.tmp
-└─ rename tmp -> config.json
-          |
-          v
-The fs.watch event form of macOS / Windows / Linux is inconsistent
-          |
-          +-- Precisely reports config.json --> The Worker refreshes
-          `-- Temporary name, missed event, or watcher error --> The current implementation cannot self-recover
-```
-
-There are three amplifying conditions simultaneously:
-
-- The watcher `error` only publishes an error event, without cleaning or rebuilding the failed instance;
-- The read failure after the watcher trigger only publishes an error, without subsequent retries;
-- The connectivity test only proactively synchronizes the Account Config and does not re-read the Personal Config; consecutive clicks still query the same old Worker Registry.
-
-The existing test simulates the external modification with direct `writeFile(config.json)` and does not cover two independent Runtimes cooperating with the formal atomic write, nor does it cover the recovery after the file event is completely lost.
-
-## 3. Final Decision
-
-The Personal Config no longer uses `fs.watch`. The Repository retains only one cross-process change observation mechanism: asynchronously re-read the target file at a low frequency and compare the content revision.
+Personal Config no longer uses `fs.watch`. The Repository keeps one cross-process observation mechanism: a
+low-frequency asynchronous re-read of the target file that compares the content revision.
 
 ```text
-Repository start/read
-        |
-        v
-Record the observed content revision
-        |
-        v
-Asynchronous polling (default about 1 second)
-        |
-        v
-Read the Personal Config within the file lock
-        |
-        +-- The revision is the same --> Do not publish an event
-        `-- The revision changes --> Update the observed revision
-                                      + Publish the personal:poll-changed
-                                      + The Registry normal refresh
+Repository start/read -> record observed content revision
+  -> async polling (default ~1 s) -> read Personal Config (within the file lock at that time)
+  -> same revision: no event
+  -> revision changed: update observed revision + publish personal:poll-changed + normal Registry refresh
 ```
 
-Do not simultaneously retain both `fs.watch + poll` long-term mechanisms; do not add the Host/Worker revision barrier, the complete Config transmission, or the Registry Snapshot sync. The polling only reads the local Personal Config file for the current Environment and does not access the server, nor does it belong to the remote Built-in refresh.
+No long-term `fs.watch + poll` combination; no Host/Worker revision barrier, full Config transmission or Registry
+Snapshot sync. Polling reads only the local Personal Config of the current Environment, never the server, and is not
+the remote Built-in refresh.
 
-## 4. Repository Implementation Constraints
+## 3. Repository Constraints
 
-### 4.1 A Single Asynchronous Polling Loop
+1. A single async polling loop starts after the first `read()` or Runtime `start()`; default interval about 1
+   second, injectable shorter for tests.
+2. The next round is scheduled only after the current one completes (no overlapping reads); async file IO and the
+   existing file lock.
+3. Compare the formal content revision, never file name, mtime, size or inode. Same revision: no Source change and
+   no Registry replace.
+4. Temporary read, lock or parse failure: report an observable error (once on entering the error state) and retry
+   next round.
+5. The Timer calls `unref()`. After `dispose()` the next round is cancelled and no event is published even if an
+   in-flight read completes.
+6. `FSWatcher`, directory event filtering, watcher error handler and rebuild state are deleted. A `watch?: boolean`
+   option that only meant "disable external observation" becomes an explicit polling option, with no misleadingly
+   named compatibility layer.
+7. In-process `update()` still publishes immediately: after the atomic write it sets `observedRevision` to the new
+   revision and emits `updated`; the next poll reads the same revision and does not emit again. Host save does not
+   wait a second; other processes catch up within about one polling interval.
 
-- Start the polling after the first `read()` or the Runtime `start()`;
-- The default interval is about 1 second; the test can inject a shorter interval;
-- Schedule the next round only after each round completes; do not allow slow IO to cause multiple reads to overlap;
-- Use asynchronous file IO and the existing file lock;
-- Compare the formal content revision; do not rely on the file name, mtime, size, or inode;
-- When the revision does not change, do not publish the Source change, and do not trigger the Registry replace;
-- When the read, lock, or parsing temporarily fails, report the observable error, and try again in the next round;
-- The Timer must call `unref()` and must not prevent the Node process from exiting;
-- Cancel the next round scheduling after the Repository `dispose()`; no event may be published after any in-flight read completes.
+## 4. Connectivity Test Refreshes Proactively
 
-Delete the `FSWatcher`, the directory event filtering, the watcher error handler, and the watcher rebuild-related state. The existing `watch?: boolean` if it only expresses the test closing the external change observation, should be changed once to the semantically explicit polling option, without retaining the misleadingly named compatibility layer.
+The test diagnoses "the config already saved" and must not wait for the next poll. On a connectivity request the
+Agent first calls the Worker `ProviderRegistryService.refresh("provider-connectivity")` (reads Personal Config,
+resolves with current Account Config, waits for Registry publish completion), then looks up providerId/modelId
+exactly and temporarily creates the formal Model through the formal execution chain.
 
-### 4.2 The In-Process Explicit Update Still Publishes Instantly
+The Host does not issue the model HTTP request (it does not own the Adapter/ModelFactory chain; a copied
+connectivity protocol would let tests pass while real chat fails), and no bypass Model is built from the Renderer
+draft, the Host Registry Snapshot or a hand-assembled Provider Config. Refresh failure returns the real
+Config/Registry error; a saved-but-incomplete Provider still fails as the Registry non-executable error.
 
-When the Repository itself executes the `update()`, it continues to update the `observedRevision` and publish one `updated` immediately after the atomic write:
+## 5. Operating Semantics
 
 ```text
-Current Repository.update()
-        |
-        +-- The atomic write completes
-        +-- observedRevision = the new revision
-        `-- emit("updated")
-
-The next poll reads the same revision
-        `-- Deduplication, does not emit again
+In-process save        -> refresh current Registry immediately
+Other process saves    -> catch up within about one polling interval
+Connectivity test      -> catch up at request start
+New Worker startup     -> first start/read reads the latest file
+Long-lived Worker      -> polling gives eventual consistency
 ```
 
-Therefore, the Host save does not wait a second; only the Repository of other processes catches up at the latest in the next polling round.
+Refresh affects only later Registry lookups and Model creation; already-created Active Models stay frozen (Provider
+Config, Model Config, Endpoint, access materials). Desktop Local Host, Web Remote and Remote Workspace each read
+only their own Environment's Personal Config; never poll or copy local Personal Config to a remote Environment.
 
-## 5. The Connectivity Test Proactively Refreshes
+## 6. Tests and Completion
 
-The model connectivity test is the diagnosis of "the configuration already saved" and cannot wait for the next polling round. When the Agent receives the connectivity request, it must first proactively refresh this round's Config Source and the Registry, then find the Provider/Model and test using the formal Model execution chain:
+Repository: two independent repositories on one file with formal atomic write publish the revision within one
+interval; changes are detected with no file events; same content, repeated atomic writes and in-process `update()`
+do not notify twice; no next round before the current read completes; lock, temporary missing or read failure
+recover next round; `dispose()` cleans the Timer and suppresses in-flight emit; Timer does not block process exit;
+no `FSWatcher` / `fs.watch` in the Personal Repository.
 
-```text
-The Host has already completed the save
-        |
-        v
-The Agent connectivity request
-        |
-        v
-The Worker Registry.refresh("provider-connectivity")
-├─ Proactively reads the Personal Config
-├─ Resolves together with the current Account Config
-└─ Waits for the Registry to publish the completion
-        |
-        v
-Find the providerId/modelId by exact lookup
-        |
-        v
-Temporarily create the formal Model and test
-```
+Registry and connectivity: Worker Registry publishes the new Provider after revision change; connectivity test
+right after save finds the Provider without waiting; active Session and temporary connectivity App share the
+refreshed same-process Registry; config read failure, incomplete Provider and missing Model keep accurate errors; no
+second Registry, Provider Snapshot or test-specific Model DTO; Active Model stays frozen.
 
-Do not have the Host directly implement the model HTTP request here: the Host does not own the Adapter/ModelFactory formal execution chain, and copying a connectivity protocol produces the "the test passes but the real chat fails" second behavior. The connectivity test is also not allowed to create a bypass Model from the Renderer draft, the Host Registry Snapshot, or the manually-assembled Provider Config.
+Regression: Account Config keeps syncing through the existing Protocol (not merged into Personal polling); Built-in
+Active/LKG and remote refresh unchanged; Model Selection, Provider Settings and model requests see one Registry
+fact; no OS depends on its file-event implementation.
 
-When the proactive refresh fails, return the real Config/Registry error; when the Provider is saved but incomplete, it should still fail as the Registry non-executable error; do not bypass the Resolver.
-
-## 6. Normal Operation Semantics
-
-```text
-In-process save       --> Immediately refresh the current Registry
-Other processes save  --> Catch up within at most about one polling interval
-The connectivity test  --> Immediately catch up at the start of the request
-New Worker startup    --> The first start/read reads the latest file
-The long-term Worker  --> The polling continuously provides the eventual consistency
-```
-
-The polling refresh only affects the subsequent Registry lookup and Model creation. Already-created Active Models continue to freeze, without hot-updating their Provider Config, Model Config, Endpoint, or access materials.
-
-The Desktop Local Host, the Web Remote, and the Remote Workspace all comply with the target Environment ownership: the Host and Worker of each Environment only read that Environment's own Personal Config. Do not poll or copy the local Personal Config to the remote Environment.
-
-## 7. Test Plan
-
-Write the failure tests first, then modify the production implementation.
-
-### 7.1 Repository
-
-- Two independent Personal Repositories point to the same file; the writer uses the formal atomic write, and the observer publishes the new revision within one interval;
-- Still detects changes without providing any file events;
-- The same content, repeated atomic writes, and the in-process `update()` do not produce duplicate notifications;
-- The next round does not start before the current round's read completes;
-- The file lock, the temporary missing, or the read failure can recover in the next round;
-- The `dispose()` cleans up the Timer, and the in-flight read must not emit after the dispose;
-- The Timer does not prevent the process from exiting;
-- The code no longer contains the Personal Repository's `FSWatcher` or `fs.watch`.
-
-### 7.2 Registry and Connectivity Test
-
-- The Worker Registry parses and publishes the new Provider after the Personal revision changes;
-- Test the connectivity immediately after saving the Personal Provider; find the Provider without waiting for the polling interval;
-- The existing active Session and the temporary connectivity App both use the refreshed same-process Registry;
-- The Config read failure, the incomplete Provider, and the missing Model each retain the accurate error;
-- The connectivity proactive refresh does not create a second Registry, the Provider Snapshot, or the test-specific Model DTO;
-- The already-created Active Model remains frozen after the Registry refresh.
-
-### 7.3 Regression
-
-- The Account Config continues to synchronize through the existing Protocol, without being merged into the Personal file polling;
-- The ZCode Built-in Active/LKG and the remote refresh mechanism remain unchanged;
-- The Model Selection, Provider Settings, and normal model requests all see the same Registry fact;
-- None of macOS, Windows, or Linux rely on their respective file event implementations.
-
-## 8. Completion Criteria
-
-- The external changes to the Personal Config no longer depend on `fs.watch`;
-- The Worker catches up with the new content revision within at most about one polling cycle; the missed events cannot cause permanent staleness;
-- The connectivity test always proactively refreshes the current Worker Registry before looking up the model;
-- No new cross-process revision protocol, the Config/Registry Snapshot sync, or the Host model execution bypass;
-- The targeted tests, the `pnpm typecheck`, the `pnpm lint`, and the macOS real-machine "the connectivity test immediately after saving" pass.
-
-## 9. Implementation Result
-
-- The Personal Repository has deleted the `FSWatcher`, the directory event filtering, and the serial watcher refresh, and changed to the default 1-second, the asynchronous content revision polling that schedules the next round after completing one round; the Timer uses `unref()` and does not publish events after `dispose()`;
-- The in-process `update()` still instantly publishes `updated`; the polling reads the same revision and deduplicates; the temporary read failure only reports once when entering the error state, and the subsequent polling continues to retry and can recover on its own;
-- The Provider connectivity protocol entry explicitly waits for the current Worker `ProviderRegistryService.refresh("provider-connectivity")` before looking up the Provider/Model and creating the formal Model; no new Host request bypass, Registry Snapshot, or test-specific Model is added;
-- The `@zcode/provider-node` 44 tests, the Services Provider Runtime 11 targeted tests, the Bootstrap protocol 108 tests, and the related typecheck pass; the macOS real-machine re-verification is left for the final manual verification stage.
+Outcome: `@zcode/provider-node` 44 tests, Services Provider Runtime 11 tests, Bootstrap protocol 108 tests and
+related typecheck passed. Open: macOS real-machine "connectivity test immediately after saving" re-verification is
+left for the final manual verification stage.
