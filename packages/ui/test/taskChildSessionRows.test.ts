@@ -69,25 +69,33 @@ describe("TaskChildSessionRows", () => {
       createElement(
         "div",
         { onClick: onRowClick },
-        createElement(TaskChildSessionRows, { task: parentTask(), onSelectSession }),
+        createElement(TaskChildSessionRows, {
+          task: parentTask(),
+          expanded: true,
+          onToggle: vi.fn(),
+          onSelectSession,
+        }),
       ),
     );
     fireEvent.click(screen.getByLabelText("taskList.childSubagentRowLabel:sub"));
-    expect(onSelectSession).toHaveBeenLastCalledWith("sub-1", {
-      readOnly: true,
-      selectionSideChat: false,
-    });
+    expect(onSelectSession).toHaveBeenLastCalledWith(
+      "sub-1",
+      { readOnly: true, selectionSideChat: false },
+      "sub",
+    );
     fireEvent.click(screen.getByLabelText("taskList.childSideChatRowLabel:side"));
-    expect(onSelectSession).toHaveBeenLastCalledWith("side-1", {
-      readOnly: false,
-      selectionSideChat: true,
-    });
+    expect(onSelectSession).toHaveBeenLastCalledWith(
+      "side-1",
+      { readOnly: false, selectionSideChat: true },
+      "side",
+    );
     // 1 side chat + 3 subagents listed as 2 rows → 2 more; it opens the parent conversation.
     fireEvent.click(screen.getByText("taskList.childMoreLabel"));
-    expect(onSelectSession).toHaveBeenLastCalledWith("parent", {
-      readOnly: false,
-      selectionSideChat: false,
-    });
+    expect(onSelectSession).toHaveBeenLastCalledWith(
+      "parent",
+      { readOnly: false, selectionSideChat: false },
+      undefined,
+    );
     // Child clicks never select the parent row underneath.
     expect(onRowClick).not.toHaveBeenCalled();
   });
@@ -96,10 +104,95 @@ describe("TaskChildSessionRows", () => {
     const { container } = render(
       createElement(TaskChildSessionRows, {
         task: parentTask({ childSessions: [] }),
+        expanded: true,
+        onToggle: vi.fn(),
         onSelectSession: vi.fn(),
       }),
     );
     expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("TaskChildSessionRows collapsed (spec §8)", () => {
+  it("keeps running children visible and the finished ones behind an expander row", () => {
+    const onToggle = vi.fn();
+    const onSelectSession = vi.fn();
+    const { container } = render(
+      createElement(TaskChildSessionRows, {
+        task: parentTask(),
+        expanded: false,
+        onToggle,
+        onSelectSession,
+      }),
+    );
+    const rows = [...container.querySelectorAll("[data-child-session-id]")].map((row) =>
+      row.getAttribute("data-child-session-id"),
+    );
+    expect(rows).toEqual(["sub-1"]);
+    // 1 side chat + 3 subagents, 1 shown → 3 hidden; the row expands instead of navigating.
+    const more = screen.getByText("taskList.childMoreLabel");
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing while collapsed when no child is running", () => {
+    const task = parentTask();
+    const { container } = render(
+      createElement(TaskChildSessionRows, {
+        task: {
+          ...task,
+          childSessions: task.childSessions!.map((child) => ({ ...child, running: false })),
+        },
+        expanded: false,
+        onToggle: vi.fn(),
+        onSelectSession: vi.fn(),
+      }),
+    );
+    expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("TaskChildSessionRows Stop (spec §8.3)", () => {
+  it("shows Stop only for running children with a background work id", () => {
+    const onStopBackgroundWork = vi.fn();
+    const onSelectSession = vi.fn();
+    const task = parentTask();
+    const { container } = render(
+      createElement(TaskChildSessionRows, {
+        task: {
+          ...task,
+          childSessions: [
+            { ...task.childSessions![0]!, backgroundWorkId: "work-1" },
+            {
+              sessionId: "sub-fg",
+              title: "foreground",
+              taskType: "subagent_child",
+              lastActivityAt: 1,
+              running: true,
+            },
+            {
+              sessionId: "sub-done",
+              title: "done",
+              taskType: "subagent_child",
+              lastActivityAt: 1,
+              running: false,
+              backgroundWorkId: "stale",
+            },
+          ],
+        },
+        expanded: true,
+        onToggle: vi.fn(),
+        onSelectSession,
+        onStopBackgroundWork,
+      }),
+    );
+    const stops = [...container.querySelectorAll("[data-child-session-stop]")];
+    expect(stops.map((stop) => stop.getAttribute("data-child-session-stop"))).toEqual(["sub-1"]);
+    fireEvent.click(stops[0]!);
+    expect(onStopBackgroundWork).toHaveBeenCalledWith("work-1");
+    expect(onSelectSession).not.toHaveBeenCalled();
   });
 });
 

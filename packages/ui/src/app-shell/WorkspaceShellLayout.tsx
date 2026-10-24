@@ -81,6 +81,7 @@ import { WebRemoteControlMobileShell } from "@/WebRemoteControlMobileShell.js";
 import { resolveTopOverlayLeadingPaddingClass, WorkspaceHeader } from "@/WorkspaceHeader.js";
 import { PullRequestStatusProbes } from "@/PullRequestStatusProbes.js";
 import { WorkspaceSidebar, type SidebarFileTreeOpenRequest } from "@/WorkspaceSidebar.js";
+import type { SidebarSubagentSessionTarget } from "@/project-sidebar/contract.js";
 import { AnimatedSidePanePanel } from "@/app-shell/AnimatedSidePanePanel.js";
 import {
   findScreenshotSurfaceTabForRender,
@@ -430,6 +431,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   handleOpenCodeViewer,
   handleAutoOpenAssistantPptx,
   handleOpenSubagentSession,
+  handleQueueSubagentSessionOpen,
   handleOpenBackgroundBash,
   handleOpenSubagentDirectory,
   handleSyncSubagentSessionTabs,
@@ -1329,7 +1331,9 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       targetRemoteSessionId?: string,
       expectedUnreadAt?: number,
       options?: { readOnly?: boolean; selectionSideChat?: boolean },
-    ) => {
+    ): boolean => {
+      // Any explicit selection supersedes a pending sidebar subagent open (spec §8.2).
+      handleQueueSubagentSessionOpen(null);
       const childKind = options?.readOnly
         ? "subagent_child"
         : options?.selectionSideChat
@@ -1358,7 +1362,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             workspacePath: targetWorkspacePath,
           });
           toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" }));
-          return;
+          return false;
         }
         if (workspaceResult.openedLocalTab) {
           logger.info("[automations] 为运行历史会话补开本地 workspace tab", {
@@ -1391,8 +1395,49 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
       } else {
         handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
       }
+      return true;
     },
-    [handleSelectTask, intl, isWebRemoteControlShell, showChatMainView, tabStoreApi, workspaceTabs],
+    [
+      handleQueueSubagentSessionOpen,
+      handleSelectTask,
+      intl,
+      isWebRemoteControlShell,
+      showChatMainView,
+      tabStoreApi,
+      workspaceTabs,
+    ],
+  );
+  // Sidebar subagent row (spec sidebar-child-conversation-counts §8.2): select the parent, then let
+  // useAppPanels open the subagent tab once the parent owns the side pane.
+  const handleOpenSidebarSubagentSession = useCallback(
+    (target: SidebarSubagentSessionTarget) => {
+      const remoteSessionId =
+        target.remoteSessionId ??
+        workspaceTabs.find(
+          (tab) =>
+            tab.workspacePath === target.workspacePath &&
+            (!target.workspaceIdentity || tab.workspaceIdentity === target.workspaceIdentity),
+        )?.remoteSessionId;
+      // A rejected selection (unreachable workspace) must not leave an armed open behind.
+      const selected = handleSelectTaskInChat(
+        target.workspacePath,
+        target.parentSessionId,
+        target.workspaceIdentity,
+        remoteSessionId,
+      );
+      if (!selected) return;
+      handleQueueSubagentSessionOpen({
+        workspacePath: target.workspacePath,
+        ...(target.workspaceIdentity ? { workspaceIdentity: target.workspaceIdentity } : {}),
+        ...(remoteSessionId ? { remoteSessionId } : {}),
+        rootSessionId: target.parentSessionId,
+        parentSessionId: target.parentSessionId,
+        childSessionId: target.childSessionId,
+        subagentType: "",
+        title: target.title,
+      });
+    },
+    [handleQueueSubagentSessionOpen, handleSelectTaskInChat, workspaceTabs],
   );
   // 中枢直接启动 accepted 后切到新会话（run 卡已在顶部）：复用运行历史那条导航，
   // target 恒带工作流所属项目坐标（不变式 7），remoteSessionId 决定连接 endpoint。
@@ -2104,6 +2149,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
           : handleOpenSidebarFiles
       }
       onSelectTask={handleSelectTaskInChat}
+      onOpenSubagentSession={mobile ? undefined : handleOpenSidebarSubagentSession}
       onStartDraftInWorkspace={handleStartDraftInWorkspaceInChat}
       onOpenCodeViewer={handleOpenCodeViewer}
       onOpenBrowserUrl={handleOpenBrowserUrl}

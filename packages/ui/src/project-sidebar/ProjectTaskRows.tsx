@@ -3,6 +3,7 @@ import type { ProjectTask, ProjectSidebarProps } from "@/project-sidebar/contrac
 import { TaskGroupTaskMenu } from "@/project-sidebar/TaskGroupTaskMenu.js";
 import { TaskList } from "@/TaskList.js";
 import type { ChildSessionSelectHandler } from "@/components/TaskChildSessionRows.js";
+import { routeChildSessionSelection } from "@/project-sidebar/child-session-navigation.js";
 import { Button } from "@/components/ui/button.js";
 import { useProjectTaskActions } from "@/project-sidebar/useProjectTaskActions.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
@@ -39,16 +40,24 @@ export const ProjectTaskRow = memo(function Row({
   );
   // Children live in the parent's workspace; forward their capability (subagent → read-only).
   const selectChild = useCallback<ChildSessionSelectHandler>(
-    (sessionId, options) =>
-      onSelect(
-        task.workspacePath,
+    (sessionId, options, title) =>
+      routeChildSessionSelection({
+        parent: task,
         sessionId,
-        task.workspaceIdentity,
-        remoteSessionId ?? undefined,
-        undefined,
-        { ...options, parentTaskId: task.taskId },
-      ),
-    [onSelect, task.workspacePath, task.workspaceIdentity, task.taskId, remoteSessionId],
+        options,
+        title,
+        openSubagentSession: presentation.onOpenSubagentSession,
+        selectInMainPane: () =>
+          onSelect(
+            task.workspacePath,
+            sessionId,
+            task.workspaceIdentity,
+            remoteSessionId ?? undefined,
+            undefined,
+            { ...options, parentTaskId: task.taskId },
+          ),
+      }),
+    [onSelect, task, remoteSessionId, presentation.onOpenSubagentSession],
   );
   const openFiles = useCallback(
     () => presentation.onOpenTaskFiles?.(task, remoteSessionId ?? undefined),

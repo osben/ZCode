@@ -2049,6 +2049,8 @@ export function createConversationV4Gateway(
     store: () => context.deps.sessionStore,
     sessions: context.sessions,
     getDetachedChildren: () => context.v4Gateway?.getDetachedChildSessionFacts() ?? [],
+    getBackgroundWorkIds: (parentSessionId) =>
+      context.v4Gateway?.getCancellableSubagentBackgroundWorks(parentSessionId) ?? new Map(),
     onRefresh: (parentKeys) => {
       for (const parentKey of parentKeys) {
         context.v4Gateway?.publishSessionIndexChildFacts(

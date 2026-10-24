@@ -40,6 +40,7 @@ function createHarness(
     running: boolean;
     taskType: string;
   }> = [];
+  const backgroundWorkIds = new Map<string, Map<string, string>>();
   const onRefresh = vi.fn();
   const store = {
     getSession: vi.fn(async (sessionId: string) => {
@@ -59,6 +60,8 @@ function createHarness(
     store: () => store,
     sessions,
     getDetachedChildren: () => detachedChildren,
+    getBackgroundWorkIds: (parentSessionId) =>
+      backgroundWorkIds.get(parentSessionId) ?? new Map(),
     onRefresh,
     logger: { warn: (message: string) => warnings.push(message) },
     now: () => clockMs.value,
@@ -75,6 +78,11 @@ function createHarness(
     },
     setChildren: (parentKey: string, ...items: ChildSessionInfo[]) => {
       children.set(parentKey, items);
+    },
+    setBackgroundWork: (parentKey: string, childSessionId: string, workId: string) => {
+      const works = backgroundWorkIds.get(parentKey) ?? new Map<string, string>();
+      works.set(childSessionId, workId);
+      backgroundWorkIds.set(parentKey, works);
     },
     detachedChildren,
     onRefresh,
@@ -216,6 +224,68 @@ describe("child session facts resolver", () => {
         },
       ],
     });
+  });
+
+  it("merges backgroundWorkId only for running subagent children found in the parent work map", () => {
+    const harness = createHarness();
+    for (const [childId, busy] of [
+      ["child-bg", true],
+      ["child-fg", true],
+      ["child-done", false],
+    ] as const) {
+      harness.sessions.set(
+        childId,
+        record({
+          sessionId: childId,
+          parentSessionId: "s-parent",
+          taskType: "subagent_child",
+          busy,
+        }),
+      );
+    }
+    harness.sessions.set(
+      "child-chat",
+      record({
+        sessionId: "child-chat",
+        parentSessionId: "s-parent",
+        taskType: "selection_side_chat",
+        busy: false,
+      }),
+    );
+    harness.resolver.seed(
+      ["s-parent"],
+      new Map([["s-parent", { sideChats: 1, subagents: 3 }]]),
+      new Map<string, ChildSessionInfo[]>([
+        [
+          "s-parent",
+          [
+            { id: "child-bg", title: "bg", taskType: "subagent_child", lastActivityAt: 50 },
+            { id: "child-fg", title: "fg", taskType: "subagent_child", lastActivityAt: 40 },
+            { id: "child-done", title: "done", taskType: "subagent_child", lastActivityAt: 30 },
+            { id: "child-chat", title: "chat", taskType: "selection_side_chat", lastActivityAt: 20 },
+          ],
+        ],
+      ]),
+    );
+    // Finished children stay in the map only to prove they never pick the id up.
+    harness.setBackgroundWork("s-parent", "child-bg", "work-1");
+    harness.setBackgroundWork("s-parent", "child-done", "work-stale");
+    const resolved = harness.resolver.resolve("s-parent");
+    const byId = new Map(resolved.childSessions?.map((child) => [child.sessionId, child]));
+    expect(byId.get("child-bg")).toStrictEqual({
+      sessionId: "child-bg",
+      title: "bg",
+      taskType: "subagent_child",
+      lastActivityAt: 50,
+      running: true,
+      backgroundWorkId: "work-1",
+    });
+    // Foreground running child (absent from the map), finished child (in the map), and the side
+    // chat all omit the key entirely — the wire schema rejects an empty/undefined value.
+    for (const childId of ["child-fg", "child-done", "child-chat"]) {
+      expect("backgroundWorkId" in (byId.get(childId) ?? {})).toBe(false);
+    }
+    expect(resolved.runningSubagentCount).toBe(2);
   });
 
   it("discovers idle side chats and counts detached running subagents without session records", async () => {

@@ -53,7 +53,7 @@ childSessions: z.array(childSessionSchema).optional(),
 - No toggle, no menu item, no setting anywhere (user decision 2026-10-15): the row gets ONLY the icon marker.
 - Rendering in every desktop sidebar view (§7): the grouped row `packages/ui/src/project-sidebar/grouped/task-row.tsx` (both render chains) and the shared `TaskListItem` row used by the projects, timeline and pinned lists: a compact icon-segment marker (`ChildSessionCountsMarker`, styled exactly like the neighboring clock/moon/`WorktreeTaskMarker` meta icons — `size-3.5`, the row's muted meta color, no highlight, tooltip via `title`) appended to the right-side metadata group — in the interactive chain it sits OUTSIDE the hover-suppressed metadata span (between it and the hover-action cluster), because the marker doubles as the expander and must stay clickable while hover swaps metadata for actions; the drag-overlay chain renders it display-only. Segments: side chats = message-circle glyph + tabular `sideChatCount`; subagents = bot glyph + count. A segment renders only when its own count is non-zero (no zero chips); when `runningSubagentCount > 0`, the subagents segment switches to its running form using the row's existing loading idiom — a spinning `LoaderIcon` next to `running/total` (e.g. `1/3`), monochrome like the neighboring meta icons. All-zero → nothing rendered, no layout reservation — plain sessions keep today's layout byte-for-byte.
 - Child list: clicking the marker expands/collapses a one-level list of child rows directly under the parent row (the marker is the expander — `aria-expanded`, no extra chevron; the click stops row propagation so it does not select the task). Children render inside the parent row's column below the title line — the same mechanism as workflow run lines — so the virtualized row model is untouched and the row simply grows (rows are already variable-height). Visual language reuses existing precedents only: the nesting rail of grouped content (`TASK_GROUP_CONTENT_CLASS` `ml-4 border-l pl-2`) and the below-title row scale of workflow run lines — child row: type glyph (message-circle / bot, `size-3`), title `text-ui-sm text-foreground-subtle` truncating, trailing status — spinning `LoaderIcon` while `running`, `text-ui-xs text-foreground-subtlest` relative time otherwise. Beyond the cap: a trailing `text-ui-xs text-foreground-subtlest` `+N more` row (navigates to the parent conversation, where the full subagent history lives). Expansion state is per-parent, per-device, collapsed by default, in `localStorage` (`lib/childSessionExpansionPreference.ts`, the `workspaceExpansionPreference` pattern) — deliberately NOT `setting.json` (fork-unsafe — upstream writes strip unknown keys) and NOT broadcast-synced (UI-local preference).
-- Navigation on child click (v1, implemented): the child session opens as the active conversation through the row's regular `onSelectTask` path. Side chats remain writable. Subagent selection carries a read-only intent into the workbench binding, matching the Host's `guard.subagentReadOnly` rule; the composer and mutation controls stay hidden. This intent applies only to that subagent binding.
+- Navigation on child click (v1; for subagents superseded by §8.2 — the main-pane path below now runs only when the shell passes no `onOpenSubagentSession`, and for side chats): the child session opens as the active conversation through the row's regular `onSelectTask` path. Side chats remain writable. Subagent selection carries a read-only intent into the workbench binding, matching the Host's `guard.subagentReadOnly` rule; the composer and mutation controls stay hidden. This intent applies only to that subagent binding.
 - Plumbing: `packages/ui/src/v4/mapSessionSummaryToTaskMeta.ts` carries the three counters and the bounded array into `ZCodeTaskMeta` (`packages/shared/src/zcode-task-types-core.ts`, flat optionals); row metadata equality in `useWorkspaceActiveTaskState.ts:61` compares them so a change re-renders; the projection upsert equality (`sessions-index-projection.ts`) includes them so a counters- or list-only change emits a delta.
 - i18n: the visible row text is icon + number only; sentence forms live in the marker tooltip (composed from per-count phrases), child-row accessible names, and aria-labels. Keys (`taskList.childSideChatsCount`, `taskList.childSubagentsCount`, `taskList.childSubagentsRunningCount`, `taskList.childSubagentRowLabel`, `taskList.childSideChatRowLabel`, `taskList.childRunningLabel`, `taskList.childMoreLabel`) in `en-US`, `zh-CN`, `uk-UA` with correct plural categories (uk-UA needs the three-form Slavic plural).
 
@@ -85,7 +85,56 @@ v2 mounted the marker only in the grouped row, so the default `projects` view, t
 - Phones: the web remote switcher resolves tasks from the top-level tree and cannot open a child, so both the `TaskListItem` owner and the grouped row hide the marker when `isWebRemoteControl`.
 - Navigation path: every wrapper between the row and `WorkspaceShellLayout.handleSelectTaskInChat` forwards the sixth `options` argument (`useProjectTaskNavigation`, the grouped `TaskGroupedView` adapter). Dropping it opened a subagent with a writable composer.
 
-Acceptance: in the projects view (default), timeline view and pinned section, a parent with a subagent child shows the bot marker; clicking it expands the child row; clicking the child opens it read-only as the active session; expansion state is shared with the grouped view for the same parent id.
+Acceptance: in the projects view (default), timeline view and pinned section, a parent with a subagent child shows the bot marker; clicking it expands the child row; clicking a subagent child opens it read-only (right pane per §8.2, main pane only without a side-pane shell); expansion state is shared with the grouped view for the same parent id.
+
+### 8. Live children, right-pane open, stop (2026-10-24)
+
+User-approved mockup (2026-10-24): running subagents stay visible without a click, a subagent opens in the right pane, and a running background subagent can be stopped from its row.
+
+**8.1 Live children inline.** Collapsed is still the default, but a collapsed parent renders its `running` children (from `childSessions`) under the row; finished children stay behind the marker. The trailing row then reads `+N more` (N = true total − shown) and expands the list (`aria-expanded=false`) instead of opening the parent; expanded, it keeps the §4 overflow behavior. One owner: `visibleChildSessions(task, expanded)` in `components/TaskChildSessionRows.tsx`; both rows use it for rendering and leading-slot alignment.
+
+**8.2 Subagent opens in the right pane.** A subagent child row no longer replaces the main pane. It selects the parent task and opens the existing `subagent-session` side-pane tab (`rootSessionId = parentSessionId = parent`, `childSessionId`, `title`, `subagentType = ""` — the summary does not carry it; presentation falls back to the title). Side chats keep the §4 behavior (main pane, writable). The parent row stays the selected row, so the sidebar highlight and the header name the parent.
+
+Owners and event order (side-pane state is render-scoped in `useAppPanels`; opening before the parent is active commits the tab under the old owner/workspace):
+
+```text
+child row click
+  → ProjectSidebar navigation(parent, { subagentTarget })   (useProjectTaskNavigation: same stale
+                                                             checks and remote attach as a parent click)
+  → remote parent with a closed tab: attachRemoteProjectWorkspace → remoteSessionId
+  → props.onOpenSubagentSession(target + remoteSessionId)   (sidebar: intent only)
+  → WorkspaceShellLayout: pendingSubagentOpen = target      (single owner of the pending intent)
+                          handleSelectTaskInChat(parent)    (normal parent selection)
+  → render: active workspace/task == parent
+  → effect: handleOpenSubagentSession(request); pending = null   (useAppPanels owns the tab)
+```
+
+- Idempotency: the tab id is `subagent-session:<workspaceKey>:<root>:<child>`; reopening activates the existing tab.
+- Remote parents: the sidebar never calls the shell's subagent open directly. It goes through the parent-task navigation, so a remote workspace whose tab is closed is attached (connection registry) before the shell selects the parent; a stale or superseded navigation drops the open.
+- Stale intent: the open is queued only after the parent selection was accepted (an unreachable workspace leaves nothing armed); any later `handleSelectTaskInChat` replaces or clears `pendingSubagentOpen`; it is consumed only when the active workspace key and task id equal the target parent. No timers.
+- Pruning: the parent pane keeps tabs whose child is in its transcript's `subagents.childSessionIds` (finished included); a child whose Agent row was removed by edit/retry is pruned — accepted.
+- Phones: unchanged (rows gated, §7).
+
+**8.3 Stop a background subagent from its row.** Wire addition (backward compatible; nested objects strip unknown keys): `childSessions[].backgroundWorkId?: string`, present only while the child runs as cancellable background work of the parent. Producer: the CLI host, from the parent publisher's `backgroundWorks` (`kind: "subagent"`, `status: "running"`, `cancellable`, matched by exact `childSessionId`), merged in `child-session-facts.resolve`. Freshness: parent `BackgroundTask*` lifecycle events invalidate and republish the parent summary like child activity (§3 event order), never `ModelStreaming`.
+
+```text
+row Stop click (running && backgroundWorkId)
+  → sendConversationCommandV4(parent workspace, envelope{ sessionId: parent, command: cancelBackgroundWork{ workId } })
+  → CLI CommandInbox → interaction-background → stopBackgroundTask(workId)
+  → child TurnComplete/BackgroundTask* → parent summary republished → running=false, Stop disappears
+```
+
+- The command is the same one the status panel sends; no new Host RPC. Transport precedent: `useTaskInteractionAutoResolutionSnooze` (workspace-scoped v4 command from a sidebar row, no pane lease).
+- Foreground subagents get no Stop (no backgroundWorkId); they end with the parent turn.
+- A failed command shows a toast; the row keeps its state until the summary changes (no optimistic removal).
+
+Acceptance (§8):
+
+1. Collapsed parent with one running and two finished subagents shows exactly the running row plus `+2 more`; clicking `+2 more` expands.
+2. Clicking a subagent row selects the parent (highlighted in the sidebar) and shows the child in the right `subagent-session` tab; works when the parent was not active and across workspaces.
+3. Selecting another task before the parent activates drops the pending open.
+4. A running background subagent row shows Stop; clicking it sends `cancelBackgroundWork` for the parent with that `workId`; the spinner and Stop disappear after the next summary.
+5. A running foreground subagent has no Stop. Old CLI (no `backgroundWorkId`) → no Stop.
 
 ## Why
 
@@ -102,7 +151,7 @@ The hierarchy already exists in the DB and in `context.sessions`; the only gap i
 7. Old UI + new CLI and new UI + old CLI → no parse errors, no rendering.
 8. A summary whose only change is a counter or a child-list entry emits a projection delta (not conflated away).
 9. Workflow children remain invisible as counts (no double display next to the workflow mini-track).
-10. Click a child row → that session opens as the active conversation (v1 navigation; side-pane hosting for side chats and a mounted subagent drilldown are follow-ups).
+10. Click a side-chat row → that session opens as the active conversation; a subagent row follows §8.2 (v1 navigation; side-pane hosting for side chats and a mounted subagent drilldown are follow-ups).
 11. More children than the cap → `+N more` trailing row; icon counts still show the true totals.
 12. A detached live subagent appears as running without a `context.sessions` record; `TurnStarted` marks it running, terminal events clear running, and parent discovery does not depend on busy state.
 13. An idle parent with a child event gets refreshed facts on the next bounded refresh, while its `lastActivityAt` remains unchanged.

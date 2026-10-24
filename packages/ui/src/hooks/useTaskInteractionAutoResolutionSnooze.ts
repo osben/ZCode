@@ -1,4 +1,5 @@
 import { useCallback, useRef } from "react";
+import type { CommandAck, CommandEnvelope } from "@zcode/shared/zcode-protocol-v4";
 import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
@@ -6,21 +7,22 @@ import { resolveWorkspaceRemoteSessionId } from "@/lib/workspaceServiceResolver.
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { sendInteractionAutoResolutionSnooze } from "@/v4/interactionAutoResolutionCommand.js";
 
-export interface TaskInteractionAutoResolutionTarget {
+export interface TaskConversationCommandTarget {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
-  sessionId: string;
 }
+
+export type TaskConversationCommandSender = (envelope: CommandEnvelope) => Promise<CommandAck>;
 
 /**
  * Sidebar tasks may come from local/remote, timeline, or pinned lists. Resolve the original Host by workspace identity
- * for pause commands; do not send them to the current window's service just because a different tab is active.
+ * for conversation commands; do not send them to the current window's service just because a different tab is active.
+ * Returns null while the target Host is not attached.
  */
-export function useTaskInteractionAutoResolutionSnooze(
-  target: TaskInteractionAutoResolutionTarget,
-) {
-  const loggedInteractionIdsRef = useRef(new Set<string>());
+export function useTaskConversationCommandSender(
+  target: TaskConversationCommandTarget,
+): TaskConversationCommandSender | null {
   const contextServices = useOptionalServices();
   const workspaceIdentity = target.workspaceIdentity?.trim() || undefined;
   const remoteSessionId = target.remoteSessionId?.trim() || undefined;
@@ -51,12 +53,37 @@ export function useTaskInteractionAutoResolutionSnooze(
     },
     [contextServices, isRemoteTarget, remoteSessionId, target.workspacePath, workspaceIdentity],
   );
-  const targetServices = useRemoteWorkspaceSessionStore(selectTargetServices);
+  const agentService = useRemoteWorkspaceSessionStore(selectTargetServices)?.zcodeAgentService;
+  const send = useCallback<TaskConversationCommandSender>(
+    async (envelope) => {
+      if (!agentService) throw new Error("task-conversation-command.target-unavailable");
+      await ensureAgentV4ConnectionHandshake(agentService);
+      return agentService.sendConversationCommandV4({
+        workspacePath: target.workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+        envelope,
+      });
+    },
+    [agentService, target.workspacePath, workspaceIdentity],
+  );
+  return agentService ? send : null;
+}
+
+export interface TaskInteractionAutoResolutionTarget extends TaskConversationCommandTarget {
+  sessionId: string;
+}
+
+/** Sidebar pause command, routed to the task's own Host (see useTaskConversationCommandSender). */
+export function useTaskInteractionAutoResolutionSnooze(
+  target: TaskInteractionAutoResolutionTarget,
+) {
+  const loggedInteractionIdsRef = useRef(new Set<string>());
+  const sendCommand = useTaskConversationCommandSender(target);
+  const workspaceIdentity = target.workspaceIdentity?.trim() || undefined;
 
   return useCallback(
     async (interactionId: string): Promise<boolean> => {
-      const agentService = targetServices?.zcodeAgentService;
-      if (!agentService) {
+      if (!sendCommand) {
         logger.warn("[task-interaction] 暂停自动结束时目标 workspace 未连接", {
           interactionId,
           sessionId: target.sessionId,
@@ -77,16 +104,9 @@ export function useTaskInteractionAutoResolutionSnooze(
         sessionId: target.sessionId,
         interactionId,
         source: "taskBadge",
-        sendCommand: async (envelope) => {
-          await ensureAgentV4ConnectionHandshake(agentService);
-          return agentService.sendConversationCommandV4({
-            workspacePath: target.workspacePath,
-            ...(workspaceIdentity ? { workspaceIdentity } : {}),
-            envelope,
-          });
-        },
+        sendCommand,
       });
     },
-    [target.sessionId, target.workspacePath, targetServices, workspaceIdentity],
+    [sendCommand, target.sessionId, target.workspacePath, workspaceIdentity],
   );
 }

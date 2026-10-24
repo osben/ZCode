@@ -281,7 +281,11 @@ export interface V4GatewayHost {
   getSessionWorkspaceId?(sessionId: string): string | null;
   /** Parent of an ordinary side-chat/subagent record; primary forks are excluded by the host. */
   getChildSessionParentId?(sessionId: string): string | null;
-  /** Child activity refreshes the parent summary without changing its activity timestamp. */
+  /**
+   * Child activity refreshes the parent summary without changing its activity timestamp. The
+   * parent's own background-work lifecycle reuses this path with parentSessionId == childSessionId
+   * because it rewrites that parent's child facts (§8.3).
+   */
   onChildSessionActivity?(parentSessionId: string, childSessionId: string): void;
   /** sessions-index：会话的列表用元信息（createdAt/父会话/最后活动时刻）。 */
   getSessionIndexMeta?(sessionId: string): SessionIndexMeta | null;
@@ -551,6 +555,25 @@ interface ProjectionEventCommitWaiter {
 
 const PROJECTION_EVENT_COMMIT_TIMEOUT_MS = 25_000;
 const MAX_TELEMETRY_EVENT_IDS = 2_000;
+/**
+ * Parent-side background-work lifecycle events (spec: sidebar-child-conversation-counts.md §8.3):
+ * they rewrite the parent's childSessions[].backgroundWorkId, so the parent summary needs the same
+ * child-facts refresh pass child activity triggers. ModelStreaming never enters this set.
+ */
+const BACKGROUND_TASK_LIFECYCLE_EVENT_TYPES = new Set<SessionEventType>([
+  SessionEventType.BackgroundTaskStarted,
+  SessionEventType.BackgroundTaskUpdated,
+  SessionEventType.BackgroundTaskCompleted,
+]);
+/**
+ * Only subagent background work can change childSessions[].backgroundWorkId; bash/workflow/dream
+ * background tasks would otherwise trigger child-facts store refreshes for every session.
+ */
+function isSubagentBackgroundTaskEvent(event: SessionEvent): boolean {
+  if (!BACKGROUND_TASK_LIFECYCLE_EVENT_TYPES.has(event.type)) return false;
+  const payload = event.payload as { taskKind?: string; childSessionId?: string } | undefined;
+  return payload?.taskKind === "subagent" || Boolean(payload?.childSessionId);
+}
 /** detached subagent child 终态后无订阅者时，publisher 由低频 tick 释放前的保留时长。 */
 export const DETACHED_CHILD_PUBLISHER_GRACE_MS = 120_000;
 
@@ -1190,6 +1213,9 @@ export class ConversationV4Gateway {
     this.fanOutToIndex(sessionId, event);
     if (event.type !== SessionEventType.ModelStreaming) {
       this.notifyParentOfChildActivity(sessionId);
+      if (isSubagentBackgroundTaskEvent(event)) {
+        this.notifyChildFactsChanged(sessionId);
+      }
     }
   }
 
@@ -1241,6 +1267,30 @@ export class ConversationV4Gateway {
     }));
   }
 
+  /**
+   * Live cancellable subagent background works of a parent, keyed by child session id (§8.3).
+   * Read from the parent's own conversation snapshot; entries sharing a childSessionId cannot say
+   * which workId owns the child, so that child is omitted entirely.
+   */
+  getCancellableSubagentBackgroundWorks(parentSessionId: string): Map<string, string> {
+    const works = new Map<string, string>();
+    const ambiguous = new Set<string>();
+    for (const work of this.publishers.get(parentSessionId)?.getSnapshot().backgroundWorks ?? []) {
+      if (work.kind !== "subagent" || work.status !== "running" || work.cancellable !== true) {
+        continue;
+      }
+      const childSessionId = work.childSessionId;
+      if (!childSessionId || !work.workId) continue;
+      if (works.has(childSessionId) || ambiguous.has(childSessionId)) {
+        works.delete(childSessionId);
+        ambiguous.add(childSessionId);
+        continue;
+      }
+      works.set(childSessionId, work.workId);
+    }
+    return works;
+  }
+
   private notifyParentOfChildActivity(sessionId: string): void {
     const parentSessionId =
       this.detachedChildParent.get(sessionId) ??
@@ -1249,6 +1299,19 @@ export class ConversationV4Gateway {
     if (!parentSessionId || parentSessionId === sessionId) return;
     try {
       this.host.onChildSessionActivity?.(parentSessionId, sessionId);
+    } catch (error) {
+      this.host.onError?.("v4.sessionsIndex.childActivity", error);
+    }
+  }
+
+  /**
+   * A background-work lifecycle event on the parent changes that parent's own child facts. The
+   * parent has no parent of its own to notify, so route it through the same child-activity
+   * refresh path with parentSessionId == childSessionId.
+   */
+  private notifyChildFactsChanged(parentSessionId: string): void {
+    try {
+      this.host.onChildSessionActivity?.(parentSessionId, parentSessionId);
     } catch (error) {
       this.host.onError?.("v4.sessionsIndex.childActivity", error);
     }

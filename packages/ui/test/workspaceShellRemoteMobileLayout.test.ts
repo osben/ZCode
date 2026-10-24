@@ -274,6 +274,7 @@ vi.mock("@/WorkspaceSidebar.js", () => ({
 
 function createWorkspaceShellProps() {
   return {
+    handleQueueSubagentSessionOpen: vi.fn(),
     activeGitSourceId: "unstaged" as const,
     activeSessionId: null,
     activeTaskChangeSummary: null,

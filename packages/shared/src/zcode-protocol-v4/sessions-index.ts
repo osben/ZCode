@@ -80,6 +80,8 @@ export const sessionSummarySchema = z.object({
         taskType: z.enum(["selection_side_chat", "subagent_child"]),
         lastActivityAt: timestampSchema,
         running: z.boolean(),
+        // Parent background-work id while the child runs as cancellable background work (§8.3).
+        backgroundWorkId: z.string().min(1).optional(),
       }),
     )
     .max(SESSION_SUMMARY_CHILD_SESSIONS_MAX)

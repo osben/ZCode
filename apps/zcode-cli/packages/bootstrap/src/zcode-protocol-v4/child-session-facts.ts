@@ -64,13 +64,19 @@ export interface ChildSessionFactsResolver {
 }
 
 /** ChildSessionInfo → the wire summary shape; `running` comes from the live runtime owners. */
-export function toWireChildSession(child: ChildSessionInfo, running: boolean) {
+export function toWireChildSession(
+  child: ChildSessionInfo,
+  running: boolean,
+  backgroundWorkId?: string,
+) {
   return {
     sessionId: child.id,
     title: child.title,
     taskType: child.taskType,
     lastActivityAt: child.lastActivityAt,
     running,
+    // The wire schema requires min length 1; omit the key entirely when absent (§8.3).
+    ...(backgroundWorkId ? { backgroundWorkId } : {}),
   };
 }
 
@@ -87,6 +93,8 @@ export function createChildSessionFactsResolver(deps: {
   store: () => SessionStorePort | undefined;
   sessions: Map<string, ChildSessionRecordView>;
   getDetachedChildren?: () => readonly DetachedChildSessionFact[];
+  /** Live cancellable subagent background works of a parent, keyed by child session id (§8.3). */
+  getBackgroundWorkIds?: (parentSessionId: string) => ReadonlyMap<string, string>;
   onRefresh?: (parentKeys: readonly string[]) => void;
   logger?: ChildSessionFactsLogger;
   now?: () => number;
@@ -315,6 +323,8 @@ export function createChildSessionFactsResolver(deps: {
         (deps.getDetachedChildren?.() ?? []).map((child) => [child.sessionId, child.running]),
       );
       const runningSubagentCount = liveSubagents.get(sessionId) ?? 0;
+      const backgroundWorkIds =
+        childList.length > 0 ? deps.getBackgroundWorkIds?.(sessionId) : undefined;
       return {
         ...(count?.sideChats ? { sideChatCount: count.sideChats } : {}),
         ...(count?.subagents ? { subagentCount: count.subagents } : {}),
@@ -329,7 +339,11 @@ export function createChildSessionFactsResolver(deps: {
                   (childRecord !== undefined
                     ? isRecordBusy(childRecord)
                     : (detachedById.get(child.id) ?? false));
-                return toWireChildSession(child, running);
+                return toWireChildSession(
+                  child,
+                  running,
+                  running ? backgroundWorkIds?.get(child.id) : undefined,
+                );
               }),
             }
           : {}),

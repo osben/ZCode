@@ -6802,6 +6802,8 @@ const ukUA: Record<string, string> = {
   "taskList.childSubagentRowLabel": "Субагент: {title}",
   "taskList.childSideChatRowLabel": "Побічна розмова: {title}",
   "taskList.childRunningLabel": "Виконується",
+  "taskList.childStopLabel": "Зупинити субагента",
+  "taskList.childStopFailed": "Не вдалося зупинити субагента. Спробуйте ще раз.",
   "taskList.childMoreLabel": "Ще {count}",
   "taskList.worktreeTaskLabelMissing":
     "Каталог worktree відсутній; файлові дії недоступні, доки його не буде відновлено",

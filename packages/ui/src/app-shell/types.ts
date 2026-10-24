@@ -361,6 +361,8 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
   handleAutoOpenAssistantPptx: (request: AssistantPreviewCardsAutoOpenRequest) => void;
   handleOpenBackgroundBash: (request: OpenBackgroundBashSideTabRequest) => void;
   handleOpenSubagentSession: (request: OpenScopedSubagentSideTabRequest) => void;
+  /** Opens the subagent tab once the parent is the active side-pane owner (sidebar child rows). */
+  handleQueueSubagentSessionOpen: (request: OpenScopedSubagentSideTabRequest | null) => void;
   handleOpenSubagentDirectory: (
     request: import("@/lib/workspaceSidePane.js").OpenScopedSubagentDirectorySideTabRequest,
   ) => void;
