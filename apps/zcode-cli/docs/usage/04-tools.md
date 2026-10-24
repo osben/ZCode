@@ -1,36 +1,38 @@
-# 04 · 工具与评测配置
+# 04 · Tools and evaluation setup
 
-工具集合由构建、模型能力、运行配置、插件、MCP 和宿主共同决定。不要把某次运行的工具数量写成固定产品契约，也不要把模型自行列出的工具名称当作注册清单。
+The tool set is determined jointly by the build, model capabilities, runtime configuration, plugins, MCP and the host. Do not write the tool count of one run as a fixed product contract, and do not treat tool names the model lists by itself as the registered list.
 
-## 确认工具是否可用
+## Confirm that a tool is available
 
-常见能力包括文件读取与编辑、命令执行、网页访问、技能、子任务和会话控制。实际名称以发送给 provider 的请求和运行事件为准。需要严格比较工具面时，在受控测试 provider 上记录请求的 `tools` 字段，并保存工具 schema；生产请求可能包含任务内容与凭据相关信息，归档前必须处理敏感数据。
+Common capabilities include file reading and editing, command execution, web access, skills, subtasks and session control. The actual names are those in the request sent to the provider and in the run events. For a strict comparison of the tool surface, record the `tools` field of the request on a controlled test provider and save the tool schemas; production requests can contain task content and credential-related information, which must be sanitized before archiving.
 
-工具出现、权限允许和执行成功是三个条件：
+Tool presence, permission to run and successful execution are three conditions:
 
 ```text
 配置与注册过滤 → 模型请求中的工具声明 → 模型发起调用
 → 参数校验、权限与 Hook → 实际执行 → 工具结果 → 模型回复
 ```
 
-内嵌搜索分支在 Bash 可用时可以隐藏独立的 Glob/Grep 工具。禁用 Bash 后搜索工具面可能变化；禁用一项工具不能据此推断某种能力完全消失。
+(Configuration and registration filtering, tool declaration in the model request, model issues a call, argument validation / permission / Hook, actual execution, tool result, model reply.)
 
-## 非交互任务模板
+The embedded search branch can hide the standalone Glob/Grep tools when Bash is available. After disabling Bash the search tool surface can change; do not infer from disabling one tool that a capability has disappeared entirely.
+
+## Non-interactive task template
 
 ```sh
 zcode --prompt "任务说明" --cwd /absolute/path/to/task --mode yolo --disallowed-tools "AskUserQuestion EnterPlanMode ExitPlanMode" --json --no-color
 ```
 
-普通 `--prompt` 没有交互式审批客户端。需要提问或审批的工具可能失败。对无需人工干预的任务，移除上述工具可避免进入计划或提问流程；这会改变实验条件，应记录在评测配置中。`yolo` 也不保证所有声明了强制确认的工具都能运行。
+An ordinary `--prompt` has no interactive approval client. Tools that need to ask or request approval may fail. For tasks needing no human intervention, removing the tools above avoids entering the plan or question flows; this changes the experimental conditions and should be recorded in the evaluation configuration. `yolo` also does not guarantee that every tool that declares forced confirmation can run.
 
-按任务协议决定是否禁用子任务、记忆、技能、MCP、插件和工作流。禁用子任务时可同时关闭 `features.subagent` 并移除 `Agent Task`。当前源码可用 `--workflow-mode disabled`；旧构建先检测参数支持，不要无条件添加。
+Decide per task protocol whether to disable subtasks, memory, skills, MCP, plugins and workflows. To disable subtasks, turn off `features.subagent` and remove `Agent Task` together. The current source accepts `--workflow-mode disabled`; with older builds, detect flag support first and do not add it unconditionally.
 
-`--disallowed-tools` 在工具注册层移除完整工具，适合固定实验工具面。配置中的 `permission.disallowedTools` 属于权限判定，不应当作它的等价替代；尤其不能假设所有权限配置都约束 `yolo`。
+`--disallowed-tools` removes whole tools at the tool registration layer, which suits fixing the experimental tool surface. `permission.disallowedTools` in the configuration belongs to permission judgment and is not an equivalent replacement; in particular, do not assume every permission setting constrains `yolo`.
 
-移除 WebSearch/WebFetch 不能断网：Bash、MCP、插件或浏览器也可能访问网络。网络、文件系统、进程和资源限制应由任务容器或操作系统实施。
+Removing WebSearch/WebFetch does not cut the network: Bash, MCP, plugins or a browser can also reach the network. Network, filesystem, process and resource limits should be enforced by the task container or the operating system.
 
-## 最小验收
+## Minimal acceptance
 
-在一次性工作区执行一个指定文件写入任务和一个命令任务。检查文件实际内容、工具结果和进程状态，再由独立脚本判定是否成功。另跑一次拒绝场景，确认限制确实生效。评测评分不能依赖模型最后一句“已完成”。
+In a throwaway workspace, run one specified file-write task and one command task. Check the actual file content, tool results and process state, then judge success with an independent script. Also run a denial scenario to confirm the restriction really applies. Evaluation scoring must not depend on the model's last sentence "done".
 
-训练数据应保留真实工具调用与结果，包括拒绝、超时和失败；不要把模型对工具的转述补成一次成功调用。输出与轨迹说明见[批量任务](13-automation.md)。
+Training data should keep real tool calls and results, including denials, timeouts and failures; do not turn the model's paraphrase of a tool into a successful call. For output and trajectory notes, see [Batch tasks](13-automation.md).

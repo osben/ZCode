@@ -1,93 +1,71 @@
-# P-12 Tool Descriptions / Schema 收敛计划
+# P-12 Tool Descriptions / Schema Alignment Plan
 
-日期：2026-06-08
+Date: 2026-06-08. Status: complete (all phases accepted 2026-06-08).
 
-## 目标
+## Goal
 
-收敛 ZCode 当前已支持 tool 在最终发送给 model provider 时的 provider-visible surface：
+Align the provider-visible surface of the tools ZCode currently supports, as sent to the model provider:
 
 - `tools[].name`
 - `tools[].description`
 - `tools[].inputSchema`
-- tool 是否出现在 main / Explore child request 的最终 `tools[]`
-- ZCode 已支持的 `Agent(Explore)` provider-visible description
-- Explore Agent / Explore child 的 provider-visible system prompt
+- whether a tool appears in the final `tools[]` of the main and Explore child requests
+- the provider-visible description of the `Agent(Explore)` tool that ZCode already supports
+- the provider-visible system prompt of the Explore Agent / Explore child
 
-本 plan 不以 registry、Zod、adapter、schema transform 等内部实现形态作为验收目标。只有最终 provider body 中工具是否出现、工具名、description、JSON schema 或 child prompt 发生差异，才进入本轮 P-12。
+Internal shapes (registry, Zod, adapter, schema transform) are not acceptance targets. Only differences in the
+final provider body (tool presence, name, description, JSON schema, child prompt) belong to P-12.
 
-## 已冻结决策
+## Frozen decisions
 
-| ID | 决策 |
+| ID | Decision |
 | --- | --- |
-| TD-D1 | `Read/Write/Edit.file_path` 面向模型的 schema/description 统一为 absolute path 语义；runtime 内部是否继续兼容 relative path 不写进 provider-visible wording。 |
-| TD-D2 | `TodoWrite.priority` / `activeForm` 字段形态暂不调整；保留 `priority`，只补齐 `content/status`、status enum 和主动维护 todo 的 guidance。 |
-| TD-D3 | `Skill` provider-visible schema 改为 `skill` 字段；runtime 可兼容旧 `name` 输入，但最终工具 schema 不再暴露 `name`。 |
-| TD-D4 | `Glob/Grep` 从 main provider `tools[]` 移除，只在 Explore child tool surface 保留。`toolAllowlist` 只能收窄当前 tool pool，不能把 Explore-only tool 提升到 main。 |
-| TD-D5 | `GoalRead` 是过期 provider tool，从 provider-visible `tools[]` 删除；goal continuation / verification 继续走 runtime prompt、tool result 或已有 goal flow。 |
-| TD-D6 | `Agent` 只覆盖当前 ZCode 已支持的 Explore 子集；同时显式收敛 Explore Agent 的 child system prompt；`model`、custom/team/fork/worktree/isolation/cwd 等未支持能力 postponed。 |
-| TD-D7 | `WebSearch` provider-visible schema/description/native-search branch 在本轮 P-12 baseline 中暂时 postponed；后续已由 [WebSearch client tool plan](./websearch-client-tool-implementation-plan.md) 单独落地。 |
-| TD-D8 | Read PDF / notebook / SVG / `pages` 等 ZCode 未 provider-ready 能力 postponed；本轮只处理 text/image Read 已支持的能力。 |
-| TD-D9 | `ExitPlanMode` V2 / plan-file approval flow postponed；保留当前 ZCode contract。 |
-| TD-D10 | `ApplyPatch`、`TodoRead`、`ReadSessionContext`、`Workflow` 作为 ZCode-specific tool 保留；只要求 description/schema truthful，不声明不存在的能力。 |
-| TD-D11 | `Skill` 是否进入未来其他 agent / custom agent 的 child tool surface 暂时 postponed；当前只调整 main `Skill` schema，Explore child 不暴露 `Skill`。 |
+| TD-D1 | The model-facing schema/description of `Read/Write/Edit.file_path` uses absolute-path semantics. Whether the runtime still accepts relative paths is not written into provider-visible wording. |
+| TD-D2 | `TodoWrite.priority` / `activeForm` keep their shape. Keep `priority`; only add `content/status`, the status enum and guidance to maintain todos proactively. |
+| TD-D3 | The `Skill` provider-visible schema uses the field `skill`. The runtime may still accept the old `name` input, but the final tool schema no longer exposes `name`. |
+| TD-D4 | `Glob/Grep` are removed from the main provider `tools[]` and kept only on the Explore child tool surface. `toolAllowlist` can only narrow the current tool pool; it cannot promote Explore-only tools to main. |
+| TD-D5 | `GoalRead` is an obsolete provider tool and is removed from provider-visible `tools[]`. Goal continuation / verification keeps using the runtime prompt, tool results or the existing goal flow. |
+| TD-D6 | `Agent` covers only the Explore subset ZCode supports today, and the Explore Agent's child system prompt is aligned explicitly. `model`, custom/team/fork/worktree/isolation/cwd and other unsupported capabilities are postponed. |
+| TD-D7 | `WebSearch` provider-visible schema/description/native-search branch was postponed in the P-12 baseline; it was later landed separately by the [WebSearch client tool plan](./websearch-client-tool-implementation-plan.md). |
+| TD-D8 | Read PDF / notebook / SVG / `pages` capabilities that ZCode is not provider-ready for are postponed; P-12 covers only the supported text/image Read. |
+| TD-D9 | `ExitPlanMode` V2 / plan-file approval flow is postponed; the current ZCode contract stays. |
+| TD-D10 | `ApplyPatch`, `TodoRead`, `ReadSessionContext`, `Workflow` stay as ZCode-specific tools; their description/schema must be truthful and must not claim non-existent capabilities. |
+| TD-D11 | Whether `Skill` enters the child tool surface of future agents / custom agents is postponed. Only the main `Skill` schema changes now; the Explore child does not expose `Skill`. |
 
-## Phase 0 Baseline 代码事实
+## Non-goals
 
-本节记录 plan 启动时的 baseline，不代表 Phase 6 完成后的当前状态。最终状态以 Phase 6 的验证结果为准。
+- No WebSearch changes.
+- No Read PDF / notebook / SVG / `pages` implementation.
+- No migration of the Todo runtime/session model to `activeForm`.
+- No subagent `model` override or custom agent.
+- No decision on `Skill` in future agents' child tool surface; the Explore child explicitly omits `Skill`.
+- No rewrite of plan mode / the `ExitPlanMode` V2 flow.
+- No change to session store, UI transcript, permission broker or tool-execution side effects, except where a provider schema change requires runtime-compatible parsing.
 
-- `registerBuiltInTools(...)` 已有 `includeExploreOnlyTools` 开关，`Glob/Grep` 也已经在 explore-only set 内；但 `AgentRuntime` 构造时恒定传入 `includeExploreOnlyTools: true`，导致 main tool pool 仍暴露 `Glob/Grep`。
-- `EXPLORE_AGENT_ALLOWED_TOOLS` baseline 包含 `Bash/Glob/Grep/Read/WebFetch/WebSearch/TodoWrite/Skill`；Explore child tool surface 与“保留 Glob/Grep”目标一致，但 `Skill` 是否属于 Explore child 尚未决策。
-- `GoalRead` baseline 仍通过 `targetReadToolEntry` 进入 `builtInTools`，因此会出现在 main provider `tools[]`。
-- `Skill` baseline provider schema 是 `{ name, args? }`，handler 也只 parse `name`。
-- `Read/Write/Edit` 的 `file_path` provider schema description baseline 仍写有 absolute or relative。
-- baseline 测试中有旧期望锁住 main 包含 `Glob/Grep`，需要随实现一起改为新的目标期望。
+## Phase gate
 
-## 非目标
+After each phase, stop and hand the following to the user; continue to the next phase only after confirmation:
 
-- 不调整 WebSearch。
-- 不实现 Read PDF / notebook / SVG / `pages`。
-- 不迁移 Todo runtime/session model 到 `activeForm`。
-- 不新增 subagent `model` override 或 custom agent。
-- 不决定 `Skill` 是否应该进入未来其他 agent / custom agent 的 child tool surface；当前 Explore child 明确不暴露 `Skill`。
-- 不重写 plan mode / `ExitPlanMode` V2 flow。
-- 不改变 session store、UI transcript、permission broker、tool execution side effect 行为，除非 provider schema 改动要求 runtime 兼容解析。
+1. Change summary and affected surface of the phase.
+2. Focused unit test results.
+3. The prompt-trajectory e2e output directory for the phase, and which `*.openai_request_body.json` to inspect.
+4. Whether the provider-visible diff matches expectations, with postponed items and residual risk.
 
-## Phase Gate
+## Phases
 
-每个 phase 完成后必须停止，交付以下内容给用户 review，等待用户确认后才能进入下一 phase：
+### Phase 0: Baseline and red/green tests
 
-1. 本 phase 改动摘要和影响面。
-2. Focused unit test 结果。
-3. 与本 phase 对应的 prompt-trajectory e2e 输出目录，并说明需查看的 `*.openai_request_body.json`。
-4. 当前 provider-visible diff 是否符合预期，是否有 postponed / residual risk。
+Lock the provider-visible tool surface with focused tests (TDD red first) instead of manual inspection:
 
-## Phase 0：Baseline 和红绿测试准备
+- Main runtime provider `tools[]` contains no `Glob` / `Grep` / `GoalRead`.
+- A main `toolAllowlist` that names `Glob` / `Grep` still cannot promote Explore-only tools.
+- The Explore child provider `tools[]` contains `Glob` / `Grep` and no edit/write/agent tools.
+- Provider-native `web_search` behavior is unchanged; assertions only guard against accidental removal of the existing native projection.
+- Prompt-trajectory testcases cover the main basic request, the Agent-enabled parent request and the Explore child request tool lists.
 
-状态：已完成。当前 focused tests 按 TDD 预期红灯，失败点是 main 仍暴露 `Glob/Grep/GoalRead`；这是 Phase 1 的目标修复项。Prompt-trajectory baseline 已生成到 `tools/prompt-trajectory/out/p12-tool-surface-phase0/test20260608-163914`。
+Baseline facts at plan start: `AgentRuntime` always passed `includeExploreOnlyTools: true`, so main exposed `Glob/Grep`; `GoalRead` entered `builtInTools` through `targetReadToolEntry`; `Skill` schema was `{ name, args? }`; `Read/Write/Edit.file_path` said "absolute or relative"; old tests locked main to include `Glob/Grep`.
 
-目标：先锁住当前 provider-visible tool surface，避免后续改动靠人工目测。
-
-### Checklist
-
-- [x] 更新或新增 focused tests，明确当前 target：
-  - main runtime provider `tools[]` 不应包含 `Glob` / `Grep` / `GoalRead`。
-  - 即使 main `toolAllowlist` 显式包含 `Glob` / `Grep`，也不能提升 Explore-only tools。
-  - Explore child provider `tools[]` 应包含 `Glob` / `Grep`，且不包含 edit/write/agent tools。
-  - provider-native `web_search` 行为暂不改变，相关断言只保证本轮没有意外删除已有 native projection。
-- [x] 新增或更新 prompt-trajectory testcase，覆盖：
-  - main basic request tool list。
-  - Agent-enabled parent request tool list。
-  - Explore child request tool list。
-- [x] 记录当前会失败的旧断言，例如 `main-tool-pool.test.ts` 里 main 包含 `Glob/Grep` 的旧期望。
-
-### 预期修改文件
-
-- `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`
-- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`
-- `apps/zcode-cli/tools/prompt-trajectory/testcases/p12-tool-surface/*`
-
-### 验证命令
+Files: `apps/zcode-cli/packages/core/tests/{main-tool-pool,subagent-explore,tool-contracts}.test.ts`, `apps/zcode-cli/tools/prompt-trajectory/testcases/p12-tool-surface/*`.
 
 ```bash
 cd apps/zcode-cli
@@ -97,201 +75,102 @@ pnpm --filter @zcode/bootstrap build
 pnpm prompt-trajectory:testcases -- --cases testcases/p12-tool-surface --out-root out/p12-tool-surface
 ```
 
-## Phase 1：Tool Exposure 收敛
+### Phase 1: Tool exposure
 
-状态：已完成。Focused tests 已转绿；prompt-trajectory e2e 输出到 `tools/prompt-trajectory/out/p12-tool-surface-phase1/test20260608-165619`，parent requests 已无 `Glob/Grep/GoalRead`，Explore child request 仍保留 `Glob/Grep`。
+Change only the final provider-visible tool list, not handler behavior.
 
-目标：只改最终 provider-visible tool list，不调整工具 handler 行为。
+- `includeExploreOnlyTools` is on only when `config.toolset === "explore"`.
+- Keep the order in `resolveBuiltInToolAllowlist(...)` and the register filter: filter by toolset scope first, then apply the allowlist, so the allowlist cannot promote `Glob/Grep` to main.
+- Remove `GoalRead` from the provider-visible built-in tool list. Delete only the provider tool registration; keep the goal continuation / verification capabilities that internal code still uses (`target.ts`, goal runtime).
+- The Explore child still has `Glob/Grep`. `ApplyPatch/TodoRead/ReadSessionContext/Workflow` are not removed.
 
-### Checklist
+Files: `packages/core/src/runtime/agent-runtime.ts`, `packages/core/src/tool/handlers/index.ts`, `main-tool-pool` / `subagent-explore` / `tool-contracts` / `target-tool` tests.
 
-- [x] 将 main runtime 的 `includeExploreOnlyTools` 改为仅在 `config.toolset === "explore"` 时开启。
-- [x] 保持 `resolveBuiltInToolAllowlist(...)` 与 register filter 的顺序：先按 toolset scope 过滤，再应用 allowlist，确保 allowlist 不能把 `Glob/Grep` 提升到 main。
-- [x] 从 provider-visible built-in tool list 中移除 `GoalRead`。
-- [x] 保留 `target.ts` / goal runtime 需要的非 provider-visible逻辑；删除 provider tool registration，不删除还被内部引用的 goal continuation / verification 能力。
-- [x] 确认 Explore child 仍包含 `Glob/Grep`。
-- [x] 确认 ZCode-specific `ApplyPatch/TodoRead/ReadSessionContext/Workflow` 没有被误删。
+Acceptance:
 
-### 预期修改文件
+- Main provider request `tools[].name` has no `Glob/Grep/GoalRead`.
+- Explore child provider request `tools[].name` has `Glob/Grep`.
+- `toolAllowlist: ["Glob", "Grep"]` in main does not produce these provider tools.
 
-- `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/index.ts`
-- `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`
-- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`
-- `apps/zcode-cli/packages/core/tests/target-tool.test.ts`
+### Phase 2: Hard provider schema differences
 
-### 验收标准
+- `Skill` provider schema is `{ skill: string, args?: string }`. The runtime parser accepts both old `{ name }` and new `{ skill }`, but `inputSchema` projects only the new field. The handler normalizes to `skillName` internally.
+- `Read/Write/Edit.file_path` description uses absolute-path semantics.
+- `Read.pages` is not exposed in the provider schema (no provider-ready capability); the runtime schema keeps the legacy `pages` for compatibility. Restoring it provider-visibly is a postponed P-12/Read media-docs item, reopened only when real PDF/pages support exists.
+- `TodoWrite` keeps `priority`, adds no `activeForm`; description covers `content/status`, the status enum, at most one `in_progress`, and proactive todo maintenance guidance (including "do not mark complete" rules).
 
-- main provider request `tools[].name` 不包含 `Glob/Grep/GoalRead`。
-- Explore child provider request `tools[].name` 包含 `Glob/Grep`。
-- `toolAllowlist: ["Glob", "Grep"]` 在 main 下不会生成这两个 provider tools。
+Files: `packages/contracts/src/tools/{skill,read,write,edit,todo}.ts`, `packages/core/src/tool/handlers/{skill,read,todo}.ts`, `skill-tool` / `tool-contracts` / `tool-input-normalization` tests.
 
-## Phase 2：Provider Schema 硬差异修正
+Acceptance:
 
-状态：已完成。Focused tests 与 contracts tests 已转绿；prompt-trajectory e2e 输出到 `tools/prompt-trajectory/out/p12-tool-surface-phase2/test20260608-170424`，确认 parent request 中 `Skill` schema 暴露 `skill` 而非 `name`，`Read` provider schema 不再暴露 `pages`，`Read/Write/Edit.file_path` 为 absolute path wording，`TodoWrite` description 包含 proactive / `in_progress` / do-not-mark-complete guidance。`Read.pages` 的 provider-visible 恢复已作为 P-12/Read media-docs postponed item 记录，后续等真实 PDF/pages 能力完成后单独重开；runtime schema 暂保留 legacy `pages` 兼容。
+- Provider-visible `Skill.inputSchema.properties` has `skill`, not `name`.
+- The runtime executes `Skill` with both old and new inputs.
+- Provider-visible `Read/Write/Edit.file_path` no longer teaches relative paths.
+- No `activeForm`, `Agent.model`, WebSearch or Read media capability is introduced.
 
-目标：处理 schema 层会直接改变模型输入 contract 的差异。
+### Phase 3: Common tool description / guidance
 
-### Checklist
+Descriptions cover the semantics; they need not match word for word.
 
-- [x] `Skill` provider schema 改为 `{ skill: string, args?: string }`。
-- [x] `Skill` runtime parser 兼容旧 `{ name: string }` 和新 `{ skill: string }`，但 `inputSchema` 只投影新字段。
-- [x] `Skill` handler 内部统一 normalize 成 `skillName`，避免后续代码继续依赖 provider-visible `name`。
-- [x] `Read/Write/Edit.file_path` schema description 改为 absolute path 语义。
-- [x] `Read.pages` 如果当前没有真实 provider-ready 能力，本轮不新增/不强调；如果字段仍暂时存在，description 必须避免声明未支持能力为可用能力，必要时将其移出 provider schema并保留 runtime-only 兼容。
-- [x] `TodoWrite` 保留 `priority`，不加 `activeForm`；补齐 `content/status`、status enum、最多一个 `in_progress` 和主动维护 todo guidance。
+- `Read`: prefer Read for known file paths, Bash `ls` for directories, default line-output semantics, do not guess about empty/unreadable results, do not use Bash `cat` instead of Read.
+- `Write`: existing files must be Read first, prefer Edit for existing files, do not proactively create docs/README, no emoji by default.
+- `Edit`: must Read first, `old_string` uniqueness, restore real content when Read output is line-number-prefixed, `replace_all` boundaries.
+- `Bash`: destructive git / hooks / package install / polling / background / timeout / sandbox-override guidance; must not unconditionally point to `Glob/Grep`, which main does not have.
+- `WebFetch`: within current fields only: source/quote safety, private/auth URLs, redirects, prefer the GitHub CLI for GitHub, MCP preference. No WebSearch/native-search.
+- `AskUserQuestion`: when to clarify, not a replacement for plan approval, `Other` option is provided by the client, preview/multiSelect boundaries.
+- `EnterPlanMode`: state the real main facts: main has `Read/Bash/Agent(Explore)`; `Glob/Grep` exist only inside the Explore child.
+- ZCode-specific tools (`ApplyPatch/TodoRead/ReadSessionContext/Workflow`) describe only their real capability.
 
-### 预期修改文件
+Files: `packages/core/src/tool/handlers/{read,write,edit,bash,webfetch,todo,ask-user-question,plan-mode}.ts`, `tool-contracts.test.ts`.
 
-- `apps/zcode-cli/packages/contracts/src/tools/skill.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/skill.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/read.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/todo.ts`
-- `apps/zcode-cli/packages/core/tests/skill-tool.test.ts`
-- `apps/zcode-cli/packages/contracts/src/tools/read.ts`
-- `apps/zcode-cli/packages/contracts/src/tools/write.ts`
-- `apps/zcode-cli/packages/contracts/src/tools/edit.ts`
-- `apps/zcode-cli/packages/contracts/src/tools/todo.ts`
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`
-- `apps/zcode-cli/packages/core/tests/tool-input-normalization.test.ts`
+Acceptance:
 
-### 验收标准
+- Main provider `Bash.description` no longer unconditionally points to `Glob/Grep`.
+- Key behavior guidance of `Read/Write/Edit/Bash/TodoWrite` is findable in the provider-visible description.
+- No description claims a postponed or unimplemented capability.
 
-- provider-visible `Skill.inputSchema.properties` 有 `skill`，没有 `name`。
-- runtime 执行 `Skill` 时新旧输入都能 parse。
-- provider-visible `Read/Write/Edit.file_path` 不再教模型使用 relative path。
-- 本轮没有引入 `activeForm`、`Agent.model`、WebSearch 或 Read media capability。
+### Phase 4: Glob / Grep Explore-only schema and description
 
-## Phase 3：Common Tool Description / Guidance 补齐
+- `Glob` schema: `pattern` required, `path` optional, strict object (`additionalProperties: false`). Description: fast file pattern matching, modification-time sorting, find files by name patterns, use the Agent tool for open-ended multi-round search. Path wording is current-working-directory semantics.
+- `Grep` schema: `pattern` required; `path/glob/output_mode/-A/-B/-C/context/-n/-i/type/head_limit/offset/multiline` stay truthful to what is supported. Description: ripgrep-compatible search, regex, glob/type filter, output modes, do not use Bash `grep/rg` instead of the dedicated tool, use the Agent tool for open-ended multi-round search.
+- If the registry still shares the same description, confirm main never sees the `Glob/Grep` contract.
 
-状态：已完成。Focused tests 与 P-12 combined tests 已转绿；prompt-trajectory e2e 输出到 `tools/prompt-trajectory/out/p12-tool-surface-phase3/test20260608-171828`，确认 main / follow-up request 无旧的 `Glob/Grep` main guidance，`Read/Bash/EnterPlanMode/WebFetch` provider-visible description 已覆盖 Phase 3 目标；parent request 仍无 `Glob/Grep/GoalRead`，Explore child 仍保留 `Glob/Grep`。
+Files: `packages/contracts/src/tools/{glob,grep}.ts`, `packages/core/src/tool/handlers/{glob,grep}.ts`, `tool-contracts` / `subagent-explore` tests.
 
-目标：description 语义覆盖齐全，但不要求逐字一致。
+Acceptance: the Explore child request has complete `Glob/Grep` schema/description; the main request has no `Glob/Grep`.
 
-### Checklist
+### Phase 5: Agent tool description + Explore Agent prompt
 
-- [x] `Read` description 补齐已支持能力的指引：已知文件路径优先用 Read、目录用 Bash `ls`、默认 line output 语义、空文件/不可读结果不要臆测、不要用 Bash `cat` 替代 Read。
-- [x] `Write` description 补齐：已有文件必须先 Read，修改已有文件优先 Edit，不主动创建 docs/README，不默认添加 emoji。
-- [x] `Edit` description 补齐：必须先 Read，`old_string` 唯一性，使用 line-number-prefixed Read output 时要还原真实内容，`replace_all` 使用边界。
-- [x] `Bash` description 补齐：destructive git / hooks / package install / polling / background / timeout / sandbox override guidance；同时避免 main prompt 无条件要求使用不存在的 `Glob/Grep`。
-- [x] `WebFetch` description 只在当前字段范围内补齐 source/quote safety、private/auth URL、redirect、GitHub prefer CLI、MCP preference 等语义；不做 WebSearch/native-search。
-- [x] `AskUserQuestion` description 补齐 clarification 使用时机、不要替代 plan approval、Other 选项由客户端提供、preview/multiSelect 使用边界。
-- [x] `EnterPlanMode` description 若仍提到 `Glob/Grep/Read`，调整为 main 可用工具事实：main 可用 `Read/Bash/Agent(Explore)`；Explore child 内才有 `Glob/Grep`。
-- [x] 保留 ZCode-specific tool truthful wording：`ApplyPatch/TodoRead/ReadSessionContext/Workflow` 只描述自身真实能力。
+Aligns two provider-visible surfaces: the `Agent` tool description/schema in the main request, and the Explore Agent system prompt in the Explore child request. No unsupported agent feature is introduced.
 
-### 预期修改文件
+- `Agent` description uses Explore routing semantics: open-ended codebase research / locating files / references / answering where/how questions (not the old "not for open-ended analysis" wording). It states that Explore is stateless and read-only, that the final answer returns only to the parent, and that the parent must relay it. It also covers the supported usage notes: description/prompt parameters, trust-but-verify, background/foreground, fresh agent with a self-contained prompt, parallel launch and available agents.
+- `Agent` schema exposes only `description/prompt/run_in_background/subagent_type: "Explore"`; no `model`, no `isolation`.
+- Explore Agent prompt: read-only file-search and codebase-research specialist (keeping the ZCode identity). The read-only critical section forbids creating, modifying, deleting, moving or copying files, temp files, and Bash commands that change file/process/system state. Redirects / heredoc file writes and state-changing commands are forbidden, but read-only pipelines (`|`) are allowed (the old over-broad `|` ban is removed).
+- Tool guidance matches the final child `tools[]`: `Glob` for files, `Grep` for content, `Read` for known paths, `Bash` only for read-only shell operations; no spawning agents.
+- `Skill` is not mentioned in the Explore prompt and not in the Explore child `tools[]`. WebFetch/TodoWrite guidance describes only supported behavior. Agent description and Explore prompt may semantically suggest `WebSearch` for current / post-knowledge-cutoff information.
+- Final answer guidance: answer directly, cite evidence file paths, quote code only when necessary, state gaps when evidence is insufficient, stay compact enough for the parent to continue.
 
-- `apps/zcode-cli/packages/core/src/tool/handlers/read.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/write.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/edit.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/bash.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/webfetch.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/todo.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/ask-user-question.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/plan-mode.ts`
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`
+Files: `packages/contracts/src/tools/agent.ts`, `packages/core/src/tool/handlers/agent.ts`, `packages/core/src/subagent/explore.ts`, `subagent-explore` / `tool-contracts` tests.
 
-### 验收标准
+Acceptance:
 
-- main provider `Bash.description` 不再无条件指向 main 不存在的 `Glob/Grep`。
-- `Read/Write/Edit/Bash/TodoWrite` 的关键行为 guidance 都能在 provider-visible description 中找到。
-- description 没有声明 postponed 或未实现能力。
+- A parent request with `Agent` has a description that states the Explore use cases and limits.
+- The Explore child system prompt is a read-only file-search/codebase-research specialist and covers the read-only boundary, tool priority and final answer guidance, without banning read-only pipes.
+- The child tool list matches Phase 1.
 
-## Phase 4：Glob / Grep Explore-only Schema 和 Description
+### Phase 6: Prompt-trajectory e2e and closing
 
-状态：已完成。Focused tests 已转绿；prompt-trajectory e2e 输出到 `tools/prompt-trajectory/out/p12-tool-surface-phase4-full-description-20260608-175318/test20260608-175318`，确认 parent/follow-up request 仍无 `Glob/Grep/GoalRead`，Explore child request 保留 `Glob/Grep`，且 `Glob/Grep` provider schema path wording 为 current working directory 语义、`additionalProperties: false`，description 保留完整语义：fast pattern matching / ripgrep search、mtime 排序、regex/filter/output mode、禁止 Bash grep/rg 替代，以及 open-ended multi-round search 交给 Agent tool。
+Final acceptance by provider-visible request body:
 
-目标：只在 Explore child surface 提供 `Glob/Grep`，main 不再暴露。
+- Main request: `tools[].name`, `Skill.inputSchema`, `Read/Write/Edit.file_path` description are checked.
+- Agent-enabled parent / Explore child: parent has no `Glob/Grep/GoalRead`; child has `Read/Bash/Glob/Grep` and no `Agent/Skill/Write/Edit/ApplyPatch/GoalRead`.
+- Explore child system prompt shows the Phase 5 identity, read-only boundary, tool priority and final answer guidance; no `Use Skill`, no old `|` ban.
+- No request top-level / message-level runtime metadata leaks into `*.openai_request_body.json`. `AskUserQuestion.metadata.source` is a provider-visible tool schema field, not runtime metadata.
+- `Agent` schema has no `model/isolation`; `Skill` schema has `skill` and no `name`.
 
-### Checklist
+Final evidence directory: `tools/prompt-trajectory/out/p12-tool-surface-final-review-20260608-184856/test20260608-184857`. Verified with focused core/contracts tests, touched-package `tsc --noEmit`, touched-file `oxlint` and `git diff --check`.
 
-- [x] `Glob` schema 字段收敛到当前 ZCode 支持范围：`pattern` required，`path` optional，strict object。
-- [x] `Glob` description 聚焦 fast file pattern matching、modification-time sorting、find files by name patterns，以及 open-ended multi-round search 使用 Agent tool。
-- [x] `Grep` schema 字段收敛到当前 ZCode 支持范围：`pattern` required，`path/glob/output_mode/-A/-B/-C/context/-n/-i/type/head_limit/offset/multiline` 等已支持字段保持 truthful。
-- [x] `Grep` description 聚焦 ripgrep-compatible search、regex、glob/type filter、output modes、不要用 Bash `grep/rg` 替代专用工具，以及 open-ended multi-round search 使用 Agent tool。
-- [x] 如果同一 description 仍被 registry 共享，必须确认 main 已不会看到 `Glob/Grep` tool contract。
-
-### 预期修改文件
-
-- `apps/zcode-cli/packages/contracts/src/tools/glob.ts`
-- `apps/zcode-cli/packages/contracts/src/tools/grep.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/glob.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/grep.ts`
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`
-- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
-
-### 验收标准
-
-- Explore child request 中 `Glob/Grep` schema/description 覆盖完整。
-- main request 中没有 `Glob/Grep`，因此不会收到它们的 description。
-
-## Phase 5：Agent Tool Description + Explore Agent Prompt 收敛
-
-状态：已完成。Focused tests 已转绿；prompt-trajectory e2e 输出到 `tools/prompt-trajectory/out/p12-tool-surface-phase5-agent-full-usage-20260608-182624/test20260608-182625`，确认 parent request 的 `Agent` description 覆盖完整 usage notes 中 ZCode 已支持的部分：description/prompt 参数说明、result relay、trust-but-verify、background/foreground、fresh agent/self-contained prompt、parallel launch 和 available agents；同时覆盖 open-ended codebase research、stateless child、parent relay、background/parallel usage，且未暴露 `model` / `isolation` 字段。Explore child system prompt 覆盖 read-only file-search/codebase-research specialist、tool priority、read-only shell pipeline 允许边界、final report guidance，并移除旧的 `|` 管道误禁。Explore child 不写入 `Skill` guidance，也不暴露 `Skill` tool；main `Skill` tool schema 调整仍属于 Phase 2。
-
-目标：同时收敛两个 provider-visible 面：main request 里 `Agent` tool 的 description/schema，以及 Explore child request 里的 Explore Agent system prompt。不引入 ZCode 未支持的 agent feature。
-
-### Checklist
-
-- [x] `Agent` provider description 改为 Explore routing 语义：适合 open-ended codebase research / locating files / references / answering where/how questions；不应继续写成“不适合 open-ended analysis”这种与 Explore 目标冲突的描述。
-- [x] `Agent` description 明确 Explore 是 stateless、read-only、final answer 只返回给 parent，需要 parent relay。
-- [x] `Agent` schema 保持只暴露当前支持字段：`description/prompt/run_in_background/subagent_type: "Explore"`；不加 `model`。
-- [x] Explore Agent prompt 的 identity / role framing 改为 read-only file-search and codebase research specialist 语义，同时保留 ZCode identity。
-- [x] Explore Agent prompt 的 read-only critical section 补齐：禁止创建、修改、删除、移动、复制文件，禁止临时文件，禁止会改变文件/process/system state 的 Bash 命令。
-- [x] 修正 Explore Agent prompt 中 “Using redirect operators (>, >>, |) ...” 对 `|` 的过宽禁止：禁止重定向 / heredoc 写文件和 state-changing command，但允许 read-only pipeline。
-- [x] Explore Agent prompt 的 tool guidance 与最终 child `tools[]` 一致：优先 `Glob` 找文件、`Grep` 搜内容、`Read` 读已知路径、`Bash` 只做 read-only shell 操作；不允许再 spawn agent。
-- [x] Agent description 与 Explore Agent prompt 保持 ZCode 真实扩展工具面：WebFetch/TodoWrite guidance 只描述当前已支持行为；`Skill` 不写入 Explore system prompt，且不进入 Explore child `tools[]`；`WebSearch` / native-search exact schema 和 provider-specific request body 在本轮 P-12 baseline 中 postponed，后续已由 WebSearch client tool plan 单独落地；Agent description 和 Explore prompt 允许用语义化 `WebSearch` 指导 current / post-knowledge-cutoff information search。
-- [x] Explore Agent prompt 的 final answer guidance 补齐：直接回答、给出证据文件路径、只在必要时引用代码片段、证据不足时说明缺口、输出足够紧凑供 parent agent 继续处理。
-
-### 预期修改文件
-
-- `apps/zcode-cli/packages/contracts/src/tools/agent.ts`
-- `apps/zcode-cli/packages/core/src/tool/handlers/agent.ts`
-- `apps/zcode-cli/packages/core/src/subagent/explore.ts`
-- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
-- `apps/zcode-cli/packages/core/tests/tool-contracts.test.ts`
-
-### 验收标准
-
-- Parent request 有 `Agent` 时，其 description 明确 Explore 的使用场景和限制。
-- Explore child request 的 system prompt 明确是 read-only file-search/codebase-research specialist，并覆盖 read-only boundary、tool priority、final answer guidance。
-- Explore child request 的 system prompt 不误禁 read-only pipe。
-- Child request tool list 与 Phase 1 目标一致。
-
-## Phase 6：Prompt Trajectory E2E 和文档收口
-
-状态：已完成。Focused tests / touched package typecheck / prompt-trajectory e2e / request-body 抽检已通过；`tools/prompt-trajectory/out/p12-tool-surface-final-review-20260608-184856/test20260608-184857` 是最终 Phase 6 evidence。`pnpm typecheck` / `pnpm lint` 在 root 或 `apps/zcode-cli` 入口被本地 pnpm/turbo 环境阻塞，已用 touched package `tsc --noEmit` 与 touched-file `oxlint` 兜底验证；阻塞细节见本节下方。
-
-目标：用 provider-visible request body 做最终验收，并同步本计划状态。
-
-### Checklist
-
-- [x] 跑 main request testcase，检查 `tools[].name`、`Skill.inputSchema`、`Read/Write/Edit.file_path` description。
-- [x] 跑 Agent-enabled parent/Explore child testcase，检查 parent 无 `Glob/Grep/GoalRead`，child 有 `Glob/Grep`。
-- [x] 检查 Explore child request 的 system prompt，确认 Phase 5 的 identity、read-only boundary、tool priority、final answer guidance 都 provider-visible。
-- [x] 对比生成的 `*.openai_request_body.json`，确保没有 request top-level / message-level runtime metadata 泄漏。`AskUserQuestion.metadata.source` 是 provider-visible tool schema 字段，不属于 runtime metadata。
-- [x] 更新本计划各 phase 状态与验证结果。
-- [x] 在 `trajectory-align-log.md` 当天条目下合并记录本轮 P-12 实现摘要。
-
-### Phase 6 验证结果
-
-- Focused core tests：`packages/core` 下 `main-tool-pool`、`subagent-explore`、`tool-contracts`、`skill-tool`、`tool-input-normalization`、`target-tool` 共 6 files / 36 tests 通过。
-- Focused contracts tests：`packages/contracts/tests/grep.test.ts` 1 file / 1 test 通过。
-- Touched package typecheck：`@zcode/contracts`、`@zcode/core`、`@zcode/bootstrap` 的 `tsc --noEmit` 均通过。
-- Build for trajectory：`@zcode/contracts`、`@zcode/core`、`@zcode/bootstrap` 的 `tsc` build 均通过。
-- Prompt trajectory：`tools/prompt-trajectory/out/p12-tool-surface-final-review-20260608-184856/test20260608-184857`。
-- Request-body 抽检：parent request 有 `Agent/Skill` 且无 `Glob/Grep/GoalRead`；Explore child 有 `Read/Bash/Glob/Grep` 且无 `Agent/Skill/Write/Edit/ApplyPatch/GoalRead`，本轮 P-12 baseline fixture 未出现 provider-native `web_search`；`Skill` schema 有 `skill` 无 `name`；`Read/Write/Edit.file_path` description 为 absolute path；`Agent` schema 无 `model/isolation`；Agent description 和 Explore prompt 可语义提示 `WebSearch`。`WebSearch` / native-search exact schema 和 provider-specific request body 后续已由 WebSearch client tool plan 单独落地；Explore prompt 无旧 `|` pipe 误禁且不包含 `Use Skill`。
-- Touched-file lint：P-12 touched `contracts/core/bootstrap` src/tests 文件通过 `oxlint`。
-- `git diff --check`：通过。
-
-阻塞说明：
-
-- root `pnpm typecheck` / `pnpm lint` 被 pnpm deps status check 阻塞：无 TTY 时拒绝清理 `node_modules` 并退出。
-- `apps/zcode-cli` 的 `pnpm typecheck` / `pnpm lint` 被本地 `turbo` shim 阻塞：找不到 `apps/zcode-cli/node_modules/turbo/bin/turbo`。
-- 更广的 package `oxlint src tests` 命中既有 `max-lines` / unused / optional-chaining 问题，例如 `core/src/workflow/lifecycle.ts`、`core/src/subagent/runner.ts`、`contracts/src/model/index.ts`、`bootstrap/src/zcode-protocol/session-mapper.ts` 等，不属于本轮 P-12 touched file。
-
-### 预期验证命令
+Environment blockers recorded at acceptance (not P-12 regressions): root `pnpm typecheck` / `pnpm lint` were blocked by the pnpm deps status check without a TTY; `apps/zcode-cli` `pnpm typecheck` / `pnpm lint` were blocked by a missing local `turbo` shim; wider package `oxlint` hit pre-existing `max-lines` / unused / optional-chaining issues in files P-12 did not touch (for example `core/src/workflow/lifecycle.ts`, `core/src/subagent/runner.ts`, `contracts/src/model/index.ts`, `bootstrap/src/zcode-protocol/session-mapper.ts`).
 
 ```bash
 cd apps/zcode-cli
@@ -306,19 +185,19 @@ pnpm lint
 git diff --check
 ```
 
-如果 full `pnpm lint` 被既有未触碰问题阻塞，需要在交付中列出阻塞文件和 focused lint/typecheck 结果，不能把 blocked 说成 passed。
+If full `pnpm lint` is blocked by existing untouched problems, list the blocking files and the focused lint/typecheck results; never report blocked as passed.
 
-## 风险点
+## Risks
 
-- `Skill.skill` 是 provider schema breaking change；需要 runtime parser 兼容旧 `name`，并检查 trajectory/replay 中历史 tool call 是否还能执行。
-- 移除 main `Glob/Grep` 会改变模型可用搜索路径；需要确认 `Agent` 在 subagent capability 可用时已暴露，且 Bash/plan-mode guidance 不再要求 main 直接使用 `Glob/Grep`。
-- 删除 `GoalRead` provider tool 不能影响 goal continuation / verification 的内部 prompt 或 tool result flow；需要 focused test 保证 goal runtime 仍可工作。
-- `Bash` description 是 main 和 Explore 共享的 provider text；需要避免写成某个 surface 独有事实，除非最终只有该 surface 可见。
-- `Read.pages` 当前字段和真实能力之间可能存在历史不一致；Phase 2 需要先确认 handler/provider 是否真的支持，再决定是移出 provider schema还是改成 postponed-safe wording。
+- `Skill.skill` is a provider schema breaking change: the runtime parser must accept the old `name`, and historical tool calls in trajectory/replay must still execute.
+- Removing main `Glob/Grep` changes the model's search path: `Agent` must be exposed when subagent capability is available, and Bash/plan-mode guidance must not ask main to use `Glob/Grep` directly.
+- Removing the `GoalRead` provider tool must not affect internal goal continuation / verification prompts or tool-result flow; a focused test guards goal runtime.
+- `Bash` description is shared provider text for main and Explore; do not write it as a fact unique to one surface unless only that surface sees it.
+- `Read.pages` may have a historical mismatch between field and real capability; verify the handler/provider before deciding between removing it from the provider schema and postponed-safe wording (resolved in Phase 2: removed from provider schema).
 
-## 执行备注
+## Execution notes
 
-- 每个 phase 结束后必须停止等待用户 review，不自动进入下一 phase。
-- 不自动 commit；只有用户明确要求 commit 时才提交。
-- 代码注释如必须新增，使用中文解释 bug/设计原因，不在代码注释里提其他产品名。
-- Plan 完成态只在 Phase 6 验收通过并更新本计划状态后标记。
+- Stop after each phase for user review; never advance automatically.
+- Do not commit automatically; commit only when the user asks.
+- New code comments, if required, explain the bug/design reason and do not name other products.
+- The plan is marked complete only after Phase 6 acceptance.

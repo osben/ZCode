@@ -1,10 +1,10 @@
 # 09 · Hooks
 
-Hook 是在会话或工具事件上运行的本地程序，可记录事件、补充上下文或阻断调用。用户配置、项目配置和插件都可能提供 Hook；项目 Hook 需要额外信任。
+A Hook is a local program that runs on session or tool events; it can log events, add context or block a call. User configuration, project configuration and plugins can all provide Hooks; project Hooks need extra trust.
 
-## 事件与最小配置
+## Events and minimal configuration
 
-支持 `SessionStart`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PostToolUseFailure`、`Stop`。在运行配置中显式启用：
+Supported events: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `Stop`. Enable them explicitly in the runtime configuration:
 
 ```json
 {
@@ -29,7 +29,7 @@ Hook 是在会话或工具事件上运行的本地程序，可记录事件、补
 }
 ```
 
-此示例要求外部 Node。`guard.mjs` 读取 stdin JSON，以下示例用于验证拒绝路径，会拒绝全部匹配的 Bash 调用：
+This example requires an external Node. `guard.mjs` reads the stdin JSON; the following example verifies the denial path and denies every matching Bash call:
 
 ```js
 let input = "";
@@ -48,11 +48,11 @@ if (event.hook_event_name === "PreToolUse") {
 }
 ```
 
-这是 Hook 协议示例，不是完整安全策略。其他工具仍可能产生文件或网络副作用。
+(The sample reason string means "Bash is forbidden in this test.") This is a Hook protocol example, not a complete security policy. Other tools can still cause file or network side effects.
 
-## 项目 Hook 信任
+## Project Hook trust
 
-放在项目运行配置中的 Hook 默认未信任。开启 `hooks.enabled`、打开项目或使用 yolo 都不会自动信任它。
+A Hook placed in the project runtime configuration is untrusted by default. Enabling `hooks.enabled`, opening the project or using yolo does not trust it automatically.
 
 ```sh
 zcode hooks trust review --workspace /absolute/path/to/project --json
@@ -61,7 +61,7 @@ zcode hooks trust status --workspace /absolute/path/to/project --json
 zcode hooks trust revoke --workspace /absolute/path/to/project --hook-digest SHA256_FROM_REVIEW
 ```
 
-先审查命令和来源，再使用 review 返回的 digest。需要批量授权当前声明时，使用 `--all-current --bundle-digest SHA256_FROM_REVIEW`；不要省略绑定到当前内容的 digest。
+Review the command and source first, then use the digest returned by review. To grant the current declarations in bulk, use `--all-current --bundle-digest SHA256_FROM_REVIEW`; do not omit the digest bound to the current content.
 
 ```text
 发现项目 Hook → 未信任，跳过执行 → review → grant
@@ -69,16 +69,18 @@ zcode hooks trust revoke --workspace /absolute/path/to/project --hook-digest SHA
 声明改变 → digest 改变 → 再次未信任
 ```
 
-信任绑定工作区身份和声明内容。已跳过的 SessionStart 不会在当前任务中补跑，验证时创建新会话。信任存储损坏会 fail closed，`status` 返回原因；先备份并按诊断恢复存储，不要把损坏当作“已授权”。
+(Project Hook discovered: untrusted, execution skipped, review, grant; it can run on the next natural event. Declaration changes: the digest changes and it is untrusted again.)
 
-## 输入、输出与错误
+Trust binds the workspace identity and the declaration content. A skipped SessionStart is not replayed in the current task; create a new session to verify. A corrupted trust store fails closed and `status` returns the reason; back up and restore the store per the diagnostics, and do not treat corruption as "authorized".
 
-stdin 包含事件名、会话、工作目录和相关工具信息；兼容字段可能同时包含 camelCase 和 snake_case。只读取当前事件需要的字段。
+## Input, output and errors
 
-同步 `PreToolUse` 可返回 `allow`、`ask`、`deny`、`updatedInput` 和 `additionalContext`。退出码 `2` 表达阻断；其他失败、超时及非法输出会产生诊断，不能把所有异常都当作可靠拒绝。多个 Hook 需要通过事件记录核对最终结果。
+stdin contains the event name, session, working directory and related tool information; compatibility fields may contain both camelCase and snake_case. Read only the fields the current event needs.
 
-`type: "command"` 支持 shell 命令及异步执行。`async: true` 的后台输出不能用于同步阻断或改写本次工具输入；需要这些作用时使用同步 Hook。`timeoutMs` 单位为毫秒，兼容字段 `timeout` 单位为秒。
+A synchronous `PreToolUse` can return `allow`, `ask`, `deny`, `updatedInput` and `additionalContext`. Exit code `2` means a block; other failures, timeouts and invalid output produce diagnostics, so not every abnormal case counts as a reliable denial. With several Hooks, check the final result through the event record.
 
-matcher 不总是正则：`Write|Edit` 走精确工具名列表；包含其他正则语法时才进入正则匹配。事件的匹配对象不同，工具事件匹配工具名，SessionStart 匹配启动来源。
+`type: "command"` supports shell commands and asynchronous execution. The background output of `async: true` cannot be used to block synchronously or rewrite the tool input of this call; use a synchronous Hook for those effects. `timeoutMs` is in milliseconds; the compatibility field `timeout` is in seconds.
 
-插件也可贡献可执行 Hook。排查时同时检查插件启用状态和 Hook 来源；不要仅凭用户配置中的开关推断所有插件 Hook 都已关闭。批量任务应记录实际加载的声明和信任状态。
+A matcher is not always a regex: `Write|Edit` uses an exact tool name list; it enters regex matching only when it contains other regex syntax. Events match different objects: tool events match the tool name, and SessionStart matches the start source.
+
+Plugins can also contribute executable Hooks. When troubleshooting, check both the plugin enabled state and the Hook source; do not infer from the switch in the user configuration that all plugin Hooks are off. Batch tasks should record the declarations actually loaded and the trust state.

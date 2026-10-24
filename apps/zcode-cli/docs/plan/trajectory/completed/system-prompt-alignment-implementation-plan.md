@@ -1,41 +1,37 @@
 # System Prompt Assembly Historical Plan
 
-日期：2026-06-02
+Date: 2026-06-02
 
-状态：主体已实现。本文是历史完成记录，不再作为 executable implementation plan 使用。
+Status: main body implemented. This is a historical completion record, not an executable plan.
 
-相关提交：
+Related commits: `5f073d6a feat(zcode-cli): align system prompt assembly`, `37de3682 fix(zcode-cli): align provider-visible prompt identity`, `523f1332 fix(zcode-cli): align git system context prompt`.
 
-- `5f073d6a feat(zcode-cli): align system prompt assembly`
-- `37de3682 fix(zcode-cli): align provider-visible prompt identity`
-- `523f1332 fix(zcode-cli): align git system context prompt`
+## Goal
 
-## 原始目标
+Within the active system prompt slice, fix the content, structure and order of the system prompt zcode-cli sends to the model provider:
 
-在 active system prompt slice 内，确定 zcode-cli 最终发送给 model provider 的 system prompt 内容、结构和顺序：
+- P-01: stable ZCode CLI/product identity prefix.
+- P-02: default stable system body.
+- P-03: custom prompt semantics of `systemPrompt` (replaces the default body; keeps the CLI prefix and request-level context).
+- P-04: first active dynamic system sections: `session_guidance`, `language`, `output_style`, `frc`, `summarize_tool_results`.
+- P-05: provider-visible git/env_info/project_context context policy.
 
-- P-01：稳定 ZCode CLI/product identity prefix。
-- P-02：default stable system body。
-- P-03：`systemPrompt` 的 custom prompt 语义（替换 default body，保留 CLI prefix 与 request-level context）。
-- P-04：第一批 active dynamic system sections：`session_guidance`、`language`、`output_style`、`frc`、`summarize_tool_results`。
-- P-05：git/env_info/project_context provider-visible context 策略。
+Not in this slice: request-level `userContext`, follow-up attachments, P-12 tool schema text, P-13 ToolSearch, postponed MCP instructions, auxiliary/side request prompt chrome.
 
-不在本 slice 内实现：request-level `userContext`、follow-up attachments、P-12 tool schema text、P-13 ToolSearch、postponed MCP instructions、auxiliary/side request prompt chrome。
+## Completion state
 
-## 完成状态
-
-| Slice | 状态 | 结果 |
+| Slice | State | Result |
 | --- | --- | --- |
-| SP-S1 CLI prefix + stable body | Done | Provider-visible request body 使用独立首条 system message 承载 ZCode CLI prefix；stable body 从 `# Agent Identity` 开始，不重复 prefix 句。 |
-| SP-S2 custom prompt semantics | Done | `systemPrompt` 走 custom path：保留 ZCode CLI prefix 和 request-level/meta-user context，跳过 default stable body、dynamic system sections、`env_info`、git snapshot 和 `project_context`；已移除独立 `overrideSystemPrompt` 输入，避免第二套覆盖语义。 |
-| SP-S3 active dynamic sections | Done | 已补 `session_guidance`、current-prompt-language guidance、`output_style`、FRC、`summarize_tool_results`，并按下文 “active dynamic system section order” 的相对顺序输出。 |
-| SP-S3 postponed dynamic sections | Done as absence | `scratchpad`、`token_budget`、MCP instructions，以及 ZCode 没有对应功能的 dynamic sections 不生成空占位。 |
-| SP-S4 git/env_info/systemContext | Partial | `env_info` 已收敛为 env_info_simple，git branch/status/commits 已拆成独立 gitStatus systemContext message 并插在 dynamic system 之后；`project_context` 与 `systemContext` 的完整决策背景和 provider-visible 位置后续单独展开。 |
-| SP-S5 prompt-trajectory evidence | Manual evidence | `system-prompt-basic` testcase 和 `git-system-context-check` out request body 已用于人工确认 provider-visible 顺序；当前不扩展 `expect.json` 自动比对能力。 |
+| SP-S1 CLI prefix + stable body | Done | The provider request carries the ZCode CLI prefix in its own first system message; the stable body starts at `# Agent Identity` and does not repeat the prefix sentence. |
+| SP-S2 custom prompt semantics | Done | `systemPrompt` takes the custom path: keeps the ZCode CLI prefix and request-level/meta-user context; skips the default stable body, dynamic system sections, `env_info`, git snapshot and `project_context`. The separate `overrideSystemPrompt` input was removed to avoid a second override semantics. |
+| SP-S3 active dynamic sections | Done | `session_guidance`, current-prompt-language guidance, `output_style`, FRC and `summarize_tool_results` are emitted in the order below. |
+| SP-S3 postponed dynamic sections | Done as absence | `scratchpad`, `token_budget`, MCP instructions and dynamic sections ZCode has no feature for emit no empty placeholder. |
+| SP-S4 git/env_info/systemContext | Partial | `env_info` is reduced to env_info_simple; git branch/status/commits are an independent gitStatus systemContext message inserted after dynamic system. The full decision background and provider-visible position of `project_context` and `systemContext` are a follow-up. |
+| SP-S5 prompt-trajectory evidence | Manual evidence | The `system-prompt-basic` testcase and the `git-system-context-check` out request body confirm the provider-visible order by hand; `expect.json` auto-compare is not extended. |
 
-## 最终 Provider-Visible Shape
+## Final provider-visible shape
 
-默认主会话：
+Default main session:
 
 ```text
 messages:
@@ -46,7 +42,7 @@ messages:
   [4...] user meta context / conversation messages
 ```
 
-custom body：
+Custom body:
 
 ```text
 messages:
@@ -55,7 +51,7 @@ messages:
   [2...] user meta context / conversation messages
 ```
 
-active dynamic system section order:
+Active dynamic system section order:
 
 ```text
 session_guidance
@@ -67,16 +63,16 @@ frc
 summarize_tool_results
 ```
 
-## Implementation Evidence
+## Implementation evidence
 
 | Area | Evidence |
 | --- | --- |
-| ContextBuilder boundaries | `apps/zcode-cli/packages/core/tests/context-builder.test.ts` covers separate prefix/stable/dynamic/git systemContext messages, custom body, default semantic anchors, current-prompt-language guidance, output style framing, FRC and summarize conditions. |
-| Runtime request shape | `apps/zcode-cli/packages/core/tests/runtime-trace.test.ts` covers `systemPrompt`, no request-time context prefix mutation after MCP initialization, and multi-turn request shape with dynamic sections plus MCP tools. |
-| Bootstrap locale boundary | `apps/zcode-cli/packages/bootstrap/tests/session-persistence.test.ts` covers UI locale detection/persistence while keeping provider-visible language guidance independent of locale, plus model refresh and resume-time git systemContext snapshot stability. |
-| Prompt trajectory | `apps/zcode-cli/tools/prompt-trajectory/testcases/system-prompt-basic/` and `apps/zcode-cli/tools/prompt-trajectory/out/git-system-context-check/trajectories/0001.openai_request_body.json` provide manual provider request-body inspection evidence. |
+| ContextBuilder boundaries | `apps/zcode-cli/packages/core/tests/context-builder.test.ts`: separate prefix/stable/dynamic/git systemContext messages, custom body, default semantic anchors, current-prompt-language guidance, output style framing, FRC and summarize conditions. |
+| Runtime request shape | `apps/zcode-cli/packages/core/tests/runtime-trace.test.ts`: `systemPrompt`, no request-time context prefix mutation after MCP initialization, multi-turn request shape with dynamic sections plus MCP tools. |
+| Bootstrap locale boundary | `apps/zcode-cli/packages/bootstrap/tests/session-persistence.test.ts`: UI locale detection/persistence while provider-visible language guidance stays independent of locale; model refresh and resume-time git systemContext snapshot stability. |
+| Prompt trajectory | `apps/zcode-cli/tools/prompt-trajectory/testcases/system-prompt-basic/` and `apps/zcode-cli/tools/prompt-trajectory/out/git-system-context-check/trajectories/0001.openai_request_body.json`. |
 
-Focused validation used for this slice:
+Focused validation:
 
 ```bash
 pnpm --filter @zcode/core exec vitest tests/context-builder.test.ts tests/runtime-trace.test.ts tests/runtime-hooks.test.ts tests/runtime-memory.test.ts tests/mcp-runtime.test.ts --run
@@ -84,17 +80,14 @@ pnpm --filter @zcode/bootstrap exec vitest tests/session-persistence.test.ts --r
 pnpm --filter @zcode/prompt-trajectory typecheck
 ```
 
-## Residual Follow-Ups
+Repo-wide `pnpm typecheck` / `pnpm lint` results are not recorded here and are not proof of completion.
+
+## Residual follow-ups
 
 | Item | Status | Note |
 | --- | --- | --- |
-| SP-S4 project_context / systemContext background | Follow-up | 需要后续单独展开当时的决策背景、`systemContext` 语义、ZCode `project_context` provider-visible surface，以及是否继续收敛。 |
-| Auxiliary / side request prompt chrome | Out of scope | 不作为本 system prompt active slice 的验收标准；应在 auxiliary request / P-36 / P-37 独立文档中处理。 |
-| Prompt-trajectory `expect.json` automation | Skipped | 当前只保留人工 request-body evidence；不在本次 cleanup 中实现自动比对。 |
-| Full repo checks | Not recorded here | 本历史记录只列 focused validation；repo-wide `pnpm typecheck` / `pnpm lint` 结果不作为该历史 plan 的完成证明。 |
+| SP-S4 project_context / systemContext background | Follow-up | Separately expand the decision background, `systemContext` semantics, the ZCode `project_context` provider-visible surface, and whether to keep converging. |
+| Auxiliary / side request prompt chrome | Out of scope | Not an acceptance criterion of this slice; handle in the auxiliary request / P-36 / P-37 documents. |
+| Prompt-trajectory `expect.json` automation | Skipped | Only manual request-body evidence is kept. |
 
-## Completion Notes
-
-- 原 executable checklist 已移除，避免后续 agent 误按旧步骤重复实现或重复提交。
-- 旧 plan 中的中间态 code snippets 已移除；最终实现以当前源码和测试为准。
-- 后续若继续推进 SP-S4 或 auxiliary request，应新建/更新独立 plan，而不是复用本文。
+Further work on SP-S4 or auxiliary requests belongs in a new or updated plan, not this document.
