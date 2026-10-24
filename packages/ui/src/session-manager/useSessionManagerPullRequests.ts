@@ -11,7 +11,8 @@ import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionSt
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
 import {
-  usePullRequestRefreshSignals,
+  usePullRequestExplicitRefresh,
+  usePullRequestGitMutationRefresh,
   usePullRequestTurnEndInvalidation,
 } from "@/hooks/usePullRequestTurnEndInvalidation.js";
 import type { SessionManagerRow } from "./sessionManagerModel.js";
@@ -131,5 +132,6 @@ export function useSessionManagerPullRequests(
   // mutation (commit/push) or an explicit refresh force the affected rows. Both are shared hooks; the
   // version signals are not replayed by a targets change.
   usePullRequestTurnEndInvalidation(prober, targets, active);
-  usePullRequestRefreshSignals(prober, targets, active);
+  usePullRequestGitMutationRefresh(prober, targets, active);
+  usePullRequestExplicitRefresh(prober, targets, active);
 }

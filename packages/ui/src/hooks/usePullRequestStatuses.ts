@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
 import {
-  usePullRequestRefreshSignals,
+  usePullRequestExplicitRefresh,
+  usePullRequestGitMutationRefresh,
   usePullRequestTurnEndInvalidation,
 } from "@/hooks/usePullRequestTurnEndInvalidation.js";
 import {
@@ -59,10 +60,10 @@ export function usePullRequestStatuses(
     void prober.probe(targets);
   }, active);
 
-  // Refresh signals run before the turn-end diff, as before the shared hook: when both probe the
-  // same workspace in one commit, the later (forced) turn-end write wins.
-  usePullRequestRefreshSignals(prober, targets, active);
+  // Order matters (the newest probe per workspace wins): git mutation, turn end, explicit refresh.
+  usePullRequestGitMutationRefresh(prober, targets, active);
   usePullRequestTurnEndInvalidation(prober, targets, active);
+  usePullRequestExplicitRefresh(prober, targets, active);
 
   // Drop store entries for workspaces that left the sidebar. PullRequestStatusProbes keeps every
   // open resolved workspace in targets (even with no visible worktree tasks), so this fires only

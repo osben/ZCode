@@ -24,31 +24,37 @@ vi.mock("@/lib/workspaceServiceResolver.js", () => ({
 
 const WORKSPACE_PATH = "/repo";
 const TASK_ID = "task-1";
+const OTHER_TASK_ID = "task-2";
 const WORKSPACE_KEY = buildTaskWorkspaceKey(WORKSPACE_PATH);
 const WORKTREE = { branchName: "feat/x", path: "/repo/.worktrees/x" };
 
-// Each driver renders with or without one worktree task in view.
+interface ViewTask {
+  taskId: string;
+  running: boolean;
+}
+
+const ONE_TASK: ViewTask[] = [{ taskId: TASK_ID, running: false }];
+
+// Each driver renders the given worktree tasks of one workspace (none = no targets).
 const drivers = [
   {
     name: "sidebar driver",
-    render: (withTarget: boolean) =>
+    render: (tasks: readonly ViewTask[]) =>
       usePullRequestStatuses(
-        withTarget
+        tasks.length > 0
           ? [
               {
                 workspaceKey: WORKSPACE_KEY,
                 workspacePath: WORKSPACE_PATH,
                 gitService,
-                tasks: [
-                  {
-                    input: {
-                      taskId: TASK_ID,
-                      branchName: WORKTREE.branchName,
-                      worktreePath: WORKTREE.path,
-                    },
-                    running: false,
+                tasks: tasks.map((task) => ({
+                  input: {
+                    taskId: task.taskId,
+                    branchName: WORKTREE.branchName,
+                    worktreePath: WORKTREE.path,
                   },
-                ],
+                  running: task.running,
+                })),
               },
             ]
           : [],
@@ -56,34 +62,36 @@ const drivers = [
   },
   {
     name: "Session manager driver",
-    render: (withTarget: boolean) =>
+    render: (tasks: readonly ViewTask[]) =>
       useSessionManagerPullRequests(
-        withTarget
-          ? [
-              {
-                task: {
-                  taskId: TASK_ID,
-                  workspacePath: WORKSPACE_PATH,
-                  executionWorktree: WORKTREE,
-                },
-                taskKey: buildPullRequestTaskKey(WORKSPACE_KEY, TASK_ID),
-                workspaceKey: WORKSPACE_KEY,
-                archived: false,
-                pinned: false,
-                running: false,
-                offline: false,
-              } as unknown as SessionManagerRow,
-            ]
-          : [],
+        tasks.map(
+          (task) =>
+            ({
+              task: {
+                taskId: task.taskId,
+                workspacePath: WORKSPACE_PATH,
+                executionWorktree: WORKTREE,
+              },
+              taskKey: buildPullRequestTaskKey(WORKSPACE_KEY, task.taskId),
+              workspaceKey: WORKSPACE_KEY,
+              archived: false,
+              pinned: false,
+              running: task.running,
+              offline: false,
+            }) as unknown as SessionManagerRow,
+        ),
       ),
   },
 ];
 
-function forcedCalls(): unknown[][] {
-  return getSessionPullRequests.mock.calls.filter((call) => {
-    const request = (call as unknown[])[0] as { forceTaskIds?: string[] };
-    return request.forceTaskIds?.includes(TASK_ID);
-  });
+function requestOf(call: unknown): { tasks: { taskId: string }[]; forceTaskIds?: string[] } {
+  return (call as unknown[])[0] as { tasks: { taskId: string }[]; forceTaskIds?: string[] };
+}
+
+function forcedCalls(taskId = TASK_ID): unknown[][] {
+  return getSessionPullRequests.mock.calls.filter((call) =>
+    requestOf(call).forceTaskIds?.includes(taskId),
+  );
 }
 
 beforeEach(() => {
@@ -100,21 +108,21 @@ afterEach(() => {
 
 describe.each(drivers)("$name refresh signals", ({ render }) => {
   it("keeps a git mutation pending while there are no targets", async () => {
-    const { rerender } = renderHook(({ withTarget }) => render(withTarget), {
-      initialProps: { withTarget: false },
+    const { rerender } = renderHook(({ tasks }) => render(tasks), {
+      initialProps: { tasks: [] as readonly ViewTask[] },
     });
     act(() => {
       usePullRequestStatusStore.getState().requestRefresh();
     });
     await act(async () => {
-      rerender({ withTarget: true });
+      rerender({ tasks: [...ONE_TASK] });
     });
     expect(forcedCalls()).toHaveLength(1);
   });
 
   it("fires an explicit refresh once per version", async () => {
-    const { rerender } = renderHook(({ withTarget }) => render(withTarget), {
-      initialProps: { withTarget: true },
+    const { rerender } = renderHook(({ tasks }) => render(tasks), {
+      initialProps: { tasks: ONE_TASK },
     });
     await act(async () => {
       usePullRequestStatusStore
@@ -124,8 +132,37 @@ describe.each(drivers)("$name refresh signals", ({ render }) => {
     expect(forcedCalls()).toHaveLength(1);
     // A new targets identity re-runs the effects but must not replay the request.
     await act(async () => {
-      rerender({ withTarget: true });
+      rerender({ tasks: [...ONE_TASK] });
     });
     expect(forcedCalls()).toHaveLength(1);
+  });
+
+  it("issues an explicit refresh after a same-commit turn end", async () => {
+    // The prober keeps only the newest response per workspace, so the explicit probe (which
+    // carries every task) must be issued after the turn-end probe (finished tasks only).
+    const { rerender } = renderHook(({ tasks }) => render(tasks), {
+      initialProps: {
+        tasks: [
+          { taskId: TASK_ID, running: true },
+          { taskId: OTHER_TASK_ID, running: false },
+        ] as readonly ViewTask[],
+      },
+    });
+    await act(async () => {
+      usePullRequestStatusStore
+        .getState()
+        .requestForceRefresh([buildPullRequestTaskKey(WORKSPACE_KEY, OTHER_TASK_ID)]);
+      rerender({
+        tasks: [
+          { taskId: TASK_ID, running: false },
+          { taskId: OTHER_TASK_ID, running: false },
+        ],
+      });
+    });
+    expect(forcedCalls(TASK_ID)).toHaveLength(1);
+    expect(forcedCalls(OTHER_TASK_ID)).toHaveLength(1);
+    expect(requestOf(getSessionPullRequests.mock.calls.at(-1)).forceTaskIds).toEqual([
+      OTHER_TASK_ID,
+    ]);
   });
 });
