@@ -1,48 +1,38 @@
 # Chat Model Select Menu
 
-> **当前状态**：聊天侧已经迁移到 V4 composer。
+> Current state: the chat side has migrated to the V4 composer.
 
-## 目标
+## Goal
 
-聊天输入框复用 `ModelConfigSelect`，模型选择交互使用简单菜单承载，减少搜索型 Command 列表在小范围模型切换里的操作成本。
+The composer reuses `ModelConfigSelect`, and model selection uses a simple menu, reducing the interaction cost of a search-style Command list for small-scope model switching.
 
-## 当前实现
+## Current implementation
 
 - `packages/ui/src/ModelConfigSelect.tsx`
-  - 使用现有 `DropdownMenu` 组件渲染模型菜单，保持 `bg-menu`、紧凑行高和键盘菜单语义。
-  - 多个 provider 时，合并菜单顶部是当前浏览的 provider 行，展开（悬停、点击或键盘）后为 provider 列表，下方 Models 列表展示所浏览 provider 的 model。provider 行只用于浏览：点击、键盘确认，或在桌面子菜单中悬停／方向键移到 provider，都只切换 Models 列表；模型、思考档位和账号连接只在选择 model 行时改变（ISSUE-058，见 [`specs/composer-model-picker-browse-only-providers.md`](../../specs/composer-model-picker-browse-only-providers.md)）。
-  - Z.ai / BigModel family 在分组标题展示当前连接方式短徽标，例如 `Start`、`Individual`、`Team`、
-    `API`；连接方式徽标使用无边框的弱表面圆形 pill，模型项本身不重复徽标。连接方式只在设置页切换，输入框菜单只消费当前 selection。
-  - 只有一个 provider 时，一级菜单直接展示 model 列表，不额外包一层 provider。
-  - 选中 model 使用 `DropdownMenuRadioItem` 保留单选状态；受当前运行任务限制的 model 使用禁用语义和锁定提示，不触发切换。
-  - 模型配置的输入类型包含任意非 Text 值时，模型名后紧跟本地化的“视觉 / Vision”紧凑徽标。徽标使用轻量圆形 pill：细边框、弱表面背景、`text-ui-xs` 中等字重；徽标属于左侧模型内容，行尾选中对号的位置不变。它只描述 provider registry 中已经声明的输入类型，不承诺当前 adapter 一定能发送相应附件。
-  - `Ctrl+M` 只唤起模型菜单，不按顺序循环切换模型；模型切换必须由用户在菜单中明确选择。
-  - trigger 文案切换时复用 toolbar rolling label 动效，和 mode / thought level 控件保持一致；系统开启 reduced motion 时直接静态替换。
-  - 自定义 provider 的显示身份按 `providerName.trim() || providerId` 解析，与菜单保持一致；名称缺失、空串或纯空白时，trigger 仍生成 `providerId/` 前缀及完整 title。前缀可见性继续由七档压缩决定。内置账号套餐维持只显示模型名的规则。
-  - composer trigger 按实际剩余空间执行七档累积压缩：Computer Use 正方形 → mode 正方形 → Plan 正方形 → think 图标＋小绿条 → 隐藏 provider-text → think 正方形（小绿条隐藏）→ model 正方形。每档够用即停，放宽时逆序恢复。模型名称显示时保持完整单行与下拉箭头，最后一档直接改为 28px 的 Lucide `Package` 图标按钮并隐藏箭头，不再额外按宽度阈值省略模型文字。具体规则见 [CUA composer 布局契约](../superpowers/specs/2026-08-18-cua-composer-entry-design.md)。provider 前缀与模型名必须保持结构化节点，不从最终文案按 `/` 切割；按钮 title 与 rolling 动画 key 继续使用完整身份文案。普通与 reduced motion 共用相同的单行容器结构，避免供应商与模型被截断样式分成两行。桌面分屏、普通 Web 和手机 Web 共用此规则。
-  - 模型项同样把模型 ID 当作不透明字符串；`openrouter/ox-alpha` 或更多层级的 `/` 不参与能力判定或名称拆分，选择值继续使用完整 ID。
-  - 模型切换 pending 时，loading spinner 放在文案后面，避免模型名左侧宽度变化造成视觉跳动。
-  - “管理模型”入口继续由调用方控制，只改变承载组件，不改变 settings 导航链路。
+  - Renders the model menu with the existing `DropdownMenu` component, keeping `bg-menu`, compact row height and keyboard menu semantics.
+  - With several providers, the merged menu has the currently browsed provider row at the top; expanded (hover, click or keyboard) it is the provider list, and the Models list below shows the models of the browsed provider. The provider row is for browsing only: click, keyboard confirm, or hovering / arrow-moving to a provider in the desktop submenu only switches the Models list; model, thinking level and account connection change only when a model row is selected (ISSUE-058, see [`specs/composer-model-picker-browse-only-providers.md`](../../specs/composer-model-picker-browse-only-providers.md)).
+  - The Z.ai / BigModel family shows the current connection method as a short badge on the group title, for example `Start`, `Individual`, `Team`, `API`; the badge is a borderless, faint-surface round pill, and model items do not repeat it. The connection method is switched only in settings; the composer menu only consumes the current selection.
+  - With a single provider, the first-level menu shows the model list directly without wrapping a provider layer.
+  - The selected model uses `DropdownMenuRadioItem` to keep single-select state; a model restricted by the currently running task uses disabled semantics and a lock hint and does not trigger a switch.
+  - When the model config's input types include any non-Text value, a compact localized "视觉 / Vision" badge follows the model name. The badge is a light round pill: thin border, faint surface background, `text-ui-xs` medium weight; it belongs to the left model content and the row-end selected check keeps its position. It only describes the input types already declared in the provider registry and does not promise the current adapter can send the corresponding attachment.
+  - `Ctrl+M` only opens the model menu and does not cycle models in order; model switching must be an explicit user selection in the menu.
+  - When the trigger text changes it reuses the toolbar rolling label animation, consistent with the mode / thought level controls; under system reduced motion it is replaced statically.
+  - The display identity of a custom provider resolves as `providerName.trim() || providerId`, consistent with the menu; when the name is missing, empty or whitespace-only the trigger still produces the `providerId/` prefix and the full title. Prefix visibility is still decided by the seven-step compression. Built-in account plans keep showing only the model name.
+  - The composer trigger applies a seven-step cumulative compression by actual free space: Computer Use square -> mode square -> Plan square -> think icon + small green bar -> hide provider-text -> think square (small green bar hidden) -> model square. Each step stops once enough, and relaxing restores in reverse order. While the model name is shown it stays a full single line with the dropdown arrow; the last step directly becomes a 28px Lucide `Package` icon button with the arrow hidden, with no extra width-threshold truncation of the model text. See the [CUA composer layout contract](../superpowers/specs/2026-08-18-cua-composer-entry-design.md). The provider prefix and model name must stay structured nodes and are never split from the final text by `/`; the button title and rolling animation key keep using the full identity text. Normal and reduced motion share the same single-line container structure, so the provider and model are not split into two lines by truncation styles. Desktop split view, plain Web and mobile Web share this rule.
+  - Model items likewise treat the model ID as an opaque string; `openrouter/ox-alpha` or more `/` levels play no part in capability judgment or name splitting, and the selection value keeps the full ID.
+  - While a model switch is pending, the loading spinner goes after the text, so a width change to the left of the model name does not cause visual jumping.
+  - The "manage models" entry stays controlled by the caller; only the host component changes and the settings navigation chain does not.
 - `packages/ui/src/v4/composer/V4ComposerToolbar.tsx`
-  - 只负责把聊天 toolbar 的模型分组、锁定状态和切换回调传入 `ModelConfigSelect`。
+  - Only passes the chat toolbar's model groups, lock state and switch callback into `ModelConfigSelect`.
 - `packages/ui/src/v4/ConversationComposer.tsx`
-  - 模式、模型、思考深度三个配置 picker 共享 composer-local 的打开状态；任一时刻最多一个
-    picker 展开。点击另一个 trigger 时，旧 picker 必须先退出可见状态，后点击的 picker
-    保持打开。
-  - 关闭旧 picker 的迟到回调只能清理它自己，不能把已经接管的兄弟 picker 一并关闭。
-  - picker owner 只在当前 `workspaceKey + sessionId/draft scope` 内有效；scope 切换时必须
-    同步清空。`ConversationComposer` React 实例可以跨 task/draft 复用，但打开状态不得跨 scope
-    保留或自动弹出。
+  - The mode, model and thinking-depth pickers share composer-local open state; at most one picker is expanded at any time. When another trigger is clicked, the old picker must leave the visible state first, and the picker clicked later stays open.
+  - A late callback that closes the old picker may only clean up itself and must not close the sibling picker that has already taken over.
+  - The picker owner is valid only inside the current `workspaceKey + sessionId/draft scope`; on a scope switch it must be cleared synchronously. The `ConversationComposer` React instance may be reused across task/draft, but the open state must not be kept or auto-popped across scopes.
 
-## 兼容边界
+## Compatibility boundary
 
-- 桌面端和 Web 端共用同一个 React 组件，菜单交互不引入平台专属逻辑。
-- picker 互斥只属于单个 composer 实例，不进入全局 store，也不跨 pane、window 或
-  desktop continuous / web-remote replayable 边界同步。
-- 手机 Web 端继续避免关闭菜单后强制恢复输入框焦点，防止触控设备拉起系统键盘遮挡菜单；模型 trigger 不保留手机专用的固定宽度、文字截断或 provider 裁剪逻辑，统一依赖 composer 的可用空间裁决。
-- ZCode Agent 的 provider 模型菜单按 runtime endpoint format 过滤，当前目录可以包含
-  Anthropic-compatible、OpenAI-compatible Chat Completions 和 OpenAI Responses 模型；Bot `/model`
-  入口复用同一 provider 能力边界。
-- 已有 session 的选择通过 V4 `switchModelConfig` 写 CLI；草稿选择由 `useDraftConfigControl` 写
-  `draftConfigRef`、workspace default 和预热 session。远程恢复必须保持 workspaceIdentity /
-  remoteSessionId，不经过 legacy task model write。
+- Desktop and Web share one React component; the menu interaction introduces no platform-specific logic.
+- Picker mutual exclusion belongs to a single composer instance, does not enter a global store, and is not synchronized across pane, window or the desktop continuous / web-remote replayable boundary.
+- Mobile Web keeps avoiding forced restoration of input focus after the menu closes, to prevent touch devices from raising the system keyboard over the menu; the model trigger keeps no mobile-specific fixed width, text truncation or provider clipping logic and relies uniformly on the composer's available-space decision.
+- The ZCode Agent provider model menu filters by runtime endpoint format; the current catalog may contain Anthropic-compatible, OpenAI-compatible Chat Completions and OpenAI Responses models; the Bot `/model` entry reuses the same provider capability boundary.
+- For an existing session the selection writes to the CLI through V4 `switchModelConfig`; a draft selection is written by `useDraftConfigControl` to `draftConfigRef`, the workspace default and the pre-warmed session. Remote recovery must keep workspaceIdentity / remoteSessionId and not go through the legacy task model write.

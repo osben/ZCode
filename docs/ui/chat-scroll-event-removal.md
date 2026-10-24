@@ -1,10 +1,10 @@
-# Chat Scroll Events（当前事实）
+# Chat Scroll Events (current state)
 
-旧“移除 onScroll/ResizeObserver”的方案已被 V4 虚拟时间线取代。当前 `ConversationTimeline` 使用：
+The old "remove onScroll/ResizeObserver" plan has been superseded by the V4 virtual timeline. The current `ConversationTimeline` uses:
 
-- `onScroll` 判断用户位置和 follow-bottom；
-- `ResizeObserver`/动态测高维护流式 row 高度；
-- virtualizer 控制可见 turn 渲染；
-- 滚底按钮帮助用户恢复自动跟随。
+- `onScroll` to decide user position and follow-bottom;
+- `ResizeObserver` / dynamic measurement to maintain streaming row heights;
+- a virtualizer to control which turns render;
+- a scroll-to-bottom button to help the user resume auto-follow.
 
-这些事件只维护 UI 视图状态，不能影响 conversation seq/projection。
+These events maintain UI view state only and must not affect conversation seq/projection.

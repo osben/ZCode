@@ -1,141 +1,127 @@
-# Composer Skill Catalog 生命周期
+# Composer Skill Catalog Lifecycle
 
-> 状态：2026-08-20 已实现并通过单元/协议回归。
-> 关联能力：`capability.session-skill-catalog`、`surface.composer-slash-capability-picker`。
-> 关联文档：[mention-panel-layout.md](./mention-panel-layout.md)、
-> [conversation-session-case-catalog.md](../conversation-session-case-catalog.md) S08。
+> Status: implemented 2026-08-20 and passing unit/protocol regressions.
+> Related capabilities: `capability.session-skill-catalog`, `surface.composer-slash-capability-picker`.
+> Related docs: [mention-panel-layout.md](./mention-panel-layout.md), [conversation-session-case-catalog.md](../conversation-session-case-catalog.md) S08.
 
 ## Feature Summary
 
 | Field | Value |
 | --- | --- |
-| Change | Composer 的 Skill 候选从 workspace 级长期快照改为 workspace/session 双 authority 目录 |
-| User-visible surfaces | `/` 的 Skills 分组；兼容入口 `$`、`¥`、`￥` |
+| Change | The Composer's Skill candidates change from a long-lived workspace-level snapshot to a workspace/session dual-authority catalog |
+| User-visible surfaces | The Skills group of `/`; compatibility entries `$`, `¥`, `￥` |
 | Change layer | option-source / persistence / recovery |
-| Existing code owners | `useSkills`、`SlashCommandPlugin`、`skillsMentionProvider`、CLI `AgentRuntime` |
-| Out of scope | Settings 的 Skill 管理目录；Skill 安装/删除/启停存储；Subagent/command catalog；canonical mention 格式 |
+| Existing code owners | `useSkills`, `SlashCommandPlugin`, `skillsMentionProvider`, CLI `AgentRuntime` |
+| Out of scope | The Settings Skill management catalog; Skill install/delete/enable storage; Subagent/command catalog; canonical mention format |
 
-## 产品语义
+## Product semantics
 
-Skill 管理面和对话候选面是两种不同 authority：
+The Skill management surface and the conversation candidate surface are two different authorities:
 
 ```text
-Settings / 安装 / 删除 / 启停
-  `-> workspace 管理目录（每次显式刷新都重新扫描磁盘）
+Settings / install / delete / enable-disable
+  `-> workspace management catalog (every explicit refresh rescans the disk)
 
-Composer 新草稿
-  |-> prewarm 尚未就绪：skills/referenceCatalog(sessionId 缺省)
-  |    `-> workspace 当前目录
-  `-> prewarm P1 就绪：skills/referenceCatalog(sessionId=P1)
-       `-> P1 AgentRuntime 初始化时冻结的目录
-            `-> 首发提升为正式 Session S1（沿用同一 runtime）
+Composer new draft
+  |-> prewarm not ready: skills/referenceCatalog(sessionId omitted)
+  |    `-> current workspace catalog
+  `-> prewarm P1 ready: skills/referenceCatalog(sessionId=P1)
+       `-> the catalog frozen when P1's AgentRuntime initialized
+            `-> first send promotes to a formal Session S1 (same runtime)
 
-Composer 已有热 Session S1
+Composer existing hot Session S1
   `-> skills/referenceCatalog(sessionId=S1)
-       `-> S1 runtime 冻结目录（不热加载新增 Skill）
+       `-> S1 runtime frozen catalog (newly added Skills are not hot-loaded)
 
-S1 被 cold resume / Agent runtime restart
-  `-> 新 runtime 重新扫描磁盘
-       `-> UI runtime revision 变化后重新请求 S1 目录
+S1 cold resume / Agent runtime restart
+  `-> the new runtime rescans the disk
+       `-> after the UI runtime revision changes, S1's catalog is requested again
 ```
 
-因此，“已有对话不更新”限定为同一个 resident runtime 生命周期。CLI cold resume 会重建
-runtime 并重新执行 context/Skill discovery，UI 必须随新 runtime authority 重新查询，不能永久复用旧 Promise
-或 renderer 缓存。
+So "an existing conversation does not update" is limited to the lifetime of the same resident runtime. A CLI cold resume rebuilds the runtime and re-runs context/Skill discovery, and the UI must re-query with the new runtime authority and must not reuse an old Promise or renderer cache forever.
 
-显式输入一个不在冻结目录中的 Skill 名称是否能被 Agent 动态加载，继续沿用 CLI `Skill` tool 的既有规则；
-Picker 只展示当前 authority 声明的候选，不借此扩大或收紧工具执行权限。
+Whether explicitly typing a Skill name that is not in the frozen catalog can be loaded dynamically by the Agent keeps following the existing rules of the CLI `Skill` tool; the Picker shows only candidates declared by the current authority and does not widen or narrow tool execution permission through this.
 
-## UI Surface Matrix
+## UI surface matrix
 
 | User scenario | UI entry | Option source | Display owner | Authority | Mode boundary | Must remain isolated from |
 | --- | --- | --- | --- | --- | --- | --- |
-| 新建草稿选择 Skill | `/`、`$`/Yen aliases | prewarm 未就绪时无 `sessionId`；就绪后带 `prewarmSessionId` | request-scoped React hook | workspace 当前目录或当前草稿 prewarm runtime 快照 | local/SSH/WSL/Docker 都走目标 workspace Agent；mobile 复用 shared-host | 不能复用上一任务 Session 目录；不能改 Settings state |
-| 已有 Session 选择 Skill | 同上 | 同协议带 `sessionId` | request-scoped React hook | Session runtime 冻结目录 | desktop continuous/mobile replayable 只影响交付，不改变目录语义 | 不得因磁盘新增或 Settings 刷新而热加载 |
-| runtime restart/cold resume | 同上 | runtime restart 后重发同一 session query | hook runtime revision | 新 runtime 目录 | remote attachment 变化也属于 request identity | 不得展示旧 runtime 迟到结果 |
-| Skill 管理 | Settings | `skillsService.list()` | Settings 本地 state | workspace 磁盘 | 使用现有目标 workspace service | 不改成 session 目录，不受 conversation cache 约束 |
+| New draft picks a Skill | `/`, `$`/Yen aliases | no `sessionId` while prewarm is not ready; with `prewarmSessionId` once ready | request-scoped React hook | the current workspace catalog or the current draft's prewarm runtime snapshot | local/SSH/WSL/Docker all go to the target workspace Agent; mobile reuses shared-host | Must not reuse the previous task's Session catalog; must not change Settings state |
+| Existing Session picks a Skill | same | same protocol with `sessionId` | request-scoped React hook | Session runtime frozen catalog | desktop continuous/mobile replayable affect only delivery, not catalog semantics | Must not hot-load because of new files on disk or a Settings refresh |
+| runtime restart/cold resume | same | resend the same session query after runtime restart | hook runtime revision | new runtime catalog | a remote attachment change is also part of request identity | Must not show late results of the old runtime |
+| Skill management | Settings | `skillsService.list()` | Settings local state | workspace disk | uses the existing target workspace service | Not changed to a session catalog, not bound by the conversation cache |
 
-## Shared And Divergent Behavior
+## Shared and divergent behavior
 
 | Concern | Shared | Deliberately different |
 | --- | --- | --- |
-| Picker | `/` 与 `$`/Yen aliases 共用同一 Skill catalog 和映射 | `/` 仍与 commands/Subagents 分组；`$` 只展示 Skills |
-| Canonical | 仍写入既有 Skill Markdown/canonical text | 目录 authority 变化不改变发送、edit、queue、retry、fork |
-| Discovery | workspace 和 session 都由 CLI Skill discovery 规则生成 | workspace 每次查询取当前磁盘；session 读取 runtime 已冻结结果 |
-| Recovery | local/remote 都按 request identity 丢弃迟到结果 | desktop continuous 与 mobile replayable 不共享 renderer 缓存 |
+| Picker | `/` and `$`/Yen aliases share one Skill catalog and mapping | `/` still groups with commands/Subagents; `$` shows only Skills |
+| Canonical | Still writes the existing Skill Markdown/canonical text | A catalog authority change does not change send, edit, queue, retry, fork |
+| Discovery | Both workspace and session come from the CLI Skill discovery rules | workspace takes the current disk on every query; session reads the runtime's frozen result |
+| Recovery | local/remote both drop late results by request identity | desktop continuous and mobile replayable do not share the renderer cache |
 
-## State Owners And Commit Sinks
+## State owners and commit sinks
 
 | State/fact | Draft/display owner | Authoritative owner | Query/commit | Persistence/cache |
 | --- | --- | --- | --- | --- |
-| workspace Skill catalog | Picker hook | workspace Agent filesystem/config/plugin discovery | prewarm 未就绪时 `skills/referenceCatalog` 无 sessionId | 仅请求态，不持久缓存 |
-| Session Skill catalog | Picker hook | `AgentRuntime.skillLoadOutcome` | 正式 `sessionId` 或草稿 `prewarmSessionId` | resident runtime 内冻结；cold resume/新草稿 prewarm 重建 |
-| Skill 管理目录 | Settings local state | `ISkillsService` + 文件/config | `skillsService.list/setEnabled/...` | 现有文件与配置 |
+| workspace Skill catalog | Picker hook | workspace Agent filesystem/config/plugin discovery | `skills/referenceCatalog` without sessionId while prewarm is not ready | request state only, no persistent cache |
+| Session Skill catalog | Picker hook | `AgentRuntime.skillLoadOutcome` | formal `sessionId` or draft `prewarmSessionId` | frozen in the resident runtime; rebuilt on cold resume / new draft prewarm |
+| Skill management catalog | Settings local state | `ISkillsService` + files/config | `skillsService.list/setEnabled/...` | existing files and config |
 | Skill mention | Lexical draft | conversation user input | existing send command | session transcript canonical text |
 
-## Must-Preserve Invariants
+## Must-preserve invariants
 
-- `workspaceKey = workspaceIdentity?.trim() || workspacePath` 只负责 workspace 身份隔离；
-  `workspacePath` 继续用于 Skill 文件发现。
-- request identity 至少包含 workspaceKey、remoteSessionId、正式 sessionId/prewarmSessionId/draft、
-  runtime revision 和请求序号；
-  scope 变化首帧清空，旧结果 fail closed。
-- Session query 找不到 session 时协议报错，禁止静默回退 workspace authority。
-- Settings 刷新、安装、删除和启停只使未提升草稿 runtime 失效，不热更新已有 resident Session。
-- `/` 与 `$`/Yen aliases 不维护两份目录；选择结果继续使用既有 canonical Skill mention。
-- relay 和 desktop main 不拥有 Skill catalog，只透传目标 workspace Agent 查询；本改动不改变
-  `desktop-continuous` / `web-remote-replayable` 的 conversation stream 语义。
+- `workspaceKey = workspaceIdentity?.trim() || workspacePath` handles only workspace identity isolation; `workspacePath` is still used for Skill file discovery.
+- Request identity includes at least workspaceKey, remoteSessionId, formal sessionId/prewarmSessionId/draft, runtime revision and request sequence; on a scope change the first frame is cleared and old results fail closed.
+- A Session query that cannot find the session reports a protocol error; silently falling back to the workspace authority is forbidden.
+- Settings refresh, install, delete and enable-disable only invalidate the runtime of an unpromoted draft and do not hot-update an existing resident Session.
+- `/` and `$`/Yen aliases do not keep two catalogs; the selection result keeps the existing canonical Skill mention.
+- Relay and desktop main do not own the Skill catalog and only pass the query to the target workspace Agent; this change does not alter the conversation stream semantics of `desktop-continuous` / `web-remote-replayable`.
 
-## Feature Relationships
+## Feature relationships
 
 | Rank | From | Edge | To | Why inspect it | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| must-inspect | session Skill catalog | renders-in | `/` 与 `$` Skill Picker | 两个入口必须共用 authority | `SlashCommandPlugin`、`skillsMentionProvider` |
-| must-inspect | session Skill catalog | served-by | `skills/referenceCatalog` | 防止 UI/CLI 双重扫描产生目录分叉 | protocol schema/handler/service tests |
-| must-inspect | session Skill catalog | state-owned-by | `AgentRuntime.skillLoadOutcome` | 热 Session 冻结的事实源 | core runtime test |
-| conditional | session Skill catalog | recovers-via | runtime restart/cold resume | 新 runtime 必须重查，旧结果不得回填 | hook runtime restart test |
-| invariant-only | session Skill catalog | constrained-by | workspace/remote delivery boundary | 本地与远程必须命中目标 Agent | workspaceIdentity/remoteSessionId assertions |
+| must-inspect | session Skill catalog | renders-in | `/` and `$` Skill Picker | The two entries must share one authority | `SlashCommandPlugin`, `skillsMentionProvider` |
+| must-inspect | session Skill catalog | served-by | `skills/referenceCatalog` | Prevent UI/CLI double scanning from forking the catalog | protocol schema/handler/service tests |
+| must-inspect | session Skill catalog | state-owned-by | `AgentRuntime.skillLoadOutcome` | The source of fact for a frozen hot Session | core runtime test |
+| conditional | session Skill catalog | recovers-via | runtime restart/cold resume | The new runtime must be re-queried and old results must not be backfilled | hook runtime restart test |
+| invariant-only | session Skill catalog | constrained-by | workspace/remote delivery boundary | Local and remote must hit the target Agent | workspaceIdentity/remoteSessionId assertions |
 
-## Codegraph Evidence
+## Codegraph evidence
 
 | Seed | Query | Direct callers/key path | Depth | Interpretation |
 | --- | --- | --- | --- | --- |
-| `useSkills` | codegraph explore unavailable；focused `rg` fallback | `SlashCommandPlugin`、`useSkillsMentionProvider` | 2 | 当前两个 Picker 入口共用 workspace 级 store |
-| `skillLoadOutcome` | focused `rg` fallback | `ensureContextInitialized` 写入，context builder/Skill tool 读取 | 2 | resident runtime 已有天然冻结目录 |
-| `usePluginReferenceCatalog` | focused `rg` fallback | Plugin mention provider → Agent protocol | 2 | 已验证的 workspace/session authority 参考实现 |
+| `useSkills` | codegraph explore unavailable; focused `rg` fallback | `SlashCommandPlugin`, `useSkillsMentionProvider` | 2 | The two Picker entries currently share a workspace-level store |
+| `skillLoadOutcome` | focused `rg` fallback | written by `ensureContextInitialized`, read by the context builder / Skill tool | 2 | A resident runtime already has a naturally frozen catalog |
+| `usePluginReferenceCatalog` | focused `rg` fallback | Plugin mention provider -> Agent protocol | 2 | A verified reference implementation of workspace/session authority |
 
-## Graph Drift And Delta
+## Graph drift and delta
 
-现有 feature graph 只声明了 slash Skill surface，没有 Session Skill catalog 的 state owner 和 protocol service。
-本实现新增 `capability.session-skill-catalog`、`state.session-skill-catalog`、
-`service.skill-reference-catalog` 及其与 Composer、conversation runtime、workspace/delivery boundary 的语义边。
+The existing feature graph declares only the slash Skill surface and has no state owner or protocol service for the Session Skill catalog. This implementation adds `capability.session-skill-catalog`, `state.session-skill-catalog`, `service.skill-reference-catalog` and their semantic edges to the Composer, the conversation runtime and the workspace/delivery boundary.
 
-## Boundary Decisions And Accepted Cases
+## Boundary decisions and accepted cases
 
 | Boundary | Decision | Includes | Excludes/prunes | Source |
 | --- | --- | --- | --- | --- |
-| 热更新 | resident Session 不更新 | 手动文件新增、Settings 变更后旧 Session 保持目录 | 不做文件 watcher | 用户确认 + CLI context guard |
-| 新建任务 | 新草稿创建新 prewarm runtime，并在 ready 前读取 workspace 当前目录 | 手动添加的 `SKILL.md` | 不复用上一任务的 Session/runtime catalog | 用户确认 |
-| cold resume | 随新 runtime 重扫 | app/Agent restart、resident eviction 后恢复 | 不永久持久化旧目录 | 当前 CLI resume 实现 |
-| 管理面 | 保持 workspace 实时目录 | Settings 全部管理动作 | 不加 session key | 用户确认 |
+| Hot update | A resident Session does not update | After a manual file add or Settings change, the old Session keeps its catalog | No file watcher | user confirmation + CLI context guard |
+| New task | A new draft creates a new prewarm runtime and reads the current workspace catalog before ready | A manually added `SKILL.md` | The previous task's Session/runtime catalog is not reused | user confirmation |
+| cold resume | Rescan with the new runtime | Recovery after app/Agent restart or resident eviction | The old catalog is not persisted forever | current CLI resume implementation |
+| Management surface | Keep the live workspace catalog | All Settings management actions | No session key is added | user confirmation |
 
 | Case ID | Setup | Action | Assertions | Evidence | Status |
 | --- | --- | --- | --- | --- | --- |
-| S08-A | 新草稿/prewarm 创建前手动新增 Skill | 打开 `/` 与 `$` | 两个入口均显示新 Skill；prewarm ready 前 authority=workspace，之后为该 prewarm Session | UI + protocol | accepted |
-| S08-B | S1 已初始化后新增 Skill | 在 S1 打开 `/`，再新建草稿打开 `/` | S1 不显示；新草稿显示 | UI + runtime/protocol | accepted |
-| S08-C | S1 runtime 重启前后磁盘目录变化 | 重启后重新打开 Picker | 丢弃旧结果并显示新 runtime catalog | UI + runtime event | accepted |
-| S08-D | remote attachment/session 切换且旧请求迟到 | 切换 scope | 首帧清空；只接收新 workspace/session/runtime 结果 | UI + service params | accepted |
-| S08-E | 草稿从无 prewarm 变为 P1 ready | 保持/重新打开 Picker | request key 切到 P1；taskId 仍为 null；只接受 P1 runtime catalog | Composer + hook | accepted |
+| S08-A | Manually add a Skill before the new draft/prewarm is created | Open `/` and `$` | Both entries show the new Skill; authority=workspace before prewarm ready and that prewarm Session afterwards | UI + protocol | accepted |
+| S08-B | Add a Skill after S1 has initialized | Open `/` in S1, then create a new draft and open `/` | S1 does not show it; the new draft does | UI + runtime/protocol | accepted |
+| S08-C | The disk catalog changes before and after an S1 runtime restart | Reopen the Picker after restart | Drop old results and show the new runtime catalog | UI + runtime event | accepted |
+| S08-D | Remote attachment/session switch with a late old request | Switch scope | First frame cleared; accept only the new workspace/session/runtime result | UI + service params | accepted |
+| S08-E | The draft goes from no prewarm to P1 ready | Keep/reopen the Picker | The request key switches to P1; taskId stays null; accept only the P1 runtime catalog | Composer + hook | accepted |
 
 ## Verification
 
-- 正式 Desktop E2E `conversation-session-v4-mention.test.ts` 在真实 workspace 写入临时
-  `.zcode/skills/e2e-session-skill-catalog/SKILL.md`：旧 resident Session 的 `/`、`$` 均不出现该
-  Skill；点击新建任务后两个入口出现同一个 canonical `skill:` 候选。
-- latest passing artifact：`desktop-e2e-20260820-135214-127`。该 VM 代表 desktop local 的 S08-A/B；
-  runtime restart、remote attachment、scope 迟到结果与 prewarm key 切换继续由 focused tests 取证，
-  不把未执行的远程/重启组合冒充 Desktop E2E。
+- The formal Desktop E2E `conversation-session-v4-mention.test.ts` writes a temporary `.zcode/skills/e2e-session-skill-catalog/SKILL.md` into a real workspace: neither `/` nor `$` of the old resident Session shows that Skill; after clicking new task both entries show the same canonical `skill:` candidate.
+- Latest passing artifact: `desktop-e2e-20260820-135214-127`. This VM represents S08-A/B of desktop local; runtime restart, remote attachment, late results on scope change and prewarm key switch continue to be evidenced by focused tests, and unexecuted remote/restart combinations are not passed off as Desktop E2E.
 
-## Unresolved Questions
+## Unresolved questions
 
-无。Subagent 和 command catalog 是否采用同类 Session 生命周期不属于本改动，单独审计。
+None. Whether the Subagent and command catalogs adopt a similar Session lifecycle is outside this change and is audited separately.

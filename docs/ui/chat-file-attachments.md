@@ -1,193 +1,149 @@
-# Chat File Attachments（当前事实）
+# Chat File Attachments (current state)
 
-附件由 V4 composer 管理。用户选择、粘贴或拖入附件后立即预传；只有已获得
-`AttachmentRef` 的 `ready` 附件才能随 `sendText.attachments` 提交。
+Attachments are managed by the V4 composer. After the user selects, pastes or drags in an attachment it is pre-uploaded immediately; only a `ready` attachment that has obtained an `AttachmentRef` can be submitted with `sendText.attachments`.
 
-发送准入统一使用“正文或附件至少一个”：`text.trim()` 非空，或存在至少一个有效
-`AttachmentRef`，二者满足其一即可。只有附件的 draft、idle send、running queue 和
-query edit 都是合法输入；正文和附件同时为空时返回 `proto.invalidPayload`。
+Send admission uniformly requires "body or attachment, at least one": `text.trim()` is non-empty, or at least one valid `AttachmentRef` exists. An attachment-only draft, idle send, running queue and query edit are all legal input; when body and attachments are both empty the result is `proto.invalidPayload`.
 
-## 状态与门禁
+## State and gating
 
 ```text
 waitingSession -> queued -> uploading -> committing -> ready
                               |
-                              +-> transient failure -> 500ms 后自动重试一次
-                              +-> failed -----------> 用户手动重试
+                              +-> transient failure -> auto-retry once after 500ms
+                              +-> failed -----------> user retries manually
 ```
 
-Renderer 以 `workspaceKey + composer scope` 保存上传状态；`workspaceKey` 统一取
-`workspaceIdentity?.trim() || workspacePath`。该状态不进入 relay/main，也不持久化浏览器
-`File`，但任务切换或 composer 局部卸载后仍可恢复并继续当前上传。
+The Renderer keeps upload state by `workspaceKey + composer scope`; `workspaceKey` is uniformly `workspaceIdentity?.trim() || workspacePath`. This state does not enter relay/main and the browser `File` is not persisted, but after a task switch or a local composer unmount the current upload can be restored and continued.
 
-- 上传并发上限为 2；进度单调，commit 前最高为 99%，commit 成功后显示 100% 约 300ms。
-- 任一附件非 `ready` 时，发送按钮和 held-queue 两个选择按钮均禁用；submit 入口再次校验，禁止产生 `sendText` 或任何 queue command。
-- 自动重试最多 1 次；手动重试开启新的重试预算。上传成功不自动发送。
-- 删除附件会 abort 在途事务并清理暂存内容。CLI/runtime 换代使未提交 ref 失效，并按原重试预算重新上传。
-- 上述清理只适用于未提交 composer 附件。编辑已发送 query 时删除附件只更新新 active branch
-  的引用列表，不删除旧 branch 使用的本地文件、artifact 或远端暂存内容。
-- 附件草稿和上传状态按 `workspaceKey + composer scope` 隔离；切换 task 不取消后台上传，切回后继续显示。
+- Upload concurrency is capped at 2; progress is monotonic, capped at 99% before commit, and 100% is shown for about 300ms after a successful commit.
+- While any attachment is not `ready`, the send button and both held-queue choice buttons are disabled; the submit entry validates again and must not produce `sendText` or any queue command.
+- Automatic retry happens at most once; a manual retry starts a new retry budget. A successful upload does not send automatically.
+- Deleting an attachment aborts the in-flight transaction and cleans staged content. A CLI/runtime generation change invalidates uncommitted refs and re-uploads them with the original retry budget.
+- The cleanup above applies only to uncommitted composer attachments. When editing an already-sent query, deleting an attachment only updates the reference list of the new active branch and does not delete the local files, artifacts or remote staged content used by the old branch.
+- Attachment drafts and upload state are isolated by `workspaceKey + composer scope`; switching task does not cancel a background upload, and it keeps showing after switching back.
 
-## 传输路由
+## Transfer routing
 
 ```text
-本地 desktop localPath ----------------------------> ready（零拷贝）
+local desktop localPath ---------------------------> ready (zero copy)
 SSH/WSL/Docker localPath -> host transfer -> remote stage -> ready
 Web/inline bytes --------> V4 begin/chunk/commit ---------> ready
 ```
 
-- 本地 desktop 真实路径不伪造上传进度。
-- Web/inline 使用现有 V4 chunk transaction，wire schema 不变；高层 put 提供进度和取消。
-- SSH/WSL/Docker 由桌面 host 把 host-local path 传到 remote runtime 可读的暂存路径，不允许把桌面路径直接交给远程 Agent。
-- relay 和 desktop main 只透传 RPC，不保存附件草稿、进度、queue 或 session 业务状态。
+- A real local desktop path does not fake upload progress.
+- Web/inline uses the existing V4 chunk transaction with an unchanged wire schema; the high-level put provides progress and cancel.
+- For SSH/WSL/Docker the desktop host transfers the host-local path to a staging path the remote runtime can read; a desktop path must never be handed straight to the remote Agent.
+- Relay and desktop main only pass RPC through and keep no attachment draft, progress, queue or session business state.
 
-## 粘贴图片的派生路径
+## Derived path for pasted images
 
-剪贴板图片继续以 session-scoped data URL artifact 作为持久化事实。artifact commit 完成后，
-CLI 会在独立的 session-scoped image cache 目录中 eager 物化一份真实图片文件；该文件只是
-可重建的派生缓存，不写入 `AttachmentRef`、conversation transcript 或 replayable snapshot。
+Clipboard images keep the session-scoped data URL artifact as the persisted fact. After the artifact commit the CLI eagerly materializes a real image file in a separate session-scoped image cache directory; this file is only a rebuildable derived cache and is not written into `AttachmentRef`, the conversation transcript or the replayable snapshot.
 
 ```text
 <storageRoot>/cli/
-  ├─ artifacts/<sessionId>/...                              # durable artifact
-  └─ image-cache/<sessionId>/image-<artifact-uri-hash>.<ext> # derived image
+  |- artifacts/<sessionId>/...                              # durable artifact
+  `- image-cache/<sessionId>/image-<artifact-uri-hash>.<ext> # derived image
 ```
 
-本节只定义派生图片与 durable artifact 的路径隔离；不新增定期清理或旧路径迁移语义。
+This section defines only the path isolation between the derived image and the durable artifact; no periodic cleanup or old-path migration semantics are added.
 
 ```text
 paste -> durable data URL artifact -> eager image file
 send  -> ensure image file path
-          ├─ 写入中：等待同一任务
-          ├─ 已存在：复用
-          └─ 不存在：从 durable artifact 重建一次
+          |- being written: wait for the same task
+          |- exists: reuse
+          `- missing: rebuild once from the durable artifact
 ```
 
-URI singleflight 的生命周期独立于单次 query，不接收 caller-owned `AbortSignal`。paste 与发送
-直接复用并等待同一个物化 Promise，避免某个请求的取消传播到共享缓存任务。
+The URI singleflight lifecycle is independent of a single query and takes no caller-owned `AbortSignal`. Paste and send reuse and await the same materialization Promise directly, so one request's cancellation does not propagate to the shared cache task.
 
-## Composer PDF 附件
+## Composer PDF attachments
 
-PDF 是独立的 prompt attachment 类型，但复用 image/video 的 admission、artifact、FilePart、
-derived cache、恢复和请求前能力投影边界。PDF 在 UI 中保持文档文件卡片，不进入图片媒体宫格；
-Composer 草稿和已发送 user row 均可打开现有 PdfViewer。
+PDF is a distinct prompt attachment type but reuses the admission, artifact, FilePart, derived cache, recovery and pre-request capability projection boundaries of image/video. In the UI a PDF stays a document file card and does not enter the image media grid; both the composer draft and the sent user row can open the existing PdfViewer.
 
 ```text
-local/staged path 或 V4 upload bytes
+local/staged path or V4 upload bytes
   -> TurnAttachment(type=pdf)
-  -> 校验 MIME、20MiB 上限和 %PDF magic
+  -> validate MIME, 20MiB limit and %PDF magic
   -> durable zcode-artifact:// URI
-  -> part.data 中的 FilePart link + metadata
+  -> FilePart link + metadata in part.data
   -> <storageRoot>/cli/pdf-cache/<sessionId>/pdf-<uri-hash>.pdf
-  -> request 前 materialize path，再按 supportsPdf 做 omit/restore
+  -> materialize the path before the request, then omit/restore by supportsPdf
 ```
 
-- Web/inline PDF 沿用 V4 20MiB、512KiB chunk 和现有 upload transaction；Desktop local/staged
-  PDF 不在 renderer 内联 base64，由 Agent 在 admission 时有界读取。
-- artifact 是附件事实来源；`part.data` 不保存 base64 或 cache path，`pdf-cache` 是可重建派生文件，
-  不进入 transcript、snapshot 或 replayable event。
-- 当前 live turn 可复用 runtime 可访问的 local/staged path；冷恢复、历史消息和模型切换必须按
-  `artifact -> pdf-cache` 优先，不能让旧 local path 覆盖 artifact 内容。
-- 已发送 PDF 预览按精确 session/row/part 授权，通过 `attachment/read` 的 offset/limit 分片读取；
-  artifact 存在但物化失败时只降级到 artifact chunks，不回退到可变原始路径。
-- `supportsPdf=true` 保留 PDF file block 与 `[PDF: source: <path>]`；`supportsPdf=false` 只 omit
-  provider-visible PDF data，保留 source 文本。每次请求重新投影，不修改持久化历史。
-- 不新增 attachment DB 表。已有 `application/pdf` FilePart 直接 hydrate；只有旧 local path 的
-  历史附件在请求前尝试重新 artifact 化，源文件失效时保留明确不可用的 source 文本，禁止按 UTF-8
-  普通文件解码。
+- Web/inline PDF keeps the V4 20MiB limit, 512KiB chunks and the existing upload transaction; a Desktop local/staged PDF is not inlined as base64 in the renderer and is read by the Agent with a bound at admission.
+- The artifact is the attachment's source of fact; `part.data` stores no base64 or cache path, and `pdf-cache` is a rebuildable derived file that does not enter the transcript, snapshot or replayable events.
+- The current live turn may reuse a local/staged path accessible to the runtime; cold recovery, historical messages and model switches must prefer `artifact -> pdf-cache`, and an old local path must not override artifact content.
+- A sent-PDF preview is authorized by exact session/row/part and reads in slices through `attachment/read` with offset/limit; when the artifact exists but materialization fails it degrades only to artifact chunks and never falls back to the mutable original path.
+- `supportsPdf=true` keeps the PDF file block and `[PDF: source: <path>]`; `supportsPdf=false` omits only the provider-visible PDF data and keeps the source text. Every request is re-projected and persisted history is not modified.
+- No attachment DB table is added. An existing `application/pdf` FilePart is hydrated directly; a historical attachment with only an old local path tries to re-artifactize before the request, and when the source file is gone an explicit unavailable source text is kept; decoding it as a UTF-8 ordinary file is forbidden.
 
-最终 provider 请求在同一个真实 user content 中追加普通文本
-`[Image: source: <absolute-path>]`：支持图片的模型收到 image block 和 path；只有明确
-`supportsImages === false` 时 image block 才替换为既有 media-omitted 文本，path 仍保留。
-path 不经过 system reminder、runtime attachment 或 MCS。多图保持全部 image/omitted block
-在前、全部可用 path block 在后。已有真实本地路径的图片直接复用原路径，不生成派生副本。
-派生缓存不支持某个图片 MIME 时走 best effort：保留原 image/base64 provider 链路，只跳过该图的
-cache/path；受支持 MIME 的真实 IO 或 durable artifact 故障仍在 provider 调用前明确失败。
+The final provider request appends plain text `[Image: source: <absolute-path>]` in the same real user content: a model that supports images receives the image block and the path; only when `supportsImages === false` explicitly is the image block replaced by the existing media-omitted text, with the path kept. The path does not go through system reminders, runtime attachments or MCS. For multiple images all image/omitted blocks come first and all available path blocks after. An image with an existing real local path reuses the original path and creates no derived copy. If the derived cache does not support an image MIME it is best effort: the original image/base64 provider chain is kept and only that image's cache/path is skipped; a real IO or durable artifact fault for a supported MIME still fails explicitly before the provider call.
 
 ## UI
 
-- 图片沿用紧凑缩略图，中央覆盖圆形进度环和百分比。
-- 非图片附件显示同等的文本状态；失败态提供重试和删除。
-- 状态不只依赖颜色，必须提供本地化的 `aria-label` / `role=status|alert`。
-- inline image/video/PDF 超过体积上限（图片 20MiB）属于确定性失败：不自动重试，chip 直接进入 failed 并保持发送禁用；
-  失败原因沿用现有 tooltip/aria 表面，显示本地化的 `chat.attachments.oversizedInline{Image,Video,Pdf}`
-  （含文件名、实际大小、上限），不得显示 `oversized-inline-*-attachment` 错误码。
-- V4 的文件 drop 由整个对话 pane 根节点唯一接管：时间线、空态、状态区和 composer 都处于同一 drop surface；主输入框不再重复注册文件 drop。桌面新建任务的轻量标题栏在窗口级 drag 状态激活后显示临时 drop mask，并接到主草稿 composer。这一结构与旧版 `ChatView` 一致。
-- 工作区文件树的 `WORKSPACE_FILE_DRAG_MIME` 不作为上传附件，而是插入工作区文件 mention；操作系统文件才进入附件预传队列。该语义与旧版 `ChatView` 一致。
-- 手机 Web 没有系统文件拖拽/选择器入口；本次只复用 V4 composer 的 renderer 本地 drop 路由，不新增 runtime、host、relay 或 `web-remote-replayable` 传输语义。
-- 已发送 query 的行内编辑器只允许删除既有附件，不提供文件选择、拖入、粘贴转附件或重新上传。
-  普通 composer 粘贴达到 5120 字符时仍按既有规则转成文本附件；行内 edit 中的同等长文本
-  保持为 `editUserQuery.newText` 正文。
-- Excel/表格软件复制单元格时，系统剪贴板可能同时暴露 `text/plain`、Excel HTML 和合成
-  `image/png`。普通 composer 检测到 Excel HTML 标记或制表符分隔文本时必须优先走文本：
-  短内容交给编辑器粘贴，达到 5120 字符才转 clipboard-text 附件；不得把同一 payload 的
-  合成 PNG 当成用户主动粘贴的图片。没有表格文本证据的截图、图片复制和 `.xlsx` 文件仍走附件。
+- Images keep a compact thumbnail with a circular progress ring and percentage in the center.
+- Non-image attachments show an equivalent text status; the failed state offers retry and delete.
+- State does not depend on color alone; localized `aria-label` / `role=status|alert` are required.
+- An inline image/video/PDF over the size limit (image 20MiB) is a deterministic failure: no automatic retry, the chip goes to failed directly and sending stays disabled; the failure reason uses the existing tooltip/aria surface and shows the localized `chat.attachments.oversizedInline{Image,Video,Pdf}` (with file name, actual size and limit); the error code `oversized-inline-*-attachment` must never be shown.
+- File drop in V4 is taken over solely by the root node of the whole conversation pane: timeline, empty state, status area and composer are all one drop surface; the main input no longer registers a file drop itself. The lightweight title bar of the desktop new task shows a temporary drop mask once the window-level drag state is active and connects it to the main draft composer. This structure matches the old `ChatView`.
+- `WORKSPACE_FILE_DRAG_MIME` from the workspace file tree is not uploaded as an attachment but inserts a workspace file mention; only operating-system files enter the attachment pre-upload queue. This matches the old `ChatView`.
+- Mobile Web has no system file drag/picker entry; it only reuses the V4 composer's renderer-local drop routing and adds no runtime, host, relay or `web-remote-replayable` transfer semantics.
+- The inline editor of a sent query may only delete existing attachments; it offers no file picking, dragging in, paste-to-attachment or re-upload. Ordinary composer paste of 5120 characters still converts to a text attachment per the existing rule; an equally long text pasted in inline edit stays as the `editUserQuery.newText` body.
+- When cells are copied from Excel or spreadsheet software the system clipboard may expose `text/plain`, Excel HTML and a synthetic `image/png` together. The ordinary composer must prefer text when it detects Excel HTML markers or tab-separated text: short content goes to the editor paste, and only at 5120 characters does it convert to a clipboard-text attachment; the synthetic PNG of the same payload must not be treated as an image the user actively pasted. Screenshots, image copies and `.xlsx` files without spreadsheet text evidence still go through attachments.
 
-## 已发送 Query 的附件编辑
+## Attachment editing of a sent query
 
 ```text
 row.attachments
-  -> 打开 edit 时复制为 renderer-local editAttachments
-       -> 删除一个或多个 ref
-          -> accepted: editUserQuery.attachments 原样替换 active branch
-          -> failed/stale/blocked: 保留本地编辑状态
-          -> cancel: 丢弃本地状态，下次从 row 重新初始化
+  -> copied into renderer-local editAttachments when edit opens
+       -> delete one or more refs
+          -> accepted: editUserQuery.attachments replaces the active branch as given
+          -> failed/stale/blocked: keep local edit state
+          -> cancel: discard local state, re-initialize from the row next time
 ```
 
-`editUserQuery.attachments` 的三态合同：字段缺省表示保留 canonical 原附件；非空数组表示
-按给定顺序替换；显式 `[]` 表示清空全部附件。删除已发送附件不调用 attachment transfer、abort
-或 cleanup API，避免破坏旧历史与其他 branch 的引用。
+Three-state contract of `editUserQuery.attachments`: an absent field keeps the canonical original attachments; a non-empty array replaces them in the given order; an explicit `[]` clears all attachments. Deleting a sent attachment calls no attachment transfer, abort or cleanup API, so old history and references of other branches are not broken.
 
-## 已发送图片预览
+## Sent image preview
 
-已发送 user row 继续只保存 `AttachmentRef`。图片附件（`mime` 以 `image/` 开头）可点击；
-非图片附件保持静态，不提供 button、手型光标或键盘打开语义。renderer 不把发送前的 `File`、
-object URL 或 base64 当作历史事实，live、cold resume 和 app restart 都从当前 row ref 走同一条
-只读查询。
+A sent user row still stores only `AttachmentRef`. Image attachments (`mime` starting with `image/`) are clickable; non-image attachments stay static, with no button, hand cursor or keyboard-open semantics. The renderer does not treat the pre-send `File`, object URL or base64 as historical fact; live, cold resume and app restart all use the same read-only query from the current row ref.
 
 ```text
 ConversationRow.userInput.attachments
-  -> 图片点击
-     -> workspace service（沿当前 workspaceIdentity / remoteSessionId attachment）
+  -> image click
+     -> workspace service (following the current workspaceIdentity / remoteSessionId attachment)
         -> v4/attachment/read(sessionId, previewRef ?? ref, offset, limit)
-           -> CLI 先验证 ref 属于当前 session 的图片 row
-              -> zcode-artifact:// ref：读取持久化 artifact
-              -> local / SSH / WSL / Docker path：由该 session 所在 runtime 读取
-           -> <= 512 KiB decoded chunk，NDJSON 返回 base64
-        -> renderer 拼成 Blob URL -> 图片预览 dialog
+           -> CLI first verifies the ref belongs to an image row of the current session
+              -> zcode-artifact:// ref: read the persisted artifact
+              -> local / SSH / WSL / Docker path: read by the runtime hosting that session
+           -> <= 512 KiB decoded chunk, returned as base64 in NDJSON
+        -> renderer assembles a Blob URL -> image preview dialog
         -> close / target change / unmount -> URL.revokeObjectURL
 ```
 
 ```text
 desktop-continuous row -------------------+
-                                          +-> 同一个只读 attachment/read query
+                                          +-> the same read-only attachment/read query
 web-remote-replayable row -> attached host+
 
-relay / desktop main：只转发，不保存 bytes、cache、row 或 preview 状态
+relay / desktop main: forward only, keep no bytes, cache, row or preview state
 ```
 
-- query 必须带精确 `sessionId`，CLI 只接受该 session 当前投影中图片附件的 `ref` 或
-  `previewRef`；禁止把任意 renderer 路径变成文件读取接口。
-- wire 每次最多返回 512 KiB decoded bytes；UI 高层 transport 负责按 `nextOffset` 拉完，避免
-  20MiB 附件突破 1MiB NDJSON envelope。CLI 可做短时、有界的同 ref 读取缓存，但不得持久化到
-  relay/main，也不得进入 conversation snapshot/event。
-- 读取失败时 dialog 显示本地化的“图片不可预览”，保留文件名以解释历史；该卡片随后移除
-  打开语义与假手型。失败不会修改 row、branch、provider context 或附件文件。
-- 手机 `/remote` 不新增独立 Agent runtime；它通过 shared-host attachment 访问桌面窗口已经
-  存在的 local/remote workspace session host。远端身份隔离仍统一使用
-  `workspaceIdentity?.trim() || workspacePath`，路径执行仍使用 `workspacePath`/runtime ref。
-- 旧历史没有可读 ref、文件已移动/删除或 artifact 已回收时不尝试猜路径，也不回退把 base64
-  塞进 row；明确进入不可预览状态。
+- The query must carry the exact `sessionId`, and the CLI accepts only the `ref` or `previewRef` of an image attachment in that session's current projection; an arbitrary renderer path must never become a file-read interface.
+- The wire returns at most 512 KiB decoded bytes at a time; the UI high-level transport pulls until done by `nextOffset`, so a 20MiB attachment does not exceed the 1MiB NDJSON envelope. The CLI may keep a short, bounded same-ref read cache but must not persist it to relay/main or put it into the conversation snapshot/event.
+- On read failure the dialog shows a localized "image cannot be previewed" (图片不可预览), keeps the file name to explain the history, and the card then loses its open semantics and fake hand cursor. A failure does not modify the row, branch, provider context or attachment file.
+- Mobile `/remote` adds no separate Agent runtime; it reaches the local/remote workspace session host already present in the desktop window through shared-host attachment. Remote identity isolation still uses `workspaceIdentity?.trim() || workspacePath`, and path execution still uses `workspacePath`/the runtime ref.
+- When old history has no readable ref, the file was moved/deleted or the artifact was reclaimed, no path is guessed and base64 is not stuffed back into the row; it explicitly enters the non-previewable state.
 
 ```text
-文件拖入 pane / 桌面草稿标题栏
-  -> 目标 SessionPane 的 ConversationComposer drop controller
-       -> workspace-file MIME -> 插入 mention
-       -> OS File[]           -> 附件预传（原有 V4 路由）
+file dragged onto pane / desktop draft title bar
+  -> the target SessionPane's ConversationComposer drop controller
+       -> workspace-file MIME -> insert mention
+       -> OS File[]           -> attachment pre-upload (original V4 route)
 
-主输入框不单独注册 drop
-  -> 同一事件只由外层 SessionPane 消费一次
+the main input registers no drop of its own
+  -> the same event is consumed once, by the outer SessionPane
 ```
 
-实现入口：`packages/ui/src/v4/ConversationComposer.tsx` 和
-`packages/ui/src/v4/composer/useComposerAttachments.ts`。
+Implementation entries: `packages/ui/src/v4/ConversationComposer.tsx` and `packages/ui/src/v4/composer/useComposerAttachments.ts`.
