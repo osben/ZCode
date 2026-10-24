@@ -1,124 +1,167 @@
-# 消息附件与多模态输入
+# Message Attachments and Multimodal Input
 
-## 背景
+## Background
 
-本文最初记录的缺口是：ZCode 的对外输入和 provider-visible history
-基本仍是纯文本。原始问题包括：
+The original gap: ZCode's external input and provider-visible history were plain text only.
+`ZCodeApp.submitPrompt(prompt: string)` / `sendInput(input: string)` took only text;
+`AgentRuntime.executeTurn(input, attachments?)` had an attachment parameter that bootstrap, CLI, TUI and the
+ZCode app-server never passed; `ModelInputMessage.content` was a `string`; the session store already had
+`FilePart` but `session-history-hydrator` restored file parts only as `[Attached file: ...]` text; and
+the ZCode app-server spec rejected embedded resources, images and audio until runtime attachments had a
+stable schema.
 
-- `ZCodeApp.submitPrompt(prompt: string)` / `sendInput(input: string)` 只接收文本。
-- `AgentRuntime.executeTurn(input, attachments?)` 已有附件参数，但 bootstrap、CLI、TUI、ZCode app-server 没有传入附件。
-- `ModelInputMessage.content` 是 `string`，`toAiSdkMessages()` 直接把 user/system 内容转成字符串。
-- session store 已有 `FilePart`，`persistUserPrompt()` 也会把附件落成 `file` part，但 resume 时 `session-history-hydrator` 只把 file part 恢复成 `[Attached file: ...]` 文本。
-- ZCode app-server spec 明确拒绝 embedded resources、images、audio，直到 runtime attachments 有稳定 schema。
+## Current implementation state
 
-## 当前实现状态
+Implemented:
 
-Status as of 2026-05-08: 图片输入主线已经落地，文件/资源/大媒体仍是分阶段能力。
+- `PromptInput = string | { text, attachments }` is exposed by bootstrap; `submitPrompt()` and
+  `sendInput()` both pass attachments to the runtime. Active turn steering is still a text queue; input
+  with attachments during an active turn is rejected stably.
+- CLI supports `--attach <path>`: common image extensions are passed as `image`, other paths as `file`.
+  TUI image paste passes a data-URL-backed `image` attachment through `TuiReadClipboardImage`.
+- The ZCode app-server `prompt` declares the image capability and turns the app-server `image` content
+  block into a runtime `image` attachment; `text` and `resource_link` are still handled as text content
+  and remote resources are not read automatically.
+- `ModelInputMessage.content` is `string | ModelMessageContentBlock[]` with a runtime JSON schema
+  covering `text`, `reasoning`, `image`, `file` and `resource_link` blocks.
+- The runtime resolver turns inline/local image attachments into provider-neutral image blocks; images are
+  limited to 2000 pixels on the longest side through `ImageProcessorPort.resizeToFit` before reaching the
+  model; WebP keeps its original bytes in the Jimp adapter (no resize/transcode).
+- Local text/file attachments are read as text blocks under the `text/plain` budget; over the limit a
+  preview and a truncated fallback are written. Non-files, oversized images, bad data URLs and read
+  failures become stable text placeholders and metadata, never a bad payload to the provider.
+- A user message is persisted as a text part plus file parts; a file part stores `mime`, `url`, `source`
+  and size/hash/preview/image/error metadata. `session-history-hydrator` restores usable image file parts
+  as structured user image blocks.
+- `toAiSdkMessages()` supports user image blocks, PDF file blocks, `stripMedia` placeholders and
+  empty/bad data URL fallback, and generates model-visible error text from the Active Model
+  `properties.input_format.support_image` / `support_pdf`.
+- Media budget projection before the provider request: ZCode counts the provider-visible image/PDF data
+  URL bytes before the model call, keeps the media of the latest real user message first and replaces
+  older media with a readable placeholder; if the latest user message itself exceeds the budget a
+  recoverable invalid-input error is thrown locally and the provider is not called (see "413 request body
+  guard").
+- Desktop GUI file picking passes `localPath` first and no longer serializes ordinary files as
+  `dataBase64` attachments. The ZCode app-server converts the GUI protocol attachment
+  (`kind/localPath/dataBase64/textContent`) into core `TurnAttachment { type, path/content }` at the
+  `session/send` boundary. TUI/CLI and GUI share the core resolver: small text is still inlined as a
+  synthetic Read result at `inlineTextMaxBytes = 64 KiB`; text over that threshold, non-text ordinary
+  files and images over `INLINE_MEDIA_ATTACHMENT_MAX_BYTES = 20 MiB` deliver only a local path reference,
+  so the model uses read tools as needed instead of stuffing large files into the prompt.
+- Request-local image path projection: inline/paste images keep the data URL artifact as the recovery
+  fact (durable artifact in `<storageRoot>/cli/artifacts/<sessionId>/`) and eagerly materialize a
+  rebuildable real image file in `<storageRoot>/cli/image-cache/<sessionId>/`. Before the model request
+  the path is ensured per artifact URI with singleflight: with image support the user content is the
+  query, the image block and `[Image: source: <path>]`; when images are explicitly unsupported the image
+  block is replaced by the existing omitted text but the path is kept. The path is ordinary request-local
+  user text, not persisted, and does not enter the system reminder, runtime attachment or MCS. On resume
+  with a missing cache it is rebuilt from the durable data URL artifact; an existing local file path is
+  reused directly. The derived cache handles only MIME types that can produce a real image extension;
+  unsupported image MIME types keep the original image/base64 provider chain with no cache/path and
+  without interrupting the request. A real read/write or durable artifact failure for a supported MIME
+  still fails explicitly before the provider call, so a stale path is never sent. Only inline images with
+  a `zcode-artifact://` URI and local-file images with a real `path` take part in the path projection;
+  other provider-ready inline images (including a missing URI or a data-URL URI) keep the original image
+  block, go through the existing media capability projection only, try to generate no path, and are not
+  blocked for lacking a durable artifact identity. No periodic cleanup or old-path migration is added.
+- Video is an independent modality. CLI, V4 `AttachmentRef`, composer inline upload and Read can all
+  produce a provider-neutral video block; the model catalog capability and the provider wire capability
+  are gated separately, and unsupported video is stripped. Model capability is expressed by the Active
+  Model `properties.input_format.support_video`; the 30MiB input limit is a ZCode global product policy of
+  the same kind as image and does not follow catalog, session or turn model config. User and tool-result
+  video both use `FilePart + zcode-artifact://` as the durable fact across providers/cold resume; the
+  base64 a provider needs is projected only at request time. The video limit of core/Read is 30MiB; V4
+  upload keeps the existing 20MiB, 64 chunks and 64MiB staging boundary; desktop continuous, mobile
+  replayable and shared-host boundaries are unchanged. Large video transfer on Web/mobile is out of
+  scope. Video shares the request-local path projection with image: an existing local file path is reused;
+  an inline video is lazily materialized from the durable data URL artifact into
+  `<storageRoot>/cli/video-cache/<sessionId>/` before the model request. With
+  `properties.input_format.support_video=true` the video block and `[Video: source: <path>]` are kept; with
+  `false` the video block is replaced by the existing omitted text and the path is kept. The video path is
+  not persisted either and is re-ensured from the durable artifact on cold resume. Only an inline video
+  with a `zcode-artifact://` URI or a local-file video with a real path takes part; unsupported MIME types
+  keep the original base64/capability chain and generate no path. No cache cleanup, migration or other
+  media-type semantics are added.
+- Media preview: the composer and sent user rows share one media preview Dialog for image/video. Video has
+  no UI whitelist by container or codec and is handed to the browser's native
+  `<video controls playsInline>`; a native decode failure shows only a "this device cannot preview" hint
+  without changing attachment upload, sending, persistence or model input. Reading a sent attachment is
+  authorized by the stable identity of the current row and the attachment index; when the target FilePart
+  is persisted the durable artifact of that turn is resolved first. Only when a new message has no
+  persisted message anchor yet, or old history has no artifact, is the authorized original stable ref
+  read. So hot state, cold recovery and repeated sends of the same path do not drift because the source
+  file was deleted or changed. The hot-state original ref and the hydrated previewRef can both prove the
+  same row/index attachment but do not authorize other paths; the session store reads the target
+  message/parts exactly by session/message and does not scan or decode the whole session for one preview.
+  A single read failure is reported only inside the Dialog and does not permanently disable the preview
+  entry. Upload and image read keep the V4 20MiB total boundary. When a Desktop local session previews a
+  sent video it first queries a local playback source authorized by the current row/index: a durable
+  artifact preferably reuses the derived file in `cli/video-cache/<sessionId>`; only
+  `metadata_only/local_ref` without an artifact uses the persisted stable path. Both are handed to the
+  native `<video>` through a Desktop-specific media protocol, never read fully into the gateway/renderer,
+  and so are not subject to the 30MiB model input limit. When an artifact exists but a playback path
+  cannot be materialized, the mutable original path must not be used; it degrades to the existing chunked
+  read. Web, mobile remote control and SSH/WSL/Docker workspaces return no remote path and keep the
+  512KiB query with the 30MiB video preview limit. Closing, switching or unmounting a chunked preview
+  still cancels later chunks; no upload staging expansion, new large-file copy, transcoding, PDF/audio
+  preview, relay state or separate runtime is added.
+- The Desktop-specific media scheme must be registered with `standard + secure + stream` before
+  `app.ready`. `standard` makes Chromium treat it as a standard URL and read the tail metadata of non-fast-
+  start MP4; without it a video whose `moov` sits after `mdat` is misjudged as undecodable in a sent
+  message. The formal VI06 E2E uses a playable MP4 with a tail `moov` and verifies loading and seek for
+  both artifact-backed and over-30MiB local-ref videos.
 
-已实现：
+Not implemented or only partially:
 
-- `PromptInput = string | { text, attachments }` 已在 bootstrap 暴露；`submitPrompt()` 和 `sendInput()` 都会把附件传给 runtime。active turn steering 仍是文本队列，带附件输入在 active turn 时被稳定拒绝。
-- CLI 支持 `--attach <path>`，按扩展名把常见图片传为 `image`，其它路径传为 `file`；TUI 图片粘贴通过 `TuiReadClipboardImage` 传入 data URL-backed `image` attachment。
-- ZCode app-server `prompt` 已声明 image capability，并把 ZCode app-server `image` content block 转成 runtime `image` attachment；`text` 和 `resource_link` 仍按文本内容处理，不自动读取远程资源。
-- `ModelInputMessage.content` 已扩展为 `string | ModelMessageContentBlock[]`，并有运行时 JSON schema 覆盖 `text`、`reasoning`、`image`、`file` 和 `resource_link` block。
-- runtime resolver 会把 inline/local image attachment 转成 provider-neutral image block，图片进入模型前通过 `ImageProcessorPort.resizeToFit` 限制最长边 2000 像素；WebP 在 Jimp adapter 中保持原始 bytes，不做 resize/transcode。
-- local text/file attachment 当前按 `text/plain` 预算读取为 text block；超限会写 preview 和 truncated fallback。非文件、超大图片、坏 data URL 或读取失败会转成稳定文本占位和 metadata，而不是把坏 payload 交给 provider。
-- user message 持久化为 text part 加 file parts；file part 保存 `mime`、`url`、`source`、size/hash/preview/image/error metadata。`session-history-hydrator` 已能把可用 image file part 恢复为结构化 user image block。
-- `toAiSdkMessages()` 已支持 user image block、PDF file block、`stripMedia` 占位、空/坏 data URL fallback，并按 Active Model 的 `properties.input_format.support_image` / `support_pdf` 生成模型可见错误文本。
+- No standalone user attachment artifact store yet; small data URLs and resolved images may still be
+  inlined into the file part. Snapshots of large media, GC, fork reference counting and the missing
+  artifact fallback follow the phases below.
+- TUI placeholder binding still relies on the exact placeholder string, not on `TextElement` byte ranges.
+- The local file resolver covers only text files and images; the full prompt expansion, MIME sniff,
+  artifacting and provider capability gate for PDF/SVG/directories/resources is not yet a unified resolver
+  capability.
+- The compact boundary does not yet record attachment statistics, `attachmentMessageIds`, strip refs, or a
+  dedicated media-strip replay after context overflow.
+- debug/trace do not yet fully show attachment storageKind, projection result, degradation reason and hash
+  prefix.
+- The "no video in phase 1" statements below describe only the initial phase and no longer represent the
+  current state.
 
-仍未实现或只部分实现：
+## Design points
 
-- 还没有独立的用户附件 artifact store；小 data URL 和解析后图片仍可内联进 file part，大媒体 snapshot、GC、fork 引用计数和缺失 artifact fallback 仍按本文后续阶段设计推进。
-- TUI 占位符绑定仍靠 exact placeholder 字符串保留，不是 `TextElement` byte range。
-- local file resolver 目前只覆盖文本文件和图片；PDF/SVG/目录/resource 的完整 prompt expansion、MIME sniff、artifact 化和 provider capability gate 还不是统一 resolver 能力。
-- compact boundary 还没有记录附件统计、`attachmentMessageIds`、strip refs 或 context overflow 后的专门 media-strip replay。
-- debug/trace 还没有完整展示附件 storageKind、projection result、降级原因和 hash 前缀。
+### Input layer
 
-Status update as of 2026-05-14: provider request 前的媒体预算投影已进入当前阶段。ZCode 会在真正调用模型前统计 provider-visible image/PDF data URL 字节数，优先保留最新真实用户消息里的媒体，把较旧媒体替换成可读 placeholder；如果最新用户消息本身已经超过预算，则本地抛出可恢复的 invalid input 错误，不把请求打到 provider。
-
-Status update as of 2026-06-06: 桌面 GUI 的文件选择入口改为优先传 `localPath`，不再把普通文件序列化成 `dataBase64` 附件。ZCode app-server 会在 `session/send` 边界把 GUI 的 `kind/localPath/dataBase64/textContent` 协议附件转换成 core 的 `TurnAttachment { type, path/content }`。TUI/CLI 与 GUI 共用 core resolver：小文本仍按 `inlineTextMaxBytes = 64 KiB` 内联为 synthetic Read 结果；超过该阈值的文本、非文本普通文件和超过 `INLINE_MEDIA_ATTACHMENT_MAX_BYTES = 20 MiB` 的图片只交付本地路径引用，让模型按需使用读取工具，而不是把大文件内容塞进 prompt。
-
-Status update as of 2026-07-31: inline/paste 图片继续把 data URL artifact 作为恢复事实，同时在
-`<storageRoot>/cli/image-cache/<sessionId>/` 中 eager 物化可重建的真实图片文件；durable artifact
-仍保存在 `<storageRoot>/cli/artifacts/<sessionId>/`。模型请求前按 artifact URI
-singleflight ensure 该路径：支持图片时 user content 为 query、image block、
-`[Image: source: <path>]`；明确不支持图片时 image block 替换为既有 omitted 文本，但保留 path。
-path 是 request-local 的普通 user text，不持久化，也不进入 system reminder、runtime attachment
-或 MCS。resume 缓存缺失时从 durable data URL artifact 重建；已有 local file path 时直接复用。
-派生缓存只处理能够生成真实图片扩展名的 MIME；不支持的图片 MIME 继续沿原 image/base64
-provider 链路发送，但不生成 cache/path，也不因此中断请求。受支持 MIME 的真实读写或 durable
-artifact 故障仍在 provider 调用前明确失败，避免发送失效 path。
-只有带 `zcode-artifact://` URI 的 inline 图片，以及带真实 `path` 的 local-file 图片参与上述
-path 投影；其他 provider-ready inline 图片（包括缺少 URI 或 URI 为 data URL）保留原 image block，
-仅继续走既有媒体能力投影，不尝试生成 path，也不因缺少 durable artifact 身份阻断模型请求。
-本次路径隔离不新增定期清理或旧路径迁移语义。
-
-Status update as of 2026-08-20: user video 与 image 共用 request-local path 投影。已有 local file path
-直接复用；inline video 在模型请求前从 durable data URL artifact lazy 物化到
-`<storageRoot>/cli/video-cache/<sessionId>/`。`properties.input_format.support_video=true` 时保留 video block 与
-`[Video: source: <path>]`，为 `false` 时 video block 替换为既有 omitted 文本并保留 path。
-video path 与 image 一样不持久化；冷恢复时从 durable artifact 重新 ensure。仅带
-`zcode-artifact://` URI 的 inline video 或带真实 path 的 local-file video 参与投影，不支持的 MIME
-保持原 base64/capability 链路且不生成 path。本次不新增缓存清理、迁移或其他媒体类型语义。
-
-Status update as of 2026-08-19: video 输入已作为独立 modality 接入当前主线。CLI、V4
-`AttachmentRef`、composer inline upload 与 Read 均可生成 provider-neutral video block；模型 catalog
-能力与 provider wire 能力分别门控，不支持时 strip。模型能力由 Active Model 的
-`properties.input_format.support_video` 表达，30MiB 输入上限是与 image 同类的 ZCode 全局产品策略，不随 catalog、session 或
-turn model 配置。用户与 tool-result
-video 都以 `FilePart + zcode-artifact://` 作为跨 provider/cold-resume 的 durable 事实，当前 provider
-需要的 base64 只在请求期投影。core/Read 的 video 输入策略为 30MiB；V4 上传继续沿用既有 20MiB、
-64 chunks 与 64MiB staging 边界，desktop continuous、mobile replayable 和 shared-host 边界不变。
-Web/mobile 大视频传输不在本期范围。本文后续“第一阶段不做 video”仅描述最初阶段，不再代表当前实现状态。
-
-Status update as of 2026-08-21: composer 与已发送 user row 的 image/video 共用媒体预览
-Dialog。video 不按容器或 codec 建 UI 白名单，统一交给浏览器原生 `<video controls playsInline>`；
-原生解码失败只显示“当前设备不支持预览”提示，不改变附件上传、发送、持久化和模型输入。
-已发送附件读取以当前 row 稳定身份和附件序号授权；目标 FilePart 已持久化时优先解析该轮的
-durable artifact。新消息尚未形成持久 message 锚点，或旧历史没有 artifact 时，才读取已授权的
-原稳定 ref。因此热态、冷恢复与同一路径重复发送都不会
-因源文件删除或变化而漂移。热态 original ref 与 hydrate 后 previewRef 均可证明同一 row/index
-附件，但不授权其他路径；session store 按 session/message 精确读取目标 message/parts，不为一次
-预览扫描或解码整段会话。单次读取失败只在 Dialog 内反馈，不永久禁用预览入口。上传与图片读取
-继续沿用 V4 20MiB 总量边界。Desktop 本地会话预览已发送视频时先查询经过当前 row/index 授权的
-本地播放源：durable artifact 优先复用 `cli/video-cache/<sessionId>` 派生文件；没有 artifact 的
-`metadata_only/local_ref` 才使用已持久化的稳定路径。两者都通过 Desktop 专用媒体协议交给原生
-`<video>`，不会把文件完整读进 gateway/renderer，因此不受 30MiB 模型输入上限约束。artifact
-存在但无法物化播放路径时不得退回可变原路径，只能降级为既有分片读取。Web、手机远控与
-SSH/WSL/Docker workspace 不返回远端路径，继续使用 512KiB query，并沿用 30MiB video preview
-上限。关闭、切换或卸载分片预览时仍取消后续 chunk；不扩上传 staging、不新增大文件副本、
-转码、PDF/audio 预览、relay 状态或独立 runtime。
-
-Desktop 专用媒体 scheme 必须在 `app.ready` 前以 `standard + secure + stream` 注册。`standard`
-使 Chromium 将其视作标准 URL 并对非 fast-start MP4 发起文件尾元数据读取；缺少该权限时，
-`moov` 位于 `mdat` 之后的视频会在已发送消息中被媒体栈误判为不可解码。正式 VI06 E2E 使用
-尾部 `moov` 的可播 MP4，同时验证 artifact-backed 与超过 30MiB local-ref 视频的加载和 seek。
-
-## 设计要点
-
-### 输入层
-
-用户输入拆成明确 variant：
+User input splits into explicit variants:
 
 - `Text { text, text_elements }`
 - `Image { image_url }`
 - `LocalImage { path }`
 - `Skill` / `Mention`
 
-其中 `Image` 是 provider-ready 的 data URL 或远程 URL；`LocalImage` 只是本地路径，只有在构造 provider request 时才读取、压缩/转换成 data URL。这个区分很关键：本地路径适合 UI 编辑和本地历史重放，但不应该被当成可直接发给 provider 的稳定内容。
+`Image` is a provider-ready data URL or remote URL; `LocalImage` is only a local path that is read and
+compressed/converted into a data URL only when the provider request is built. The distinction is key:
+a local path suits UI editing and local history replay but must not be treated as stable content to send
+to a provider directly.
 
-输入层还需要注意几个细节：
+More input-layer details:
 
-- `TextElement` 用 byte range + placeholder 绑定 UI 占位符，避免图片占位文本被编辑后附件映射错位。
-- local image 进入模型前生成 `<image name=[Image #N]>`、`input_image`、`</image>` 的有序内容，给模型一个稳定标签。
-- 模型能力通过 `input_modalities` 表达；TUI attach/submit 路径都会检查，禁用或警告不支持图片的模型。
-- 不支持图片的历史会把 image part 归一成占位文本，而不是静默丢掉。
-- SDK 第一层只支持 text + local_image，并把 text 合并成 prompt，把 local image 作为 `--image` 传给 CLI。这是简单但稳定的入口兼容策略。
-- 估算上下文时会把 base64 图片 payload 替换成按 detail/尺寸估算的 token 成本，避免 raw JSON 大小误导 compact 判断。
+- `TextElement` binds UI placeholders with a byte range + placeholder, so editing the image placeholder
+  text does not misalign attachments.
+- A local image entering the model generates ordered content `<image name=[Image #N]>`, `input_image`,
+  `</image>`, giving the model a stable label.
+- Model capability is expressed by `input_modalities`; both the TUI attach and submit paths check it, and
+  disable or warn for models without image support.
+- History for a model without image support normalizes image parts to placeholder text instead of
+  dropping them silently.
+- The SDK first layer supports only text + local_image: it merges text into the prompt and passes local
+  images to the CLI as `--image`. A simple but stable entry compatibility strategy.
+- When estimating context, base64 image payloads are replaced by a token cost estimated from
+  detail/size, so the raw JSON size does not mislead compact decisions.
 
-### 持久化与 provider 投影
+### Persistence and provider projection
 
-ZCode 当前的 session store 形态是：消息由 `MessageInfo + Part[]` 组成，附件是 `FilePart`：
+The current ZCode session store form: a message consists of `MessageInfo + Part[]`, and attachments are
+`FilePart`:
 
 ```typescript
 type FilePart = {
@@ -130,78 +173,103 @@ type FilePart = {
 };
 ```
 
-`FilePartSource` 分成 `file`、`symbol`、`resource`，并记录 placeholder 文本的 start/end/value。这比只存 `path` 更适合 resume、MCP resource、符号引用和 UI 还原。
+`FilePartSource` is split into `file`, `symbol`, `resource` and records the start/end/value of the
+placeholder text. This suits resume, MCP resources, symbol references and UI restoration better than
+storing only `path`.
 
-provider transform 的规则：
+Provider transform rules:
 
-- `text/plain` 和 directory file 不直接作为 file part 进模型，而是在 prompt 构造阶段转为文本或 synthetic Read 结果。
-- image/PDF 这类 media 作为 file/media part 进入 AI SDK。
-- `ProviderTransform.message()` 会按 `model.capabilities.input` 判断 image/audio/video/pdf 是否支持；不支持时替换成明确错误文本，要求模型告知用户。
-- 空 base64 图片会被替换成 `"ERROR: Image file is empty or corrupted..."`，避免 provider 报晦涩错误。
-- tool result 的媒体附件如果 provider 支持 tool-result media，就放在 tool result content；不支持时抽出来追加一条 synthetic user message：`Attached image(s) from tool result:`。
-- compact/replay 时可以 `stripMedia`，把媒体替换成 `[Attached image/png: file]` 这类占位。
-- TUI 对图片/PDF使用虚拟占位符 `[Image N]` / `[PDF N]`，删除占位符就删除对应 part；SVG 按文本粘贴，不当作图片 base64。
+- `text/plain` and directory files do not go to the model as file parts; they become text or a synthetic
+  Read result at prompt construction.
+- image/PDF media enter the AI SDK as file/media parts.
+- `ProviderTransform.message()` decides by `model.capabilities.input` whether image/audio/video/pdf is
+  supported; if not it is replaced by explicit error text asking the model to tell the user.
+- An empty base64 image is replaced by `"ERROR: Image file is empty or corrupted..."`, so the provider
+  does not report an obscure error.
+- Media attached to a tool result goes into the tool result content if the provider supports tool-result
+  media; otherwise it is extracted and appended as a synthetic user message:
+  `Attached image(s) from tool result:`.
+- On compact/replay `stripMedia` can replace media with placeholders like `[Attached image/png: file]`.
+- The TUI uses virtual placeholders `[Image N]` / `[PDF N]` for images/PDFs; deleting a placeholder
+  deletes the matching part; SVG is pasted as text, not as image base64.
 
-### 对 ZCode 的取舍
+### Trade-offs for ZCode
 
-ZCode 采用 durable part 模型作为持久化主线，因为当前仓库已经有 `FilePart` / `FilePartSource` 形状；同时采用显式输入 variant 和本地图片延迟编码，避免入口层直接把本地路径伪装成 provider 内容。
+ZCode uses the durable part model as the persistence mainline since the repository already has the
+`FilePart` / `FilePartSource` shape, and uses explicit input variants and lazy local image encoding so the
+entry layer never disguises a local path as provider content.
 
-具体取舍：
+- External input uses `UserPromptInput` / `UserAttachmentInput`, keeping the differences between local
+  path, data URL and resource link.
+- The session store keeps `MessageInfo + Part[]` and strengthens `FilePart` metadata, source, hash, size.
+- Provider-visible history uses `MessageContentBlock[]`, projected from parts by hydration/the prompt
+  builder.
+- UI placeholders bind through `TextElement` / `source.text`, not by string scanning.
+- Unsupported media returns a stable error or visible fallback in the first phase, never a silent drop.
 
-- 对外输入用 `UserPromptInput` / `UserAttachmentInput`，保留 local path、data URL、resource link 的差异。
-- session store 继续用 `MessageInfo + Part[]`，补强 `FilePart` metadata、source、hash、size。
-- provider-visible history 用 `MessageContentBlock[]`，由 hydration/prompt builder 从 parts 投影出来。
-- UI 占位符用 `TextElement` / `source.text` 绑定，不靠字符串扫描猜测附件。
-- 不支持媒体时第一阶段返回稳定错误或可见 fallback，不静默丢弃。
+## Architecture
 
-## 架构落点
+Main skeleton: `MessageInfo + Part[]` in the session event log is the source of truth, projected into
+provider messages before entering the model. So the TUI, resume, compact, rewind, fork and debug all work
+around one durable part model instead of each path assembling strings.
 
-这一版的主骨架：session event log 里的 `MessageInfo + Part[]` 是事实源；进入模型前再投影成 provider message。这样可以让 TUI、resume、compact、rewind、fork、debug 都围绕同一个 durable part 模型工作，而不是每条路径各自拼字符串。
+### Message fact source
 
-### 消息事实源
+The persistence layer keeps three kinds of information:
 
-持久化层保留三类信息：
+- `MessageInfo`: role, session, time, cost/token, parent/fork/compact boundary and other metadata.
+- `TextPart`: user-visible text, synthetic read results, error fallback, compact placeholder.
+- `FilePart`: the attachment fact, not the provider file part. It records `mime`, `filename`, `url`,
+  `source`, `sizeBytes`, `sha256`, storage location and recoverable state.
 
-- `MessageInfo`：role、session、时间、cost/token、parent/fork/compact 边界等元信息。
-- `TextPart`：用户可见文本、synthetic read 结果、错误 fallback、compact placeholder。
-- `FilePart`：附件事实，不等于 provider file part。它记录 `mime`、`filename`、`url`、`source`、`sizeBytes`、`sha256`、存储位置和可恢复状态。
+`FilePart.url` is a stable URI, not a "string that can be sent to the model directly":
 
-`FilePart.url` 应视为稳定 URI，而不是“能直接发给模型”的字符串：
+- `file://...`: a local file reference at submit time, readable only by the attachment resolver.
+- `data:<mime>;base64,...`: small provider-ready inline content.
+- `zcode-artifact://<artifactId>`: content already in the attachment artifact store.
+- `mcp-resource://...` or a `resource` source: content from MCP/resource links.
 
-- `file://...`：用户提交时的本地文件引用，只能由 attachment resolver 读取。
-- `data:<mime>;base64,...`：小体积、provider-ready 的 inline 内容。
-- `zcode-artifact://<artifactId>`：已经进入附件 artifact store 的内容。
-- `mcp-resource://...` 或 `resource` source：来自 MCP/resource link 的内容。
+`FilePart.source.text` keeps the byte range and value of the placeholder in the user input. When the TUI
+deletes `[Image 1]` / `[PDF 1]` the matching `FilePart` is deleted, rather than guessing by rescanning
+same-named text.
 
-`FilePart.source.text` 保留 placeholder 在用户输入里的 byte range 和 value。TUI 删除 `[Image 1]` / `[PDF 1]` 时删除对应 `FilePart`，而不是靠重新扫描同名文本猜测。
+### Prompt expansion
 
-### Prompt 扩展
+The user part is first expanded into "context the model can understand" when entering the session, but
+the original `FilePart` is kept.
 
-关键点是：用户 part 进入 session 时先扩展成“模型可以理解的上下文”，但原始 `FilePart` 仍然保留。
+- `resource`: read through the MCP/resource adapter; text content produces a synthetic `TextPart`, binary
+  content a `[Binary content: <mime>]` fallback, and the `FilePart` is kept.
+- `file://` + `text/plain`: goes through the unified Read capability or an equivalent `FileSystemPort`
+  read, supporting `start/end`, symbol range and budget limits; the model sees synthetic text with the
+  "Called Read..." semantics plus the file content, and the session still keeps the `FilePart`.
+- `file://` + directory: in the first phase a directory is not sent as a file part; it goes through a
+  directory summary/Read result or an explicit error.
+- `image/*` / `application/pdf`: not turned into synthetic text; resolved into a media attachment that
+  enters `data:` or `zcode-artifact:` by size and is loaded at provider projection.
+- Empty base64, corrupted image, MIME mismatch: produce a stable error text part, never a bad payload to
+  the provider.
 
-- `resource`：通过 MCP/resource adapter 读取；文本内容生成 synthetic `TextPart`，二进制内容生成 `[Binary content: <mime>]` fallback，同时保留 `FilePart`。
-- `file://` + `text/plain`：走统一 Read 能力或等价的 `FileSystemPort` 读取，支持 `start/end`、symbol range 和预算限制；模型看到的是 “Called Read...” 语义的 synthetic text + 文件内容，session 仍保留 `FilePart`。
-- `file://` + directory：第一阶段不把目录作为 file part 发给模型，走目录摘要/Read 结果或明确错误。
-- `image/*` / `application/pdf`：不转成 synthetic text；解析成媒体附件，按大小进入 `data:` 或 `zcode-artifact:`，provider 投影阶段再加载。
-- 空 base64、损坏图片、MIME 不匹配：生成稳定错误 text part，不把坏 payload 交给 provider。
+Module boundary: prompt expansion may only call controlled adapters/ports, and session/core must not call
+`fs.readFile`, `fetch` or a shell directly.
 
-这里要注意模块边界：prompt expansion 只能调用受控 adapter/port，不能在 session/core 里直接调用 `fs.readFile`、`fetch` 或 shell。
+### Storage layers
 
-### 存储分层
+Large files cannot be stuffed into the part JSON of SQLite, and provider-ready base64 is not long-term
+history. Four layers:
 
-大文件不能直接塞进 SQLite 的 part JSON，也不能把 provider-ready base64 当作长期历史。建议分四层：
+| Layer | Stores | Does not store | Purpose |
+| ----- | ------ | -------------- | ------- |
+| SQLite/session store | message/part metadata, text part, short preview, artifact URI, hash, size, MIME, source range | large base64, full binary, full large text | resume, rewind, compact boundary, debug |
+| Attachment artifact store | original media, small/medium binaries, extracted text preview, reusable provider payload | session business state, full user input log | stable resume/fork replay, large-file references |
+| Workspace reference | the local path, mtime, size, hash at selection time | provider payload | entry draft, error hints, re-resolving when needed |
+| Provider projection | AI SDK `text` / `image` / `file` part | the persistent fact source | a single model request |
 
-| 层                        | 存什么                                                                                     | 不存什么                           | 用途                                |
-| ------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------- | ----------------------------------- |
-| SQLite/session store      | message/part metadata、text part、短 preview、artifact URI、hash、size、MIME、source range | 大 base64、完整二进制、完整大文本  | resume、rewind、compact 边界、debug |
-| Attachment artifact store | 原始媒体、小/中型二进制、抽取后的文本 preview、可复用 provider payload                     | session 业务状态、用户输入全文日志 | resume/fork 稳定重放、大文件引用    |
-| Workspace reference       | 用户选择时的本地路径、mtime、size、hash                                                    | provider payload                   | 入口草稿、错误提示、必要时重新解析  |
-| Provider projection       | AI SDK `text` / `image` / `file` part                                                      | 持久事实源                         | 单次模型请求                        |
-
-Provider projection 还必须保证 user message 在 wire 上非空。附件-only 输入的边界如下：
+Provider projection must also guarantee a non-empty user message on the wire. Boundary for
+attachment-only input:
 
 ```text
-SQLite：一条 user(text="", file)
+SQLite: one user(text="", file)
                     │
       ┌─────────────┴──────────────────┐
       │ live                           │ resume / rewind /
@@ -211,7 +279,7 @@ SQLite：一条 user(text="", file)
  prompt_attachment                     │
       └─────────────┬───────────────────┘
                     ▼
-              Agent 内存 history
+              Agent in-memory history
                     │
                     ▼
               provider adapter
@@ -219,50 +287,63 @@ SQLite：一条 user(text="", file)
                     ▼
                "(no content)"
 
-UI snapshot ──始终读取 SQLite 原始消息──> 一个带附件的 user 气泡
+UI snapshot ──always reads the raw SQLite message──> one user bubble with the attachment
 ```
 
-持久化不拆分消息；拆分只发生在 live/hydrate 的 runtime/provider 投影阶段。成功展开为
-`prompt_attachment` 的文本附件可能留下空 `real_user`，图片等媒体仍保留在 structured user content 中。hydrate
-重建的空 `real_user` envelope 只存在于 Agent 内存，不写回 session store，也不进入 UI
-snapshot。fork commit 本身只复制持久化事实；只有子会话后续打开/恢复时才进入 hydrate。
+Persistence does not split messages; splitting happens only in the live/hydrate runtime/provider
+projection. A text attachment successfully expanded into `prompt_attachment` may leave an empty
+`real_user`, while media such as images stay in the structured user content. The empty `real_user`
+envelope rebuilt by hydrate exists only in Agent memory and is neither written back to the session store
+nor enters the UI snapshot. The fork commit only copies persisted facts; hydrate happens only when the
+child session is later opened/resumed.
 
-如果真实 user content 是空字符串，或转换后没有任何 AI SDK user parts，adapter 只在最终
-wire 序列化边界将其投影为固定英文 `"(no content)"`，避免
-空白占位被部分 provider trim 后仍判定为缺失 prompt。空格、换行等长度非零的字符串保持原值；
-已含图片、文件、resource link 或非空文本的 user content 不追加 fallback。session store、
-用户可见 query、title seed 和附件事实始终保持原值，`"(no content)"` 只允许出现在 provider
-wire 或 model-io 诊断中。
+If the real user content is an empty string, or conversion leaves no AI SDK user parts, the adapter
+projects it to the fixed English `"(no content)"` only at the final wire serialization boundary, so a
+blank placeholder trimmed by some provider is not still judged a missing prompt. Strings of non-zero
+length such as spaces and line breaks keep their value; user content that already has images, files,
+resource links or non-empty text gets no fallback. The session store, user-visible query, title seed and
+attachment facts always keep their original value, and `"(no content)"` may appear only on the provider
+wire or in model-io diagnostics.
 
-默认策略：
+Default policy:
 
-- 小文本可以直接内联为 text part；超出预算只内联 preview，并把完整内容或可恢复引用放到 artifact store。
-- 媒体在提交时 snapshot 到 attachment artifact store，确保 resume/fork 不依赖用户本地文件之后是否被改名或删除。
-- 超过附件上限的文件只保存 metadata 和稳定错误，不做 snapshot，避免把不可用大文件偷偷占用本地存储。
-- 小 data URL 可以保存在 part 里；超过 `sqliteInlineDataUrlMaxBytes` 的 data URL 必须落 artifact，只在 part 里存 `zcode-artifact://...`。
-- provider-ready data URL 是投影结果，不是事实源；除非它足够小并且本身就是用户输入。
-- video provider payload 统一从 artifact 生成 data URL/base64；会话内切换和冷恢复都必须重新按
-  当前 provider wire 投影，message DB 不能只保存某次请求的临时 payload。
-- renderer 从草稿、历史或 replayable payload 恢复 inline image/video 时，`sizeBytes` 只作展示
-  metadata；解码前必须根据 base64 正文计算真实字节数并执行对应媒体上限，不能让缺失或低报的
-  `sizeBytes` 绕过校验。
-- project input history 是独立的 legacy 输入召回能力，不是 session 媒体事实源。本期只保存其既有
-  file/image/url 投影；video 不得通过扩大 InputHistory contract 假装可持久化，入口层应显式投影
-  支持的附件类型。
+- Small text may be inlined as a text part; beyond the budget only a preview is inlined and the full
+  content or a recoverable reference goes to the artifact store.
+- Media is snapshotted into the attachment artifact store at submit time, so resume/fork does not depend
+  on the user's local file being renamed or deleted later.
+- A file over the attachment limit keeps only metadata and a stable error with no snapshot, so unusable
+  large files do not silently occupy local storage.
+- A small data URL may be stored in the part; a data URL over `sqliteInlineDataUrlMaxBytes` must go to an
+  artifact, with only `zcode-artifact://...` in the part.
+- A provider-ready data URL is a projection result, not a fact source, unless it is small enough and is
+  itself the user input.
+- Video provider payload is always generated from the artifact as data URL/base64; switching within a
+  session and cold recovery must re-project by the current provider wire, and the message DB must not
+  store only the temporary payload of one request.
+- When the renderer restores inline image/video from drafts, history or replayable payloads, `sizeBytes`
+  is display metadata only; before decoding the real byte count must be computed from the base64 body and
+  the matching media limit enforced, so a missing or understated `sizeBytes` cannot bypass validation.
+- Project input history is an independent legacy input recall capability, not a session media fact
+  source. This phase stores only its existing file/image/url projection; video must not pretend to be
+  persistable by widening the InputHistory contract, and the entry layer should project the supported
+  attachment types explicitly.
 
-初始阈值建议用代码常量或配置项表达，不新增环境变量：
+Initial thresholds are expressed as code constants or config items, with no new environment variable:
 
-- `inlineTextMaxBytes`: 64 KiB，预算内直接转 text part。
-- `textPreviewMaxBytes`: 32 KiB，大文本 preview 上限。
-- `sqliteInlineDataUrlMaxBytes`: 256 KiB，超过就必须 artifact 化。
-- `mediaSnapshotMaxBytes`: 20 MiB，超过则拒绝或只保留 metadata。具体 provider 的更低限制由 provider adapter 再次门控。
-- `toolAttachmentMaxBytes`: 20 MiB，tool 产物媒体进入同一 artifact store。
+- `inlineTextMaxBytes`: 64 KiB, converted directly to a text part within budget.
+- `textPreviewMaxBytes`: 32 KiB, upper bound of the large-text preview.
+- `sqliteInlineDataUrlMaxBytes`: 256 KiB, beyond which artifacting is required.
+- `mediaSnapshotMaxBytes`: 20 MiB, beyond which the file is rejected or only metadata is kept. Lower limits
+  of a specific provider are gated again by the provider adapter.
+- `toolAttachmentMaxBytes`: 20 MiB, tool-produced media enters the same artifact store.
 
-后续如果要把这些阈值暴露成配置，必须另写配置优先级、错误行为和测试覆盖；不要直接加 `ZCODE_*` 环境变量。
+If these thresholds are later exposed as config, config precedence, error behavior and test coverage must
+be written separately; do not add `ZCODE_*` environment variables directly.
 
-### 投影层
+### Projection layer
 
-新增独立投影入口，避免 `session-history-hydrator`、compact、provider transform 各自做一套规则：
+A separate projection entry, so `session-history-hydrator`, compact and provider transform do not each
+carry their own rules:
 
 ```typescript
 interface MessageProjectionOptions {
@@ -281,61 +362,83 @@ interface MessageProjector {
 }
 ```
 
-投影规则：
+Projection rules:
 
-- `live/resume` 默认尽量保留当前模型支持的 media。
-- `compact` 首次请求沿用模型能力与媒体预算投影；遇到媒体过大错误后，重试仅传 placeholder 和必要 metadata。
-- `replay` 如果附件 artifact 不存在，转成 `[Missing attachment: <name> <mime>]`。
-- provider 不支持某 modality 时，生成稳定错误 text part，例如 “Cannot read image/png because this model does not support image input.”
-- tool result media 优先放在 tool-result content；provider 不支持 tool-result media 但支持 user media 时，追加 synthetic user message。
+- `live/resume` keep, by default, as much media as the current model supports.
+- The first `compact` request follows the model capability and media budget projection; after a
+  media-too-large error the retry passes only placeholders and necessary metadata.
+- If an artifact is missing, `replay` becomes `[Missing attachment: <name> <mime>]`.
+- When the provider does not support a modality, a stable error text part is generated, for example
+  "Cannot read image/png because this model does not support image input."
+- Tool result media prefers the tool-result content; when the provider does not support tool-result media
+  but supports user media, a synthetic user message is appended.
 
-### 413 请求体防线
+<a id="413-请求体防线"></a>
 
-图片导致的 413 属于 HTTP request body 问题，不应只依赖 token compact。即使图片 token 估算很低，base64 JSON body 仍可能超过 provider、代理或网关限制。因此 provider request 投影层必须承担硬字节预算：
+### 413 request body guard
 
-- 每次调用 provider 前，图片、PDF、其他二进制文件和视频共用一个 `40MiB`
-  请求媒体预算。统一统计完整 data URL 的 UTF-8 字节数，包含 base64 和 URL 前缀；
-  已投影为文本的附件不计入媒体预算。视频不再拥有独立的请求预算。
-- `media-budget.ts` 是唯一的请求预算实现；普通对话、compact/summary、Memory 和
-  目标完成验证都先按模型能力投影，再应用该预算。只修改当前请求副本，不修改
-  session message、tool result 或 artifact，持久化与恢复链路保持原有语义。
-- 最新真实用户消息中的媒体视为当前轮输入，优先保留，避免用户刚上传的截图被历史图片挤掉。
-- 历史媒体按新近程度保留；超出预算的旧媒体替换为 `modelMessageContentToText()` 生成的附件 placeholder，并追加“因媒体预算省略”的说明。
-- 如果当前轮媒体本身超过预算，立即抛出可恢复的 `invalid_input`，错误码统一为
-  `MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE`，不按附件类型分流，也不再调用 provider。
-- compact/summary 首次请求遵循相同预算；遇到 provider 媒体过大错误后，沿用既有的
-  placeholder 重试策略。
-- 发生媒体省略时记录 debug 日志，包含投影前后媒体字节数、保留数量和省略数量。
+A 413 caused by images is an HTTP request body problem and must not rely only on token compact. Even if
+the image token estimate is low, the base64 JSON body may exceed provider, proxy or gateway limits. So the
+provider request projection layer must enforce a hard byte budget:
 
-单张图片 resize 和单个视频 `30MiB` 原始文件上限继续在附件输入/Read 层执行；
-请求层只负责编码后的合计预算，不重复计算视频原始字节。恰好 `30MiB` 的视频编码后
-已有 `40MiB` base64，再加 URL 前缀便超过请求预算，因此单文件校验通过不保证请求能发送。
+- Before each provider call, images, PDFs, other binary files and video share one `40MiB` request media
+  budget. The UTF-8 byte count of the complete data URL is counted uniformly, including base64 and the URL
+  prefix; attachments already projected to text are not counted. Video has no separate request budget.
+- `media-budget.ts` is the only request budget implementation; ordinary conversation, compact/summary,
+  Memory and goal-completion verification all project by model capability first and then apply this
+  budget. Only the current request copy is modified, not session messages, tool results or artifacts, so
+  persistence and recovery chains keep their semantics.
+- Media in the latest real user message counts as current-turn input and is kept first, so a screenshot
+  the user just uploaded is not pushed out by historical images.
+- Historical media is kept by recency; old media beyond the budget is replaced by the attachment
+  placeholder generated by `modelMessageContentToText()` plus a note that it was omitted for the media
+  budget.
+- If the current-turn media itself exceeds the budget, a recoverable `invalid_input` is thrown at once
+  with the single error code `MEDIA_BUDGET_CURRENT_ATTACHMENT_TOO_LARGE`, with no split by attachment
+  type and no provider call.
+- The first compact/summary request follows the same budget; after a provider media-too-large error the
+  existing placeholder retry strategy is used.
+- When media is omitted a debug log records the media bytes before/after projection and the kept and
+  omitted counts.
 
-`40MiB` 为正文等非媒体内容预留空间，但不统计文本、工具定义和 JSON 包装，不能保证
-整个 HTTP body 始终小于 `50MiB`。不新增 provider 专属预算或持久化状态。
+The single-image resize and the single-video `30MiB` raw file limit are still enforced at the attachment
+input/Read layer; the request layer only handles the encoded total budget and does not recount the raw
+video bytes. A video of exactly `30MiB` already has `40MiB` of base64 after encoding and exceeds the
+request budget with the URL prefix, so passing the single-file check does not guarantee the request can
+be sent.
 
-## 目标
+`40MiB` reserves space for non-media content such as the body, but text, tool definitions and the JSON
+envelope are not counted and the whole HTTP body is not guaranteed to stay under `50MiB`. No
+provider-specific budget or persisted state is added.
 
-第一阶段支持用户消息携带本地文件、图片和资源链接，并把可被当前模型消费的内容安全地注入模型请求。
+## Goals
 
-核心目标：
+The first phase supports user messages carrying local files, images and resource links, and safely injects
+the content the current model can consume into the model request.
 
-1. 建立 provider-neutral 的消息内容块和附件 schema。
-2. 让 CLI/TUI/ZCode app-server/bootstrap/runtime/session store 使用同一份附件契约。
-3. 图片在支持 image input 的模型上以 image content block 进入 provider；不支持时给出稳定、可解释的降级。
-4. 文本文件可以按预算内联；大文件和二进制文件只保留摘要、metadata 和可追踪引用，不把大体积内容直接塞回上下文。
-5. resume、compact、rewind、debug、event log 都能观察和恢复附件状态。
-6. UI 占位符和附件引用必须有显式 range/source 绑定，编辑后不会错配图片或文件。
+Core goals:
 
-非目标：
+1. A provider-neutral message content block and attachment schema.
+2. CLI/TUI/ZCode app-server/bootstrap/runtime/session store use the same attachment contract.
+3. Images enter the provider as image content blocks on models supporting image input; otherwise a
+   stable, explainable degradation.
+4. Text files can be inlined within budget; large and binary files keep only a summary, metadata and a
+   traceable reference and are not stuffed into the context.
+5. resume, compact, rewind, debug and the event log can all observe and restore attachment state.
+6. UI placeholders and attachment references have explicit range/source binding, so editing never
+   mismatches an image or file.
 
-- 第一阶段不做音频、视频、目录批量上传、远程 URL 自动下载。
-- 第一阶段不让业务层直接读 `fs` 或访问网络；附件解析必须走 adapter/port。
-- 第一阶段不承诺所有 provider 私有格式，只支持 AI SDK 能稳定表达的 text/image/PDF/file-like 内容，provider 差异放在 model adapter。
+Non-goals:
 
-## 契约
+- No audio, video, directory batch upload or automatic remote URL download in the first phase.
+- The first phase lets the business layer neither read `fs` directly nor access the network; attachment
+  resolution must go through adapters/ports.
+- No promise to support all provider-private formats in the first phase; only text/image/PDF/file-like
+  content the AI SDK can express stably, with provider differences in the model adapter.
 
-新增入口层输入契约：
+## Contract
+
+New entry-layer input contract:
 
 ```typescript
 type UserPromptInput = {
@@ -356,9 +459,11 @@ interface TextElement {
 }
 ```
 
-入口层的 `local_file` 只表达用户选择了本地文件，不是 provider-ready 内容。只有附件 adapter/prompt builder 能把它解析成文本、data URL、artifact ref 或 fallback。
+The entry-layer `local_file` only expresses that the user picked a local file and is not provider-ready
+content. Only the attachment adapter/prompt builder can resolve it into text, a data URL, an artifact ref
+or a fallback.
 
-新增 provider-neutral content block：
+New provider-neutral content block:
 
 ```typescript
 type MessageContentBlock =
@@ -393,7 +498,8 @@ interface AttachmentRef {
 }
 ```
 
-session `FilePart` 需要补充存储 metadata，在现有 `FilePart` 形状上扩展，使其更适合大文件：
+The session `FilePart` gets extra storage metadata, extending the existing `FilePart` shape for large
+files:
 
 ```typescript
 interface AttachmentStorageMetadata {
@@ -412,53 +518,71 @@ interface AttachmentStorageMetadata {
 }
 ```
 
-`metadata_only` 不是成功附件，它表示用户确实提交过附件，但 ZCode 没有把原始内容保存下来，模型只能看到可解释 fallback。
+`metadata_only` is not a successful attachment: the user did submit it, but ZCode did not keep the
+original content and the model can see only an explainable fallback.
 
-`ModelInputMessage.content` 从 `string` 扩展为：
+`ModelInputMessage.content` extends from `string` to:
 
 ```typescript
 type ModelMessageContent = string | MessageContentBlock[];
 ```
 
-兼容策略：
+Compatibility:
 
-- system、assistant、tool 第一阶段继续优先使用 string。
-- user message 使用 block array；纯文本输入仍可保持 string 或被规范化成单个 text block。
-- text/plain 文件先转 text block；image/PDF 转 file/image block；目录只作为文本说明或明确拒绝。
-- `modelInputMessageJsonSchema` 必须同步扩展，跨进程和 session 边界不能只靠 TypeScript 类型。
+- system, assistant and tool prefer string in the first phase.
+- A user message uses a block array; plain text input may stay a string or be normalized into a single
+  text block.
+- text/plain files become a text block first; image/PDF become file/image blocks; a directory is only a
+  text description or an explicit refusal.
+- `modelInputMessageJsonSchema` must be extended in sync; cross-process and session boundaries cannot rely
+  on TypeScript types alone.
 
-## 附件解析边界
+## Attachment resolution boundary
 
-新增 `AttachmentPort` 或放入现有受控 I/O adapter 层，负责：
+An `AttachmentPort` (or an existing controlled I/O adapter layer) is responsible for:
 
-- 规范化本地路径，相对路径基于 session cwd，绝对路径必须经过 workspace/sandbox 策略。
-- 读取 metadata：文件名、MIME、size、hash、mtime。
-- 按 MIME 和大小判断可内联、可转图片、可作为文本摘要、或只能引用。
-- 图片读取为 base64/data URL 形态，不在 core 里直接读文件。
-- 图片默认走 `ImageProcessorPort.resizeToFit`，进入模型前最长边应限制在 2000 像素以内；后续支持 original detail 时必须由模型能力门控。Node/SEA 默认实现使用纯 JS Jimp adapter，以避免图片处理依赖平台原生二进制。
-- WebP 第一阶段不做 resize/transcode。Jimp 默认不支持 WebP 编码输出，adapter 必须原样返回 WebP bytes，`resized: false`，保留 `image/webp` MIME；如果后续引入 WebP resize，必须先在本 spec 中定义新的 WASM/native 资源加载、SEA 打包和降级行为。
-- SVG 不作为图片 base64 发送，优先按文本文件处理。
-- PDF 第一阶段可作为 media file block 或 fallback；不支持 PDF 的模型必须收到明确错误文本。
-- 文本文件按统一预算读取，超限时返回 preview + artifact ref。
-- 对 data URL 校验 base64 非空、MIME 合法；空或损坏图片转稳定错误，不把坏 payload 发给 provider。
-- MIME 优先由内容 sniff，文件扩展名只作为 fallback。
+- Normalizing local paths: relative paths based on the session cwd, absolute paths through the
+  workspace/sandbox policy.
+- Reading metadata: file name, MIME, size, hash, mtime.
+- Deciding by MIME and size whether it can be inlined, converted to an image, used as a text summary, or
+  only referenced.
+- Reading images as base64/data URL; core does not read files directly.
+- Images go through `ImageProcessorPort.resizeToFit` by default, limiting the longest side to 2000 pixels
+  before entering the model; supporting original detail later must be gated by model capability. The
+  Node/SEA default implementation uses the pure-JS Jimp adapter so image processing does not depend on
+  platform-native binaries.
+- WebP gets no resize/transcode in the first phase. Jimp does not support WebP encoding by default, so the
+  adapter must return WebP bytes unchanged with `resized: false`, keeping the `image/webp` MIME; if WebP
+  resize is introduced later, the new WASM/native resource loading, SEA packaging and degradation behavior
+  must first be defined in this spec.
+- SVG is not sent as image base64 and is preferably handled as a text file.
+- PDF in the first phase can be a media file block or a fallback; a model without PDF support must get
+  explicit error text.
+- Text files are read under a unified budget; over the limit a preview + artifact ref is returned.
+- Data URLs are validated for non-empty base64 and legal MIME; empty or corrupted images turn into a
+  stable error and the bad payload is not sent to the provider.
+- MIME is sniffed from content first; the file extension is only a fallback.
 
-业务层只表达“用户附带了这个资源”的意图，不直接调用 `fs`、`fetch` 或 `process.env`。
+The business layer only expresses the intent "the user attached this resource" and does not call `fs`,
+`fetch` or `process.env` directly.
 
-## 入口路径
+## Entry paths
 
 ### CLI / TUI
 
-第一阶段推荐新增显式输入形态，而不是魔法解析所有文本：
+The first phase recommends explicit input forms instead of magic parsing of all text:
 
-- `zcode --attach path --prompt "..."`。
-- TUI 支持粘贴或选择文件后生成附件列表；图片/PDF 以虚拟占位符 `[Image N]` / `[PDF N]` 渲染。
-- 外部编辑器或手动删除占位符后，要根据 `TextElement` / `FilePart.source.text` 删除或重排对应附件。
-- 纯文本里出现 `@file`、拖拽路径等 UX 可以后续做，但解析结果也必须转成同一 `AttachmentRef`。
+- `zcode --attach path --prompt "..."`.
+- The TUI supports pasting or selecting files to produce an attachment list; images/PDFs render as virtual
+  placeholders `[Image N]` / `[PDF N]`.
+- After an external editor or manual deletion of a placeholder, the matching attachment must be deleted or
+  reordered per `TextElement` / `FilePart.source.text`.
+- UX such as `@file` in plain text or dragging a path can come later, but its result must also be turned
+  into the same `AttachmentRef`.
 
 ### Bootstrap API
 
-把 app API 改成可接受 attachments：
+The app API accepts attachments:
 
 ```typescript
 interface UserPromptInput {
@@ -470,109 +594,150 @@ submitPrompt(input: string | UserPromptInput, options?: SubmitPromptOptions): Pr
 sendInput(input: string | UserPromptInput, options?: SendInputOptions): Promise<SendInputResult>;
 ```
 
-`UserAttachmentInput` 是入口层 schema，runtime 之前先由 adapter 解析为稳定 `MessageContentBlock[]`。
-为兼容当前 API，`string` 等价于 `{ text: string, attachments: [] }`。
+`UserAttachmentInput` is an entry-layer schema that an adapter resolves into stable
+`MessageContentBlock[]` before the runtime. For compatibility with the current API, `string` equals
+`{ text: string, attachments: [] }`.
 
 ### ZCode app-server
 
-ZCode app-server 当前支持 `text` 和 `resource_link`。下一步：
+The ZCode app-server currently supports `text` and `resource_link`. Next:
 
-- `text` -> text block。
-- `resource_link` -> resource_link block，先不自动读取网络。
-- embedded image/resource -> 解析为 attachment block。
-- 不支持的 block 返回 `invalid_params`，错误中包含稳定 `unsupported_content_block` reason。
+- `text` -> text block.
+- `resource_link` -> resource_link block, without auto-reading the network for now.
+- embedded image/resource -> resolved into an attachment block.
+- Unsupported blocks return `invalid_params`, with a stable `unsupported_content_block` reason in the
+  error.
 
 ## Provider Transform
 
-`toAiSdkMessages()` 负责把 ZCode content blocks 转成 AI SDK `ModelMessage`：
+`toAiSdkMessages()` turns ZCode content blocks into AI SDK `ModelMessage`:
 
-- text block -> `{ type: "text", text }`。
-- image block -> AI SDK image part。
-- resource/file text preview -> text part。
-- unsupported file/audio/video -> text fallback，内容包含文件名、MIME、size 和“模型未接收原始二进制”的提示。
+- text block -> `{ type: "text", text }`.
+- image block -> AI SDK image part.
+- resource/file text preview -> text part.
+- unsupported file/audio/video -> text fallback containing the file name, MIME, size and a note that "the
+  model did not receive the original binary".
 
-模型能力判断：
+Model capability:
 
-- 使用 Active Model 的 `properties.input_format`；不从 model ID、Provider 类型或独立 capability map 重新推断。
-- 目标模型不支持 image 时，不发送 image part；改为稳定错误或降级文本。
-- 默认建议第一阶段对“用户显式附图但模型不支持图片”返回用户可操作错误，而不是静默忽略。
-- `mime -> modality` 的判断集中在 transform 层：`image/* -> image`、`application/pdf -> pdf`，后续再扩 audio/video。
-- tool result 附带 media 时，优先作为 tool-result content；若 provider 不支持 tool-result media 但模型支持用户侧 media，则追加 synthetic user message 携带附件。
-- compact、summary、跨模型 resume 可传 `stripMedia` 选项，将 media 转成 `[Attached <mime>: <name>]` 文本。
+- Use the Active Model `properties.input_format`; do not re-infer from the model ID, provider type or a
+  separate capability map.
+- If the target model does not support image, no image part is sent; a stable error or degraded text is
+  used.
+- For the first phase, the recommendation is to return a user-actionable error rather than silently
+  ignore it when the user explicitly attaches an image but the model does not support images.
+- The `mime -> modality` decision is centralized in the transform layer: `image/* -> image`,
+  `application/pdf -> pdf`, audio/video to be extended later.
+- Tool result media prefers the tool-result content; if the provider does not support tool-result media
+  but the model supports user-side media, a synthetic user message carries the attachment.
+- compact, summary and cross-model resume can pass the `stripMedia` option to turn media into
+  `[Attached <mime>: <name>]` text.
 
-## Session Store 与恢复
+## Session Store and recovery
 
-### 首发与冷恢复一致性
+### First-send and cold-recovery consistency
 
-同一模型配置、相同可恢复附件事实下，普通发送、队列消费和 resume / rewind / fork
-恢复必须共用用户消息组装逻辑。正文在前，普通附件按提交顺序排列，粘贴图片在后；
-文本文件仍投影为独立 `prompt_attachment`，不改变 synthetic reminder 或空正文锚点语义。
-图片是否来自粘贴由持久化的附件来源决定，不能由恢复后的临时媒体 `source.kind` 判断。
+With the same model config and the same recoverable attachment facts, ordinary send, queue consumption
+and resume / rewind / fork recovery must share the user message assembly logic. Body first, ordinary
+attachments in submit order, pasted images last; text files still project as separate `prompt_attachment`
+without changing the synthetic reminder or empty-body anchor semantics. Whether an image came from a paste
+is decided by the persisted attachment origin, not by the temporary media `source.kind` after recovery.
 
 ```text
-CLI / Desktop / mobile 输入 → Agent 解析 → 统一用户消息组装 → provider 投影
+CLI / Desktop / mobile input → Agent resolve → unified user message assembly → provider projection
                                   ↓
-                        TextPart + FilePart（唯一持久事实）
+                        TextPart + FilePart (the only persistent fact)
                                   ↓
-resume / rewind / fork → hydrate 内容 → 同一用户消息组装 → provider 投影
+resume / rewind / fork → hydrate content → same user message assembly → provider projection
 ```
 
-路径引用附件保存 `metadata.pathReferenceText`，内容是首次发送给模型的完整三行说明，
-包括路径、降级原因和读取提示。恢复优先使用这份原文，不重新读取文件，也不根据当前
-解析规则重新生成文案。`preview` 仍表示文件内容预览，不复用为附件说明字段。
-该可选字段随既有 FilePart JSON 保存，无需数据库迁移；消费时校验它为字符串。
+A path-reference attachment stores `metadata.pathReferenceText`, the complete three-line description first
+sent to the model, including the path, the degradation reason and the read hint. Recovery uses this text
+first, without re-reading the file or regenerating wording by current resolution rules. `preview` still
+means the file content preview and is not reused as the attachment description field. This optional field
+is saved in the existing FilePart JSON with no database migration; consumers validate that it is a string.
 
-旧消息同样使用统一顺序。若没有有效的 `pathReferenceText`，保留既有单行占位，
-不猜测丢失的原因、不回填或重写历史。旧历史首次切换到修复后的投影可能改变缓存前缀；
-新保存的消息必须在热态与冷恢复后的最终 provider 请求中保持附件顺序和说明文本一致。
-媒体 artifact 缺失、模型能力变化和 compact 的既有降级规则仍适用。
+Old messages use the same unified order. Without a valid `pathReferenceText` the existing one-line
+placeholder is kept; the lost reason is not guessed and history is not backfilled or rewritten. The first
+switch of old history to the fixed projection may change the cache prefix; newly saved messages must keep
+the same attachment order and description text in the final provider request in both hot state and after
+cold recovery. The existing degradation rules for missing media artifacts, model capability changes and
+compact still apply.
 
-回归覆盖路径引用、剪贴板文本、PDF、本地图片与粘贴图片混排、video、纯文本及附件单独发送；
-同时覆盖队列消费、MCS 开关、实际 SQLite 关闭重开以及最终 provider payload。
-Desktop 冷恢复通过发送附件、继续对话、重启并续发验证；mobile replayable 使用同一 Agent
-持久事实，不新增客户端消息组装状态。
+Regression covers path references, clipboard text, PDF, mixed local and pasted images, video, plain text
+and attachment-only sends; also queue consumption, the MCS switch, a real SQLite close and reopen, and the
+final provider payload. Desktop cold recovery is verified by sending an attachment, continuing the
+conversation, restarting and continuing again; mobile replayable uses the same Agent persistent facts and
+adds no client message assembly state.
 
-持久化时：
+On persistence:
 
-- 用户原文保存为 text part。
-- 每个附件保存为 `FilePart`，补齐 `filename`、`mime`、`url/source`、hash、size metadata；`source` 必须保留 `file` / `resource` / `symbol` 类型，不退化成单个 path。
-- 本地文件可以保存 `file://` / workspace-relative source；provider-ready data URL 或 artifact ref 作为解析产物保存，避免 resume 时重复猜测。
-- 大体积或转换产物进入 artifact store，只在 part 里保存引用。
+- The user's original text is saved as a text part.
+- Each attachment is saved as a `FilePart` with `filename`, `mime`, `url/source`, hash and size metadata
+  filled in; `source` must keep the `file` / `resource` / `symbol` type and not degrade to a single path.
+- A local file may save a `file://` / workspace-relative source; the provider-ready data URL or artifact
+  ref is saved as a resolved product, avoiding repeated guessing on resume.
+- Large or converted products go into the artifact store, with only a reference in the part.
 
-恢复时：
+On recovery:
 
-- `session-history-hydrator` 不能只生成 `[Attached file: ...]`。
-- 对仍可安全重建的 text/image block，恢复为 content block。
-- 对缺失、超限或模型不支持的附件，恢复为稳定 text fallback，并记录 recoverability metadata。
-- 本地 UI draft/history 可以恢复 local path 和占位符；provider history 只能使用已解析的安全内容或 fallback，不能把 local path 当作 image URL。
+- `session-history-hydrator` must not just generate `[Attached file: ...]`.
+- Text/image blocks that can still be rebuilt safely are restored as content blocks.
+- Missing, over-limit or model-unsupported attachments are restored as stable text fallback, with
+  recoverability metadata recorded.
+- Local UI drafts/history may restore local paths and placeholders; provider history may use only resolved
+  safe content or fallback and must not treat a local path as an image URL.
 
-Compact 时：
+On compact:
 
-- summary 模型默认 `stripMedia: true`，不接收原始图片、PDF、二进制或大 base64。
-- compact 输入里的媒体替换为 `[Attached <mime>: <filename> <size>]`，文本大文件替换为 preview + truncated 标记。
-- compact boundary 记录 `attachmentMessageIds`、被 strip 的附件数量、总字节数和可恢复 artifact refs，便于 debug 和后续 fork。
-- compact boundary 之前的附件仍在 artifact store 中，但默认不重新进入 active model context；用户需要继续讨论时，模型应知道“之前有附件但媒体内容已从摘要上下文移除”。
-- compact boundary 之后的最近上下文附件仍按正常 block 保留，直到下一次 compact。
-- 如果 `stripMedia` 后仍超过模型上下文，返回稳定 compact failure reason，例如 `context_too_large_after_media_strip`，并提示用户缩小输入或重新开启会话。
-- provider context overflow 后的自动续跑可以再次用 `stripMedia` 重投影，并追加 synthetic user text 说明媒体已被移除；不要在错误恢复路径重新读取大文件。
-- 上下文 token 估算不能按 base64 原文长度粗暴计算，图片 data URL 应使用固定或尺寸相关估算，PDF/大文本按 preview 和 provider-specific 估算。
+- The summary model defaults to `stripMedia: true` and receives no original images, PDFs, binaries or
+  large base64.
+- Media in the compact input is replaced by `[Attached <mime>: <filename> <size>]`, and large text files
+  by preview + truncated marker.
+- The compact boundary records `attachmentMessageIds`, the number of stripped attachments, total bytes and
+  recoverable artifact refs, for debug and later forks.
+- Attachments from before the compact boundary remain in the artifact store but by default do not re-enter
+  the active model context; when the user continues the discussion the model should know "there was an
+  attachment before but the media content was removed from the summary context".
+- Recent-context attachments after the compact boundary are kept as normal blocks until the next compact.
+- If it still exceeds the model context after `stripMedia`, a stable compact failure reason such as
+  `context_too_large_after_media_strip` is returned, prompting the user to shrink the input or start a new
+  session.
+- Auto continuation after a provider context overflow can re-project with `stripMedia` again and append a
+  synthetic user text explaining the media was removed; large files are not re-read in the error recovery
+  path.
+- Context token estimation must not count the raw base64 length; image data URLs use a fixed or
+  size-related estimate, PDF/large text use preview and provider-specific estimates.
 
-## Rewind、Fork 与附件
+## Rewind, fork and attachments
 
-附件和 rewind/compact 的关系必须单独设计，否则大文件很容易被误删、误读或重复塞进上下文。
+The relationship between attachments and rewind/compact needs separate design, otherwise large files are
+easily deleted by mistake, misread or stuffed into the context repeatedly.
 
-- conversation rewind 删除或隐藏目标点之后的 message/part，但不立刻删除 attachment artifact；artifact 进入未引用状态，由后续 GC 处理。
-- file-only rewind 恢复的是 workspace checkpoint，不改变已经提交的附件 snapshot。用户提交时的图片/文件内容以 artifact 为准，不因工作区文件被 rewind 后变化而重新解释。
-- 如果用户 attach 的只是 `metadata_only` 大文件，rewind/fork 只能保留 metadata 和错误 fallback，不能假装可恢复。
-- compact boundary 之前的会话 rewind 仍按 `rewind-compact.md` 的规则走 fork；fork 时复制 message/part metadata，并共享 immutable artifact URI 或增加引用计数。
-- fork 如果发现父会话 artifact 缺失，必须把对应 `FilePart` 转为 `[Missing attachment: ...]` fallback，并在 fork debug event 中记录 `attachment_artifact_missing`。
-- `partID` 级 rewind/cleanup 应根据 `FilePart.source.text` 删除对应附件 part；删除用户文本里的 placeholder 后不能留下孤儿附件继续发给模型。
-- checkpoint snapshot 是工作区文件变更的审计记录，不是用户附件存储。两套 artifact 不应混用，但 trace/debug 里要能把同一 turn 的 checkpoint 和附件关联起来。
-- compact 生成摘要时记录 `attachmentMessageIds`，rewind 到 compact boundary 后仍能解释“哪些附件曾参与摘要但原始媒体未在 active context 中”。
+- Conversation rewind deletes or hides message/parts after the target point but does not delete attachment
+  artifacts at once; the artifact becomes unreferenced and is handled by a later GC.
+- File-only rewind restores a workspace checkpoint and does not change submitted attachment snapshots. The
+  image/file content at submit time is defined by the artifact and is not reinterpreted when workspace
+  files change after the rewind.
+- If the user attached only a `metadata_only` large file, rewind/fork can keep only the metadata and the
+  error fallback and must not pretend it is recoverable.
+- A rewind in a session before the compact boundary still forks per the rules of `rewind-compact.md`; the
+  fork copies message/part metadata and shares the immutable artifact URI or increments the reference
+  count.
+- If a fork finds the parent session artifact missing, it must turn the matching `FilePart` into a
+  `[Missing attachment: ...]` fallback and record `attachment_artifact_missing` in the fork debug event.
+- `partID`-level rewind/cleanup should delete the matching attachment part by `FilePart.source.text`;
+  after the placeholder in the user text is deleted no orphan attachment may keep being sent to the model.
+- A checkpoint snapshot is the audit record of workspace file changes, not user attachment storage. The two
+  artifact stores must not be mixed, but trace/debug should be able to correlate the checkpoint and the
+  attachments of the same turn.
+- Compact records `attachmentMessageIds` when generating the summary, so after rewinding to the compact
+  boundary one can still explain "which attachments took part in the summary but whose original media is
+  not in the active context".
 
-## 安全与错误
+## Security and errors
 
-关键错误码：
+Key error codes:
 
 - `attachment_not_found`
 - `attachment_outside_workspace`
@@ -581,119 +746,139 @@ Compact 时：
 - `attachment_model_unsupported`
 - `attachment_read_failed`
 
-日志和 event：
+Logs and events:
 
-- 记录附件数量、MIME、大小、hash 前缀、解析结果、降级原因。
-- 不记录完整 base64、完整文件内容、完整用户隐私内容。
-- 所有附件解析、artifact 写入、provider transform 都携带同一个 `traceId`。
+- Record attachment count, MIME, size, hash prefix, resolution result and degradation reason.
+- Never record full base64, full file content or full private user content.
+- All attachment resolution, artifact writes and provider transforms carry the same `traceId`.
 
-## 实施阶段
+## Implementation phases
 
-### Phase 0：spec 与 fixture
+### Phase 0: spec and fixtures
 
-1. 固化本 spec，并在 `docs/design/v2/rewind-compact.md` 增补附件、compact boundary、fork artifact 的关系。
-2. 增加测试 fixture：小文本、大文本、PNG、JPEG、WebP、空 base64、损坏图片、PDF、SVG、目录、缺失文件、空格路径。
-3. 定义默认阈值常量和错误码，不新增环境变量。
+1. Fix this spec and add the attachment, compact boundary and fork artifact relationship to
+   `docs/design/v2/rewind-compact.md`.
+2. Add test fixtures: small text, large text, PNG, JPEG, WebP, empty base64, corrupted image, PDF, SVG,
+   directory, missing file, path with spaces.
+3. Define the default threshold constants and error codes; add no environment variable.
 
-### Phase 1：契约和 projection 骨架
+### Phase 1: contracts and projection skeleton
 
-1. 扩展 `@zcode/contracts` 的 `ModelInputMessage`、JSON schema、session event payload。
-2. 扩展 session `FilePart` metadata，保持旧 part JSON 可读。
-3. 新增 `MessageProjector`，把 stored messages 投影成 provider-neutral `MessageContentBlock[]`。
-4. 更新 `MessageHistory`，支持 user content blocks，同时保持纯文本路径兼容。
-5. 单测覆盖纯文本兼容、block JSON schema、unsupported modality fallback、`stripMedia` placeholder。
+1. Extend `ModelInputMessage`, the JSON schema and the session event payload of `@zcode/contracts`.
+2. Extend the session `FilePart` metadata, keeping old part JSON readable.
+3. Add `MessageProjector` to project stored messages into provider-neutral `MessageContentBlock[]`.
+4. Update `MessageHistory` to support user content blocks while keeping the plain text path compatible.
+5. Unit tests cover plain text compatibility, block JSON schema, unsupported modality fallback and
+   `stripMedia` placeholders.
 
-### Phase 2：Attachment artifact store
+### Phase 2: attachment artifact store
 
-1. 从现有 `ToolArtifactStorePort` 抽出或新增 `ArtifactStorePort`，支持 binary/text artifact、metadata、hash、size、MIME、stream/buffer 读取。
-2. SQLite part 只保存 artifact URI 和 metadata，不保存大 base64。
-3. `NodeToolArtifactStore` 可继续服务 tool text 产物；用户附件媒体走同一基础设施或 sibling namespace，例如 `cli/attachments/<sessionId>`。
-4. 增加 artifact GC 设计入口：本阶段可只做未引用查询，不自动删除。
-5. 单测覆盖写入、读取、hash 去重、缺失 artifact fallback、跨平台路径。
+1. Extract from the existing `ToolArtifactStorePort` or add an `ArtifactStorePort`, supporting
+   binary/text artifacts, metadata, hash, size, MIME and stream/buffer reads.
+2. The SQLite part stores only the artifact URI and metadata, no large base64.
+3. `NodeToolArtifactStore` can keep serving tool text products; user attachment media uses the same
+   infrastructure or a sibling namespace such as `cli/attachments/<sessionId>`.
+4. Add an artifact GC design entry: this phase may only do the unreferenced query, with no auto delete.
+5. Unit tests cover write, read, hash dedupe, missing artifact fallback and cross-platform paths.
 
-### Phase 3：Prompt expansion / attachment resolver
+### Phase 3: prompt expansion / attachment resolver
 
-1. 新增 `AttachmentResolver`，接受 `UserAttachmentInput` / `FilePart`，输出 synthetic text parts、file parts 和 artifact refs。
-2. `text/plain` 文件走 Read 等价语义，支持 preview/truncated。
-3. image/PDF 走 MIME sniff、大小门控、artifact snapshot、data URL 投影准备。
-4. SVG 走文本路径；目录走摘要或明确错误。
-5. resource link 通过 MCP/resource adapter 读取，失败时生成稳定错误 text。
-6. 单测覆盖路径规范化、MIME sniff、空/坏 data URL、超限、missing、resource failure。
+1. Add `AttachmentResolver` accepting `UserAttachmentInput` / `FilePart` and outputting synthetic text
+   parts, file parts and artifact refs.
+2. `text/plain` files use Read-equivalent semantics with preview/truncated.
+3. image/PDF go through MIME sniff, size gating, artifact snapshot and data URL projection preparation.
+4. SVG uses the text path; directories use a summary or an explicit error.
+5. Resource links are read through the MCP/resource adapter; failures produce stable error text.
+6. Unit tests cover path normalization, MIME sniff, empty/bad data URL, over-limit, missing and resource
+   failure.
 
-### Phase 4：入口接入
+### Phase 4: entry wiring
 
-1. Bootstrap API 支持 `submitPrompt(string | UserPromptInput)`、`sendInput(string | UserPromptInput)`。
-2. CLI 增加 `--attach <path>`，多次传入按顺序生成 `FilePart`。
-3. TUI 支持附件 draft 列表和虚拟 placeholder，删除 placeholder 同步删除 part。
-4. ZCode app-server 接入 `text`、`resource_link`、embedded image/resource；audio/video 继续返回稳定 unsupported。
-5. 所有入口都走同一 resolver，不重复实现读取逻辑。
+1. The bootstrap API supports `submitPrompt(string | UserPromptInput)` and
+   `sendInput(string | UserPromptInput)`.
+2. CLI adds `--attach <path>`; multiple passes produce `FilePart` in order.
+3. The TUI supports an attachment draft list and virtual placeholders; deleting a placeholder deletes the
+   part in sync.
+4. The ZCode app-server accepts `text`, `resource_link`, embedded image/resource; audio/video keep
+   returning a stable unsupported.
+5. All entries go through the same resolver and do not duplicate read logic.
 
-### Phase 5：Provider transform
+### Phase 5: provider transform
 
-1. 更新 `toAiSdkMessages()`，支持 text/image/PDF/file preview。
-2. 按 model catalog 的 `modalities.input` 或现有 supports 字段门控 image/PDF。
-3. 实现 tool-result media 策略：支持则留在 tool result，不支持则 synthetic user message。
-4. provider transform 不直接读本地文件，只通过 artifact store 获取 provider payload。
-5. 单测覆盖 image-capable、non-image、PDF-capable、tool-result media、empty base64、unsupported modality。
+1. Update `toAiSdkMessages()` to support text/image/PDF/file preview.
+2. Gate image/PDF by `modalities.input` of the model catalog or the existing supports fields.
+3. Implement the tool-result media strategy: keep in the tool result if supported, otherwise a synthetic
+   user message.
+4. The provider transform does not read local files directly and gets the provider payload only through
+   the artifact store.
+5. Unit tests cover image-capable, non-image, PDF-capable, tool-result media, empty base64 and unsupported
+   modality.
 
-### Phase 6：compact、overflow 与 rewind/fork
+### Phase 6: compact, overflow and rewind/fork
 
-1. compact 调用 `MessageProjector` 并强制 `stripMedia: true`。
-2. compact boundary 记录附件统计、`attachmentMessageIds` 和被 strip refs。
-3. context overflow recovery 使用同一 strip-media 投影，不重复解析本地文件。
-4. rewind cleanup 只移除 message/part 引用，artifact 延迟 GC。
-5. fork 复制 part metadata 并共享 immutable artifact，缺失 artifact 转 fallback。
-6. 更新 `docs/design/v2/rewind-compact.md`，把上述规则并入现有 compact boundary 和 file checkpoint 设计。
-7. 单测覆盖 compact stripMedia、compact 后 resume、rewind 到 part、rewind 后 artifact 不误删、fork 缺失 artifact fallback。
+1. compact calls `MessageProjector` and forces `stripMedia: true`.
+2. The compact boundary records attachment statistics, `attachmentMessageIds` and stripped refs.
+3. Context overflow recovery uses the same strip-media projection and does not re-resolve local files.
+4. rewind cleanup removes only message/part references; artifacts are GC'd lazily.
+5. fork copies part metadata and shares immutable artifacts; a missing artifact turns into a fallback.
+6. Update `docs/design/v2/rewind-compact.md` to merge these rules into the existing compact boundary and
+   file checkpoint design.
+7. Unit tests cover compact stripMedia, resume after compact, rewind to a part, artifact not deleted by
+   mistake after rewind, fork missing artifact fallback.
 
-### Phase 7：debug、观测和收尾
+### Phase 7: debug, observability and wrap-up
 
-1. debug event 展示附件数量、MIME、size、hash 前缀、storageKind、projection result、降级原因。
-2. trace 覆盖 resolver、artifact write/read、provider projection、compact strip、rewind cleanup。
-3. 文档补充用户可见行为：哪些文件会进入模型，哪些只保留 preview/metadata。
-4. 根据 provider 差异补充 OpenAI、Anthropic、OpenAI-compatible 兼容测试。
+1. The debug event shows attachment count, MIME, size, hash prefix, storageKind, projection result and
+   degradation reason.
+2. trace covers resolver, artifact write/read, provider projection, compact strip and rewind cleanup.
+3. Documentation adds user-visible behavior: which files enter the model and which keep only a
+   preview/metadata.
+4. Add OpenAI, Anthropic and OpenAI-compatible compatibility tests as provider differences require.
 
-## 测试要求
+## Test requirements
 
-完成实现前至少运行：
+Before finishing implementation run at least:
 
 ```text
 npm run lint
 npm test
 ```
 
-必测场景：
+Required scenarios:
 
-- 纯文本消息仍保持现有行为。
-- 空字符串、空数组或空 text parts 形成的 user message 在 provider wire 上转为 `"(no content)"`；空格、换行、非空文本和媒体-only content 保持不变。
-- user message 同时包含 text + image。
-- image-capable 模型收到 image part。
-- 非 image-capable 模型返回稳定错误或稳定降级。
-- 空 base64 / 损坏图片不会发给 provider，返回稳定错误文本。
-- PDF 模型能力门控和 fallback。
-- SVG 作为文本处理。
-- tool result image 在支持/不支持 tool-result media 的 provider 下分别正确转换。
-- compact stripMedia 把媒体替换成占位文本。
-- compact boundary 记录附件 message id 和 strip 统计。
-- context overflow 后不会重新读取大文件，而是复用 artifact/fallback。
-- conversation rewind 不立即删除附件 artifact。
-- file-only rewind 不改变已提交附件 snapshot。
-- fork 会保留或降级附件引用。
-- 本地文件路径跨平台解析，Windows/macOS/Linux 分隔符和空格路径不破。
-- 大文件不直接进入模型上下文，而是 artifact/ref + preview。
-- session resume 后附件不丢失、不重复、不错误重放。
-- ZCode app-server unsupported content block 返回稳定 invalid params。
-- 日志和 event 不泄露 base64 或完整文件内容。
+- Plain text messages keep the existing behavior.
+- A user message formed from an empty string, empty array or empty text parts becomes `"(no content)"` on
+  the provider wire; spaces, line breaks, non-empty text and media-only content stay unchanged.
+- A user message with text + image.
+- An image-capable model receives the image part.
+- A non-image-capable model returns a stable error or a stable degradation.
+- Empty base64 / corrupted images are not sent to the provider and return stable error text.
+- PDF model capability gating and fallback.
+- SVG is handled as text.
+- A tool result image converts correctly under providers that support / do not support tool-result media.
+- compact stripMedia replaces media with placeholder text.
+- The compact boundary records attachment message ids and strip statistics.
+- After context overflow large files are not re-read; the artifact/fallback is reused.
+- Conversation rewind does not delete attachment artifacts at once.
+- File-only rewind does not change submitted attachment snapshots.
+- fork keeps or degrades attachment references.
+- Local file paths resolve cross-platform; Windows/macOS/Linux separators and paths with spaces do not
+  break.
+- Large files do not enter the model context directly; artifact/ref + preview instead.
+- After session resume attachments are neither lost, duplicated nor wrongly replayed.
+- The ZCode app-server returns stable invalid params for an unsupported content block.
+- Logs and events do not leak base64 or full file content.
 
-## Composer PDF 对齐（2026-08-29）
+## Composer PDF alignment (2026-08-29)
 
-Composer PDF 使用独立的 `TurnAttachment.type = "pdf"` 和 shared
-`ZCodePromptPdfAttachment`。本地/远端路径与 Web V4 bytes 均在 admission 时校验 MIME、20MiB
-边界和 `%PDF` magic，并写入 durable artifact；session `part.data` 只保存 FilePart 的
-`zcode-artifact://` link、MIME、文件名和 metadata。`pdf-cache/<sessionId>/` 是请求与预览使用的
-可重建派生 `.pdf` 路径，不写入 DB、snapshot 或 replayable event。
+Composer PDF uses the independent `TurnAttachment.type = "pdf"` and the shared `ZCodePromptPdfAttachment`.
+Local/remote paths and Web V4 bytes are validated at admission for MIME, the 20MiB boundary and the `%PDF`
+magic and written to a durable artifact; the session `part.data` stores only the FilePart's
+`zcode-artifact://` link, MIME, file name and metadata. `pdf-cache/<sessionId>/` is the rebuildable derived
+`.pdf` path used by requests and preview, and is not written to the DB, snapshot or replayable events.
 
-冷恢复与模型切换按 artifact-first 重新物化 path；`supportsPdf=false` 时在 provider 请求前
-omit PDF data 并保留 `[PDF: source: <path>]`，切回支持模型时从同一 artifact 恢复。Composer 和
-已发送 row 维持文档卡片形态，但统一使用 PdfViewer 与精确 row/part 授权的 attachment range
-read；relay/main 不保存 PDF bytes 或 session 业务状态。
+Cold recovery and model switching re-materialize the path artifact-first; with `supportsPdf=false` the PDF
+data is omitted before the provider request and `[PDF: source: <path>]` is kept, and switching back to a
+supporting model restores it from the same artifact. The composer and sent rows keep the document card
+form but uniformly use PdfViewer and an attachment range read authorized exactly by row/part; relay/main
+store no PDF bytes or session business state.

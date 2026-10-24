@@ -2,197 +2,447 @@
 
 ## CLI Process Identity
 
-CLI 命令名继续保持 `zcode`，用于兼容现有 npm `bin`、脚本、help 和文档示例。操作系统可见的 Node 进程名必须统一设置为 `zcode-cli`，避免通过 `ps`、Activity Monitor、任务管理器或 ZCode app-server 父进程管理面板观察时只看到 `node` 或不稳定的脚本名。
+The CLI command name stays `zcode` for compatibility with the existing npm `bin`, scripts, help
+and doc examples. The OS-visible Node process name must be set uniformly to `zcode-cli`, so `ps`,
+Activity Monitor, Task Manager or the ZCode app-server parent-process panel never shows just
+`node` or an unstable script name.
 
-入口层必须在加载 bootstrap、TUI、provider、storage 或其它可能启动异步任务的模块之前设置 `process.title = "zcode-cli"`。该行为不新增 `ZCODE_*` 环境变量，也不依赖当前平台 shell、二进制文件名或用户启动方式；普通 Node bundle、`tsx` 开发入口和 SEA binary 都应共享同一个进程名常量。
+The entry layer sets `process.title = "zcode-cli"` before loading bootstrap, TUI, provider,
+storage or any module that may start async tasks. This adds no `ZCODE_*` environment variable and
+does not depend on the platform shell, binary file name or how the user launched it; plain Node
+bundles, the `tsx` dev entry and SEA binaries share the same process-name constant.
 
-`zcode doctor --json` 必须同时报告 `cli.processName` 和 `runtime.processTitle`，普通 `zcode doctor` 输出也应展示当前进程名，便于脚本和人工诊断验证实际运行进程已经应用该契约。
+`zcode doctor --json` must report both `cli.processName` and `runtime.processTitle`, and plain
+`zcode doctor` output also shows the current process name, so scripts and manual diagnostics can
+verify the running process honors the contract.
 
-ZCode 的 slash command 入口放在 CLI/bootstrap 侧，而不是 TUI 侧。TUI 只把用户输入交给一个 `submitPrompt` 函数，并根据 runtime events 渲染进度。
+ZCode's slash-command entry lives on the CLI/bootstrap side, not the TUI side. The TUI only hands
+user input to one `submitPrompt` function and renders progress from runtime events.
 
-TUI 的 slash command 候选列表见 [`tui-slash-command-suggestions.md`](./tui-slash-command-suggestions.md)。候选列表只消费 command center 暴露的只读命令面，不拥有命令执行逻辑。
+The TUI slash-command suggestion list is in
+[`tui-slash-command-suggestions.md`](./tui-slash-command-suggestions.md). The suggestion list only
+consumes the read-only command surface exposed by the command center; it owns no execution logic.
 
-当前注册的内置命令：
+Currently registered built-in commands:
 
-- `/btw <question>`: 旁路回答一个简短 side question；不创建普通 turn，不把问题或答案写入主会话上下文，不中断正在运行的主 turn。详见 [`btw-side-question.md`](./btw-side-question.md)。
-- `/compact [instructions]`: 走现有 core manual compact 路径，允许附加总结指令。
-- `/expert [status|resume|stop|<task>]`: 启动或管理 expert workflow；带任务时默认把当前 session 切到 `yolo`，并通过 workflow runtime 调度多个 agent activity。
-- `/effort [list|<level>]`: 查询或切换当前 session 的 reasoning/thinking 深度；可选 level 来自当前模型 catalog/config 的 reasoning metadata。交互式 TUI 在 composer 内用类似 `/model` 的候选 popup 选择，提交显式 `/effort <level>`。`/variant` 是输入兼容别名。
-- `/fork [latest|checkpointId]`: 从 workspace checkpoint 分叉新 session；无参数或 `latest` 使用最新 checkpoint，有参数时按 checkpoint id 分叉。
-- `/help [command]`: 本地只读展示 slash command 帮助；不创建 session、不发模型请求、不访问外部 I/O。有参数时只展示目标命令的用法，参数可带或不带开头的 `/`。
-- `/login`: 使用 ZCode/Z.AI CLI OAuth device flow 登录；命令层调用 bootstrap 登录服务，不创建普通模型 session。Init 返回授权 URL 后必须立刻通过 assistant transcript message 展示链接，避免 SSH/远程终端场景只在宿主机打开浏览器而用户看不到可复制链接。
-- `/locale [auto|en-US|zh-CN]`: 查询或切换当前 UI 语言，并把请求值持久化到配置文件；`/language` 是输入兼容别名。
-- `/logout`: 清理共享 credential store 中的 ZAI 登录态；不创建普通模型 session。
-- `/mcp [list|status|connect <server>|disconnect <server>]`: 查询或管理当前 session 可见的 MCP server 连接状态；命令层只调用 app/server 暴露的 MCP 管理接口。
-- `/mode [plan|build|edit|yolo]`: 查询或切换当前 TUI session 的 permission mode；交互式 composer 输入 `/mode` 时打开与 `/model` 同形态的本地 popup，选择项提交显式 `/mode <mode>`；`edit` 自动接受 `Write`、`Edit`、`ApplyPatch` 等文件编辑工具，其他高风险或非编辑操作仍按 build 策略确认；`auto` 可显示但暂不允许从 TUI 切入。
-- `/model [list|main|lite|provider/model]`: 查询或切换当前 session 的主模型；可选模型来自 `model.main`、`model.lite` 和所有已配置 `provider.*.models`，状态归 app/server 保存，TUI 不持有模型状态。
-- `/new`: 启动一个新的 root session，并把当前 TUI 后续 prompt 切到该 session。该命令不发送模型请求、不恢复最近会话、不复制旧 session 的 transcript 或 checkpoint；permission mode/model 等 session runtime 配置按当前 CLI/TUI 配置重新初始化。创建失败时错误向上冒泡，由 TUI 按普通命令失败显示。`/clear` 是它的别名，行为必须完全一致。
-- `/resume [sessionId]`: 有参数时恢复指定 session；无参数时恢复当前目录最近活动的 root session。这里的 `sessionId` 是 ZCode session id，通常形如 `sess_...`，对应 CLI JSON 输出里的 `sessionId` 字段，不是 `traceId`、`turnId`、`messageId` 或 `toolCallId`。`/continue` 是 `/resume` 的别名。
-- `/rewind [latest|checkpointId]`: 走 core checkpoint/rewind 路径，查看最新 checkpoint 或按目标 checkpoint 恢复 workspace 文件。
-- `/skill`: 只读列举当前工作目录可发现的 skills，不创建 session、不发模型请求、不调用 `Skill` tool。
-- `/skill <name> [task]`: 强制下一次 prompt 先加载指定 skill，再继续执行任务。
-- `/workflow [what the workflow should accomplish]`: 内置 prompt 型命令，与 `/init` 同路：TUI/headless 只识别名字并把原文交给 `submitPrompt`，bootstrap 的 builtin prompt resolver 展开成「先用 `Skill` 工具加载内置 `dynamic-workflows` 技能，再写脚本调 `CreateWorkflow`」的提示词（`$ARGUMENTS` 替换）。命令正文与技能都随 CLI 内置，不依赖任何插件；App 协议侧受动态工作流灰度门约束（`docs/dynamic-workflow/launch.md`「Gray release」）；TUI/headless 受进程参数 `--workflow-mode` 约束，缺省 `disabled` 时 `/` 面板与 `/help` 不列出该命令，TUI 手打给本地提示、不发模型，headless 报错退出 1。`workflow` 是保留名，同名自定义命令不广播、不展开。
-- `/dwf [list|cancel [runId]|resume <runId>]`: 列出、取消或恢复本会话的动态工作流 run（`docs/dynamic-workflow/launch.md`「`/dwf`」）。`--workflow-mode disabled` 下 `list`/`cancel` 照常，`resume` 在请求服务端之前以同一句 disabled 提示拒绝。
-- `/goal [pause|resume|clear|replace <objective>|<objective>]`: 查询或管理当前 session goal；设置或恢复 active goal 后，runtime 在空闲且不处于 plan mode 时继续推进目标。`/target` 是兼容 alias，只用于接收旧客户端和旧脚本输入；help、suggestion 和新文档必须展示 `/goal`。
+- `/btw <question>`: answers a short side question out of band; creates no normal turn, writes
+  neither question nor answer into the main session context, and does not interrupt a running
+  main turn. See [`btw-side-question.md`](./btw-side-question.md).
+- `/compact [instructions]`: goes through the existing core manual compact path; may carry
+  summary instructions.
+- `/expert [status|resume|stop|<task>]`: starts or manages an expert workflow; with a task it
+  switches the current session to `yolo` by default and schedules multiple agent activities
+  through the workflow runtime.
+- `/effort [list|<level>]`: queries or switches the current session's reasoning/thinking depth;
+  levels come from the current model catalog/config reasoning metadata. The interactive TUI uses
+  a `/model`-style candidate popup inside the composer and submits an explicit
+  `/effort <level>`. `/variant` is an input-compatibility alias.
+- `/fork [latest|checkpointId]`: forks a new session from a workspace checkpoint; no argument or
+  `latest` uses the newest checkpoint, otherwise it forks by checkpoint id.
+- `/help [command]`: local read-only slash-command help; creates no session, sends no model
+  request, accesses no external I/O. With an argument it shows only the target command's usage;
+  the argument may be given with or without the leading `/`.
+- `/login`: logs in through the ZCode/Z.AI CLI OAuth device flow; the command layer calls the
+  bootstrap login service and creates no normal model session. Once Init returns the authorize
+  URL, it must immediately be shown as an assistant transcript message, so SSH/remote-terminal
+  scenarios don't only open a browser on the host while the user has no copyable link.
+- `/locale [auto|en-US|zh-CN]`: queries or switches the current UI language and persists the
+  requested value to the config file; `/language` is an input-compatibility alias.
+- `/logout`: clears the ZAI login state from the shared credential store; creates no normal model
+  session.
+- `/mcp [list|status|connect <server>|disconnect <server>]`: queries or manages the MCP server
+  connections visible to the current session; the command layer only calls the MCP management
+  interface exposed by the app/server.
+- `/mode [plan|build|edit|yolo]`: queries or switches the current TUI session's permission mode;
+  typing `/mode` in the interactive composer opens a local popup in the same shape as `/model`,
+  and a chosen entry submits an explicit `/mode <mode>`. `edit` auto-accepts file-editing tools
+  like `Write`, `Edit`, `ApplyPatch`; other high-risk or non-editing operations still confirm
+  under the build policy. `auto` may be displayed but cannot be entered from the TUI yet.
+- `/model [list|main|lite|provider/model]`: queries or switches the current session's main model;
+  candidates come from `model.main`, `model.lite` and all configured `provider.*.models`; state
+  is kept by the app/server and the TUI holds no model state.
+- `/new`: starts a new root session and switches subsequent TUI prompts to it. It sends no model
+  request, does not resume the latest session, and does not copy the old session's transcript or
+  checkpoints; permission mode/model and other session runtime config re-initialize from the
+  current CLI/TUI configuration. Creation errors bubble up and the TUI shows them as a normal
+  command failure. `/clear` is its alias with identical behavior.
+- `/resume [sessionId]`: with an argument, resumes that session; without, resumes the most
+  recently active root session in the current directory. `sessionId` is the ZCode session id,
+  usually shaped like `sess_...` — the `sessionId` field in CLI JSON output — not `traceId`,
+  `turnId`, `messageId` or `toolCallId`. `/continue` is an alias of `/resume`.
+- `/rewind [latest|checkpointId]`: goes through the core checkpoint/rewind path, viewing the
+  newest checkpoint or restoring workspace files to a target checkpoint.
+- `/skill`: read-only listing of skills discoverable in the current working directory; creates no
+  session, sends no model request, calls no `Skill` tool.
+- `/skill <name> [task]`: forces the next prompt to first load the named skill, then continue the
+  task.
+- `/workflow [what the workflow should accomplish]`: built-in prompt command, same path as
+  `/init`: TUI/headless recognize only the name and pass the raw text to `submitPrompt`; the
+  bootstrap builtin prompt resolver expands it into "first load the built-in `dynamic-workflows`
+  skill with the `Skill` tool, then write a script calling `CreateWorkflow`"
+  (`$ARGUMENTS` substituted). Both the command text and the skill are bundled with the CLI; no
+  plugin is required. The App protocol side is gated by the dynamic-workflow gray release
+  (`docs/dynamic-workflow/launch.md`, "Gray release"); TUI/headless are gated by the process
+  argument `--workflow-mode` — with the default `disabled` the `/` panel and `/help` omit the
+  command, a hand-typed `/workflow` in the TUI gets a local hint and no model request, and
+  headless errors with exit code 1. `workflow` is a reserved name: same-named custom commands
+  are neither broadcast nor expanded.
+- `/dwf [list|cancel [runId]|resume <runId>]`: lists, cancels or resumes this session's dynamic
+  workflow runs (`docs/dynamic-workflow/launch.md`, "`/dwf`"). Under
+  `--workflow-mode disabled`, `list`/`cancel` work as usual; `resume` is rejected with the same
+  disabled message before contacting the server.
+- `/goal [pause|resume|clear|replace <objective>|<objective>]`: queries or manages the current
+  session goal; after setting or resuming an active goal, the runtime keeps advancing it while
+  idle and not in plan mode. `/target` is a compatibility alias that only accepts old client and
+  old script input; help, suggestions and new docs must show `/goal`.
 
-所有 `/goal` 写操作都必须先走 bootstrap/app 暴露的 goal/target 兼容接口，再由 runtime 写出兼容 `target_changed` session event。TUI、ZCode app-server 和未来 replay/debug 投影消费事件，不解析命令返回文案来判断 goal 状态。
+All `/goal` write operations go first through the goal/target compatibility interface exposed by
+bootstrap/app, and the runtime then writes the compatible `target_changed` session event. The
+TUI, ZCode app-server and future replay/debug projections consume that event; they never parse
+command reply text to determine goal state.
 
-进程级 CLI 命令：
+Process-level CLI commands:
 
-- 全局 `--cwd <path>`: 指定本次 CLI command 的有效工作目录。该目录会作为 session `workingDirectory`、dotenv 查找起点、skill discovery 目录、`--continue`/`/resume` 最近 session 查询目录以及 `doctor` 的报告目录。相对路径必须按 CLI 启动时的当前目录解析为绝对路径；空路径、不存在路径、不可访问路径或非目录路径必须在 CLI 入口边界返回明确错误，并且不得创建 app/session、不得发送模型请求。实现不得调用 `process.chdir()`，避免污染 TUI、ZCode app-server、多 session 和后台任务所在的 Node.js 进程。`--cwd` 是 CLI 参数覆盖，不新增 `ZCODE_*` 环境变量；若后续要增加环境变量形式，必须先补充用途、优先级、错误行为和测试覆盖。
-- 全局 `--prompt <text>`: 作为脚本友好的单轮 headless 入口。未显式传入 `--mode` 时，CLI 必须以 `yolo` permission mode 创建 runtime，避免无交互 broker 的 headless prompt 在常见写文件、执行命令路径上停在审批流；显式 `--mode build|edit|plan|yolo` 仍然优先于该默认值。该默认只属于 `--prompt` 入口，不改变无参数 TUI、`zcode tui`、ZCode app-server session 或单独 `--target` 的初始化 mode。
-- 全局 `--browser-use=headless`: 为 `--prompt`、`--target` 和 TUI 显式启用 CLI managed CDP Browser Use。CLI 在首次 backend discovery 时启动 native headless Chromium，只有完成 CDP handshake 后才返回 `type: "cdp"` descriptor。该参数不使用 `agent-browser`，不改变 browser-use plugin/node_repl 模型入口；plugin 禁用时不得启动 Chromium。`zcode app-server` 使用该参数必须 fail closed，避免 Desktop/Web Remote shared-host 链路获得第二个 browser runtime。
-- 全局 `--browser-executable <absolute-path>`: 指定 `--browser-use=headless` 使用的 Chrome/Chromium 可执行文件；不能单独使用。省略时只查找本机已安装 browser 和 Playwright cache，P0 不联网下载。路径或可执行性错误必须发生在 app/session 创建前；实现使用跨平台 path/fs API 和参数数组 spawn，不经 shell，不默认添加 `--no-sandbox`。
-- 全局 `--workflow-mode <disabled|onDemand|alwaysOn>`: 决定本进程 TUI 与 headless（`--prompt`、`--target`）会话的动态工作流面，语义同服务端 `dynamicWorkflow.mode`（`docs/dynamic-workflow/launch.md`「The standalone CLI: `--workflow-mode`」）。**缺省为 `disabled`**。取值用 shared 的 `normalizeDynamicWorkflowMode`（精确拼写、忽略首尾空白），非法值在 CLI 入口报错并列出三个取值，退出码 1，不创建 app/session。`app-server`/`agent-server` 由 Host 决定 mode，带该参数即报作用域错误；`login`、`plugins`、`skills`、`doctor` 等不建会话的子命令同样报错。入口把 mode 一次性折成两个显式 runtime 字段 `dynamicWorkflowEnabled = mode !== "disabled"`、`dynamicWorkflowToolsOnDemand = mode === "onDemand"`，写进本进程创建的每个 app（含 `/new`、`/resume`、fork）；mode 不落盘，resume 到不同 mode 静默切换。不新增环境变量或配置键。
-- 全局 `--target <objective>`: 用于兼容 headless goal 场景，等价于在 headless session 里执行 `/goal <objective>`；CLI 必须复用 command center 的 goal 语义，而不是重新发明一套 target-only 控制流。`--resume` / `--continue` 时作用于恢复出来的 session；未指定时作用于新建 session。`--target` 不与 `--prompt` 组合；需要显式 slash command 形态时使用 `--prompt "/goal ..."`。实现不得把 `--target` 改造成环境变量。
-- 全局 `--target-replace`: `--target` 的显式覆盖确认开关。若当前 session 已有 goal，而未显式提供 `--target-replace`，CLI 必须在本地返回明确错误，不得静默覆盖 goal，也不得发送模型请求。`--target-replace` 单独出现时必须报错。
-- `zcode skills list`: 只读列举当前工作目录可发现的 skills。它复用 bootstrap 的 skill discovery 接口，不启动 TUI、不创建 session、不发模型请求；`zcode skills` 等价于 `zcode skills list`。普通输出展示 name、scope/source、description 和 path；`--json` 输出结构化 skills 与 diagnostics；`--verbose` 在普通输出后追加 diagnostics。
-- `zcode commands list`: 只读列举当前工作目录可发现的自定义 prompt commands。它复用 bootstrap 的 custom command discovery 接口，不启动 TUI、不创建 session、不发模型请求；`zcode commands` 等价于 `zcode commands list`。普通输出展示 `/name`、argument hint、scope/source、description 和 path；`--json` 输出结构化 commands 与 diagnostics；`--verbose` 追加 diagnostics。
-- `zcode login`: 使用 ZCode/Z.AI CLI OAuth device flow 登录，浏览器授权后把敏感 token 写入与桌面 Z Code 共享的 `~/.zcode/v2/credentials.json`，并只在 `~/.zcode/cli/config.json` patch 非敏感 provider/model 默认配置。`--no-browser` 只打印授权 URL，不自动打开浏览器，仍继续轮询。
-- `zcode logout`: 清理共享 credential store 中的 ZAI 登录态；如果 `oauth:active_provider` 当前是 `zai`，同步清空 active provider。
-- `zcode doctor`: 输出运行时和打包假设检查，是 CLI 健康检查和 smoke-test 的唯一进程级入口。
+- Global `--cwd <path>`: the effective working directory for this CLI command. It serves as the
+  session `workingDirectory`, the dotenv lookup start, the skill-discovery directory, the
+  `--continue`/`/resume` latest-session query directory and the `doctor` report directory.
+  Relative paths resolve against the CLI startup directory into absolute paths; empty,
+  nonexistent, inaccessible or non-directory paths must produce a clear error at the CLI entry
+  boundary without creating an app/session or sending a model request. The implementation must
+  not call `process.chdir()`, which would pollute the Node process hosting the TUI, ZCode
+  app-server, multiple sessions and background tasks. `--cwd` is a CLI-argument override; no
+  `ZCODE_*` environment variable is added — a future environment-variable form must first add
+  purpose, precedence, error behavior and test coverage to a spec.
+- Global `--prompt <text>`: the script-friendly single-turn headless entry. Without an explicit
+  `--mode`, the CLI must create the runtime with `yolo` permission mode so headless prompts
+  without an interactive broker don't stall in approval flows on the common file-write and
+  command-execution paths; an explicit `--mode build|edit|plan|yolo` still wins. This default
+  applies only to the `--prompt` entry; it does not change the initialization mode of the
+  no-argument TUI, `zcode tui`, ZCode app-server sessions or a standalone `--target`.
+- Global `--browser-use=headless`: explicitly enables CLI-managed CDP Browser Use for `--prompt`,
+  `--target` and the TUI. On first backend discovery the CLI starts a native headless Chromium
+  and only returns a `type: "cdp"` descriptor after the CDP handshake. This argument does not use
+  `agent-browser` and does not change the browser-use plugin/node_repl model entry; when the
+  plugin is disabled no Chromium may be started. `zcode app-server` must fail closed with this
+  argument, so Desktop/Web Remote shared-host chains never gain a second browser runtime.
+- Global `--browser-executable <absolute-path>`: the Chrome/Chromium executable used by
+  `--browser-use=headless`; cannot be used alone. When omitted, only locally installed browsers
+  and the Playwright cache are searched — P0 does not download over the network. Path or
+  executability errors must happen before app/session creation; the implementation uses
+  cross-platform path/fs APIs and argument-array spawn, no shell, and does not default to adding
+  `--no-sandbox`.
+- Global `--workflow-mode <disabled|onDemand|alwaysOn>`: decides the dynamic-workflow surface of
+  this process's TUI and headless (`--prompt`, `--target`) sessions, with the same semantics as
+  the server-side `dynamicWorkflow.mode` (`docs/dynamic-workflow/launch.md`, "The standalone CLI:
+  `--workflow-mode`"). **Default is `disabled`.** Values are normalized by the shared
+  `normalizeDynamicWorkflowMode` (exact spelling, surrounding whitespace ignored); an invalid
+  value errors at the CLI entry, lists the three accepted values and exits 1 without creating an
+  app/session. `app-server`/`agent-server` get their mode from the Host and reject the argument
+  with a scope error; session-less subcommands (`login`, `plugins`, `skills`, `doctor`, ...) also
+  reject it. The entry folds the mode once into two explicit runtime fields —
+  `dynamicWorkflowEnabled = mode !== "disabled"` and
+  `dynamicWorkflowToolsOnDemand = mode === "onDemand"` — written into every app this process
+  creates (including `/new`, `/resume`, forks). The mode is not persisted; resuming into a
+  different mode switches silently. No environment variable or config key is added.
+- Global `--target <objective>`: headless goal compatibility, equivalent to running
+  `/goal <objective>` in the headless session; the CLI must reuse the command center's goal
+  semantics rather than inventing a target-only control flow. With `--resume` / `--continue` it
+  applies to the restored session; otherwise to the newly created session. `--target` does not
+  combine with `--prompt`; use `--prompt "/goal ..."` when the explicit slash-command form is
+  needed. The implementation must not turn `--target` into an environment variable.
+- Global `--target-replace`: the explicit override confirmation for `--target`. If the session
+  already has a goal and `--target-replace` is not given, the CLI must return a clear local error
+  — never silently overwrite the goal, never send a model request. `--target-replace` alone is an
+  error.
+- `zcode skills list`: read-only listing of skills discoverable in the current working directory.
+  It reuses bootstrap's skill-discovery interface, starts no TUI, creates no session, sends no
+  model request; `zcode skills` equals `zcode skills list`. Plain output shows name, scope/source,
+  description and path; `--json` outputs structured skills and diagnostics; `--verbose` appends
+  diagnostics to the plain output.
+- `zcode commands list`: read-only listing of custom prompt commands discoverable in the current
+  working directory. It reuses bootstrap's custom-command discovery interface, starts no TUI,
+  creates no session, sends no model request; `zcode commands` equals `zcode commands list`.
+  Plain output shows `/name`, argument hint, scope/source, description and path; `--json` outputs
+  structured commands and diagnostics; `--verbose` appends diagnostics.
+- `zcode login`: logs in through the ZCode/Z.AI CLI OAuth device flow; after browser
+  authorization it writes sensitive tokens into `~/.zcode/v2/credentials.json` shared with the
+  desktop Z Code, and only patches non-sensitive provider/model defaults in
+  `~/.zcode/cli/config.json`. `--no-browser` only prints the authorize URL without opening a
+  browser, and keeps polling.
+- `zcode logout`: clears the ZAI login state from the shared credential store; if
+  `oauth:active_provider` is currently `zai`, the active provider is cleared too.
+- `zcode doctor`: outputs runtime and packaging-assumption checks; the single process-level entry
+  for CLI health checks and smoke tests.
 
-`zcode hello` 不再是受支持命令。CLI 不保留无业务语义的 greeting/smoke-test 命令；脚本、文档和测试需要使用 `zcode doctor` 或 `zcode --version` 表达健康检查意图。
+`zcode hello` is no longer a supported command. The CLI keeps no greeting/smoke-test command
+without business meaning; scripts, docs and tests use `zcode doctor` or `zcode --version` to
+express health-check intent.
 
-ZCode protocol client 通过协议原生能力承载 session/config 操作，因此只广播只读帮助和 prompt 型命令：
+ZCode protocol clients carry session/config operations through native protocol capabilities, so
+only read-only help and prompt-type commands are broadcast:
 
-- `help`: 对应 `/help [command]`，由 bootstrap 直接返回当前 ZCode app-server command surface，不创建模型 turn。
-- `compact`: 对应 `/compact [instructions]`。
-- `workflow`: 对应 `/workflow [what the workflow should accomplish]`，`source: "builtin"`，紧随 `goal` 之后广播；灰度门关闭时整行不广播，手打 `/workflow` 也不展开。
-- `goal`: 对应 `/goal [pause|resume|clear|replace <objective>|<objective>]`，由 bootstrap 本地读写 session goal；已有目标时 `/goal <objective>` 与 `/goal replace <objective>` 都按替换处理，并继续通过兼容 `target_changed` / `_meta.zcode.target` 投影状态；`/target` 只作为输入兼容别名，不广播给新客户端。
-- `skill`: 对应 `/skill <name> [task]`，由 bootstrap 改写成显式 `Skill` tool 调用要求；ZCode app-server 侧 skill discovery 仍由协议原生 skill UI 承载，不把 `/skill` 裸命令解释成列表。
+- `help`: matches `/help [command]`; bootstrap returns the current ZCode app-server command
+  surface directly, creating no model turn.
+- `compact`: matches `/compact [instructions]`.
+- `workflow`: matches `/workflow [what the workflow should accomplish]`,
+  `source: "builtin"`, broadcast right after `goal`; when the gray gate is closed the row is not
+  broadcast at all and a hand-typed `/workflow` is not expanded.
+- `goal`: matches `/goal [pause|resume|clear|replace <objective>|<objective>]`; bootstrap reads
+  and writes the session goal locally; with an existing goal both `/goal <objective>` and
+  `/goal replace <objective>` are treated as replace, and state keeps projecting through the
+  compatible `target_changed` / `_meta.zcode.target`; `/target` remains only an input
+  compatibility alias and is not broadcast to new clients.
+- `skill`: matches `/skill <name> [task]`; bootstrap rewrites it into an explicit `Skill` tool
+  call requirement. ZCode app-server-side skill discovery stays with the protocol-native skill
+  UI; the bare `/skill` command is not interpreted as a listing.
 
-App 的「计划模式」是 Composer 本地列表操作，选中复用标准 Plan 开关；协议目录不再广播
-`/plan [task]`，CLI 不提供对应的 prompt 展开。`plan` 保持保留名，避免自定义命令接管该入口。
-App 的具体交互见 [计划模式快捷入口](../../../../../docs/plan-slash-command.md)。
+The App's "plan mode" is a Composer-local list action whose selection reuses the standard Plan
+toggle; the protocol catalog no longer broadcasts `/plan [task]` and the CLI provides no matching
+prompt expansion. `plan` stays a reserved name so a custom command cannot take over that entry.
+App-side interaction: [plan-mode quick entry](../../../../../docs/plan-slash-command.md).
 
-ZCode app-server `/help` 只展示 ZCode app-server 已广播的命令，不能把 local-only 的 `/mode`、`/model`、`/resume`、`/mcp` 等命令混入，避免 client 看到不可执行的本地 TUI 操作。
+ZCode app-server `/help` shows only the commands it broadcasts; local-only commands such as
+`/mode`, `/model`, `/resume`, `/mcp` must not be mixed in, so clients never see local TUI
+operations they cannot execute.
 
-`/btw` 暂不进入 ZCode app-server `available_commands_update`。ZCode app-server 客户端需要 side-result UI 后，应通过 `zcode.dev/session/sideQuestion` 扩展方法请求旁路回答，而不是把 `/btw` 作为普通 prompt command 广播或注入主会话。
+`/btw` is not in the ZCode app-server `available_commands_update` for now. Once clients have
+side-result UI, they should ask through the `zcode.dev/session/sideQuestion` extension method,
+not receive `/btw` as a normal prompt command or have it injected into the main session.
 
-ZCode app-server 的 command 广播使用 `available_commands_update` session update；不要把这些命令塞进 `initialize` 或 `session/new` 响应体，也不要让 transport 层理解 ZCode command 语义。
+ZCode app-server command broadcast uses the `available_commands_update` session update; these
+commands are never stuffed into `initialize` or `session/new` response bodies, and the transport
+layer never understands ZCode command semantics.
 
-命令识别、参数解析和会话切换在 command 层，UI 只负责触发和显示结果。后续如果要加 command palette、自定义命令或 MCP prompt command，继续扩展 command center，不把具体命令分支塞进 TUI。
+Command recognition, argument parsing and session switching live in the command layer; the UI
+only triggers and displays results. A future command palette, custom commands or MCP prompt
+commands extend the command center — specific command branches never go into the TUI.
 
-成功处理的 slash command 应通过 input-history 端口 best-effort 记录原始命令文本，供 TUI `Up` 历史召回使用；例如 `/help` 召回应恢复 `/help`，而不是丢失本地命令或恢复展开后的 prompt。历史写入失败不得影响命令响应。包含 API key 等敏感参数的 `/login` 形态不得写入历史。
+Successfully handled slash commands record the raw command text best-effort through the
+input-history port for TUI `Up` recall; e.g. recalling `/help` restores `/help`, not a lost local
+command or the expanded prompt. A history write failure must not affect the command response.
+`/login` forms carrying sensitive parameters such as API keys are never written to history.
 
-自定义 prompt command 的设计见 [`custom-commands.md`](./custom-commands.md)。该能力规划为 command center 的动态命令来源：markdown 文件只定义可复用 prompt 模板，发现和读取通过 adapter，TUI/ZCode app-server 只消费只读命令面，最终执行仍进入普通 runtime turn。P0 目标兼容常见的 `.claude/commands/*.md` 文件形态，同时优先支持 ZCode 原生 `.zcode/commands` 与 `.agents/commands`，并把 `allowed-tools`、`model`、动态 shell/file 展开等高风险能力纳入权限和 I/O 边界。
+The custom prompt command design is in [`custom-commands.md`](./custom-commands.md). It is
+planned as a dynamic command source for the command center: markdown files only define reusable
+prompt templates, discovery and reading go through adapters, TUI/ZCode app-server consume only
+the read-only command surface, and final execution still enters a normal runtime turn. The P0
+goal is compatibility with the common `.claude/commands/*.md` shape, prioritizing native
+`.zcode/commands` and `.agents/commands`, and bringing high-risk capabilities like
+`allowed-tools`, `model` and dynamic shell/file expansion under the permission and I/O
+boundaries.
 
-`/help` 测试覆盖：
+`/help` test coverage:
 
-- slash command parser 将 `/help` 与 `/help model` 识别为已知命令。
-- command center 执行 `/help` 时不创建 app、不发送模型 prompt，并返回当前 command surface。
-- command center 在 history source 可用时把 `/help` 记录为 `slash_command`，但不记录 API-key login 命令。
-- 非交互 `zcode --prompt /help` 直接输出同一份 command surface，不创建 runtime。
+- The slash-command parser recognizes `/help` and `/help model` as known commands.
+- Executing `/help` creates no app, sends no model prompt, and returns the current command
+  surface.
+- With a history source available, the command center records `/help` as `slash_command` but
+  never records API-key login commands.
+- Non-interactive `zcode --prompt /help` prints the same command surface without creating a
+  runtime.
 
-CLI process identity 测试覆盖：
+CLI process identity test coverage:
 
-- 入口层设置的进程名常量为 `zcode-cli`，且普通命令名仍为 `zcode`。
-- `zcode doctor --json` 输出 `cli.processName = "zcode-cli"` 和 `runtime.processTitle = "zcode-cli"`。
-- 普通 `zcode doctor` 输出包含当前进程名，方便手动诊断。
+- The process-name constant set by the entry layer is `zcode-cli`, and the plain command name is
+  still `zcode`.
+- `zcode doctor --json` outputs `cli.processName = "zcode-cli"` and
+  `runtime.processTitle = "zcode-cli"`.
+- Plain `zcode doctor` output includes the current process name for manual diagnostics.
 
-Headless `--prompt` 测试覆盖：
+Headless `--prompt` test coverage:
 
-- `--prompt` 未传 `--mode` 时传给 runtime 的 permission mode 是 `yolo`。
-- `--prompt --mode build|edit|plan|yolo` 保留显式覆盖，不被 headless 默认值改写。
+- Without `--mode`, the permission mode passed to the runtime for `--prompt` is `yolo`.
+- `--prompt --mode build|edit|plan|yolo` keeps the explicit override; the headless default never
+  rewrites it.
 
-CLI Browser Use 测试覆盖：
+CLI Browser Use test coverage:
 
-- `--browser-use` 只接受 `headless`；`--browser-executable` 单独使用或路径无效时在 app 创建前失败。
-- prompt/TUI 把同一个 managed CDP runtime 注入当前 app；session replacement 关闭旧 context，不泄漏 tab。
-- browser-use plugin disabled 时通用 node_repl 仍可用，但不启动 Chromium、不注入 browser broker。
-- app-server 拒绝 headless 参数，不改变 Desktop/Web Remote shared-host ownership。
-- Linux 无 `DISPLAY` 的真实 Chromium E2E 必须经过 MCP node_repl、plugin browser-client、broker 和 port，
-  不能用直接调用 adapter 的 mock 冒充 Browser Use 全链路。
+- `--browser-use` accepts only `headless`; `--browser-executable` alone or with an invalid path
+  fails before app creation.
+- prompt/TUI inject the same managed CDP runtime into the current app; session replacement closes
+  the old context and leaks no tabs.
+- With the browser-use plugin disabled, generic node_repl still works but no Chromium starts and
+  no browser broker is injected.
+- app-server rejects the headless argument, preserving Desktop/Web Remote shared-host ownership.
+- A real Chromium E2E on Linux without `DISPLAY` must go through MCP node_repl, the plugin
+  browser-client, the broker and the port; mocks calling the adapter directly cannot impersonate
+  the full Browser Use chain.
 
-`--workflow-mode` 测试覆盖（launch.md DWG-14 ～ DWG-17）：
+`--workflow-mode` test coverage (launch.md DWG-14 to DWG-17):
 
-- TUI 与 `--prompt` 缺省写 `dynamicWorkflowEnabled: false`；`onDemand` / `alwaysOn` 写对应两个布尔；TUI 的 `/new`、`/resume` 沿用同一对；非法值退出 1 且不建 app。
-- `app-server`、`agent-server`、`login`、`skills` 带该参数退出 1；`--prompt`、`--target`、`tui` 接受。
-- `disabled` 下 TUI 的 `/` 建议与 `/help` 不含 `workflow`；`/workflow` 给本地提示且不调 `submitPrompt`；`/dwf list`/`cancel` 照常，`/dwf resume` 不调 `resumeWorkflowRun`。
-- `disabled` 下 headless `-p "/workflow ..."` 报错退出 1、不建 app；`--workflow-mode alwaysOn` 时照旧走普通 prompt 路径。
+- TUI and `--prompt` default to `dynamicWorkflowEnabled: false`; `onDemand` / `alwaysOn` write
+  the corresponding two booleans; the TUI's `/new` and `/resume` reuse the same pair; invalid
+  values exit 1 without creating an app.
+- `app-server`, `agent-server`, `login`, `skills` exit 1 with the argument; `--prompt`,
+  `--target`, `tui` accept it.
+- Under `disabled` the TUI's `/` suggestions and `/help` omit `workflow`; `/workflow` gives a
+  local hint and does not call `submitPrompt`; `/dwf list`/`cancel` work as usual; `/dwf resume`
+  does not call `resumeWorkflowRun`.
+- Under `disabled`, headless `-p "/workflow ..."` errors with exit 1 and creates no app; with
+  `--workflow-mode alwaysOn` it goes through the normal prompt path as before.
 
-Headless `--target` 测试覆盖：
+Headless `--target` test coverage:
 
-- `--target` 单独使用时走 headless `/goal ...` 语义；与 `--prompt` 同时出现时在 CLI 入口边界报错。
-- `--target-replace` 允许覆盖现有 goal；`--target-replace` 单独出现时报错。
-- `--prompt "/goal ..."` 与单独 `--target ...` 都会经过同一条 command center goal 语义；`--prompt "/target ..."` 暂时保留兼容；headless 无法交互确认替换时必须返回明确错误，不得静默丢弃 selection。
+- `--target` alone follows the headless `/goal ...` semantics; together with `--prompt` it errors
+  at the CLI entry boundary.
+- `--target-replace` allows overwriting an existing goal; `--target-replace` alone is an error.
+- Both `--prompt "/goal ..."` and a standalone `--target ...` go through the same command-center
+  goal semantics; `--prompt "/target ..."` stays compatible for now; when headless cannot
+  interactively confirm a replace it must return a clear error, never silently drop the
+  selection.
 
-## TUI `/model` 持久化
+## TUI `/model` persistence
 
-`/model <target>` 成功切换主模型时，app/server 必须同步更新当前 runtime 的 model ref 和配置文件里的 `model` 主模型选择，避免 TUI 里看到的模型只停留在内存态。TUI 仍只调用 command center，不直接读写配置文件。
+When `/model <target>` successfully switches the main model, the app/server must update both the
+current runtime's model ref and the `model` main-model selection in the config file, so the model
+shown in the TUI is not just in-memory state. The TUI still only calls the command center and
+never reads or writes config files directly.
 
-交互式 TUI 中，composer 输入 `/model` 或 `/model ` 时在输入框上方打开 command-shaped model popup；弹窗按模型 id、alias、名称和生成的 `/model <provider/model>` 命令文本过滤。行布局左侧优先显示模型名称，右侧右对齐显示弱化的 provider 名称。Up/Down 移动高亮，Enter 通过显式 `/model <provider/model>` 提交切换，Tab 只把高亮模型补全进输入框。提交空 `/model` 和 `/model list` 保留纯文本列表，用于复制、排查和非 popup 客户端。
+In the interactive TUI, typing `/model` or `/model ` in the composer opens a command-shaped model
+popup above the input; the popup filters by model id, alias, name and the generated
+`/model <provider/model>` command text. Rows show the model name on the left and a muted provider
+name right-aligned. Up/Down moves the highlight, Enter submits the switch as an explicit
+`/model <provider/model>`, Tab only completes the highlighted model into the input. Submitting
+bare `/model` and `/model list` keeps the plain-text list for copying, troubleshooting and
+non-popup clients.
 
-持久化目标按已加载配置源选择：优先更新包含 model 配置的 project config，其次更新包含 model 配置的 user config。环境变量、CLI override 和 session 注入只作为运行时覆盖，不作为 `/model` 的落盘目标。没有可写配置源或写入失败时，`/model` 返回失败并保持当前 runtime model 不变。
+The persistence target is chosen from the loaded config sources: prefer the project config
+containing model config, then the user config containing model config. Environment variables,
+CLI overrides and session injections are runtime overrides only, never `/model` persistence
+targets. With no writable config source or a failed write, `/model` returns failure and the
+current runtime model stays unchanged.
 
-配置写入只 patch 主模型选择：字符串形态的 `model: "provider/model"` 继续保持字符串形态；对象形态的 `model.main` 被替换，`model.lite`、`provider`、`mcp`、`skills`、`permission` 等其它字段必须保留。写入由 config adapter 负责 atomic write 和跨平台路径处理，日志不得输出 API key、headers 等敏感字段。
+The config write patches only the main model selection: a string-shaped `model: "provider/model"`
+stays a string; an object-shaped `model.main` is replaced while `model.lite`, `provider`, `mcp`,
+`skills`, `permission` and other fields are preserved. Writes go through the config adapter for
+atomic writes and cross-platform path handling, and logs never print sensitive fields such as API
+keys or headers.
 
-测试覆盖：
+Test coverage:
 
-- config adapter 能在字符串和对象两种 model shape 下 patch 主模型并保留其它字段。
-- bootstrap `setModel()` 在写入配置成功后才更新 runtime model。
-- TUI `/model` wiring 继续只经过 app/server `setModel()`，不在 TUI 层新增业务状态。
+- The config adapter patches the main model under both string and object model shapes while
+  preserving other fields.
+- bootstrap `setModel()` updates the runtime model only after the config write succeeds.
+- TUI `/model` wiring keeps going only through app/server `setModel()`, with no new business state
+  in the TUI layer.
 
-## TUI `/effort` 思考深度
+## TUI `/effort` reasoning depth
 
-`/effort` 是本地 command-center 命令，不发送模型请求。它只作用于当前 session 的主模型 reasoning/thinking provider options，并把成功选择的 level 写入 `local_setting(model.reasoningLevel)` 作为全局偏好，供后续新 session 在当前模型支持该 level 时复用。`/variant` 是完全等价的输入别名；help 和新文档展示 `/effort` 为主命令。
+`/effort` is a local command-center command that sends no model request. It only affects the
+current session's main-model reasoning/thinking provider options, and writes the successfully
+chosen level to `local_setting(model.reasoningLevel)` as a global preference for later new
+sessions to reuse when the current model supports it. `/variant` is a fully equivalent input
+alias; help and new docs show `/effort` as the primary command.
 
-可选 level 必须来自当前模型的 catalog/config reasoning metadata。没有 reasoning metadata、reasoning disabled 或 level 为空时，命令返回“当前模型不支持 effort selection”的本地提示，不创建普通 turn。用户输入不支持的 level 时返回当前可用列表，并保持 runtime provider options 不变。
+Available levels come from the current model's catalog/config reasoning metadata. With no
+reasoning metadata, reasoning disabled, or an empty level, the command returns the local hint
+"当前模型不支持 effort selection" and creates no normal turn. When the user inputs an
+unsupported level, it returns the currently available list and keeps the runtime provider options
+unchanged.
 
-交互式 TUI 中，输入 `/effort`、`/effort `、`/variant` 或 `/variant ` 时，composer 使用与 `/model` 相同形态的本地候选 popup 展示并过滤可选 level；Tab 将当前候选补全成显式 `/effort <level>`，Enter 提交时也解析为显式 `/effort <level>`。TUI 只消费 app/server 暴露的可选 level 列表，不直接解析 reasoning metadata、不保存业务状态。提交空 `/effort`、`/variant`、`/effort list` 或 `/variant list` 时，command center 返回纯文本列表，用于复制、排查和非 popup 客户端。
+In the interactive TUI, typing `/effort`, `/effort `, `/variant` or `/variant ` opens a local
+candidate popup in the same shape as `/model`, showing and filtering the available levels; Tab
+completes the current candidate into an explicit `/effort <level>`, and Enter also submits as an
+explicit `/effort <level>`. The TUI only consumes the level list exposed by the app/server; it
+never parses reasoning metadata itself or stores business state. Submitting bare `/effort`,
+`/variant`, `/effort list` or `/variant list` returns a plain-text list for copying,
+troubleshooting and non-popup clients.
 
-切换成功时 app/server 必须同步更新 runtime `modelProviderOptions`，返回新的 `thoughtLevel` 投影给 TUI/ZCode app-server。写入全局偏好失败时记录结构化 warning，但当前 session 已切换的 runtime 状态保持成功，避免本地偏好存储故障阻塞用户继续工作。
+On success the app/server must update the runtime `modelProviderOptions` and return the new
+`thoughtLevel` projection to the TUI/ZCode app-server. A failed global-preference write logs a
+structured warning, but the current session's switched runtime state stays successful — a local
+preference-storage failure must not block the user from continuing.
 
-测试覆盖：
+Test coverage:
 
-- slash command parser 将 `/effort` 和 `/variant` 识别为同一命令，并保留 `rawName`。
-- TUI composer 输入 `/effort` 或 `/variant` 时打开本地候选 popup，Tab/Enter 选择候选后提交显式 `/effort <level>`。
-- command center 执行空 `/effort` 或 `/effort list` 时返回纯文本列表；执行 `/effort <level>` 时只调用 app/server `setThoughtLevel()`，不发送模型 prompt。
-- bootstrap `setThoughtLevel()` 更新 runtime provider options、返回 `thoughtLevel`，并尽力写入全局 reasoning level 偏好。
-- 后续新 session 在没有显式 runtime provider options 时读取全局 reasoning level；若当前模型不支持该 level，则回退到模型默认 reasoning level。
+- The slash-command parser recognizes `/effort` and `/variant` as the same command and preserves
+  `rawName`.
+- Typing `/effort` or `/variant` in the composer opens the local candidate popup; Tab/Enter
+  selection submits an explicit `/effort <level>`.
+- The command center returns a plain-text list for bare `/effort` or `/effort list`; for
+  `/effort <level>` it only calls app/server `setThoughtLevel()` and sends no model prompt.
+- bootstrap `setThoughtLevel()` updates the runtime provider options, returns `thoughtLevel`, and
+  best-effort writes the global reasoning-level preference.
+- Later new sessions read the global reasoning level when no explicit runtime provider options
+  exist; if the current model does not support it, fall back to the model's default reasoning
+  level.
 
-## TUI `/locale` 持久化
+## TUI `/locale` persistence
 
-`/locale` 是本地 command-center 命令，不发送模型请求。无参数时展示当前 effective locale 和可配置值；带 `auto`、`en-US` 或 `zh-CN` 时调用 app/server 暴露的 `setLocale()`，成功后返回新的 effective locale 给 TUI。TUI 只消费返回结果里的 `locale` 投影并重新选择 copy catalog，不直接读写配置文件，也不保存业务状态。
+`/locale` is a local command-center command that sends no model request. Without an argument it
+shows the current effective locale and configurable values; with `auto`, `en-US` or `zh-CN` it
+calls the app/server `setLocale()` and returns the new effective locale to the TUI. The TUI only
+consumes the `locale` projection from the result and re-selects the copy catalog; it never reads
+or writes config files or stores business state.
 
-持久化目标按 UI 语言的配置归属选择：如果当前 project config 明确包含 `ui.locale`，更新该 project config；否则更新 user config，缺失时创建 `~/.zcode/cli/config.json`。CLI `--locale` 是当前进程覆盖，但 TUI 内 `/locale` 成功后可以覆盖当前进程里后续 `/new`、`/resume` 创建 app 时使用的 locale。
+The persistence target follows the UI-language config ownership: if the current project config
+explicitly contains `ui.locale`, update that project config; otherwise update the user config,
+creating `~/.zcode/cli/config.json` when missing. CLI `--locale` is a current-process override,
+but after a successful `/locale` the TUI may override the locale used by later `/new` and
+`/resume` app creation in the current process.
 
-写入只 patch `ui.locale`，必须保留 `model`、`provider`、`mcp`、`skills`、`permission` 等其它字段。`auto` 按请求值落盘，当前进程 effective locale 继续按 adapter 检测结果解析；检测不到支持语言时为 `en-US`。写入失败时返回明确错误，并保持当前 effective locale 不变。
+The write patches only `ui.locale` and must preserve `model`, `provider`, `mcp`, `skills`,
+`permission` and other fields. `auto` persists the requested value; the current-process effective
+locale still resolves from adapter detection, defaulting to `en-US` when no supported language is
+detected. A failed write returns a clear error and keeps the current effective locale unchanged.
 
-测试覆盖：
+Test coverage:
 
-- slash command parser 将 `/locale` 和 `/language` 识别为同一命令。
-- command center 执行 `/locale` 查询时不创建模型 turn。
-- command center 执行 `/locale zh-CN` 时调用 app/server `setLocale()`，返回 `locale` 投影供 TUI 切换 copy catalog。
-- config adapter 能 patch 或创建 `ui.locale`，并保留其它配置字段。
-- bootstrap `setLocale()` 在配置写入成功后才更新 effective locale。
-- CLI TUI wiring 在 `/locale` 后让后续 `/new` app 使用新的 locale override。
+- The slash-command parser recognizes `/locale` and `/language` as the same command.
+- Executing the `/locale` query creates no model turn.
+- Executing `/locale zh-CN` calls app/server `setLocale()` and returns the `locale` projection
+  for the TUI to switch copy catalogs.
+- The config adapter patches or creates `ui.locale` while preserving other config fields.
+- bootstrap `setLocale()` updates the effective locale only after the config write succeeds.
+- CLI TUI wiring makes apps created by later `/new` use the new locale override.
 
-## TUI `/new` 行为
+## TUI `/new` behavior
 
-`/new` 是 TUI 内的会话切换命令，`/clear` 是完全等价的别名。Command center 通过 bootstrap/CLI 提供的 `newApp` 工厂创建一个不带 `sessionId`、不带 `resume` 标记的新 app/runtime，并把它设为当前 active app。新 app 会立即获得新的 session id；当前持久化实现仍按 runtime 规则在该 session 的首个 turn 写入 session store。TUI 继续只调用 `submitPrompt`，不直接访问 session store，也不保存业务 session 状态。
+`/new` is the TUI session-switch command; `/clear` is its fully equivalent alias. The command
+center uses the `newApp` factory provided by bootstrap/CLI to create a new app/runtime with no
+`sessionId` and no `resume` flag, and sets it as the active app. The new app immediately gets a
+new session id; the current persistence implementation still writes to the session store on the
+session's first turn per runtime rules. The TUI keeps calling only `submitPrompt`, never touches
+the session store and stores no business session state.
 
-返回给 TUI 的响应必须包含新 session id，便于用户在首个 turn 持久化后复制到 `--resume` 或 `/resume <sessionId>`。响应还应要求 TUI 重置当前 session 投影，避免新 session 面板继续显示旧 todo、token 或 background terminal 状态。TUI 收到不携带 `restoredMessages` 的 session reset 结果时，必须清空当前 transcript 后再追加本地命令确认；`/resume` 这类携带 `restoredMessages` 的 reset 结果则用恢复出来的 transcript 替换当前显示。如果当前 client 没有提供 `newApp`，返回明确的不可用提示；如果创建 app 失败，保留原始错误链，让 TUI 的现有错误显示处理。
+The response to the TUI must contain the new session id, so the user can copy it to `--resume` or
+`/resume <sessionId>` after the first turn persists. The response must also ask the TUI to reset
+the current session projection, so the new session panel doesn't keep showing old todos, tokens
+or background-terminal state. When a session-reset result carries no `restoredMessages`, the TUI
+must clear the current transcript before appending the local command confirmation; results that
+do carry `restoredMessages` (like `/resume`) replace the display with the restored transcript. If
+the current client provides no `newApp`, return a clear unavailability message; if app creation
+fails, keep the original error chain for the TUI's existing error display.
 
-测试覆盖：
+Test coverage:
 
-- slash command parser 将 `/new` 识别为已知命令。
-- slash command parser 将 `/clear` 识别为 `/new` 的别名，并保留原始 `rawName` 便于帮助和审计显示。
-- command center 执行 `/new` 时不调用模型 prompt、不调用 `/resume` 的最近会话解析，并返回新 session id。
-- command center 执行 `/clear` 时复用 `/new` 的同一路径，返回同样的 session reset/session id 结果。
-- CLI TUI wiring 在 `/new` 后把后续 prompt 发送到新创建的 active app。
-- TUI transcript 合并在 session reset 且没有 `restoredMessages` 时清空旧消息，避免新 session 继续占用旧会话显示空间。
+- The slash-command parser recognizes `/new` as a known command.
+- The parser recognizes `/clear` as an alias of `/new` and preserves the original `rawName` for
+  help and audit display.
+- Executing `/new` calls no model prompt, does not run `/resume`'s latest-session resolution, and
+  returns the new session id.
+- Executing `/clear` reuses `/new`'s path and returns the same session-reset/session-id result.
+- CLI TUI wiring sends subsequent prompts to the newly created active app after `/new`.
+- The TUI transcript merge clears old messages on a session reset without `restoredMessages`, so
+  a new session doesn't keep occupying the old session's display space.
 
 ## Auth Login Setup
 
-`/login`、`/logout` 与进程级 `zcode login` / `zcode logout` 共用 [`auth-login.md`](./auth-login.md) 的 bootstrap service。OAuth、打开浏览器、credential 读写、配置 patch 都放在 adapter/bootstrap 层；core 不读取环境变量、不直接网络请求、不直接写配置文件。
+`/login`, `/logout` and the process-level `zcode login` / `zcode logout` share the bootstrap
+service of [`auth-login.md`](./auth-login.md). OAuth, browser opening, credential reads/writes
+and config patching all live in the adapter/bootstrap layer; core reads no environment
+variables, makes no direct network requests and writes no config files.
 
-保存 token 时复用桌面 Z Code 的 `~/.zcode/v2/credentials.json` 加密 key-value store。`~/.zcode/cli/config.json` 只 patch provider/model 相关非敏感字段，保留已有 `mcp`、`skills`、`permission` 等配置；新配置使用 provider-first shape，不恢复 bak 的 flat `provider/model/baseURL/apiKey` 配置。
+Saving a token reuses the desktop Z Code's `~/.zcode/v2/credentials.json` encrypted key-value
+store. `~/.zcode/cli/config.json` only patches non-sensitive provider/model fields and preserves
+existing `mcp`, `skills`, `permission` config; new configuration uses the provider-first shape
+and does not restore the bak's flat `provider/model/baseURL/apiKey` configuration.
 
-测试覆盖：
+Test coverage:
 
-- slash command parser 将 `/login`、`/logout` 识别为已知命令。
-- command center 执行 `/login`、`/logout` 时不创建 app、不发送模型 prompt。
-- 进程级 `zcode login` 能通过注入的 bootstrap login service 输出授权 URL 与登录成功用户。
-- 进程级 `zcode logout` 能通过注入的 bootstrap logout service 输出清理结果。
+- The slash-command parser recognizes `/login` and `/logout` as known commands.
+- Executing `/login` and `/logout` creates no app and sends no model prompt.
+- The process-level `zcode login` prints the authorize URL and the logged-in user through an
+  injected bootstrap login service.
+- The process-level `zcode logout` prints the cleanup result through an injected bootstrap logout
+  service.

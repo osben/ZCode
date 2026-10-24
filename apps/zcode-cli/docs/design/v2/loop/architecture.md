@@ -1,146 +1,74 @@
-# Agent Loop 设计
+# Agent Loop Design
 
-## 文档定位
+## Document scope
 
-本文档定义 ZCode CLI 的核心 agent loop 设计，作为 `architecture.md` 的子模块设计。Agent loop 是整个系统的核心引擎，其他模块（tool、provider、permission 等）都是为其服务的组件。
-
----
-
-## 一、设计基础
-
-### 1.1 核心循环
-
-**核心循环**：`Gather → Act → Verify`
-
-```
-用户输入 → 模型评估 → Tool Calls 或最终响应 → 执行工具 → 结果反馈 → 重复
-```
-
-**权限模式**：
-- `default` - 未覆盖的工具触发审批
-- `acceptEdits` - 自动批准文件编辑
-- `plan` - 只产生计划，不执行
-- `dontAsk` - 不提示，只用规则
-- `yolo` - 跳过 permission prompt，直接执行
-- `auto` - 保留，暂不实现
-
-**Hook 系统**：
-- `PreToolUse` / `PostToolUse` / `PostToolUseFailure`
-- `UserPromptSubmit`, `Stop`, `SubagentStart/Stop`
-- `PreCompact`, `PermissionRequest`, `SessionStart/End`
+Core agent loop design for the ZCode CLI, as the sub-module design of `architecture.md`. The agent
+loop is the system's core engine; other modules (tool, provider, permission, etc.) are components
+serving it.
 
 ---
 
-### 1.2 设计模式
+## 1. Design foundations
 
-| 模式 | 描述 |
-|------|------|
-| **事件驱动 Loop** | 状态变化通过事件记录，loop 由事件推进 |
-| **Session/Turn 层次** | Session 包含多个 Turn，每个 Turn 是完整请求-响应 |
-| **Tool Contract 声明** | 工具必须声明 schema、权限、副作用、超时等 |
-| **Permission 独立** | 权限检查与执行分离，不混入业务逻辑 |
-| **Event Sourcing** | append-only event store，支持恢复和重放 |
-| **Port/Adapter 分离** | core 不依赖具体实现 |
+### 1.1 Core loop
+
+**Core loop**: `Gather → Act → Verify`
+
+```
+user input -> model evaluation -> tool calls or final response -> execute tools -> feed results back -> repeat
+```
+
+**Permission modes**:
+
+- `default` — uncovered tools trigger approval
+- `acceptEdits` — auto-approve file edits
+- `plan` — produce a plan only, no execution
+- `dontAsk` — never prompt, rules only
+- `yolo` — skip permission prompts, execute directly
+- `auto` — reserved, not implemented yet
+
+**Hook system**: `PreToolUse` / `PostToolUse` / `PostToolUseFailure`, `UserPromptSubmit`, `Stop`,
+`SubagentStart/Stop`, `PreCompact`, `PermissionRequest`, `SessionStart/End`.
+
+### 1.2 Design patterns
+
+| Pattern | Description |
+|---------|-------------|
+| Event-driven loop | State changes are recorded as events; the loop advances by events |
+| Session/Turn hierarchy | A session contains multiple turns; each turn is one full request-response |
+| Tool contract declaration | Tools must declare schema, permissions, side effects, timeout, etc. |
+| Independent permission | Permission checks are separated from execution, never mixed into business logic |
+| Event sourcing | Append-only event store, supporting recovery and replay |
+| Port/Adapter separation | Core does not depend on concrete implementations |
 
 ---
 
-## 二、ZCode Agent Loop 设计
+## 2. ZCode agent loop design
 
-### 2.1 核心循环
+### 2.1 Core loop
 
-ZCode 采用 **Event-first Agent Loop**：
+ZCode uses an **event-first agent loop**: Turn Input → Event Creation → State Transition (reducer) →
+Projection (`ConversationView` | `ToolCallView` | `PendingPermissionView`) → Provider (LLM call) /
+Tool Runtime / Permission Service → Event Emit, which feeds the next transition.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Agent Loop                                   │
-│                                                                   │
-│  ┌─────────┐    ┌──────────────┐    ┌───────────────────────┐  │
-│  │  Turn   │───>│ Event        │───>│ State Transition      │  │
-│  │  Input  │    │ Creation     │    │ (Reducer)             │  │
-│  └─────────┘    └──────────────┘    └───────────────────────┘  │
-│                                              │                   │
-│                                              ▼                   │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                     Projection                              ││
-│  │  ConversationView | ToolCallView | PendingPermissionView  ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                                              │                   │
-│                                              ▼                   │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    │
-│  │   Provider   │    │    Tool      │    │  Permission  │    │
-│  │   (LLM Call) │    │   Runtime    │    │    Service   │    │
-│  └──────────────┘    └──────────────┘    └──────────────┘    │
-│                                              │                   │
-│                                              ▼                   │
-│                                     ┌──────────────┐             │
-│                                     │ Event Emit   │             │
-│                                     └──────────────┘             │
-└─────────────────────────────────────────────────────────────────┘
-```
+### 2.2 Turn lifecycle
 
-### 2.2 Turn 生命周期
+A turn has four phases:
 
-一个 Turn 包含以下阶段：
+1. **Input Processing** — parse user input, apply the permission mode, inject context (memory,
+   system prompt).
+2. **Model Request** — build the prompt (system + context + history + input), call
+   `ProviderAdapter`, handle streaming events, record `model_request`.
+3. **Tool path** (when tool calls exist):
+   - 3a **Tool Scheduling** — order by dependencies (read-only in parallel, writes serial),
+     pre-check permissions, register pending permissions.
+   - 3b **Tool Execution** — execute tools, capture result or error, emit `tool_result` events.
+   - 3c **Result Aggregation** — aggregate all tool results, prepare the next model request, then
+     return to Phase 2.
+4. **Turn Completion** (on final response) — emit `turn_complete`, update projections, check whether
+   compaction is needed.
 
-```
-Turn Input
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 1: Input Processing                                    │
-│ - 解析用户输入                                               │
-│ - 应用 permission mode                                       │
-│ - 注入 context (memory, system prompt)                       │
-└─────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 2: Model Request                                       │
-│ - 构建 prompt (system + context + history + input)           │
-│ - 调用 ProviderAdapter                                        │
-│ - 处理 streaming 事件                                        │
-│ - 记录 model_request 事件                                    │
-└─────────────────────────────────────────────────────────────┘
-    │
-    ├──▶ 如果有 Tool Calls
-    │       │
-    │       ▼
-    │   ┌─────────────────────────────────────────────────────┐│
-    │   │ Phase 3a: Tool Scheduling                           ││
-    │   │ - 按依赖关系排序 (read-only 并行, write 串行)       ││
-    │   │ - 权限预检查                                        ││
-    │   │ - 注册 pending permission                           ││
-    │   └─────────────────────────────────────────────────────┘│
-    │       │
-    │       ▼
-    │   ┌─────────────────────────────────────────────────────┐│
-    │   │ Phase 3b: Tool Execution                            ││
-    │   │ - 执行工具                                          ││
-    │   │ - 捕获结果或错误                                    ││
-    │   │ - 发射 tool_result 事件                             ││
-    │   └─────────────────────────────────────────────────────┘│
-    │       │
-    │       ▼
-    │   ┌─────────────────────────────────────────────────────┐│
-    │   │ Phase 3c: Result Aggregation                        ││
-    │   │ - 汇总所有工具结果                                   ││
-    │   │ - 准备下一轮 model request                          ││
-    │   └─────────────────────────────────────────────────────┘│
-    │       │
-    │       └──▶ 回到 Phase 2 (继续调用模型)
-    │
-    └──▶ 如果是最终响应
-            │
-            ▼
-        ┌─────────────────────────────────────────────────────┐
-        │ Phase 4: Turn Completion                             │
-        │ - 发射 turn_complete 事件                           │
-        │ - 更新 projection                                   │
-        │ - 检查是否需要 compact                               │
-        └─────────────────────────────────────────────────────┘
-```
-
-### 2.3 状态模型
+### 2.3 State model
 
 #### 2.3.1 SessionState
 
@@ -152,17 +80,17 @@ interface SessionState {
   mode: CollaborationMode;
   status: SessionStatus;
 
-  // 事件相关
+  // Events
   eventLog: SessionEvent[];
   turnCount: number;
   totalTokenCount: number;
 
-  // Context 管理
+  // Context management
   contextWindow: number;
   contextUsed: number;
   compactBoundaries: CompactBoundary[];
 
-  // 并发
+  // Concurrency
   pendingPermissions: PendingPermission[];
   activeToolCalls: ToolCall[];
 }
@@ -176,35 +104,34 @@ interface TurnState {
   sessionId: SessionId;
   turnNumber: number;
 
-  // Phase
   phase: TurnPhase;
 
-  // Model 相关
+  // Model
   modelRequest?: ModelRequest;
   modelResponse?: ModelResponse;
   streamingParts: StreamingPart[];
 
-  // Tool 相关
+  // Tools
   toolCalls: ToolCall[];
   toolResults: ToolResult[];
   toolSchedule: ToolSchedule;
 
-  // Permission 相关
+  // Permissions
   pendingPermissions: PermissionRequest[];
   resolvedPermissions: PermissionResult[];
 
-  // 结果
+  // Outcome
   finalResponse?: string;
   error?: TurnError;
   resultType: TurnResultType;
 }
 ```
 
-#### 2.3.3 TurnPhase 枚举
+#### 2.3.3 TurnPhase enum
 
 ```typescript
 enum TurnPhase {
-  Idle = 'idle',                    // 等待输入
+  Idle = 'idle',                    // waiting for input
   ProcessingInput = 'processing_input',
   AwaitingModelResponse = 'awaiting_model_response',
   Streaming = 'streaming',
@@ -219,26 +146,26 @@ enum TurnPhase {
 
 ---
 
-## 三、Event 设计
+## 3. Event design
 
-### 3.1 Event 分类
+### 3.1 Event taxonomy
 
-| 类别 | Event | 描述 |
-|------|-------|------|
-| **Session** | `session_created`, `session_resumed`, `session_forked`, `session_compacted` | Session 生命周期 |
-| **Turn** | `turn_started`, `turn_input_received`, `turn_complete`, `turn_error` | Turn 生命周期 |
-| **Message** | `user_message`, `assistant_message`, `system_message` | 消息 |
-| **Model** | `model_request`, `model_streaming`, `model_complete`, `model_error` | 模型调用 |
-| **Tool** | `tool_call_scheduled`, `tool_call_started`, `tool_call_result`, `tool_call_error`, `tool_batch_complete` | 工具执行 |
-| **Permission** | `permission_requested`, `permission_resolved`, `permission_denied` | 权限 |
-| **State** | `compact_boundary`, `rewind_triggered`, `checkpoint_created` | 状态管理 |
-| **Subagent** | `subagent_spawned`, `subagent_message`, `subagent_stopped` | 子 Agent |
-| **System** | `interrupt`, `cancel`, `resume`, `error` | 系统事件 |
+| Category   | Events                                                                                             | Description       |
+|------------|----------------------------------------------------------------------------------------------------|-------------------|
+| Session    | `session_created`, `session_resumed`, `session_forked`, `session_compacted`                         | Session lifecycle |
+| Turn       | `turn_started`, `turn_input_received`, `turn_complete`, `turn_error`                                | Turn lifecycle    |
+| Message    | `user_message`, `assistant_message`, `system_message`                                               | Messages          |
+| Model      | `model_request`, `model_streaming`, `model_complete`, `model_error`                                 | Model calls       |
+| Tool       | `tool_call_scheduled`, `tool_call_started`, `tool_call_result`, `tool_call_error`, `tool_batch_complete` | Tool execution |
+| Permission | `permission_requested`, `permission_resolved`, `permission_denied`                                  | Permissions       |
+| State      | `compact_boundary`, `rewind_triggered`, `checkpoint_created`                                        | State management  |
+| Subagent   | `subagent_spawned`, `subagent_message`, `subagent_stopped`                                          | Child agents      |
+| System     | `interrupt`, `cancel`, `resume`, `error`                                                            | System events     |
 
-### 3.2 Event 结构
+### 3.2 Event structure
 
 ```typescript
-// 基础 Event
+// Base event
 interface SessionEvent {
   id: EventId;
   sessionId: SessionId;
@@ -251,7 +178,7 @@ interface SessionEvent {
   metadata?: EventMetadata;
 }
 
-// Tool Call Event 示例
+// Example: tool call event
 interface ToolCallScheduledEvent extends SessionEvent {
   type: 'tool_call_scheduled';
   payload: {
@@ -279,29 +206,29 @@ interface ToolCallResultEvent extends SessionEvent {
 }
 ```
 
-### 3.3 Event 约束
+### 3.3 Event constraints
 
-1. **不可变性**：Event 一旦创建不可修改
-2. **可重放**：Event store 支持从任意 point 重放
-3. **有序性**：sequenceNumber 保证顺序
-4. **可传播**：包含 traceId 支持分布式追踪
-5. **版本化**：Event schema 支持演进
+1. **Immutable**: an event never changes after creation.
+2. **Replayable**: the event store supports replay from any point.
+3. **Ordered**: `sequenceNumber` guarantees order.
+4. **Propagatable**: carries `traceId` for distributed tracing.
+5. **Versioned**: event schemas can evolve.
 
 ---
 
-## 四、Projection 设计
+## 4. Projection design
 
-### 4.1 Projection 类型
+### 4.1 Projection types
 
-| Projection | 用途 | 更新时机 |
-|------------|------|----------|
-| `SessionProjection` | Session 整体状态 | 任何 session 事件 |
-| `ConversationView` | 对话历史（用于 prompt 构建） | message 事件 |
-| `ToolCallView` | 工具调用状态 | tool 事件 |
-| `PendingPermissionView` | 待审批权限 | permission 事件 |
-| `ContextBudgetView` | Token 预算 | model 事件 |
+| Projection              | Purpose                                  | Updated on          |
+|-------------------------|------------------------------------------|---------------------|
+| `SessionProjection`     | Overall session state                    | Any session event   |
+| `ConversationView`      | Conversation history (prompt building)   | Message events      |
+| `ToolCallView`          | Tool call state                          | Tool events         |
+| `PendingPermissionView` | Pending approvals                        | Permission events   |
+| `ContextBudgetView`     | Token budget                             | Model events        |
 
-### 4.2 Projection 更新
+### 4.2 Projection updates
 
 ```typescript
 // EventReducer
@@ -325,17 +252,16 @@ function reduce(state: SessionProjection, event: SessionEvent): SessionProjectio
 }
 ```
 
-### 4.3 Prompt 构建
+### 4.3 Prompt building
 
 ```typescript
-// ConversationView 用于构建 model prompt
+// ConversationView builds the model prompt
 interface ConversationView {
   messages: Message[];
   systemPrompt: string;
   compactBoundaries: CompactBoundary[];
   contextBudget: ContextBudget;
 
-  // 构建方法
   toModelMessages(): ModelMessage[];
   estimateTokenCount(): number;
   shouldCompact(): boolean;
@@ -344,15 +270,15 @@ interface ConversationView {
 
 ---
 
-## 五、Tool 调度
+## 5. Tool scheduling
 
-### 5.1 调度策略
+### 5.1 Schedule shape
 
 ```typescript
 interface ToolSchedule {
   items: ToolScheduleItem[];
-  parallelGroups: ToolCallId[][];  // 可以并行的组
-  executionOrder: ToolCallId[];   // 最终执行顺序
+  parallelGroups: ToolCallId[][];  // groups that can run in parallel
+  executionOrder: ToolCallId[];   // final execution order
 }
 
 interface ToolScheduleItem {
@@ -367,26 +293,30 @@ interface ToolScheduleItem {
 }
 ```
 
-### 5.2 调度规则
+### 5.2 Scheduling rules
 
-1. **Read-only / concurrentSafe 工具可以并行**：`Read`, `Glob`, `Grep`、`WebSearch`，以及 metadata 明确声明 `concurrentSafe: true` 的工具；只有 `WebSearch` handler 内部的 provider-native `web_search` side request 不进入本地 tool 调度
-2. **Write / destructive / 非 concurrentSafe 工具必须串行**：例如 `Write`, `Edit`, `Bash`
-3. **依赖必须先执行**：如果 Tool B 依赖 Tool A 的结果，B 必须在 A 之后
-4. **Pending Permission 阻塞**：如果有未批准的权限请求，阻塞相关工具
-5. **调度必须被消费**：runtime 必须调用 `executor.executeSchedule(toolCalls, schedule, { signal })`，不能忽略 schedule 后用全量 `executeBatch`
+1. **Read-only / concurrentSafe tools run in parallel**: `Read`, `Glob`, `Grep`, `WebSearch`, plus
+   any tool whose metadata declares `concurrentSafe: true`; only `WebSearch`'s provider-native
+   `web_search` side requests inside the handler stay outside local tool scheduling.
+2. **Write / destructive / non-concurrentSafe tools run serially**: e.g. `Write`, `Edit`, `Bash`.
+3. **Dependencies execute first**: if tool B depends on tool A's result, B runs after A.
+4. **Pending permissions block**: an unapproved permission request blocks the related tools.
+5. **The schedule must be consumed**: the runtime must call
+   `executor.executeSchedule(toolCalls, schedule, { signal })`; it must not ignore the schedule and
+   fall back to a full `executeBatch`.
 
-### 5.3 调度算法
+### 5.3 Scheduling algorithm
 
 ```typescript
 function scheduleTools(toolCalls: ToolCall[]): ToolSchedule {
-  // 1. 拓扑排序
+  // 1. Topological sort
   const sorted = topologicalSort(toolCalls, getDependencies);
 
-  // 2. 分组：同一依赖层内只把 read-only/concurrentSafe 工具放入并行组；
-  //    有副作用或未声明并发安全的工具独立成组。
+  // 2. Group: within a dependency layer, only read-only/concurrentSafe tools join a parallel
+  //    group; side-effecting or undeclared tools each get their own group.
   const groups = groupByParallelSafety(sorted);
 
-  // 3. 验证无循环依赖
+  // 3. Validate no dependency cycles
   validateNoCycles(groups);
 
   return {
@@ -399,46 +329,33 @@ function scheduleTools(toolCalls: ToolCall[]): ToolSchedule {
 
 ---
 
-## 六、Permission 集成
+## 6. Permission integration
 
-### 6.1 Permission 流程
+### 6.1 Permission flow
 
-```
-Tool Call 请求
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ PermissionService.check(toolCall)                           │
-│                                                               │
-│ 1. 检查 permission mode (plan/build/yolo/auto)              │
-│ 2. 检查 allowed_tools / disallowed_tools                   │
-│ 3. 检查 risk level                                         │
-│ 4. 如果需要询问，emit permission_requested 事件              │
-│ 5. 等待用户响应或自动决策                                    │
-└─────────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 决策结果                                                     │
-│                                                               │
-│ - allow: 继续执行                                           │
-│ - deny: 发射 tool_call_error，返回拒绝信息                   │
-│ - escalate: 触发更高层级审批                                │
-└─────────────────────────────────────────────────────────────┘
-```
+`PermissionService.check(toolCall)` runs, in order:
 
-### 6.2 Permission Mode
+1. Check the permission mode (plan/build/yolo/auto).
+2. Check `allowed_tools` / `disallowed_tools`.
+3. Check the risk level.
+4. If asking is required, emit a `permission_requested` event.
+5. Wait for the user response or an automated decision.
+
+Decision outcome: `allow` continues execution; `deny` emits `tool_call_error` and returns the
+rejection; `escalate` triggers higher-level approval.
+
+### 6.2 Permission mode
 
 ```typescript
 enum CollaborationMode {
-  Plan = 'plan',      // 只读，产生计划
-  Build = 'build',    // 正常执行
-  Yolo = 'yolo',      // 跳过 permission prompt
-  Auto = 'auto',      // 保留，暂不实现
+  Plan = 'plan',      // read-only, produce a plan
+  Build = 'build',    // normal execution
+  Yolo = 'yolo',      // skip permission prompts
+  Auto = 'auto',      // reserved, not implemented yet
 }
 ```
 
-### 6.3 Permission Event
+### 6.3 Permission events
 
 ```typescript
 interface PermissionRequestedEvent extends SessionEvent {
@@ -465,17 +382,17 @@ interface PermissionResolvedEvent extends SessionEvent {
 
 ---
 
-## 七、Context 管理
+## 7. Context management
 
-### 7.1 Context Budget
+### 7.1 Context budget
 
 ```typescript
 interface ContextBudget {
   maxTokens: number;
   usedTokens: number;
-  reservedTokens: number;  // system prompt, tool definitions 等固定开销
+  reservedTokens: number;  // fixed overhead: system prompt, tool definitions
 
-  // 各部分预算
+  // Per-part budgets
   systemPromptBudget: number;
   conversationBudget: number;
   toolResultBudget: number;
@@ -483,48 +400,27 @@ interface ContextBudget {
 }
 ```
 
-### 7.2 Compact 触发条件
+### 7.2 Compact triggers
 
 ```typescript
 interface CompactTrigger {
   condition: 'token_threshold' | 'turn_count' | 'manual';
-  threshold: number;  // 如 0.85 (85%)
+  threshold: number;  // e.g. 0.85 (85%)
   priority: CompactPriority;
 }
 ```
 
-### 7.3 Compact 流程
+### 7.3 Compact flow
 
-```
-触发条件满足
-    │
-    ▼
-emit PreCompact Event
-    │
-    ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 构建 Compact Boundary                                       │
-│                                                               │
-│ - 识别需要保留的消息                                         │
-│ - 生成摘要                                                   │
-│ - 标记 compact 范围                                          │
-└─────────────────────────────────────────────────────────────┘
-    │
-    ▼
-emit CompactBoundary Event (不可变)
-    │
-    ▼
-重建 ConversationView
-    │
-    ▼
-emit SessionCompacted Event
-```
+Trigger satisfied → emit `PreCompact` event → build the compact boundary (identify messages to
+keep, generate the summary, mark the compact range) → emit the immutable `CompactBoundary` event →
+rebuild `ConversationView` → emit `SessionCompacted`.
 
 ---
 
-## 八、Error 处理
+## 8. Error handling
 
-### 8.1 Error 类型
+### 8.1 Error types
 
 ```typescript
 enum TurnErrorType {
@@ -546,72 +442,57 @@ interface TurnError {
 }
 ```
 
-### 8.2 Error 处理策略
+### 8.2 Error strategies
 
-| Error 类型 | 策略 |
-|------------|------|
-| `ModelError` | 重试 N 次，指数退避 |
-| `ToolError` | 检查是否可重试，可能跳过或降级 |
-| `PermissionDenied` | 返回拒绝信息给用户 |
-| `ContextExceeded` | 触发 compact 或结束 session |
-| `Timeout` | 取消操作，尝试恢复 |
-| `Canceled` | 清理状态，优雅退出 turn |
+| Error type         | Strategy                                          |
+|--------------------|---------------------------------------------------|
+| `ModelError`       | Retry N times with exponential backoff            |
+| `ToolError`        | Check retryability; possibly skip or degrade      |
+| `PermissionDenied` | Return the rejection to the user                  |
+| `ContextExceeded`  | Trigger compaction or end the session             |
+| `Timeout`          | Cancel the operation, attempt recovery            |
+| `Canceled`         | Clean up state, exit the turn gracefully          |
 
 ---
 
-## 九、候选命名
+## 9. Candidate naming
 
-| 概念 | 候选名称 | 状态 |
-|------|----------|------|
-| Agent Runtime | `AgentRuntime`, `AgentEngine`, `TurnCoordinator` | L1 |
-| Turn State | `TurnState`, `TurnContext`, `TurnRecord` | L1 |
-| Event Reducer | `EventReducer`, `StateReducer`, `ProjectionUpdater` | L1 |
-| Conversation View | `ConversationView`, `PromptBuilder`, `MessageHistory` | L1 |
-| Tool Scheduler | `ToolScheduler`, `ToolCoordinator`, `ExecutionPlanner` | L1 |
+| Concept            | Candidates                                             | Status |
+|--------------------|--------------------------------------------------------|--------|
+| Agent Runtime      | `AgentRuntime`, `AgentEngine`, `TurnCoordinator`       | L1     |
+| Turn State         | `TurnState`, `TurnContext`, `TurnRecord`               | L1     |
+| Event Reducer      | `EventReducer`, `StateReducer`, `ProjectionUpdater`    | L1     |
+| Conversation View  | `ConversationView`, `PromptBuilder`, `MessageHistory`  | L1     |
+| Tool Scheduler     | `ToolScheduler`, `ToolCoordinator`, `ExecutionPlanner` | L1     |
 | Permission Service | `PermissionService`, `ApprovalService`, `AccessController` | L1 |
 
 ---
 
-## 十、与其他模块的关系
+## 10. Relationship to other modules
 
 ```
-Agent Loop (本文档)
-    │
-    ├──▶ ToolSystem
-    │       ├── ToolRegistry
-    │       ├── ToolRuntime
-    │       └── ToolContract (见 ToolContract RFC)
-    │
-    ├──▶ Provider
-    │       ├── ProviderAdapter
-    │       └── ProviderCapabilities (见 ProviderCapability RFC)
-    │
-    ├──▶ PermissionService
-    │       └── Permission/Mode/Risk Policy
-    │
-    ├──▶ Storage (EventStore)
-    │       └── SessionEventStore, ProjectionStorage
-    │
-    ├──▶ MemoryPipeline
-    │       └── 跨 session 知识提取
-    │
-    └──▶ SubagentRuntime
-            └── Mailbox, InterAgentMessage
+Agent Loop (this document)
+    ├── ToolSystem        (ToolRegistry, ToolRuntime, ToolContract — see ToolContract RFC)
+    ├── Provider          (ProviderAdapter, ProviderCapabilities — see ProviderCapability RFC)
+    ├── PermissionService (Permission/Mode/Risk policy)
+    ├── Storage           (SessionEventStore, ProjectionStorage)
+    ├── MemoryPipeline    (cross-session knowledge extraction)
+    └── SubagentRuntime   (Mailbox, InterAgentMessage)
 ```
 
 ---
 
-## 十一、待细化
+## 11. To be detailed
 
-- [ ] Tool Scheduler 的具体算法实现
-- [ ] Permission Risk Level 的具体分类
-- [ ] Context Budget 的具体分配策略
-- [ ] Compact Boundary 的具体 schema
-- [ ] Error Recovery 的具体重试策略
-- [ ] Hook System 与 Loop 的集成点
+- [ ] Concrete Tool Scheduler algorithm implementation
+- [ ] Concrete Permission Risk Level classification
+- [ ] Concrete Context Budget allocation strategy
+- [ ] Concrete Compact Boundary schema
+- [ ] Concrete Error Recovery retry strategy
+- [ ] Hook System integration points with the loop
 
 ---
 
-## 十二、参考来源
+## 12. References
 
 - [Model Context Protocol](https://modelcontextprotocol.io)

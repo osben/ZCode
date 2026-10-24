@@ -65,30 +65,44 @@ present; ZCode infers `stdio` in that case.
 
 `features.mcp` defaults to `true`, but no server is connected unless `mcp.servers` is configured. Individual servers may set `enabled: false`.
 
-MCP client initialize 的 `clientInfo.version` 必须使用和 CLI 相同的 app version 来源，即仓库根 `package.json` 注入的版本值。源码测试或未注入 bundle 的直接运行环境可以回退到 `0.0.0`，但不能读取 `packages/adapters/package.json` 之类的 workspace 子包版本。
+The `clientInfo.version` of MCP client initialize must use the same app version source as the CLI, the
+version injected from the repository root `package.json`. Source tests or direct runs without bundle
+injection may fall back to `0.0.0`, but must not read the version of a workspace subpackage such as
+`packages/adapters/package.json`.
 
-MCP 协议版本协商必须服从 server 的连接预算：
+MCP protocol version negotiation must obey the connection budget of the server:
 
-- `auto` 模式允许 modern probe 失败后回退 legacy，因此 probe 继续使用 `min(5000ms, timeoutMs / 2)`，必须给 legacy initialize 留出预算。
-- 显式 modern pin 没有 legacy 回退；probe 就是唯一可用的 initialize 路径，必须使用完整的 `timeoutMs`，不能再套通用 5 秒上限。否则冷启动超过 5 秒的合法 server 会被静默移出工具池，即使它已声明更长的连接预算。
-- 外层 connect timeout 仍是总预算与取消边界；pin probe 使用完整预算不代表允许越过 connect timeout。
+- `auto` mode allows falling back to legacy after a modern probe fails, so the probe keeps using
+  `min(5000ms, timeoutMs / 2)` and must leave budget for the legacy initialize.
+- An explicit modern pin has no legacy fallback; the probe is the only usable initialize path and must
+  use the full `timeoutMs`, not the generic 5 second cap. Otherwise a legal server with a cold start over
+  5 seconds would be silently removed from the tool pool even though it declared a longer connection
+  budget.
+- The outer connect timeout remains the total budget and cancellation boundary; the pin probe using the
+  full budget does not allow exceeding the connect timeout.
 
 ## Project-Level MCP Config Plan
 
 ### Config Model
 
-配置模型的基本形态：
+Basic shape of the config model:
 
-- 配置文件支持 global config 和 project config 合并；project config 会从当前目录向上查找到最近 Git worktree。
-- `mcp` 是普通 config section，server name 是 map key，后加载的 config 覆盖同名 server。
-- 本地 MCP 用 command array，不通过 shell 字符串；远程 MCP 用 URL / headers / OAuth。
-- MCP 工具最终以 server name 为前缀进入 tool pool，并可通过 tool allow/deny pattern 控制。
+- The config file supports merging global config and project config; project config is searched upward
+  from the current directory to the nearest Git worktree.
+- `mcp` is an ordinary config section, the server name is the map key, and later-loaded config overrides
+  a same-named server.
+- A local MCP uses a command array rather than a shell string; a remote MCP uses URL / headers / OAuth.
+- MCP tools finally enter the tool pool prefixed with the server name and can be controlled by tool
+  allow/deny patterns.
 
-ZCode 采用“config 先合并，MCP 后连接”的大方向，但 project MCP 有额外安全边界：project config 可能是仓库内容，不能让进入目录本身就静默启动本地进程或发起网络连接。
+ZCode follows the general direction "merge config first, connect MCP later", but project MCP has an extra
+security boundary: project config may be repository content, so entering a directory must not silently
+start a local process or issue a network connection.
 
 ### Desired Behavior
 
-ZCode CLI/TUI/headless prompt 应自动读取 project-level config，使仓库可以声明自己的 MCP servers。典型形态：
+ZCode CLI/TUI/headless prompt should read project-level config automatically, so a repository can declare
+its own MCP servers. Typical shape:
 
 ```json
 {

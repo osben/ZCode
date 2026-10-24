@@ -153,7 +153,7 @@ Found in this sync; each needs a decision, not a guess.
    own soft-delete copy in `zcode-agent/`. Delete it or keep it for parity.
 4. `side-pane-plugin-menu.test.mjs`: restore upstream's SPT-E2E-007 concurrent-install cases or keep
    the fork's trimmed version.
-5. Pre-existing doc debt: `apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md` has a
-   duplicated block (lines 28–171 repeated) and is still in Chinese.
+5. Resolved by the docs compaction series: `apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md`
+   is English and its duplicated block is gone.
 
 Full history: git show 5df10a43f18201fe2dcfb1c8e1ccea240f50a0ef:specs/upstream-sync-3.16.2.md

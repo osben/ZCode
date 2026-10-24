@@ -2,6 +2,7 @@
 
 Measured on 2026-10-16, macOS arm64, Node 26.11.1. Baseline:
 `origin/integration` at `9017ed277eb7f6c593b969ad21fb6973aeed462a`.
+Full history: `git show b89ecdfc:apps/zcode-cli/docs/bash-command-registry-performance.md`.
 
 The generator is `scripts/generate-bash-command-registry.mjs`. Its runtime consumers
 are `core/src/tool/handlers/bash-command-permission-policy.ts` (root tuple lookup)
@@ -16,11 +17,6 @@ fresh-process CLI startup, with no more than 20 ms higher p95 first Bash latency
 Both final build modes pass. Keep the existing synchronous record API and lazily
 parse/cache individual root tuples; do not defer parsing the entire registry to
 the first Bash call.
-
-The initial exploratory build omitted the official Zod deduplication plugin. Its
-normal CLI improvement was only 3.3%, while minified startup improved 6.1%. Those
-runs motivated the production-equivalent measurements below; they are not the
-final acceptance evidence.
 
 ## Method
 
@@ -56,8 +52,8 @@ Bash harness immediately after module initialization. It is not total process RS
 | --------------------------------- | --------------: | ----------: | ----------------: | ------------: |
 | CLI startup median                |          377.97 |      336.28 |            412.44 |        386.87 |
 | CLI startup p95                   |          432.92 |      368.05 |            449.06 |        431.14 |
-| First policy median               |            1.05 |        1.54 |              0.94 |          1.50 |
-| First policy p95                  |            1.69 |        1.68 |              1.04 |          1.75 |
+| First policy median               |            1.05 |        1.54 |              0.94 |         1.50 |
+| First policy p95                  |            1.69 |        1.68 |              1.04 |         1.75 |
 | First Bash median                 |          507.55 |      497.82 |             24.11 |         24.75 |
 | First Bash p95                    |          644.98 |      543.62 |             26.77 |         28.57 |
 | Heap before first Bash, median MB |           57.55 |       39.26 |             64.23 |         44.78 |

@@ -1,31 +1,36 @@
-# Lite Model 级别实施计划
+# Lite Model Level Plan
 
-## 背景
+## Background
 
-ZCode 第一版模型调度只需要两个能力级别：
+The first version of ZCode model scheduling needs two capability levels:
 
-- `main`：主力模型，处理普通 agent loop、代码修改、复杂推理和默认工具调用。
-- `lite`：轻量模型，处理低风险、短上下文、结构化的小任务。
+- `main`: the primary model for the normal agent loop, code changes, complex reasoning and default tool
+  calls.
+- `lite`: a light model for low-risk, short-context, structured small tasks.
 
-`lite` 必须是可选能力。用户不配置 `lite` 时，所有 lite 请求解析到当前 `main`，保证单模型配置仍然完整可用。
+`lite` is optional. When the user does not configure `lite`, every lite request resolves to the current
+`main`, so a single-model configuration stays complete and usable.
 
-## 目标
+## Goals
 
-1. 在 spec、contracts、config 和 runtime 中统一使用 `lite` 命名。
-2. 移除旧 `small` / `small_model` 配置兼容，统一只暴露 `lite`。
-3. 建立一个明确的模型解析入口，让业务逻辑只表达请求 role，不直接拼模型字符串。
-4. 第一版不做自动任务复杂度分类，只在明确场景使用 `lite`。
+1. Use the name `lite` consistently in spec, contracts, config and runtime.
+2. Drop the legacy `small` / `small_model` config compatibility; expose only `lite`.
+3. Provide one explicit model resolution entry so business logic expresses only the request role and
+   never assembles model strings itself.
+4. No automatic task-complexity classification in the first version; use `lite` only in explicit
+   scenarios.
 
-## 非目标
+## Non-goals
 
-- 不做大型 model catalog。
-- 不做自动 main/lite 分类器。
-- 不新增 `ZCODE_MODEL_LITE` 环境变量。后续如确需环境变量，必须先补充用途、优先级、错误行为和测试覆盖。
-- 不把 provider 兼容性分支散落到 core runtime。
+- No large model catalog.
+- No automatic main/lite classifier.
+- No `ZCODE_MODEL_LITE` environment variable. If one is ever needed, first specify its purpose,
+  precedence, error behavior and test coverage.
+- No scattering of provider compatibility branches into the core runtime.
 
-## 配置契约
+## Config contract
 
-推荐单模型配置：
+Recommended single-model config:
 
 ```json
 {
@@ -46,7 +51,7 @@ ZCode 第一版模型调度只需要两个能力级别：
 }
 ```
 
-需要区分 `main` 和 `lite` 时：
+To distinguish `main` and `lite`:
 
 ```json
 {
@@ -70,18 +75,22 @@ ZCode 第一版模型调度只需要两个能力级别：
 }
 ```
 
-解析规则：
+Resolution rules:
 
-1. `model` 字符串等价于 `model.main`；值必须是 `provider/model`。
-2. `model.main` / `model.lite` 只接受 `provider/model` 字符串，不接受 inline target。
-3. `model.lite` 可选；如果缺失，则 `lite` role 解析为当前 `main`。
-4. `small_model` 和 `model.small` 不再作为兼容输入，schema 必须拒绝。
-5. 如果 `model.lite` 指向不存在的 provider/model，错误归属为 `provider_not_configured` 或 `model_not_found`，不能静默回退到 main。
-6. `apiKey` 和 `headers` 属于 provider 连接配置，优先从 `provider.*.options` 读取；未配置 `apiKey` 时 adapter 可以从环境变量 fallback，但不暴露 `apiKeyEnv` 用户字段。
+1. A `model` string equals `model.main`; the value must be `provider/model`.
+2. `model.main` / `model.lite` accept only `provider/model` strings, not inline targets.
+3. `model.lite` is optional; when missing, the `lite` role resolves to the current `main`.
+4. `small_model` and `model.small` are no longer accepted as compatibility input; the schema must
+   reject them.
+5. If `model.lite` points to a nonexistent provider/model, the error is `provider_not_configured` or
+   `model_not_found`; it must not silently fall back to main.
+6. `apiKey` and `headers` are provider connection config, read preferably from `provider.*.options`.
+   When `apiKey` is not configured the adapter may fall back to environment variables, but no
+   `apiKeyEnv` user field is exposed.
 
-## Role 解析契约
+## Role resolution contract
 
-新增统一解析入口：
+A single resolution entry:
 
 ```typescript
 type ModelRequestRole = "main" | "lite" | "compact" | "review" | "subagent";
@@ -91,9 +100,9 @@ interface ModelRoleResolver {
 }
 ```
 
-默认映射：
+Default mapping:
 
-| Role | 默认模型 |
+| Role | Default model |
 |------|----------|
 | `main` | `model.main` |
 | `lite` | `model.lite ?? model.main` |
@@ -101,70 +110,74 @@ interface ModelRoleResolver {
 | `review` | `model.main` |
 | `subagent` | parent model |
 
-后续可以在 role policy 中把 `compact` 或特定 subagent 指向 `lite`，但第一版不自动改变。
+A role policy may later point `compact` or specific subagents at `lite`; the first version does not
+change them automatically.
 
-## 第一批 lite 使用场景
+## First lite scenarios
 
-只在明确低风险场景接入：
+Wire in only explicit low-risk scenarios:
 
-- 本地 TUI session title 生成；如果用户没有配置 `model.lite`，该请求必须解析到当前默认/main 模型，但 `modelRef.role` 仍记录为 `lite`。ZCode app-server 和 headless 默认不启用标题生成。
-- tool batch 短摘要。
-- hook prompt 的结构化判断。
-- away summary / idle summary。
-- 简单权限说明或只读分类器。
+- Local TUI session title generation. Without a configured `model.lite` the request must resolve to the
+  current default/main model, but `modelRef.role` is still recorded as `lite`. The ZCode app-server and
+  headless mode do not enable title generation by default.
+- Short summaries of tool batches.
+- Structured judgments for hook prompts.
+- Away summary / idle summary.
+- Simple permission explanations or read-only classifiers.
 
-不用于：
+Not used for:
 
-- 需要跨文件修改的主 agent loop。
-- destructive tool 决策。
-- compact 正文总结，除非后续 spec 明确放开。
-- review 或安全判断的最终结论。
+- The main agent loop that needs cross-file changes.
+- Destructive tool decisions.
+- The compact body summary, unless a later spec explicitly allows it.
+- The final conclusion of review or security judgments.
 
-## 实现顺序
+## Implementation order
 
-1. Spec 已更新：`docs/design/v2/model/README.md` 和 loop interface 草案使用 `lite`。
-2. Contracts：
-   - `ModelRole.Small` 改为 `ModelRole.Lite`。
-   - `RuntimeConfig.model` 由 provider-first config 解析成 `{ main, lite? }`。
-   - 用户配置不保留 `RuntimeConfig.model.small` 兼容入口。
-   - 用户配置不保留 inline target 兼容入口。
-3. Config adapter：
-   - file config 读取 `model.lite`。
-   - 拒绝 `model.small`、`small_model` 和 inline target。
-   - 不新增 lite 环境变量。
-4. Bootstrap/runtime：
-   - 引入 `ModelRoleResolver` 或等价 helper。
-   - runtime 不再直接持有单一 `defaultModelRef` 作为所有请求的唯一来源。
-   - 普通请求使用 `role: "main"`。
-   - 明确低风险边车任务使用 `role: "lite"`。
-5. Events/logging：
-   - `model.request` 和网络状态事件记录最终 `ModelRef`。
-   - 需要额外记录 `requestedRole`，用于解释为什么一次请求走了 `lite` 或继承了 `main`。
-6. Tests：
-   - 先补 contracts/config/resolver 单元测试。
-   - 再接 runtime 场景测试。
+1. Spec updated: `docs/design/v2/model/README.md` and the loop interface drafts use `lite`.
+2. Contracts:
+   - `ModelRole.Small` becomes `ModelRole.Lite`.
+   - `RuntimeConfig.model` is resolved from provider-first config into `{ main, lite? }`.
+   - User config keeps no `RuntimeConfig.model.small` compatibility entry.
+   - User config keeps no inline target compatibility entry.
+3. Config adapter:
+   - file config reads `model.lite`.
+   - Reject `model.small`, `small_model` and inline targets.
+   - Add no lite environment variable.
+4. Bootstrap/runtime:
+   - Introduce `ModelRoleResolver` or an equivalent helper.
+   - The runtime no longer holds a single `defaultModelRef` as the only source for all requests.
+   - Normal requests use `role: "main"`.
+   - Explicit low-risk side tasks use `role: "lite"`.
+5. Events/logging:
+   - `model.request` and network status events record the final `ModelRef`.
+   - Also record `requestedRole` to explain why a request went to `lite` or inherited `main`.
+6. Tests:
+   - Add contracts/config/resolver unit tests first.
+   - Then runtime scenario tests.
 
-## 测试要求
+## Test requirements
 
-必须覆盖：
+Must cover:
 
-- 未配置 `model.lite` 时，`lite` 解析为 `main`。
-- 配置 `model.lite` 时，lite 场景使用 lite，main 场景仍使用 main。
-- schema 拒绝 `small_model`、`model.small` 和 inline target。
-- lite provider 未配置时返回结构化错误，不静默回退。
-- session/model event 中包含最终 `ModelRef` 和请求 role。
-- subagent 默认继承 parent，不因 lite 存在而自动降级。
+- Without `model.lite`, `lite` resolves to `main`.
+- With `model.lite`, lite scenarios use lite and main scenarios still use main.
+- The schema rejects `small_model`, `model.small` and inline targets.
+- An unconfigured lite provider returns a structured error and does not silently fall back.
+- Session/model events contain the final `ModelRef` and the request role.
+- A subagent inherits the parent by default and is not downgraded just because lite exists.
 
-验证命令：
+Verification commands:
 
 ```text
 npm run lint
 npm test
 ```
 
-## 验收标准
+## Acceptance criteria
 
-- 单模型用户无需新增配置即可继续工作。
-- 双模型用户只需配置 `model.lite`，即可让明确边车任务使用轻量模型。
-- core 业务逻辑不直接读取 config key 或环境变量，只通过 role resolver 获取模型。
-- `small` / `small_model` 不再作为用户配置、事件或公开 API 输入。
+- Single-model users keep working without new configuration.
+- Dual-model users only configure `model.lite` to make explicit side tasks use the light model.
+- Core business logic does not read config keys or environment variables; it gets models only through
+  the role resolver.
+- `small` / `small_model` are no longer user config, events or public API input.

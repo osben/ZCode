@@ -10,11 +10,9 @@ capability domains. Hook files from non-official third-party Marketplaces can be
 parsed for diagnostics, but are not injected into the runtime until ZCode has an
 explicit trust and permission gate.
 
-This feature started as first-party packaged capabilities such as the iOS
-Simulator and Android Emulator plugins. Claude Code Marketplace compatibility
-extends the installation and discovery model, but it is still not a new arbitrary
-extension runtime. High-risk Claude plugin features are recognized and diagnosed
-before ZCode grows a matching runtime.
+Claude Code Marketplace compatibility extends the installation and discovery model of the first-party
+packaged plugins (iOS Simulator, Android Emulator) but is not an arbitrary extension runtime. High-risk
+Claude plugin features are recognized and diagnosed before ZCode grows a matching runtime.
 
 See also `docs/claude-code-marketplace-plugin-compat.md` for the Marketplace
 implementation plan and phased V1a/V1b/V1c scope.
@@ -359,10 +357,11 @@ expansion tells the model to load that skill before performing the command.
 
 ### Agents
 
-ZCode 会枚举插件根目录约定位置 `agents/*.md`，并把已启用插件中的 profile 以
-`<plugin-name>:<agent-name>` 加载到子代理运行时；名称无冲突时同时提供裸名别名。这个约定目录
-能力与 manifest 的 `agents` 字段不同：P0 仍只诊断 manifest 中声明的自定义 agents 路径，
-不会把任意外部路径投影为运行时组件。
+ZCode enumerates the conventional plugin-root location `agents/*.md` and loads the profiles of enabled
+plugins into the subagent runtime as `<plugin-name>:<agent-name>`; when the bare name does not collide
+it is also provided as an alias. This conventional-directory capability differs from the manifest
+`agents` field: P0 still only diagnoses custom agents paths declared in the manifest and does not
+project arbitrary external paths into runtime components.
 
 ### MCP
 
