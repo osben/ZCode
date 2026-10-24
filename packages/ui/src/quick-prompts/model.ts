@@ -5,10 +5,12 @@
 import {
   LEGACY_SINGLE_ROOT_PROJECT_PREFIX,
   QUICK_PROMPT_BODY_MAX_LENGTH,
+  QUICK_PROMPT_COLORS,
   QUICK_PROMPT_LIST_LIMIT,
   QUICK_PROMPT_NAME_MAX_LENGTH,
   findQuickPromptGlobalBlockers,
   type QuickPrompt,
+  type QuickPromptColor,
   type QuickPromptProjectRef,
   type QuickPromptScope,
   type QuickPromptSnapshot,
@@ -16,6 +18,32 @@ import {
 import type { QuickPromptSlashItem } from "@/slashCommandHelpers.js";
 import type { SerializedPromptBody } from "@/prompt-body/index.js";
 import { quickPromptProjectKey } from "@/quick-prompts/reader.js";
+
+/** Rule 22: the picker order; "none" is a separate swatch and is not a palette member. */
+export const QUICK_PROMPT_COLOR_OPTIONS: readonly QuickPromptColor[] = QUICK_PROMPT_COLORS;
+
+/**
+ * Rule 22/23: the design token that paints a color's dot. A static map, so no class or variable name is ever built
+ * from data. Legacy and unknown values (null) have no dot.
+ */
+const QUICK_PROMPT_COLOR_VARS: Record<QuickPromptColor, string> = {
+  red: "var(--color-quick-prompt-red)",
+  orange: "var(--color-quick-prompt-orange)",
+  yellow: "var(--color-quick-prompt-yellow)",
+  green: "var(--color-quick-prompt-green)",
+  blue: "var(--color-quick-prompt-blue)",
+  violet: "var(--color-quick-prompt-violet)",
+  pink: "var(--color-quick-prompt-pink)",
+};
+
+export function quickPromptColorVar(color: QuickPromptColor | null | undefined): string | null {
+  return color ? (QUICK_PROMPT_COLOR_VARS[color] ?? null) : null;
+}
+
+/** i18n key of the swatch's accessible name; null (none) has its own key. */
+export function quickPromptColorMessageId(color: QuickPromptColor | null): string {
+  return color ? `quickPrompts.color.${color}` : "quickPrompts.color.none";
+}
 
 /** Rule 2: pinned globals not hidden in the project, in global order, then the project's pinned quick prompts. */
 export function composeQuickPromptRow(snapshot: QuickPromptSnapshot | null): QuickPrompt[] {

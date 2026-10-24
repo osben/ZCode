@@ -33,6 +33,7 @@ function prompt(
     project: scope === "project" ? project : null,
     name: `name-${id}`,
     body: { markdown: `text ${id}`, nodes: "[]" },
+    color: null,
     pinned: true,
     position: 0,
     createdAt: 1,

@@ -10,6 +10,25 @@ export interface QuickPromptProjectRef {
   projectId: string;
 }
 
+/** Color labels (spec rule 22): a fixed palette; "none" is the absence of a value (null), not a member. */
+export const QUICK_PROMPT_COLORS = [
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "blue",
+  "violet",
+  "pink",
+] as const;
+export type QuickPromptColor = (typeof QUICK_PROMPT_COLORS)[number];
+
+/** Reads of the stored column: any value outside the palette (unknown hue, empty, non-string) is "none". */
+export function normalizeQuickPromptColor(value: unknown): QuickPromptColor | null {
+  return typeof value === "string" && (QUICK_PROMPT_COLORS as readonly string[]).includes(value)
+    ? (value as QuickPromptColor)
+    : null;
+}
+
 export interface QuickPromptBody {
   /** Canonical prompt markdown ($getPromptMarkdown) used for preview, search and send. */
   markdown: string;
@@ -24,6 +43,8 @@ export interface QuickPrompt {
   project: QuickPromptProjectRef | null;
   name: string;
   body: QuickPromptBody;
+  /** Optional label color; null = none (legacy prompts, unknown stored values). */
+  color: QuickPromptColor | null;
   pinned: boolean;
   /** Order within its list (globals, or one project's quick prompts). */
   position: number;
@@ -44,6 +65,7 @@ export interface QuickPromptCreateInput {
   project: QuickPromptProjectRef | null;
   name: string;
   body: QuickPromptBody;
+  color?: QuickPromptColor | null;
   pinned: boolean;
 }
 
@@ -51,6 +73,8 @@ export interface QuickPromptUpdateInput {
   promptId: string;
   name?: string;
   body?: QuickPromptBody;
+  /** undefined = unchanged, null = clear. */
+  color?: QuickPromptColor | null;
   /** Changing scope moves the quick prompt to the end of the target list. */
   scope?: QuickPromptScope;
   project?: QuickPromptProjectRef | null;

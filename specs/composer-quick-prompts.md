@@ -40,7 +40,7 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
 4. **"/" panel** (board C). The slash panel gains a fourth section, "Quick prompts", listing every quick prompt
    available in the session (globals not hidden in P + P's quick prompts), pinned or not, matched by name and
    text. The section is not offered inside the quick prompt editor's own body field.
-5. No shortcuts, icons, colors or variables.
+5. No shortcuts, icons or variables. A quick prompt may carry an optional color label (rules 22-24).
 6. First run (board K): no quick prompt at all → the row shows only the `+` chip with the label "Add a quick
    prompt" and a one-line hint.
 
@@ -100,6 +100,19 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
     web-remote-replayable connection — the desktop Host attachment and a Source Server's `/ws` — gets a read-only
     service that rejects mutations with `quick-prompt.read-only`.
 
+### Color label (added 2026-10-23; mockup agreed: style A, dot)
+
+22. **Palette**: a fixed set of seven hues — `red`, `orange`, `yellow`, `green`, `blue`, `violet`, `pink` — plus
+    **none** (the default and the only state of legacy prompts). No free-form hex. A quick prompt has at most
+    one color; the color is independent of scope and pinning.
+23. **Where it shows**: a small dot before the name on the chip in the row above the composer (desktop and
+    mobile web; the chip stays a neutral outline, the name keeps the standard text color), and the same dot
+    before the name in Settings rows. The hover preview, the "/" panel and the Save draft popover are unchanged.
+    The dot is decoration: the accessible name of a chip stays the quick prompt name.
+24. **Where it is set**: the editor (rule 15) gains a **Color** row of eight swatches (the seven hues and a dashed
+    "No color" swatch), below Name and above Scope, one selected at a time, each with an accessible name.
+    Save draft creates a prompt with no color; Duplicate copies the color. Color does not affect rule 12.
+
 ## Storage and ownership
 
 Quick prompts are user preferences read by every window and by mobile through the desktop Host, so they live in
@@ -135,6 +148,19 @@ CREATE TABLE IF NOT EXISTS fork_quick_prompt_hidden (
   (both ids may contain `:`) and never derived from a path (a root may belong to several projects). The renderer
   takes it from the session's task in the project tree, or from the draft's `draftProjectId` + host.
 - Deleting a quick prompt deletes its hidden marks in the same transaction.
+- **Color column**: a second additive migration `9004_fork_quick_prompt_color` in the same ledger adds
+  `fork_quick_prompts.color TEXT` (NULL = none). The `9003` DDL string and its checksum stay untouched; both
+  migrations are checked and applied in order inside the same `BEGIN IMMEDIATE` transaction. Older fork builds
+  select explicit columns and never write `color`, so they keep working on the shared file.
+- **Color value contract**: the stored value is the palette name (rule 22). The repository keeps the raw column
+  value and normalizes only when building a `QuickPrompt`: an unknown, empty or non-string value reads as
+  `null` (none) and never fails the read of the prompt or its snapshot. An update writes `color` only when the
+  input carries the field (`undefined` = unchanged, `null` = clear), so renaming a prompt saved by a newer build
+  with a hue this build does not know keeps that raw value. Writes validate with the palette enum; an unknown
+  hue sent by a client is stored as none instead of rejecting the whole write.
+- Wire shape: `QuickPrompt.color: QuickPromptColor | null` (always present on reads, so mobile chips render it
+  through the unchanged read-only attachment); `QuickPromptCreateInput.color?` and `QuickPromptUpdateInput.color?`
+  are optional.
 
 ### Owners and event order
 
@@ -190,6 +216,10 @@ sequenceDiagram
 11. Limits: the 51st global quick prompt cannot be created.
 12. Incognito session shows and uses quick prompts.
 13. Upstream build and older fork builds open the shared DB with the fork tables present.
+14. Color: a legacy prompt (no color) renders exactly as before; picking a hue in the editor shows the dot on its
+    chip and Settings row after save; picking "No color" removes it; Duplicate keeps the color; Save draft makes
+    an uncolored prompt; an unknown stored value shows no dot and the prompt still works; a rename never erases a
+    stored value; the mobile row shows the dot.
 
 Interaction scenarios 2–5, 7 and 10 need desktop/web E2E coverage.
 
@@ -198,7 +228,8 @@ Interaction scenarios 2–5, 7 and 10 need desktop/web E2E coverage.
 - **Team layer**: quick prompts committed to the repository and shared through git, shown read-only next to
   project ones. Upstream already uses `.zcode/` in repositories (`workflows`, `agents`, `skills`); the file name
   must not collide with a future upstream file.
-- Variables, Import/Export, sync across machines, shortcuts, icons, colors, attachments, a toolbar palette
+- Variables, Import/Export, sync across machines, shortcuts, icons, free-form colors, tinted chips (mockup style
+  B), a color filter or grouping, color in the "/" panel, attachments, a toolbar palette
   (board B), new-session cards (board D), per-project ordering of globals.
 
 ## Implementation notes

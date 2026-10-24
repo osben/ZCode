@@ -26,6 +26,18 @@ CREATE TABLE IF NOT EXISTS fork_quick_prompt_hidden (
   PRIMARY KEY (host_id, project_id, prompt_id)
 );`;
 
+/** Spec "Color column": adds the optional label color. A separate row keeps the 9003 DDL and checksum frozen. */
+export const FORK_QUICK_PROMPT_COLOR_MIGRATION_ID = "9004_fork_quick_prompt_color";
+export const FORK_QUICK_PROMPT_COLOR_SCHEMA = `ALTER TABLE fork_quick_prompts ADD COLUMN color TEXT;`;
+
+const FORK_QUICK_PROMPT_MIGRATIONS = [
+  { id: FORK_QUICK_PROMPTS_MIGRATION_ID, schema: FORK_QUICK_PROMPTS_SCHEMA },
+  {
+    id: FORK_QUICK_PROMPT_COLOR_MIGRATION_ID,
+    schema: FORK_QUICK_PROMPT_COLOR_SCHEMA,
+  },
+] as const;
+
 const log = createServiceLogger("quick-prompts");
 const ensuredHandles = new WeakSet<DatabaseSync>();
 
@@ -37,33 +49,33 @@ const ensuredHandles = new WeakSet<DatabaseSync>();
 export function ensureQuickPromptSchema(db: DatabaseSync): void {
   if (ensuredHandles.has(db)) return;
   if (db.isTransaction) throw new Error("quick-prompts.schema-inside-transaction");
-  const checksum = createHash("sha256").update(FORK_QUICK_PROMPTS_SCHEMA).digest("hex");
-  let applied = false;
+  const appliedIds: string[] = [];
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS tasks_schema_migration (
       id TEXT PRIMARY KEY, checksum TEXT NOT NULL, time_applied INTEGER NOT NULL
     )`);
-    const row = db
-      .prepare("SELECT checksum FROM tasks_schema_migration WHERE id=?")
-      .get(FORK_QUICK_PROMPTS_MIGRATION_ID) as { checksum: string } | undefined;
-    if (row) {
-      if (row.checksum !== checksum) {
-        throw Object.assign(
-          new Error(
-            `Task database migration checksum mismatch: ${FORK_QUICK_PROMPTS_MIGRATION_ID}`,
-          ),
-          { kind: "checksum_mismatch" },
+    for (const migration of FORK_QUICK_PROMPT_MIGRATIONS) {
+      const checksum = createHash("sha256").update(migration.schema).digest("hex");
+      const row = db
+        .prepare("SELECT checksum FROM tasks_schema_migration WHERE id=?")
+        .get(migration.id) as { checksum: string } | undefined;
+      if (row) {
+        if (row.checksum !== checksum) {
+          throw Object.assign(
+            new Error(`Task database migration checksum mismatch: ${migration.id}`),
+            { kind: "checksum_mismatch" },
+          );
+        }
+      } else {
+        db.exec(migration.schema);
+        db.prepare("INSERT INTO tasks_schema_migration VALUES (?,?,?)").run(
+          migration.id,
+          checksum,
+          Date.now(),
         );
+        appliedIds.push(migration.id);
       }
-    } else {
-      db.exec(FORK_QUICK_PROMPTS_SCHEMA);
-      db.prepare("INSERT INTO tasks_schema_migration VALUES (?,?,?)").run(
-        FORK_QUICK_PROMPTS_MIGRATION_ID,
-        checksum,
-        Date.now(),
-      );
-      applied = true;
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -71,8 +83,7 @@ export function ensureQuickPromptSchema(db: DatabaseSync): void {
     throw error;
   }
   ensuredHandles.add(db);
-  if (applied)
-    log.info(undefined, "quick prompts schema applied", {
-      migrationId: FORK_QUICK_PROMPTS_MIGRATION_ID,
-    });
+  for (const migrationId of appliedIds) {
+    log.info(undefined, "quick prompts schema applied", { migrationId });
+  }
 }

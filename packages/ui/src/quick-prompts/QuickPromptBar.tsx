@@ -44,6 +44,7 @@ import {
   QuickPromptEditorDialog,
   type QuickPromptEditorTarget,
 } from "@/quick-prompts/QuickPromptEditorDialog.js";
+import { QuickPromptColorDot } from "@/quick-prompts/QuickPromptColorDot.js";
 import { QuickPromptSavePopover } from "@/quick-prompts/QuickPromptSavePopover.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/index.js";
 
@@ -107,7 +108,10 @@ export function QuickPromptBar({
         input.insertSerializedBody(prompt.body.nodes);
       } catch (cause) {
         // The body and the name never reach the log; the id identifies the broken row.
-        logger.warn("[quick-prompts] insert failed", { promptId: prompt.promptId, cause });
+        logger.warn("[quick-prompts] insert failed", {
+          promptId: prompt.promptId,
+          cause,
+        });
         setActionError(intl.formatMessage({ id: "quickPrompts.errors.insert" }));
         return;
       }
@@ -209,8 +213,8 @@ export function QuickPromptBar({
         data-prompt-id={prompt.promptId}
         className={
           isMobile
-            ? "min-h-9 max-w-[12rem] shrink-0 truncate rounded-full px-3"
-            : "h-7 max-w-[12rem] shrink-0 truncate rounded-full px-2.5"
+            ? "min-h-9 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-3"
+            : "h-7 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-2.5"
         }
         onMouseDown={(event) => {
           // Keeps the editor selection: the caret must not move when a chip is clicked.
@@ -233,6 +237,7 @@ export function QuickPromptBar({
           insertPrompt(prompt, modifierPressed);
         }}
       >
+        <QuickPromptColorDot color={prompt.color} />
         <span className="truncate">{prompt.name}</span>
       </Button>
     );

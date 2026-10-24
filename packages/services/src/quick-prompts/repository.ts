@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   findQuickPromptGlobalBlockers,
+  normalizeQuickPromptColor,
   QUICK_PROMPT_LIST_LIMIT,
   type QuickPrompt,
   type QuickPromptBody,
@@ -13,7 +14,7 @@ import {
 } from "#src/quick-prompts/contract.js";
 
 const COLUMNS =
-  "prompt_id, scope, host_id, project_id, name, body_markdown, body_nodes, pinned, position, created_at, updated_at";
+  "prompt_id, scope, host_id, project_id, name, body_markdown, body_nodes, color, pinned, position, created_at, updated_at";
 
 interface PromptRow {
   prompt_id: string;
@@ -23,6 +24,8 @@ interface PromptRow {
   name: string;
   body_markdown: string;
   body_nodes: string;
+  /** Raw column value; normalized only when building a QuickPrompt (spec: a newer build's hue must survive edits). */
+  color: unknown;
   pinned: number;
   position: number;
   created_at: number;
@@ -44,6 +47,7 @@ function toPrompt(row: PromptRow): QuickPrompt {
         : { hostId: row.host_id ?? "", projectId: row.project_id ?? "" },
     name: row.name,
     body: { markdown: row.body_markdown, nodes: row.body_nodes },
+    color: normalizeQuickPromptColor(row.color),
     pinned: row.pinned === 1,
     position: row.position,
     createdAt: row.created_at,
@@ -112,7 +116,10 @@ export class QuickPromptRepository {
             `SELECT ${COLUMNS} FROM fork_quick_prompts WHERE scope='global' ORDER BY position, prompt_id`,
           )
           .all() as unknown as PromptRow[]
-      ).map((row) => ({ ...toPrompt(row), hiddenInProject: hidden.has(row.prompt_id) }));
+      ).map((row) => ({
+        ...toPrompt(row),
+        hiddenInProject: hidden.has(row.prompt_id),
+      }));
       const projectPrompts = project
         ? (
             this.db
@@ -153,6 +160,7 @@ export class QuickPromptRepository {
         project: input.scope === "global" ? null : input.project,
         name: input.name,
         body: input.body,
+        color: input.color ?? null,
         pinned: input.pinned,
         position,
         createdAt: now,
@@ -192,7 +200,10 @@ export class QuickPromptRepository {
       }
       this.db
         .prepare(
-          "UPDATE fork_quick_prompts SET scope=?, host_id=?, project_id=?, name=?, body_markdown=?, body_nodes=?, position=?, updated_at=? WHERE prompt_id=?",
+          // color is written only when the input carries it: the stored raw value may be a hue a newer build saved.
+          `UPDATE fork_quick_prompts SET scope=?, host_id=?, project_id=?, name=?, body_markdown=?, body_nodes=?, position=?, updated_at=?${
+            input.color !== undefined ? ", color=?" : ""
+          } WHERE prompt_id=?`,
         )
         .run(
           next.scope,
@@ -203,10 +214,18 @@ export class QuickPromptRepository {
           next.body.nodes,
           position,
           now,
+          ...(input.color !== undefined ? [input.color] : []),
           current.promptId,
         );
       if (moved) this.renumber(current);
-      return { ...current, ...next, project: next.project, position, updatedAt: now };
+      return {
+        ...current,
+        ...next,
+        color: input.color !== undefined ? input.color : current.color,
+        project: next.project,
+        position,
+        updatedAt: now,
+      };
     });
   }
 
@@ -226,6 +245,8 @@ export class QuickPromptRepository {
   duplicate(input: { promptId: string } & Target): QuickPrompt {
     return this.write(() => {
       const source = this.require(input.promptId);
+      // The raw column is copied so a hue this build does not know survives duplication.
+      const sourceRow = this.find(input.promptId);
       assertTarget(input);
       assertGlobalBody(input.scope, source.body);
       const position = this.listCount(input);
@@ -237,12 +258,13 @@ export class QuickPromptRepository {
         project: input.scope === "global" ? null : input.project,
         name: source.name,
         body: { ...source.body },
+        color: source.color,
         pinned: true,
         position,
         createdAt: now,
         updatedAt: now,
       };
-      this.insert(copy);
+      this.insert(copy, sourceRow?.color);
       return copy;
     });
   }
@@ -331,9 +353,9 @@ export class QuickPromptRepository {
     });
   }
 
-  private insert(prompt: QuickPrompt): void {
+  private insert(prompt: QuickPrompt, rawColor?: unknown): void {
     this.db
-      .prepare(`INSERT INTO fork_quick_prompts (${COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+      .prepare(`INSERT INTO fork_quick_prompts (${COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(
         prompt.promptId,
         prompt.scope,
@@ -342,6 +364,7 @@ export class QuickPromptRepository {
         prompt.name,
         prompt.body.markdown,
         prompt.body.nodes,
+        (rawColor === undefined ? prompt.color : rawColor) as string | null,
         prompt.pinned ? 1 : 0,
         prompt.position,
         prompt.createdAt,
