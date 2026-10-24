@@ -1,169 +1,171 @@
-# Model Provider 重构回归用例目录
+# Model Provider Refactor Regression Case Catalog
 
-状态：第一版，待产品审阅
+Status: first version, pending product review.
 
-这份文档不是实现方案，而是给测试人员执行的用户场景目录。每条用例都包含：
+This document is not an implementation plan; it is a user-scenario catalog for testers. Each case
+has: a user-comprehensible scenario, required test data, actual user actions, expected observable
+results, and explicitly what must not happen. This version focuses on **feature × feature**:
+behavior when the new provider code combines with other product features. Legacy-data scenarios are
+out of this table to keep the interaction review focused.
 
-- 用户能理解的场景；
-- 测试前需要准备的数据；
-- 用户实际操作；
-- 应观察到的结果；
-- 明确不应该发生的结果。
+`[To confirm]` marks a spot without a single confirmed product expectation; candidate behaviors are
+listed for product review.
 
-本版聚焦 **功能 × 功能**：新 Provider 代码与其他产品功能组合时的行为。老数据场景暂不放在本表，避免稀释功能交互的审阅重点。
+## 1. Feature × feature
 
-`[待确认]` 表示这里还没有确定唯一产品预期，先把候选行为写出来，供产品审阅。
-
-## 一、功能 × 功能
-
-| Case ID | 优先级 | 用户场景与准备 | 操作步骤 | 预期结果 | 不应发生 |
+| Case ID | Priority | Scenario and setup | Steps | Expected | Must not happen |
 | --- | --- | --- | --- | --- | --- |
-| F-APP-001 | P0 | 我选择模型 B 发送消息，之后退出 App。 | 重新打开 App，进入原会话，再新建会话并发送消息。 | 原会话继续显示并使用模型 B；新会话按“上次使用模型”规则处理，暂按模型 B；消息和模型信息不丢失。 | 重启后无提示切到模型列表第一项；界面显示 B 但实际使用 A。 |
-| F-APP-002 | P0 | 我在工作区 A 使用模型 B，之后切换到工作区 B。 | 在 B 新建会话并发送消息，再回到 A 查看原会话。 | `[待确认]` 若 last-used 全局生效，B 的新会话默认模型为 B；A 的历史和运行状态不被 B 影响。若按工作区隔离，则 B 保留自己的模型。 | 两个工作区的消息、Queue 或当前会话互相串用。 |
-| F-APP-003 | P0 | 我在两个窗口同时打开同一个工作区。 | 窗口 1 选择模型 A，窗口 2 选择模型 B，然后分别发送消息。 | 最终结果按产品规定的冲突规则收口；每个窗口最终显示权威模型；不会出现界面与实际模型不一致。 | 两个窗口各自认为自己成功，但 Runtime 使用了第三个模型。 |
-| F-DRAFT-001 | P0 | 我刚新建会话，还没有发第一条消息。 | 选择模型 B 和一个有效的思考程度，然后发送第一条消息。 | 第一条消息使用 B 和该思考程度；草稿选择不会被异步加载的旧目录覆盖。 | 第一条消息使用旧默认模型，或 thought 被悄悄改成不支持的值。 |
-| F-DRAFT-002 | P0 | 新会话正在准备时，我改变模型。 | 预热尚未完成时选择模型 B，立即发送消息。 | 首条消息使用 B；准备过程中的旧模型不会覆盖用户最后一次选择。 | 发送后才切换模型，导致首条消息使用旧模型。 |
-| F-SESSION-001 | P0 | 我正在一个会话中使用模型 A。 | 切换到模型 B，等待切换完成后发送下一条消息。 | 当前已完成的历史仍标记为 A；下一条消息使用 B；切换结果可在会话中恢复。 | 所有历史被改写成 B，或下一条仍使用 A。 |
-| F-SESSION-002 | P0 | 我正在生成一条消息时改变模型。 | 在生成过程中从 A 切到 B，等待当前消息结束，再发送下一条。 | 当前这条消息继续由 A 完成；B 从安全边界开始生效，通常是下一条消息。 | 中途把同一条请求拆成两个模型，或当前请求被无提示重发。 |
-| F-SESSION-003 | P0 | 我只改变思考程度，不改变模型。 | 在模型 A 上从 low 改为 high，再发送消息。 | 新消息使用 A + high；已有消息和历史模型不被改写。 | thought 改变导致模型也被替换，或实际仍使用旧 thought。 |
-| F-SESSION-004 | P0 | 我连续快速选择 A、B、C。 | 快速连续点击三个模型，最后发送一条消息。 | 最后一次有效选择 C 生效；旧操作的迟到结果不能覆盖 C。 | 结果随机落在 A 或 B，或界面显示 C、请求使用 B。 |
-| F-SESSION-005 | P0 | 我选择了一个当前不可用的模型。 | 打开模型菜单，尝试选择已禁用、已删除或套餐不支持的模型。 | 模型明确显示不可用原因，不能发送；已有会话不会被静默改成其他模型。 | 菜单隐藏原因并自动换成第一个可用模型。 |
-| F-SESSION-006 | P1 | 我重新选择当前已经使用的模型。 | 对当前模型重复点击选择。 | 结果是无变化；不会产生重复的切换记录、提示或额外请求。 | 重复选择被记录成一次模型切换，或触发无意义重启。 |
-| F-SESSION-007 | P0 | 两个供应商都提供同名模型。 | 在供应商 A 的同名模型和供应商 B 的同名模型之间切换并发送。 | 供应商身份和模型身份都被正确区分；统计、历史和请求使用被选中的完整身份。 | 只按模型名判断，导致请求发到错误供应商。 |
-| F-QUEUE-001 | P0 | 当前任务运行中，我又发送了一条消息。 | 消息进入 Queue；在消费前切换模型；等待 Queue 消费。 | `[待确认]` 需要明确是使用入队时模型还是消费时模型；界面、实际请求和恢复结果必须一致。 | Queue 显示使用 B，实际使用 A，且没有任何提示。 |
-| F-QUEUE-002 | P0 | Queue 中有一条带图片的消息。 | 入队后切换到不支持图片的模型，等待消费。 | `[待确认]` 应明确拒绝、要求用户修改，还是转成文本；不能丢失附件或静默发送不完整消息。 | 图片被丢弃，或文本模型收到无法解释的附件。 |
-| F-QUEUE-003 | P1 | Queue 中有 `/goal` 或 `/compact`。 | 入队后切换模型，再让命令消费。 | 命令按既定维护命令规则执行；不会被当成普通文本，也不会使用错误模型。 | `/compact` 被编辑成普通消息，或 `/goal` 被提前执行。 |
-| F-QUEUE-004 | P0 | 当前任务运行中我点击 Stop。 | 停止当前任务，观察剩余 Queue。 | 当前任务停止；Queue 按产品规则保留或暂停；恢复后使用明确的当前模型规则。 | Stop 清空了用户没有要求删除的 Queue。 |
-| F-QUEUE-005 | P1 | App 在 Queue 尚未消费时退出。 | 退出 App，重新打开并恢复会话。 | Queue 的状态按照产品规则恢复或明确标记为未发送；不会自动重复发送。 | 同一条消息被发送两次，或 Queue 无提示消失。 |
-| F-COMPACT-001 | P0 | 会话接近上下文上限时切换模型。 | 从大 context 模型切换到小 context 模型，继续发送消息。 | `[待确认]` 应明确拒绝、先 Compact、截断历史或建立新会话；用户能看到原因。 | 请求直接超窗失败，或历史被静默删除。 |
-| F-COMPACT-002 | P0 | 我在 Compact 前修改模型或思考程度。 | 触发 Compact，同时改变模型/思考程度。 | Compact 使用明确规定的模型和思考程度；Compact 完成后下一条消息使用最新有效配置。 | Compact 使用旧配置且没有任何记录，或 Compact 结果覆盖新选择。 |
-| F-COMPACT-003 | P0 | 我把最大输出设置得很大。 | 输入很长的历史，再发送消息并触发自动 Compact。 | 总输入、思考和输出预算不会超过模型窗口；必要时先压缩或降低本次请求预算。 | 只校验 output，不考虑历史和 thinking，导致请求超窗。 |
-| F-COMPACT-004 | P1 | Compact 请求本身失败。 | 让 Compact 使用的模型返回失败，再继续操作会话。 | 失败原因清楚；原历史和用户输入不丢失；不会无限重试或偷偷换模型。 | Compact 失败后会话卡死，或用户消息被丢弃。 |
-| F-COMPACT-005 | P0 | 我先发送几条消息，再执行 Compact，之后继续发送。 | 触发 Compact；等待完成；发送一条新消息。 | Compact 前后的模型身份、思考程度和历史边界清楚；新消息使用 Compact 完成后生效的模型配置。 | Compact 后把历史模型全部改成当前模型，或新消息使用 Compact 前的错误配置。 |
-| F-COMPACT-006 | P1 | 我在 Compact 后立即 Fork 或执行 Goal。 | 完成 Compact 后先 Fork 一条分支，再在原会话执行 Goal。 | Fork 只复制允许复制的历史；Goal 只作用于原会话；两者使用各自明确的模型和思考程度。 | Compact 生成的摘要被重复复制，或 Goal 在错误的 Fork 会话中执行。 |
-| F-MEDIA-001 | P0 | 我已经在历史中发送过图片。 | 切换到文本模型，再发送普通文本。 | 历史仍可查看；新请求是否携带旧图片按模型能力和产品规则处理，并给出明确结果。 | 历史图片被静默删除，或请求因旧图片崩溃。 |
-| F-MEDIA-002 | P0 | 我选择了视觉模型后发送图片。 | 发送图片，再切换到不支持图片的模型。 | 图片发送使用视觉模型；切换后模型菜单和附件校验一致。 | 菜单说支持图片，但发送时才无提示失败。 |
-| F-MEDIA-003 | P1 | 模型声明支持某种媒体，但供应商实现不支持。 | 发送对应媒体附件。 | 产品按“模型能力 + 实际供应商能力”共同判断，明确拒绝或降级；不伪装成功。 | 发送成功但供应商实际收到损坏或空附件。 |
-| F-PLAN-001 | P0 | 我在 Start Plan 下选择模型并发送。 | 发送一条消息，再把套餐切换成 Coding Plan，继续发送。 | 每条消息使用当时有效的套餐和凭证；切换后模型可用性、显示和用量保持一致。 | 套餐已切换但仍使用旧凭证，或无提示换成其他模型。 |
-| F-PLAN-002 | P0 | 我在套餐切换过程中有一条消息排队。 | 切换套餐，等待 Queue 消费。 | `[待确认]` 需明确按入队时套餐还是消费时套餐；凭证与模型身份必须成对一致。 | 使用了模型 B，却携带模型 A 套餐的凭证。 |
-| F-PLAN-003 | P1 | 套餐状态正在加载或暂时请求失败。 | 打开模型菜单并尝试发送。 | 暂时未知时不误判为不可用；真正确认失效后才阻止或切换；提示原因。 | 网络抖动导致模型被静默隐藏或自动降级。 |
-| F-AUTH-001 | P0 | 我修改了当前供应商的 API Key。 | 修改 Key 后继续当前会话，并新建一个会话。 | 进行中的请求按既定快照完成；后续请求使用新 Key；Key 不出现在历史、统计或日志中。 | 当前请求被半途换 Key，或旧 Key 继续无限使用。 |
-| F-SETTINGS-001 | P0 | 我在设置里修改模型的 context、max output 或媒体能力。 | 保存设置后回到已有会话和新会话分别发送消息。 | 已创建的当前请求不被改变；后续新请求使用新配置；未修改的其他能力保持不变。 | 设置页保存一个字段时清空其他模型能力。 |
-| F-SETTINGS-002 | P0 | 我在设置中禁用当前模型。 | 禁用模型，回到已有会话并发送；再新建会话。 | 已有运行中的请求按既定生命周期完成；后续发送明确失败或按产品 fallback 规则处理；新会话不选择该模型。 | 禁用后已有历史消失，或界面仍显示可发送但实际失败。 |
-| F-SUBAGENT-001 | P0 | 主会话使用模型 A，我创建内置 Subagent。 | 创建 Subagent，让它执行一次工作；然后主会话切换到 B。 | `[待确认]` 若无独立覆盖，Subagent 是否继承创建时 A 或当前主会话 B 必须明确；父子会话不能互相改写。 | 主会话切换模型导致已运行的 child 中途换模型。 |
-| F-SUBAGENT-002 | P0 | 我给自定义 Subagent 设置了独立模型和思考程度。 | 主会话切换模型，再创建该 Subagent。 | Subagent 使用自己的有效配置；主会话仍使用主模型；无效 thought 阻止保存或执行。 | Subagent 的设置被主会话模型覆盖。 |
-| F-SUBAGENT-003 | P0 | 我在设置里给内置 Subagent 设置模型和思考程度。 | 保存覆盖；关闭设置重新打开；创建该 Subagent。 | 设置能保存并在重启后恢复；模型和思考程度作为一个组合生效；清除模型覆盖后恢复规定的继承行为。 | 只保存了模型却遗留旧 thought，或清除模型后仍使用旧覆盖。 |
-| F-SUBAGENT-004 | P0 | 我在设置里给自定义 Subagent 设置模型。 | 保存自定义 Subagent；主会话换模型；调用该 Subagent。 | 自定义 Subagent 使用它自己的已保存模型；主会话切换不改写 Subagent 配置。 | 调用时临时继承主会话模型，覆盖了已保存设置。 |
-| F-SUBAGENT-005 | P0 | Subagent 设置的模型后来被禁用或删除。 | 打开 Subagent 设置，再尝试调用。 | 原设置仍可被识别；调用前明确提示模型不可用，并允许用户修正；不会自动换模型覆盖配置。 | 调用时静默换成第一个可用模型。 |
-| F-SUBAGENT-006 | P0 | 主会话调用 Subagent，Subagent 又调用另一个 Subagent。 | 让父 Subagent 创建子 Subagent；分别观察三层会话。 | 每一层的模型继承/覆盖规则一致且可追踪；子 Subagent 不反向修改父会话或主会话。 | 子 Subagent 继承了错误层级的模型，或模型配置在多层之间串改。 |
-| F-SUBAGENT-007 | P1 | Subagent 正在运行时修改设置里的模型。 | 运行 Subagent；在设置中修改该 Subagent 的模型；等待运行结束后再次调用。 | 已运行的 child 使用旧配置完成；下一次调用使用新配置。 | 运行中的 child 中途换模型，或设置修改影响历史结果。 |
-| F-GOAL-001 | P0 | 我在模型 A 下创建一个 Goal。 | 创建 Goal，发送几条消息；Goal 完成后切换到模型 B。 | Goal 的状态和完成结果保留；模型切换只影响后续允许的消息，不改写已完成 Goal。 | 切换模型导致 Goal 被重置、重复验证或重新执行。 |
-| F-GOAL-002 | P0 | Goal 尚未完成时，我发送普通消息。 | Goal 运行中发送普通消息，再切换模型，等待 Goal 完成。 | 普通消息按 Goal/Queue 规则等待或排队；Goal 使用明确的模型和思考程度；不会越过 Goal 约束提前执行。 | 普通消息绕过 Goal 直接执行，或使用尚未生效的模型。 |
-| F-GOAL-003 | P1 | Goal 完成后触发 Goal Verify。 | 使用模型 A 完成 Goal，再让 Verify 使用可用配置运行。 | Verify 的模型来源和思考程度明确；Verify 失败不会把 Goal 错误标记为成功。 | Verify 使用随机模型，或 Verify 失败被当成 Goal 成功。 |
-| F-FORK-002 | P0 | 我从一个已经完成的消息 Fork 新会话。 | 原会话使用 A；Fork 后选择 B 并发送；再回到原会话发送。 | Fork 会话使用 B，原会话继续使用 A；两边的模型切换和历史互不影响。 | Fork 后原会话也切到 B，或两个会话共享可变模型设置。 |
-| F-FORK-003 | P1 | 原会话有 Goal 或 Queue 时 Fork。 | 在 Goal 未完成或 Queue 不为空时尝试 Fork。 | 按产品规则允许或阻止，并明确哪些 Goal/Queue 会复制；不能悄悄复制未完成意图。 | Fork 后同一条 Queue 或 Goal 被两个会话重复执行。 |
-| F-GIT-001 | P0 | 我让 App 根据工作区改动生成 Git commit。 | 选择模型 A，生成提交说明并执行 commit；再切换模型 B 重复一次。 | `[待确认]` 如果生成提交说明会调用模型，则实际使用的模型、思考程度和用量可追踪；Git 提交本身不因切模型而改变。 | 提交说明使用了错误模型，或模型切换导致已有 commit 被重写。 |
-| F-GIT-002 | P1 | Git commit 生成过程中切换模型或退出 App。 | 生成提交说明时切换模型或退出后重开。 | 当前生成按既定规则完成或明确失败；不会重复提交；重开后能看见提交结果。 | 退出重开造成重复 commit，或提交说明与实际使用模型无法对应。 |
-| F-MEMORY-001 | P0 | 我在模型 A 下完成任务，系统随后提取 Memory。 | 完成任务；等待 Memory 提取；再把主会话切换到 B。 | Memory 提取使用明确的模型来源；已生成 Memory 不被主会话切换改写；失败不破坏主会话。 | Memory 随主会话切换被重新生成或覆盖。 |
-| F-MEMORY-002 | P1 | Memory 提取时模型或 Provider 不可用。 | 让 Memory 使用的模型失效，再触发提取。 | 提取明确失败或按专门 fallback 规则处理；已有 Memory 保留；不会偷偷使用普通会话模型。 | Memory 失败导致已有记忆丢失，或无提示使用错误模型。 |
-| F-TITLE-001 | P1 | 会话生成标题时我切换模型。 | 发送消息触发自动标题；标题生成期间切换模型。 | 标题生成使用明确的模型快照；标题不会因为主会话切换被重复覆盖。 | 同一个会话出现多个标题，或标题模型无法追踪。 |
-| F-INTERNAL-001 | P1 | 我分别使用 Compact、Title、Memory、Goal Verify、Git Commit 等内部功能。 | 逐个触发这些功能，分别查看模型、思考程度和用量。 | 每个功能都有独立、可追踪的模型来源、失败处理和用量归属；功能之间不共享错误的临时模型状态。 | 内部功能随机使用第一个模型，或一个功能失败影响其他功能。 |
-| F-AUTOMATION-001 | P0 | 我保存一个 Automation，并立即运行它。 | 保存模型和思考程度，点击立即运行；随后修改默认模型。 | Automation 使用保存时或执行时的规则之一，并在所有界面一致；修改默认模型不会偷偷改写已保存任务。 | 保存页面显示 B，实际运行使用 A。 |
-| F-REMOTE-001 | P0 | 我在 SSH/WSL/Docker 工作区选择模型。 | 选择模型并发送；断开远程连接后重新连接。 | 模型候选来自目标工作区；重连后显示和实际使用的模型一致；本地工作区设置不串入远端。 | 远端断开时用本地模型目录冒充远端可用模型。 |
-| F-REMOTE-002 | P0 | 桌面端和手机远控同时操作同一会话。 | 桌面选择 A，手机选择 B，再分别发送或恢复。 | 两端看到同一个权威结果；桌面实时链路与手机恢复链路不互相制造第二份 Session/Queue。 | 手机断线恢复时重复执行桌面已发送的消息。 |
-| F-HISTORY-001 | P1 | 我切换模型后查看聊天记录。 | 先用 A 发送，再切到 B 发送，退出后重新打开。 | 历史能区分实际使用过的模型；模型名称变化后仍能识别原 Provider/Model 身份。 | 所有历史消息都显示为最后一次使用的模型。 |
-| F-USAGE-001 | P0 | 我手动切换模型、触发 fallback、执行 Compact 和 Subagent。 | 完成这些操作后查看用量统计。 | 统计记录实际执行的模型、Provider、思考程度和任务来源；不同 Provider 的同名模型可区分。 | 统计只显示用户最后选择的模型，或把内部调用算错套餐。 |
-| F-FALLBACK-001 | P0 | 当前模型被删除或暂时不可用。 | 打开已有会话并尝试继续发送。 | `[待确认]` 删除、禁用、鉴权失败、网络失败是否分别允许 fallback；任何自动 fallback 都要有明确提示和记录。 | 所有错误都静默切到第一个模型。 |
-| F-RETRY-001 | P1 | 一次请求失败后点击 Retry。 | 请求失败后重试，再切换模型后再次 Retry。 | Retry 使用明确的旧配置或当前配置规则；不会因为重试而悄悄改变模型或思考程度。 | 第一次失败用 A，重试无提示改成 B。 |
-| F-FORK-001 | P1 | 我从旧消息 Fork 出一个新会话。 | 在 A 的历史上 Fork，Fork 后选择 B 并发送。 | 原会话仍使用 A；新会话从明确的模型初值开始，历史复制不改变原会话模型。 | Fork 让原会话也切到 B。 |
-| F-CATALOG-001 | P1 | App 使用过程中模型目录发生变化。 | 目录新增、删除或禁用模型，观察当前会话、菜单和新会话。 | 当前会话、历史、菜单和新会话各按自己的规则变化；目录刷新不会覆盖用户正在进行的选择。 | 目录刷新后自动把当前会话切到新模型。 |
-| F-REASONING-001 | P1 | 我选择模型的思考程度，并关闭思考内容展示。 | 选择 high，关闭 reasoning 展示，再发送并恢复历史。 | 执行思考程度与界面是否展示思考内容是两个独立结果；关闭展示不改变实际档位。 | 隐藏 reasoning 导致请求不再使用 high。 |
-| F-APP-004 | P0 | 我正在生成消息时退出 App。 | 生成中退出 App，重新打开并进入该会话。 | 已完成部分和未完成部分状态清楚；不会重复发送；继续操作时使用明确的当前模型。 | 重启后同一条消息被自动发送两次，或模型被无提示替换。 |
-| F-APP-005 | P1 | 我在切换工作区时刚好选择了模型。 | 选择模型 B 后立即切换到另一个工作区，再返回查看。 | 未完成的选择不会写入错误工作区；每个工作区显示自己的权威结果。 | A 工作区的迟到结果覆盖 B 工作区的模型。 |
-| F-APP-006 | P1 | 我在另一个窗口修改了模型设置。 | 窗口 1 打开会话，窗口 2 修改 Provider 或模型能力；窗口 1 再发送消息。 | 窗口 1 使用明确的旧配置或新配置规则；界面最终与实际请求一致。 | 设置修改导致正在运行的请求中途变更。 |
-| F-DRAFT-003 | P0 | 我先在草稿中选择视觉模型并添加图片。 | 选择视觉模型、添加图片，再切换文本模型后发送。 | 切换后附件校验立即更新；不支持时明确阻止或要求处理。 | 发送成功但图片被静默丢弃。 |
-| F-DRAFT-004 | P1 | 我选择过模型但没有发送消息。 | 选择模型 B，切换到其他页面，再回来新建会话。 | 未提交的草稿选择按规定保留或丢弃；不会被当成已使用模型写入历史偏好。 | 只打开菜单就改变 last-used 模型。 |
-| F-SESSION-008 | P0 | 会话正在等待权限或用户回答时切换模型。 | 保持阻塞状态，切换模型，再批准或回答。 | 阻塞中的原请求按原模型完成；新模型只影响后续允许的请求。 | 批准后原请求改用新模型，导致上下文不一致。 |
-| F-SESSION-009 | P1 | 请求失败后正在等待 Retry 时切换模型。 | 失败后切换模型，再点击 Retry。 | Retry 使用明确的旧配置或新配置规则；界面和实际请求一致。 | Retry 无提示使用了与用户选择不同的模型。 |
-| F-SESSION-010 | P0 | 模型没变，但我把同一模型从个人连接切到 Team/Start 连接。 | 切换连接方式后发送消息。 | 供应商、模型、连接方式和凭证成套生效；用量归属正确。 | 只切换了显示标签，实际仍使用旧连接凭证。 |
-| F-QUEUE-006 | P0 | Queue 里连续有两条消息。 | 第一条入队后切到 B，第二条入队后切到 C，再等待全部消费。 | 两条消息的模型解析遵循同一规则且顺序稳定；不会互相覆盖。 | 两条消息都使用最后一次模型，或顺序被打乱。 |
-| F-QUEUE-007 | P1 | 我编辑一条已经排队的消息。 | 入队后切换模型，再编辑并重新发送。 | 编辑后的消息使用重新提交时的有效规则；原 Queue 项只消费一次。 | 原消息和编辑后的消息各执行一次。 |
-| F-QUEUE-008 | P0 | Queue 等待期间套餐过期。 | 套餐过期后等待 Queue 自动消费。 | 消费前重新确认模型和套餐；无权限时消息保留并明确提示。 | Queue 仍携带过期凭证直接发送。 |
-| F-QUEUE-009 | P0 | Queue 等待期间模型被禁用。 | 禁用模型后等待 Queue 消费。 | 消费被阻止或按明确 fallback 处理；Queue 内容不丢失。 | 被禁用模型仍发送，或 Queue 无提示消失。 |
-| F-COMPACT-007 | P0 | Goal 尚未完成时触发 Compact。 | 在 Goal 运行中达到 Compact 条件。 | Compact 不绕过 Goal 阻塞；完成后 Goal 和 Queue 状态仍正确。 | Compact 后普通消息越过未完成 Goal 执行。 |
-| F-COMPACT-008 | P1 | 我在 Compact 边界创建 Fork。 | 历史刚完成 Compact，立即 Fork 并分别发送。 | 父子会话的摘要边界和模型配置各自稳定；不会重复压缩。 | Fork 触发第二次相同 Compact，或摘要互相覆盖。 |
-| F-COMPACT-009 | P0 | Compact 失败后我退出 App。 | Compact 失败后退出，重新打开会话并继续操作。 | 失败状态和原历史保留；重开后可重试或明确结束，不自动重复执行。 | 重启后 Compact 无限重试，或原消息丢失。 |
-| F-COMPACT-010 | P1 | 历史中有大量附件时触发 Compact。 | 在含图片/PDF/视频的会话中触发 Compact。 | 附件在压缩前后的保留、摘要和重新发送规则明确；不产生损坏引用。 | Compact 后附件被当成普通文本或无提示消失。 |
-| F-GOAL-004 | P0 | Queue 中已有消息时创建 Goal。 | 先排队普通消息，再创建 Goal。 | Goal、普通消息和 Queue 的执行顺序符合既定规则；不会重复消费。 | Goal 绕过 Queue，或普通消息被错误清空。 |
-| F-GOAL-005 | P0 | Goal 运行中退出 App。 | Goal 未完成时退出，重开后恢复并继续。 | Goal 状态、当前模型、验证状态和 Queue 可恢复；不会从头重复执行。 | 重启后 Goal 被当成新 Goal，或 Queue 重复执行。 |
-| F-GOAL-006 | P1 | Goal 完成后原模型不可用，再执行 Verify。 | 禁用或删除原模型后触发 Verify。 | Verify 使用明确的当前规则；原 Goal 结果不被改写。 | Verify 静默换模型并覆盖原结果。 |
-| F-FORK-004 | P0 | 当前会话还在运行时创建 Fork。 | 在允许的历史位置 Fork，同时原会话继续运行。 | Fork 只复制已完成且允许复制的内容；原会话和 Fork 各自使用正确模型。 | 把正在生成的部分复制成完整消息，或重复执行当前请求。 |
-| F-FORK-005 | P1 | 我在原会话发生过模型切换后再 Fork。 | A → B 后从较早消息 Fork，并在两边继续发送。 | Fork 的起始模型和原会话当前模型按规则确定；历史模型切换记录不被抹掉。 | Fork 后所有历史被错误标成 B。 |
-| F-FORK-006 | P1 | 含媒体附件的会话被 Fork。 | 从含图片或文件的历史创建 Fork，再切换模型发送。 | 附件引用只复制一次且可追踪；目标模型不支持时明确处理。 | 父子会话共享可变附件状态，或附件被重复上传。 |
-| F-GIT-003 | P0 | 我切换模型后根据新的代码改动生成 commit。 | A 下完成部分修改，切到 B 后生成提交说明并提交。 | commit 说明使用规定的模型；提交内容和 Git 历史只由实际改动决定。 | 切模型导致旧 commit 被重写，或说明模型与实际不符。 |
-| F-GIT-004 | P1 | Git commit 前有权限确认。 | 生成提交说明后等待权限，期间切换模型，再批准。 | 权限确认对应原操作；批准不会把原 commit 请求换成新模型。 | 批准后重新生成或提交两次。 |
-| F-GIT-005 | P1 | Git commit 生成说明失败。 | 失败后切换模型，再重试。 | 重试规则明确；已有工作区改动和提交历史不丢失。 | 失败重试自动创建多个 commit。 |
-| F-MEMORY-003 | P1 | 我从会话 Fork 后分别提取 Memory。 | 父会话和 Fork 都产生新的重要信息。 | Memory 按工作区/会话规则隔离；模型来源可追踪。 | Fork 的记忆覆盖父会话记忆。 |
-| F-MEMORY-004 | P1 | 我切换工作区后触发 Memory 提取。 | 在 A 完成任务，切到 B 后触发提取，再回到 A。 | Memory 写入正确工作区；模型和来源不串。 | B 的模型或路径被用于 A 的 Memory。 |
-| F-MEMORY-005 | P1 | Memory 提取遇到额度不足。 | 让 Provider 额度耗尽，再触发 Memory。 | 主会话结果和已有 Memory 保留；提取失败原因清楚。 | Memory 失败导致主会话失败或已有内容丢失。 |
-| F-TITLE-002 | P1 | 我 Fork 会话后分别生成标题。 | 父会话和 Fork 分别触发自动标题。 | 标题按各自会话内容和模型规则生成；互不覆盖。 | Fork 继承并覆盖父会话标题。 |
-| F-SUBAGENT-008 | P0 | 我修改 Subagent 设置但还没有保存。 | 打开 Subagent 设置改模型，先不保存；立即调用 Subagent。 | 未保存草稿不影响本次调用；调用使用上一次已保存配置。 | 未保存输入被偷偷用于运行。 |
-| F-SUBAGENT-009 | P0 | 主会话有 Queue 时调用 Subagent。 | 主会话运行中有排队消息，调用 Subagent，再等待 Queue 消费。 | Subagent 与主会话 Queue 的执行顺序、模型和资源隔离明确。 | Subagent 抢占或重复消费主会话 Queue。 |
-| F-SUBAGENT-010 | P0 | Subagent 等待权限时切换主会话模型。 | Child 阻塞时切换父会话模型，再批准 child。 | child 继续使用自己的有效配置；父会话后续请求使用新模型。 | 批准 child 后它中途换成父会话新模型。 |
-| F-SUBAGENT-011 | P0 | App 退出后恢复一个正在运行过的 Subagent。 | 运行 child 时退出，重开后查看父子会话并继续操作。 | 不重复创建或执行旧 child；模型来源和状态可恢复。 | 重启后自动多创建一个相同 child。 |
-| F-SUBAGENT-012 | P1 | Subagent 调用时携带了附件。 | 给 child 发送图片或文件，再切换 child 模型。 | 附件能力按 child 模型判断；父会话的媒体规则不被错误套用。 | 父模型支持附件就无条件放行给 child。 |
-| F-AUTOMATION-002 | P0 | 定时任务等待执行期间我改变默认模型。 | 保存 Automation，修改默认模型，等待定时执行。 | Automation 按保存时或执行时的明确规则运行；默认模型修改不会偷偷改写任务。 | 同一任务不同次运行无提示随机换模型。 |
-| F-AUTOMATION-003 | P0 | Automation 执行时模型不可用。 | 到执行时间前禁用任务模型，再等待运行。 | 运行失败或 fallback 规则明确；原 Automation 配置不被覆盖。 | 运行时静默改写 Automation 的模型。 |
-| F-WIKI-002 | P1 | Wiki 生成期间切换套餐或聊天模型。 | Wiki 使用临时模型生成时，修改套餐或聊天模型。 | Wiki 请求和聊天请求互相隔离；各自使用规定的配置快照。 | Wiki 中途改用聊天模型，或聊天被 Wiki 切换。 |
-| F-REMOTE-003 | P0 | 远程会话正在 Compact 或 Goal 中时断线。 | 断开 SSH/远程连接，重连后恢复。 | Compact/Goal 状态、模型和 Queue 可恢复；不会重复执行。 | 重连后重新发送旧请求或丢失阻塞状态。 |
-| F-REMOTE-004 | P0 | 手机切换模型后，桌面立即发送消息。 | 手机选择 B，桌面端马上发送，再让手机重连查看。 | 两端最终显示同一个权威模型和结果；不会生成两条消息。 | 手机恢复时重复发送桌面已发送内容。 |
-| F-USAGE-002 | P0 | 请求失败后 fallback，再点击 Retry。 | 记录第一次模型 A 失败，系统切到 B，再执行 Retry。 | 统计能区分 A 的失败、B 的 fallback 和 Retry 的实际模型。 | 所有消耗都归到 B，或失败请求被隐藏。 |
-| F-FAIL-001 | P0 | Provider 不可用和模型不可用分别发生。 | 分别模拟凭证失效、模型禁用、网络失败，再发送消息。 | 三种错误有可区分的提示和处理规则；不能用一个模糊 fallback 覆盖所有情况。 | 任意错误都静默切换模型。 |
-| F-FAIL-002 | P0 | 我保存模型设置时发生失败。 | 同时修改模型、context 和 reasoning，故意让保存失败。 | 要么整组不生效，要么明确显示部分成功；重新打开设置结果可解释。 | UI 显示保存成功，但只有部分字段生效。 |
-| F-REASONING-002 | P0 | 我原来选择的 thought 在切换后模型上不存在。 | A 使用 high，切到不支持 high 的 B，再发送。 | 按明确规则清空、使用 B 默认或阻止发送；不会把 high 强塞给 B。 | 请求携带 B 不支持的 thought。 |
-| F-REASONING-003 | P0 | 我选择高思考程度但把输出上限调得很低。 | 发送长消息并观察请求和 Compact。 | 思考和可见输出的预算关系明确；不会产生必然无效的请求。 | thought 被静默关闭，或请求超出窗口。 |
+| F-APP-001 | P0 | I select model B, send a message, then quit the app. | Reopen the app, enter the original session, then create a new session and send. | Original session keeps displaying and using model B; new session follows the last-used-model rule (currently B); messages and model info not lost. | After restart, silently switch to the first model in the list; UI shows B but A is actually used. |
+| F-APP-002 | P0 | I use model B in workspace A, then switch to workspace B. | Create a session in B and send, then return to A and view the original session. | `[To confirm]` If last-used is global, B's new session defaults to model B; A's history and running state are unaffected by B. If workspace-isolated, B keeps its own model. | The two workspaces cross-use messages, queue, or current session. |
+| F-APP-003 | P0 | I open the same workspace in two windows. | Window 1 selects model A, window 2 selects model B, then both send messages. | The final result converges per the product's conflict rule; each window ends up showing the authoritative model; UI never disagrees with the actual model. | Both windows think they succeeded while the runtime used a third model. |
+| F-DRAFT-001 | P0 | I just created a session and have not sent the first message. | Select model B and a valid reasoning level, then send the first message. | First message uses B and that reasoning level; the draft selection is not overwritten by a late async catalog load. | First message uses the old default model, or thought is silently changed to an unsupported value. |
+| F-DRAFT-002 | P0 | I change the model while the new session is still preparing. | Select model B before warm-up finishes and send immediately. | First message uses B; the old model during preparation never overwrites the user's last selection. | The model switches only after send, so the first message uses the old model. |
+| F-SESSION-001 | P0 | I am using model A in a session. | Switch to model B, wait for the switch to complete, then send the next message. | Completed history stays marked A; the next message uses B; the switch result survives session recovery. | All history rewritten to B, or the next message still uses A. |
+| F-SESSION-002 | P0 | I change the model while a message is generating. | Switch A→B mid-generation, let the current message finish, then send the next. | The current message completes on A; B takes effect at a safe boundary, usually the next message. | The same in-flight request is split across two models, or silently resent. |
+| F-SESSION-003 | P0 | I change only the reasoning level, not the model. | Change low→high on model A, then send. | The new message uses A + high; existing messages and their models are not rewritten. | Changing thought also replaces the model, or the old thought is still used. |
+| F-SESSION-004 | P0 | I rapidly select A, B, C in sequence. | Quickly click three models, then send one message. | The last valid selection C wins; late results from older selections cannot overwrite C. | The result randomly lands on A or B, or the UI shows C while the request uses B. |
+| F-SESSION-005 | P0 | I select a currently unavailable model. | Open the model menu and try selecting a disabled, deleted, or plan-unsupported model. | The model clearly shows the unavailability reason and cannot be sent; the existing session is not silently switched to another model. | The menu hides the reason and auto-switches to the first available model. |
+| F-SESSION-006 | P1 | I re-select the model already in use. | Click the current model again. | No change; no duplicate switch records, toasts, or extra requests. | A repeated selection is recorded as a model switch or triggers a pointless restart. |
+| F-SESSION-007 | P0 | Two providers both offer a same-named model. | Switch between provider A's and provider B's same-named models and send. | Provider identity and model identity are both distinguished; stats, history, and requests use the selected full identity. | Matching by model name only, sending requests to the wrong provider. |
+| F-QUEUE-001 | P0 | A task is running and I send another message. | The message queues; switch models before consumption; wait for the queue. | `[To confirm]` Whether the enqueue-time or consumption-time model is used must be defined; UI, actual request, and recovery must agree. | Queue shows B but uses A with no notice. |
+| F-QUEUE-002 | P0 | A queued message contains an image. | After enqueue, switch to a model without image support and wait for consumption. | `[To confirm]` Define reject / require edit / convert to text; attachments are never lost and incomplete messages are never silently sent. | The image is dropped, or a text model receives an uninterpretable attachment. |
+| F-QUEUE-003 | P1 | The queue holds `/goal` or `/compact`. | Switch models after enqueue, then let the command consume. | Commands follow the established maintenance-command rules; not treated as plain text and not run with the wrong model. | `/compact` edited into a plain message, or `/goal` executed early. |
+| F-QUEUE-004 | P0 | A task is running and I click Stop. | Stop the current task and inspect the remaining queue. | Current task stops; the queue is kept or paused per product rules; recovery uses a defined current-model rule. | Stop empties a queue the user did not ask to delete. |
+| F-QUEUE-005 | P1 | The app quits with an unconsumed queue. | Quit and reopen the app, then restore the session. | Queue state is restored or explicitly marked unsent per product rules; never auto-resent. | The same message is sent twice, or the queue disappears silently. |
+| F-COMPACT-001 | P0 | The session nears the context limit when I switch models. | Switch from a large-context model to a small-context one and keep sending. | `[To confirm]` Define reject / compact first / truncate history / new session; the user sees the reason. | The request fails over-window, or history is silently deleted. |
+| F-COMPACT-002 | P0 | I change model or reasoning right before Compact. | Trigger Compact while changing model/reasoning. | Compact uses its defined model and reasoning; the next message after Compact uses the latest valid config. | Compact uses the old config with no record, or its result overwrites the new selection. |
+| F-COMPACT-003 | P0 | I set max output very high. | Enter a very long history, then send and trigger auto-Compact. | Total input, thinking, and output budgets never exceed the model window; compress or reduce this request's budget when needed. | Only output is validated, ignoring history and thinking, causing an over-window request. |
+| F-COMPACT-004 | P1 | The Compact request itself fails. | Make the compacting model fail, then continue using the session. | The failure reason is clear; original history and user input are not lost; no infinite retry or silent model swap. | The session hangs after Compact failure, or user messages are dropped. |
+| F-COMPACT-005 | P0 | I send messages, run Compact, then keep sending. | Trigger Compact, wait for completion, send a new message. | Model identity, reasoning, and history boundaries are clear before/after; the new message uses the config in effect after Compact. | After Compact, all history models are rewritten to the current model, or the new message uses the pre-Compact config. |
+| F-COMPACT-006 | P1 | I Fork or run a Goal right after Compact. | After Compact, fork a branch, then run a Goal in the original session. | Fork copies only allowed history; Goal acts only on the original session; each uses its own defined model and reasoning. | The Compact summary is duplicated, or Goal runs in the wrong forked session. |
+| F-MEDIA-001 | P0 | I have sent images earlier in the history. | Switch to a text model, then send plain text. | History stays viewable; whether the new request carries old images follows model capability and product rules, with a clear outcome. | Historical images are silently deleted, or the request crashes on old images. |
+| F-MEDIA-002 | P0 | I send an image after selecting a vision model. | Send the image, then switch to a model without image support. | The image send uses the vision model; after switching, the menu and attachment validation agree. | The menu claims image support but sending fails silently. |
+| F-MEDIA-003 | P1 | A model claims a media type but the provider does not support it. | Send that media attachment. | Judged by "model capability + actual provider capability" together: explicit reject or degrade; never fake success. | Send succeeds but the provider receives a broken or empty attachment. |
+| F-PLAN-001 | P0 | I select a model and send under Start Plan. | Send a message, then switch the plan to Coding Plan and keep sending. | Each message uses the plan and credentials valid at that time; model availability, display, and usage stay consistent after switching. | The old credential is kept after the switch, or the model silently changes. |
+| F-PLAN-002 | P0 | A message is queued while the plan switches. | Switch the plan and wait for queue consumption. | `[To confirm]` Define enqueue-time vs consumption-time plan; credentials and model identity must pair correctly. | Model B is used with model A's plan credentials. |
+| F-PLAN-003 | P1 | Plan status is loading or temporarily failing. | Open the model menu and try to send. | A temporarily unknown state is not treated as unavailable; only confirmed invalidity blocks or switches, with a reason. | A network jitter silently hides the model or auto-degrades it. |
+| F-AUTH-001 | P0 | I change the current provider's API Key. | Change the key, continue the current session, and create a new session. | In-flight requests finish per their snapshot; later requests use the new key; the key never appears in history, stats, or logs. | The current request is re-keyed mid-flight, or the old key keeps being used forever. |
+| F-SETTINGS-001 | P0 | I edit a model's context, max output, or media capability in settings. | Save, then send from an existing session and a new session. | The in-flight request is unchanged; new requests use the new config; untouched capabilities stay unchanged. | Saving one field clears other model capabilities. |
+| F-SETTINGS-002 | P0 | I disable the current model in settings. | Disable the model, send from the existing session, then create a new session. | Running requests finish per their lifecycle; later sends fail explicitly or follow the product fallback rule; new sessions do not pick that model. | Existing history disappears after disable, or the UI still allows send but fails. |
+| F-SUBAGENT-001 | P0 | The main session uses model A; I create a builtin subagent. | Create the subagent, let it run once, then switch the main session to B. | `[To confirm]` Without an override, whether the subagent inherits creation-time A or current main-session B must be defined; parent and child never rewrite each other. | A main-session model switch changes a running child's model mid-flight. |
+| F-SUBAGENT-002 | P0 | I set an independent model and reasoning for a custom subagent. | Switch the main-session model, then invoke that subagent. | The subagent uses its own valid config; the main session keeps its model; an invalid thought blocks save or execution. | The subagent's settings are overwritten by the main-session model. |
+| F-SUBAGENT-003 | P0 | I set model and reasoning for a builtin subagent in settings. | Save the override; close and reopen settings; invoke the subagent. | Settings persist across restart; model and reasoning apply as a pair; clearing the model override restores the defined inheritance. | Only the model is saved while the old thought lingers, or clearing the model keeps the old override. |
+| F-SUBAGENT-004 | P0 | I set a model for a custom subagent in settings. | Save the custom subagent; switch the main-session model; invoke it. | The custom subagent uses its saved model; main-session switches never rewrite its config. | It temporarily inherits the main-session model, overwriting saved settings. |
+| F-SUBAGENT-005 | P0 | A subagent's configured model is later disabled or deleted. | Open the subagent settings, then try to invoke it. | The stored config is still recognized; invocation clearly reports the model is unavailable and lets the user fix it; never auto-swaps the model. | Silent switch to the first available model at call time. |
+| F-SUBAGENT-006 | P0 | The main session calls a subagent that calls another subagent. | Have the parent create a child; inspect all three session layers. | Each layer's inheritance/override rules are consistent and traceable; a child never modifies its parent or the main session. | A child inherits from the wrong layer, or configs cross-write across layers. |
+| F-SUBAGENT-007 | P1 | The subagent's model is edited in settings while it runs. | Run the subagent; edit its model in settings; wait for it to finish, then invoke again. | The running child completes on the old config; the next invocation uses the new config. | The running child switches mid-flight, or the edit changes historical results. |
+| F-GOAL-001 | P0 | I create a Goal under model A. | Create the Goal, send messages; after it completes, switch to model B. | Goal state and results persist; the model switch only affects later allowed messages and never rewrites a completed Goal. | Switching models resets the Goal, re-verifies, or re-executes it. |
+| F-GOAL-002 | P0 | The Goal is unfinished and I send a normal message. | Send while the Goal runs, switch models, wait for completion. | Normal messages wait or queue per Goal/queue rules; the Goal uses its defined model and reasoning; nothing bypasses Goal constraints. | Normal messages bypass the Goal or use a not-yet-effective model. |
+| F-GOAL-003 | P1 | Goal Verify runs after the Goal completes. | Complete the Goal on model A, then run Verify with an available config. | Verify's model source and reasoning are defined; a Verify failure never marks the Goal as successful. | Verify uses a random model, or its failure counts as Goal success. |
+| F-FORK-002 | P0 | I fork a new session from a completed message. | Original session uses A; select B in the fork and send; return to the original and send. | The fork uses B; the original keeps A; model switches and history stay independent. | The original also switches to B after the fork, or both sessions share mutable model state. |
+| F-FORK-003 | P1 | The original session has a Goal or a queue when I fork. | Try forking while a Goal is unfinished or the queue is non-empty. | Allow or block per product rules, clearly stating which Goals/queue items are copied; never silently copy unfinished intent. | The same queue item or Goal runs twice after the fork. |
+| F-GIT-001 | P0 | I let the app generate a Git commit from workspace changes. | Select model A, generate the commit message and commit; switch to model B and repeat. | `[To confirm]` If message generation calls a model, the actual model, reasoning, and usage must be traceable; the Git commit itself never changes from a model switch. | The message used the wrong model, or a model switch rewrites an existing commit. |
+| F-GIT-002 | P1 | I switch models or quit the app while a commit message generates. | Switch models or quit and reopen during generation. | The current generation completes or fails explicitly per rules; no duplicate commits; the result is visible after reopen. | Reopen causes a duplicate commit, or the message cannot be matched to the model actually used. |
+| F-MEMORY-001 | P0 | I finish a task under model A and the system extracts Memory. | Complete the task; wait for Memory extraction; switch the main session to B. | Memory extraction uses a defined model source; generated Memory is not rewritten by the main-session switch; failure does not break the main session. | Memory is regenerated or overwritten by the main-session switch. |
+| F-MEMORY-002 | P1 | The Memory model or provider is unavailable during extraction. | Invalidate the model Memory uses, then trigger extraction. | Extraction fails explicitly or follows a dedicated fallback; existing Memory is kept; never silently uses the normal chat model. | Failure deletes existing memories, or silently uses the wrong model. |
+| F-TITLE-001 | P1 | I switch models while a session title generates. | Send a message to trigger auto-title; switch models during generation. | Title generation uses a defined model snapshot; the title is not repeatedly overwritten by main-session switches. | The session ends up with multiple titles, or the title model is untraceable. |
+| F-INTERNAL-001 | P1 | I use Compact, Title, Memory, Goal Verify, Git Commit internal features one by one. | Trigger each and check model, reasoning, and usage. | Each feature has an independent traceable model source, failure handling, and usage attribution; no shared wrong temporary model state. | Internal features randomly use the first model, or one failure affects the others. |
+| F-AUTOMATION-001 | P0 | I save an Automation and run it immediately. | Save the model and reasoning, click run now, then change the default model. | The automation uses save-time or run-time rules consistently across UI; changing the default never rewrites the saved task. | The save page shows B while the run uses A. |
+| F-REMOTE-001 | P0 | I select a model in an SSH/WSL/Docker workspace. | Select and send; disconnect and reconnect the remote. | Candidates come from the target workspace; display and actual model agree after reconnect; local workspace settings do not leak into the remote. | When the remote is down, local models are passed off as remote-available. |
+| F-REMOTE-002 | P0 | Desktop and mobile remote control operate the same session. | Desktop selects A, mobile selects B, then send or restore from both. | Both ends see the same authoritative result; the desktop live link and mobile recovery link never create a second session/queue. | On mobile reconnect, desktop-sent messages are re-executed. |
+| F-HISTORY-001 | P1 | I view chat history after switching models. | Send with A, switch to B and send, quit and reopen. | History distinguishes the models actually used; after renames the original provider/model identity is still identifiable. | All history shows the last-used model. |
+| F-USAGE-001 | P0 | I switch models manually, trigger fallback, run Compact and subagents. | Do all of these, then view usage stats. | Stats record the actual model, provider, reasoning, and task source; same-named models from different providers are distinguishable. | Stats show only the last selected model, or misattribute internal calls. |
+| F-FALLBACK-001 | P0 | The current model is deleted or temporarily unavailable. | Open an existing session and try to continue. | `[To confirm]` Whether deletion, disable, auth failure, and network failure each allow fallback must be defined; every automatic fallback is clearly notified and logged. | All errors silently switch to the first model. |
+| F-RETRY-001 | P1 | A request fails and I click Retry. | Retry after failure, switch models, then retry again. | Retry uses a defined old-config or current-config rule; never silently changes model or reasoning. | First failure uses A; retry silently becomes B. |
+| F-FORK-001 | P1 | I fork a new session from an old message. | Fork from A's history, select B in the fork, send. | The original keeps A; the fork starts from a defined initial model; history copying never changes the original's model. | The fork makes the original switch to B too. |
+| F-CATALOG-001 | P1 | The model catalog changes while the app runs. | Add, delete, or disable models; watch the current session, menu, and new sessions. | Each surface follows its own rule; catalog refresh never overwrites an in-progress user selection. | After refresh the current session auto-switches to a new model. |
+| F-REASONING-001 | P1 | I select a reasoning level and hide reasoning display. | Select high, hide reasoning display, send, and restore history. | The executed reasoning level and whether the UI shows reasoning are independent; hiding display never changes the actual level. | Hiding reasoning stops the request from using high. |
+| F-APP-004 | P0 | I quit the app while a message generates. | Quit mid-generation, reopen, enter the session. | Completed and incomplete parts have clear state; nothing is resent; continuing uses the defined current model. | The same message auto-sends twice after restart, or the model is silently replaced. |
+| F-APP-005 | P1 | I select a model right while switching workspaces. | Select model B, immediately switch to another workspace, return and check. | An unfinished selection is never written into the wrong workspace; each workspace shows its own authoritative result. | Workspace A's late result overwrites workspace B's model. |
+| F-APP-006 | P1 | Model settings are edited in another window. | Window 1 has a session open; window 2 edits provider/model capability; window 1 sends. | Window 1 uses a defined old-or-new config rule; UI ends up matching the actual request. | The edit changes a running request mid-flight. |
+| F-DRAFT-003 | P0 | I pick a vision model and add an image in the draft first. | Select a vision model, add an image, then switch to a text model and send. | Attachment validation updates immediately on switch; explicitly block or ask for handling when unsupported. | Send succeeds but the image is silently dropped. |
+| F-DRAFT-004 | P1 | I selected a model but never sent. | Select model B, switch pages, come back, create a session. | An uncommitted draft selection is kept or discarded per rules; never written to history as a used model. | Merely opening the menu changes the last-used model. |
+| F-SESSION-008 | P0 | I switch models while the session waits for permission or an answer. | Stay blocked, switch models, then approve or answer. | The blocked original request completes on its original model; the new model only affects later allowed requests. | After approval the original request uses the new model, breaking context consistency. |
+| F-SESSION-009 | P1 | I switch models while waiting to retry a failed request. | Switch models after failure, then click Retry. | Retry uses a defined old-or-new config rule; UI and actual request agree. | Retry silently uses a model different from the user's choice. |
+| F-SESSION-010 | P0 | The model is unchanged, but I switch it from a personal connection to a Team/Start connection. | Switch the connection type and send. | Provider, model, connection type, and credentials take effect as a set; usage attribution is correct. | Only the label changes while the old connection credentials are still used. |
+| F-QUEUE-006 | P0 | Two messages queue in a row. | Switch to B after the first enqueues, to C after the second, then wait for consumption. | Both messages resolve models under the same rule with stable ordering; no overwriting each other. | Both use the last model, or the order is shuffled. |
+| F-QUEUE-007 | P1 | I edit a queued message. | Switch models after enqueue, then edit and resend. | The edited message uses the rule effective at resubmission; the original queue item is consumed once. | Both the original and edited message execute. |
+| F-QUEUE-008 | P0 | The plan expires while the queue waits. | Let the plan expire, then wait for queue consumption. | Model and plan are re-validated before consumption; without entitlement the message is kept with a clear notice. | The queue sends with expired credentials. |
+| F-QUEUE-009 | P0 | The model is disabled while the queue waits. | Disable the model and wait for consumption. | Consumption is blocked or handled by a defined fallback; queue content is not lost. | The disabled model still sends, or the queue silently disappears. |
+| F-COMPACT-007 | P0 | Compact triggers while a Goal is unfinished. | Reach the compact condition while the Goal runs. | Compact does not bypass Goal blocking; Goal and queue states remain correct afterward. | After Compact, normal messages bypass the unfinished Goal. |
+| F-COMPACT-008 | P1 | I fork right at the Compact boundary. | Fork immediately after history compacts; send from both. | Parent and child each keep stable summary boundaries and model configs; no double compaction. | The fork triggers an identical second Compact, or summaries overwrite each other. |
+| F-COMPACT-009 | P0 | I quit the app after a Compact failure. | Quit after failure, reopen the session, continue. | The failure state and original history persist; retry or explicit end is possible after reopen; no automatic re-run. | Compact retries infinitely after restart, or original messages are lost. |
+| F-COMPACT-010 | P1 | Compact triggers with many attachments in history. | Trigger Compact in a session with images/PDF/video. | Attachment retention, summarization, and resend rules around compaction are defined; no broken references. | Attachments become plain text or silently vanish after Compact. |
+| F-GOAL-004 | P0 | I create a Goal while the queue already has messages. | Queue normal messages first, then create the Goal. | Goal, normal messages, and queue execute in the defined order; nothing is consumed twice. | The Goal bypasses the queue, or normal messages are wrongly cleared. |
+| F-GOAL-005 | P0 | The app quits while a Goal runs. | Quit before completion, reopen, restore, continue. | Goal state, current model, verification state, and queue recover; nothing re-runs from scratch. | After restart the Goal is treated as new, or the queue re-executes. |
+| F-GOAL-006 | P1 | The original model is unavailable when Verify runs after Goal completion. | Disable or delete the original model, then trigger Verify. | Verify uses the defined current rule; the original Goal result is not rewritten. | Verify silently swaps models and overwrites the result. |
+| F-FORK-004 | P0 | I fork while the current session is still running. | Fork at an allowed history position while the original keeps running. | The fork copies only completed, copyable content; original and fork each use the correct model. | In-progress generation is copied as a complete message, or the current request re-executes. |
+| F-FORK-005 | P1 | I fork after the original session switched models. | After A→B, fork from an earlier message; keep sending in both. | The fork's starting model and the original's current model follow the rules; historical switch records are not erased. | All history in the fork is mislabeled B. |
+| F-FORK-006 | P1 | A session with media attachments is forked. | Fork from history with images or files, then switch models and send. | Attachment references are copied once and stay traceable; unsupported target models are handled explicitly. | Parent and child share mutable attachment state, or attachments re-upload. |
+| F-GIT-003 | P0 | I switch models, then generate a commit from new code changes. | Make changes under A, switch to B, generate the message and commit. | The commit message uses the defined model; commit content and Git history depend only on actual changes. | The switch rewrites old commits, or the message model mismatches. |
+| F-GIT-004 | P1 | A permission confirmation precedes the Git commit. | Generate the message, wait for permission, switch models meanwhile, then approve. | The confirmation matches the original action; approval never re-keys the original commit request. | After approval it regenerates or commits twice. |
+| F-GIT-005 | P1 | Git commit message generation fails. | Switch models after failure, then retry. | The retry rule is defined; workspace changes and commit history are not lost. | A failed retry creates multiple commits. |
+| F-MEMORY-003 | P1 | I fork a session, then extract Memory in both. | Parent and fork each produce new notable information. | Memory is isolated per workspace/session rules; the model source is traceable. | The fork's memory overwrites the parent's. |
+| F-MEMORY-004 | P1 | I trigger Memory extraction after switching workspaces. | Finish a task in A, trigger extraction from B, return to A. | Memory is written to the correct workspace; model and source do not cross. | B's model or path is used for A's Memory. |
+| F-MEMORY-005 | P1 | Memory extraction hits insufficient quota. | Exhaust the provider quota, then trigger Memory. | The main session result and existing Memory survive; the failure reason is clear. | Memory failure breaks the main session or existing content. |
+| F-TITLE-002 | P1 | I fork a session, then generate titles in both. | Trigger auto-title in parent and fork. | Titles follow each session's content and model rules; no overwriting. | The fork inherits and overwrites the parent's title. |
+| F-SUBAGENT-008 | P0 | I edit subagent settings without saving. | Edit the model in settings without saving; invoke the subagent immediately. | The unsaved draft does not affect this call; it uses the last saved config. | Unsaved input is secretly used for the run. |
+| F-SUBAGENT-009 | P0 | The main session has a queue while I invoke a subagent. | With messages queued, invoke the subagent, then wait for consumption. | Execution order, model, and resource isolation between subagent and main queue are defined. | The subagent preempts or double-consumes the main queue. |
+| F-SUBAGENT-010 | P0 | The main-session model switches while a subagent waits for permission. | Switch the parent model while the child is blocked, then approve the child. | The child continues on its own valid config; the parent's later requests use the new model. | After approval the child switches to the parent's new model mid-flight. |
+| F-SUBAGENT-011 | P0 | The app restarts while a subagent was running. | Quit while a child runs; reopen, inspect parent/child, continue. | The old child is not re-created or re-executed; model source and state recover. | After restart an identical extra child is auto-created. |
+| F-SUBAGENT-012 | P1 | A subagent call carries attachments. | Send an image or file to the child, then switch the child's model. | Attachment capability is judged by the child's model; the parent's media rules are not misapplied. | Parent model support alone lets the attachment through to the child. |
+| F-AUTOMATION-002 | P0 | I change the default model while a scheduled task waits. | Save the automation, change the default model, wait for the scheduled run. | The automation runs by a defined save-time or run-time rule; changing the default never rewrites the task. | Different runs of the same task silently use random models. |
+| F-AUTOMATION-003 | P0 | The model is unavailable when an Automation runs. | Disable the task's model before run time, then wait. | Failure or fallback follows a defined rule; the stored automation config is not overwritten. | The run silently rewrites the automation's model. |
+| F-WIKI-002 | P1 | The plan or chat model changes during Wiki generation. | While Wiki generates with a temporary model, change the plan or chat model. | Wiki and chat requests are isolated; each uses its defined config snapshot. | Wiki switches to the chat model mid-run, or chat is switched by Wiki. |
+| F-REMOTE-003 | P0 | A remote session is in Compact or Goal when the connection drops. | Disconnect SSH/remote during Compact/Goal, reconnect, restore. | Compact/Goal state, model, and queue recover; nothing re-executes. | Old requests are resent or blocked state is lost on reconnect. |
+| F-REMOTE-004 | P0 | Mobile switches the model, then desktop sends immediately. | Mobile selects B, desktop sends at once, then mobile reconnects and views. | Both ends end up with the same authoritative model and result; no duplicate messages. | Mobile re-sends what desktop already sent during recovery. |
+| F-USAGE-002 | P0 | A request fails over to fallback, then I click Retry. | Record model A failing, the system switching to B, then Retry. | Stats distinguish A's failure, B's fallback, and the retry's actual model. | All consumption is attributed to B, or the failed request is hidden. |
+| F-FAIL-001 | P0 | Provider unavailability and model unavailability occur separately. | Simulate credential failure, model disable, and network failure, then send. | The three errors have distinguishable notices and handling; one vague fallback cannot cover all. | Any error silently switches the model. |
+| F-FAIL-002 | P0 | Saving model settings fails. | Edit model, context, and reasoning together and force the save to fail. | Either the whole set does not apply, or partial success is explicit; reopening settings is explainable. | The UI shows success while only some fields applied. |
+| F-REASONING-002 | P0 | My chosen thought level does not exist on the switched-to model. | Use high on A, switch to B without high support, send. | Clear, use B's default, or block sending per defined rules; high is never forced onto B. | The request carries a thought B does not support. |
+| F-REASONING-003 | P0 | I pick a high reasoning level but a very low output cap. | Send a long message and watch the request and Compact. | The budget relation between thinking and visible output is defined; no guaranteed-invalid request. | Thought is silently disabled, or the request exceeds the window. |
 
-## 二、功能 × 套餐/服务端配置
+## 2. Feature × plan / server-side config
 
-这一节补充上一节没有展开的交叉维度：同一个功能分别处于 Start Plan、个人/团队 Coding Plan、API Key，或服务端模型目录正在变化时，用户操作和最终执行是否仍然一致。这里不把套餐当成孤立的登录用例，而是要求检查它对具体产品功能的影响。
+This section covers the cross dimension the previous one did not expand: the same feature under
+Start Plan, personal/team Coding Plan, API Key, or while the server-side model catalog changes —
+whether user actions and actual execution stay consistent. Plans are not treated as isolated login
+cases; each must be checked for its effect on concrete product features.
 
-| Case ID | 优先级 | 用户场景与准备 | 操作步骤 | 预期结果 | 不应发生 |
+| Case ID | Priority | Scenario and setup | Steps | Expected | Must not happen |
 | --- | --- | --- | --- | --- | --- |
-| F-PLAN-004 | P0 | Start Plan 和 Coding Plan 同时有效，且两边有部分同名模型。 | 在聊天、定时任务和 Subagent 设置中分别打开模型菜单并切换连接方式。 | 两种计划都按服务端返回的可用性展示；相同模型名仍保留完整 Provider/计划身份。 | 选择 Start Plan 后把 Coding Plan 隐藏，或只按模型名误合并。 |
-| F-PLAN-005 | P0 | 套餐状态正在加载，或服务端暂时请求失败。 | 已选模型仍在使用时刷新设置页、打开新会话并尝试发送。 | 暂时未知只保留原选择并提示加载状态；只有服务端明确失效才阻止使用；不会趁网络抖动换模型。 | 加载中的计划被当作失效，或自动切到 API Key。 |
-| F-PLAN-006 | P0 | 服务端返回新版本模型目录，目录中删除了当前模型或只返回部分配置。 | 在已有会话、Automation、Off-Peak 和 Subagent 页面打开/刷新模型菜单。 | 不完整目录不会破坏上一份完整事实；当前运行快照保持不变；新建操作明确显示不可用原因。 | 半份目录覆盖完整目录，导致模型消失或请求落到错误模型。 |
-| F-PLAN-007 | P0 | Team Coding Plan 缺少组织或项目范围。 | 在聊天、定时任务和 Subagent 中选择该 Team 连接并发送/运行。 | 连接明确不可用并说明缺少范围；不借用个人 Coding Plan、Start Plan 或 API Key 静默降级。 | 界面仍显示 Team，实际请求却使用个人凭证。 |
-| F-PLAN-008 | P0 | 同一个模型 ID 同时存在于 Start、个人 Coding 和 Team Coding。 | 依次选择三种连接发送消息，并查看历史和用量。 | 每次请求、历史和统计都能区分完整计划身份、凭证和思考档位。 | 统计或历史只记录模型名，无法判断实际用了哪种计划。 |
-| F-AUTOMATION-004 | P0 | 我在 Automation 表单中固定了 Coding Plan 模型和思考程度。 | 保存任务；修改聊天默认模型为 Start Plan；点击立即运行并查看任务详情/运行记录。 | Automation 的保存值和运行快照仍是 Coding Plan + 原思考程度；聊天默认值不改写任务。 | 保存页显示 Coding，实际运行使用 Start 或当前聊天模型。 |
-| F-AUTOMATION-005 | P0 | 我保存了 Start Plan 的定时任务，等待执行前 Start Plan 失效但 Coding Plan 仍有效。 | 到执行时间前刷新服务端套餐状态，再等待一次运行。 | 任务按明确的不可用规则失败并保留原配置，或按产品规定提示用户修复；不得静默换到 Coding Plan。 | 任务无提示改用另一计划，或把原任务配置永久改写。 |
-| F-AUTOMATION-006 | P0 | 定时任务保存后服务端删除它使用的模型。 | 打开任务详情、修改其他字段并再次运行。 | 任务仍能识别原 Provider/模型；保存其他字段不会清掉模型和思考程度；运行前明确阻止。 | 编辑一个无关字段就把模型重置成默认值。 |
-| F-OFFPEAK-001 | P0 | 我在个人 Coding Plan 下创建闲时任务。 | 创建任务并选择闲时模型，随后改变聊天默认模型和计划连接；等待闲时任务运行。 | 闲时任务使用隐藏的 idle-plan Provider、服务端允许的具体模型和票据；聊天默认值、Recent 和普通 Queue 不受影响。 | 闲时任务改用聊天模型，或把闲时请求算入普通 Chat。 |
-| F-OFFPEAK-002 | P0 | 我在 Team Coding Plan 下创建闲时任务，且 Team 范围有效。 | 创建并运行闲时任务，观察请求凭证和任务记录。 | 使用 Team 允许的 idle-plan 事实和对应范围；任务身份、票据和续跑保持一致。 | 使用个人凭证，或运行中切到普通 Team Chat Provider。 |
-| F-OFFPEAK-003 | P0 | 当前只有 Start Plan，或用户把连接切成 Start Plan。 | 打开闲时任务创建页并尝试保存/运行。 | 按产品规则明确显示不支持或不可用；不伪装成普通 Chat，也不静默回退到普通模型。 | Start Plan 被当作闲时任务的授权来源。 |
-| F-OFFPEAK-004 | P0 | 闲时任务已保存，运行前用户切换账户或计划连接。 | 在任务等待期间切换个人/团队/Start 连接，再等待运行。 | 已保存任务不会被静默重新绑定；若新连接不满足条件，任务明确失败并保留原身份。 | 任务只因当前账户变化就使用另一人的凭证。 |
-| F-OFFPEAK-005 | P0 | 闲时任务运行时，用户继续聊天并修改模型。 | 运行闲时任务，同时在普通会话切换模型、发送一条 Queue 消息。 | 闲时 turn 使用自己的 execution snapshot；普通消息在安全边界回到用户模型，顺序和计费分别正确。 | 闲时临时模型泄漏到普通消息或 Queue。 |
-| F-OFFPEAK-006 | P0 | 闲时票据缺失、过期或与当前计划不匹配。 | 触发闲时任务执行。 | 在发出 Provider 请求前失败；任务身份和原始配置保留，可重试或明确结束；不走普通 Chat fallback。 | 带着过期票据发请求，或无提示换普通模型。 |
-| F-SUBAGENT-013 | P0 | 父会话使用 Start Plan，内置 Subagent 没有独立模型覆盖。 | 调用 child，并在 child 运行期间切换父会话到 Coding Plan。 | child 按规定继承创建时的 Start 或父级快照；已运行 child 不中途换计划。 | 父会话一切换，child 的在途请求也改成 Coding。 |
-| F-SUBAGENT-014 | P0 | 父会话使用 Start Plan，但 child 明确配置个人 Coding Plan。 | 保存 child 覆盖后调用，再切换父会话模型。 | child 请求使用自己保存的 Coding Plan；父会话仍使用 Start；两者的凭证和统计可区分。 | child 被父会话计划覆盖。 |
-| F-SUBAGENT-015 | P0 | 父会话使用 Coding Plan，child 明确配置 Start Plan。 | 调用 child 并查看父子两层请求和历史。 | child 使用 Start Plan 的完整身份和支持的思考档位；父请求不被改写。 | Start 只显示在设置里，实际 child 仍发 Coding 凭证。 |
-| F-SUBAGENT-016 | P0 | Subagent 正在运行时，服务端下发新的计划或禁用当前模型。 | 让 child 在途期间刷新目录/计划，再等待完成；下一次再次调用。 | 在途 child 使用旧快照完成或明确失败；下一次调用按新目录重新校验。 | 同一个 child 前后半途使用两个计划，且没有边界记录。 |
-| F-SUBAGENT-017 | P0 | 自定义 Subagent 保存了计划模型和思考程度。 | 关闭并重开 App；切换主会话计划；再次调用该 profile。 | profile 的计划、模型和 thought 成组持久化；主会话切换不改写它。 | 只恢复模型没恢复 thought，或重开后回到默认计划。 |
-| F-SUBAGENT-018 | P0 | 多层 Subagent 中，父 child 使用显式计划，孙 child 使用继承。 | 运行三层调用并查看每层 provider/model/thought。 | 继承只沿直接父级快照解析；每一层的最终身份可追踪，不向上反向修改。 | 孙 child 跳过父级，继承到主会话的错误计划。 |
-| F-SUBAGENT-019 | P0 | Team Subagent 缺少组织或项目范围。 | 调用该 child。 | child 在请求前明确报无权限；不改用个人、Start 或 API Key；父会话仍可继续。 | Team child 静默降级，或失败影响整个父会话。 |
-| F-INTERNAL-002 | P0 | 聊天使用 Start/Coding 计划时触发 Compact、Title、Memory、Goal Verify、Git Commit。 | 分别执行这些内部操作并查看请求、历史和用量。 | 每个内部功能使用已定义的专属模型来源或父级快照；结果和用量归属正确，不互相污染。 | 所有内部操作随机使用最后一次聊天模型。 |
-| F-INTERNAL-003 | P0 | 内部操作进行中切换计划或模型。 | 在 Compact/Title/Memory/Verify/Git 任一操作等待时切换连接。 | 已发出的操作保持原快照；后续操作才使用新连接；失败能定位到具体功能。 | 在途内部请求被半途换凭证或重发。 |
-| F-INTERNAL-004 | P0 | 某个内部功能的专用模型在服务端失效。 | 触发该功能，再继续普通聊天、Subagent 和 Automation。 | 失败只影响该内部功能，原会话和其他功能仍按各自规则运行；无全局静默降级。 | 一个内部模型失效导致所有功能都换模型或不可用。 |
+| F-PLAN-004 | P0 | Start Plan and Coding Plan are both valid with some same-named models. | Open the model menu in chat, scheduled tasks, and subagent settings and switch connections. | Both plans show availability per server responses; same-named models keep full provider/plan identity. | Selecting Start Plan hides Coding Plan, or same-named models merge. |
+| F-PLAN-005 | P0 | Plan status is loading or the server temporarily fails. | With a selected model in use, refresh settings, open a new session, try to send. | A temporarily unknown state keeps the current selection with a loading notice; only confirmed server-side invalidity blocks use; no model switching on network jitter. | A loading plan is treated as invalid, or auto-switch to API Key. |
+| F-PLAN-006 | P0 | The server returns a new catalog that deletes the current model or returns only partial config. | Open/refresh the model menu in existing sessions, Automation, Off-Peak, and subagent pages. | A partial catalog never breaks the last complete facts; the current running snapshot is unchanged; new operations show the unavailability reason. | A half catalog overwrites the full one, making models vanish or requests land on wrong models. |
+| F-PLAN-007 | P0 | Team Coding Plan lacks organization or project scope. | Select that Team connection in chat, scheduled tasks, and subagents; send/run. | The connection is clearly unavailable with the missing scope stated; never silently degrades to personal Coding Plan, Start Plan, or API Key. | UI shows Team while requests use personal credentials. |
+| F-PLAN-008 | P0 | The same model ID exists under Start, personal Coding, and Team Coding. | Send under each of the three connections and check history and usage. | Every request, history entry, and stat distinguishes the full plan identity, credentials, and reasoning tier. | Stats or history record only the model name, unable to tell which plan was used. |
+| F-AUTOMATION-004 | P0 | I pinned a Coding Plan model and reasoning in an Automation form. | Save the task; change the chat default to Start Plan; run now and check details/run history. | The automation's saved values and run snapshot stay Coding Plan + the original reasoning; the chat default never rewrites the task. | The save page shows Coding while the run uses Start or the current chat model. |
+| F-AUTOMATION-005 | P0 | A Start Plan scheduled task waits; Start Plan becomes invalid but Coding Plan remains valid. | Refresh server plan state before run time, then wait for a run. | The task fails by a defined unavailability rule keeping its config, or prompts the user to fix it per product rules; never silently switches to Coding Plan. | The task silently uses another plan, or its config is permanently rewritten. |
+| F-AUTOMATION-006 | P0 | The server deletes the model a saved scheduled task uses. | Open task details, edit other fields, run again. | The task still recognizes the original provider/model; editing other fields never clears model and reasoning; running is explicitly blocked. | Editing an unrelated field resets the model to default. |
+| F-OFFPEAK-001 | P0 | I create an off-peak task under a personal Coding Plan. | Create the task with an off-peak model, then change the chat default model and plan connection; wait for the off-peak run. | The off-peak task uses the hidden idle-plan provider, the server-allowed model, and the ticket; chat defaults, recents, and the normal queue are unaffected. | The off-peak task uses the chat model, or off-peak requests are billed as normal chat. |
+| F-OFFPEAK-002 | P0 | I create an off-peak task under a Team Coding Plan with valid scope. | Create and run the off-peak task; watch request credentials and task records. | Uses Team-allowed idle-plan facts and matching scope; task identity, ticket, and continuation stay consistent. | Uses personal credentials, or switches to the normal Team chat provider mid-run. |
+| F-OFFPEAK-003 | P0 | Only Start Plan exists, or the user switches the connection to Start Plan. | Open the off-peak task creation page and try to save/run. | Clearly unsupported or unavailable per product rules; never disguised as normal chat or silently falling back to normal models. | Start Plan is accepted as an authorization source for off-peak tasks. |
+| F-OFFPEAK-004 | P0 | An off-peak task is saved; the user switches account or plan connection before it runs. | Switch personal/team/Start connection while the task waits, then wait for the run. | The saved task is never silently rebound; if the new connection does not qualify, the task fails explicitly keeping its identity. | The task uses someone else's credentials merely because the current account changed. |
+| F-OFFPEAK-005 | P0 | An off-peak task runs while the user keeps chatting and changing models. | Run the off-peak task while switching models and queueing a message in a normal session. | The off-peak turn uses its own execution snapshot; normal messages return to the user's model at a safe boundary; ordering and billing are separately correct. | The off-peak temporary model leaks into normal messages or the queue. |
+| F-OFFPEAK-006 | P0 | The off-peak ticket is missing, expired, or mismatched with the current plan. | Trigger the off-peak task execution. | Fails before any provider request; task identity and original config are kept; retry or explicit end is possible; no normal-chat fallback. | Sends with an expired ticket, or silently switches to a normal model. |
+| F-SUBAGENT-013 | P0 | The parent session uses Start Plan; a builtin subagent has no model override. | Invoke the child, then switch the parent to Coding Plan while the child runs. | The child inherits the creation-time Start or parent snapshot as defined; a running child never switches plans mid-flight. | The parent's switch re-keys the child's in-flight request to Coding. |
+| F-SUBAGENT-014 | P0 | The parent uses Start Plan; the child is explicitly configured with personal Coding Plan. | Save the child override, invoke it, then switch the parent model. | The child's requests use its saved Coding Plan; the parent stays on Start; credentials and stats are distinguishable. | The child is overridden by the parent's plan. |
+| F-SUBAGENT-015 | P0 | The parent uses Coding Plan; the child is explicitly configured with Start Plan. | Invoke the child; inspect both layers' requests and history. | The child uses Start Plan's full identity and supported reasoning tiers; the parent's requests are unchanged. | Start appears only in settings while the child actually sends Coding credentials. |
+| F-SUBAGENT-016 | P0 | The server delivers a new plan or disables the current model while a subagent runs. | Refresh catalog/plans while the child is in flight, wait for completion; invoke again. | The in-flight child completes on the old snapshot or fails explicitly; the next invocation revalidates against the new catalog. | The same child half-runs on two plans with no boundary record. |
+| F-SUBAGENT-017 | P0 | A custom subagent saved a plan model and reasoning. | Close and reopen the app; switch the main-session plan; invoke the profile again. | The profile's plan, model, and thought persist as a group; main-session switches never rewrite it. | Only the model restores without the thought, or it resets to the default plan after restart. |
+| F-SUBAGENT-018 | P0 | In multi-layer subagents, the parent child uses an explicit plan; the grandchild inherits. | Run three layers and inspect each layer's provider/model/thought. | Inheritance resolves only along the direct parent snapshot; each layer's final identity is traceable; no upward writes. | The grandchild skips its parent and inherits the main session's wrong plan. |
+| F-SUBAGENT-019 | P0 | A Team subagent lacks organization or project scope. | Invoke the child. | The child explicitly reports no permission before any request; never falls back to personal, Start, or API Key; the parent session continues. | The Team child silently degrades, or its failure breaks the whole parent session. |
+| F-INTERNAL-002 | P0 | Chat runs on Start/Coding while Compact, Title, Memory, Goal Verify, Git Commit trigger. | Run each internal operation and inspect requests, history, and usage. | Each internal feature uses its defined dedicated model source or parent snapshot; results and usage attribution are correct and unpolluted. | All internal operations randomly use the last chat model. |
+| F-INTERNAL-003 | P0 | The plan or model switches while an internal operation runs. | Switch the connection while Compact/Title/Memory/Verify/Git is waiting. | Issued operations keep their snapshot; only later operations use the new connection; failures localize to the feature. | In-flight internal requests are re-keyed or resent mid-flight. |
+| F-INTERNAL-004 | P0 | A dedicated model for an internal feature becomes invalid server-side. | Trigger that feature, then continue normal chat, subagents, and automations. | The failure affects only that feature; the session and other features run by their own rules; no global silent degradation. | One internal model failure makes every feature switch models or go unavailable. |
 
+## 3. Expectations to confirm first during review
 
-## 三、审阅时优先确认的预期
+These questions change the expectations of many feature cases:
 
-以下问题会改变大量功能用例的预期：
-
-1. last-used 模型是全局生效，还是按 workspace 隔离？
-2. Queue 消费时使用入队时模型，还是消费时当前模型？
-3. 运行中切换模型是当前 Turn 继续用旧模型，还是立即中断并切换？
-4. 切换到更小 context 时，是拒绝、自动 Compact、截断，还是新建会话？
-5. 模型被删除、被禁用、鉴权失败、网络失败时，fallback 规则是否不同？
-6. Start Plan、Coding Plan、API Key 切换时，在途请求和 Queue 分别使用哪种凭证？
-7. Subagent、Compact、Title、Memory、Goal Verify、Automation、Wiki 是否继承主会话模型？
-8. Git Commit 生成提交说明是否真的调用模型；如果调用，使用哪套模型规则？
+1. Is the last-used model global, or isolated per workspace?
+2. Does queue consumption use the enqueue-time model or the current model at consumption?
+3. On a mid-run model switch, does the current turn keep the old model, or is it interrupted and
+   switched immediately?
+4. On switching to a smaller context: reject, auto-Compact, truncate, or new session?
+5. Do deletion, disable, auth failure, and network failure have different fallback rules?
+6. When switching Start Plan / Coding Plan / API Key, which credentials do in-flight requests and
+   the queue use?
+7. Do subagents, Compact, Title, Memory, Goal Verify, Automation, and Wiki inherit the main-session
+   model?
+8. Does Git commit message generation actually call a model; if so, which model rule applies?

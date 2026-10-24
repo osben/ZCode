@@ -1,30 +1,41 @@
 # Plan Mode Plan File Compact Continuity
 
-## 背景
+## Background
 
-当前 ZCode 的 `ExitPlanMode` 仍通过 tool input 的 `plan` 字段承载完整 plan。若 `ExitPlanMode` 审批后很快触发 compact，summary 可能没有保留完整 plan，compact/resume 后模型无法稳定拿回已批准 plan。
+`ExitPlanMode` still carries the full plan in its tool input `plan` field. If compact triggers
+soon after approval, the summary may not preserve the full plan and, after compact/resume, the
+model cannot reliably get back the approved plan.
 
-## 目标
+## Goal
 
-审批通过后的 `ExitPlanMode.plan` 必须同步写入 workspace root 下的确定性 plan file。compact 成功后，runtime 必须把该 plan file 的路径和完整内容作为 `plan_file_reference` model-only reminder 持久化到 compact 后历史里。
+After approval, `ExitPlanMode.plan` must be synchronously written to a deterministic plan file
+under the workspace root. After a successful compact, the runtime must persist that plan file's
+path and full content into the post-compact history as a `plan_file_reference` model-only
+reminder.
 
-## 路径合同
-
-plan file 路径为：
+## Path contract
 
 ```text
 ${workspaceRoot}/.zcode/plans/plan-${sanitizedSessionId}.md
 ```
 
-`workspaceRoot` 表示工作区根路径；不能使用可能被 Bash `cd` 改变的 `workingDirectory`。`sanitizedSessionId` 只保留 `A-Z`、`a-z`、`0-9`、`.`、`_`、`-`，其他字符替换成 `-`，并去掉首尾 `-`。
+`workspaceRoot` is the workspace root; never the `workingDirectory`, which Bash `cd` can change.
+`sanitizedSessionId` keeps only `A-Z`, `a-z`, `0-9`, `.`, `_`, `-`, replaces everything else with
+`-`, and strips leading/trailing `-`.
 
-## 写入合同
+## Write contract
 
-`ExitPlanMode` 在用户审批通过并应用 permission broker 返回的最终 input 后写 plan file。写入内容必须是最终 `plan` 原始字符串，不能 trim、补换行或做其他规范化；空 plan 只用于输入校验。写入使用 `FileSystemPort.writeTextFile()`，参数必须包含 `createParents: true`、`atomic: true`、`encoding: "utf8"`。写失败只影响后续 compact continuity，不阻断用户已批准的退出 plan mode。
+The plan file is written after user approval and after the final input from the permission broker
+is applied. The content must be the final `plan` raw string — no trim, newline padding or other
+normalization; an empty plan is only for input validation. The write uses
+`FileSystemPort.writeTextFile()` with `createParents: true`, `atomic: true`, `encoding: "utf8"`.
+A write failure affects only later compact continuity; it never blocks the already-approved plan
+exit.
 
-## Compact 合同
+## Compact contract
 
-compact 成功后，如果确定性 plan file 存在且内容非空，runtime 在 `postCompactReminderEntries` 中追加 source 为 `plan_file_reference` 的 model-only reminder，内容格式为：
+After a successful compact, if the deterministic plan file exists and is non-empty, the runtime
+appends to `postCompactReminderEntries` a model-only reminder with source `plan_file_reference`:
 
 ```text
 A plan file exists from plan mode at: ${planFilePath}
@@ -36,14 +47,18 @@ ${planContent}
 If this plan is relevant to the current work and not already complete, continue working on it.
 ```
 
-该 reminder 排在 generic read-state reminders 前面，并通过现有 `persistCompactSummary()` 与 compact summary 一起持久化；任一步持久化失败时沿用现有 compact persistence rollback。
+The reminder sorts before generic read-state reminders and persists together with the compact
+summary via the existing `persistCompactSummary()`; on any persistence failure, the existing
+compact persistence rollback applies.
 
-## 非目标
+## Non-goals
 
-- 不改变 provider-visible `ExitPlanMode` input schema。
-- 不实现 runtime injected `plan` / `planFilePath`。
-- 不改变 `ExitPlanMode` output shape。
-- 不新增 UI 展示。
-- 不把 plan file 加入 generic read-state reminder。
-- 不处理用户手动删除 `.zcode/plans` 后的恢复。
-- 不在本次 compact continuity 改造内实现默认 plan file retention cleanup；若后续实现，应由保留周期配置驱动并清理默认 plans 目录下的过期 `.md`，不是 `ExitPlanMode`、compact 或 session 结束时的即时删除。
+- No change to the provider-visible `ExitPlanMode` input schema.
+- No runtime-injected `plan` / `planFilePath`.
+- No change to the `ExitPlanMode` output shape.
+- No new UI display.
+- The plan file is not added to the generic read-state reminder.
+- No recovery after the user manually deletes `.zcode/plans`.
+- No default plan-file retention cleanup in this compact-continuity change; if implemented later,
+  it must be driven by a retention-period config and clean expired `.md` files in the default plans
+  directory — not immediate deletion at `ExitPlanMode`, compact or session end.
