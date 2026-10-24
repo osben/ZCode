@@ -27,13 +27,13 @@ historical baseline is the first parent of merge `279907140b`, not intermediate 
 
 ### 1.1 Confirmed problems (before the fix)
 
-| Item                  | Fact                                                                                                                                                    | Impact                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Core event dimension  | `send_btn` uses `custom:<encoded providerId>:<model>`; completion/step normal path uses `<providerId>/<model>`; `model_provider` uses the actual new ID | Filtering on old IDs misses new data; grouping splits old/new. Events are still sent.                   |
-| Team entry plan state | `resolveCodingPlanEntryPlanStateFromProviderSettings()` looked for Individual, then Start, and missed both Team Providers                              | Team-only returned `no_plan`; Team plus Start could return `start_plan`                                 |
-| BigModel Team family  | `resolveCodingPlanProviderFamily()` had no Team branch                                                                                                  | `unknown` and empty channel; correct is `bigmodel` / `MaaS`. Z.ai Team was already correct.             |
-| Success event label   | `resolveProviderTelemetryLabel()` had no BigModel Team / Start                                                                                          | `add_model_success` carried the raw ID (Start was already missed in the old version; Team is new)       |
-| Homepage off-peak     | `OffPeakNewTaskEntry` used the same plan-state helper as click admission                                                                                | With `codingPlanActive` unset and the view loaded, Team-only was wrongly blocked from navigating        |
+| Item                  | Fact                                                                                                                                                    | Impact                                                                                            |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Core event dimension  | `send_btn` uses `custom:<encoded providerId>:<model>`; completion/step normal path uses `<providerId>/<model>`; `model_provider` uses the actual new ID | Filtering on old IDs misses new data; grouping splits old/new. Events are still sent.             |
+| Team entry plan state | `resolveCodingPlanEntryPlanStateFromProviderSettings()` looked for Individual, then Start, and missed both Team Providers                               | Team-only returned `no_plan`; Team plus Start could return `start_plan`                           |
+| BigModel Team family  | `resolveCodingPlanProviderFamily()` had no Team branch                                                                                                  | `unknown` and empty channel; correct is `bigmodel` / `MaaS`. Z.ai Team was already correct.       |
+| Success event label   | `resolveProviderTelemetryLabel()` had no BigModel Team / Start                                                                                          | `add_model_success` carried the raw ID (Start was already missed in the old version; Team is new) |
+| Homepage off-peak     | `OffPeakNewTaskEntry` used the same plan-state helper as click admission                                                                                | With `codingPlanActive` unset and the view loaded, Team-only was wrongly blocked from navigating  |
 
 Limits of the evidence: the WebView bootstrap carried the wrong funnel context and the website protocol
 uses it for four purchase events, but the real website purchase reports were not captured. The
@@ -95,15 +95,15 @@ selected account.
 
 ### 3.2 Mapping (verified against old staging `790884b1ce`)
 
-| Current real ID                                          | Old statistics ID                                       |
-| -------------------------------------------------------- | ------------------------------------------------------- |
-| `zai-api` / `bigmodel-api` related history identities    | `builtin:zai` / `builtin:bigmodel`                      |
-| `account:zai-individual-coding-plan`                     | `builtin:zai-coding-plan`                               |
-| `account:bigmodel-individual-coding-plan`                | `builtin:bigmodel-coding-plan`                          |
-| `account:zai-start-plan` / `account:bigmodel-start-plan` | `builtin:*-start-plan`                                  |
+| Current real ID                                          | Old statistics ID                                                                                  |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `zai-api` / `bigmodel-api` related history identities    | `builtin:zai` / `builtin:bigmodel`                                                                 |
+| `account:zai-individual-coding-plan`                     | `builtin:zai-coding-plan`                                                                          |
+| `account:bigmodel-individual-coding-plan`                | `builtin:bigmodel-coding-plan`                                                                     |
+| `account:zai-start-plan` / `account:bigmodel-start-plan` | `builtin:*-start-plan`                                                                             |
 | Both `account:*-team-coding-plan`                        | shared old Coding Plan bucket (old model options / connection resolution share it with Individual) |
-| Both `account:*-offpeak-idle-plan`                       | shared old value `offpeak-idle-plan`                    |
-| Custom Provider / unknown ID / already-old ID            | kept as is (never attribute to official by name or address) |
+| Both `account:*-offpeak-idle-plan`                       | shared old value `offpeak-idle-plan`                                                               |
+| Custom Provider / unknown ID / already-old ID            | kept as is (never attribute to official by name or address)                                        |
 
 Ten exact ID mappings are implemented. UUID instances created from templates are not forced into old
 built-in buckets (template ID is not instance ID). Restoring old values may re-merge buckets the new
@@ -113,14 +113,14 @@ old/new event construction, not a helper returning one old ID.
 
 ### 3.3 Each event keeps its own field semantics
 
-| Event                                                | model_provider      | model_name                                              | provider_name / other                                                   |
-| ---------------------------------------------------- | ------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `send_btn`                                           | statistics ID       | `custom:<encoded statistics ID>:<model>`                | UI address hostname at send time; absent address is not invented        |
-| `message_completion` / `agent_step`                  | statistics ID       | normal request `<statistics ID>/<model>`; existing fallback without request fact | from the actual request; the mapped ID is never used to query Registry |
-| `context_compaction`                                 | same                | existing Provider prefix rule                           | no new provider_name                                                    |
-| `automation_create_result` / `automation_run_now_ck` | same                | plain model ID                                          | existing rules: standard-personal, no template, hostname only for API-key |
-| `off_peak_task_create_result`                        | per off-peak mapping | plain model ID                                         | provider_name from the result object                                    |
-| `app_login_success`                                  | n/a                 | n/a                                                     | OAuth `login_provider` unchanged (`z.ai` / `bigmodel`)                  |
+| Event                                                | model_provider       | model_name                                                                       | provider_name / other                                                     |
+| ---------------------------------------------------- | -------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `send_btn`                                           | statistics ID        | `custom:<encoded statistics ID>:<model>`                                         | UI address hostname at send time; absent address is not invented          |
+| `message_completion` / `agent_step`                  | statistics ID        | normal request `<statistics ID>/<model>`; existing fallback without request fact | from the actual request; the mapped ID is never used to query Registry    |
+| `context_compaction`                                 | same                 | existing Provider prefix rule                                                    | no new provider_name                                                      |
+| `automation_create_result` / `automation_run_now_ck` | same                 | plain model ID                                                                   | existing rules: standard-personal, no template, hostname only for API-key |
+| `off_peak_task_create_result`                        | per off-peak mapping | plain model ID                                                                   | provider_name from the result object                                      |
+| `app_login_success`                                  | n/a                  | n/a                                                                              | OAuth `login_provider` unchanged (`z.ai` / `bigmodel`)                    |
 
 ID adaptation must not change correlation or counts: send stays the submitted selection snapshot;
 step/completion follow the actual request fact; a model change across requests is not overwritten by the
@@ -175,17 +175,17 @@ family does not replace the current connection.
 
 ## 5. Impact surface (paths relative to `packages/ui/src/`)
 
-| Priority       | Scenario / entry                       | Shared implementation / authority                                                                      | Change boundary                                          |
-| -------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| must-inspect   | Composer send, completion, step, compaction | `v4/telemetry/conversationPromptTelemetry.ts`, `conversationTelemetrySupervisor.ts`, `lib/messageTelemetry.ts` | statistics ID in field construction only                 |
-| must-inspect   | Settings, sidebar, Composer, off-peak upgrade entries | `lib/codingPlanFunnelTelemetry.ts`                                                      | Team classification, family/channel                      |
-| must-inspect   | Website purchase panel                 | `settings/model-provider-section/codingPlanEmbeddedWebview.ts` (frozen funnelContext)                  | verify injected values; no new WebView state owner       |
-| must-inspect   | Homepage off-peak template             | `v4/OffPeakNewTaskEntry.tsx`; gray config + settings view                                              | fix Team mis-block; submit rules unchanged               |
-| must-inspect   | Provider subscription success feedback | `lib/appTelemetry.ts`, `settings/model-provider-section/oauthActions.ts`                               | success label normalization                              |
-| should-inspect | Automation / off-peak create and run-now | `lib/automationTelemetry.ts`, `lib/offPeakTelemetry.ts`, `settings/AutomationsSection.tsx`           | provider fields only, plain model names                  |
-| invariant-only | Login, core-event plan snapshot        | `root/useRootOAuthEffects.ts`, `hooks/usePlanIdentitySnapshot.ts`                                      | unchanged                                                |
-| invariant-only | Actual requests, Service report, cross-end sync | CLI fact producer, `services/src/telemetry/telemetryCore.ts`                                  | requests use real IDs; no extra IO / global string replace |
-| excluded       | Old network-status projection          | shared parser, old Service/UI projection                                                               | separate problem                                         |
+| Priority       | Scenario / entry                                      | Shared implementation / authority                                                                              | Change boundary                                            |
+| -------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| must-inspect   | Composer send, completion, step, compaction           | `v4/telemetry/conversationPromptTelemetry.ts`, `conversationTelemetrySupervisor.ts`, `lib/messageTelemetry.ts` | statistics ID in field construction only                   |
+| must-inspect   | Settings, sidebar, Composer, off-peak upgrade entries | `lib/codingPlanFunnelTelemetry.ts`                                                                             | Team classification, family/channel                        |
+| must-inspect   | Website purchase panel                                | `settings/model-provider-section/codingPlanEmbeddedWebview.ts` (frozen funnelContext)                          | verify injected values; no new WebView state owner         |
+| must-inspect   | Homepage off-peak template                            | `v4/OffPeakNewTaskEntry.tsx`; gray config + settings view                                                      | fix Team mis-block; submit rules unchanged                 |
+| must-inspect   | Provider subscription success feedback                | `lib/appTelemetry.ts`, `settings/model-provider-section/oauthActions.ts`                                       | success label normalization                                |
+| should-inspect | Automation / off-peak create and run-now              | `lib/automationTelemetry.ts`, `lib/offPeakTelemetry.ts`, `settings/AutomationsSection.tsx`                     | provider fields only, plain model names                    |
+| invariant-only | Login, core-event plan snapshot                       | `root/useRootOAuthEffects.ts`, `hooks/usePlanIdentitySnapshot.ts`                                              | unchanged                                                  |
+| invariant-only | Actual requests, Service report, cross-end sync       | CLI fact producer, `services/src/telemetry/telemetryCore.ts`                                                   | requests use real IDs; no extra IO / global string replace |
+| excluded       | Old network-status projection                         | shared parser, old Service/UI projection                                                                       | separate problem                                           |
 
 ## 6. Acceptance scenarios
 
@@ -194,20 +194,20 @@ funnel/event construction), identity (old/new/custom/unknown), fact source (send
 end (desktop local/remote workspace/phone). Pure field mapping uses parameterized unit tests; no full
 OS x theme x plan x event matrix.
 
-| Case ID | Setup -> Action                                                                       | Must assert                                                                      | Layer                       |
-| ------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------- |
-| T119-01 | Each family has only Team, entitled=true -> read entry plan state                     | `coding_plan`; no fake Individual entitlement needed                             | parameterized unit          |
-| T119-02 | Individual/Team + Start mixed; only Start / none / null view                          | Coding Plan wins; others start_plan/no_plan/unknown; disabling a model does not negate entitled | unit             |
-| T119-03 | Individual/Team/Start and unknown IDs -> create funnel context                        | family/channel correct; Start independent; unknown stays unknown                 | unit                        |
-| T119-04 | BigModel Team/Start success -> real `add_model_success` builder                       | label=bigmodel; Z.ai=z.ai; login event value/count unchanged                     | builder/call test           |
-| T119-05 | Team entry creates one funnelContext -> app upgrade and WebView bootstrap             | same funnel ID, status/family/channel; audience, level/list kept                 | builder + WebView injection |
-| T119-06 | Both Team-only, view ready, gray allowed, `codingPlanActive` unset -> click off-peak template | enters create page, no "no Coding Plan" prompt                          | app E2E (real `OffPeakNewTaskEntry` browser case) |
-| T119-07 | No plan or `codingPlanActive=false` -> same entry; later submit eligibility fails     | still blocked/prompted; Team does not bypass connection/credential/quota checks  | unit + representative E2E   |
-| T119-08 | Verified official mapping, already-old ID, custom/unknown ID, special-char model      | provider and model_name identity consistent, encoding correct, unknown unchanged | unit                        |
-| T119-09 | Send seed -> request start -> step/completion; multi-request; early failure without request | send keeps selection snapshot; runtime events use their request; missing fact keeps existing fallback; no event added/lost | V4 telemetry integration |
-| T119-10 | Automation/off-peak create success+failure, run-now, compaction                       | plain model name / prefix rules kept; failures adapted too; hostname fill conditions unchanged | builder/call test        |
-| T119-11 | Test reporter: one representative conversation and one funnel open                    | final `eventExtraDetail` correct, reported once; no probe to production endpoint | transport-intercept integration/E2E |
-| T119-12 | Desktop remote workspace, phone entries, history restore/reconnect                    | no cross-workspace identity pollution, no new phone telemetry requests, no backfill from restored history | existing isolation tests + targeted cross-end check (real Electron/phone/SSH pending) |
+| Case ID | Setup -> Action                                                                               | Must assert                                                                                                                | Layer                                                                                 |
+| ------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| T119-01 | Each family has only Team, entitled=true -> read entry plan state                             | `coding_plan`; no fake Individual entitlement needed                                                                       | parameterized unit                                                                    |
+| T119-02 | Individual/Team + Start mixed; only Start / none / null view                                  | Coding Plan wins; others start_plan/no_plan/unknown; disabling a model does not negate entitled                            | unit                                                                                  |
+| T119-03 | Individual/Team/Start and unknown IDs -> create funnel context                                | family/channel correct; Start independent; unknown stays unknown                                                           | unit                                                                                  |
+| T119-04 | BigModel Team/Start success -> real `add_model_success` builder                               | label=bigmodel; Z.ai=z.ai; login event value/count unchanged                                                               | builder/call test                                                                     |
+| T119-05 | Team entry creates one funnelContext -> app upgrade and WebView bootstrap                     | same funnel ID, status/family/channel; audience, level/list kept                                                           | builder + WebView injection                                                           |
+| T119-06 | Both Team-only, view ready, gray allowed, `codingPlanActive` unset -> click off-peak template | enters create page, no "no Coding Plan" prompt                                                                             | app E2E (real `OffPeakNewTaskEntry` browser case)                                     |
+| T119-07 | No plan or `codingPlanActive=false` -> same entry; later submit eligibility fails             | still blocked/prompted; Team does not bypass connection/credential/quota checks                                            | unit + representative E2E                                                             |
+| T119-08 | Verified official mapping, already-old ID, custom/unknown ID, special-char model              | provider and model_name identity consistent, encoding correct, unknown unchanged                                           | unit                                                                                  |
+| T119-09 | Send seed -> request start -> step/completion; multi-request; early failure without request   | send keeps selection snapshot; runtime events use their request; missing fact keeps existing fallback; no event added/lost | V4 telemetry integration                                                              |
+| T119-10 | Automation/off-peak create success+failure, run-now, compaction                               | plain model name / prefix rules kept; failures adapted too; hostname fill conditions unchanged                             | builder/call test                                                                     |
+| T119-11 | Test reporter: one representative conversation and one funnel open                            | final `eventExtraDetail` correct, reported once; no probe to production endpoint                                           | transport-intercept integration/E2E                                                   |
+| T119-12 | Desktop remote workspace, phone entries, history restore/reconnect                            | no cross-workspace identity pollution, no new phone telemetry requests, no backfill from restored history                  | existing isolation tests + targeted cross-end check (real Electron/phone/SSH pending) |
 
 Execution record (2026-09-11): T119-01 to T119-11 covered by unit and browser tests. V4 Supervisor
 compares old/new identity on the same fact sequence field by field after a model switch (only random

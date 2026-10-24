@@ -30,15 +30,15 @@ Resolver.
 
 ## 2. Common root causes
 
-| Root cause                                                         | Affected                                  | Direction                                                                        |
-| ------------------------------------------------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------- |
-| Account scenarios disguised as Personal API-key Providers          | CTP, QR, CPUW, Restart, Transition, Turbo | Prepare only account API, Credential and product facts; the formal Resolver generates formal Account Providers |
-| Tests still write old Family mode/selectedKey                      | Migration                                 | Delete the old format compat, do not restore                                     |
-| Current Family connection selection lacks coverage                 | CTP, Restart, Transition, Off-Peak        | Restore formal behavior proof with structured `providerFamilyConnectionSelections` |
-| CW/OTB/I08 wait for a deleted Workspace Registry push log          | CW, OTB, I08                              | Cold start is proven by real requests; Personal hot update waits a uniform 2s    |
-| Bot harness returns an empty Model Selection View                  | 4 Bot E2E                                 | Share a minimal non-empty Selection fixture                                      |
-| Subagent E2E still reads/writes the old double map                 | I20 and neighboring Settings E2E          | Delete the compat reader, use the current structured selection                   |
-| Upgrade WebView helper uses the visible page origin as the mock control plane | CPUW-01/03                     | Use an explicit mock control URL and observe the formal account refresh result   |
+| Root cause                                                                    | Affected                                  | Direction                                                                                                      |
+| ----------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Account scenarios disguised as Personal API-key Providers                     | CTP, QR, CPUW, Restart, Transition, Turbo | Prepare only account API, Credential and product facts; the formal Resolver generates formal Account Providers |
+| Tests still write old Family mode/selectedKey                                 | Migration                                 | Delete the old format compat, do not restore                                                                   |
+| Current Family connection selection lacks coverage                            | CTP, Restart, Transition, Off-Peak        | Restore formal behavior proof with structured `providerFamilyConnectionSelections`                             |
+| CW/OTB/I08 wait for a deleted Workspace Registry push log                     | CW, OTB, I08                              | Cold start is proven by real requests; Personal hot update waits a uniform 2s                                  |
+| Bot harness returns an empty Model Selection View                             | 4 Bot E2E                                 | Share a minimal non-empty Selection fixture                                                                    |
+| Subagent E2E still reads/writes the old double map                            | I20 and neighboring Settings E2E          | Delete the compat reader, use the current structured selection                                                 |
+| Upgrade WebView helper uses the visible page origin as the mock control plane | CPUW-01/03                                | Use an explicit mock control URL and observe the formal account refresh result                                 |
 
 ## 3. Formal E2E input chain
 
@@ -99,11 +99,11 @@ complete Provider/Model/Reasoning Selection.
 These verify only the unreleased old `mode/selectedKey` storage migration, not current Family product behavior; the
 old format compat is not restored to restore Family.
 
-| Original # | Case       | Reason                                          |
-| ---------: | ---------- | ----------------------------------------------- |
-|         27 | I32/MP-M01 | Old mode/selectedKey migration                  |
-|         28 | I33/MP-M02 | Team Plan selectedKey identity migration        |
-|         29 | I34/MP-M03 | selectedKey repair with missing organization    |
+| Original # | Case       | Reason                                       |
+| ---------: | ---------- | -------------------------------------------- |
+|         27 | I32/MP-M01 | Old mode/selectedKey migration               |
+|         28 | I33/MP-M02 | Team Plan selectedKey identity migration     |
+|         29 | I34/MP-M03 | selectedKey repair with missing organization |
 
 The whole file `conversation-session-model-provider-selected-key-migration.test.ts` can be deleted. Family settings
 switching, current connection recovery and fallback remain formal product behavior and use the current structured
@@ -111,18 +111,18 @@ selection to restore the original case or build equivalent coverage.
 
 ### 6.2 Explicit repair: 24 cases
 
-| Original # | Case group                         | Handling                                                                                                                                                   |
-| ---------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1-4        | Bot                                | Use the shared minimal Selection fixture, keep the original card, terminal, AskUserQuestion assertions                                                    |
+| Original # | Case group                         | Handling                                                                                                                                                                                       |
+| ---------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1-4        | Bot                                | Use the shared minimal Selection fixture, keep the original card, terminal, AskUserQuestion assertions                                                                                         |
 | 5-17       | CTP/QR                             | Use the formal Account Scenario; restore Family connection menu, personal/team switching and OAuth recovery; keep activity, quota, Context, reset opportunity and Composer reminder assertions |
-| 20         | I20 Subagent                       | Delete old double-map compat, use structured selection, keep the cold-start child request                                                                  |
-| 21         | CW01-CW04                          | Delete the old Registry log parser; after startup prove by limits, Compact and cold-recovery requests                                                      |
-| 22         | OTB                                | Delete revision log comparison; after Personal hot update wait a uniform 2s, keep budget/request assertions                                                |
-| 23         | I08                                | Delete the old revision barrier; after the model appears wait 2s and assert the first Provider identity                                                    |
-| 24         | I26/MP-R02                         | Use the formal Account Provider and atomic persisted selection, keep non-first-model recovery                                                              |
-| 25-26      | I27/MP-R03, I28/MP-R04             | Restore current connection fallback semantics with structured Family selection                                                                             |
-| 30-32      | I29/MP-S01, I30/MP-S02, I31/MP-S03 | Restore connection switching, draft retention and Plan reconciliation with structured Family selection                                                     |
-| 33-37      | Turbo                              | Use the formal Account Provider and atomic selection, keep two-state reasoning, switching, late response and request assertions                            |
+| 20         | I20 Subagent                       | Delete old double-map compat, use structured selection, keep the cold-start child request                                                                                                      |
+| 21         | CW01-CW04                          | Delete the old Registry log parser; after startup prove by limits, Compact and cold-recovery requests                                                                                          |
+| 22         | OTB                                | Delete revision log comparison; after Personal hot update wait a uniform 2s, keep budget/request assertions                                                                                    |
+| 23         | I08                                | Delete the old revision barrier; after the model appears wait 2s and assert the first Provider identity                                                                                        |
+| 24         | I26/MP-R02                         | Use the formal Account Provider and atomic persisted selection, keep non-first-model recovery                                                                                                  |
+| 25-26      | I27/MP-R03, I28/MP-R04             | Restore current connection fallback semantics with structured Family selection                                                                                                                 |
+| 30-32      | I29/MP-S01, I30/MP-S02, I31/MP-S03 | Restore connection switching, draft retention and Plan reconciliation with structured Family selection                                                                                         |
+| 33-37      | Turbo                              | Use the formal Account Provider and atomic selection, keep two-state reasoning, switching, late response and request assertions                                                                |
 
 Model IDs may appear in tests as real Built-in Config fixture facts; production code must not restore branching on
 specific model IDs.

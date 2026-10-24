@@ -114,6 +114,7 @@ Provider Registry (lookup, validate) -> ModelFactory -> Adapter private createMo
 The full `RegistryProviderConfig/RegistryModelConfig` is the private creation input ModelFactory hands to
 the Adapter, not a queryable field of the public `Model`; `Model.bind()` stays the legitimate way to derive a
 bound Model from an existing Model.
+
 - Documents serving as current design entry are rewritten around Provider Config + Model Config Rules + Registry + ModelFactory + Active Model; pure historical documents are marked historical/retired at the title and opening with a link to the current Design; normative wording that would lead readers to implement Catalog, models.dev fallback, modelId hardcode or capability maps is deleted; historical plans, migration records and Git archaeology evidence are not deleted wholesale; the dev-docs capability map no longer lists retired files as current owners.
 
 ### 1.7 Tighten ineffective projections of the current Model Option Protocol
@@ -181,22 +182,22 @@ A. Zeroing tests and dependency evidence (failing tests for Required ModelFactor
 
 ## 5. Accepted cases
 
-| Case ID | Scenario                                  | Expected                                                                  |
-| ------- | ----------------------------------------- | ------------------------------------------------------------------------- |
-| RZ-01   | production creates AgentRuntime           | the type requires ModelFactory and structured ModelSelection              |
-| RZ-02   | tests build a non-executable Runtime      | an explicit Unavailable ModelFactory; no sentinel Model                   |
-| RZ-03   | model without a Reasoning Option Spec     | `reasoning` absent in Protocol/UI, no `enabled=false`                     |
-| RZ-04   | model with a Reasoning Option Spec        | only levels/defaultLevel; no fixed `enabled=true`                         |
-| RZ-05   | Shared Protocol export scan               | old ZCode Provider DTOs and fields belonging only to them are zero        |
-| RZ-06   | reading a published old CLI config        | the importer parses privately and produces the current Personal Config    |
-| RZ-07   | normal request, Compact, Memory, Title, Child | context/output facts come only from the run's Active Model            |
-| RZ-08   | Model Config default max output updated   | affects only later-created Models; no write-back to old Selection/Runtime snapshot |
-| RZ-09   | local and remote model execution          | each created by the target Environment's ModelFactory, no local fallback  |
-| RZ-10   | reading the current model design docs     | Catalog, models.dev or capability map no longer presented as current authority |
-| RZ-11   | reading the current Model Option Protocol | no zero-consumer field and no flat tools/structured capability            |
-| RZ-12   | a Built-in Provider has a label           | candidates show the Registry Config label                                 |
-| RZ-13   | Provider label missing                    | candidates fall back to providerId only, never a Bootstrap static name table |
-| RZ-14   | reading the Model creation Design         | the Registry lookup/validate vs ModelFactory/Adapter creation boundary is clear |
+| Case ID | Scenario                                      | Expected                                                                           |
+| ------- | --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| RZ-01   | production creates AgentRuntime               | the type requires ModelFactory and structured ModelSelection                       |
+| RZ-02   | tests build a non-executable Runtime          | an explicit Unavailable ModelFactory; no sentinel Model                            |
+| RZ-03   | model without a Reasoning Option Spec         | `reasoning` absent in Protocol/UI, no `enabled=false`                              |
+| RZ-04   | model with a Reasoning Option Spec            | only levels/defaultLevel; no fixed `enabled=true`                                  |
+| RZ-05   | Shared Protocol export scan                   | old ZCode Provider DTOs and fields belonging only to them are zero                 |
+| RZ-06   | reading a published old CLI config            | the importer parses privately and produces the current Personal Config             |
+| RZ-07   | normal request, Compact, Memory, Title, Child | context/output facts come only from the run's Active Model                         |
+| RZ-08   | Model Config default max output updated       | affects only later-created Models; no write-back to old Selection/Runtime snapshot |
+| RZ-09   | local and remote model execution              | each created by the target Environment's ModelFactory, no local fallback           |
+| RZ-10   | reading the current model design docs         | Catalog, models.dev or capability map no longer presented as current authority     |
+| RZ-11   | reading the current Model Option Protocol     | no zero-consumer field and no flat tools/structured capability                     |
+| RZ-12   | a Built-in Provider has a label               | candidates show the Registry Config label                                          |
+| RZ-13   | Provider label missing                        | candidates fall back to providerId only, never a Bootstrap static name table       |
+| RZ-14   | reading the Model creation Design             | the Registry lookup/validate vs ModelFactory/Adapter creation boundary is clear    |
 
 ## 6. Definition of done and non-goals
 

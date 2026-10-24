@@ -16,16 +16,16 @@ Start uses the current App login, drops the separate connection step, and is ava
 current personal/team plan. Only Start is split out; Todo101 (full coexistence of personal/multiple teams)
 is not started.
 
-| Item              | Final decision                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------- |
-| Provider identity | keep `account:zai-start-plan` and `account:bigmodel-start-plan`; no ID merge, no virtual Provider       |
-| Name and logo     | both Start entries share one display name, each keeping the existing Z.ai / BigModel logo; the current brand filter decides which is shown |
-| Settings location | an independent Provider entry in the existing "Zhipu" group, reusing existing display and detail components |
+| Item              | Final decision                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider identity | keep `account:zai-start-plan` and `account:bigmodel-start-plan`; no ID merge, no virtual Provider                                                   |
+| Name and logo     | both Start entries share one display name, each keeping the existing Z.ai / BigModel logo; the current brand filter decides which is shown          |
+| Settings location | an independent Provider entry in the existing "Zhipu" group, reusing existing display and detail components                                         |
 | Detail            | only Start's connect/disconnect is removed; entitlement, quota, claim and model management stay; opening detail does not change the paid connection |
-| Availability      | login, Start entitlement, model enablement and config completeness still pass the original checks; no auto-claim |
-| Data              | no model-selection migration, no new migration version, upgrade connection snapshot or bulk rewrite; existing formats stay readable |
-| New optimization  | at submit/create, when a paid plan's same model has quota on Start and thinking options are compatible, ask whether to switch |
-| Request race      | existing account protection kept; no new check/abort/resend between identity read and token read       |
+| Availability      | login, Start entitlement, model enablement and config completeness still pass the original checks; no auto-claim                                    |
+| Data              | no model-selection migration, no new migration version, upgrade connection snapshot or bulk rewrite; existing formats stay readable                 |
+| New optimization  | at submit/create, when a paid plan's same model has quota on Start and thinking options are compatible, ask whether to switch                       |
+| Request race      | existing account protection kept; no new check/abort/resend between identity read and token read                                                    |
 
 Unified display creates no new execution identity. Across brands, a saved old Start ID is not rewritten to
 the new brand's Start. Both brands' model configs are kept (no merge of enablement, order or user overrides).
@@ -42,13 +42,13 @@ not entitlement.
 - Real login identity, entitlement, model enablement and completeness are still confirmed by the existing Account/Registry chain (leftover brand settings alone do not imply login). Off-Peak's no-current contract stays; Start.current is not omitted to bypass account limits.
 - Start's `connectionKey` depends only on account principal, brand and Start type (not the paid connection): switching team keeps Start's identity, switching account changes it. Same-identity LKG, resetPrevious, revision pairing and pre-publish account/settings checks are reused; no new sync state or token copy.
 
-| State                                   | Expected                                                                       |
-| --------------------------------------- | ------------------------------------------------------------------------------ |
-| Not logged in, no entitlement, pending  | real status shown; no unexecutable Start models; no "connect Start" prompt     |
-| Effective with available models         | Start and the usable paid plan provide models at the same time                 |
-| Effective, server explicitly returns empty models | this round's dynamic model list is cleared; the old whitelist is not kept |
-| Same-identity query temporarily fails   | existing last-known fact kept; with no earlier success nothing is faked available |
-| Explicit expiry / credential unavailable | user's selection kept, reason reported, no auto plan switch                   |
+| State                                             | Expected                                                                          |
+| ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Not logged in, no entitlement, pending            | real status shown; no unexecutable Start models; no "connect Start" prompt        |
+| Effective with available models                   | Start and the usable paid plan provide models at the same time                    |
+| Effective, server explicitly returns empty models | this round's dynamic model list is cleared; the old whitelist is not kept         |
+| Same-identity query temporarily fails             | existing last-known fact kept; with no earlier success nothing is faked available |
+| Explicit expiry / credential unavailable          | user's selection kept, reason reported, no auto plan switch                       |
 
 ### 2.2 Model selection
 
@@ -91,15 +91,15 @@ Title: "体验套餐有可用额度" (trial plan has available quota). Body: "�
 
 ### 4.3 Entry scope
 
-| Entry                                      | Prompt position and side effect                                                        |
-| ------------------------------------------ | -------------------------------------------------------------------------------------- |
-| New-chat first send, new message in a chat | before the original send chain; button/shortcut/attachment share one check; after confirm the Session/draft write-back is reused |
-| Newly submitted queued / guide messages    | checked before first submission; already-submitted queue starts do not re-prompt       |
-| Create scheduled task                      | after form validation, before creation; the result is saved to the task's model config |
-| Edit scheduled task                        | when saving changes touching model selection; title/time-only edits do not prompt      |
-| Save and run now                           | prompt once at the save stage; the run stage does not check again                      |
-| Wiki manual generation / full regenerate   | before the new generation request; the result is fixed as this round's selection       |
-| Custom Subagent create/edit                | when creating an explicit model or editing the model, before form save; description/tool-only edits do not prompt |
+| Entry                                      | Prompt position and side effect                                                                                                                                              |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| New-chat first send, new message in a chat | before the original send chain; button/shortcut/attachment share one check; after confirm the Session/draft write-back is reused                                             |
+| Newly submitted queued / guide messages    | checked before first submission; already-submitted queue starts do not re-prompt                                                                                             |
+| Create scheduled task                      | after form validation, before creation; the result is saved to the task's model config                                                                                       |
+| Edit scheduled task                        | when saving changes touching model selection; title/time-only edits do not prompt                                                                                            |
+| Save and run now                           | prompt once at the save stage; the run stage does not check again                                                                                                            |
+| Wiki manual generation / full regenerate   | before the new generation request; the result is fixed as this round's selection                                                                                             |
+| Custom Subagent create/edit                | when creating an explicit model or editing the model, before form save; description/tool-only edits do not prompt                                                            |
 | Built-in / plugin Subagent                 | inline model change saves immediately: prompt after the user confirms the new model, before saving; "Not now" saves the just-picked paid model, closing keeps the old config |
 
 A Subagent switch is saved as long-term model config (not a one-off call); built-in/plugin ones use the
@@ -134,15 +134,15 @@ invalidation notices about the background Start. No multi-Start / paid notificat
 
 ## 6. State ownership and chain
 
-| Fact / intent                              | Owner                                                   |
-| ------------------------------------------ | ------------------------------------------------------- |
-| Login identity, JWT                        | OAuth service and credential store                      |
-| Paid-connection selection                  | SettingService                                          |
-| current, entitlement, dynamic model members | Account Source, State and Overlay published in one revision |
-| Executable models and effective selection | target Host/Worker Registry and the shared Selection Facade |
-| Quota                                      | existing UsageEntitlement service; UI consumes snapshots only |
-| Whether the recommendation is off          | current App/Host unified setting preference             |
-| Draft, config and submission               | each entry's original owner; the returned selection goes through the original submit path |
+| Fact / intent                               | Owner                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Login identity, JWT                         | OAuth service and credential store                                                        |
+| Paid-connection selection                   | SettingService                                                                            |
+| current, entitlement, dynamic model members | Account Source, State and Overlay published in one revision                               |
+| Executable models and effective selection   | target Host/Worker Registry and the shared Selection Facade                               |
+| Quota                                       | existing UsageEntitlement service; UI consumes snapshots only                             |
+| Whether the recommendation is off           | current App/Host unified setting preference                                               |
+| Draft, config and submission                | each entry's original owner; the returned selection goes through the original submit path |
 
 Flow: user confirms submit or create -> the UI reads the same-model Start availability, thinking options and
 quota from the target Host service -> if the recommendation is off or no clearly compatible usable quota,
@@ -155,29 +155,29 @@ workspaceIdentity isolation stay; model availability is not read from the wrong 
 
 P0 this doc + Design V2 converge; P1 tests first, then current / paid-mapping classification / Start request auth together; P2 settings group, unified name and brand icon, independent detail, Start connection action removed; P3 startup keeps old values readable, stops writing the Start connection, limits paid-invalidation observer and suggestions; P4 shared recommendation check and dialog, Host preference, entry wiring; P5 affected regression and desktop/phone interaction verification, formal docs after stabilization.
 
-| ID     | Scenario and key assertions                                                                                                    |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| SIP-01 | Each brand logged in with Start entitlement and no plan selection: Start executes, request uses the JWT                         |
-| SIP-02 | Start and the current personal/team both current: same-name models execute separately without mixing credentials                |
-| SIP-03 | Switching personal/team/Team scope does not change Start identity, model intent or connectionKey                                |
-| SIP-04 | Independent Start in the Zhipu group, unified name, brand logo; detail has no connect/disconnect, keeps entitlement and model management; browsing writes no paid connection |
-| SIP-05 | Not logged in, no entitlement, pending, unknown, explicit empty models, model disabled: shown and validated by the original contract |
-| SIP-06 | Saved Start keeps its ID after restart; paid selection still maps the current paid connection; unavailable Start does not auto-swap plans |
-| SIP-07 | Old kind:start-plan readable and Start auto-available; no model data migration; new-user init does not pick a paid plan; the only non-current personal plan stays user-selectable |
-| SIP-08 | Existing account-switch, logout, LKG and request-credential protection kept; no new identity-read barrier                      |
-| SIP-09 | Start quota/concurrency errors keep the original banner; recovery does not preempt other selections                             |
-| SIP-10 | With Start and paid both current, global invalidation observes only the paid connection; no suggestion to write a Start connection |
-| SIP-11 | After claiming, Start refreshes without overriding the original model or paid connection; deep link opens Start itself          |
-| SIP-12 | Automation/Bot/explicit Subagent/Wiki saved selections follow the new resolution; no bulk migration; inheritance and frozen runs not reinterpreted |
-| SIP-13 | Desktop, phone on the same Host and remote workspace read the right models and quota; continuous/replayable recovery contracts kept |
-| SIP-14 | Paid same-model with Start available and quota, compatible levels: recommendation shown; different model, incompatible level, already Start: not shown |
-| SIP-15 | Unknown, failed, expired-bucket or exhausted quota never reported available; original submit kept, normal paid use not blocked  |
-| SIP-16 | Chat first/follow-up sends, attachments, shortcut, new queue/guide submissions: after switching the actual request is Start, sent once; "Not now" keeps the model; closing keeps the draft |
-| SIP-17 | Scheduled task create/modify model, save-and-run: prompt only at the save stage and save the result; run-now and background scheduling do not prompt |
-| SIP-18 | New Wiki generation may prompt; auto-refresh and failure-page fill-in do not; existing generated facts not rewritten             |
-| SIP-19 | Subagent custom save and built-in/plugin immediate save follow the button semantics; inherit, restore default, thinking-strength/text-only edits and execution do not prompt |
+| ID     | Scenario and key assertions                                                                                                                                                                                                                                                       |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SIP-01 | Each brand logged in with Start entitlement and no plan selection: Start executes, request uses the JWT                                                                                                                                                                           |
+| SIP-02 | Start and the current personal/team both current: same-name models execute separately without mixing credentials                                                                                                                                                                  |
+| SIP-03 | Switching personal/team/Team scope does not change Start identity, model intent or connectionKey                                                                                                                                                                                  |
+| SIP-04 | Independent Start in the Zhipu group, unified name, brand logo; detail has no connect/disconnect, keeps entitlement and model management; browsing writes no paid connection                                                                                                      |
+| SIP-05 | Not logged in, no entitlement, pending, unknown, explicit empty models, model disabled: shown and validated by the original contract                                                                                                                                              |
+| SIP-06 | Saved Start keeps its ID after restart; paid selection still maps the current paid connection; unavailable Start does not auto-swap plans                                                                                                                                         |
+| SIP-07 | Old kind:start-plan readable and Start auto-available; no model data migration; new-user init does not pick a paid plan; the only non-current personal plan stays user-selectable                                                                                                 |
+| SIP-08 | Existing account-switch, logout, LKG and request-credential protection kept; no new identity-read barrier                                                                                                                                                                         |
+| SIP-09 | Start quota/concurrency errors keep the original banner; recovery does not preempt other selections                                                                                                                                                                               |
+| SIP-10 | With Start and paid both current, global invalidation observes only the paid connection; no suggestion to write a Start connection                                                                                                                                                |
+| SIP-11 | After claiming, Start refreshes without overriding the original model or paid connection; deep link opens Start itself                                                                                                                                                            |
+| SIP-12 | Automation/Bot/explicit Subagent/Wiki saved selections follow the new resolution; no bulk migration; inheritance and frozen runs not reinterpreted                                                                                                                                |
+| SIP-13 | Desktop, phone on the same Host and remote workspace read the right models and quota; continuous/replayable recovery contracts kept                                                                                                                                               |
+| SIP-14 | Paid same-model with Start available and quota, compatible levels: recommendation shown; different model, incompatible level, already Start: not shown                                                                                                                            |
+| SIP-15 | Unknown, failed, expired-bucket or exhausted quota never reported available; original submit kept, normal paid use not blocked                                                                                                                                                    |
+| SIP-16 | Chat first/follow-up sends, attachments, shortcut, new queue/guide submissions: after switching the actual request is Start, sent once; "Not now" keeps the model; closing keeps the draft                                                                                        |
+| SIP-17 | Scheduled task create/modify model, save-and-run: prompt only at the save stage and save the result; run-now and background scheduling do not prompt                                                                                                                              |
+| SIP-18 | New Wiki generation may prompt; auto-refresh and failure-page fill-in do not; existing generated facts not rewritten                                                                                                                                                              |
+| SIP-19 | Subagent custom save and built-in/plugin immediate save follow the button semantics; inherit, restore default, thinking-strength/text-only edits and execution do not prompt                                                                                                      |
 | SIP-20 | "Don't ask again" holds across entries, restart and phone on the same Host; after checked switch / "Not now" the next selection still comes from that entry's saved result and other entries' models are unchanged; no new account sync across Hosts; real error hints not masked |
-| SIP-21 | Ordinary API Provider, Off-Peak, Bot, original-request retry: no recommendation dialog or new model-switch side effect          |
+| SIP-21 | Ordinary API Provider, Off-Peak, Bot, original-request retry: no recommendation dialog or new model-switch side effect                                                                                                                                                            |
 
 Gates follow root and child AGENTS: freshness / git status, affected tests, typecheck, lint,
 `architecture:check --changed`; App interaction adds desktop/phone E2E and theme/i18n verification; CLI per
@@ -214,11 +214,11 @@ daily dev dir untouched; model/entitlement/signing external dependencies use cas
 Host/Worker Registry, submission, SDK request construction and persistence are real code; no real paid
 service):
 
-| Spec                                                                                             | Asserted behavior                                                                                                                                                                                         | Result                                                              |
-| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Spec                                                                                             | Asserted behavior                                                                                                                                                                                                                                                                                                                                                                                                   | Result                                                                                                                                |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `conversation-session/manual-review/pending/conversation-session-start-plan-independent.test.ts` | independent Start navigation, no connect button, paid selection unchanged; Subagent close-restore/confirm-save/thinking-only no prompt; scheduled task create switches to Start (SQLite checked), text edit no prompt; chat "not now"/close/switch, real request Provider and `high` level, sent once, accepted write-back; recommendation-off persists across entries and restart; 1280/390 widths and both themes | release 29 run `desktop-e2e-20260916133532026-p27004-0077916f12a51fd1` passed (earlier extended run `...131850282-p22060-...` passed) |
-| `repo-wiki/repo-wiki-model-plan-selection.test.ts`                                               | paid and Start coexist; default paid, "not now" generates with paid persisted; full regenerate switch saves Start in wiki.json                                                                            | `desktop-e2e-20260916132805627-p25424-cd18c54e0f1f4fc0` passed      |
-| `ui-shell/marketing-touch-entitlement.test.ts`                                                   | old kind:start-plan kept across restart; claim/refresh/browse do not change the connection; the only personal plan can be actively selected; saved Start Subagent model not overridden by paid selection   | `desktop-e2e-20260916133328079-p26502-2678ae04ad3d916c` passed      |
+| `repo-wiki/repo-wiki-model-plan-selection.test.ts`                                               | paid and Start coexist; default paid, "not now" generates with paid persisted; full regenerate switch saves Start in wiki.json                                                                                                                                                                                                                                                                                      | `desktop-e2e-20260916132805627-p25424-cd18c54e0f1f4fc0` passed                                                                        |
+| `ui-shell/marketing-touch-entitlement.test.ts`                                                   | old kind:start-plan kept across restart; claim/refresh/browse do not change the connection; the only personal plan can be actively selected; saved Start Subagent model not overridden by paid selection                                                                                                                                                                                                            | `desktop-e2e-20260916133328079-p26502-2678ae04ad3d916c` passed                                                                        |
 
 Run summaries are under `packages/desktop/.e2e-artifacts/<run>/summary.md` in the Pro worktree; four dialog
 layout screenshots are local in `/tmp/start154-visual-review/` and were viewed. The new cases stay pending

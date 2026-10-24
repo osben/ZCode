@@ -48,17 +48,17 @@ The table's model set is the completeness-check input: every listed model needs 
 
 ## Per-field discussion list
 
-| Field                          | Baseline        | Site may override | When unconfirmed                        |
-| ------------------------------ | --------------- | ----------------- | --------------------------------------- |
-| `contextWindow`                | Model           | yes               | use the known Model value               |
-| `maxOutputTokens.max`          | Model           | yes               | use the known limit                     |
-| `reasoningLevel.values`        | Model           | yes               | conservative, add no levels             |
-| `reasoningLevel.map`           | Model + API Schema | yes            | no reliable mapping means unavailable   |
-| `maxOutputTokens.map`          | API Schema      | yes               | no reliable mapping means unavailable   |
-| `support_pdf`                  | Model           | yes               | do not declare support                  |
-| `supportsToolCall`             | Model/API       | yes               | must not disable a ZCode-required capability |
-| `supportsJsonSchemaOutput`     | Model/API       | yes               | do not declare support when unconfirmed |
-| search / system-message ability | API baseline   | yes               | do not declare support when unconfirmed |
+| Field                           | Baseline           | Site may override | When unconfirmed                             |
+| ------------------------------- | ------------------ | ----------------- | -------------------------------------------- |
+| `contextWindow`                 | Model              | yes               | use the known Model value                    |
+| `maxOutputTokens.max`           | Model              | yes               | use the known limit                          |
+| `reasoningLevel.values`         | Model              | yes               | conservative, add no levels                  |
+| `reasoningLevel.map`            | Model + API Schema | yes               | no reliable mapping means unavailable        |
+| `maxOutputTokens.map`           | API Schema         | yes               | no reliable mapping means unavailable        |
+| `support_pdf`                   | Model              | yes               | do not declare support                       |
+| `supportsToolCall`              | Model/API          | yes               | must not disable a ZCode-required capability |
+| `supportsJsonSchemaOutput`      | Model/API          | yes               | do not declare support when unconfirmed      |
+| search / system-message ability | API baseline       | yes               | do not declare support when unconfirmed      |
 
 "May override" is a configuration capability; a site need not write an override, and without one the earlier baseline applies.
 

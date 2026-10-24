@@ -238,14 +238,14 @@ failed resource load or a remote config referencing an unknown key all fall back
 
 ### 7.6 Display surfaces
 
-| Surface                                   | Data source                                  | Behavior this round                                       |
-| ----------------------------------------- | -------------------------------------------- | --------------------------------------------------------- |
-| Provider left navigation                  | Effective Provider Config                    | Show Provider Logo; missing or unknown key falls back     |
-| Provider detail title                     | Effective Provider Config                    | Same Logo Resolver as navigation                          |
-| Provider Template picker                  | Template `config.logo`                       | Show the Template baseline Logo                           |
-| Account Provider detail                   | Account Provider's Effective Provider Config | No more inferring the Z.AI/BigModel Logo by Provider ID   |
-| Welcome/OAuth login entry                 | The login product's own brand resources      | Kept for now, never the Provider Logo fact source         |
-| Model selector, session messages, task list | Out of scope                               | No new Logo surface just to "unify the brand"             |
+| Surface                                     | Data source                                  | Behavior this round                                     |
+| ------------------------------------------- | -------------------------------------------- | ------------------------------------------------------- |
+| Provider left navigation                    | Effective Provider Config                    | Show Provider Logo; missing or unknown key falls back   |
+| Provider detail title                       | Effective Provider Config                    | Same Logo Resolver as navigation                        |
+| Provider Template picker                    | Template `config.logo`                       | Show the Template baseline Logo                         |
+| Account Provider detail                     | Account Provider's Effective Provider Config | No more inferring the Z.AI/BigModel Logo by Provider ID |
+| Welcome/OAuth login entry                   | The login product's own brand resources      | Kept for now, never the Provider Logo fact source       |
+| Model selector, session messages, task list | Out of scope                                 | No new Logo surface just to "unify the brand"           |
 
 All bundled Logos live in the UI resource boundary shared by Desktop and Web, used by one Resolver. The Renderer may
 keep a `logo key -> bundled asset` table, but it only loads resources and contains no Provider ID, name, order,

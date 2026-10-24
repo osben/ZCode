@@ -17,14 +17,14 @@ shared recommendation balance, on-demand refresh and 60-second validity (F09, se
 components, data owners and execution protocol semantics are kept; the contract for passing the side
 session's first model is completed before implementation.
 
-| Fact                       | Authoritative source                                        | Display / consumer                              |
-| -------------------------- | ----------------------------------------------------------- | ----------------------------------------------- |
-| Model for the next submit  | effective Provider, model, options of the current input/form | input quota; submit-time same-model recommendation |
-| Executed model and errors  | session execution facts                                     | session balance and business error reminders    |
-| Historical model switch    | recorded fromProvider/fromModel, toProvider/toModel         | switch divider hint (never reads the current draft or connection) |
-| Start identity/entitlement | current logged-in account, Account Source                   | Provider availability, Registry, settings page  |
-| Paid-connection selection  | existing saved selection and the in-flight submit selection | personal/team dropdown, full team identity match |
-| Plan balance               | existing UsageEntitlement service                           | by plan and quota bucket (no second balance state) |
+| Fact                       | Authoritative source                                         | Display / consumer                                                |
+| -------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------- |
+| Model for the next submit  | effective Provider, model, options of the current input/form | input quota; submit-time same-model recommendation                |
+| Executed model and errors  | session execution facts                                      | session balance and business error reminders                      |
+| Historical model switch    | recorded fromProvider/fromModel, toProvider/toModel          | switch divider hint (never reads the current draft or connection) |
+| Start identity/entitlement | current logged-in account, Account Source                    | Provider availability, Registry, settings page                    |
+| Paid-connection selection  | existing saved selection and the in-flight submit selection  | personal/team dropdown, full team identity match                  |
+| Plan balance               | existing UsageEntitlement service                            | by plan and quota bucket (no second balance state)                |
 
 `current` still means "matches the account access context"; Start and one paid Provider may both be true;
 it is not the input selection and is not used to guess the dropdown's selected item. Desktop continuous,
@@ -36,6 +36,7 @@ phone replayable and the original submit owner are kept.
 start-plan once Start was chosen in the input (personal/team/none all returned none), so the ring could
 disappear for a new zero-usage session and the hover lacked Start balance (the ring also carries context
 usage, so it is not the Start state indicator).
+
 - [x] Remove that extra connection condition; show balance per the input's effective Provider and model.
 - [x] Keep original account entitlement, model, config validation and quota-refresh entries.
 - [x] Personal/team quota keeps depending on the correct paid scope; other Providers' semantics unchanged.
@@ -45,6 +46,7 @@ usage, so it is not the Start state indicator).
 Chain `settingService.prepareLegacyAccountConnections` -> `node.ts` readAccountProviderSettings ->
 `accountProviderConnectionResolver.ts`: a legacy team missing organizationId with failed completion produced
 `unresolvedFamilies`, marking the same brand's Providers including Start unknown and skipping queries.
+
 - [x] Drop that restriction for Start (it keeps querying entitlement independently by the logged-in account).
 - [x] Missing team info still restricts paid access that needs it (no guessed organization/project).
 - [x] No migration, extra recovery or complex race barrier. Old tests asserting Start unknown with the whole brand are corrected. The defect has source and test evidence but is not the proven cause of the earlier Air plan-expiry symptom.
@@ -74,11 +76,11 @@ These callers supply `preferredProviderId` but omit `accountAccess`; `useUsageEn
 and `BigModelUsageQuotaProvider` does not derive it from the ID alone, so Start can return `not_configured`
 with provider=null, quota=null.
 
-| Call site                                  | Fix                                                                 |
-| ------------------------------------------ | ------------------------------------------------------------------- |
-| `useV4SessionQuotaBanner.ts`               | add the access description from the actual executing Provider; keep the server-error branch |
-| `usePlanIdentitySnapshot.ts`               | check Start/paid queries, add the parameter, keep the plan-identity statistics purpose |
-| `MarketingTouchProvider.tsx` post-claim balance refresh | add the access description for that Start query, still via the existing service |
+| Call site                                               | Fix                                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `useV4SessionQuotaBanner.ts`                            | add the access description from the actual executing Provider; keep the server-error branch |
+| `usePlanIdentitySnapshot.ts`                            | check Start/paid queries, add the parameter, keep the plan-identity statistics purpose      |
+| `MarketingTouchProvider.tsx` post-claim balance refresh | add the access description for that Start query, still via the existing service             |
 
 - [x] Fix the calls without asking the user to reconnect or copying credentials into UI.
 - [x] Cover cold cache, existing cache and refresh so other entries filling the cache do not mask the missing parameter.
@@ -95,19 +97,19 @@ not mean executable models. The original screenshot mixed "Coding Plan / not con
 for no-plan, query failure and missing config; this round fixes the state classification and reuses existing
 page components (no page redesign).
 
-| Case                           | Final display and action                                          | Nature                                              |
-| ------------------------------ | ----------------------------------------------------------------- | --------------------------------------------------- |
-| Not logged in                  | Start-specific login note + login entry                           | adjust note and wiring, reuse login flow; never "connect Start" |
-| First query, nothing yet       | original "querying + spinner"                                     | reused, no skeleton                                 |
-| Explicitly no valid plan       | no trial plan available; keep original intro and applicable campaign entry | necessary Start empty-state adjustment    |
-| Valid plan                     | original plan card, quota card, upgrade, model management         | reused; connect/disconnect and paid-connection dropdown removed |
-| Pending                        | original green pending time                                       | reused, no promise of executability                 |
-| Effective time reached, quota not synced | original "refresh entitlement" button                   | reused                                              |
-| Quota exhausted                | original card 0%, empty bar, 0 / total; keep plan info and model management | reused, no exhaustion warning added      |
-| First query failed             | original failed state with retry wired                            | fix classification/action; no no-plan or not-connected |
-| Background refresh failed      | existing cache/error handling                                     | no new failure bar over old content; cache-retention rule not widened |
-| Explicit login/credential invalid | original re-login action                                       | necessary classification fix; ordinary network failure only retries |
-| Provider config truly missing  | only then show config unavailable                                 | fix wrong judgment; no-plan or balance failure must not trigger it |
+| Case                                     | Final display and action                                                    | Nature                                                                |
+| ---------------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Not logged in                            | Start-specific login note + login entry                                     | adjust note and wiring, reuse login flow; never "connect Start"       |
+| First query, nothing yet                 | original "querying + spinner"                                               | reused, no skeleton                                                   |
+| Explicitly no valid plan                 | no trial plan available; keep original intro and applicable campaign entry  | necessary Start empty-state adjustment                                |
+| Valid plan                               | original plan card, quota card, upgrade, model management                   | reused; connect/disconnect and paid-connection dropdown removed       |
+| Pending                                  | original green pending time                                                 | reused, no promise of executability                                   |
+| Effective time reached, quota not synced | original "refresh entitlement" button                                       | reused                                                                |
+| Quota exhausted                          | original card 0%, empty bar, 0 / total; keep plan info and model management | reused, no exhaustion warning added                                   |
+| First query failed                       | original failed state with retry wired                                      | fix classification/action; no no-plan or not-connected                |
+| Background refresh failed                | existing cache/error handling                                               | no new failure bar over old content; cache-retention rule not widened |
+| Explicit login/credential invalid        | original re-login action                                                    | necessary classification fix; ordinary network failure only retries   |
+| Provider config truly missing            | only then show config unavailable                                           | fix wrong judgment; no-plan or balance failure must not trigger it    |
 
 - [x] Linked check of `providerFamilyConnectionVisibility.ts`, `Detail.tsx`, `StatusCards.tsx` and the original claim/intro entries so changing copy alone does not hide actions.
 - [x] With a plan keep plan name, expiry, per-plan quota cards, per-model quota buckets, upgrade and model-management layout; multiple plans group exactly by plan_id; one exhausted bucket does not affect others or clear the page.
@@ -171,32 +173,33 @@ Start never silently consumes paid quota; claiming and browsing change neither m
 connection. The same-model recommendation keeps thinking-compat validation and original submit/accepted
 write-back; task triggers, background execution, run-now and Bot add no recommendation. No new identity-read
 race barrier, auto-resend, second accepted queue, connection or quota state.
+
 - [x] Before implementing, the formal Start spec and related feature graph were aligned with these decisions (removing "Start is a connection option / auto fall back to personal on invalidation"); withdrawn candidates not introduced.
 - [x] Old guide code deleted only after checking real references and only for the dedicated deprecated flow; valid legacy-format compatibility reads kept.
 
 ## 10. Regression cases
 
-| ID    | Scenario                                                                                                                                                  |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SF-01 | Two brands x global personal/team/none/legacy Start: input-selected Start provides its quota                                                              |
-| SF-02 | New zero-context and existing-context sessions: ring, hover and refresh correct; after switching to paid, correct scope                                   |
-| SF-03 | Legacy team organization completion fails: Start still queries independently; team access keeps its restriction                                           |
-| SF-04 | Session balance, identity snapshot, post-claim balance: cold cache / existing cache / refresh pass correct access description                             |
-| SF-05 | Start present; not logged in, querying, no plan, valid, pending, failed, login invalid show correct state and action                                      |
-| SF-06 | Zero quota keeps the original card; multiple plans and buckets do not mix; bucket time vs plan expiry separate, no fabrication                            |
-| SF-07 | After claiming, model/paid selection unchanged; "View plan" opens the Start detail; refresh failure does not reverse the claim                            |
-| SF-08 | Team selected and personal not enabled: dropdown shows team; team temporarily unavailable not cleared by current; full team identity matched              |
-| SF-09 | Old Start user without a paid selection: "select a plan"; the single personal candidate selectable; never auto-picks the first                            |
-| SF-10 | Two brands x three plan types, same/different model names, missing catalog, history replay: divider / first-use / toast suffix correct                    |
-| SF-11 | Custom Provider labels unchanged; zh/en, light/dark, desktop and phone narrow without truncation or overflow; no new left-side status system              |
-| SF-12 | Original exact Start resolution, request auth, same-model recommendation, claim, store owners and continuous/replayable boundaries not regressed           |
+| ID    | Scenario                                                                                                                                                                                                                                                                                                           |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SF-01 | Two brands x global personal/team/none/legacy Start: input-selected Start provides its quota                                                                                                                                                                                                                       |
+| SF-02 | New zero-context and existing-context sessions: ring, hover and refresh correct; after switching to paid, correct scope                                                                                                                                                                                            |
+| SF-03 | Legacy team organization completion fails: Start still queries independently; team access keeps its restriction                                                                                                                                                                                                    |
+| SF-04 | Session balance, identity snapshot, post-claim balance: cold cache / existing cache / refresh pass correct access description                                                                                                                                                                                      |
+| SF-05 | Start present; not logged in, querying, no plan, valid, pending, failed, login invalid show correct state and action                                                                                                                                                                                               |
+| SF-06 | Zero quota keeps the original card; multiple plans and buckets do not mix; bucket time vs plan expiry separate, no fabrication                                                                                                                                                                                     |
+| SF-07 | After claiming, model/paid selection unchanged; "View plan" opens the Start detail; refresh failure does not reverse the claim                                                                                                                                                                                     |
+| SF-08 | Team selected and personal not enabled: dropdown shows team; team temporarily unavailable not cleared by current; full team identity matched                                                                                                                                                                       |
+| SF-09 | Old Start user without a paid selection: "select a plan"; the single personal candidate selectable; never auto-picks the first                                                                                                                                                                                     |
+| SF-10 | Two brands x three plan types, same/different model names, missing catalog, history replay: divider / first-use / toast suffix correct                                                                                                                                                                             |
+| SF-11 | Custom Provider labels unchanged; zh/en, light/dark, desktop and phone narrow without truncation or overflow; no new left-side status system                                                                                                                                                                       |
+| SF-12 | Original exact Start resolution, request auth, same-model recommendation, claim, store owners and continuous/replayable boundaries not regressed                                                                                                                                                                   |
 | SF-13 | `/side <question>` first submit: when compatible with quota the recommendation may show; confirm affects only the child, "not now" keeps its original selection, closing neither creates nor sends and keeps the draft; empty `/side` does not prompt; both delivery modes keep original idempotency and admission |
-| SF-14 | Recommendation, settings page and input hover share the same-account same-Start balance; after the settings page refreshes to zero the recommendation must not keep the old positive quota; other accounts/Providers' results are not mixed |
-| SF-15 | Recommendation balance within 60 s judged by the real quota; over 60 s or unknown refreshes in the background, this time continues with the original selection without waiting, and the next submit uses the new result |
-| SF-16 | Same brand A -> B: B's balance is read via the account/Provider refresh mechanism; brief reuse is allowed but an old sample older than the validity stops being used; query failure follows existing backoff and never blocks submit |
-| SF-17 | Session switch, unmount/remount and next-day entry never make an old balance fresh again; repeated access reuses the 60 s throttle and in-flight merge; no extra polling without operations |
-| SF-18 | Bucket validity checked at submit time: a fresh snapshot with an expired bucket does not recommend; server time counts the time elapsed since sampling; original bucket/plan time display rules kept |
-| SF-19 | Claim / entitlement change triggers the original refresh chain and syncs the recommendation basis; an existing zero quota updated to positive restores the recommendation without auto-switching; covers every recommendation entry and the same-Host phone path |
+| SF-14 | Recommendation, settings page and input hover share the same-account same-Start balance; after the settings page refreshes to zero the recommendation must not keep the old positive quota; other accounts/Providers' results are not mixed                                                                        |
+| SF-15 | Recommendation balance within 60 s judged by the real quota; over 60 s or unknown refreshes in the background, this time continues with the original selection without waiting, and the next submit uses the new result                                                                                            |
+| SF-16 | Same brand A -> B: B's balance is read via the account/Provider refresh mechanism; brief reuse is allowed but an old sample older than the validity stops being used; query failure follows existing backoff and never blocks submit                                                                               |
+| SF-17 | Session switch, unmount/remount and next-day entry never make an old balance fresh again; repeated access reuses the 60 s throttle and in-flight merge; no extra polling without operations                                                                                                                        |
+| SF-18 | Bucket validity checked at submit time: a fresh snapshot with an expired bucket does not recommend; server time counts the time elapsed since sampling; original bucket/plan time display rules kept                                                                                                               |
+| SF-19 | Claim / entitlement change triggers the original refresh chain and syncs the recommendation basis; an existing zero quota updated to positive restores the recommendation without auto-switching; covers every recommendation entry and the same-Host phone path                                                   |
 
 Old tests asserting "Start quota requires a globally selected Start" and "Start must be unknown when legacy
 team completion fails" were corrected; tests proving the right expectations came before implementation.
@@ -275,13 +278,13 @@ after a same-brand account change.
 
 ### 13.3 Recommendation rule at submit
 
-| Balance fact at submit                                                  | Behavior                                                                          |
-| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| latest successful sample <= 60 s, same-model bucket valid with positive quota | recommend normally when the original candidate/thinking/preference conditions hold |
-| latest successful sample <= 60 s, balance zero                          | no recommendation, continue with the original selection                           |
-| sample older than 60 s, or not yet queried                              | refresh in the background per existing throttle/backoff; this time continues with the original selection without waiting for the quota query |
-| query failed                                                            | skip the recommendation, normal submit unaffected; retry per original backoff     |
-| snapshot <= 60 s but its quota bucket has expired                        | that bucket is not a basis; other valid same-model buckets are judged by the original rule |
+| Balance fact at submit                                                        | Behavior                                                                                                                                     |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| latest successful sample <= 60 s, same-model bucket valid with positive quota | recommend normally when the original candidate/thinking/preference conditions hold                                                           |
+| latest successful sample <= 60 s, balance zero                                | no recommendation, continue with the original selection                                                                                      |
+| sample older than 60 s, or not yet queried                                    | refresh in the background per existing throttle/backoff; this time continues with the original selection without waiting for the quota query |
+| query failed                                                                  | skip the recommendation, normal submit unaffected; retry per original backoff                                                                |
+| snapshot <= 60 s but its quota bucket has expired                             | that bucket is not a basis; other valid same-model buckets are judged by the original rule                                                   |
 
 - [x] Validity is by the latest real successful sample; reading cache, remounting and cross-entry echo do not reset its age; a failed refresh does not extend an old positive quota's validity.
 - [x] Bucket validity is judged at the actual submit time; with a server reference time the time elapsed since collection is counted (not fixed at snapshot.serverTime / generatedAt); the original handling of server vs local clock difference is kept.

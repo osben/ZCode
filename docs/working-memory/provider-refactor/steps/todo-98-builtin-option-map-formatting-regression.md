@@ -21,11 +21,11 @@ F98-03 reproduced in Pro with real space typing: the dialog's React Portal keybo
 
 ## 3. Impact analysis (planning / presentation)
 
-| Entry | Shared implementation and display state | Source, validation and save boundary |
-| --- | --- | --- |
-| add model | Model edit draft -> ProviderModelSettingsGroups -> JsonSlotEditor | Built-in inherited value as placeholder, explicit draft as value; original validation and save kept; viewing never pins the recommended value |
-| edit model | same controls; Personal/pinned config differs from inherited display | Settings Facade/ConfigService still saves the Personal Overlay; cancel writes nothing |
-| Desktop / Web / phone settings | same UI | same config version keeps the same line breaks; narrow-screen soft wrap does not replace the source string's indentation; no Web publish or attachment change |
+| Entry                          | Shared implementation and display state                              | Source, validation and save boundary                                                                                                                          |
+| ------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| add model                      | Model edit draft -> ProviderModelSettingsGroups -> JsonSlotEditor    | Built-in inherited value as placeholder, explicit draft as value; original validation and save kept; viewing never pins the recommended value                 |
+| edit model                     | same controls; Personal/pinned config differs from inherited display | Settings Facade/ConfigService still saves the Personal Overlay; cancel writes nothing                                                                         |
+| Desktop / Web / phone settings | same UI                                                              | same config version keeps the same line breaks; narrow-screen soft wrap does not replace the source string's indentation; no Web publish or attachment change |
 
 What is shared is string display; the draft and commit semantics of add/edit and inherited/pinned are not unified or changed. Grading: must-inspect Built-in Map source strings; should-inspect `ProviderModelSettingsGroups.tsx`, `ProviderModelMetadataFields.tsx` value/placeholder; invariant-only Personal save and the Model executor; evidence-only Provider Node, Map, UI display and settings E2E tests. `JsonSlotEditor` uses `value={value}` and `placeholder={effectiveValue}` directly with no formatting step. No codegraph (targeted config diff and direct reading); no new business surface/owner; the graph only adds spec/Todo links.
 
@@ -33,11 +33,11 @@ What is shared is string display; the draft and commit semantics of add/edit and
 
 User ruling: expand objects, two-space indentation, simple ternaries on one line; style and change constraint are separate. No open question. Dimensions kept: nested/simple/complex branch x dedicated/fallback source x placeholder/personal input; no combination of accounts, plans or every theme/language/device (they do not change the source text format); desktop and narrow layout each keep display evidence.
 
-| Case | Setup / action | Must assert | Evidence |
-| --- | --- | --- | --- |
-| F98-01 | read representative nested, complex-branch and simple real Built-in Maps | object-level line breaks, two-space indentation, simple ternary on one line, simple maxOutput Map not expanded mechanically | config-level regression test (not a hand-written multi-line fixture) |
-| F98-02 | compile and diff old/new Maps | expression structure unchanged; no config change beyond Map layout and revision; existing request tests pass | reuse existing compile/equivalence tests; no persisted full old-config snapshot or large proof framework |
-| F98-03 | settings add/edit showing an inherited Map; type a personal layout then cancel / save normally | inherited line breaks kept; personal input not re-laid-out; viewing/cancel produces no override; normal save keeps the original boundary | shared UI test + representative Electron E2E/screenshots covering desktop and narrow layout |
+| Case   | Setup / action                                                                                 | Must assert                                                                                                                              | Evidence                                                                                                 |
+| ------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| F98-01 | read representative nested, complex-branch and simple real Built-in Maps                       | object-level line breaks, two-space indentation, simple ternary on one line, simple maxOutput Map not expanded mechanically              | config-level regression test (not a hand-written multi-line fixture)                                     |
+| F98-02 | compile and diff old/new Maps                                                                  | expression structure unchanged; no config change beyond Map layout and revision; existing request tests pass                             | reuse existing compile/equivalence tests; no persisted full old-config snapshot or large proof framework |
+| F98-03 | settings add/edit showing an inherited Map; type a personal layout then cancel / save normally | inherited line breaks kept; personal input not re-laid-out; viewing/cancel produces no override; normal save keeps the original boundary | shared UI test + representative Electron E2E/screenshots covering desktop and narrow layout              |
 
 Catalog/coverage are merged into this table; implementation reuses `providerModelMetadataDialog.test.ts` and the nearest existing settings E2E cases, adding the case/manifest per e2e-case-lifecycle without copying a whole matrix or auto-promoting pending. Tests first; isolated config, no real account/model request, no sleeps; real phone/Web not run must be stated.
 

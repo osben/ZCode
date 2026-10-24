@@ -28,12 +28,12 @@ resolve exactly once and the Desktop Host no longer scans the Settings View to g
 
 ### 2.1 `enabled`, `entitled` and `executable`
 
-| Fact                                    | Sole meaning                                                                          | Owner                       | Allowed consumers                                                      |
-| --------------------------------------- | ------------------------------------------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------- |
-| `provider.enabled`                      | Provider joined to the current config; normal Built-in sits in the main list or menu  | Built-in + Personal Overlay | Settings placement; Resolver's first execution gate                    |
-| `access.entitled`                       | Whether the current account has the matching Account product eligibility              | Account Overlay             | Account status UI; Resolver's Account execution gate                   |
-| `provider.executable` / Registry presence | Provider enabled, entitled, complete and with at least one executable model         | Resolver / Registry         | Model selection, connection test, real execution, internal exact lookup |
-| Account access descriptor               | Static `type/family/mode` description                                                 | Built-in Provider Config    | Display dispatch, account request material resolution; never turned into a "connected" boolean |
+| Fact                                      | Sole meaning                                                                         | Owner                       | Allowed consumers                                                                              |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `provider.enabled`                        | Provider joined to the current config; normal Built-in sits in the main list or menu | Built-in + Personal Overlay | Settings placement; Resolver's first execution gate                                            |
+| `access.entitled`                         | Whether the current account has the matching Account product eligibility             | Account Overlay             | Account status UI; Resolver's Account execution gate                                           |
+| `provider.executable` / Registry presence | Provider enabled, entitled, complete and with at least one executable model          | Resolver / Registry         | Model selection, connection test, real execution, internal exact lookup                        |
+| Account access descriptor                 | Static `type/family/mode` description                                                | Built-in Provider Config    | Display dispatch, account request material resolution; never turned into a "connected" boolean |
 
 `enabled` must not infer account connected/purchased/entitled, and the mere existence of an Account access
 descriptor must not infer entitlement. Renderer does not copy the Resolver formula; it consumes `executable` or the
@@ -129,13 +129,13 @@ are resolved by request-time Services.
 
 ## 4. UI surface matrix
 
-| Scenario                      | Display/draft                        | Commit action                          | Authoritative owner                                | Must isolate                                           |
-| ----------------------------- | ------------------------------------ | -------------------------------------- | -------------------------------------------------- | ------------------------------------------------------ |
-| Welcome typed key             | Local API key draft                  | `savePersonalProviderOverlay`          | Personal Provider Config                           | No Account Overlay/Family selection, no Built-in copy  |
-| Provider Settings pay-as-you-go API | Effective Config + key draft   | Same Overlay save entry                | Personal Provider Config                           | No Account Request Auth                                |
-| Provider Settings Coding Plan | Account access/entitlement + plan status | Explicit connection selection/account operations | App Settings + Account Overlay          | No typed key; no `enabled`-inferred entitlement        |
-| Connection test               | Provider/Model row                   | Flush Provider draft then test formal Model | Registry/ModelFactory                          | No Model Rule rewrite, no account state guessing       |
-| Off-Peak create and dispatch  | Support state + idle selection       | Ticket + host-private Request Auth     | Off-Peak Service + Registry + Account Request Auth | No credential exposure, no ordinary Session Selection change |
+| Scenario                            | Display/draft                            | Commit action                                    | Authoritative owner                                | Must isolate                                                 |
+| ----------------------------------- | ---------------------------------------- | ------------------------------------------------ | -------------------------------------------------- | ------------------------------------------------------------ |
+| Welcome typed key                   | Local API key draft                      | `savePersonalProviderOverlay`                    | Personal Provider Config                           | No Account Overlay/Family selection, no Built-in copy        |
+| Provider Settings pay-as-you-go API | Effective Config + key draft             | Same Overlay save entry                          | Personal Provider Config                           | No Account Request Auth                                      |
+| Provider Settings Coding Plan       | Account access/entitlement + plan status | Explicit connection selection/account operations | App Settings + Account Overlay                     | No typed key; no `enabled`-inferred entitlement              |
+| Connection test                     | Provider/Model row                       | Flush Provider draft then test formal Model      | Registry/ModelFactory                              | No Model Rule rewrite, no account state guessing             |
+| Off-Peak create and dispatch        | Support state + idle selection           | Ticket + host-private Request Auth               | Off-Peak Service + Registry + Account Request Auth | No credential exposure, no ordinary Session Selection change |
 
 High-risk relations: Account Overlay -> Settings/telemetry (`enabled=true, entitled=false` misreported as
 connected/purchased); Registry -> Off-Peak Host dispatch (Settings scan hits several Providers, dispatch lacks
@@ -148,7 +148,7 @@ replayable and remote workspace invariants unchanged (Provider Registry sync sta
 ### Provider / Services
 
 - Account Provider `enabled=true, entitled=false`: visible in Settings, absent from Registry; `enabled=true,
-  entitled=true` and complete: in Registry.
+entitled=true` and complete: in Registry.
 - A present descriptor with `entitled=false` is never interpreted as connected/purchased.
 - Account Resolver projects only `builtinModelIds + access.entitled`.
 - Individual/Team Coding Plan project keys resolve by the original identity and cache boundary; ordinary

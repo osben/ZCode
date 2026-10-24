@@ -51,16 +51,16 @@ This is a bugfix of an existing contract and needs no new product decision.
 
 ### 1.2 Tighten `RuntimeModelFactoryInput`
 
-| Field                       | Fact                                             | Decision |
-| --------------------------- | ------------------------------------------------ | -------- |
-| `contextWindow`             | Registry Model properties already carry it       | delete   |
-| `properties`                | callers must not override Registry's full facts  | delete   |
-| `midConversationSystemMode` | MCS override is judged at Provider message projection | delete |
-| `providerOptions`           | Provider parameters come from Model Config reasoningMapping | delete |
-| `selection`                 | ModelFactory selection input                     | keep     |
-| `visibleMaxOutputTokens`    | still part of fixed-thinking visible-output budget | keep   |
-| `reasoningMode`             | still expresses the auxiliary-call disable-reasoning intent | keep |
-| `requestDependencies`       | still binds request-auth etc. for this execution | keep     |
+| Field                       | Fact                                                        | Decision |
+| --------------------------- | ----------------------------------------------------------- | -------- |
+| `contextWindow`             | Registry Model properties already carry it                  | delete   |
+| `properties`                | callers must not override Registry's full facts             | delete   |
+| `midConversationSystemMode` | MCS override is judged at Provider message projection       | delete   |
+| `providerOptions`           | Provider parameters come from Model Config reasoningMapping | delete   |
+| `selection`                 | ModelFactory selection input                                | keep     |
+| `visibleMaxOutputTokens`    | still part of fixed-thinking visible-output budget          | keep     |
+| `reasoningMode`             | still expresses the auxiliary-call disable-reasoning intent | keep     |
+| `requestDependencies`       | still binds request-auth etc. for this execution            | keep     |
 
 Only proven-ineffective fields are removed; the three valid execution parameters are not redesigned. All
 Core call sites drop the pass-through; no deprecated alias, optional field or unconsumed parameter is kept.
@@ -126,17 +126,17 @@ from the capability seeds after deletion.
 
 ## 4. Accepted cases
 
-| Case ID | Setup                                 | Action                   | Assertions                              |
-| ------- | ------------------------------------- | ------------------------ | --------------------------------------- |
-| MZ-01   | Model MCS=false, runtime mode=force   | Full Compact             | whole chain selects, estimates and requests in MCS shape |
-| MZ-02   | Model MCS=false, runtime mode=auto    | Full Compact             | keeps legacy user reminder shape        |
-| MZ-03   | Model MCS=true, runtime mode=auto     | Full Compact             | requests in MCS shape                   |
-| MZ-04   | Automatic Compact holds Active Model A | triggers after Registry updates to B | still uses A and the current runtime force |
-| MZ-05   | every Core ModelFactory call site     | typecheck/unit           | no longer passes the four ineffective fields |
-| MZ-06   | fixed-thinking / auxiliary execution / request-auth | create and call Model | the three valid execution parameters unchanged |
-| MZ-07   | published Legacy Provider store fixture | start importer         | conversion identical to before; Shared has no old DTO |
-| MZ-08   | current Provider/Model Config         | normal start and settings read | never enters the Legacy parser/type |
-| MZ-09   | the three candidate dead files        | knip + dep:refs + delete | no production, test, barrel or dynamic-entry residue |
+| Case ID | Setup                                               | Action                               | Assertions                                               |
+| ------- | --------------------------------------------------- | ------------------------------------ | -------------------------------------------------------- |
+| MZ-01   | Model MCS=false, runtime mode=force                 | Full Compact                         | whole chain selects, estimates and requests in MCS shape |
+| MZ-02   | Model MCS=false, runtime mode=auto                  | Full Compact                         | keeps legacy user reminder shape                         |
+| MZ-03   | Model MCS=true, runtime mode=auto                   | Full Compact                         | requests in MCS shape                                    |
+| MZ-04   | Automatic Compact holds Active Model A              | triggers after Registry updates to B | still uses A and the current runtime force               |
+| MZ-05   | every Core ModelFactory call site                   | typecheck/unit                       | no longer passes the four ineffective fields             |
+| MZ-06   | fixed-thinking / auxiliary execution / request-auth | create and call Model                | the three valid execution parameters unchanged           |
+| MZ-07   | published Legacy Provider store fixture             | start importer                       | conversion identical to before; Shared has no old DTO    |
+| MZ-08   | current Provider/Model Config                       | normal start and settings read       | never enters the Legacy parser/type                      |
+| MZ-09   | the three candidate dead files                      | knip + dep:refs + delete             | no production, test, barrel or dynamic-entry residue     |
 
 No new conversation state combination, so the Formal Proof state machine is unchanged; MZ-01 to MZ-04 use
 Core unit/integration tests; no new Desktop E2E (affected existing Provider/Compact regressions only).

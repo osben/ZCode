@@ -21,13 +21,13 @@ hover look identical; dark theme (10% vs 5% white, with a blended selected hover
 (composited examples: light about `#f3f3f3` both; dark about `#2b2b2b` vs `#313131`). The user rejected
 strengthening text/icons; no text color, bold or icon emphasis.
 
-| State dimension     | Final rule                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------- |
-| On/off              | background difference only; light selected darker, dark selected lighter            |
+| State dimension        | Final rule                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| On/off                 | background difference only; light selected darker, dark selected lighter                             |
 | Hover / keyboard focus | slight interaction background change; on and off still clearly different; off-hover must not look on |
-| Personal override   | border keeps expressing override source only; no border-as-switch, no thicker border or focus ring |
-| Text/icons          | original color, weight, glyph, size                                                 |
-| Layout/controls     | size, spacing, icons, groups unchanged; no checkbox, check mark or on/off text      |
+| Personal override      | border keeps expressing override source only; no border-as-switch, no thicker border or focus ring   |
+| Text/icons             | original color, weight, glyph, size                                                                  |
+| Layout/controls        | size, spacing, icons, groups unchanged; no checkbox, check mark or on/off text                       |
 
 Fix locally in the model editor; do not change global `--color-selected` / `--color-hover` or other pages.
 `modelEditorControlStyle` is shared with text-input/map editors, so only the boolean-selected branch
@@ -45,14 +45,14 @@ cleanup entries could carry the name; removing only the name timer was not enoug
 
 ### 2.1 Final interaction
 
-| Action                          | Behavior                                                                             |
-| ------------------------------- | ------------------------------------------------------------------------------------ |
-| Enter name editing              | create a name-edit draft and edit identity; show the current name                    |
-| Type / pause / composition end  | edit the name draft only; no timed save; does not exit editing                       |
-| Enter (not IME candidate confirm) | confirm: save and end the edit, reusing the blur commit with no duplicate write    |
-| Blur                            | confirm save and exit; blank/unchanged name keeps existing validation and no-commit rule |
-| Esc (not IME composing)         | abandon this edit, restore the name shown at edit start, exit; no save or compensating rollback |
-| IME candidate confirm           | keep the composition guard; candidate Enter is not a confirm-save                    |
+| Action                            | Behavior                                                                                        |
+| --------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Enter name editing                | create a name-edit draft and edit identity; show the current name                               |
+| Type / pause / composition end    | edit the name draft only; no timed save; does not exit editing                                  |
+| Enter (not IME candidate confirm) | confirm: save and end the edit, reusing the blur commit with no duplicate write                 |
+| Blur                              | confirm save and exit; blank/unchanged name keeps existing validation and no-commit rule        |
+| Esc (not IME composing)           | abandon this edit, restore the name shown at edit start, exit; no save or compensating rollback |
+| IME candidate confirm             | keep the composition guard; candidate Enter is not a confirm-save                               |
 
 Esc cancels the **local unconfirmed name draft**; it does not write back remote/other-window changes.
 After exit the authoritative Provider View is shown; no rollback writes an old whole Provider.
@@ -77,26 +77,26 @@ address / API Key draft --original idle / blur / cleanup--> original save (never
 
 Relative to `packages/ui/src/settings/model-provider-section/`:
 
-| Item             | Location                                                                                                  | Boundary                                           |
-| ---------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Block feedback   | `modelEditorControlStyle.ts`; check `ProviderModelMetadataFields.tsx`, `ProviderModelModalityOptions.tsx` | local selected/hover background only               |
-| Name interaction | `InlineEditableProviderCard.tsx`, Header in `ProviderCardSections.tsx`                                    | name edit draft, Enter/blur/Esc, IME events        |
-| Commit isolation | `ProviderDraftSave.ts` and the `commitPendingDraft` call sites                                            | adjust field extraction only if needed             |
-| Shared scheduling | `useIdleTrigger.ts`                                                                                      | check consumers only; no global timer change       |
+| Item              | Location                                                                                                  | Boundary                                     |
+| ----------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Block feedback    | `modelEditorControlStyle.ts`; check `ProviderModelMetadataFields.tsx`, `ProviderModelModalityOptions.tsx` | local selected/hover background only         |
+| Name interaction  | `InlineEditableProviderCard.tsx`, Header in `ProviderCardSections.tsx`                                    | name edit draft, Enter/blur/Esc, IME events  |
+| Commit isolation  | `ProviderDraftSave.ts` and the `commitPendingDraft` call sites                                            | adjust field extraction only if needed       |
+| Shared scheduling | `useIdleTrigger.ts`                                                                                       | check consumers only; no global timer change |
 
 ## 4. Verification
 
-| Case    | Scenario/action                                          | Must assert                                                            |
-| ------- | -------------------------------------------------------- | ---------------------------------------------------------------------- |
-| S122-01 | both themes, mouse stays, toggle image/capability/MFJS repeatedly | selected/unselected backgrounds clearly differ; text, icon, size unchanged |
-| S122-02 | not overridden / overridden x on/off x hover/keyboard focus; phone touch | border means override only; off-hover does not look on; no new ring/checkbox; touch state distinguishable |
-| S122-03 | number/map inputs on the same page and other settings controls | not affected by the option style change; fixed locked options still cannot toggle |
-| N122-01 | A -> B, keep editing longer than the old idle time, then Esc | no save on timeout; Esc restores the old name/exits; advancing timers or cleanup never writes B |
-| N122-02 | A -> B, Enter / click outside                            | saves the correct name exactly once; unchanged/blank follows the old rules |
-| N122-03 | address/API Key auto-save, connection test while name unconfirmed | other fields save as before without the unconfirmed name; Esc does not clear other fields' intent |
-| N122-04 | blur/cleanup after Esc; switch Provider; delayed save reply | cancelled name not resubmitted; no overwrite of a new Provider or newer state |
-| N122-05 | Chinese IME input / candidate Enter / composition end    | no mid-way confirm or timed save; real Enter/Esc still work            |
-| N122-06 | name save success/failure, re-enter editing              | success shows authoritative name; failure has feedback and retry path; no fake success or compensating old-name write |
+| Case    | Scenario/action                                                          | Must assert                                                                                                           |
+| ------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| S122-01 | both themes, mouse stays, toggle image/capability/MFJS repeatedly        | selected/unselected backgrounds clearly differ; text, icon, size unchanged                                            |
+| S122-02 | not overridden / overridden x on/off x hover/keyboard focus; phone touch | border means override only; off-hover does not look on; no new ring/checkbox; touch state distinguishable             |
+| S122-03 | number/map inputs on the same page and other settings controls           | not affected by the option style change; fixed locked options still cannot toggle                                     |
+| N122-01 | A -> B, keep editing longer than the old idle time, then Esc             | no save on timeout; Esc restores the old name/exits; advancing timers or cleanup never writes B                       |
+| N122-02 | A -> B, Enter / click outside                                            | saves the correct name exactly once; unchanged/blank follows the old rules                                            |
+| N122-03 | address/API Key auto-save, connection test while name unconfirmed        | other fields save as before without the unconfirmed name; Esc does not clear other fields' intent                     |
+| N122-04 | blur/cleanup after Esc; switch Provider; delayed save reply              | cancelled name not resubmitted; no overwrite of a new Provider or newer state                                         |
+| N122-05 | Chinese IME input / candidate Enter / composition end                    | no mid-way confirm or timed save; real Enter/Esc still work                                                           |
+| N122-06 | name save success/failure, re-enter editing                              | success shows authoritative name; failure has feedback and retry path; no fake success or compensating old-name write |
 
 Name tests use real component events with controlled time/Promises and verify actual save calls/output.
 Style needs real browser computed style plus interaction screenshots in both themes and representative

@@ -14,16 +14,16 @@
 
 ## 2. Final ruling
 
-| Item | Ruling |
-| --- | --- |
-| manual output-budget entry | removed; the ungenerated and regenerate entries are consistent, desktop and Web share behavior |
-| Wiki's own output-budget state | no longer maintained, submitted or saved; touched state, types, constants, copy and unused helpers removed |
-| actual request ceiling | the target model's currently effective Limit; unified Model validation and Option Map, no hand-written vendor request fields |
-| fixed Catalog / Page budgets and halving | deleted; catalog and body both use the model Limit directly, with no Wiki-private output budget |
-| special retry that raises the budget after truncation | deleted; no budget raising or extra rescue retry (with the full Limit already used there is no higher budget) |
-| output truncation detection | kept; hitting the cap never stores incomplete output as success content |
-| ordinary failure retry, timeout | original semantics kept |
-| tool rounds, source character budget, catalog page-count limit | kept (not model max-output settings) |
+| Item                                                           | Ruling                                                                                                                       |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| manual output-budget entry                                     | removed; the ungenerated and regenerate entries are consistent, desktop and Web share behavior                               |
+| Wiki's own output-budget state                                 | no longer maintained, submitted or saved; touched state, types, constants, copy and unused helpers removed                   |
+| actual request ceiling                                         | the target model's currently effective Limit; unified Model validation and Option Map, no hand-written vendor request fields |
+| fixed Catalog / Page budgets and halving                       | deleted; catalog and body both use the model Limit directly, with no Wiki-private output budget                              |
+| special retry that raises the budget after truncation          | deleted; no budget raising or extra rescue retry (with the full Limit already used there is no higher budget)                |
+| output truncation detection                                    | kept; hitting the cap never stores incomplete output as success content                                                      |
+| ordinary failure retry, timeout                                | original semantics kept                                                                                                      |
+| tool rounds, source character budget, catalog page-count limit | kept (not model max-output settings)                                                                                         |
 
 The ceiling means "at most this much", not "fill it"; a larger ceiling may lengthen a single response, so unchanged time and cost are not promised.
 

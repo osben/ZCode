@@ -38,16 +38,16 @@
 
 ### 0.1 Terminology
 
-| Name                      | Sole meaning                                                                |
-| ------------------------- | --------------------------------------------------------------------------- |
-| Provider Template         | Built-in-published Provider config inheritance source; cannot execute       |
-| Account Concrete Provider | Built-in-published account product Provider; constrained by Account Overlay |
-| Personal Provider         | User-created real Provider instance with a unique `providerId`              |
-| Personal Provider Overlay | Sparse config the user saves for a real Provider instance                   |
-| Effective Provider Config | Final config the Resolver composes from all applicable sources for Registry |
+| Name                      | Sole meaning                                                                            |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| Provider Template         | Built-in-published Provider config inheritance source; cannot execute                   |
+| Account Concrete Provider | Built-in-published account product Provider; constrained by Account Overlay             |
+| Personal Provider         | User-created real Provider instance with a unique `providerId`                          |
+| Personal Provider Overlay | Sparse config the user saves for a real Provider instance                               |
+| Effective Provider Config | Final config the Resolver composes from all applicable sources for Registry             |
 | Account Family            | Settings navigation and connection-selection boundary of Z.ai/BigModel account products |
-| `access.entitled`         | Whether the current account has access eligibility for the Account Provider |
-| executable                | Resolver result: Provider/Model config is complete and satisfies execution conditions |
+| `access.entitled`         | Whether the current account has access eligibility for the Account Provider             |
+| executable                | Resolver result: Provider/Model config is complete and satisfies execution conditions   |
 
 Template, Family, entitlement, Settings placement and executable do not replace each other.
 

@@ -45,12 +45,12 @@ Display priority: a confirmed personal tier wins; otherwise Team per the existin
 
 Mode: planning; layers: presentation / validation. Scope: the account plan badge and the shared hook's necessary adjustment.
 
-| Entry / priority                        | Shared implementation and data                                                                  | Boundary                                                                          |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Avatar badge, must-inspect              | `WorkspaceSidebarFooter` -> `useWorkspaceSidebarFooterUsageSummaryState` -> `resolveSidebarFooterProfilePlanBadge` | read personal/Team facts independently; keep styles and i18n                |
-| Footer quota and upgrade, must-inspect  | same UsageSummary hook, `teamSources`, `currentUsageSource`                                     | Team query independent of personal entitlement; org/project sources do not degrade to personal |
-| Provider Settings plan cards, should-inspect | Account Access helper, enterprise pricing hook                                             | keep current behavior; do not loosen the helper globally                          |
-| Desktop / Web / mobile / remote, invariant-only | existing hooks, service injection and Family boundary                                    | reuse the current account fact source; no new runtime or direct platform API; continuous/replayable chains untouched |
+| Entry / priority                                | Shared implementation and data                                                                                     | Boundary                                                                                                             |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| Avatar badge, must-inspect                      | `WorkspaceSidebarFooter` -> `useWorkspaceSidebarFooterUsageSummaryState` -> `resolveSidebarFooterProfilePlanBadge` | read personal/Team facts independently; keep styles and i18n                                                         |
+| Footer quota and upgrade, must-inspect          | same UsageSummary hook, `teamSources`, `currentUsageSource`                                                        | Team query independent of personal entitlement; org/project sources do not degrade to personal                       |
+| Provider Settings plan cards, should-inspect    | Account Access helper, enterprise pricing hook                                                                     | keep current behavior; do not loosen the helper globally                                                             |
+| Desktop / Web / mobile / remote, invariant-only | existing hooks, service injection and Family boundary                                                              | reuse the current account fact source; no new runtime or direct platform API; continuous/replayable chains untouched |
 
 The authoritative fact comes from the account service, projected through Account Overlay / ProviderSettingsView; tier and price keep their own services and caches. The badge has no Composer draft, default-model inheritance, submit command or persistence point. Entries share data but not all display conditions.
 
@@ -71,14 +71,14 @@ Graph drift / proposed delta: `capability.plan-entitlements` should add the Foot
 
 Dimensions: Family, personal/Team entitlement, loading/refresh state only.
 
-| Case  | Setup and action                                                    | Expected and evidence                                                                 |
-| ----- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 73-01 | BigModel personal false, Team true; cold-start sidebar              | shows Team; component/hook regression + E2E + Air                                     |
-| 73-02 | Z.ai with Team entitlement only                                     | shows Team; component/hook regression                                                 |
-| 73-03 | personal tier present, with and without Team entitlement            | personal tier wins in both; existing-rule regression                                  |
-| 73-04 | neither entitlement, or Start Plan only                             | no forged personal tier / Team; unit test                                             |
-| 73-05 | switch from a Team Family to another Family without entitlement, or log out | no stale Team badge; component test                                           |
-| 73-06 | personal query loading, Provider View not Ready/failed then recovers; Team entitlement changes alone | unknown is not "confirmed none"; shows the latest facts after recovery without a full page refresh |
-| 73-07 | Team only, open Footer quota/upgrade entry; pricing fails           | on success keeps the right org/project; on failure existing error handling without erasing the confirmed Team identity |
+| Case  | Setup and action                                                                                     | Expected and evidence                                                                                                  |
+| ----- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 73-01 | BigModel personal false, Team true; cold-start sidebar                                               | shows Team; component/hook regression + E2E + Air                                                                      |
+| 73-02 | Z.ai with Team entitlement only                                                                      | shows Team; component/hook regression                                                                                  |
+| 73-03 | personal tier present, with and without Team entitlement                                             | personal tier wins in both; existing-rule regression                                                                   |
+| 73-04 | neither entitlement, or Start Plan only                                                              | no forged personal tier / Team; unit test                                                                              |
+| 73-05 | switch from a Team Family to another Family without entitlement, or log out                          | no stale Team badge; component test                                                                                    |
+| 73-06 | personal query loading, Provider View not Ready/failed then recovers; Team entitlement changes alone | unknown is not "confirmed none"; shows the latest facts after recovery without a full page refresh                     |
+| 73-07 | Team only, open Footer quota/upgrade entry; pricing fails                                            | on success keeps the right org/project; on failure existing error handling without erasing the confirmed Team identity |
 
 Pruned: no model request, no provider replay fixture; no Session/Submission change and no conversation state-space expansion. E2E controls entitlement responses on the existing account/Provider fixture and waits on observable state, no fixed sleep. Light/dark, zh/en and narrow screen get representative checks without redesigning the badge visuals. Remote scenarios keep existing account-source isolation. Cases, coverage and E2E status were planned, archived per e2e-case-lifecycle at implementation; this log investigation is not fix-verification. No open user ruling.

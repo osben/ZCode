@@ -59,16 +59,16 @@ mismatch points to diagnosis and never suggests that repeated retry will fix it.
 
 ## 3. Old implementation disposition
 
-| Scope                                                              | Disposition                                  | Must prove before reuse                                         |
-| ------------------------------------------------------------------ | -------------------------------------------- | --------------------------------------------------------------- |
-| Migration interception in `Root.tsx`, `useStorageStartup`, workspace snapshot subscription | remove old wiring, reimplement at app startup | business Root not mounted early; users without workspace protected |
-| `prepareStorage(workspace)` and workspace-destroy retry            | not a global entry; audit callers then delete or narrow | no fake workspace; no global restart on tab switch |
-| Original SQL runner, lock wait, rollback, ready after COMMIT       | reuse item by item                           | still runs frozen original SQL, ledger-compatible, observable waiting |
-| Agent early notification and protocol request admission            | keep needed abilities, adjust wiring, fix failure propagation | terminal state observable even with no first notification or process exit; ordinary RPC timeout not degraded |
-| Loading components, styles, copy                                   | reusable as needed                           | no workspace state mixed in; multi-stage and error recovery     |
-| Transaction, frozen SQL, lock contention, crash recovery tests     | keep for acceptance                          | run on the new startup entry; old passes do not substitute      |
-| Workspace hook / Root / startup E2E                                | remove stale assertions, add new scenarios first | verify the real startup order                               |
-| Independent Provider config protection                             | keep independent commit and tests            | not withdrawn by the startup rewrite                            |
+| Scope                                                                                      | Disposition                                                   | Must prove before reuse                                                                                      |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Migration interception in `Root.tsx`, `useStorageStartup`, workspace snapshot subscription | remove old wiring, reimplement at app startup                 | business Root not mounted early; users without workspace protected                                           |
+| `prepareStorage(workspace)` and workspace-destroy retry                                    | not a global entry; audit callers then delete or narrow       | no fake workspace; no global restart on tab switch                                                           |
+| Original SQL runner, lock wait, rollback, ready after COMMIT                               | reuse item by item                                            | still runs frozen original SQL, ledger-compatible, observable waiting                                        |
+| Agent early notification and protocol request admission                                    | keep needed abilities, adjust wiring, fix failure propagation | terminal state observable even with no first notification or process exit; ordinary RPC timeout not degraded |
+| Loading components, styles, copy                                                           | reusable as needed                                            | no workspace state mixed in; multi-stage and error recovery                                                  |
+| Transaction, frozen SQL, lock contention, crash recovery tests                             | keep for acceptance                                           | run on the new startup entry; old passes do not substitute                                                   |
+| Workspace hook / Root / startup E2E                                                        | remove stale assertions, add new scenarios first              | verify the real startup order                                                                                |
+| Independent Provider config protection                                                     | keep independent commit and tests                             | not withdrawn by the startup rewrite                                                                         |
 
 No whole-branch hard reset or rewriting pushed history: later commits replace the old implementation and
 delete unused protocols, exports, copy and tests.
@@ -108,16 +108,16 @@ The code had only coarse classes (open_failed / lock_timeout / checksum_mismatch
 runner put non-BUSY SQLite exceptions under `sql_failed` with the original error in `cause`. This change is
 about error propagation and display, not migration definitions.
 
-| Raw evidence                                          | Standard category                      | UI behavior                                                                                  |
-| ----------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------- |
-| SQLite primary code 13 (SQLITE_FULL)                  | storage_full                           | storage full / capacity limit; retry after freeing space / checking quota                    |
-| system file operation ENOSPC                          | storage_full                           | storage full; never auto-clean user files                                                    |
-| system file operation EDQUOT (if exposed)             | storage_quota_exceeded                 | storage quota insufficient; freeing other user files may not help                            |
-| SQLITE_BUSY; SQLITE_LOCKED judged separately          | database_busy / database_locked        | external BUSY follows the lock-wait budget; same-connection LOCKED is not waited blindly, reports a conflict; not a disk problem, never ends another owner |
-| explicit EACCES / EPERM / SQLITE_READONLY             | access_denied / read_only              | permission/read-only prompt; SQLITE_PERM alone does not imply a specific OS cause            |
-| SQLITE_NOMEM / explicit ENOMEM (incl. recognizable extended codes) | memory_unavailable        | allocation failure; an unknown process exit is not proven OOM                                |
-| SQLITE_CORRUPT / NOTADB / checksum mismatch           | database_invalid / migration_mismatch  | block, offer diagnostics and help; no delete, ledger change or auto repair                   |
-| generic SQLITE_IOERR / CANTOPEN, unknown exception    | io_failed / open_failed / unknown      | read/write/open failure or unknown; without explicit evidence never say "disk full"          |
+| Raw evidence                                                       | Standard category                     | UI behavior                                                                                                                                                |
+| ------------------------------------------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite primary code 13 (SQLITE_FULL)                               | storage_full                          | storage full / capacity limit; retry after freeing space / checking quota                                                                                  |
+| system file operation ENOSPC                                       | storage_full                          | storage full; never auto-clean user files                                                                                                                  |
+| system file operation EDQUOT (if exposed)                          | storage_quota_exceeded                | storage quota insufficient; freeing other user files may not help                                                                                          |
+| SQLITE_BUSY; SQLITE_LOCKED judged separately                       | database_busy / database_locked       | external BUSY follows the lock-wait budget; same-connection LOCKED is not waited blindly, reports a conflict; not a disk problem, never ends another owner |
+| explicit EACCES / EPERM / SQLITE_READONLY                          | access_denied / read_only             | permission/read-only prompt; SQLITE_PERM alone does not imply a specific OS cause                                                                          |
+| SQLITE_NOMEM / explicit ENOMEM (incl. recognizable extended codes) | memory_unavailable                    | allocation failure; an unknown process exit is not proven OOM                                                                                              |
+| SQLITE_CORRUPT / NOTADB / checksum mismatch                        | database_invalid / migration_mismatch | block, offer diagnostics and help; no delete, ledger change or auto repair                                                                                 |
+| generic SQLITE_IOERR / CANTOPEN, unknown exception                 | io_failed / open_failed / unknown     | read/write/open failure or unknown; without explicit evidence never say "disk full"                                                                        |
 
 SQLite uses the raw numeric errcode (low 8 bits when extended) and structured reasons; Node's generic
 `ERR_SQLITE_ERROR` cannot replace SQLite sub-codes, and English `message` matching is forbidden. Reading
@@ -144,14 +144,14 @@ and standard error code are consistent; a capacity-cap fixture does not prove ev
 
 ## 6. Wait budget
 
-| Scenario                  | Rule                                                                                         |
-| ------------------------- | -------------------------------------------------------------------------------------------- |
-| Global loading            | no total timeout that kills a process; state is determined by stage and executor lifecycle   |
-| Control-plane first state | keep 30 s, only for establishing the control plane; established before long SQL, not wrapping the whole migration |
+| Scenario                  | Rule                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Global loading            | no total timeout that kills a process; state is determined by stage and executor lifecycle                                                                                |
+| Control-plane first state | keep 30 s, only for establishing the control plane; established before long SQL, not wrapping the whole migration                                                         |
 | SQLite write-lock wait    | keep the 60-minute cap with async backoff (single native busy 25 ms, async backoff 10-200 ms), independent of the business 5 s busy timeout; over budget fails explicitly |
-| Original SQL executing    | no auto-kill SQL timeout; no "no progress update" death judgment (synchronous SQL can run long) |
-| Long-wait hint            | show elapsed-time note at 10 minutes and keep waiting; not a deadline and no guarantee that memory/space suffice |
-| Ordinary business request | keep the original timeout; migration-admission waiting is separate from business request timing |
+| Original SQL executing    | no auto-kill SQL timeout; no "no progress update" death judgment (synchronous SQL can run long)                                                                           |
+| Long-wait hint            | show elapsed-time note at 10 minutes and keep waiting; not a deadline and no guarantee that memory/space suffice                                                          |
+| Ordinary business request | keep the original timeout; migration-admission waiting is separate from business request timing                                                                           |
 
 The execution thread and status channel keep the window responsive; "no SQL timeout" is never a reason for
 a UI without state or an endless loading after the process exits. After ready the business 5 s busy
@@ -163,35 +163,35 @@ unaffected.
 
 ## 7. Acceptance matrix (all pending; old Todo ticks are not inherited)
 
-| ID          | Scenario                                              | Must prove                                                           |
-| ----------- | ----------------------------------------------------- | -------------------------------------------------------------------- |
-| GLOBALDB-01 | new user without workspace, no account/Key, network down | local required databases prepared, then normal first-use flow     |
-| GLOBALDB-02 | Host old-database migration paused                    | startup page visible, state readable, window responsive, business not started |
-| GLOBALDB-03 | Host done, long session-database migration            | stages switch correctly; Root entered only when both databases and services are ready |
-| GLOBALDB-04 | migrated, partially migrated, user edited after migration | completed items not repeated, later edits not overwritten; original SQL/checksum/ledger compatible |
-| GLOBALDB-05 | Host succeeds, session database fails, then retry     | committed Host database not rolled back; uncommitted session transaction recovered; no config rebuild |
-| GLOBALDB-06 | Host post-migration repair fails; required service assembly fails | no fake ready, accurate error ownership, retry has no repeated side effects or leaks |
-| GLOBALDB-07 | multiple windows / standalone CLI, same and different databases | same database SQLite-exclusive, no repeated migration; different databases do not mix state |
-| GLOBALDB-08 | lock wait over the old 5 s; over budget               | the former continues to success; the latter is diagnosable, never terminates the lock owner |
-| GLOBALDB-09 | kill before COMMIT; notification lost after COMMIT    | real child process recovers correctly, ledger and data consistent    |
-| GLOBALDB-10 | first status missing, Worker/Agent crash, IPC break   | observable failure/reconnect state, no permanent feedback-less loading |
-| GLOBALDB-11 | page refresh, double-click retry, late old ready      | no repeated start or cancelled migration; new attempt not overwritten by old state |
-| GLOBALDB-12 | FULL, permission, I/O, checksum, corrupt database     | clear reason, safe recovery entry, no fake success or empty-database fallback |
-| GLOBALDB-13 | custom data dir and different session db configs      | prepared database equals the business-opened one; no false global ready |
-| GLOBALDB-14 | scheduler / bot / Wiki / warm-up triggered together   | server-side admission works without relying on a UI mask; accepted queue not copied |
-| GLOBALDB-15 | local start with remote history, remote connection failure, old Agent | does not connect all environments, network failure not reported as DB error; old protocol has explicit compatibility |
-| GLOBALDB-16 | phone pairing, reconnect, access during shared-host preparation | no second runtime; desktop continuous vs phone replayable boundaries unchanged |
-| GLOBALDB-17 | Windows/macOS/Linux, theme, language, narrow screen   | visible, operable, no white screen; packaged Worker/child-process resource paths work |
-| GLOBALDB-18 | cold start of a migrated database, quit and restart   | no stray Agent/Worker, duplicate background tasks or visible startup regression |
-| GLOBALDB-19 | ARMS events, stage changes, failure copy and retry    | accurate time boundaries, UI and telemetry errors from one source, terminal dedupe; final payload within attribute budget |
-| GLOBALDB-20 | free space drops then recovers during long SQL        | sampling independent; keeps the maximum drop vs the start baseline, recovered space after rollback does not erase the peak |
-| GLOBALDB-21 | multiple volumes, missing file, probe failure, SDK exception, offline | missing values not zero-filled, per-volume distinction, business still prepares, no scan/report blocking |
-| GLOBALDB-22 | migration executor crash, forced app exit, only a start event | confirmed failure vs unknown terminal state distinguishable; no invented SQL error, true peak or guaranteed report |
-| GLOBALDB-23 | SQLite FULL / ENOSPC / EDQUOT; sampling still has space or is missing | classification/copy accurate, not dependent on sampling, no wrong disk blamed |
-| GLOBALDB-24 | IOERR / CANTOPEN / permission / NOMEM / unknown process exit | no false disk-full or OOM, unknown stays unknown, UI and telemetry same source |
-| GLOBALDB-25 | COMMIT or post-migration repair fails, then rollback/close fails | original cause kept, cleanup/retry state clear, no false rollback claim |
-| GLOBALDB-26 | main-db disk has space, temp disk fails; space recovered at retry | main-db headroom does not negate FULL; old peak kept, new attempt independent, ledger correct |
-| GLOBALDB-27 / 28 | Host rebuild revokes old startup listeners; historical project unavailable | pending E2E from the 2026-09-15 review fixes (see section 11) |
+| ID               | Scenario                                                                   | Must prove                                                                                                                 |
+| ---------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| GLOBALDB-01      | new user without workspace, no account/Key, network down                   | local required databases prepared, then normal first-use flow                                                              |
+| GLOBALDB-02      | Host old-database migration paused                                         | startup page visible, state readable, window responsive, business not started                                              |
+| GLOBALDB-03      | Host done, long session-database migration                                 | stages switch correctly; Root entered only when both databases and services are ready                                      |
+| GLOBALDB-04      | migrated, partially migrated, user edited after migration                  | completed items not repeated, later edits not overwritten; original SQL/checksum/ledger compatible                         |
+| GLOBALDB-05      | Host succeeds, session database fails, then retry                          | committed Host database not rolled back; uncommitted session transaction recovered; no config rebuild                      |
+| GLOBALDB-06      | Host post-migration repair fails; required service assembly fails          | no fake ready, accurate error ownership, retry has no repeated side effects or leaks                                       |
+| GLOBALDB-07      | multiple windows / standalone CLI, same and different databases            | same database SQLite-exclusive, no repeated migration; different databases do not mix state                                |
+| GLOBALDB-08      | lock wait over the old 5 s; over budget                                    | the former continues to success; the latter is diagnosable, never terminates the lock owner                                |
+| GLOBALDB-09      | kill before COMMIT; notification lost after COMMIT                         | real child process recovers correctly, ledger and data consistent                                                          |
+| GLOBALDB-10      | first status missing, Worker/Agent crash, IPC break                        | observable failure/reconnect state, no permanent feedback-less loading                                                     |
+| GLOBALDB-11      | page refresh, double-click retry, late old ready                           | no repeated start or cancelled migration; new attempt not overwritten by old state                                         |
+| GLOBALDB-12      | FULL, permission, I/O, checksum, corrupt database                          | clear reason, safe recovery entry, no fake success or empty-database fallback                                              |
+| GLOBALDB-13      | custom data dir and different session db configs                           | prepared database equals the business-opened one; no false global ready                                                    |
+| GLOBALDB-14      | scheduler / bot / Wiki / warm-up triggered together                        | server-side admission works without relying on a UI mask; accepted queue not copied                                        |
+| GLOBALDB-15      | local start with remote history, remote connection failure, old Agent      | does not connect all environments, network failure not reported as DB error; old protocol has explicit compatibility       |
+| GLOBALDB-16      | phone pairing, reconnect, access during shared-host preparation            | no second runtime; desktop continuous vs phone replayable boundaries unchanged                                             |
+| GLOBALDB-17      | Windows/macOS/Linux, theme, language, narrow screen                        | visible, operable, no white screen; packaged Worker/child-process resource paths work                                      |
+| GLOBALDB-18      | cold start of a migrated database, quit and restart                        | no stray Agent/Worker, duplicate background tasks or visible startup regression                                            |
+| GLOBALDB-19      | ARMS events, stage changes, failure copy and retry                         | accurate time boundaries, UI and telemetry errors from one source, terminal dedupe; final payload within attribute budget  |
+| GLOBALDB-20      | free space drops then recovers during long SQL                             | sampling independent; keeps the maximum drop vs the start baseline, recovered space after rollback does not erase the peak |
+| GLOBALDB-21      | multiple volumes, missing file, probe failure, SDK exception, offline      | missing values not zero-filled, per-volume distinction, business still prepares, no scan/report blocking                   |
+| GLOBALDB-22      | migration executor crash, forced app exit, only a start event              | confirmed failure vs unknown terminal state distinguishable; no invented SQL error, true peak or guaranteed report         |
+| GLOBALDB-23      | SQLite FULL / ENOSPC / EDQUOT; sampling still has space or is missing      | classification/copy accurate, not dependent on sampling, no wrong disk blamed                                              |
+| GLOBALDB-24      | IOERR / CANTOPEN / permission / NOMEM / unknown process exit               | no false disk-full or OOM, unknown stays unknown, UI and telemetry same source                                             |
+| GLOBALDB-25      | COMMIT or post-migration repair fails, then rollback/close fails           | original cause kept, cleanup/retry state clear, no false rollback claim                                                    |
+| GLOBALDB-26      | main-db disk has space, temp disk fails; space recovered at retry          | main-db headroom does not negate FULL; old peak kept, new attempt independent, ledger correct                              |
+| GLOBALDB-27 / 28 | Host rebuild revokes old startup listeners; historical project unavailable | pending E2E from the 2026-09-15 review fixes (see section 11)                                                              |
 
 The 20 GB performance test stays deferred until explicitly authorized; this round is isolated-database
 functional verification only. A small-database success does not prove low-memory or low-disk users migrate
@@ -266,11 +266,11 @@ valid baseline or sample the metric is omitted, never 0 (a single start sample p
 Results are deduplicated per attempt; checkpoint vs terminal are distinct; success rate and final peak
 distribution use terminal only.
 
-| OS      | Entry and semantics                                                                         | Interpretation limits                                                                                   |
-| ------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Windows | Node async statfs `bavail * bsize`; verify the packaged libuv's CallerAvailableAllocationUnits mapping | caller-available amount, not total free ignoring quota; NTFS compression/sparse files make logical length differ from physical use |
-| macOS   | same statfs available-block semantics; no mixing with Finder capacity or Foundation estimates | APFS volumes in one container share space; clones/snapshots change allocation; readings of different volumes may reflect the same pool and are never summed |
-| Linux   | same statfs `bavail * bsize`, not statvfs units or `bfree`                                   | ordinary-user available amount, not guaranteed to include all user quota / inode / metadata limits; ext4/Btrfs/overlay behave differently |
+| OS      | Entry and semantics                                                                                    | Interpretation limits                                                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows | Node async statfs `bavail * bsize`; verify the packaged libuv's CallerAvailableAllocationUnits mapping | caller-available amount, not total free ignoring quota; NTFS compression/sparse files make logical length differ from physical use                          |
+| macOS   | same statfs available-block semantics; no mixing with Finder capacity or Foundation estimates          | APFS volumes in one container share space; clones/snapshots change allocation; readings of different volumes may reflect the same pool and are never summed |
+| Linux   | same statfs `bavail * bsize`, not statvfs units or `bfree`                                             | ordinary-user available amount, not guaranteed to include all user quota / inode / metadata limits; ext4/Btrfs/overlay behave differently                   |
 
 Principle: unify "OS-reported free-space change" without claiming equivalence across quota, reclaimable
 space and allocation policy; keep platform dimension grouping. Two local databases on the same file system

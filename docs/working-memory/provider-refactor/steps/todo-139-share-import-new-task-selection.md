@@ -15,10 +15,10 @@ import skipped new-task initialization.
 
 ## Rules
 
-| Item                     | Priority order                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| Item                            | Priority order                                                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Provider, model, thinking level | initialized new-task draft of the target workspace -> full ModelSelection of the most recent accepted Submission -> public default selection |
-| Mode / permission        | initialized new-task draft of the target workspace -> mode of the most recent accepted Submission -> product default build |
+| Mode / permission               | initialized new-task draft of the target workspace -> mode of the most recent accepted Submission -> product default build                   |
 
 - Extract or reuse the ordinary new-task initialization entry so both entries share rules; the share service does not copy a default-model algorithm.
 - "Existing draft first" includes its explicit empty selection; a user-cleared or invalid selection is not treated as missing and replaced by a default. Reuse the current public effective-selection resolution and validation; no separate fallback.

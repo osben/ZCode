@@ -35,10 +35,10 @@ separately.
 
 ## 2. First principles
 
-| ZCode Option      | Anthropic Messages                               | OpenAI Chat Completions                                          | OpenAI Responses    |
-| ----------------- | ------------------------------------------------ | ---------------------------------------------------------------- | ------------------- |
-| `reasoningLevel`  | `thinking.type`, `thinking.budget_tokens` if needed | `reasoning_effort` or the target compatible Schema's equivalent | `reasoning.effort`  |
-| `maxOutputTokens` | `max_tokens`                                     | `max_completion_tokens`; some compatible protocols use `max_tokens` | `max_output_tokens` |
+| ZCode Option      | Anthropic Messages                                  | OpenAI Chat Completions                                             | OpenAI Responses    |
+| ----------------- | --------------------------------------------------- | ------------------------------------------------------------------- | ------------------- |
+| `reasoningLevel`  | `thinking.type`, `thinking.budget_tokens` if needed | `reasoning_effort` or the target compatible Schema's equivalent     | `reasoning.effort`  |
+| `maxOutputTokens` | `max_tokens`                                        | `max_completion_tokens`; some compatible protocols use `max_tokens` | `max_output_tokens` |
 
 ZCode keeps the unified semantics of the public Options; the concrete field names, object nesting and switch
 expression are declared by the Model Config Rule hitting the current `providerId/modelId/api.type`. Runtime and
@@ -164,7 +164,7 @@ or `default`; Title, Goal Title, Git Commit Message and Memory Recall keep selec
 Examples (`map`):
 
 - Anthropic Messages: values `["off","low","high"]`, default `low`, map `value == 'off' ? {'thinking': {'type':
-  'disabled'}} : {'thinking': {'type': 'enabled', 'budget_tokens': value == 'low' ? 1024 : 8192}}`.
+'disabled'}} : {'thinking': {'type': 'enabled', 'budget_tokens': value == 'low' ? 1024 : 8192}}`.
 - OpenAI Chat Completions: values `["low","medium","high"]`, default `medium`, map `{'reasoning_effort': value}`.
 - OpenAI Responses: same values, map `{'reasoning': {'effort': value}}`.
 

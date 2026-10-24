@@ -22,13 +22,13 @@ feature specs; history is read by the [authority order](../design-v2/README.md).
 
 ## 1. Product entries of existing vendors (survey baseline 2026-09-16; re-verify endpoints, members and plan rights at implementation)
 
-| Vendor         | Current problem                                                                | Target                                                                                 |
-| -------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
-| Kimi           | `moonshot-kimi` points to the open platform but includes the Code-side `k3` / `k3-256k` and has no subscription entry | split Kimi API and Kimi Coding Plan (Kimi Code), each with its endpoint, Key page, model members and capabilities |
-| MiniMax        | only the ordinary MiniMax entry                                                | add Token Plan; make the subscription-Key vs pay-as-you-go-Key difference clear; verify domestic/international credentials per the official contract |
-| Alibaba Bailian | only China / international API                                                | add Coding Plan and Token Plan; verify personal/team, region and protocol separately, no duplicate templates by plan name alone |
-| Xiaomi MiMo    | only the ordinary API                                                          | add Token Plan; match the plan `tp-` Key vs ordinary `sk-` Key and regional plan endpoints separately |
-| Z.ai / BigModel | API and Coding Plan already separate templates but manual plans use a special Access | keep the four template identities and current names; the plan Access becomes the generic `api-key` |
+| Vendor          | Current problem                                                                                                       | Target                                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kimi            | `moonshot-kimi` points to the open platform but includes the Code-side `k3` / `k3-256k` and has no subscription entry | split Kimi API and Kimi Coding Plan (Kimi Code), each with its endpoint, Key page, model members and capabilities                                    |
+| MiniMax         | only the ordinary MiniMax entry                                                                                       | add Token Plan; make the subscription-Key vs pay-as-you-go-Key difference clear; verify domestic/international credentials per the official contract |
+| Alibaba Bailian | only China / international API                                                                                        | add Coding Plan and Token Plan; verify personal/team, region and protocol separately, no duplicate templates by plan name alone                      |
+| Xiaomi MiMo     | only the ordinary API                                                                                                 | add Token Plan; match the plan `tp-` Key vs ordinary `sk-` Key and regional plan endpoints separately                                                |
+| Z.ai / BigModel | API and Coding Plan already separate templates but manual plans use a special Access                                  | keep the four template identities and current names; the plan Access becomes the generic `api-key`                                                   |
 
 - Kimi Code's official model IDs are `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed` (then `kimi-for-coding` was K2.8 Preview). Open-platform version names are not Code request IDs, and not every member is assumed to hold every model right.
 - New API-Key-type plans reuse `api-key` first; no special Access per vendor plan. OAuth, credential renewal or account-entitlement refresh need a separately designed real auth contract.
@@ -78,10 +78,10 @@ Minimal display change: manual plans are recognized by `templateId`; account pla
 the existing Access mode. Both Views already carry template identity; the settings page and model menu share
 the check; no new Model capability Schema.
 
-| Condition (model ID exactly `glm-5.3` ignoring case) | Vision badge             |
-| ---------------------------------------------------- | ------------------------ |
-| Template `zai-api` / `bigmodel-api`                  | hidden                   |
-| Account personal/team Coding Plan or Start Plan      | hidden                   |
+| Condition (model ID exactly `glm-5.3` ignoring case)           | Vision badge              |
+| -------------------------------------------------------------- | ------------------------- |
+| Template `zai-api` / `bigmodel-api`                            | hidden                    |
+| Account personal/team Coding Plan or Start Plan                | hidden                    |
 | Ordinary API template, template-less custom Provider, Off-Peak | shown per `supportsImage` |
 
 - Every model first needs `supportsImage === true` to be shown; GLM-5.3-Flash and other models keep showing by capability. GLM-5.3's real image input capability is kept: never set `supportsImage` false to hide the badge, nor change attachment upload, validation or request encoding.
@@ -100,14 +100,14 @@ the check; no new Model capability Schema.
 Candidates come from a public third-party provider preset survey (this round); priority is this round's
 suggestion and no entry is proven releasable. Promotional links, historical plans and client-specific config are not copied directly.
 
-| Batch  | Candidate                                                | Settle before implementing                                                                                                                           |
-| ------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First  | Volcano Ark / Doubao                                     | valid entries of API, Agent Plan and old Coding Plan, model identity, existing-user boundary; [Agent Plan](https://www.volcengine.com/activity/agentplan) |
-| First  | Tencent TokenHub                                         | Token Plan first; general / Hy plans share Key and endpoint but differ in model rights, avoid duplicate templates; [access docs](https://cloud.tencent.com/document/product/1823/130119) |
-| First  | Baidu Qianfan                                            | API and personal Token Plan; the old Coding Plan stopped renewal and is not a new default; [upgrade notice](https://cloud.baidu.com/news/notice_e839687d-1cf7-4a5b-afbd-ea2f7bcd325d) |
-| First  | SiliconFlow                                              | China / international address, Key ownership and models each protocol actually supports; [access docs](https://docs.siliconflow.cn/docs/usercases/use-siliconcloud-in-ClaudeCode) |
+| Batch  | Candidate                                                | Settle before implementing                                                                                                                                                                  |
+| ------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| First  | Volcano Ark / Doubao                                     | valid entries of API, Agent Plan and old Coding Plan, model identity, existing-user boundary; [Agent Plan](https://www.volcengine.com/activity/agentplan)                                   |
+| First  | Tencent TokenHub                                         | Token Plan first; general / Hy plans share Key and endpoint but differ in model rights, avoid duplicate templates; [access docs](https://cloud.tencent.com/document/product/1823/130119)    |
+| First  | Baidu Qianfan                                            | API and personal Token Plan; the old Coding Plan stopped renewal and is not a new default; [upgrade notice](https://cloud.baidu.com/news/notice_e839687d-1cf7-4a5b-afbd-ea2f7bcd325d)       |
+| First  | SiliconFlow                                              | China / international address, Key ownership and models each protocol actually supports; [access docs](https://docs.siliconflow.cn/docs/usercases/use-siliconcloud-in-ClaudeCode)           |
 | First  | Google Gemini API                                        | evaluate only the official OpenAI-compatible interface and API Key, verifying tool calls, thinking signatures and image chain; [compat notes](https://ai.google.dev/gemini-api/docs/openai) |
-| Second | StepFun, LongCat, PPIO, ModelScope, NVIDIA NIM, BytePlus | evaluate by user demand for product entry, existing protocol expressiveness and model evidence; no half-finished templates released                  |
+| Second | StepFun, LongCat, PPIO, ModelScope, NVIDIA NIM, BytePlus | evaluate by user demand for product entry, existing protocol expressiveness and model evidence; no half-finished templates released                                                         |
 
 - Gemini candidacy does not lift Todo22's exclusion of a native Google Adapter / Vertex; if the compat interface cannot meet the contract, record the gap and design separately. Bedrock, Azure and other complex cloud auth stay in Todo22 and are not mixed into ordinary template gaps; a new type needs a real auth need, and hand-written URLs must not hide region, deployment identity or signing differences.
 - Before a candidate becomes an implementable slice, list its exact name, Template ID, Key page, endpoint, original Model IDs, default-enable range, capability and parameter evidence and the real verification conditions.

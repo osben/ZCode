@@ -58,20 +58,20 @@ Chains that already passed and must not be touched to suit failing Cases: Bot te
 
 ## 4. The 12 initial failures
 
-| Category            | Case               | Failure                                              | Ruling                                                                                     |
-| ------------------- | ------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Template/UI         | MP-UI-01           | not restored to new Provider detail after creation   | Fixed: detail may have no name-edit button; assert the selected navigation identity        |
-| Model JSON UI       | MP-UI-06           | expected `"{}"`, got empty string                    | Update the old placeholder assertion                                                       |
-| Template + first send | I08              | Personal Rule save wait never satisfied              | Fixed: Helper read `maxOutputTokens.default`; the formal field is `.max`                   |
-| Repo Wiki           | Repo Wiki settings | no `ready-empty`                                     | Remove the non-core no-model E2E assertion; no no-Provider Fixture                         |
-| Repo Wiki           | Repo Wiki produces | Generate button still disabled                       | Model selection lost reasoning; reuse unified Selection completion                         |
-| Output Token        | OTB08-OTB10        | OTB09 asserted old cap 41,665                        | usage anchor already covers the previous assistant; correct value 41,671                   |
-| Reasoning           | I20                | Helper required `thinking.budget_tokens`             | Remove the shared assertion with no contract basis                                         |
-| Restart Selection   | I26                | complete Team Plan Recent not restored               | Complete seed + Registry readiness; fix production recovery only if still failing          |
-| Restart Fallback    | I27                | old Start Plan Recent invalid, expected Account first model | Fall back to Host Configured Default; no Renderer Account-first                     |
-| Restart Fallback    | I28                | removed-model Recent invalid, expected Account first model | Same as I27                                                                         |
-| Settings Transition | I31                | non-first Team Plan model not kept                   | Settings round-trip keeps it; delete the consumer-less transition state                    |
-| Quota Reminder      | QR-E2E-09          | first reset opportunity reminder not shown           | Passes alone and in the full Coding Plan spec; run-isolation noise, no production change   |
+| Category              | Case               | Failure                                                     | Ruling                                                                                   |
+| --------------------- | ------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Template/UI           | MP-UI-01           | not restored to new Provider detail after creation          | Fixed: detail may have no name-edit button; assert the selected navigation identity      |
+| Model JSON UI         | MP-UI-06           | expected `"{}"`, got empty string                           | Update the old placeholder assertion                                                     |
+| Template + first send | I08                | Personal Rule save wait never satisfied                     | Fixed: Helper read `maxOutputTokens.default`; the formal field is `.max`                 |
+| Repo Wiki             | Repo Wiki settings | no `ready-empty`                                            | Remove the non-core no-model E2E assertion; no no-Provider Fixture                       |
+| Repo Wiki             | Repo Wiki produces | Generate button still disabled                              | Model selection lost reasoning; reuse unified Selection completion                       |
+| Output Token          | OTB08-OTB10        | OTB09 asserted old cap 41,665                               | usage anchor already covers the previous assistant; correct value 41,671                 |
+| Reasoning             | I20                | Helper required `thinking.budget_tokens`                    | Remove the shared assertion with no contract basis                                       |
+| Restart Selection     | I26                | complete Team Plan Recent not restored                      | Complete seed + Registry readiness; fix production recovery only if still failing        |
+| Restart Fallback      | I27                | old Start Plan Recent invalid, expected Account first model | Fall back to Host Configured Default; no Renderer Account-first                          |
+| Restart Fallback      | I28                | removed-model Recent invalid, expected Account first model  | Same as I27                                                                              |
+| Settings Transition   | I31                | non-first Team Plan model not kept                          | Settings round-trip keeps it; delete the consumer-less transition state                  |
+| Quota Reminder        | QR-E2E-09          | first reset opportunity reminder not shown                  | Passes alone and in the full Coding Plan spec; run-isolation noise, no production change |
 
 CPUW-01/03 failed first because of the WebView run environment and passed on rerun; if they fail again, fix the environment or Fixture first, never restore legacy Account API behavior.
 

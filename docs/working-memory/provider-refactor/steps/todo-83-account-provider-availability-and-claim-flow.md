@@ -34,13 +34,13 @@ The Account Provider Resolver generates the state in one place; UI, Registry and
 
 ```ts
 {
-  availability, // available | pending | unavailable | unknown
-  entitled,     // whether the account entitlement can be used now
-  effectiveAt,  // pending effective time (empty if none)
-  current,      // whether the Family selected this connection
-  models,       // model members returned by the account
-  executable,   // whether an executable model exists
-  selectable    // whether it can enter the current model picker
+  (availability, // available | pending | unavailable | unknown
+    entitled, // whether the account entitlement can be used now
+    effectiveAt, // pending effective time (empty if none)
+    current, // whether the Family selected this connection
+    models, // model members returned by the account
+    executable, // whether an executable model exists
+    selectable); // whether it can enter the current model picker
 }
 ```
 

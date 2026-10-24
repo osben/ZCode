@@ -215,16 +215,16 @@ The larger product semantics of queuing vs "immediate guidance" remain deferred;
 
 ## 11. Cross-layer impact
 
-| Layer             | Change                                              | Must not happen                              |
-| ----------------- | --------------------------------------------------- | -------------------------------------------- |
-| UI / Composer     | complete in-memory state, menus, selection empty state | re-reading Session Snapshot every render  |
-| Draft persistence | persist text/editor/mode/ModelSelection             | persist Active Model, credentials or Option Specs |
-| Submission        | copy the full Composer state once                   | fill mode/model from Session after submit    |
-| App Recent        | save latest Submission Selection + mode on acceptance | update Recent on menu click                |
-| Agent Session     | record execution state after acceptance             | act as the Renderer Composer's live store    |
-| Registry          | provide Ready View, preferred and Selection validation | Renderer copying the fallback algorithm   |
-| Queue / Guide     | keep the frozen Submission                          | re-read Composer at execution                |
-| Remote            | pass the same Submission and workspace identity     | Relay/Main holding Composer business state   |
+| Layer             | Change                                                 | Must not happen                                   |
+| ----------------- | ------------------------------------------------------ | ------------------------------------------------- |
+| UI / Composer     | complete in-memory state, menus, selection empty state | re-reading Session Snapshot every render          |
+| Draft persistence | persist text/editor/mode/ModelSelection                | persist Active Model, credentials or Option Specs |
+| Submission        | copy the full Composer state once                      | fill mode/model from Session after submit         |
+| App Recent        | save latest Submission Selection + mode on acceptance  | update Recent on menu click                       |
+| Agent Session     | record execution state after acceptance                | act as the Renderer Composer's live store         |
+| Registry          | provide Ready View, preferred and Selection validation | Renderer copying the fallback algorithm           |
+| Queue / Guide     | keep the frozen Submission                             | re-read Composer at execution                     |
+| Remote            | pass the same Submission and workspace identity        | Relay/Main holding Composer business state        |
 
 Automation, Repo Wiki, Subagent, Off-Peak, Bot, Prompt CLI and TUI are not moved into the App Composer Draft; only verify they are not hurt by cleaning shared helpers.
 

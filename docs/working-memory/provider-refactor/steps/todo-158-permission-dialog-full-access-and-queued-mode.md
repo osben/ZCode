@@ -24,13 +24,13 @@ semantics. Historical conflict: [C26](../design-v2/evidence-and-contradictions.m
 
 Ordinary command approval lists, default still the 1st item:
 
-| No. | Option                         | Meaning and effect                                                                        |
-| --- | ------------------------------ | ----------------------------------------------------------------------------------------- |
-| 1   | Allow                          | allow this once; existing allow_once semantics                                            |
-| 2   | Always allow this command      | project scope, same command not asked again; existing allow_project rule generation/matching kept |
-| 3   | Full access                    | grant the Agent full access with no more confirmation; performs this Todo's current-task, Composer and queue sync |
-| 4   | Deny                           | deny this operation; existing Deny behavior                                               |
-| 5   | Tell the model what to do next... | the separate input row for feedback with denial and its submit method kept             |
+| No. | Option                            | Meaning and effect                                                                                                |
+| --- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 1   | Allow                             | allow this once; existing allow_once semantics                                                                    |
+| 2   | Always allow this command         | project scope, same command not asked again; existing allow_project rule generation/matching kept                 |
+| 3   | Full access                       | grant the Agent full access with no more confirmation; performs this Todo's current-task, Composer and queue sync |
+| 4   | Deny                              | deny this operation; existing Deny behavior                                                                       |
+| 5   | Tell the model what to do next... | the separate input row for feedback with denial and its submit method kept                                        |
 
 - Number shortcuts, arrows, Tab, Enter, focus and the confirm button follow the actual option layout; `5` focuses feedback without submitting; IME behavior and phone input compat kept. The feedback row still requires the request to declare feedback support (no fake feedback response for entries lacking it).
 - Item 2 keeps showing the Agent's real prefix/exact scope (a title wording change must not change matching or widen authorization). File, network, MCP and official CUA approvals sharing the surface keep their tool-scope wording and trusted capability-group semantics (not renamed "command").
@@ -38,14 +38,14 @@ Ordinary command approval lists, default still the 1st item:
 
 ## 3. Code facts and problems
 
-| Fact                                                          | Implication                                                       | Entry                                                                  |
-| ------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| The Composer menu only edits the current scope's draft        | reusing the menu callback cannot resolve the pending approval     | `packages/ui/src/v4/SessionPane.tsx`, `useDraftConfigControl.ts`        |
-| The instant mode-switch command is still used by Bot, automation, CLI/TUI and compat paths | not dead code, and approval batch sync must not spread to all callers | `zcodeTaskServiceAdapter.ts`, `session-facade.ts`              |
-| `app.setMode()` updates Runtime and also writes project `permission/mode` | the task-level grant must not inherit the project-preference side effect | `session-facade.ts`, `runtime-config.ts`                      |
-| Passing only `mode=yolo` normalizes to `planEnabled=false`    | the approval-specific update must keep Plan explicitly; the shared compat decode rule is not changed blindly | `packages/shared/src/execution-state.ts` |
-| Each tool call reads Runtime mode at start; an approval waits in a broker | a running task can switch, but pending approvals are not auto-resolved and calls that already read the old mode are not redone | `call-runner.ts`, `permission-flow.ts` |
-| Queue items carry their own mode/Plan and re-apply on consume | changing only Runtime or UI lets the next dequeue switch back     | `product-projection.ts`, `turn-model.ts`                               |
+| Fact                                                                                       | Implication                                                                                                                    | Entry                                                            |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| The Composer menu only edits the current scope's draft                                     | reusing the menu callback cannot resolve the pending approval                                                                  | `packages/ui/src/v4/SessionPane.tsx`, `useDraftConfigControl.ts` |
+| The instant mode-switch command is still used by Bot, automation, CLI/TUI and compat paths | not dead code, and approval batch sync must not spread to all callers                                                          | `zcodeTaskServiceAdapter.ts`, `session-facade.ts`                |
+| `app.setMode()` updates Runtime and also writes project `permission/mode`                  | the task-level grant must not inherit the project-preference side effect                                                       | `session-facade.ts`, `runtime-config.ts`                         |
+| Passing only `mode=yolo` normalizes to `planEnabled=false`                                 | the approval-specific update must keep Plan explicitly; the shared compat decode rule is not changed blindly                   | `packages/shared/src/execution-state.ts`                         |
+| Each tool call reads Runtime mode at start; an approval waits in a broker                  | a running task can switch, but pending approvals are not auto-resolved and calls that already read the old mode are not redone | `call-runner.ts`, `permission-flow.ts`                           |
+| Queue items carry their own mode/Plan and re-apply on consume                              | changing only Runtime or UI lets the next dequeue switch back                                                                  | `product-projection.ts`, `turn-model.ts`                         |
 
 `permission/mode` is the project-mode fallback when creating an Agent; `permission/ruleset` is the rule set
 of "always allow this command"; Session execution state and Composer Recent are separate fact sources. This
@@ -66,6 +66,7 @@ Desktop continuous / Mobile replayable
 ```
 
 Queue boundary:
+
 - The affected queue is determined by the Agent's serial order when it accepts the approval action: pending inputs during the run, paused/held queues and not-yet-consumed Guide.
 - It coordinates with reserve/promote/drain; during the batch update the target item may not start with old config; already-started messages are not turned back into queue items and history is not rewritten.
 - The authoritative execution data is changed and the needed input records and events/projections are synced so memory, queries and edit-back never read the old value (not only the renderer display or snapshot).
@@ -77,6 +78,7 @@ queue A build + Plan=true -> yolo + Plan=true     queue B edit + Plan=false -> y
 ```
 
 Approval, failure and cross-end:
+
 - One explicit approval action folds the permission switch, queue change and current answer together; the UI does not send two unrelated commands and assume atomic success. It reuses the existing Runtime state update, interaction broker and command idempotency; the Agent is the owner of queue and permission (no second accepted queue in Renderer, Host or Relay).
 - Interaction and task/session ownership are validated; a late action cannot expand permission after the request was denied, cancelled or handled by another end; a Hook racing a user answer still has a unique winner.
 - Any failure of state save, queue update or event commit gives a reconcilable result and an idempotent retry path (no approving the tool before discovering the queue did not finish); the commit point, failure recovery and fault-injection evidence are explicit (several `await`s are not a transaction).
@@ -96,20 +98,20 @@ Only approving the current request is in scope; other already-pending independen
 
 ## 6. Acceptance cases
 
-| Case     | Scenario                                              | Must prove                                                                                           |
-| -------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| PA158-01 | Ordinary command approval                              | five rows in order, default allow-once, 1-4 and row-5 feedback navigation; no fake input when feedback is not declared |
-| PA158-02 | Running build/edit task awaiting approval, pick full access | no turn stop, no new message; Runtime becomes yolo, the current tool runs, later tools judged by the new permission |
-| PA158-03 | Runtime, Composer and queue with different Plan       | all targets become yolo, each keeping true/false; yolo+Plan still obeys planning constraints         |
-| PA158-04 | Several ordinary queue items, held queue and unconsumed Guide | all targets updated; config/attachments/order/pause state unchanged; auto-consume and "send now" never write back the old mode |
-| PA158-05 | Edit-back of an updated queue item                     | Composer gets the item's updated permission and original Plan/model/body; other items unchanged    |
-| PA158-06 | Batch update interleaved with new submissions, reserve/promote/drain | boundary decided by owner order; no missed target, no double execution, no override of a later-accepted independent user choice |
-| PA158-07 | Multi-end clicks, Hook answer, deny/cancel, lost ACK   | a unique answer winner, expired action gives no privilege, retry reconciles without duplicate side effects |
-| PA158-08 | Faults in save / queue update / event commit           | no false full success and no early tool release; facts consistent after recovery or retry           |
-| PA158-09 | Ordinary menu, allow once, project always-allow, deny/feedback | original behavior; the ordinary menu does not batch-update the queue; project rule scope not widened |
-| PA158-10 | Desktop, phone reconnect and scope switch              | continuous/replayable verified separately; same-task results consistent, drafts not overwritten by ordinary snapshots, no workspaceIdentity/session mix |
-| PA158-11 | Task/project preferences and shared callers            | the action writes no project mode/ruleset or Recent and changes no other task; Bot/automation/CLI regress-free |
-| PA158-12 | Sub-agent-origin approval and old-version combinations | origin routing matches actual execution permission; unsupported full action neither wrongly grants nor extends to unrelated tasks |
+| Case     | Scenario                                                             | Must prove                                                                                                                                              |
+| -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PA158-01 | Ordinary command approval                                            | five rows in order, default allow-once, 1-4 and row-5 feedback navigation; no fake input when feedback is not declared                                  |
+| PA158-02 | Running build/edit task awaiting approval, pick full access          | no turn stop, no new message; Runtime becomes yolo, the current tool runs, later tools judged by the new permission                                     |
+| PA158-03 | Runtime, Composer and queue with different Plan                      | all targets become yolo, each keeping true/false; yolo+Plan still obeys planning constraints                                                            |
+| PA158-04 | Several ordinary queue items, held queue and unconsumed Guide        | all targets updated; config/attachments/order/pause state unchanged; auto-consume and "send now" never write back the old mode                          |
+| PA158-05 | Edit-back of an updated queue item                                   | Composer gets the item's updated permission and original Plan/model/body; other items unchanged                                                         |
+| PA158-06 | Batch update interleaved with new submissions, reserve/promote/drain | boundary decided by owner order; no missed target, no double execution, no override of a later-accepted independent user choice                         |
+| PA158-07 | Multi-end clicks, Hook answer, deny/cancel, lost ACK                 | a unique answer winner, expired action gives no privilege, retry reconciles without duplicate side effects                                              |
+| PA158-08 | Faults in save / queue update / event commit                         | no false full success and no early tool release; facts consistent after recovery or retry                                                               |
+| PA158-09 | Ordinary menu, allow once, project always-allow, deny/feedback       | original behavior; the ordinary menu does not batch-update the queue; project rule scope not widened                                                    |
+| PA158-10 | Desktop, phone reconnect and scope switch                            | continuous/replayable verified separately; same-task results consistent, drafts not overwritten by ordinary snapshots, no workspaceIdentity/session mix |
+| PA158-11 | Task/project preferences and shared callers                          | the action writes no project mode/ruleset or Recent and changes no other task; Bot/automation/CLI regress-free                                          |
+| PA158-12 | Sub-agent-origin approval and old-version combinations               | origin routing matches actual execution permission; unsupported full action neither wrongly grants nor extends to unrelated tasks                       |
 
 Required verification: root `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected
 tests; CLI per its child rules. UI covers desktop/phone, light/dark and zh/en; interaction needs matching
@@ -127,12 +129,12 @@ Push/MR is triggered separately by the user.
 
 Impact: presentation, validation, commit-effect, persistence, recovery.
 
-| Scenario / entry            | Shared implementation                | Draft / default         | Validation and commit                                    | Authority / save                                              | Boundary and isolation                         |
-| --------------------------- | ------------------------------------ | ----------------------- | -------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------- |
-| Desktop/phone ordinary approval | PermissionDialog / V4InteractionDialogs | default allow once   | Agent declares the fullAccess option; original-command resolveInteraction | interaction registry -> Runtime -> session store atomic commit | continuous/replayable keep their original chains |
-| Ordinary Composer menu      | useDraftConfigControl                | independent scope draft | original draft callback                                  | Renderer draft                                                | no queue batch change                          |
-| Project always-allow        | existing option builder              | Agent prefix/exact      | original permissionUpdates                               | project ruleset                                               | no rule widening                               |
-| Sub-agent / legacy          | original approval surface            | original options        | does not declare the full fullAccess capability          | actual child broker                                           | no wrong parent switch, no fake child success  |
+| Scenario / entry                | Shared implementation                   | Draft / default         | Validation and commit                                                     | Authority / save                                               | Boundary and isolation                           |
+| ------------------------------- | --------------------------------------- | ----------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------ |
+| Desktop/phone ordinary approval | PermissionDialog / V4InteractionDialogs | default allow once      | Agent declares the fullAccess option; original-command resolveInteraction | interaction registry -> Runtime -> session store atomic commit | continuous/replayable keep their original chains |
+| Ordinary Composer menu          | useDraftConfigControl                   | independent scope draft | original draft callback                                                   | Renderer draft                                                 | no queue batch change                            |
+| Project always-allow            | existing option builder                 | Agent prefix/exact      | original permissionUpdates                                                | project ruleset                                                | no rule widening                                 |
+| Sub-agent / legacy              | original approval surface               | original options        | does not declare the full fullAccess capability                           | actual child broker                                            | no wrong parent switch, no fake child success    |
 
 Must check: the registry/broker's unique answer, Core pendingInputs/held projection, SQLite `session_input`
 and execution entry, V4 mode/queue patch, Composer targeted sync. Regressions: Plan, Guide, reserve/promote,
@@ -142,6 +144,7 @@ the approval-full-access semantic edge and was supplemented; the old queue-domai
 hold the accepted queue conflicts with the current CommandInbox owner and was not used.
 
 Commit, race and recovery:
+
 - Reuse `resolveInteraction`; the stable option ID is `fullAccess` (never derived from position). Only an Agent with atomic-save capability declares it, for ordinary main-task permission requests; sub-agents, Q&A, Plan approval and workflows requiring independent tool confirmation do not claim support.
 - The Registry validates session, request type and option capability and takes the answer right. Core's permission responder race provides a broker claim: a Hook that already won blocks the claim; after a claim the Hook withdraws. On failure the approval is kept and may be explicitly retried/denied, never auto-released.
 - Runtime locks the target queue's consume/promote within the task; an existing Guide consumption or reserve returns a retryable failure; the fixed ID set of accepted, unconsumed items is taken; CommandInbox's serial admission bounds later submissions. Each item's own Plan and other fields are kept.
@@ -168,20 +171,20 @@ stays pending (not auto-promoted). No open product question.
 
 Temporary logs are in `/tmp/zcode-todo158/`.
 
-| Verification                                                   | Result                                                                                         |
-| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Root `pnpm typecheck`, CLI `pnpm --dir apps/zcode-cli typecheck` | pass; CLI 28 tasks succeed                                                                   |
-| Root `pnpm lint`, `pnpm architecture:check --changed`          | pass; lint has pre-existing warnings, architecture 0 violations                                |
-| SQLite transaction / fixed targets / rollback / cancel / task isolation | 3 pass (`adapters/tests/permission-full-access.test.ts`)                              |
-| Core permission / Hook claim / Plan                            | 24 pass (`permission-full-access`, `permission-responder-race`, `independent-plan-state`)       |
-| Contracts event reducer                                        | 27 pass                                                                                        |
-| Bootstrap broker / registry / projection / original approval chain | 120 pass                                                                                   |
-| Bootstrap queue reserve/promote/edit-back                      | 34 pass (`v4-native-queue.test.ts`)                                                            |
-| V4 continuous / replayable post-commit recovery                | 2 new pass; 1 old-revision baseline failure in the same file                                   |
-| UI approval / shortcuts / compat capability / Composer         | 67 pass; 1 SHARE32 baseline failure reproduced separately and not in the targeted result       |
-| UI queue edit-back / Plan transition                           | 22 pass; the new regression failed first (restores queue item mode/Plan/model/reasoning)       |
-| Desktop E2E types and fixture check                            | pass; the fixture's queued text is only for enqueue/edit-back with no model request, so the matcher warning stays |
-| CLI lint                                                       | fails: baseline max-lines errors (telemetry/debug/bootstrap etc.), not refactored in passing    |
+| Verification                                                            | Result                                                                                                            |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Root `pnpm typecheck`, CLI `pnpm --dir apps/zcode-cli typecheck`        | pass; CLI 28 tasks succeed                                                                                        |
+| Root `pnpm lint`, `pnpm architecture:check --changed`                   | pass; lint has pre-existing warnings, architecture 0 violations                                                   |
+| SQLite transaction / fixed targets / rollback / cancel / task isolation | 3 pass (`adapters/tests/permission-full-access.test.ts`)                                                          |
+| Core permission / Hook claim / Plan                                     | 24 pass (`permission-full-access`, `permission-responder-race`, `independent-plan-state`)                         |
+| Contracts event reducer                                                 | 27 pass                                                                                                           |
+| Bootstrap broker / registry / projection / original approval chain      | 120 pass                                                                                                          |
+| Bootstrap queue reserve/promote/edit-back                               | 34 pass (`v4-native-queue.test.ts`)                                                                               |
+| V4 continuous / replayable post-commit recovery                         | 2 new pass; 1 old-revision baseline failure in the same file                                                      |
+| UI approval / shortcuts / compat capability / Composer                  | 67 pass; 1 SHARE32 baseline failure reproduced separately and not in the targeted result                          |
+| UI queue edit-back / Plan transition                                    | 22 pass; the new regression failed first (restores queue item mode/Plan/model/reasoning)                          |
+| Desktop E2E types and fixture check                                     | pass; the fixture's queued text is only for enqueue/edit-back with no model request, so the matcher warning stays |
+| CLI lint                                                                | fails: baseline max-lines errors (telemetry/debug/bootstrap etc.), not refactored in passing                      |
 
 Baseline isolation: at `/tmp/zcode-todo158/baseline` (same HEAD plus the saved pre-existing patch) the
 SHARE32 failure, the gateway old-revision assertion, the background-notification timing assertion and the

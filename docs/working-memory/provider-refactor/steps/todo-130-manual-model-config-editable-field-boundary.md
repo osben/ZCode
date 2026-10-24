@@ -41,20 +41,20 @@ Evidence: seven isolated tests with the real Hook and dialog asserted the proble
 
 ## 2. Layer 1: field ownership
 
-| Editable in the page, user-managed in manual mode | Config path                                                                                     |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Context window                                    | `properties.contextWindow`                                                                      |
-| Max output token cap                              | `optionSpecs.maxOutputTokens.max`                                                               |
-| Image, video, PDF input                           | `properties.inputFormat.supportsImage / supportsVideo / supportsPdf`                            |
+| Editable in the page, user-managed in manual mode                 | Config path                                                                                     |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Context window                                                    | `properties.contextWindow`                                                                      |
+| Max output token cap                                              | `optionSpecs.maxOutputTokens.max`                                                               |
+| Image, video, PDF input                                           | `properties.inputFormat.supportsImage / supportsVideo / supportsPdf`                            |
 | Structured output, native search, mid-conversation system message | `properties.supportsJsonSchemaOutput / supportsNativeWebSearch / supportsMidConversationSystem` |
-| Reasoning levels and reasoning parameter mapping  | `optionSpecs.reasoningLevel.values / map`                                                       |
-| MFJS tool schema (superseded by Todo134)          | `properties.requiresMfjsToolSchema`                                                             |
+| Reasoning levels and reasoning parameter mapping                  | `optionSpecs.reasoningLevel.values / map`                                                       |
+| MFJS tool schema (superseded by Todo134)                          | `properties.requiresMfjsToolSchema`                                                             |
 
-| Not editable, not frozen by manual mode | Config path                                                                   |
-| --------------------------------------- | ----------------------------------------------------------------------------- |
-| Max output token request-parameter mapping | `optionSpecs.maxOutputTokens.map`                                          |
-| Tool-call capability                    | `properties.supportsToolCall`                                                 |
-| Audio input capability                  | `properties.inputFormat.supportsAudio`                                        |
+| Not editable, not frozen by manual mode     | Config path                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| Max output token request-parameter mapping  | `optionSpecs.maxOutputTokens.map`                                             |
+| Tool-call capability                        | `properties.supportsToolCall`                                                 |
+| Audio input capability                      | `properties.inputFormat.supportsAudio`                                        |
 | Fixed text input / text output declarations | `properties.inputFormat.supportsText`, `properties.outputFormat.supportsText` |
 
 Model ID is identity and `enabled` is independent on/off; neither is rewritten by a mode switch. `enabled`
@@ -126,9 +126,9 @@ recommendation resolving/failed -> user closes smart config
 
 ### 5.2 Two kinds of error
 
-| State                                                | Handling                                                                               |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| User-editable field missing/invalid                  | block save, locate the field                                                           |
+| State                                                             | Handling                                                                                                       |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| User-editable field missing/invalid                               | block save, locate the field                                                                                   |
 | Editable fields complete but system config lacks execution fields | allow saving the valid personal rule; model stays non-executable in the Registry with the config problem shown |
 
 The existing "incomplete model can be repaired in settings but not executed" candidate mechanism is kept.
@@ -146,13 +146,13 @@ No version bump, dual write, new file, complex migrator or rollback system.
 
 ## 7. Modification locations
 
-| Layer             | Main location                                                                                      | Purpose                                                  |
-| ----------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Field contract/schema | `packages/provider/src/config/rule-data-schema.ts`; reuse leaves of `packages/shared/src/model-config.ts` | manual requires editable fields only; final schema not weakened |
-| Rule composition/write | `packages/provider/src/config/model-config.ts`, ConfigService/Facade write boundary           | system fields inherited, manual fields override explicitly |
-| Draft/submit      | UI `ProviderModelMetadata.ts`, `ProviderModelDraftState.ts`, `useProviderModelDraft.ts`            | materialize editable items only; drop old-model and hidden-field fallbacks |
-| Page              | UI `ProviderModelMetadataDialog.tsx`                                                               | always show switch, disable only while saving            |
-| Local format      | `packages/provider-node/src/provider-config-file-codec.ts`, `personal-provider-config-repository.ts` | local handling of old dev records                      |
+| Layer                  | Main location                                                                                             | Purpose                                                                    |
+| ---------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Field contract/schema  | `packages/provider/src/config/rule-data-schema.ts`; reuse leaves of `packages/shared/src/model-config.ts` | manual requires editable fields only; final schema not weakened            |
+| Rule composition/write | `packages/provider/src/config/model-config.ts`, ConfigService/Facade write boundary                       | system fields inherited, manual fields override explicitly                 |
+| Draft/submit           | UI `ProviderModelMetadata.ts`, `ProviderModelDraftState.ts`, `useProviderModelDraft.ts`                   | materialize editable items only; drop old-model and hidden-field fallbacks |
+| Page                   | UI `ProviderModelMetadataDialog.tsx`                                                                      | always show switch, disable only while saving                              |
+| Local format           | `packages/provider-node/src/provider-config-file-codec.ts`, `personal-provider-config-repository.ts`      | local handling of old dev records                                          |
 
 UI paths are relative to `packages/ui/src/settings/model-provider-section/`.
 
@@ -163,18 +163,18 @@ UI paths are relative to `packages/ui/src/settings/model-provider-section/`.
 - UI: hidden map/tool-call draft duties removed; audio/fixed text no longer materialized by the editor; closing saves editable content only. A -> B unresolved never falls back to A's config; switching back to smart clears only editable overrides, not existing system leaves/enable state. Switch always shown, disabled only while saving.
 - Tests: two domain failing tests (old schema rejected the new manual shape), codec/draft failing tests (hidden fields still materialized); then Provider, Provider Node and UI draft/component tests (42 files, 498 passed), a real temporary Repository write/reopen/enable test (8), and targeted draft tests (37). Real Hook+dialog browser checks (390/zh-CN/light, 1200/English/dark) passed: empty ID makes no request, switch operable, stale success/failure after close never overwrites the draft. Root typecheck passed, lint 0 errors / 41 existing warnings, architecture 0 violations. No Pro/Electron/phone shared-host run is claimed.
 
-| Case    | Setup and action                                                | Must prove                                                              |
-| ------- | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| M120-01 | add/edit with empty ID, resolving, failed, no recommendation; toggle mode | switch present and usable; disabled only while saving; smart -> manual works |
-| M120-02 | A -> B, B unresolved, close, fill editable items, save          | no A system-field fallback; saved rule has no hidden fields; final internal config from B |
-| M120-03 | on->off->on, A->B->A, switch Provider, close dialog, reversed resolve order | stale replies never overwrite manual/new-generation draft; smart config not auto re-enabled |
-| M120-04 | manual config pins editable values; system updates capability and mapping | user fields unchanged; system fields update; enable semantics unchanged |
-| M120-05 | manual missing any required editable field, or system field supplied | new-write schema rejects precisely; `false` and valid CEL accepted    |
-| M120-06 | visible fields complete, system maxOutput mapping missing; save then try to create Model | personal rule saves; candidate shows accurate system config problem and cannot execute; no false numeric error |
-| M120-07 | dev-env old full manual record incl. other Providers, default selection, order | local normalization keeps user values/identity/enable; no whole-file clearing or unrelated loss |
-| M120-08 | save+reopen, cancel, save failure, revision conflict, re-enable then edit | mode and values correct; cancel writes nothing; failure keeps edits; new edits not swallowed by restored recommendation |
-| M120-09 | smart mode untouched fields / explicit override / explicit false | sparse intent kept; no hidden-field overrides produced                 |
-| M120-10 | desktop, phone existing settings entries and CLI/Host consume the same config | ownership and final config agree; no new cross-end write fork; remote identity and message flow unchanged |
+| Case    | Setup and action                                                                         | Must prove                                                                                                              |
+| ------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| M120-01 | add/edit with empty ID, resolving, failed, no recommendation; toggle mode                | switch present and usable; disabled only while saving; smart -> manual works                                            |
+| M120-02 | A -> B, B unresolved, close, fill editable items, save                                   | no A system-field fallback; saved rule has no hidden fields; final internal config from B                               |
+| M120-03 | on->off->on, A->B->A, switch Provider, close dialog, reversed resolve order              | stale replies never overwrite manual/new-generation draft; smart config not auto re-enabled                             |
+| M120-04 | manual config pins editable values; system updates capability and mapping                | user fields unchanged; system fields update; enable semantics unchanged                                                 |
+| M120-05 | manual missing any required editable field, or system field supplied                     | new-write schema rejects precisely; `false` and valid CEL accepted                                                      |
+| M120-06 | visible fields complete, system maxOutput mapping missing; save then try to create Model | personal rule saves; candidate shows accurate system config problem and cannot execute; no false numeric error          |
+| M120-07 | dev-env old full manual record incl. other Providers, default selection, order           | local normalization keeps user values/identity/enable; no whole-file clearing or unrelated loss                         |
+| M120-08 | save+reopen, cancel, save failure, revision conflict, re-enable then edit                | mode and values correct; cancel writes nothing; failure keeps edits; new edits not swallowed by restored recommendation |
+| M120-09 | smart mode untouched fields / explicit override / explicit false                         | sparse intent kept; no hidden-field overrides produced                                                                  |
+| M120-10 | desktop, phone existing settings entries and CLI/Host consume the same config            | ownership and final config agree; no new cross-end write fork; remote identity and message flow unchanged               |
 
 APP interaction needs E2E covering close click, fill, save, reopen and cancel (existing pending smart-config
 cases updated per the E2E lifecycle). Desktop and phone keep shared-host, continuous/replayable boundaries.

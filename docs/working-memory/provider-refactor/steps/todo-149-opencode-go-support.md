@@ -22,11 +22,11 @@ other parameters, responses and tool calls are compatible after removing them.
 
 In the "Add provider" "Other" group next to Zen, reusing the existing OpenCode light/dark icons and create flow:
 
-| Template ID             | Name                       | API type                  | Main series in the official access table |
-| ----------------------- | -------------------------- | ------------------------- | ---------------------------------------- |
-| `opencode-go-chat`      | OpenCode Go (Chat)         | `openai-chat-completions` | GLM, Kimi, DeepSeek, MiMo, LongCat, Hy   |
-| `opencode-go-messages`  | OpenCode Go (Anthropic)    | `anthropic-messages`      | MiniMax, Qwen                            |
-| `opencode-go-responses` | OpenCode Go (Responses)    | `openai-responses`        | GPT, Grok, Muse                          |
+| Template ID             | Name                    | API type                  | Main series in the official access table |
+| ----------------------- | ----------------------- | ------------------------- | ---------------------------------------- |
+| `opencode-go-chat`      | OpenCode Go (Chat)      | `openai-chat-completions` | GLM, Kimi, DeepSeek, MiMo, LongCat, Hy   |
+| `opencode-go-messages`  | OpenCode Go (Anthropic) | `anthropic-messages`      | MiniMax, Qwen                            |
+| `opencode-go-responses` | OpenCode Go (Responses) | `openai-responses`        | GPT, Grok, Muse                          |
 
 - Common Base URL `https://opencode.ai/zen/go/v1`; Access `api-key`; a single API-key link `https://opencode.ai/auth`.
 - Server-original Model IDs are kept (no `opencode-go/` client namespace prefix); models are grouped by Go's official protocols and the full Zen list is not copied (Go's MiniMax must not go in the Chat template).
@@ -61,12 +61,12 @@ manual Go URL ----------+            -> existing personal override / manual mode
 
 ## Impact
 
-| Entry                               | Shared change                          | Unchanged state / commit boundary                                                        |
-| ----------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Add Provider, model settings        | Template list, recommended model config | page drafts saved to Personal via the Settings Service; unedited recommended fields not materialized |
-| Connectivity test                   | Registry resolution and formal Adapter request parameters | existing prompts, budget, stream-completion rule; session model selection untouched |
-| Chat, automation, Subagent, Wiki... | Registry candidates and Model request config | each entry keeps its own default, inheritance, validation, commit and persistence |
-| Remote workspace and phone          | same execution rules after existing config delivery | no new sync chain; desktop continuous vs phone replayable unchanged |
+| Entry                               | Shared change                                             | Unchanged state / commit boundary                                                                    |
+| ----------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Add Provider, model settings        | Template list, recommended model config                   | page drafts saved to Personal via the Settings Service; unedited recommended fields not materialized |
+| Connectivity test                   | Registry resolution and formal Adapter request parameters | existing prompts, budget, stream-completion rule; session model selection untouched                  |
+| Chat, automation, Subagent, Wiki... | Registry candidates and Model request config              | each entry keeps its own default, inheritance, validation, commit and persistence                    |
+| Remote workspace and phone          | same execution rules after existing config delivery       | no new sync chain; desktop continuous vs phone replayable unchanged                                  |
 
 No change to Provider/Model Schema, persistence format, account identity, session recovery or frozen
 in-flight Model semantics. Codegraph was unavailable (no depth-2 call-graph scan); the above rests on source

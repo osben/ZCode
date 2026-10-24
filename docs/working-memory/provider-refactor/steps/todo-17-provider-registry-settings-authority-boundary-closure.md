@@ -100,15 +100,15 @@ not necessarily back to the Built-in value).
 The set currently shown on the settings page never serves as a full snapshot of the Personal Repository.
 Writes follow the unit of the user's operation:
 
-| User operation                                         | Domain write                                                        |
-| ------------------------------------------------------ | ------------------------------------------------------------------- |
-| Edit Provider API, Access, Endpoint, Provider enabled  | `savePersonalProvider(providerId, config)`                          |
-| Edit Model enabled, Properties, Options, Reasoning Mapping | `savePersonalModelConfig(providerId, modelId, config)`          |
-| Restore a Model field                                  | save the exact Config with that leaf deleted; delete the exact Rule when Config is empty |
-| Add a Personal Model                                   | atomically add to `provider.modelIds` and save the initial exact Model Config |
-| Delete a Personal Model                                | atomically delete the `modelIds` member and the exact Rule it owns  |
-| Rename a Personal Model                                | atomically move the `modelIds` member and the exact Rule it owns    |
-| Reorder Personal Models                                | only reorder `provider.modelIds`                                    |
+| User operation                                             | Domain write                                                                             |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Edit Provider API, Access, Endpoint, Provider enabled      | `savePersonalProvider(providerId, config)`                                               |
+| Edit Model enabled, Properties, Options, Reasoning Mapping | `savePersonalModelConfig(providerId, modelId, config)`                                   |
+| Restore a Model field                                      | save the exact Config with that leaf deleted; delete the exact Rule when Config is empty |
+| Add a Personal Model                                       | atomically add to `provider.modelIds` and save the initial exact Model Config            |
+| Delete a Personal Model                                    | atomically delete the `modelIds` member and the exact Rule it owns                       |
+| Rename a Personal Model                                    | atomically move the `modelIds` member and the exact Rule it owns                         |
+| Reorder Personal Models                                    | only reorder `provider.modelIds`                                                         |
 
 A Model enabled button on the Provider page still writes Model Config (where a control appears does not
 change config ownership). Remove from the normal save path `savePersonalProvider(providerId, providerConfig,
@@ -120,6 +120,7 @@ Provider may delete its exact Rules in bulk but the interface must express delet
 
 The Renderer may keep a local Draft but async writes of one Provider commit in the order they occurred;
 different Providers may run in parallel (edit field -> edit model -> rename -> test, each finishing before the next).
+
 - A late response of an earlier save cannot overwrite newer local input or show as latest success.
 - Rename waits for the in-flight save of the old ID, then switches later operations to the new ID; the old ID accepts no writes.
 - Delete is terminal: after it starts, a late save cannot recreate the Provider.
@@ -136,6 +137,7 @@ another config fact. The bare assertions `config as RegistryProviderConfig`, `co
 and `config.toJSON() as RegistryModelConfigObject` are folded into one runtime creation entry (API may be
 `from()`, `parse()` or equivalent) returning
 `RegistryConfigResult<T> = { ok: true; config: T } | { ok: false; issues: readonly ConfigValidationIssue[] }`.
+
 - The entry recursively checks Registry-required fields; the single internal type proof must not leak to callers.
 - The Resolver uses this one result for both Settings issues and the Registry value. Completeness answers only "are required fields complete"; enabled, visibility, member conflicts and registration stay with the Resolver.
 - The serialization exit of a complete type returns a complete static structure (no optional fields re-exposed).
@@ -176,9 +178,14 @@ and Adapter encoding go through the formal Model request chain. One operation te
 ```ts
 type ModelConnectivityResult =
   | { readonly success: true }
-  | { readonly success: false; readonly error: {
-      readonly kind: "auth" | "model_not_found" | "rate_limit" | "network" | "server" | "unknown";
-      readonly message: string; readonly httpStatus?: number; } };
+  | {
+      readonly success: false;
+      readonly error: {
+        readonly kind: "auth" | "model_not_found" | "rate_limit" | "network" | "server" | "unknown";
+        readonly message: string;
+        readonly httpStatus?: number;
+      };
+    };
 ```
 
 Delete the single-element `results[]`, `EndpointConnectivityResult`, `endpointType` inference and the
@@ -211,14 +218,14 @@ Change layers: option-source, validation, commit-effect, persistence. Main entri
 Connectivity Service and the target ModelFactory. Out of scope: Remote Settings/Provisioning, M4, Todo 11,
 Access/Reasoning product semantics, task and model-selection lifecycle.
 
-| User scenario          | UI entry           | Draft / display                        | Commit                    | Authority                        | Must isolate              |
-| ---------------------- | ------------------ | -------------------------------------- | ------------------------- | -------------------------------- | ------------------------- |
-| Edit Provider          | Provider detail    | Personal Provider Draft; 3-layer View  | `savePersonalProvider`    | Personal Provider Repository     | Model Rules, Selection    |
-| Toggle Model           | Provider model list | single-model exact Draft               | `savePersonalModelConfig` | Personal Model Rules             | other models' Rules       |
-| Edit Model             | Model sub-page     | single-model exact Draft               | upsert/delete exact Rule  | Personal Model Rules             | other Provider fields     |
-| Add/rename/delete Model | list and sub-page | Personal member operations             | domain atomic operation   | `modelIds` + owned exact Rule    | Built-in members          |
-| Rename Provider        | Provider name edit | current providerId Draft               | atomic rename             | Provider Map + owned exact Rules | Session/Recent/Automation |
-| Test Model             | Model-row test button | no independent long-term Draft      | `testModelConnectivity`   | no new persistence; formal request | all Selection state      |
+| User scenario           | UI entry              | Draft / display                       | Commit                    | Authority                          | Must isolate              |
+| ----------------------- | --------------------- | ------------------------------------- | ------------------------- | ---------------------------------- | ------------------------- |
+| Edit Provider           | Provider detail       | Personal Provider Draft; 3-layer View | `savePersonalProvider`    | Personal Provider Repository       | Model Rules, Selection    |
+| Toggle Model            | Provider model list   | single-model exact Draft              | `savePersonalModelConfig` | Personal Model Rules               | other models' Rules       |
+| Edit Model              | Model sub-page        | single-model exact Draft              | upsert/delete exact Rule  | Personal Model Rules               | other Provider fields     |
+| Add/rename/delete Model | list and sub-page     | Personal member operations            | domain atomic operation   | `modelIds` + owned exact Rule      | Built-in members          |
+| Rename Provider         | Provider name edit    | current providerId Draft              | atomic rename             | Provider Map + owned exact Rules   | Session/Recent/Automation |
+| Test Model              | Model-row test button | no independent long-term Draft        | `testModelConnectivity`   | no new persistence; formal request | all Selection state       |
 
 Desktop, Web and Mobile reuse the same UI/Service contract; no new remote config editing. Shared facts:
 Overlay is computed by the Resolver (Settings keeps failed candidates, Registry only complete executable
@@ -236,27 +243,27 @@ A. Update the long-term specs (`configuration.md`, `registry.md`, `settings.md`,
 
 ## 6. Accepted cases
 
-| Case ID | Setup                                             | Action                              | Assertions                                                         | Evidence layer            |
-| ------- | ------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------ | ------------------------- |
-| PRS-01  | complete Effective Provider/Model                 | create Registry Config              | returns the complete static type; complete serialization           | Provider unit + typecheck |
-| PRS-02  | missing Endpoint or Model format leaf             | create Registry Config              | precise issues; not entering the Registry                          | Provider unit             |
-| PRS-03  | Built-in + Account Built-in + Personal, one Provider | get Settings View                | Effective Built-in, sparse Personal, final Effective               | Resolver/Facade unit      |
-| PRS-04  | Personal-only Provider/Model matches a Built-in Rule | get Settings View                | Provider has no Built-in layer; Model gets the Built-in Rule defaults | Resolver/Facade unit   |
-| PRS-05  | exact Rules for models A, B under a Provider      | save only A                         | B's match condition, content and order semantics unchanged         | Config Service unit       |
-| PRS-06  | a Personal exact Rule the UI does not show        | edit Provider fields                | the invisible Rule is kept                                         | Service + UI unit         |
-| PRS-07  | ordinary hidden Provider/Model                    | get Settings/Selection; internal exact create | not shown on user entries; internal creation still succeeds | Facade + Registry unit  |
-| PRS-08  | hidden Built-in vs Personal same-ID conflict      | get Settings                        | only diagnostics that resolve the conflict; Built-in still executable internally | Resolver/Facade unit |
-| PRS-09  | Personal Provider with all optional fields        | rename Provider                     | all Config fields and order kept; owned exact Rules migrate        | Config Service unit       |
-| PRS-10  | quick consecutive edits of one Provider           | submit two operations               | final state follows user order; an old response does not overwrite new input | UI/Service unit |
-| PRS-11  | disabled/incomplete Model                         | UI click or bypass-UI test call     | UI disabled; a bypass is rejected by the target ModelFactory       | UI + Agent unit           |
-| PRS-12  | saved executable Model                            | test connectivity                   | the formal Model/Adapter finishes the request; single result; Selection state unchanged | Service/Core integration |
-| PRS-13  | Registry update invalidates the model between save and request | test connectivity       | the target ModelFactory rejects by the current Registry, not trusting the Host's old View | Agent integration |
-| PRS-15  | batch Personal Rule + single-model exact Rule     | restore the exact leaf              | final value recomputed from all Rules, may return to the batch Personal value | Resolver/Facade unit |
-| PRS-16  | user editing while an external View updates       | receive the new View                | dirty fields kept; unedited fields updated                         | UI unit                   |
-| PRS-17  | save unfinished                                   | rename Provider                     | old-ID save finishes first, then identity migrates; old ID not rebuilt | UI/Service unit        |
-| PRS-18  | save unfinished                                   | delete Provider                     | a late save after deletion cannot resurrect the Provider           | UI/Service unit           |
-| PRS-19  | Provider/Model has pending saves                  | click test                          | waits for saves, then tests the latest formal Model                | UI/Service integration    |
-| PRS-20  | new Model input matches existing Rules            | request `previewModelConfig`        | returns rule-resolved defaults; nothing persisted                  | Facade/UI unit            |
+| Case ID | Setup                                                          | Action                                        | Assertions                                                                                | Evidence layer            |
+| ------- | -------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------- |
+| PRS-01  | complete Effective Provider/Model                              | create Registry Config                        | returns the complete static type; complete serialization                                  | Provider unit + typecheck |
+| PRS-02  | missing Endpoint or Model format leaf                          | create Registry Config                        | precise issues; not entering the Registry                                                 | Provider unit             |
+| PRS-03  | Built-in + Account Built-in + Personal, one Provider           | get Settings View                             | Effective Built-in, sparse Personal, final Effective                                      | Resolver/Facade unit      |
+| PRS-04  | Personal-only Provider/Model matches a Built-in Rule           | get Settings View                             | Provider has no Built-in layer; Model gets the Built-in Rule defaults                     | Resolver/Facade unit      |
+| PRS-05  | exact Rules for models A, B under a Provider                   | save only A                                   | B's match condition, content and order semantics unchanged                                | Config Service unit       |
+| PRS-06  | a Personal exact Rule the UI does not show                     | edit Provider fields                          | the invisible Rule is kept                                                                | Service + UI unit         |
+| PRS-07  | ordinary hidden Provider/Model                                 | get Settings/Selection; internal exact create | not shown on user entries; internal creation still succeeds                               | Facade + Registry unit    |
+| PRS-08  | hidden Built-in vs Personal same-ID conflict                   | get Settings                                  | only diagnostics that resolve the conflict; Built-in still executable internally          | Resolver/Facade unit      |
+| PRS-09  | Personal Provider with all optional fields                     | rename Provider                               | all Config fields and order kept; owned exact Rules migrate                               | Config Service unit       |
+| PRS-10  | quick consecutive edits of one Provider                        | submit two operations                         | final state follows user order; an old response does not overwrite new input              | UI/Service unit           |
+| PRS-11  | disabled/incomplete Model                                      | UI click or bypass-UI test call               | UI disabled; a bypass is rejected by the target ModelFactory                              | UI + Agent unit           |
+| PRS-12  | saved executable Model                                         | test connectivity                             | the formal Model/Adapter finishes the request; single result; Selection state unchanged   | Service/Core integration  |
+| PRS-13  | Registry update invalidates the model between save and request | test connectivity                             | the target ModelFactory rejects by the current Registry, not trusting the Host's old View | Agent integration         |
+| PRS-15  | batch Personal Rule + single-model exact Rule                  | restore the exact leaf                        | final value recomputed from all Rules, may return to the batch Personal value             | Resolver/Facade unit      |
+| PRS-16  | user editing while an external View updates                    | receive the new View                          | dirty fields kept; unedited fields updated                                                | UI unit                   |
+| PRS-17  | save unfinished                                                | rename Provider                               | old-ID save finishes first, then identity migrates; old ID not rebuilt                    | UI/Service unit           |
+| PRS-18  | save unfinished                                                | delete Provider                               | a late save after deletion cannot resurrect the Provider                                  | UI/Service unit           |
+| PRS-19  | Provider/Model has pending saves                               | click test                                    | waits for saves, then tests the latest formal Model                                       | UI/Service integration    |
+| PRS-20  | new Model input matches existing Rules                         | request `previewModelConfig`                  | returns rule-resolved defaults; nothing persisted                                         | Facade/UI unit            |
 
 PRS-05 compares the resolved Rule's identity, order, match condition and config content (not raw bytes such as indentation).
 

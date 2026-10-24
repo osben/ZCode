@@ -22,9 +22,7 @@ optionSpecs.<optionName>.map
 ## 2. Variable naming
 
 ```ts
-reasoningLevel == "high"
-  ? { "reasoning_effort": "high" }
-  : { "reasoning_effort": "max" }
+reasoningLevel == "high" ? { reasoning_effort: "high" } : { reasoning_effort: "max" };
 ```
 
 ```text
@@ -44,21 +42,21 @@ Built-in Map strings favor readability in the settings text box. Complex conditi
 ```ts
 reasoningLevel == "low"
   ? {
-      "thinking": {
-        "type": "adaptive"
+      thinking: {
+        type: "adaptive",
       },
-      "output_config": {
-        "effort": "low"
-      }
+      output_config: {
+        effort: "low",
+      },
     }
   : {
-      "thinking": {
-        "type": "adaptive"
+      thinking: {
+        type: "adaptive",
       },
-      "output_config": {
-        "effort": "max"
-      }
-    }
+      output_config: {
+        effort: "max",
+      },
+    };
 ```
 
 Simple expressions may stay on one line: `{ "max_tokens": maxOutputTokens }`.

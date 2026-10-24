@@ -34,13 +34,13 @@ field locations, smart-toggle placement and footer layout are updated there.
 6. Some old valid manual files contained MFJS. At the existing file-codec normalization boundary, recognize the old editable or old complete shape and extract current manual fields. No `schemaVersion` change, no global data migration; unknown/corrupt formats are not pretended successful.
 7. Identity and edit-generation protection of recommendations and reset is preserved. No recommendation cache, second draft or persisted collapse state.
 
-| Action                     | Draft                                                                                  | Persistence                                                |
-| -------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Expand/collapse            | all fields preserved                                                                   | no write                                                   |
-| Edit basic/advanced fields | update the same draft                                                                  | no write                                                   |
-| Reset / switch smart mode  | existing Hook and async protection                                                     | no write                                                   |
-| Save                       | validate all editable fields; auto-expand and focus errors in advanced fields          | existing submission only after validation succeeds         |
-| Cancel                     | discard this editing session                                                           | no write                                                   |
+| Action                     | Draft                                                                         | Persistence                                        |
+| -------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------- |
+| Expand/collapse            | all fields preserved                                                          | no write                                           |
+| Edit basic/advanced fields | update the same draft                                                         | no write                                           |
+| Reset / switch smart mode  | existing Hook and async protection                                            | no write                                           |
+| Save                       | validate all editable fields; auto-expand and focus errors in advanced fields | existing submission only after validation succeeds |
+| Cancel                     | discard this editing session                                                  | no write                                           |
 
 Errors are located by existing structured field identifiers, not translated copy. Re-submitting the same
 error after manually collapsing Advanced also expands it. Existing control locking while saving stays.
@@ -64,7 +64,7 @@ ModelSelection, account synchronization, requests and in-flight execution are no
 | M134-07 | Desktop/narrow screen, light/dark, Chinese/English, labels/keyboard help, footer layout                      |
 | M134-08 | New manual schema rejects hidden fields; can save without MFJS; system MFJS follows rules                    |
 | M134-09 | Old valid manual shape can be read and survives repeated read/write; unknown/corrupt config remains rejected |
-| M134-10 | Unrelated smart-mode edits retain existing hidden system overlays and create no new hidden overlays         |
+| M134-10 | Unrelated smart-mode edits retain existing hidden system overlays and create no new hidden overlays          |
 
 ## Relations and result
 

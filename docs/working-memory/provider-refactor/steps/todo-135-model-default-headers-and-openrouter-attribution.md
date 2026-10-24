@@ -26,12 +26,12 @@ the fix is at the common model outlet, not a title-only patch. Baseline: `origin
 
 ### Generic default headers
 
-| Category       | Restored default content                                                       |
-| -------------- | ------------------------------------------------------------------------------ |
-| Client version | `User-Agent: ZCode/<version>`, `X-ZCode-App-Version` for a valid version       |
-| Product source | `HTTP-Referer`, `X-Title: Z Code@electron/cli`, `X-ZCode-Agent: glm`           |
-| Environment    | `X-Release-Channel`, `X-Client-Language`, `X-Client-Timezone`                  |
-| Platform       | `X-Platform`, `X-Os-Category`, `X-Os-Version`                                  |
+| Category       | Restored default content                                                 |
+| -------------- | ------------------------------------------------------------------------ |
+| Client version | `User-Agent: ZCode/<version>`, `X-ZCode-App-Version` for a valid version |
+| Product source | `HTTP-Referer`, `X-Title: Z Code@electron/cli`, `X-ZCode-Agent: glm`     |
+| Environment    | `X-Release-Channel`, `X-Client-Language`, `X-Client-Timezone`            |
+| Platform       | `X-Platform`, `X-Os-Category`, `X-Os-Version`                            |
 
 Never mistake the SDK version or a remote Worker's own version for the desktop client version. Value
 normalization and missing-value semantics are kept (no illegal newlines in headers; a normal version is

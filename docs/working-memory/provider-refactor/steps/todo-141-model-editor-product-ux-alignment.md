@@ -11,14 +11,14 @@ decisions were reconnected in the existing editor; product-branch code was not m
 
 ## Final layout
 
-| Area                                    | Content and order                                                                                                            |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Area                                    | Content and order                                                                                                               |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | Separate row below the title            | Smart-configuration name, question mark and toggle, left-aligned horizontally, compact internal spacing from the product branch |
-| Default body                            | Model ID, context window, maximum output tokens                                                                              |
-| Advanced settings, collapsed by default | Input types, model capabilities, reasoning-configuration group                                                               |
-| Reasoning-configuration group           | **Reasoning levels and reasoning-parameter mapping adjacent vertically in one group**; no card border                         |
-| Bottom left                             | Reset form: smaller, underlined text button                                                                                  |
-| Bottom right                            | Cancel and Save (Save primary)                                                                                               |
+| Default body                            | Model ID, context window, maximum output tokens                                                                                 |
+| Advanced settings, collapsed by default | Input types, model capabilities, reasoning-configuration group                                                                  |
+| Reasoning-configuration group           | **Reasoning levels and reasoning-parameter mapping adjacent vertically in one group**; no card border                           |
+| Bottom left                             | Reset form: smaller, underlined text button                                                                                     |
+| Bottom right                            | Cancel and Save (Save primary)                                                                                                  |
 
 - "Reasoning levels" (zh-CN "推理档位", "from low to high" kept) edits the ordered levels the model supports, not the current session level. The advanced entry is labeled "Advanced settings".
 - No inner cards (no group borders, backgrounds or extra padding). Field-to-field spacing about 24px -> 16px (explicitly requested), about 4px label-to-input, current spacing between options in a field.

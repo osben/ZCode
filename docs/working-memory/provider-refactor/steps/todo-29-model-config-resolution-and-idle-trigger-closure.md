@@ -93,13 +93,13 @@ config, and the text does not claim the server recognizes or authorizes the mode
 
 ## 6. Impact boundaries
 
-| Layer         | This round                                               | Unchanged                                           |
-| ------------- | -------------------------------------------------------- | --------------------------------------------------- |
-| draft-default | Unified Resolution projection and sparse Draft           | Rule content and override precedence                |
-| presentation  | New success banner, fix JSON default wrong display       | Model field order and editable scope                |
-| commit-effect | Unified 1200ms idle/blur flush                           | Host save, Registry refresh, revision authority     |
-| validation    | Wait for current Resolution before save                  | Integrity rules and Adapter compatibility           |
-| persistence   | Provider text still auto-saves                           | Personal Config Schema and physical location        |
+| Layer         | This round                                         | Unchanged                                       |
+| ------------- | -------------------------------------------------- | ----------------------------------------------- |
+| draft-default | Unified Resolution projection and sparse Draft     | Rule content and override precedence            |
+| presentation  | New success banner, fix JSON default wrong display | Model field order and editable scope            |
+| commit-effect | Unified 1200ms idle/blur flush                     | Host save, Registry refresh, revision authority |
+| validation    | Wait for current Resolution before save            | Integrity rules and Adapter compatibility       |
+| persistence   | Provider text still auto-saves                     | Personal Config Schema and physical location    |
 
 Model selection, connection testing, account plan, Remote Provisioning, Desktop continuous, Mobile replayable, queue
 and recovery are untouched.

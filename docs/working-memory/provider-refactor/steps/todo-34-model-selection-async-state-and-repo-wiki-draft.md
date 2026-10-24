@@ -26,7 +26,7 @@ completed, Registry published `account:bigmodel-team-coding-plan / GLM-5.3-Flash
 model ready). Real sequence:
 
 ```text
-Repo Wiki first render -> useModelSelectionView initial return null -> null projected to empty groups, default model "" 
+Repo Wiki first render -> useModelSelectionView initial return null -> null projected to empty groups, default model ""
  -> resolveRepoWikiThoughtLevelOption parses "" -> parseModelPickerValue throws -> Error Boundary unloads Repo Wiki
  -> getView subsequently succeeds, cannot update the unloaded page
 ```
@@ -49,7 +49,7 @@ Selection.
   empty array and Repo Wiki projected empty candidates to an empty `modelValue`, making "View not yet obtained"
   indistinguishable from "View obtained and providers truly empty".
 - **Repo Wiki Store saved control encoding, not domain Selection** (`modelValue: string; modelTouched: boolean;
-  thoughtLevel?: string; thoughtLevelTouched: boolean`). The `provider/model` string is only the control encoding of
+thoughtLevel?: string; thoughtLevelTouched: boolean`). The `provider/model` string is only the control encoding of
   `ModelConfigSelect`; Repo Wiki should save a sparse explicit `ModelSelection` and format strings only at the
   Select boundary.
 - **Renderer duplicated Host fallback.** Target Host's `ModelSelectionView` atomically contains candidates and
@@ -184,13 +184,13 @@ not replace UI admission with a silent return.
 
 ### 4.6 Adjacent entries
 
-| Entry             | loading / unavailable                                                                                  | error                                                                              | ready                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Root startup gate | Keep waiting for the first Model Selection View                                                        | End silent waiting, show read failure and reload; never interpret as "no Provider" | Complete startup check by existing Provider availability rules                |
-| Composer          | Preserve Draft/Session Selection, model control shows loading and cannot submit a new selection        | Preserve Selection, control shows read failure and reload                          | Candidates by target Host View; Session/Active Model ownership unchanged      |
-| Automation        | missing-target/remote-waiting shown in the model control, no fallback to Base Host                     | Preserve form Draft, control shows read failure and reload                         | Candidates only from the selected Workspace Host                              |
-| Subagent Settings | Preserve form Draft, model controls show loading                                                       | Preserve form Draft, model area shows read failure and reload                      | Keep using Local Environment View                                             |
-| Provider Settings | Panel shows loading, `null` not treated as empty Provider list                                         | Panel shows read failure and reload                                                | Display that Environment's Provider Settings View                             |
+| Entry             | loading / unavailable                                                                           | error                                                                              | ready                                                                    |
+| ----------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Root startup gate | Keep waiting for the first Model Selection View                                                 | End silent waiting, show read failure and reload; never interpret as "no Provider" | Complete startup check by existing Provider availability rules           |
+| Composer          | Preserve Draft/Session Selection, model control shows loading and cannot submit a new selection | Preserve Selection, control shows read failure and reload                          | Candidates by target Host View; Session/Active Model ownership unchanged |
+| Automation        | missing-target/remote-waiting shown in the model control, no fallback to Base Host              | Preserve form Draft, control shows read failure and reload                         | Candidates only from the selected Workspace Host                         |
+| Subagent Settings | Preserve form Draft, model controls show loading                                                | Preserve form Draft, model area shows read failure and reload                      | Keep using Local Environment View                                        |
+| Provider Settings | Panel shows loading, `null` not treated as empty Provider list                                  | Panel shows read failure and reload                                                | Display that Environment's Provider Settings View                        |
 
 Root's error ends the infinite wait controlled only by a `hydrated` boolean but must not fabricate an empty
 `ModelSelectionView` to trigger the "no available Provider" branch. Provider Settings keeps its own domain state and

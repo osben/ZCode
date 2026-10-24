@@ -7,12 +7,12 @@ config was published.
 
 Applies to both `account:zai-offpeak-idle-plan` and `account:bigmodel-offpeak-idle-plan`:
 
-| Item                | Target                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------------------- |
-| Built-in model list | only `GLM-5.3` and `GLM-5.3-Flash`, both enabled by default; `GLM-5.2` and `GLM-5-Turbo` removed |
-| GLM-5.3 vision      | no image/video input, configured as the ordinary API's real capability (not the Coding Plan bridging capability declaration) |
-| GLM-5.3-Flash vision | keeps the ordinary API's image/video/PDF capability                                            |
-| Built-in search     | `supportsNativeWebSearch` off for both models                                                   |
+| Item                 | Target                                                                                                                       |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Built-in model list  | only `GLM-5.3` and `GLM-5.3-Flash`, both enabled by default; `GLM-5.2` and `GLM-5-Turbo` removed                             |
+| GLM-5.3 vision       | no image/video input, configured as the ordinary API's real capability (not the Coding Plan bridging capability declaration) |
+| GLM-5.3-Flash vision | keeps the ordinary API's image/video/PDF capability                                                                          |
+| Built-in search      | `supportsNativeWebSearch` off for both models                                                                                |
 
 This adjusts the capability config itself; it is not a frontend badge-hiding special case.
 

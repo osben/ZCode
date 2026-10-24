@@ -40,18 +40,18 @@ Final scope:
 
 The current Writers were compared with the frozen staging commit's file names, strict Schemas, null handling, list parsing and failure scope. This is code fact.
 
-| Domain             | Real staging read behavior                                                      | Accepted rollback degradation                              | Ruling              |
-| ------------------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------- |
-| Provider Config    | reads old `config.json`; current writes only new `provider_config.json`         | pre-upgrade config; new Provider/Template edits invisible  | no dual-write       |
-| Session            | knows `runtime/model_selection`; message, Part, Entry are lenient JSON reads    | new model metadata, Reasoning or some new messages degrade | no dual-write       |
-| Off-Peak           | old `model/thought_level` nullable; extra columns harmless                      | new tasks may use staging's default model                  | no dual-write       |
-| Automation         | old `model/provider/thought_level` nullable; extra columns harmless             | new tasks and Runs cannot keep the new frozen selection    | no dual-write       |
-| Account Settings   | non-strict Schema, ignores new fields, empty defaults for missing old fields    | account connection or plan selection may need re-choosing  | no dual-write       |
-| Custom Subagent    | Frontmatter reads known fields only; new `modelSelection` does not reject file  | explicit model selection degrades to inherit/default       | no dual-write       |
-| Built-in Subagent state | lenient field picking, ignores new model override fields                   | model override lost; `disabledAgentIds` kept               | no dual-write       |
-| Repo Wiki          | old and new Readers parse JSON leniently                                        | Wiki readable; regeneration may need model re-selection    | no dual-write       |
-| Bot Config/State   | same-file old and new Options both strict, field sets mutually incompatible     | whole Bot config/state rejected is unacceptable            | versioned file isolation |
-| Model/Reasoning    | no independent persistence medium                                               | follows owning domain                                      | no generic layer    |
+| Domain                  | Real staging read behavior                                                     | Accepted rollback degradation                              | Ruling                   |
+| ----------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------ |
+| Provider Config         | reads old `config.json`; current writes only new `provider_config.json`        | pre-upgrade config; new Provider/Template edits invisible  | no dual-write            |
+| Session                 | knows `runtime/model_selection`; message, Part, Entry are lenient JSON reads   | new model metadata, Reasoning or some new messages degrade | no dual-write            |
+| Off-Peak                | old `model/thought_level` nullable; extra columns harmless                     | new tasks may use staging's default model                  | no dual-write            |
+| Automation              | old `model/provider/thought_level` nullable; extra columns harmless            | new tasks and Runs cannot keep the new frozen selection    | no dual-write            |
+| Account Settings        | non-strict Schema, ignores new fields, empty defaults for missing old fields   | account connection or plan selection may need re-choosing  | no dual-write            |
+| Custom Subagent         | Frontmatter reads known fields only; new `modelSelection` does not reject file | explicit model selection degrades to inherit/default       | no dual-write            |
+| Built-in Subagent state | lenient field picking, ignores new model override fields                       | model override lost; `disabledAgentIds` kept               | no dual-write            |
+| Repo Wiki               | old and new Readers parse JSON leniently                                       | Wiki readable; regeneration may need model re-selection    | no dual-write            |
+| Bot Config/State        | same-file old and new Options both strict, field sets mutually incompatible    | whole Bot config/state rejected is unacceptable            | versioned file isolation |
+| Model/Reasoning         | no independent persistence medium                                              | follows owning domain                                      | no generic layer         |
 
 This proves the Provider-refactor fields are not rejected domain-wide by old Readers; it is not a full old-App startup, display and execution acceptance. Records must distinguish static review, targeted tests and real rollback evidence.
 
@@ -191,15 +191,15 @@ Completion:
 
 Paths are relative to the frozen commit; later refactors shifting lines do not change the read contract.
 
-| Domain     | Main evidence paths                                                                                                                                              |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Provider   | `packages/services/src/model-provider/providerConfigRuntime.ts`; `packages/services/test/providerConfigRuntime.test.ts`                                          |
-| Session    | `apps/zcode-cli/packages/adapters/src/storage/session-store/codecs.ts`; `apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts`                 |
-| Off-Peak   | `packages/services/src/session/offPeakTaskRepo.ts` (Schema, create, rowToTask/list)                                                                               |
-| Automation | `packages/services/src/session/automationRepo.ts` (Schema, create, rowToAutomation/list)                                                                         |
-| Settings   | `packages/shared/src/validationAppSettings.ts`                                                                                                                   |
-| Subagent   | `packages/services/src/subagents/subagentMarkdown.ts`; `packages/services/src/subagents/subagentsService.ts`                                                     |
-| Wiki       | `packages/services/src/repo-wiki/repoWikiStorage.ts`                                                                                                             |
-| Bot        | `packages/shared/src/bots.ts`; `packages/services/src/bots/config.ts`; `packages/services/src/bots/repo.ts`; `packages/services/src/bots/storageMigration.ts`    |
+| Domain     | Main evidence paths                                                                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider   | `packages/services/src/model-provider/providerConfigRuntime.ts`; `packages/services/test/providerConfigRuntime.test.ts`                                       |
+| Session    | `apps/zcode-cli/packages/adapters/src/storage/session-store/codecs.ts`; `apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts`              |
+| Off-Peak   | `packages/services/src/session/offPeakTaskRepo.ts` (Schema, create, rowToTask/list)                                                                           |
+| Automation | `packages/services/src/session/automationRepo.ts` (Schema, create, rowToAutomation/list)                                                                      |
+| Settings   | `packages/shared/src/validationAppSettings.ts`                                                                                                                |
+| Subagent   | `packages/services/src/subagents/subagentMarkdown.ts`; `packages/services/src/subagents/subagentsService.ts`                                                  |
+| Wiki       | `packages/services/src/repo-wiki/repoWikiStorage.ts`                                                                                                          |
+| Bot        | `packages/shared/src/bots.ts`; `packages/services/src/bots/config.ts`; `packages/services/src/bots/repo.ts`; `packages/services/src/bots/storageMigration.ts` |
 
 Implementation evidence: [68-72 implementation report](./68-72-implementation-report.md). Bot v3, the one-time import and old-file preservation are implemented; the running Service no longer rewrites old state. Rollback acceptance is the strict-read / file-byte boundary, not a full old-App real-device acceptance.

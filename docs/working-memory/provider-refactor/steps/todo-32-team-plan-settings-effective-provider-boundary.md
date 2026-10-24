@@ -82,14 +82,14 @@ model list (toggle and edit per model).
 
 Team Plan status keeps explicit reasons and is no longer reverse-inferred from a generic `statusLabelId`:
 
-| Status                   | Plan card behavior                                           | Provider config area                  |
-| ------------------------ | ------------------------------------------------------------ | ------------------------------------- |
-| checking                 | Display loading, clear previous Team quota                   | Display if Provider exists            |
-| available                | Display team identity and quota                              | Display                               |
-| explicitly-not-allocated | Explicitly display "team plan unassigned"                    | Display                               |
-| credential-unavailable   | Display Project Key/credential reasons and available actions | Display                               |
-| request-failed / unknown | Display fetch failure and allow retry, not called unassigned | Display                               |
-| provider-loading         | Display Provider loading                                     | Editor not yet displayed              |
+| Status                   | Plan card behavior                                           | Provider config area                    |
+| ------------------------ | ------------------------------------------------------------ | --------------------------------------- |
+| checking                 | Display loading, clear previous Team quota                   | Display if Provider exists              |
+| available                | Display team identity and quota                              | Display                                 |
+| explicitly-not-allocated | Explicitly display "team plan unassigned"                    | Display                                 |
+| credential-unavailable   | Display Project Key/credential reasons and available actions | Display                                 |
+| request-failed / unknown | Display fetch failure and allow retry, not called unassigned | Display                                 |
+| provider-loading         | Display Provider loading                                     | Editor not yet displayed                |
 | provider-missing         | Display independent config exception                         | Do not render a fake plan purchase page |
 
 Specific types may reuse existing upstream decisions or a page-local decision union, but only as plan card View

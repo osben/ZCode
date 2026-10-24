@@ -14,13 +14,13 @@ Add, edit, enable/disable, rename, delete and sort follow one consistent member-
 
 ## 2. Confirmed problems
 
-| ID  | Problem | Evidence |
-| --- | --- | --- |
-| W01 | With no Personal Provider record, the first model add to an Account Provider fails; it works only after a drag creates the record | `config-service.ts` in-memory reproduction; edit/enable already write model config separately but do not fix the add |
-| W02 | Adding a model regenerates order from the member list and drops the existing order (`[B,A]` + C becomes `[A,B,C]`) | reproduced on Account and custom Providers |
-| W03 | A background View update creates a new model object that overwrites the open model edit draft | DOM: typing 123456 returns to 200000 on an equivalent-object refresh |
-| W04 | With some model attributes missing, the whole row's edit/toggle/delete entries disappear | DOM: after contextWindow is missing only the name and error remain |
-| W05 | The custom Provider form rebuilds `api` and drops static headers; an unedited form may be judged as needing save | form conversion and config service reproduction; no users in current built-in config or checked Air config, so real-account impact is not claimed |
+| ID  | Problem                                                                                                                           | Evidence                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W01 | With no Personal Provider record, the first model add to an Account Provider fails; it works only after a drag creates the record | `config-service.ts` in-memory reproduction; edit/enable already write model config separately but do not fix the add                              |
+| W02 | Adding a model regenerates order from the member list and drops the existing order (`[B,A]` + C becomes `[A,B,C]`)                | reproduced on Account and custom Providers                                                                                                        |
+| W03 | A background View update creates a new model object that overwrites the open model edit draft                                     | DOM: typing 123456 returns to 200000 on an equivalent-object refresh                                                                              |
+| W04 | With some model attributes missing, the whole row's edit/toggle/delete entries disappear                                          | DOM: after contextWindow is missing only the name and error remain                                                                                |
+| W05 | The custom Provider form rebuilds `api` and drops static headers; an unedited form may be judged as needing save                  | form conversion and config service reproduction; no users in current built-in config or checked Air config, so real-account impact is not claimed |
 
 ## 3. Layering and single source of truth
 
@@ -40,15 +40,15 @@ Built-in / Template / Account facts + Personal config -> Host consistent config 
 
 Config Service centralizes Provider existence, Personal record acquisition and the decision of when a sparse override may be created. For a legitimately existing built-in/Account Provider with no Personal record, add or sort may create a sparse override on demand and never copy the whole Effective Config nor turn Account dynamic members, credentials or connection info into personal config. A deleted custom/template-instance Personal Provider fails for late operations (not resurrected). Member snapshot and Personal revision checks stay at the actual commit boundary, not only at click time.
 
-| Operation | Atomically changes | Must not |
-| --- | --- | --- |
-| add personal model | personal modelIds, current order with the new member appended, the model's initial config and enabled=true | require a prior sort; reset the old order; copy account members |
-| edit existing model | that model's personal config and follow mode | rewrite the member list or other models' config |
-| enable/disable | that model's enabled leaf | send back a whole old config overwriting other edits; change follow mode |
-| drag sort | modelOrder | write inherited members as personal; change enabled |
-| rename personal model | personal member ID, order references, identity of the same model's config | rename an inherited member; lose mode or other config |
-| delete personal model | personal member, order references, matching config | delete an inherited member or other models' config |
-| edit Provider field | only the explicitly changed field | clear form-unmanaged headers; materialize inherited values |
+| Operation             | Atomically changes                                                                                         | Must not                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| add personal model    | personal modelIds, current order with the new member appended, the model's initial config and enabled=true | require a prior sort; reset the old order; copy account members          |
+| edit existing model   | that model's personal config and follow mode                                                               | rewrite the member list or other models' config                          |
+| enable/disable        | that model's enabled leaf                                                                                  | send back a whole old config overwriting other edits; change follow mode |
+| drag sort             | modelOrder                                                                                                 | write inherited members as personal; change enabled                      |
+| rename personal model | personal member ID, order references, identity of the same model's config                                  | rename an inherited member; lose mode or other config                    |
+| delete personal model | personal member, order references, matching config                                                         | delete an inherited member or other models' config                       |
+| edit Provider field   | only the explicitly changed field                                                                          | clear form-unmanaged headers; materialize inherited values               |
 
 Reuse existing domain operations and extract only truly shared rules (no generic CRUD framework or arbitrary JSON Patch). Enable/disable uses a narrow semantic operation updating enabled on the latest config inside the transaction (not borrowing the full model dialog save); old and new ways must not coexist with different behavior. Sorting reuses `owned-order.ts`: new unsorted inherited members first, the user's existing valid order kept, unsorted personal members after; relative order of existing members is unchanged by an add and the new personal member is appended. The Provider form takes the Personal Draft as commit base keeping untouched fields (`api` is not rebuilt from the UI's type/baseURL alone and never falls back to the whole Effective Config); no edit means no save.
 
@@ -70,32 +70,32 @@ open model dialog -> capture that model's draft + baseline revision
 
 ## 6. Impact
 
-| Entry | Shared implementation | Focus |
-| --- | --- | --- |
-| Provider field form | `ProviderDraftSave.ts`, `providerPersonalSave.ts`; the card owns the draft | partial-field save without losing untouched config |
-| model add/edit/enable | `InlineEditableProviderCard.tsx`, `ProviderFormControls.tsx` | narrow operations, edit lifecycle, keep on failure |
-| model rows and drag | `ProviderCardSections.tsx`, existing optimistic-sort hook | repairable incomplete models; order not reset by add |
-| all settings operations | `packages/provider/src/facades.ts`, `config-service.ts` | trusted member facts, serialization, atomic commit |
-| inherited config and execution | config resolution, Account snapshot, Registry | editable in settings vs executable stay separate |
-| downstream selection | existing Selection View update chain | refresh after save, no change to selection restore or default-level rules |
-| multi-end and remote | same settings Service on the target Host, common UI | do not write the wrong environment; mobile layout usable |
-| session flow | desktop continuous / web replayable | invariant only: no change to Session protocol, queue, reconnect or remote send sync |
+| Entry                          | Shared implementation                                                      | Focus                                                                               |
+| ------------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Provider field form            | `ProviderDraftSave.ts`, `providerPersonalSave.ts`; the card owns the draft | partial-field save without losing untouched config                                  |
+| model add/edit/enable          | `InlineEditableProviderCard.tsx`, `ProviderFormControls.tsx`               | narrow operations, edit lifecycle, keep on failure                                  |
+| model rows and drag            | `ProviderCardSections.tsx`, existing optimistic-sort hook                  | repairable incomplete models; order not reset by add                                |
+| all settings operations        | `packages/provider/src/facades.ts`, `config-service.ts`                    | trusted member facts, serialization, atomic commit                                  |
+| inherited config and execution | config resolution, Account snapshot, Registry                              | editable in settings vs executable stay separate                                    |
+| downstream selection           | existing Selection View update chain                                       | refresh after save, no change to selection restore or default-level rules           |
+| multi-end and remote           | same settings Service on the target Host, common UI                        | do not write the wrong environment; mobile layout usable                            |
+| session flow                   | desktop continuous / web replayable                                        | invariant only: no change to Session protocol, queue, reconnect or remote send sync |
 
 Codegraph was unavailable; precise search and call-chain reading traced Facade, Config Service, Personal writes and View return. The old `modelProviderServiceStorage.ts` graph seed was updated to the current `NodePersonalProviderConfigRepository` and Facade/Config Service added; the old Service is not restored from the old graph.
 
 ## 7. Regression cases
 
-| Case | Setup and action | Must observe | Evidence |
-| --- | --- | --- | --- |
-| W89-01 | Account Provider with no Personal record adds a model directly; also edit/toggle first then add | both orders succeed; only the necessary override created, no account models copied | config service + Electron |
-| W89-02 | sort to B,A then add C; Account, template instance, custom | B,A,C; save, reopen and restart agree | config service + Electron |
-| W89-03 | Account returns members outside the static list; edit and sort | saves normally; inherited members still non-deletable/ID-fixed; duplicate add rejected | Facade + UI |
-| W89-04 | edit in the open dialog, push an equivalent View and a real external change | draft not lost; stale save does not overwrite external change, draft remains after the error | DOM + Electron representative |
-| W89-05 | personal/inherited model with missing attributes | opens for repair; personal deletable, inherited not; unrepaired does not become executable | DOM + Registry + Electron representative |
-| W89-06 | custom Provider with headers: no edit, rename, change Base URL | no edit no save; other edits keep headers; inherited fields not materialized | form + config service |
-| W89-07 | concurrent enable and config edit; pinned/follow models | only own fields change; enabled and mode do not contaminate each other | Facade/config service |
-| W89-08 | stale member snapshot, deleted model/Provider, duplicate add, repository write failure | clear failure without resurrection or partial write; no fake success | service fault tests + DOM |
-| W89-09 | save via the target environment's settings Service, check the other | only the target changes; shared UI operable at narrow width | service isolation + multi-end smoke |
+| Case   | Setup and action                                                                                | Must observe                                                                                 | Evidence                                 |
+| ------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| W89-01 | Account Provider with no Personal record adds a model directly; also edit/toggle first then add | both orders succeed; only the necessary override created, no account models copied           | config service + Electron                |
+| W89-02 | sort to B,A then add C; Account, template instance, custom                                      | B,A,C; save, reopen and restart agree                                                        | config service + Electron                |
+| W89-03 | Account returns members outside the static list; edit and sort                                  | saves normally; inherited members still non-deletable/ID-fixed; duplicate add rejected       | Facade + UI                              |
+| W89-04 | edit in the open dialog, push an equivalent View and a real external change                     | draft not lost; stale save does not overwrite external change, draft remains after the error | DOM + Electron representative            |
+| W89-05 | personal/inherited model with missing attributes                                                | opens for repair; personal deletable, inherited not; unrepaired does not become executable   | DOM + Registry + Electron representative |
+| W89-06 | custom Provider with headers: no edit, rename, change Base URL                                  | no edit no save; other edits keep headers; inherited fields not materialized                 | form + config service                    |
+| W89-07 | concurrent enable and config edit; pinned/follow models                                         | only own fields change; enabled and mode do not contaminate each other                       | Facade/config service                    |
+| W89-08 | stale member snapshot, deleted model/Provider, duplicate add, repository write failure          | clear failure without resurrection or partial write; no fake success                         | service fault tests + DOM                |
+| W89-09 | save via the target environment's settings Service, check the other                             | only the target changes; shared UI operable at narrow width                                  | service isolation + multi-end smoke      |
 
 Pruning: personal/Team/Start share one Account member algorithm, no per-brand full combinations (ordinary Account and Start dynamic members as representatives); Off-Peak hidden adds no ordinary settings entry; theme, language and narrow screen use representatives; real entitlement, migration, send sync and Session restore are not this item's E2E targets. E2E follows `e2e-case-lifecycle` (pending, independent fixture, real-operation assertions; catalog/matrix updated first), no real user data; Electron runs on the MacBook Pro, DOM tests do not substitute for a desktop conclusion, and CSS details are not heavily asserted. Concurrency tests cover: full draft saved then toggled keeps both edits; toggle committed first then an old-revision draft rejected; member change during queueing rejected; deleted Provider not resurrected.
 
@@ -103,13 +103,13 @@ Pruning: personal/Team/Start share one Account member algorithm, no per-brand fu
 
 ### Related problems found and fixed during implementation
 
-| ID | Root cause and fix | Evidence |
-| --- | --- | --- |
-| W06 | Account/preset detail missed the delete callback (delete changed only the UI); detail operation wiring unified | Pro: add then delete read-from-disk assertion failed; real delete verified after the callback was restored |
-| W07 | local member copy overwritten by late save/failed rollback; the add dialog closed before the write finished | DOM: external add during delayed failure, add failure keeps input; duplicate member state removed |
-| W08 | Start quota refresh temporarily became checking and unmounted the edit area of a confirmed available account | Pro file refresh reproduced; edit area kept on the Account-confirmed state while the quota card refreshes independently; 200-item plan display tests pass |
-| W09 | same-named models of different Providers reused the open draft | DOM red/green; edit subtree isolated by Provider identity |
-| W10 | Esc close and reopen during an unfinished save let the old save response close the new draft | DOM failed then passed; add and edit block close during save, a sync ref prevents duplicate submit |
+| ID  | Root cause and fix                                                                                             | Evidence                                                                                                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W06 | Account/preset detail missed the delete callback (delete changed only the UI); detail operation wiring unified | Pro: add then delete read-from-disk assertion failed; real delete verified after the callback was restored                                                |
+| W07 | local member copy overwritten by late save/failed rollback; the add dialog closed before the write finished    | DOM: external add during delayed failure, add failure keeps input; duplicate member state removed                                                         |
+| W08 | Start quota refresh temporarily became checking and unmounted the edit area of a confirmed available account   | Pro file refresh reproduced; edit area kept on the Account-confirmed state while the quota card refreshes independently; 200-item plan display tests pass |
+| W09 | same-named models of different Providers reused the open draft                                                 | DOM red/green; edit subtree isolated by Provider identity                                                                                                 |
+| W10 | Esc close and reopen during an unfinished save let the old save response close the new draft                   | DOM failed then passed; add and edit block close during save, a sync ref prevents duplicate submit                                                        |
 
 ### Verification (2026-09-08)
 

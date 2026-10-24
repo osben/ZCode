@@ -35,8 +35,18 @@ has no value). No `reasoningLevelPolicy`, `defaultPolicy`, `preferredValue`, `in
 The structure mixed "what the model supports" with "what to choose when the caller did not decide":
 
 ```ts
-interface EnumOptionSpec { type: "enum"; values: readonly string[]; default: string; map: string; }
-interface LimitOptionSpec { type: "limit"; max: number; default: number; map: string; }
+interface EnumOptionSpec {
+  type: "enum";
+  values: readonly string[];
+  default: string;
+  map: string;
+}
+interface LimitOptionSpec {
+  type: "limit";
+  max: number;
+  default: number;
+  map: string;
+}
 ```
 
 `default` was re-materialized at several layers (Config / Built-in Rule; Model constructor; Adapter `bindModel`;
@@ -70,10 +80,26 @@ incomplete.
 ### 3.1 Option Spec
 
 ```ts
-interface EnumOptionSpecConfigInput { type?: "enum" | null; values?: readonly string[] | null; map?: string | null; }
-interface EnumOptionSpec { type: "enum"; /** ordered by semantic strength low to high */ values: readonly string[]; map: string; }
-interface LimitOptionSpecConfigInput { type?: "limit" | null; max?: number | null; map?: string | null; }
-interface LimitOptionSpec { type: "limit"; max: number; map: string; }
+interface EnumOptionSpecConfigInput {
+  type?: "enum" | null;
+  values?: readonly string[] | null;
+  map?: string | null;
+}
+interface EnumOptionSpec {
+  type: "enum";
+  /** ordered by semantic strength low to high */ values: readonly string[];
+  map: string;
+}
+interface LimitOptionSpecConfigInput {
+  type?: "limit" | null;
+  max?: number | null;
+  map?: string | null;
+}
+interface LimitOptionSpec {
+  type: "limit";
+  max: number;
+  map: string;
+}
 ```
 
 - Enum `values` non-empty, deduplicated, ordered low to high; the client never guesses strength from concrete
@@ -179,18 +205,18 @@ dialog draft validation into the Provider page's bottom save/connection-test fee
 
 ## 5. UI surface matrix
 
-| Scenario                                      | Current value/draft owner             | New default or inheritance                                 | Commit / execution sink       | Behavior of this Todo                            |
-| --------------------------------------------- | ------------------------------------- | ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------ |
-| Provider model config dialog                  | Renderer local Model Rule draft       | Built-in/Template/Provider/Personal Effective Model Config | Personal Model Config Rule    | Enum tag editor; Max edits `max`                 |
-| New conversation draft                        | Renderer draft + Model Selection View | Latest complete selection, else `preferredSelection`       | Session Model Selection       | Missing reasoning filled with highest, made concrete |
-| Existing Session                              | Agent Session Selection               | Session's own frozen value                                 | Active Model / later requests | Does not read Spec default                       |
-| Model switch                                  | Composer local selection              | Current legal value, else target model's highest           | `session/setModel`            | Submits a complete reasoning choice              |
-| Automation                                    | Automation edit draft                 | Target Host `preferredSelection` concrete value            | Automation record             | Saves concrete reasoning at creation             |
-| Repo Wiki                                     | Workspace generation draft            | Its own selection / Target Host View                       | One Wiki execution            | No mutual override with Session drafts           |
+| Scenario                                      | Current value/draft owner             | New default or inheritance                                 | Commit / execution sink       | Behavior of this Todo                                 |
+| --------------------------------------------- | ------------------------------------- | ---------------------------------------------------------- | ----------------------------- | ----------------------------------------------------- |
+| Provider model config dialog                  | Renderer local Model Rule draft       | Built-in/Template/Provider/Personal Effective Model Config | Personal Model Config Rule    | Enum tag editor; Max edits `max`                      |
+| New conversation draft                        | Renderer draft + Model Selection View | Latest complete selection, else `preferredSelection`       | Session Model Selection       | Missing reasoning filled with highest, made concrete  |
+| Existing Session                              | Agent Session Selection               | Session's own frozen value                                 | Active Model / later requests | Does not read Spec default                            |
+| Model switch                                  | Composer local selection              | Current legal value, else target model's highest           | `session/setModel`            | Submits a complete reasoning choice                   |
+| Automation                                    | Automation edit draft                 | Target Host `preferredSelection` concrete value            | Automation record             | Saves concrete reasoning at creation                  |
+| Repo Wiki                                     | Workspace generation draft            | Its own selection / Target Host View                       | One Wiki execution            | No mutual override with Session drafts                |
 | Subagent                                      | Form or Markdown config               | Parent model inheritance or explicit target selection      | Subagent config / child Model | Inherits concrete value; explicit selection completed |
-| Bot                                           | Bot draft / active task               | Concrete Selection                                         | Bot task execution            | Delete `spec.default` fallback                   |
-| Title / Goal / Commit / Memory / Connectivity | Each auxiliary call                   | `values[0]`                                                | Single binding or Request     | Lowest level kept, Session untouched             |
-| Model execution                               | Active Model + Model Request          | No implicit default                                        | Model Executor                | Missing values fail before the network           |
+| Bot                                           | Bot draft / active task               | Concrete Selection                                         | Bot task execution            | Delete `spec.default` fallback                        |
+| Title / Goal / Commit / Memory / Connectivity | Each auxiliary call                   | `values[0]`                                                | Single binding or Request     | Lowest level kept, Session untouched                  |
+| Model execution                               | Active Model + Model Request          | No implicit default                                        | Model Executor                | Missing values fail before the network                |
 
 A shared candidate source is not shared state: Automation, Repo Wiki, Subagent, Bot and ordinary Session keep their
 own drafts, persistence and commit boundaries.

@@ -6,7 +6,7 @@
 >
 > Prerequisite: Todo 24 completed `accessId`, account creation binding and request security validation pathname
 > special-case cleanup. Based on later product decisions, this Todo replaces Todo 24's `api-key / zhipu-account /
-> execution-provided` three Access types, `planKind` and the `challenge / requestSigning / executionProtocol`
+execution-provided` three Access types, `planKind` and the `challenge / requestSigning / executionProtocol`
 > universal field structure. Todo 24's conclusions on account dynamic auth, Account Overlay narrowing, private
 > Credential isolation and server-side final authorization remain valid.
 
@@ -132,12 +132,12 @@ API key Providers, and the write boundary mechanically rejects Personal `access`
 
 ### 3.3 Coding Plan, Start and Off-Peak
 
-| Product entry                          | Access mode              | Static behavior                                                                          |
-| -------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------------- |
-| Z.ai / BigModel Start Plan             | `start-plan`             | Official release security validation material chain; no V4                               |
-| Z.ai / BigModel Individual Coding Plan | `individual-coding-plan` | Current connection request auth; V4 static admission                                     |
-| Z.ai / BigModel Team Coding Plan       | `team-coding-plan`       | Current Team scope and request auth; V4 static admission                                 |
-| Z.ai / BigModel Idle Plan              | `off-peak`               | Execution-period JWT, Plan Key, Ticket and Off-Peak failure protocol; no V4              |
+| Product entry                          | Access mode              | Static behavior                                                             |
+| -------------------------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| Z.ai / BigModel Start Plan             | `start-plan`             | Official release security validation material chain; no V4                  |
+| Z.ai / BigModel Individual Coding Plan | `individual-coding-plan` | Current connection request auth; V4 static admission                        |
+| Z.ai / BigModel Team Coding Plan       | `team-coding-plan`       | Current Team scope and request auth; V4 static admission                    |
+| Z.ai / BigModel Idle Plan              | `off-peak`               | Execution-period JWT, Plan Key, Ticket and Off-Peak failure protocol; no V4 |
 
 Each Provider keeps its exact Provider ID, `group`, `visibility`, Endpoint and model members. Fixed IDs remain for
 Provider identity, ModelSelection and task persistence, not for guessing Mode.
@@ -242,13 +242,13 @@ are unchanged.
 
 ## 8. UI Surface Matrix
 
-| Scenario                        | Display/Draft source                        | Submission or run owner           | Behavior                                                          | Must isolate                                 |
-| ------------------------------- | ------------------------------------------- | --------------------------------- | ----------------------------------------------------------------- | -------------------------------------------- |
-| Normal Provider settings        | Personal API key Draft                      | Provider Settings Service         | `zai-api/bigmodel-api` keep normal API key, no V4                 | Does not enter Family Account process        |
-| Z.ai/BigModel Family API key    | Account Connection and credential state     | Account/Credential + Request Auth | Built-in Mode fixed to `api-key`, no hand-filled key              | Does not write Personal access               |
-| Start login and request         | Account Connection + security validation UI | Account/Request Auth              | Enters security validation only by `mode=start-plan`              | Does not affect normal API key               |
-| Individual/Team request         | Account Connection                          | Request Auth + Adapter            | Resolves current key by Mode, has V4 admission                    | Does not freeze account or Team scope        |
-| Off-Peak creation and execution | Fixed Provider Selection + current account  | Off-Peak Service + Adapter        | Executes by `mode=off-peak`                                       | Does not pollute normal Session Selection    |
+| Scenario                        | Display/Draft source                        | Submission or run owner           | Behavior                                                            | Must isolate                                 |
+| ------------------------------- | ------------------------------------------- | --------------------------------- | ------------------------------------------------------------------- | -------------------------------------------- |
+| Normal Provider settings        | Personal API key Draft                      | Provider Settings Service         | `zai-api/bigmodel-api` keep normal API key, no V4                   | Does not enter Family Account process        |
+| Z.ai/BigModel Family API key    | Account Connection and credential state     | Account/Credential + Request Auth | Built-in Mode fixed to `api-key`, no hand-filled key                | Does not write Personal access               |
+| Start login and request         | Account Connection + security validation UI | Account/Request Auth              | Enters security validation only by `mode=start-plan`                | Does not affect normal API key               |
+| Individual/Team request         | Account Connection                          | Request Auth + Adapter            | Resolves current key by Mode, has V4 admission                      | Does not freeze account or Team scope        |
+| Off-Peak creation and execution | Fixed Provider Selection + current account  | Off-Peak Service + Adapter        | Executes by `mode=off-peak`                                         | Does not pollute normal Session Selection    |
 | Usage/Entitlement               | Account/Subscription Service                | Usage Services                    | Does not reverse-deduce dynamic product state from Effective Access | Does not change refresh and billing strategy |
 
 Implementation record (2026-08-27): Provider Config and Runtime consolidated to `api-key | zhipu-account`, static

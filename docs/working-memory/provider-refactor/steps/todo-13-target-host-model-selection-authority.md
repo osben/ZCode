@@ -154,37 +154,36 @@ wrong:   Sparse Selection + Model Config Default -> Effective Option -> written 
 correct: Sparse Selection stays as is; + Model Config Default -> Active Model.options (this execution's complete fact)
 ```
 
-   The same risk was checked in Session restore, Model switch, Automation/Off-Peak dispatch, Compact/Memory/Subagent, CLI arguments, RPC round-trip and Draft persistence. UI showing the current default is not a user selection; only a real edit creates an override.
-6. **One type is not one product owner.** `ModelSelection` unifies only how a future Model is referenced:
+The same risk was checked in Session restore, Model switch, Automation/Off-Peak dispatch, Compact/Memory/Subagent, CLI arguments, RPC round-trip and Draft persistence. UI showing the current default is not a user selection; only a real edit creates an override. 6. **One type is not one product owner.** `ModelSelection` unifies only how a future Model is referenced:
 
-| Product state     | Meaning of missing `modelSelection`                                   | Resolution timing / owner       |
-| ----------------- | --------------------------------------------------------------------- | ------------------------------- |
-| Composer / Draft  | initial value by initialization priority                              | Renderer Draft                  |
-| Session           | may be absent before first execution; accepted Selection must be saved after | Session Store/Core        |
-| Automation        | resolve target Host preferred at form creation and fix a concrete Selection | Automation record/service  |
-| Repo Wiki         | use target Workspace preferred                                        | each generation submit boundary |
-| Bot               | product default rule of the Workspace for the Bot context             | Bot config/task submission      |
-| Subagent override | inherit Parent Active Model; no Workspace default lookup              | Parent/child execution boundary |
-| Off-Peak          | task creation forms its own exact provider/model Selection            | Off-Peak record/dispatcher      |
+| Product state     | Meaning of missing `modelSelection`                                          | Resolution timing / owner       |
+| ----------------- | ---------------------------------------------------------------------------- | ------------------------------- |
+| Composer / Draft  | initial value by initialization priority                                     | Renderer Draft                  |
+| Session           | may be absent before first execution; accepted Selection must be saved after | Session Store/Core              |
+| Automation        | resolve target Host preferred at form creation and fix a concrete Selection  | Automation record/service       |
+| Repo Wiki         | use target Workspace preferred                                               | each generation submit boundary |
+| Bot               | product default rule of the Workspace for the Bot context                    | Bot config/task submission      |
+| Subagent override | inherit Parent Active Model; no Workspace default lookup                     | Parent/child execution boundary |
+| Off-Peak          | task creation forms its own exact provider/model Selection                   | Off-Peak record/dispatcher      |
 
-   Whole `modelSelection` missing means the product fixes no model; `modelSelection.options` missing means identity is fixed and options follow Model Config defaults. Do not conflate them with an empty string, an `inherit` fake ID or a global fallback helper. Automation UI has no "follow Workspace"/"default model" virtual state: the create form, old records without a Selection and target-Workspace switches initialize a concrete provider/model from the target Host `preferredSelection` (reasoning resolved from the target Option Spec) and always save a complete `modelSelection`; later Workspace preferred changes do not affect saved Automations.
+Whole `modelSelection` missing means the product fixes no model; `modelSelection.options` missing means identity is fixed and options follow Model Config defaults. Do not conflate them with an empty string, an `inherit` fake ID or a global fallback helper. Automation UI has no "follow Workspace"/"default model" virtual state: the create form, old records without a Selection and target-Workspace switches initialize a concrete provider/model from the target Host `preferredSelection` (reasoning resolved from the target Option Spec) and always save a complete `modelSelection`; later Workspace preferred changes do not affect saved Automations.
 
 ## 3. Impact summary
 
 Change layers: `option-source`, `draft-default`, `validation`, `persistence`, `recovery`. Out of scope:
 Provider Provisioning, Access/Auth, model request encoding, Queue/Goal state machine, remote Subagent config management.
 
-| Scenario                  | Candidate/default source        | Draft owner           | Commit sink                | Final authority                     |
-| ------------------------- | ------------------------------- | --------------------- | -------------------------- | ----------------------------------- |
-| Conversation local        | Local Host View/preferred       | Composer Draft        | Submission command         | Local Worker Registry/ModelFactory  |
-| Conversation remote       | Remote Host View/preferred      | Composer Draft        | Remote Submission command  | Remote Worker Registry/ModelFactory |
-| Automation                | Host of the form's Workspace    | Automation form       | Automation Service/record  | executing Environment ModelFactory  |
-| Repo Wiki                 | current project's Host          | generation settings   | Repo Wiki Service          | target Environment ModelFactory     |
-| Bot                       | Host for the Bot context        | Bot command draft     | Bot config/Task submission | target Environment ModelFactory     |
-| Off-Peak                  | Local Host scoped hidden View   | Off-Peak form         | Off-Peak Service/record    | Local Worker ModelFactory           |
-| Subagent Settings         | Local Host View                 | Subagent form         | Local `ISubagentsService`  | Local Environment config            |
-| Remote Subagent execution | no UI this round                | Remote profile/config | Agent tool                 | Remote Worker ModelFactory          |
-| Git Commit sidecar        | request target Host initial/explicit selection | single request | text generation service | target Environment ModelFactory |
+| Scenario                  | Candidate/default source                       | Draft owner           | Commit sink                | Final authority                     |
+| ------------------------- | ---------------------------------------------- | --------------------- | -------------------------- | ----------------------------------- |
+| Conversation local        | Local Host View/preferred                      | Composer Draft        | Submission command         | Local Worker Registry/ModelFactory  |
+| Conversation remote       | Remote Host View/preferred                     | Composer Draft        | Remote Submission command  | Remote Worker Registry/ModelFactory |
+| Automation                | Host of the form's Workspace                   | Automation form       | Automation Service/record  | executing Environment ModelFactory  |
+| Repo Wiki                 | current project's Host                         | generation settings   | Repo Wiki Service          | target Environment ModelFactory     |
+| Bot                       | Host for the Bot context                       | Bot command draft     | Bot config/Task submission | target Environment ModelFactory     |
+| Off-Peak                  | Local Host scoped hidden View                  | Off-Peak form         | Off-Peak Service/record    | Local Worker ModelFactory           |
+| Subagent Settings         | Local Host View                                | Subagent form         | Local `ISubagentsService`  | Local Environment config            |
+| Remote Subagent execution | no UI this round                               | Remote profile/config | Agent tool                 | Remote Worker ModelFactory          |
+| Git Commit sidecar        | request target Host initial/explicit selection | single request        | text generation service    | target Environment ModelFactory     |
 
 State owners: Model Selection View = target Host Provider Registry Facade (UI snapshot cached per Host
 service instance, changes on Registry revision); Composer Draft = Entry/Renderer; App Recent = App x
@@ -236,30 +235,30 @@ subscription and drops late Views; the same revision number from different Hosts
 
 ## 6. Accepted cases
 
-| Case ID | Setup                                                       | Action                       | Assertions                                                     |
-| ------- | ----------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------- |
-| HMS-01  | Local Workspace, Local Host has model A                     | open new Draft               | candidates and initial Selection come from Local Host          |
-| HMS-02  | Remote Host only has B, Local Host only A                   | open remote Draft            | only B shown; never shows or falls back to A                   |
-| HMS-03  | Remote Host waiting/disconnected                            | open model menu / send       | loading/unavailable; Local Host not called                     |
-| HMS-04  | two remote Workspaces, same path, different workspaceIdentity | each accepts a Submission  | App Recent isolated by workspaceKey                            |
-| HMS-05  | App Recent invalid in target Host View, preferred valid     | create new Draft             | uses Host preferred; Recent/Default not overwritten            |
-| HMS-06  | Recent invalid and Host View has no preferred               | create new Draft             | stays unavailable; Renderer does not pick the first item       |
-| HMS-07  | Registry removes the current model after Draft creation     | keep editing                 | original Selection kept and shown unavailable; no silent swap  |
-| HMS-08  | existing Session Selection becomes invalid                  | restore / next execution     | Session intent kept; ModelFactory fails explicitly; Default not read |
-| HMS-09  | Queue/Guide/Edit/Retry carry partial explicit options       | admission/execution          | Selection keeps explicit leaves and adds no absent leaves      |
-| HMS-10  | Automation switches between local and remote projects       | switch target, pick model, cancel/save | View follows Host; cancel does not change Conversation; save writes structured Selection |
-| HMS-11  | Repo Wiki picks a reasoning model                           | open/generate                | Option Specs from target Host; no preview Session              |
-| HMS-12  | Settings opens Subagent in a remote Workspace context       | view/edit entry              | expresses local config or remote unsupported; no Remote config read/write |
-| HMS-13  | Remote Agent has its own Subagent config                    | trigger child                | reads Remote config; Remote ModelFactory creates the Model     |
-| HMS-14  | old product storage holds model + thought                   | repository read then save    | one-way converted to ModelSelection; new writes do not split fields |
-| HMS-15  | Desktop continuous and Mobile replayable control the same remote task | select and send    | same Remote Host; queue/snapshot/replay owners unchanged       |
-| HMS-16  | Selection fixes only provider/model; Model Config has default options | create Model      | Active Model gets full defaults; Selection stays without options |
-| HMS-17  | user explicitly picks reasoning equal to current default    | save and reload              | explicit leaf kept; later default changes do not move the pin  |
-| HMS-18  | patch clears the last explicit option                       | save and reload              | no persisted `null` or `options: {}`                           |
-| HMS-19  | Session restore meets absent maxOutputTokens                | restore and create Model     | default only enters Active Model, not Session Selection        |
-| HMS-20  | switch from model A to B with different Option Specs        | pick B                       | A's options not inherited; only explicit choices for B saved   |
-| HMS-21  | Automation create form, target Host has preferredSelection  | save without picking a model | saves concrete provider/model/reasoning; button submittable    |
-| HMS-22  | Automation saved with a concrete modelSelection             | change Host preferred, dispatch | keeps the saved Selection, no drift with Workspace preferred |
+| Case ID | Setup                                                                 | Action                                 | Assertions                                                                               |
+| ------- | --------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| HMS-01  | Local Workspace, Local Host has model A                               | open new Draft                         | candidates and initial Selection come from Local Host                                    |
+| HMS-02  | Remote Host only has B, Local Host only A                             | open remote Draft                      | only B shown; never shows or falls back to A                                             |
+| HMS-03  | Remote Host waiting/disconnected                                      | open model menu / send                 | loading/unavailable; Local Host not called                                               |
+| HMS-04  | two remote Workspaces, same path, different workspaceIdentity         | each accepts a Submission              | App Recent isolated by workspaceKey                                                      |
+| HMS-05  | App Recent invalid in target Host View, preferred valid               | create new Draft                       | uses Host preferred; Recent/Default not overwritten                                      |
+| HMS-06  | Recent invalid and Host View has no preferred                         | create new Draft                       | stays unavailable; Renderer does not pick the first item                                 |
+| HMS-07  | Registry removes the current model after Draft creation               | keep editing                           | original Selection kept and shown unavailable; no silent swap                            |
+| HMS-08  | existing Session Selection becomes invalid                            | restore / next execution               | Session intent kept; ModelFactory fails explicitly; Default not read                     |
+| HMS-09  | Queue/Guide/Edit/Retry carry partial explicit options                 | admission/execution                    | Selection keeps explicit leaves and adds no absent leaves                                |
+| HMS-10  | Automation switches between local and remote projects                 | switch target, pick model, cancel/save | View follows Host; cancel does not change Conversation; save writes structured Selection |
+| HMS-11  | Repo Wiki picks a reasoning model                                     | open/generate                          | Option Specs from target Host; no preview Session                                        |
+| HMS-12  | Settings opens Subagent in a remote Workspace context                 | view/edit entry                        | expresses local config or remote unsupported; no Remote config read/write                |
+| HMS-13  | Remote Agent has its own Subagent config                              | trigger child                          | reads Remote config; Remote ModelFactory creates the Model                               |
+| HMS-14  | old product storage holds model + thought                             | repository read then save              | one-way converted to ModelSelection; new writes do not split fields                      |
+| HMS-15  | Desktop continuous and Mobile replayable control the same remote task | select and send                        | same Remote Host; queue/snapshot/replay owners unchanged                                 |
+| HMS-16  | Selection fixes only provider/model; Model Config has default options | create Model                           | Active Model gets full defaults; Selection stays without options                         |
+| HMS-17  | user explicitly picks reasoning equal to current default              | save and reload                        | explicit leaf kept; later default changes do not move the pin                            |
+| HMS-18  | patch clears the last explicit option                                 | save and reload                        | no persisted `null` or `options: {}`                                                     |
+| HMS-19  | Session restore meets absent maxOutputTokens                          | restore and create Model               | default only enters Active Model, not Session Selection                                  |
+| HMS-20  | switch from model A to B with different Option Specs                  | pick B                                 | A's options not inherited; only explicit choices for B saved                             |
+| HMS-21  | Automation create form, target Host has preferredSelection            | save without picking a model           | saves concrete provider/model/reasoning; button submittable                              |
+| HMS-22  | Automation saved with a concrete modelSelection                       | change Host preferred, dispatch        | keeps the saved Selection, no drift with Workspace preferred                             |
 
 Pruned: Provider API type combinations (no Adapter encoding change); remote Subagent Settings CRUD/sync/conflict;
 merging the Off-Peak hidden View into the ordinary View; Queue, Goal, Compact, Background, permission and

@@ -8,11 +8,11 @@
 
 ## 1. Three workstreams and boundaries
 
-| Workstream | May change | Must keep |
-| --- | --- | --- |
-| A: dedicated Map beautification | expression structure, duplicated branches, condition placement | for every legal input the final request fields, values, omit/delete semantics, mode and budget |
-| B: fallback Map enhancement | per API Schema, provide usable generic reasoning field mappings | dedicated-rule override capability, Personal override, model-selection validation and output-limit authority |
-| C: closing-level cleanup | non-API-native closing names unified to `disabled` where possible, compatible mapping of affected old selections | the old selection's closing semantics, user-defined levels/Maps, each business save boundary |
+| Workstream                      | May change                                                                                                       | Must keep                                                                                                    |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| A: dedicated Map beautification | expression structure, duplicated branches, condition placement                                                   | for every legal input the final request fields, values, omit/delete semantics, mode and budget               |
+| B: fallback Map enhancement     | per API Schema, provide usable generic reasoning field mappings                                                  | dedicated-rule override capability, Personal override, model-selection validation and output-limit authority |
+| C: closing-level cleanup        | non-API-native closing names unified to `disabled` where possible, compatible mapping of affected old selections | the old selection's closing semantics, user-defined levels/Maps, each business save boundary                 |
 
 - No change to dedicated rules' model match range, prefix/suffix rules, site range, priority or other model capability; dedicated Maps must not all be replaced by a generic hybrid Map.
 - No model ID change, no Provider special execution path, no extension of the expression language for shorter code.
@@ -132,16 +132,16 @@ persisted original Selection / current user draft
 
 Config/request semantics and limited selection compatibility, not a UI redesign. Boundaries use the existing feature graph's model-capabilities and model-selection nodes (codegraph unavailable: targeted reading of the config and known seed files, no full call-graph audit claimed).
 
-| Priority / entry | Shared boundary and what to check | Commit / save boundary |
-| --- | --- | --- |
-| must: Built-in / Resolver | `zcode-builtin.json`, `packages/provider/src/resolver.ts`; rule layering, source, dedicated override | Personal config not rewritten on load |
-| must: compile and request | `packages/model-option-map/src/`, Agent `model-option-map-fetch.ts`; compile, Merge Patch, conflicts with output Map | final Model build validation and request stay authoritative |
-| must: shared selection resolution | `packages/provider/src/effective-model-selection.ts`, Registry validation | transient effective vs persisted intent |
-| must: add/edit model | shared model draft, `useModelSelectionView`; adding only levels inherits the fallback, explicit Map/pinned config stays | Personal written on user save; smart-config switch semantics unchanged |
-| must: Composer / session | shared View and draft; old level resolution, new-selection legality | original send-success / explicit-save boundary, no change to a running Model |
-| should: scheduled tasks / Bot / Wiki | entries reusing resolution, display/execution consistent | each explicit save and execution-freeze boundary, no bulk record refresh |
-| conditional: Subagent / Off-Peak | whether Host resolution is bypassed, original identity and execution locking | per §4, no Markdown/Ticket change |
-| invariant: desktop/Web, Local/Remote | target Host config, no local substitute or forced pre-send sync | `workspaceIdentity` isolation; continuous/replayable unchanged |
+| Priority / entry                     | Shared boundary and what to check                                                                                       | Commit / save boundary                                                       |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| must: Built-in / Resolver            | `zcode-builtin.json`, `packages/provider/src/resolver.ts`; rule layering, source, dedicated override                    | Personal config not rewritten on load                                        |
+| must: compile and request            | `packages/model-option-map/src/`, Agent `model-option-map-fetch.ts`; compile, Merge Patch, conflicts with output Map    | final Model build validation and request stay authoritative                  |
+| must: shared selection resolution    | `packages/provider/src/effective-model-selection.ts`, Registry validation                                               | transient effective vs persisted intent                                      |
+| must: add/edit model                 | shared model draft, `useModelSelectionView`; adding only levels inherits the fallback, explicit Map/pinned config stays | Personal written on user save; smart-config switch semantics unchanged       |
+| must: Composer / session             | shared View and draft; old level resolution, new-selection legality                                                     | original send-success / explicit-save boundary, no change to a running Model |
+| should: scheduled tasks / Bot / Wiki | entries reusing resolution, display/execution consistent                                                                | each explicit save and execution-freeze boundary, no bulk record refresh     |
+| conditional: Subagent / Off-Peak     | whether Host resolution is bypassed, original identity and execution locking                                            | per §4, no Markdown/Ticket change                                            |
+| invariant: desktop/Web, Local/Remote | target Host config, no local substitute or forced pre-send sync                                                         | `workspaceIdentity` isolation; continuous/replayable unchanged               |
 
 ## 6. Order and acceptance
 
@@ -156,15 +156,15 @@ Config/request semantics and limited selection compatibility, not a UI redesign.
 
 ## 7. Execution record
 
-| Item | Status | Evidence |
-| --- | --- | --- |
-| discussion conclusions and three workstreams | implemented | this Todo |
-| all dedicated rules and equivalence baseline | A done | `reasoning-map-before-todo95.json` 19 expressions, per-rule index/range; final Merge Patch request compared for every legal level including existing fields/budget |
-| three API fallback mappings | B done | unknown model changing only values, Personal Map override, illegal level rejected; Pro real Model request verified Chat high |
-| closing-level rename and Personal combinations | C done | 25 rules renamed; original-legal-first, specific-rule override, unknown rejection and read-only original intent verified by real Built-in Facade tests; unreleased config not supported |
-| consumer compatibility (incl. Subagent boundary) | C done | Host/Worker share the Node Facade; Composer/task real runs, Wiki/Bot/UI 33 regressions, explicit Subagent 9 regressions; frozen execution, inheritance and Ticket get no re-resolution |
-| typecheck/lint/unit/Pro E2E | A/B/C verified | C: Provider / provider-node / Option Map 352 tests pass; repo typecheck and lint pass; Pro `desktop-e2e-20260909-121842-573`: R95C-01, SR87-01, SR87-06 3/3 pass; pending does not auto-promote |
-| second review and closeout | A/B/C done | C changes only the revision, 25 `values`, 10 Map close literals and shared resolution; dedicated requests equivalent, the fallback's temporary old-name mismatch corrected to the off semantics; no budget override, pre-send sync, request-layer alias or silent replacement |
+| Item                                             | Status         | Evidence                                                                                                                                                                                                                                                                      |
+| ------------------------------------------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| discussion conclusions and three workstreams     | implemented    | this Todo                                                                                                                                                                                                                                                                     |
+| all dedicated rules and equivalence baseline     | A done         | `reasoning-map-before-todo95.json` 19 expressions, per-rule index/range; final Merge Patch request compared for every legal level including existing fields/budget                                                                                                            |
+| three API fallback mappings                      | B done         | unknown model changing only values, Personal Map override, illegal level rejected; Pro real Model request verified Chat high                                                                                                                                                  |
+| closing-level rename and Personal combinations   | C done         | 25 rules renamed; original-legal-first, specific-rule override, unknown rejection and read-only original intent verified by real Built-in Facade tests; unreleased config not supported                                                                                       |
+| consumer compatibility (incl. Subagent boundary) | C done         | Host/Worker share the Node Facade; Composer/task real runs, Wiki/Bot/UI 33 regressions, explicit Subagent 9 regressions; frozen execution, inheritance and Ticket get no re-resolution                                                                                        |
+| typecheck/lint/unit/Pro E2E                      | A/B/C verified | C: Provider / provider-node / Option Map 352 tests pass; repo typecheck and lint pass; Pro `desktop-e2e-20260909-121842-573`: R95C-01, SR87-01, SR87-06 3/3 pass; pending does not auto-promote                                                                               |
+| second review and closeout                       | A/B/C done     | C changes only the revision, 25 `values`, 10 Map close literals and shared resolution; dedicated requests equivalent, the fallback's temporary old-name mismatch corrected to the off semantics; no budget override, pre-send sync, request-layer alias or silent replacement |
 
 C real-run and test-precondition correction: R95C-01 verifies a historical `nothink` draft shows `disabled` after reload, body edits still keep the historical value and the new value is saved only on send; the real model request carries `thinking.type=disabled` with no wrong effort. The first run failed on a test-precondition race (directly editing localStorage let the old page's `beforeunload` re-flush the in-memory draft over the injected historical selection; temporary logs proved the first read on the new page was already `disabled`, so the new resolution did not corrupt persisted state). The case now injects the old record on `pagehide` (after the exit save) before reload; temporary diagnostics were removed and the production Composer save mechanism untouched. Mobile + SSH real devices and other historical debts stay with Todo102, not passed off as full-platform.
 

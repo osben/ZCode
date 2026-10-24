@@ -70,17 +70,17 @@ branch.
 
 ## 1. Gaps and Target States
 
-| ID  | Gap                                                                                                                             | Target state                                                                                                                |
-| --- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| G1  | `accessId` enters Account Overlay, Provider Config, Protocol, Credential key, Request Auth and UI                               | Deleted by Todo 24; the account service resolves the current compatible connection by static family/planKind                |
-| G2  | `ForkModelRef { providerId, modelId, variant }` is an isomorphic alias of the old `ModelRef`                                    | Future execution intent uses `ModelSelection` directly; `variant` exits                                                     |
-| G3  | `formatModelSelection()` cannot save `maxOutputTokens`; strings still treated as a reversible domain format                     | State, protocol and persistence pass only structured `ModelSelection`; strings only at Picker/Legacy boundaries            |
-| G4  | Model editing submits and closes immediately; rename and config save are two Mutations                                          | Complete Draft submitted through one atomic Host Mutation; popup closes when Registry observes success                      |
-| G5  | Changing Model ID does not first move the Personal-specific Rule and re-preview Effective Config                                | Host provides a non-persistent Preview; the new ID refreshes inheritance immediately, Personal explicit values unchanged    |
-| G6  | UI copies Effective values into the Personal Draft; inheritance, not-set and explicit override are confused                     | Draft separates Personal values from Effective Preview; four-state semantics observable, editable, restorable               |
-| G7  | Normal Built-in Provider and Personal-only Provider reuse the complete editor                                                   | "Add Supplier" enters the simplified editor; "Create Custom Provider" keeps the complete editor                             |
-| G8  | `adapterCompatibility.reasoningReplay` keeps historical model specials as a formal Config dimension                             | Delete the whole Compatibility container; all Adapters execute canonical replay only                                        |
-| G9  | Adapter execution files/comments keep old Registry naming; old Todo completion claims disagree with code                        | Naming mechanically zeroed; historical Todos get correction notes; roadmap and Feature Graph synchronized                   |
+| ID  | Gap                                                                                                         | Target state                                                                                                             |
+| --- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| G1  | `accessId` enters Account Overlay, Provider Config, Protocol, Credential key, Request Auth and UI           | Deleted by Todo 24; the account service resolves the current compatible connection by static family/planKind             |
+| G2  | `ForkModelRef { providerId, modelId, variant }` is an isomorphic alias of the old `ModelRef`                | Future execution intent uses `ModelSelection` directly; `variant` exits                                                  |
+| G3  | `formatModelSelection()` cannot save `maxOutputTokens`; strings still treated as a reversible domain format | State, protocol and persistence pass only structured `ModelSelection`; strings only at Picker/Legacy boundaries          |
+| G4  | Model editing submits and closes immediately; rename and config save are two Mutations                      | Complete Draft submitted through one atomic Host Mutation; popup closes when Registry observes success                   |
+| G5  | Changing Model ID does not first move the Personal-specific Rule and re-preview Effective Config            | Host provides a non-persistent Preview; the new ID refreshes inheritance immediately, Personal explicit values unchanged |
+| G6  | UI copies Effective values into the Personal Draft; inheritance, not-set and explicit override are confused | Draft separates Personal values from Effective Preview; four-state semantics observable, editable, restorable            |
+| G7  | Normal Built-in Provider and Personal-only Provider reuse the complete editor                               | "Add Supplier" enters the simplified editor; "Create Custom Provider" keeps the complete editor                          |
+| G8  | `adapterCompatibility.reasoningReplay` keeps historical model specials as a formal Config dimension         | Delete the whole Compatibility container; all Adapters execute canonical replay only                                     |
+| G9  | Adapter execution files/comments keep old Registry naming; old Todo completion claims disagree with code    | Naming mechanically zeroed; historical Todos get correction notes; roadmap and Feature Graph synchronized                |
 
 ## 2. Access: replaced by Todo 24
 
@@ -178,12 +178,12 @@ The Renderer Draft does not copy Effective values into Personal values. Each fie
 effective (`ModelFieldDraft<T> { personal: T | null | undefined; inherited: T | undefined; effective: T | undefined }`;
 the generic need not exist, per-field structures are fine). Four semantics:
 
-| Status                          | Saved facts                                  | UI                                                             |
-| ------------------------------- | -------------------------------------------- | -------------------------------------------------------------- |
-| Upstream has value, no Personal | No Personal written                          | Low-emphasis inherited value                                   |
-| Upstream no value, no Personal  | No Personal written                          | "Not set" / dash                                               |
-| Personal explicit value         | Corresponding sparse leaves                  | Normal emphasis, can restore inheritance                       |
-| Personal explicit clear         | `null`, only for fields permitting clear     | Explicit cleared state, not equal to not overridden            |
+| Status                          | Saved facts                              | UI                                                  |
+| ------------------------------- | ---------------------------------------- | --------------------------------------------------- |
+| Upstream has value, no Personal | No Personal written                      | Low-emphasis inherited value                        |
+| Upstream no value, no Personal  | No Personal written                      | "Not set" / dash                                    |
+| Personal explicit value         | Corresponding sparse leaves              | Normal emphasis, can restore inheritance            |
+| Personal explicit clear         | `null`, only for fields permitting clear | Explicit cleared state, not equal to not overridden |
 
 Numeric/text inputs use inherited values as placeholder; Boolean/Format use Toggle Chip/Selectable Tag, status
 distinguished by checkmark, dash, stroke and low-interference undo, never by color alone. PDF/Audio stay hidden but
@@ -255,13 +255,13 @@ Config public Service.
 
 ### 7.1 UI surface matrix
 
-| Scenario                      | UI entry                                   | Draft/presentation owner                    | Default/inheritance source      | Validation and submission                                    | Authoritative owner                | Mode boundary                      |
-| ----------------------------- | ------------------------------------------ | ------------------------------------------- | ------------------------------- | ------------------------------------------------------------ | ---------------------------------- | ---------------------------------- |
-| Add normal Built-in Provider  | Provider Settings fixed operations         | Renderer selection state; no Provider Draft | Target Host Built-in Config     | Create Personal Overlay                                      | Target Environment Host            | Local/Remote use their own Host    |
-| Create Personal-only Provider | Custom creation interface                  | Renderer creation state                     | No default API Schema           | Immediately create incomplete Provider, then auto-save       | Target Environment Host            | Same                               |
-| Edit Model                    | Larger manual-save popup                   | Renderer Local Draft                        | Host Effective Preview          | One atomic Model Mutation                                    | Personal Config + Registry         | Desktop/Mobile same semantics      |
-| Model selection               | Conversation/Automation/Subagent/Repo Wiki | Each product's own Draft                    | Target Host Selection View      | Each commit sink                                             | Each product state/Worker Registry | Product lifecycles not unified     |
-| Account connection display    | Family/Usage/Entitlement UI                | Host projection state                       | Account Connection/Availability | Existing login/connection actions                            | Account Service                    | Does not read `accessId`           |
+| Scenario                      | UI entry                                   | Draft/presentation owner                    | Default/inheritance source      | Validation and submission                              | Authoritative owner                | Mode boundary                   |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------- | ------------------------------- | ------------------------------------------------------ | ---------------------------------- | ------------------------------- |
+| Add normal Built-in Provider  | Provider Settings fixed operations         | Renderer selection state; no Provider Draft | Target Host Built-in Config     | Create Personal Overlay                                | Target Environment Host            | Local/Remote use their own Host |
+| Create Personal-only Provider | Custom creation interface                  | Renderer creation state                     | No default API Schema           | Immediately create incomplete Provider, then auto-save | Target Environment Host            | Same                            |
+| Edit Model                    | Larger manual-save popup                   | Renderer Local Draft                        | Host Effective Preview          | One atomic Model Mutation                              | Personal Config + Registry         | Desktop/Mobile same semantics   |
+| Model selection               | Conversation/Automation/Subagent/Repo Wiki | Each product's own Draft                    | Target Host Selection View      | Each commit sink                                       | Each product state/Worker Registry | Product lifecycles not unified  |
+| Account connection display    | Family/Usage/Entitlement UI                | Host projection state                       | Account Connection/Availability | Existing login/connection actions                      | Account Service                    | Does not read `accessId`        |
 
 ### 7.2 Hierarchy relations
 

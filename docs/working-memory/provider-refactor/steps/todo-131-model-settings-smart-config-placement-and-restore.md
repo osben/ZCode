@@ -61,14 +61,14 @@ No confirmation dialog or direct-save entry. Fields edited after restore are new
 
 ### 3.3 Empty ID, failure and concurrency
 
-| Condition                          | Behavior                                                                           |
-| ---------------------------------- | ---------------------------------------------------------------------------------- |
-| Empty ID                           | clickable; clears overrides and enables smart; keeps empty ID; no empty-identity request; matches after an ID is typed |
-| Current identity already has a valid recommendation | may reuse results still applicable to the current Provider/model/access; project the draft immediately |
-| Re-resolution needed               | restore is not disabled while resolving; only results for the current identity and this restore intent are applied |
-| Resolution fails                   | keep the pre-restore draft, show failure in the existing feedback area (never clear first and let the user bear the loss) |
-| Resolution succeeds but recommendation has gaps | show only what was actually obtained; real gap feedback and save validation apply; nothing fabricated |
-| Saving                             | restore disabled; click cannot change the draft being submitted                   |
+| Condition                                           | Behavior                                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Empty ID                                            | clickable; clears overrides and enables smart; keeps empty ID; no empty-identity request; matches after an ID is typed    |
+| Current identity already has a valid recommendation | may reuse results still applicable to the current Provider/model/access; project the draft immediately                    |
+| Re-resolution needed                                | restore is not disabled while resolving; only results for the current identity and this restore intent are applied        |
+| Resolution fails                                    | keep the pre-restore draft, show failure in the existing feedback area (never clear first and let the user bear the loss) |
+| Resolution succeeds but recommendation has gaps     | show only what was actually obtained; real gap feedback and save validation apply; nothing fabricated                     |
+| Saving                                              | restore disabled; click cannot change the draft being submitted                                                           |
 
 Apart from saving there is no extra disable condition (empty ID, already smart, no overrides, request in flight).
 
@@ -76,13 +76,13 @@ Async resolution stays atomic: keep the draft before resolution; apply once on s
 
 ## 4. Layer 3: implementation boundary
 
-| Location                                                  | Purpose                                                                                       |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Location                                                  | Purpose                                                                                                                              |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `ProviderModelMetadataDialog.tsx`                         | smart config to the right of the ID container; bottom leadingAction becomes Restore; keep responsiveness, read-only ID and save lock |
-| `ProviderModelMetadataDialogActions.tsx`                  | reuse existing Switch and action area; wire restore and saving-disable; no change to other pages' action order |
-| `useProviderModelDraft.ts` / `ProviderModelDraftState.ts` | explicit draft action for restore, reusing the field cleanup/projection of enabling smart config, also covering "already smart" |
-| `ProviderFormControls.tsx` / `ProviderCardSections.tsx`   | add and edit share one restore entry; keep identity permissions, error display, revision and save transaction |
-| i18n and existing help component                          | zh-CN button literally "恢复"; English translated with the same meaning; smart-config help per Todo125 |
+| `ProviderModelMetadataDialogActions.tsx`                  | reuse existing Switch and action area; wire restore and saving-disable; no change to other pages' action order                       |
+| `useProviderModelDraft.ts` / `ProviderModelDraftState.ts` | explicit draft action for restore, reusing the field cleanup/projection of enabling smart config, also covering "already smart"      |
+| `ProviderFormControls.tsx` / `ProviderCardSections.tsx`   | add and edit share one restore entry; keep identity permissions, error display, revision and save transaction                        |
+| i18n and existing help component                          | zh-CN button literally "恢复"; English translated with the same meaning; smart-config help per Todo125                               |
 
 Paths relative to `packages/ui/src/settings/model-provider-section/` (except i18n/shared components).
 Calling `onChange(true)` alone is not restore: when the mode is already on, a normal mode change may not
@@ -93,16 +93,16 @@ or protocol. May ship in the same batch as Todo130 but must not build a third re
 
 ## 5. Verification
 
-| Case    | Scenario                                                       | Must assert                                                                           |
-| ------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| R121-01 | wide/narrow screen, long ID, long translation, inherited ID read-only | switch only in the ID container, question mark placed correctly; Restore bottom left, save/cancel kept; no truncation or unreachable control |
-| R121-02 | smart mode with overrides, click Restore                       | overrides cleared, smart stays on; no immediate write; no dependence on switch false -> true |
-| R121-03 | click Restore on manual config                                 | editable items return to recommendation and smart on; ID/Provider/enabled kept; system fields not frozen |
-| R121-04 | Restore with empty ID, then type an ID                         | button usable, clears overrides, smart on, no empty-ID request; matches the current identity after typing |
-| R121-05 | restore -> edit -> save; restore -> cancel; save failure       | new edits kept, cancel writes nothing, failure keeps the draft; the button itself never submits |
-| R121-06 | A -> B then Restore, B request slow/failing                    | A's recommendation not used; failure does not clear the original draft; explicit error feedback |
-| R121-07 | restore in flight, then edit/switch mode/switch Provider/close/restore again/start save | stale success and failure never overwrite the new generation; no duplicate write or draft change during save |
-| R121-08 | saving=true / recommendation pending / no overrides            | disabled only when saving; otherwise allowed                                          |
+| Case    | Scenario                                                                                | Must assert                                                                                                                                  |
+| ------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| R121-01 | wide/narrow screen, long ID, long translation, inherited ID read-only                   | switch only in the ID container, question mark placed correctly; Restore bottom left, save/cancel kept; no truncation or unreachable control |
+| R121-02 | smart mode with overrides, click Restore                                                | overrides cleared, smart stays on; no immediate write; no dependence on switch false -> true                                                 |
+| R121-03 | click Restore on manual config                                                          | editable items return to recommendation and smart on; ID/Provider/enabled kept; system fields not frozen                                     |
+| R121-04 | Restore with empty ID, then type an ID                                                  | button usable, clears overrides, smart on, no empty-ID request; matches the current identity after typing                                    |
+| R121-05 | restore -> edit -> save; restore -> cancel; save failure                                | new edits kept, cancel writes nothing, failure keeps the draft; the button itself never submits                                              |
+| R121-06 | A -> B then Restore, B request slow/failing                                             | A's recommendation not used; failure does not clear the original draft; explicit error feedback                                              |
+| R121-07 | restore in flight, then edit/switch mode/switch Provider/close/restore again/start save | stale success and failure never overwrite the new generation; no duplicate write or draft change during save                                 |
+| R121-08 | saving=true / recommendation pending / no overrides                                     | disabled only when saving; otherwise allowed                                                                                                 |
 
 Draft and mode are verified with the real Hook/pure functions; interaction by DOM/E2E clicks. Save/cancel
 verify call counts and real Repository output (disk unchanged before save; after save independent enable

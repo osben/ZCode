@@ -122,14 +122,14 @@ Select is a product-state stage; no domain type named `ModelSelect` is added. Bo
 
 ### 8.2 Product mapping
 
-| Product/scenario | Select stage                                    | Boundary forming Submission               |
-| ---------------- | ----------------------------------------------- | ----------------------------------------- |
-| Normal session   | Composer / Draft                                | user sends and the system accepts         |
-| Automation       | optional model preference in the record         | each scheduled trigger                    |
-| Repo Wiki        | model choice in generate page or saved config   | user clicks generate                      |
-| Bot              | model preference in Bot config                  | message received, a task is created       |
-| Subagent         | optional model override in Profile              | Child Agent creation                      |
-| Off-Peak         | model choice on the create page                 | user submits and the system accepts       |
+| Product/scenario | Select stage                                           | Boundary forming Submission                |
+| ---------------- | ------------------------------------------------------ | ------------------------------------------ |
+| Normal session   | Composer / Draft                                       | user sends and the system accepts          |
+| Automation       | optional model preference in the record                | each scheduled trigger                     |
+| Repo Wiki        | model choice in generate page or saved config          | user clicks generate                       |
+| Bot              | model preference in Bot config                         | message received, a task is created        |
+| Subagent         | optional model override in Profile                     | Child Agent creation                       |
+| Off-Peak         | model choice on the create page                        | user submits and the system accepts        |
 | Title/Memory/Git | usually no long-lived Select; intent from call context | each Sidecar call forms its own Submission |
 
 - Automation set to "follow Workspace" stores no `modelSelection`; each trigger reads Host preferred at that time and forms that run's Submission; later Host preferred changes do not affect it.

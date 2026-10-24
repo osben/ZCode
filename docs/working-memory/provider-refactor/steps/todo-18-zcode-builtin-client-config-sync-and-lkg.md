@@ -44,15 +44,17 @@ The server adds one first-level field under `data.configs`:
 
 ```ts
 interface ZCodeBuiltinConfigContent {
-  readonly providers: Record<string, ProviderConfigObject>;          // pure content of ZCode Built-in Provider Config
-  readonly modelConfigRules: readonly ModelConfigRuleObject[];       // pure content of ZCode Built-in Model Config Rules
+  readonly providers: Record<string, ProviderConfigObject>; // pure content of ZCode Built-in Provider Config
+  readonly modelConfigRules: readonly ModelConfigRuleObject[]; // pure content of ZCode Built-in Model Config Rules
 }
 interface ZCodeBuiltinRelease {
   readonly schemaVersion: number;
-  readonly revision: number;   // strictly increasing per release; a content rollback also gets a larger revision
+  readonly revision: number; // strictly increasing per release; a content rollback also gets a larger revision
   readonly config: ZCodeBuiltinConfigContent;
 }
-interface ClientConfigFields { readonly zcodeBuiltin?: ZCodeBuiltinRelease; }
+interface ClientConfigFields {
+  readonly zcodeBuiltin?: ZCodeBuiltinRelease;
+}
 ```
 
 Example: `{ "code": 0, "data": { "configs": { "zcodeBuiltin": { "schemaVersion": 1, "revision": 42, "config": { "providers": {}, "modelConfigRules": [] } } } } }`.
@@ -80,10 +82,10 @@ the first client sync (the old Todo 19 was abandoned; a future gate would be a s
 
 ### 1.3 Roles of Bundled, LKG and Remote
 
-| Input                    | Meaning                                                         | Lifecycle        | Rewritten at runtime  |
-| ------------------------ | --------------------------------------------------------------- | ---------------- | --------------------- |
-| Bundled Config           | the compatible baseline carried by the current installer        | App release      | no                    |
-| Environment Active Cache | the Built-in the Environment accepted and uses now; also the LKG | across restarts | yes, atomic replace   |
+| Input                    | Meaning                                                          | Lifecycle          | Rewritten at runtime   |
+| ------------------------ | ---------------------------------------------------------------- | ------------------ | ---------------------- |
+| Bundled Config           | the compatible baseline carried by the current installer         | App release        | no                     |
+| Environment Active Cache | the Built-in the Environment accepted and uses now; also the LKG | across restarts    | yes, atomic replace    |
 | Remote Config            | the current `/client/configs.data.configs.zcodeBuiltin` response | one remote refresh | not persisted directly |
 
 Runtime never rewrites `config/provider/zcode-builtin.json` or read-only installer assets. A successful
@@ -169,15 +171,15 @@ Startup: read Bundled + read LKG -> choose the compatible max revision -> publis
 remote refresh in the background. The network request never blocks Provider Runtime's first ready on a
 valid local candidate; with no valid local candidate startup fails (no empty Registry, no half-complete Provider).
 
-| Remote response case                         | Handling                                                  |
-| -------------------------------------------- | --------------------------------------------------------- |
-| HTTP/timeout/JSON/Envelope failure           | keep the current Snapshot and LKG, log a diagnosable error |
-| `configs.zcodeBuiltin` missing               | treat as not yet delivered, keep the current Snapshot      |
-| Schema unsupported                           | reject the response, keep the current Snapshot and LKG     |
-| Provider/Rule strict parse failure           | reject the whole response, no partial application          |
-| revision below the current valid revision    | stale response, ignored                                    |
-| revision equal and content identical         | dedupe, no write, no notification                          |
-| revision equal but content different         | publish protocol error, reject and log                     |
+| Remote response case                          | Handling                                                     |
+| --------------------------------------------- | ------------------------------------------------------------ |
+| HTTP/timeout/JSON/Envelope failure            | keep the current Snapshot and LKG, log a diagnosable error   |
+| `configs.zcodeBuiltin` missing                | treat as not yet delivered, keep the current Snapshot        |
+| Schema unsupported                            | reject the response, keep the current Snapshot and LKG       |
+| Provider/Rule strict parse failure            | reject the whole response, no partial application            |
+| revision below the current valid revision     | stale response, ignored                                      |
+| revision equal and content identical          | dedupe, no write, no notification                            |
+| revision equal but content different          | publish protocol error, reject and log                       |
 | revision higher and compatible parse succeeds | atomically replace the Active Cache, then publish the change |
 
 Write and publish order: remote payload -> strict envelope/domain parse -> atomic replace `active.json` ->

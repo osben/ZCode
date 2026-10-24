@@ -16,11 +16,11 @@ Confirmed gaps: (1) `ProviderModelMetadataDialog.tsx` shows the switch only for 
 
 ### 2.1 Only the necessary differences
 
-| Content | Add | Edit |
-| --- | --- | --- |
-| initialization | new model draft, follow recommended by default | saved personal config, mode and this edit's baseline |
-| model ID | required, duplicate checked on save | personal member editable; inherited member read-only |
-| save effect | create personal member and its config, mode, keeping existing order | update config, mode; atomic rename when ID changes |
+| Content        | Add                                                                 | Edit                                                 |
+| -------------- | ------------------------------------------------------------------- | ---------------------------------------------------- |
+| initialization | new model draft, follow recommended by default                      | saved personal config, mode and this edit's baseline |
+| model ID       | required, duplicate checked on save                                 | personal member editable; inherited member read-only |
+| save effect    | create personal member and its config, mode, keeping existing order | update config, mode; atomic rename when ID changes   |
 
 Recommendation resolution, mode switch, field editing, validation, cancel and keep-draft-on-failure are all shared; the `add/edit` identity is kept but is not a branch condition for the recommendation switch or config conversion.
 
@@ -65,11 +65,11 @@ Boundaries covered: A->B->A, returning to the original ID, same ID with a differ
 
 Layers: presentation, draft-default, validation, commit-effect, persistence; no session restore.
 
-| Entry | Shared implementation / draft owner | Recommendation and validation source | Commit and persistence |
-| --- | --- | --- | --- |
+| Entry                       | Shared implementation / draft owner                                         | Recommendation and validation source                                            | Commit and persistence                                                                      |
+| --------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | add model inside a Provider | ProviderModelsSection -> shared config editing logic/dialog; this new draft | target Host `resolveModelConfig`; shared draft conversion and server validation | `addPersonalModel` carries the config mode; ConfigService single Personal Repository update |
-| edit personal model | ModelRowInput -> same shared logic/dialog; initialized from existing config | same; keeps baseline revision and rename check | `savePersonalModelDraft`; config, mode and any rename atomic |
-| edit inherited model | same, ID read-only | current inherited baseline; member permission independent | same model config save; inherited member identity unchanged |
+| edit personal model         | ModelRowInput -> same shared logic/dialog; initialized from existing config | same; keeps baseline revision and rename check                                  | `savePersonalModelDraft`; config, mode and any rename atomic                                |
+| edit inherited model        | same, ID read-only                                                          | current inherited baseline; member permission independent                       | same model config save; inherited member identity unchanged                                 |
 
 - Extract the really duplicated draft initialization, mode conversion, post-ID-change recommendation projection and commit validation; keep thin create/update entries, no generic CRUD or large form framework. The recommendation facts belong to the target Host; the Renderer holds only personal edit intent and the display draft, with no second Registry/Overlay resolver.
 - The optional mode field flows from UI callback, hook, Settings Service, Facade to ConfigService; old callers default to follow. Reuse the existing mode metadata and completeness validation; creating the member, order, config and mode is one transaction. No `provider_config.json` format change, no migration, no mode in ModelConfig, request params or account state. The feature is unreleased, so no compatibility for "old pinned config"; `useRecommendedConfig` and related fields stay and are not renamed for UI copy.
@@ -78,16 +78,16 @@ Layers: presentation, draft-default, validation, commit-effect, persistence; no 
 
 ## 4. Acceptance plan
 
-| ID | Setup and action | Must verify | Evidence |
-| --- | --- | --- | --- |
-| M90-01 | add: enter an ID that resolves a recommendation | the switch appears on the save/cancel row; default follow; cannot go pinned before ready | DOM + Pro Electron |
-| M90-02 | add: turn follow off, edit a field, save, reopen | config complete, mode false; later recommendation changes do not alter pinned fields; member and order written once | service/config tests + Electron disk read |
-| M90-03 | add/edit: pinned back to follow, then edit a field and save | old overrides cleared, new edit kept; cancel saves nothing; original enabled not changed by mode | parameterized tests + Electron representative |
-| M90-04 | add and edit personal model, follow state, A to B | unoverridden fields follow B; explicit overrides kept including one that equals A's recommendation | shared logic + DOM |
-| M90-05 | same, pinned state A to B, or clear a required field | config and mode kept; no name-based recommendation call, no recommended placeholder/override style; an incomplete pinned config is rejected in UI and Host with no implicit B fill; `false` / legal `{}` usable | shared logic + service tests |
-| M90-06 | delayed A reply, switch to B; also A->B->A, close-reopen, switch Provider, toggle off/on | only the current edit/identity/mode generation applies; pinned draft not overwritten by a late recommendation; save never uses stale resolution | controllable Promise/hook/DOM (no sleeps) |
-| M90-07 | no recommendation, resolution failure, duplicate ID, version conflict or write failure | no forged pinned config without a baseline; error keeps the draft; nothing partially written; inherited ID read-only | DOM + service fault tests |
-| M90-08 | both modes save/cancel, narrow screen, zh/en, light/dark | one interaction component usable; writes the target Host, other environments unaffected | Electron representative + service isolation |
+| ID     | Setup and action                                                                         | Must verify                                                                                                                                                                                                     | Evidence                                      |
+| ------ | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| M90-01 | add: enter an ID that resolves a recommendation                                          | the switch appears on the save/cancel row; default follow; cannot go pinned before ready                                                                                                                        | DOM + Pro Electron                            |
+| M90-02 | add: turn follow off, edit a field, save, reopen                                         | config complete, mode false; later recommendation changes do not alter pinned fields; member and order written once                                                                                             | service/config tests + Electron disk read     |
+| M90-03 | add/edit: pinned back to follow, then edit a field and save                              | old overrides cleared, new edit kept; cancel saves nothing; original enabled not changed by mode                                                                                                                | parameterized tests + Electron representative |
+| M90-04 | add and edit personal model, follow state, A to B                                        | unoverridden fields follow B; explicit overrides kept including one that equals A's recommendation                                                                                                              | shared logic + DOM                            |
+| M90-05 | same, pinned state A to B, or clear a required field                                     | config and mode kept; no name-based recommendation call, no recommended placeholder/override style; an incomplete pinned config is rejected in UI and Host with no implicit B fill; `false` / legal `{}` usable | shared logic + service tests                  |
+| M90-06 | delayed A reply, switch to B; also A->B->A, close-reopen, switch Provider, toggle off/on | only the current edit/identity/mode generation applies; pinned draft not overwritten by a late recommendation; save never uses stale resolution                                                                 | controllable Promise/hook/DOM (no sleeps)     |
+| M90-07 | no recommendation, resolution failure, duplicate ID, version conflict or write failure   | no forged pinned config without a baseline; error keeps the draft; nothing partially written; inherited ID read-only                                                                                            | DOM + service fault tests                     |
+| M90-08 | both modes save/cancel, narrow screen, zh/en, light/dark                                 | one interaction component usable; writes the target Host, other environments unaffected                                                                                                                         | Electron representative + service isolation   |
 
 Pruning: inherited-model rename (existing ID read-only and server-side member protection, check it did not regress); all Account plans and ordinary Provider combinations (shared member write and draft rules; Account add and personal-model edit as representatives); real API/billing/Selection auto-switch (no behavior change, no real model requests); new formal state enumerations (a local form transaction suffices). No unruled scope; stop and discuss if a format change, account permission or a new auto-save becomes necessary. E2E timing uses normal UI condition waits; out-of-order resolution is proven by controllable-Promise unit tests; mobile/remote not run is stated, not replaced by a desktop narrow viewport.
 

@@ -23,14 +23,14 @@ group run -> container/whole-group verification and report.
 
 ## 1. Evidence caliber
 
-| Evidence                       | What it proves                                          | Equals E2E pass?        |
-| ------------------------------ | ------------------------------------------------------- | ----------------------- |
-| `typecheck:e2e`                | E2E TypeScript compiles                                 | No                      |
-| fixture check / coverage audit | Fixture, manifest and coverage matrix structure correct | No                      |
-| unit tests                     | helper/service local behavior correct                   | No                      |
-| WDIO single spec               | the case's setup/action/assertion really completed in Electron | Yes, that case   |
-| Docker single spec             | the case passes in the standard isolated environment    | Yes, that environment   |
-| Provider/Conversation preset   | batch of cases in the suite pass                        | Yes, that suite         |
+| Evidence                       | What it proves                                                 | Equals E2E pass?      |
+| ------------------------------ | -------------------------------------------------------------- | --------------------- |
+| `typecheck:e2e`                | E2E TypeScript compiles                                        | No                    |
+| fixture check / coverage audit | Fixture, manifest and coverage matrix structure correct        | No                    |
+| unit tests                     | helper/service local behavior correct                          | No                    |
+| WDIO single spec               | the case's setup/action/assertion really completed in Electron | Yes, that case        |
+| Docker single spec             | the case passes in the standard isolated environment           | Yes, that environment |
+| Provider/Conversation preset   | batch of cases in the suite pass                               | Yes, that suite       |
 
 The final report must not use "related checks passed" for "E2E ran and passed"; not-run, environment-blocked,
 product failure and obsolete cases are listed separately.
@@ -157,22 +157,22 @@ This round corrected the real inputs and real run chain instead of maintaining t
 
 ### 9.1 macOS Electron/WDIO evidence
 
-| Scope                                   | Result | Artifact / state                                                                                 |
-| --------------------------------------- | -----: | ------------------------------------------------------------------------------------------------ |
-| Bot automation / Feishu lifecycle       |    5/5 | `desktop-e2e-20260901-123836-685`                                                                |
-| Coding Plan Team / quota reset          |  18/18 | `desktop-e2e-20260901-134307-916`                                                                |
-| Upgrade WebView refresh                 |    2/2 | `desktop-e2e-20260901-140456-210`                                                                |
-| Built-in Subagent model selection       |    1/1 | `desktop-e2e-20260901-132851-878`                                                                |
-| Context Window cold resume              |    1/1 | `desktop-e2e-20260901-134040-202`                                                                |
-| Model output token budget               |    1/1 | `desktop-e2e-20260901-134123-921`                                                                |
-| Provider settings transition            |    3/3 | `desktop-e2e-20260901-134207-163`                                                                |
-| Provider restart recovery               |    4/4 | `desktop-e2e-20260901-133355-002`                                                                |
-| Turbo recovery                          |    3/3 | `desktop-e2e-20260901-133648-823`                                                                |
-| Turbo switch                            |    3/3 | `desktop-e2e-20260901-133743-135`                                                                |
-| Output-token preflight                  |    1/1 | `desktop-e2e-20260901-134931-393`                                                                |
-| Output-token preflight smoke            |    2/2 | `desktop-e2e-20260901-135009-362`                                                                |
-| Provider Template add/edit/restore/send |    1/1 | `desktop-e2e-20260901-140409-625`                                                                |
-| selected-key migration                  |      — | `deleted-by-decision`                                                                            |
+| Scope                                   | Result | Artifact / state                                                                                                    |
+| --------------------------------------- | -----: | ------------------------------------------------------------------------------------------------------------------- |
+| Bot automation / Feishu lifecycle       |    5/5 | `desktop-e2e-20260901-123836-685`                                                                                   |
+| Coding Plan Team / quota reset          |  18/18 | `desktop-e2e-20260901-134307-916`                                                                                   |
+| Upgrade WebView refresh                 |    2/2 | `desktop-e2e-20260901-140456-210`                                                                                   |
+| Built-in Subagent model selection       |    1/1 | `desktop-e2e-20260901-132851-878`                                                                                   |
+| Context Window cold resume              |    1/1 | `desktop-e2e-20260901-134040-202`                                                                                   |
+| Model output token budget               |    1/1 | `desktop-e2e-20260901-134123-921`                                                                                   |
+| Provider settings transition            |    3/3 | `desktop-e2e-20260901-134207-163`                                                                                   |
+| Provider restart recovery               |    4/4 | `desktop-e2e-20260901-133355-002`                                                                                   |
+| Turbo recovery                          |    3/3 | `desktop-e2e-20260901-133648-823`                                                                                   |
+| Turbo switch                            |    3/3 | `desktop-e2e-20260901-133743-135`                                                                                   |
+| Output-token preflight                  |    1/1 | `desktop-e2e-20260901-134931-393`                                                                                   |
+| Output-token preflight smoke            |    2/2 | `desktop-e2e-20260901-135009-362`                                                                                   |
+| Provider Template add/edit/restore/send |    1/1 | `desktop-e2e-20260901-140409-625`                                                                                   |
+| selected-key migration                  |      — | `deleted-by-decision`                                                                                               |
 | SSH Remote Environment Provisioning     |      — | `blocked-environment`: MacBook Pro has no `ZCODE_E2E_SSH_HOST/USERNAME/PASSWORD`; static checks not counted as pass |
 
 All runs used an independent clean runtime clone on the MacBook Pro at the same commit through the standard

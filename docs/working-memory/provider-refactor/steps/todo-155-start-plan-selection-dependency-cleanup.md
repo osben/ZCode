@@ -11,13 +11,13 @@
 Start is an independent Provider and no longer needs the global "connection mode" to select Start. State
 sources follow the owner of the displayed fact (not all switched mechanically to the input box):
 
-| Scenario                              | Correct source                                              |
-| ------------------------------------- | ----------------------------------------------------------- |
-| Input-box quota; same-model plan recommendation at submit | effective Provider and model of the current input box/form |
-| Session balance / error reminders     | the session's executing Provider, model and error facts     |
-| Historical model-switch divider hint  | fromProvider/fromModel and toProvider/toModel in the record |
-| Start availability; settings entitlement | current logged-in account's Start entitlement and model config |
-| Settings personal/team connection; team usage scope | global paid connection and complete team identity |
+| Scenario                                                  | Correct source                                                 |
+| --------------------------------------------------------- | -------------------------------------------------------------- |
+| Input-box quota; same-model plan recommendation at submit | effective Provider and model of the current input box/form     |
+| Session balance / error reminders                         | the session's executing Provider, model and error facts        |
+| Historical model-switch divider hint                      | fromProvider/fromModel and toProvider/toModel in the record    |
+| Start availability; settings entitlement                  | current logged-in account's Start entitlement and model config |
+| Settings personal/team connection; team usage scope       | global paid connection and complete team identity              |
 
 ```text
 logged-in account -> Account Source -> Start entitlement / Registry
@@ -51,17 +51,17 @@ keeps thinking-option compatibility validation; the plan type is display only an
 
 ## 4. Acceptance matrix
 
-| ID    | Scenario and expectation                                                                                          |
-| ----- | ----------------------------------------------------------------------------------------------------------------- |
-| SC-01 | Two brands x global personal/team/unset/legacy Start: choosing Start in the input shows quota by its entitlement  |
-| SC-02 | New session with zero context and session with usage: ring/hover correct; after switching back to paid, quota follows the real Provider |
-| SC-03 | Legacy team organization completion fails: team stays restricted, a logged-in Start with entitlement is independently usable; no migration |
-| SC-04 | Start low balance, exhausted, query failure, cold cache and refresh: access parameters correct; original error hints not regressed |
-| SC-05 | Start not logged in, no plan/expired, pending, unknown, truly missing config shown distinctly; claim entry and model management have no misleading connection copy |
-| SC-06 | Team current=true, personal current=false: dropdown shows the real team; legacy Start users can still actively choose the only paid plan |
+| ID    | Scenario and expectation                                                                                                                                                      |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SC-01 | Two brands x global personal/team/unset/legacy Start: choosing Start in the input shows quota by its entitlement                                                              |
+| SC-02 | New session with zero context and session with usage: ring/hover correct; after switching back to paid, quota follows the real Provider                                       |
+| SC-03 | Legacy team organization completion fails: team stays restricted, a logged-in Start with entitlement is independently usable; no migration                                    |
+| SC-04 | Start low balance, exhausted, query failure, cold cache and refresh: access parameters correct; original error hints not regressed                                            |
+| SC-05 | Start not logged in, no plan/expired, pending, unknown, truly missing config shown distinctly; claim entry and model management have no misleading connection copy            |
+| SC-06 | Team current=true, personal current=false: dropdown shows the real team; legacy Start users can still actively choose the only paid plan                                      |
 | SC-07 | Two brands x three plan types, same/different model names: both sides' suffix correct; changing current connection, missing catalog or history replay never changes plan type |
-| SC-08 | Ordinary custom Provider keeps the original label; zh/en, desktop/phone narrow, light/dark without truncation or overflow |
-| SC-09 | Claiming/browsing Start changes no model or global paid connection; legacy settings stay readable; unavailable Start has no paid fallback |
+| SC-08 | Ordinary custom Provider keeps the original label; zh/en, desktop/phone narrow, light/dark without truncation or overflow                                                     |
+| SC-09 | Claiming/browsing Start changes no model or global paid connection; legacy settings stay readable; unavailable Start has no paid fallback                                     |
 
 Failing tests first, then fixes. Required checks: root typecheck, lint, `architecture:check --changed`,
 affected tests; interaction E2E via Pro admin SSH as the user required; a narrow desktop window is not full
