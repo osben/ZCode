@@ -1,42 +1,42 @@
 # Coding Plan Webview Upgrade E2E Cases
 
-本文记录 Coding Plan 升级入口迁到官网 embedded webview 后，桌面端需要覆盖的 E2E case。范围限定在 desktop local workspace，接口使用 WDIO case-local mock server，不访问真实 BigModel / Z.AI 套餐接口。
+Desktop E2E cases for the Coding Plan upgrade entry that now opens the official site in an embedded webview. Scope: desktop local workspace only; the interface is a WDIO case-local mock server, and no real BigModel / Z.AI plan API is accessed.
 
-## 覆盖原则
+## Coverage principles
 
-- 每条 case 都必须有独立 setup、action、assert，不把“打开过 webview”视为购买完成覆盖。
-- 打开升级页后断言 Windows/Linux 的最小化、最大化、关闭窗口按钮可见且命中区域不被覆盖；macOS 不显示这组自绘按钮。按钮命令与关闭网页的区别由 `overlayWindowControls.test.ts` 回归。
-- 官网 webview 完成支付后，App 的业务语义是：先关闭升级 webview，再刷新当前 Coding Plan provider。
-- Provider 刷新通过当前 ProviderSettingsService / Account 凭据边界，至少覆盖购买完成之后的 `subscription/list` 与企业套餐查询；不能把账号凭据写入 Personal Provider Config。
-- 本组 case 不发送模型请求，不生成 DeepSeek provider replay fixture。
-- CPUW-01 初始即有 Personal/Start 权益，须通过真实 Account 控制面解析：初始 customerInfo 提供组织/项目，受控 mock profile 保留查询 Start 的 JWT，不用旧 Personal apiKey 伪造账号连接。库存 loading/error 文案同时覆盖中英文启动语言。
+- Every case has an independent setup, action and assert; "the webview was opened" never counts as purchase-completion coverage.
+- After opening the upgrade page, assert that the Windows/Linux minimize, maximize and close window buttons are visible and their hit areas are not covered; macOS shows no such custom-drawn buttons. The difference between the button commands and closing the web page is regression-tested by `overlayWindowControls.test.ts`.
+- App semantics after the official-site webview completes payment: close the upgrade webview first, then refresh the current Coding Plan provider.
+- The provider refresh goes through the current ProviderSettingsService / Account credential boundary and covers at least the post-purchase `subscription/list` and enterprise-plan queries; account credentials must never be written into the Personal Provider Config.
+- These cases send no model request and generate no DeepSeek provider replay fixture.
+- CPUW-01 starts with a Personal/Start entitlement that must be resolved through the real Account control plane: the initial customerInfo supplies the organization/project, a controlled mock profile keeps the JWT that queries Start, and the old Personal apiKey is not used to fake an account connection. Inventory loading/error copy covers both the zh and en startup languages.
 
 ## Accepted Cases
 
-当前鉴权以 [PAT 规格](../model-provider-project-access-token.md) 为准：账号初始化查询/创建专用 Key ID 后签发 PAT，已删除 Copy Secret。CPUW-01 核对 PAT 请求和 Copy=0、入口完整库存与 WebView 同一 funnel、刷新/重载不重复上报；CPUW-01/03 还断言账号凭据不泄漏到 Personal Config。购买完成之前冻结 request ledger 位置，只检查其后的权益刷新，不能用启动请求冒充购买回调证据；有效 PAT 允许复用，不要求购买后重新签发。
+Current authentication follows the [PAT spec](../model-provider-project-access-token.md): account initialization queries/creates a dedicated Key ID and then issues a PAT; Copy Secret is removed. CPUW-01 checks the PAT request and Copy=0, that the entry's full inventory and the WebView share one funnel, and that refresh/reload does not report twice; CPUW-01/03 also assert that account credentials do not leak into the Personal Config. The request-ledger position is frozen before purchase completion and only the subsequent entitlement refresh is checked, so startup requests cannot stand in as purchase-callback evidence; a valid PAT may be reused and re-issuing after purchase is not required.
 
-本例 mock PAT 有效期为 10 分钟，购买后订阅查询沿用本例已签发的 PAT；企业目录继续使用当前 family 的 OAuth。两类请求分开核对，不输出凭据内容。
+The mock PAT here is valid for 10 minutes and the post-purchase subscription query reuses the PAT issued in this case; the enterprise catalog keeps using the current family's OAuth. The two request kinds are checked separately and no credential content is printed.
 
-当前回归：2026-10-14 macOS Electron，`desktop-e2e-tests-only-20261014c` 中 CPUW-01/03 均通过（2 passed，0 failed）。证据为同名本地 artifact 目录的 `summary.json`；不代表全部桌面 E2E 或 Windows/Linux 已验证。
+Latest regression (2026-10-14, macOS Electron, `desktop-e2e-tests-only-20261014c`): CPUW-01/03 passed (2 passed, 0 failed); evidence is `summary.json` in the same-named local artifact directory. It does not claim all desktop E2E or Windows/Linux.
 
-| Case    | 场景                                                                             | Setup                                                                                     | Action                                       | Assertions                                                                                       |
-| ------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| CPUW-01 | 官网 webview 通知 App 关闭升级弹窗并刷新当前 provider                            | 已登录 BigModel，当前连接为个人 Coding Plan；本地 mock 支持专用 Key ID/PAT 和购买完成信号 | 头像菜单打开升级 webview，触发购买完成       | webview 关闭；完成后查询订阅和企业套餐；初始化签发 PAT，Copy=0，Personal Config 无账号凭据       |
-| CPUW-02 | 官网 webview 外链/加载异常不回退旧内置购买面板                                   | mock 官网页加载失败或接口返回系统繁忙                                                     | 打开升级入口                                 | App 展示 webview shell 或 load-failure fallback；不渲染旧 `CodingPlanPurchasePanel` 个人套餐按钮 |
-| CPUW-03 | Z.ai 官网 webview 通知 App 关闭升级弹窗并刷新当前 provider 与 Team Plan products | 已登录 Z.ai，webview 注入该 family OAuth 与 JWT，不注入 BigModel 凭据                     | 头像菜单打开升级 webview，触发 Z.ai 购买完成 | webview 关闭；完成后以 Z.ai 凭据查询订阅和企业套餐；Personal Config 无账号凭据                   |
+| Case    | Scenario                                                                              | Setup                                                                                                         | Action                                           | Assertions                                                                                                         |
+| ------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| CPUW-01 | The official-site webview notifies the App to close the upgrade dialog and refresh the current provider | Logged into BigModel, current connection is a personal Coding Plan; local mock supports a dedicated Key ID/PAT and a purchase-complete signal | Open the upgrade webview from the avatar menu, trigger purchase completion | Webview closes; afterwards subscription and enterprise plan are queried; initialization issues a PAT, Copy=0, Personal Config has no account credentials |
+| CPUW-02 | Official-site webview external link / load failure does not fall back to the old built-in purchase panel | Mock official page fails to load or the interface returns system busy                                         | Open the upgrade entry                           | App shows the webview shell or the load-failure fallback; the old `CodingPlanPurchasePanel` personal-plan buttons are not rendered |
+| CPUW-03 | The Z.ai official-site webview notifies the App to close the upgrade dialog and refresh the current provider and Team Plan products | Logged into Z.ai, the webview injects that family's OAuth and JWT, no BigModel credentials injected           | Open the upgrade webview from the avatar menu, trigger Z.ai purchase completion | Webview closes; afterwards subscription and enterprise plan are queried with Z.ai credentials; Personal Config has no account credentials |
 
 ## Pruned Cases
 
-| Decision | Pruned combinations                 | Reason                                                                                                        | Representative coverage                                                                                                                   |
-| -------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| CPUW-P01 | Z.AI PayPal / Stripe 真支付完成     | 需要真实第三方支付授权，不能在桌面 CI 中稳定执行；App 侧完成语义由 Z.ai mock webview completion 覆盖          | CPUW-03 覆盖 Z.ai bridge + App close/refresh；支付方式内部保留单元/组件测试                                                               |
-| CPUW-P02 | Mobile `/remote` webview completion | 手机远控不创建独立官网购买 webview；当前升级 webview 是桌面 renderer 本地弹层                                 | CPUW-01 保持 desktop local scope；远端 Environment 的 Provider Runtime 独立拥有配置与 Registry，不由本用例验证跨 Environment Provisioning |
-| CPUW-P03 | 企业 Team Plan webview 完整购买     | 当前官网完成信号到 App 的关闭/刷新语义与个人套餐相同；企业产品刷新只需断言 `refreshTeamPlanProducts` 单元覆盖 | `modelProviderCodingPlan.test.ts` 覆盖 Team products refresh；CPUW-01 覆盖真实 webview IPC                                                |
+| Decision | Pruned combination                  | Reason                                                                                                                                | Representative coverage                                                                                                                                              |
+| -------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CPUW-P01 | Z.AI PayPal / Stripe real payment completion | Needs real third-party payment authorization and cannot run stably in desktop CI; App-side completion semantics are covered by the Z.ai mock webview completion | CPUW-03 covers the Z.ai bridge + App close/refresh; payment methods keep internal unit/component tests                                                              |
+| CPUW-P02 | Mobile `/remote` webview completion | Mobile remote control creates no independent official-site purchase webview; the current upgrade webview is a desktop renderer local overlay | CPUW-01 stays in desktop local scope; a remote Environment's Provider Runtime owns its configuration and Registry independently, and this case does not verify cross-Environment Provisioning |
+| CPUW-P03 | Full enterprise Team Plan webview purchase | The official-site completion signal's close/refresh semantics for the App equal the personal plan; enterprise product refresh only needs the `refreshTeamPlanProducts` unit assertion | `modelProviderCodingPlan.test.ts` covers Team products refresh; CPUW-01 covers the real webview IPC                                                                  |
 
 ## Fixture Contract
 
-- WDIO mock server 负责：
-  - `/coding-plan`：模拟官网 embedded 页面。
+- The WDIO mock server provides:
+  - `/coding-plan`: simulates the official embedded page.
   - `/api/v2/releases/latest`
   - `/api/v1/client/configs`
   - `/api/biz/customer/getCustomerInfo`
@@ -44,11 +44,7 @@
   - `/api/biz/v1/organization/:organizationId/projects/:projectId/api_keys/:apiKeyId/access_tokens`
   - `/api/biz/subscription/list`
   - `/api/monitor/usage/quota/limit`
-- mock server 提供 `/__e2e/coding-plan/requests` 供 spec 断言请求。
-- `CPUW-01` / `CPUW-03` 使用 `fast-text` timing，不依赖真实流式模型请求。
-- Coding Plan webview origin 是 Vite 构建期常量。定向运行和默认全量 glob 都必须在
-  desktop build 前启动同一个 shard-owned mock origin；不能等到 worker `beforeSession`
-  才注入 origin。
-- 同一全量 shard 可能依次运行 sold-out、system-busy 和 refresh-provider。mock origin
-  在 shard 生命周期内保持不变，每个 upgrade worker 在启动 Electron 前通过测试控制端点
-  重置 `scenario`、购买状态与 request ledger；其它 worker 不得关闭 launcher-owned server。
+- The mock server offers `/__e2e/coding-plan/requests` for the spec to assert requests.
+- `CPUW-01` / `CPUW-03` use `fast-text` timing and do not depend on real streaming model requests.
+- The Coding Plan webview origin is a Vite build-time constant. Both targeted runs and the default full glob must start the same shard-owned mock origin before the desktop build; the origin cannot be injected only at worker `beforeSession`.
+- One full shard may run sold-out, system-busy and refresh-provider in turn. The mock origin stays unchanged over the shard lifetime; each upgrade worker resets `scenario`, purchase state and the request ledger through the test control endpoint before starting Electron; other workers must not shut down the launcher-owned server.
