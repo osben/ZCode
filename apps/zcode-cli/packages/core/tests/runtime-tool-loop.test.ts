@@ -10966,6 +10966,159 @@ describe("AgentRuntime tool loop", () => {
     }
   });
 
+  function createStartPlanFirstTurnToolRuntime(
+    sessionId: ReturnType<typeof createSessionId>,
+    busyCallCount: number,
+  ) {
+    const eventStore = createTestSessionEventStore();
+    const sessionStore = new RecordingSessionStore();
+    const registry = createToolRegistry();
+    const providerId = "account:zai-start-plan";
+    const counters = { modelCallCount: 0, toolHandlerCallCount: 0 };
+
+    registry.register({
+      inputSchema: {},
+      metadata: {
+        concurrentSafe: true,
+        destructive: false,
+        name: "StreamRead",
+        needsApproval: false,
+        readOnly: true,
+        riskLevel: "low",
+        sideEffectScope: "none",
+      },
+      handler: async () => {
+        counters.toolHandlerCallCount++;
+        return "stream-read-ok";
+      },
+    });
+
+    const runtime = createTestAgentRuntime(
+      sessionId,
+      {
+        mode: "yolo",
+        modelSelection: {
+          modelId: "GLM-5.3" as never,
+          providerId: providerId as never,
+        },
+        modelStreaming: "on",
+      },
+      {
+        eventStore,
+        sessionStore,
+        toolRegistry: registry,
+        modelFactory: createTestModelFactory({
+          async generateText() {
+            throw new Error("generateText should not be used");
+          },
+          async *streamText() {
+            counters.modelCallCount++;
+            if (counters.modelCallCount === 1) {
+              yield {
+                type: "tool_call",
+                toolCall: { id: "stream-read", name: "StreamRead", input: {} },
+              };
+              yield {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+              };
+              return;
+            }
+            if (counters.modelCallCount <= 1 + busyCallCount) {
+              yield { type: "error", error: createProviderBusyError(providerId, "3009") };
+              return;
+            }
+            yield { type: "text_delta", text: "first turn done" };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            };
+          },
+        } as never),
+      },
+    );
+
+    return { counters, eventStore, runtime, sessionStore };
+  }
+
+  async function settleWithFakeTimers<T>(promise: Promise<T>): Promise<T> {
+    // The admission retry timer is registered only after the first step's tool settles,
+    // so keep advancing until the turn settles instead of advancing once up front.
+    let settled = false;
+    const tracked = promise.finally(() => {
+      settled = true;
+    });
+    tracked.catch(() => undefined);
+    while (!settled) {
+      await vi.advanceTimersByTimeAsync(500);
+    }
+    return tracked;
+  }
+
+  it("retries Start Plan busy admission failures on later steps of the first turn", async () => {
+    vi.useFakeTimers();
+    const sessionId = createSessionId("runtime-start-plan-first-turn-later-step-busy-retry");
+    const { counters, eventStore, runtime, sessionStore } = createStartPlanFirstTurnToolRuntime(
+      sessionId,
+      1,
+    );
+
+    try {
+      const result = await settleWithFakeTimers(runtime.executeTurn("first prompt"));
+      const events = await eventStore.getEvents(sessionId);
+      const retryStartedPayloads = events
+        .filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted)
+        .map((event) => event.payload as any);
+
+      expect(result.response).toBe("first turn done");
+      expect(counters.modelCallCount).toBe(3);
+      expect(counters.toolHandlerCallCount).toBe(1);
+      expect(retryStartedPayloads).toHaveLength(1);
+      expect(retryStartedPayloads[0]).toMatchObject({ retryNumber: 1, maxRetries: 2 });
+      expect(
+        sessionStore.messagesBySession
+          .get(sessionId)
+          ?.some(
+            (message) =>
+              message.role === "assistant" &&
+              message.finish === "start_plan_admission_retry_discarded",
+          ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports exhausted Start Plan busy retries on later steps of the first turn", async () => {
+    vi.useFakeTimers();
+    const sessionId = createSessionId("runtime-start-plan-first-turn-later-step-busy-exhausted");
+    const { counters, eventStore, runtime } = createStartPlanFirstTurnToolRuntime(sessionId, 3);
+
+    try {
+      const error = await settleWithFakeTimers(runtime.executeTurn("first prompt")).then(
+        () => undefined,
+        (caught: unknown) => caught,
+      );
+      const events = await eventStore.getEvents(sessionId);
+      const turnErrorPayload = events.find((event) => event.type === SessionEventType.TurnError)
+        ?.payload as any;
+
+      expect(error).toBeDefined();
+      expect(counters.modelCallCount).toBe(4);
+      expect(
+        events.filter((event) => event.type === SessionEventType.StreamRecoveryRetryStarted),
+      ).toHaveLength(2);
+      expect(turnErrorPayload.error).toMatchObject({
+        code: "3009",
+        message: START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("continues stream recovery with a synthetic failed result for side-effecting tools", async () => {
     const sessionId = createSessionId("runtime-stream-side-effect-recovery");
     const eventStore = createTestSessionEventStore();

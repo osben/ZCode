@@ -106,7 +106,9 @@ export function getStartPlanBusyAdmissionRetryDelayMs(input: {
   state: RegularTurnLoopState;
   turnNumber: number;
 }): number | undefined {
-  if (input.turnNumber <= 0) return undefined;
+  // Only the very first model request of a new session fails fast (initial-busy banner);
+  // later steps of the first user turn must retry too, or a mid-turn busy kills the turn.
+  if (input.turnNumber <= 0 && input.state.modelStepCount <= 0) return undefined;
   if (!START_PLAN_BUSY_RETRY_PROVIDER_IDS.has(input.providerId)) return undefined;
   if (!isStartPlanBusyStreamRecoveryFailure(input.error)) return undefined;
   return START_PLAN_BUSY_MAIN_TURN_ADMISSION_RETRY_DELAYS_MS[input.state.streamRecoveryRetryCount];
