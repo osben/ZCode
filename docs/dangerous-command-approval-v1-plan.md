@@ -233,6 +233,8 @@ Dimensions: mode×match, mode×child, input version×response, shell×grammar, s
 
 DCA-V1-01/03..08 became guarded contract cases; 02 keeps PowerShell pruned; 09..12 restored the Git/rsync extensions; 13..15 are mode passthrough, inheritance, and original-yolo comparisons; 19..25 are the batch-deletion classes. Accepted is not covered; unrun evidence does not inherit old state.
 
+DCA-V1-13 accepted sub-scenario (menu replacement): the menu shows no Edit and offers Guarded/YOLO; after picking Guarded the existing dangerous-command deny loop still holds; historical edit keeps its schema, config projection, Composer/automation echo and runtime policy; alias mapping does not drift either way. Menu UI reuses the existing pending E2E.
+
 ## Implementation / E2E Handoff
 
 1. Spec/catalog/matrix/tool-chain first; failing tests precede production implementation.
