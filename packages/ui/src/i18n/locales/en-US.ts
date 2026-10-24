@@ -8306,6 +8306,8 @@ const enUS: Record<string, string> = {
   "taskList.childSubagentRowLabel": "Subagent: {title}",
   "taskList.childSideChatRowLabel": "Side chat: {title}",
   "taskList.childRunningLabel": "Running",
+  "taskList.childStopLabel": "Stop subagent",
+  "taskList.childStopFailed": "Couldn't stop the subagent. Try again.",
   "taskList.childMoreLabel": "+{count} more",
   "taskList.worktreeTaskLabelMissing":
     "Worktree directory is missing; filesystem actions are unavailable until it is restored",

@@ -7883,6 +7883,8 @@ const zhCN: Record<string, string> = {
   "taskList.childSubagentRowLabel": "子代理：{title}",
   "taskList.childSideChatRowLabel": "侧边对话：{title}",
   "taskList.childRunningLabel": "运行中",
+  "taskList.childStopLabel": "停止子代理",
+  "taskList.childStopFailed": "无法停止子代理，请重试。",
   "taskList.childMoreLabel": "+{count} 个",
   "taskList.worktreeTaskLabelMissing": "Worktree 目录不存在；恢复前无法执行文件操作",
   "taskList.worktreeTaskLabelNoBranch": "Worktree 会话 · {directory}",

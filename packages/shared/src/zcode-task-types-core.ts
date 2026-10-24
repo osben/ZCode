@@ -281,6 +281,11 @@ export interface ZCodeTaskChildSession {
   lastActivityAt: number;
   /** True while the child's runtime is alive in the CLI host (subagents executing work). */
   running: boolean;
+  /**
+   * Parent background-work id while the child runs as cancellable background work; the sidebar
+   * Stop sends cancelBackgroundWork{workId} to the parent (spec sidebar-child-conversation-counts §8.3).
+   */
+  backgroundWorkId?: string;
 }
 
 export interface ZCodeTaskMeta {

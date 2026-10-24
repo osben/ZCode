@@ -154,6 +154,48 @@ describe("TaskChildSessionRows collapsed (spec §8)", () => {
   });
 });
 
+describe("TaskChildSessionRows Stop (spec §8.3)", () => {
+  it("shows Stop only for running children with a background work id", () => {
+    const onStopBackgroundWork = vi.fn();
+    const onSelectSession = vi.fn();
+    const task = parentTask();
+    const { container } = render(
+      createElement(TaskChildSessionRows, {
+        task: {
+          ...task,
+          childSessions: [
+            { ...task.childSessions![0]!, backgroundWorkId: "work-1" },
+            {
+              sessionId: "sub-fg",
+              title: "foreground",
+              taskType: "subagent_child",
+              lastActivityAt: 1,
+              running: true,
+            },
+            {
+              sessionId: "sub-done",
+              title: "done",
+              taskType: "subagent_child",
+              lastActivityAt: 1,
+              running: false,
+              backgroundWorkId: "stale",
+            },
+          ],
+        },
+        expanded: true,
+        onToggle: vi.fn(),
+        onSelectSession,
+        onStopBackgroundWork,
+      }),
+    );
+    const stops = [...container.querySelectorAll("[data-child-session-stop]")];
+    expect(stops.map((stop) => stop.getAttribute("data-child-session-stop"))).toEqual(["sub-1"]);
+    fireEvent.click(stops[0]!);
+    expect(onStopBackgroundWork).toHaveBeenCalledWith("work-1");
+    expect(onSelectSession).not.toHaveBeenCalled();
+  });
+});
+
 describe("useChildSessionsExpansion", () => {
   it("defaults collapsed, toggles, and persists per parent so other views read the same state", () => {
     const { result } = renderHook(() => useChildSessionsExpansion("parent"));

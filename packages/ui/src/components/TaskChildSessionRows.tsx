@@ -7,7 +7,7 @@
  * workspace. Side chats stay writable; subagents open read-only because the Host rejects child
  * input. The overflow row opens the parent conversation, where the full subagent history lives.
  */
-import { Bot, LoaderIcon, MessageCircle } from "lucide-react";
+import { Bot, LoaderIcon, MessageCircle, Square } from "lucide-react";
 import { useCallback, useState, type MouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -56,11 +56,14 @@ export function TaskChildSessionRows({
   expanded,
   onToggle,
   onSelectSession,
+  onStopBackgroundWork,
 }: {
   task: ZCodeTaskMeta;
   expanded: boolean;
   onToggle: () => void;
   onSelectSession: ChildSessionSelectHandler;
+  /** Stops a running background subagent (spec §8.3); rows without a backgroundWorkId get no Stop. */
+  onStopBackgroundWork?: (workId: string) => void;
 }) {
   const { intl } = useZCodeIntl();
   const listed = visibleChildSessions(task, expanded);
@@ -90,45 +93,62 @@ export function TaskChildSessionRows({
   return (
     <div className="ml-4 border-l border-border py-px pl-2" data-child-sessions-list="true">
       {listed.map((child) => (
-        <button
-          key={child.sessionId}
-          data-child-session-id={child.sessionId}
-          type="button"
-          onClick={openSession(child.sessionId, child.taskType, child.title)}
-          aria-label={intl.formatMessage(
-            {
-              id:
-                child.taskType === "subagent_child"
-                  ? "taskList.childSubagentRowLabel"
-                  : "taskList.childSideChatRowLabel",
-            },
-            { title: child.title },
-          )}
-          className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded-sm px-1.5 text-left text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
-        >
-          {child.taskType === "subagent_child" ? (
-            <Bot aria-hidden="true" className="size-3 shrink-0" />
-          ) : (
-            <MessageCircle aria-hidden="true" className="size-3 shrink-0" />
-          )}
-          <span className="min-w-0 truncate">{child.title}</span>
-          <span className="ml-auto flex shrink-0 items-center gap-1 text-ui-xs text-foreground-subtlest">
-            {child.running ? (
-              // Rotate the HTML wrapper, not the SVG, matching TaskListItem (assumed cheaper; not profiled).
-              <span
-                role="img"
-                aria-label={intl.formatMessage({ id: "taskList.childRunningLabel" })}
-                className="flex size-3 items-center justify-center motion-safe:animate-spin"
-              >
-                <LoaderIcon aria-hidden="true" className="size-3" />
-              </span>
-            ) : (
-              <span className="tabular-nums">
-                {formatTaskRelativeTime(child.lastActivityAt, intl)}
-              </span>
+        <div key={child.sessionId} className="group/child-row flex min-w-0 items-center">
+          <button
+            data-child-session-id={child.sessionId}
+            type="button"
+            onClick={openSession(child.sessionId, child.taskType, child.title)}
+            aria-label={intl.formatMessage(
+              {
+                id:
+                  child.taskType === "subagent_child"
+                    ? "taskList.childSubagentRowLabel"
+                    : "taskList.childSideChatRowLabel",
+              },
+              { title: child.title },
             )}
-          </span>
-        </button>
+            className="flex h-6 min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1.5 text-left text-ui-sm text-foreground-subtle hover:bg-surface-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
+          >
+            {child.taskType === "subagent_child" ? (
+              <Bot aria-hidden="true" className="size-3 shrink-0" />
+            ) : (
+              <MessageCircle aria-hidden="true" className="size-3 shrink-0" />
+            )}
+            <span className="min-w-0 truncate">{child.title}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-1 text-ui-xs text-foreground-subtlest">
+              {child.running ? (
+                // Rotate the HTML wrapper, not the SVG, matching TaskListItem (assumed cheaper; not profiled).
+                <span
+                  role="img"
+                  aria-label={intl.formatMessage({ id: "taskList.childRunningLabel" })}
+                  className="flex size-3 items-center justify-center motion-safe:animate-spin"
+                >
+                  <LoaderIcon aria-hidden="true" className="size-3" />
+                </span>
+              ) : (
+                <span className="tabular-nums">
+                  {formatTaskRelativeTime(child.lastActivityAt, intl)}
+                </span>
+              )}
+            </span>
+          </button>
+          {child.running && child.backgroundWorkId && onStopBackgroundWork ? (
+            <button
+              type="button"
+              data-child-session-stop={child.sessionId}
+              title={intl.formatMessage({ id: "taskList.childStopLabel" })}
+              aria-label={intl.formatMessage({ id: "taskList.childStopLabel" })}
+              onClick={(event: MouseEvent<HTMLButtonElement>) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onStopBackgroundWork(child.backgroundWorkId!);
+              }}
+              className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded-sm text-foreground-subtlest hover:bg-surface-hover hover:text-destructive focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-border-focused"
+            >
+              <Square aria-hidden="true" className="size-3" />
+            </button>
+          ) : null}
+        </div>
       ))}
       {overflow > 0 ? (
         <button

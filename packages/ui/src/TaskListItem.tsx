@@ -49,6 +49,7 @@ import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { buildWorkbenchSessionKey, useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
+import { useStopChildBackgroundWork } from "@/hooks/useStopChildBackgroundWork.js";
 import {
   WORKBENCH_SESSION_DRAG_MIME,
   clearActiveWorkbenchSessionDragPayload,
@@ -245,6 +246,15 @@ export const MemoTaskItem = memo(function TaskListItem({
     ? (actionsDisabledReason ??
       intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" }))
     : undefined;
+  const stopChildBackgroundWork = useStopChildBackgroundWork(
+    {
+      workspacePath,
+      ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
+      ...(remoteSessionId ? { remoteSessionId } : {}),
+      sessionId: task.taskId,
+    },
+    intl.formatMessage({ id: "taskList.childStopFailed" }),
+  );
   const snoozeInteractionAutoResolution = useTaskInteractionAutoResolutionSnooze({
     workspacePath,
     ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
@@ -482,6 +492,7 @@ export const MemoTaskItem = memo(function TaskListItem({
         expanded={childSessionsExpanded}
         onToggle={toggleChildSessions}
         onSelectSession={onSelectChildSession}
+        onStopBackgroundWork={(workId) => void stopChildBackgroundWork(workId)}
       />
     ) : null;
   const hasBelowTitleLines = hasWorkflowRunLines || hasChildSessionRows;

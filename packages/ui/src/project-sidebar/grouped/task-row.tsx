@@ -51,6 +51,7 @@ import {
 } from "@/project-sidebar/grouped/types.js";
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
+import { useStopChildBackgroundWork } from "@/hooks/useStopChildBackgroundWork.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";
@@ -301,6 +302,15 @@ function GroupedTaskInteractiveRow({
   const workspaceActionsDisabledReason = workspaceActionsDisabled
     ? intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" })
     : undefined;
+  const stopChildBackgroundWork = useStopChildBackgroundWork(
+    {
+      workspacePath: task.workspacePath,
+      ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
+      ...(remoteSessionId ? { remoteSessionId } : {}),
+      sessionId: task.taskId,
+    },
+    intl.formatMessage({ id: "taskList.childStopFailed" }),
+  );
   const snoozeInteractionAutoResolution = useTaskInteractionAutoResolutionSnooze({
     workspacePath: task.workspacePath,
     ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
@@ -710,6 +720,7 @@ function GroupedTaskInteractiveRow({
           expanded={childSessionsExpanded}
           onToggle={handleToggleChildSessions}
           onSelectSession={handleSelectChildSession}
+          onStopBackgroundWork={(workId) => void stopChildBackgroundWork(workId)}
         />
       ) : null}
     </div>

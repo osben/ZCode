@@ -1,62 +1,26 @@
 import { useCallback, useRef } from "react";
-import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
-import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
-import { resolveWorkspaceRemoteSessionId } from "@/lib/workspaceServiceResolver.js";
-import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
+import {
+  useTaskConversationCommandSender,
+  type TaskConversationCommandTarget,
+} from "@/hooks/useTaskConversationCommandSender.js";
 import { sendInteractionAutoResolutionSnooze } from "@/v4/interactionAutoResolutionCommand.js";
 
-export interface TaskInteractionAutoResolutionTarget {
-  workspacePath: string;
-  workspaceIdentity?: string;
-  remoteSessionId?: string;
+export interface TaskInteractionAutoResolutionTarget extends TaskConversationCommandTarget {
   sessionId: string;
 }
 
-/**
- * Sidebar tasks may come from local/remote, timeline, or pinned lists. Resolve the original Host by workspace identity
- * for pause commands; do not send them to the current window's service just because a different tab is active.
- */
+/** Sidebar pause command, routed to the task's own Host (see useTaskConversationCommandSender). */
 export function useTaskInteractionAutoResolutionSnooze(
   target: TaskInteractionAutoResolutionTarget,
 ) {
   const loggedInteractionIdsRef = useRef(new Set<string>());
-  const contextServices = useOptionalServices();
+  const sendCommand = useTaskConversationCommandSender(target);
   const workspaceIdentity = target.workspaceIdentity?.trim() || undefined;
-  const remoteSessionId = target.remoteSessionId?.trim() || undefined;
-  const isRemoteTarget = Boolean(workspaceIdentity || remoteSessionId);
-  const selectTargetServices = useCallback(
-    (state: ReturnType<typeof useRemoteWorkspaceSessionStore.getState>) => {
-      if (!isRemoteTarget) {
-        return state.baseServices ?? contextServices;
-      }
-
-      const resolvedRemoteSessionId = resolveWorkspaceRemoteSessionId(
-        {
-          workspacePath: target.workspacePath,
-          workspaceIdentity,
-          remoteSessionId,
-          // This hook's target type carries only task-routing fields. The presence of remoteSessionId is enough to show
-          // that legacy data may use path-compatible recovery; do not fabricate a specific RemoteTarget.
-          remoteTarget: remoteSessionId ? true : undefined,
-        },
-        state,
-      );
-      if (resolvedRemoteSessionId) {
-        return state.sessionsById[resolvedRemoteSessionId]?.services ?? null;
-      }
-      // If the original Host for a remote task cannot be found, do not fall back to the local service; the same taskId
-      // could be sent to the wrong workspace. Keep a retryable failure and wait for the remote attachment to recover.
-      return null;
-    },
-    [contextServices, isRemoteTarget, remoteSessionId, target.workspacePath, workspaceIdentity],
-  );
-  const targetServices = useRemoteWorkspaceSessionStore(selectTargetServices);
 
   return useCallback(
     async (interactionId: string): Promise<boolean> => {
-      const agentService = targetServices?.zcodeAgentService;
-      if (!agentService) {
+      if (!sendCommand) {
         logger.warn("[task-interaction] 暂停自动结束时目标 workspace 未连接", {
           interactionId,
           sessionId: target.sessionId,
@@ -77,16 +41,9 @@ export function useTaskInteractionAutoResolutionSnooze(
         sessionId: target.sessionId,
         interactionId,
         source: "taskBadge",
-        sendCommand: async (envelope) => {
-          await ensureAgentV4ConnectionHandshake(agentService);
-          return agentService.sendConversationCommandV4({
-            workspacePath: target.workspacePath,
-            ...(workspaceIdentity ? { workspaceIdentity } : {}),
-            envelope,
-          });
-        },
+        sendCommand,
       });
     },
-    [target.sessionId, target.workspacePath, targetServices, workspaceIdentity],
+    [sendCommand, target.sessionId, target.workspacePath, workspaceIdentity],
   );
 }

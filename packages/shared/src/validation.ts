@@ -2004,6 +2004,7 @@ export const zcodeTaskMetaSchema = z.object({
         taskType: z.enum(["selection_side_chat", "subagent_child"]),
         lastActivityAt: z.number().int().nonnegative(),
         running: z.boolean(),
+        backgroundWorkId: nonEmptyStringSchema.optional(),
       }),
     )
     .optional(),
