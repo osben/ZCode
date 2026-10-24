@@ -29,3 +29,29 @@ export function ensureTaskNavigationWorkspace(params: {
   params.addLocalWorkspaceTab(params.workspacePath);
   return { accepted: true, openedLocalTab: true };
 }
+
+/**
+ * Selects a task after making its workspace visible. handleSelectTask only activates an existing tab, so a task of a
+ * local project whose tab is closed (the command-center search covers those, ISSUE-020) used to be selected in a
+ * hidden workspace and the view never moved (ISSUE-069).
+ */
+export function selectTaskInNavigationWorkspace(params: {
+  target: { workspacePath: string; taskId: string; workspaceIdentity?: string };
+  activateTabByPath: (workspacePath: string, options?: { workspaceIdentity?: string }) => boolean;
+  addLocalWorkspaceTab: (workspacePath: string) => void;
+  selectTask: (workspacePath: string, taskId: string, workspaceIdentity?: string) => void;
+  onRejected: (reason: "remote_attachment_missing") => void;
+}): void {
+  const { workspacePath, taskId, workspaceIdentity } = params.target;
+  const result = ensureTaskNavigationWorkspace({
+    workspacePath,
+    workspaceIdentity,
+    activateTabByPath: params.activateTabByPath,
+    addLocalWorkspaceTab: params.addLocalWorkspaceTab,
+  });
+  if (!result.accepted) {
+    params.onRejected(result.reason);
+    return;
+  }
+  params.selectTask(workspacePath, taskId, workspaceIdentity);
+}
