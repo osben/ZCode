@@ -80,6 +80,9 @@ v2 mounted the marker only in the grouped row, so the default `projects` view, t
 - Navigation contract: `ProjectSidebarProps.onSelectTask` declares the optional sixth `options: { readOnly?, selectionSideChat? }` argument the shell handler (`WorkspaceShellLayout.handleSelectTaskInChat`) already accepts. A subagent child opens read-only, a side chat opens writable with restricted commands; the overflow row opens the parent without options.
 - Row memo equality (`areTaskListItemTaskFieldsEqual`) includes `sideChatCount`, `subagentCount`, `runningSubagentCount` and `childSessions`, so a counter- or list-only summary update re-renders the row.
 
+- Data path (regression from the 3.16.2 sync): the ported `project-sidebar` builds rows from the project tree (task index) and overlaid only live `activity` from the controller rows, so the Host child facts never reached ANY sidebar view, grouped included. The controller registry now exposes `readTaskOverlays()` — per online row, `activity` and/or `childFacts` (`pickTaskChildSessionFacts(row.meta)`, defined fields only) — and `applyProjectTaskOverlays` spreads `childFacts` onto the matching tree row. Rows without facts keep their identity; the task index still never stores child facts. The no-registry fallback (`useWorkspaceSessionsIndexItems`) carries the same facts from the mapped session summaries.
+- Navigation path: every wrapper between the row and `WorkspaceShellLayout.handleSelectTaskInChat` forwards the sixth `options` argument (`useProjectTaskNavigation`, the grouped `TaskGroupedView` adapter). Dropping it opened a subagent with a writable composer.
+
 Acceptance: in the projects view (default), timeline view and pinned section, a parent with a subagent child shows the bot marker; clicking it expands the child row; clicking the child opens it read-only as the active session; expansion state is shared with the grouped view for the same parent id.
 
 ## Why

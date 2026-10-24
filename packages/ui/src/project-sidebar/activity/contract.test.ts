@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { ProjectTask } from "@/project-sidebar/contract.js";
-import { applyProjectTaskActivities } from "@/project-sidebar/view.js";
+import { applyProjectTaskOverlays } from "@/project-sidebar/view.js";
 import { getTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
 it("远端 phase 只叠加完整身份匹配的现有行，不改标题/排序时间/归属或增加行", () => {
@@ -26,7 +26,7 @@ it("远端 phase 只叠加完整身份匹配的现有行，不改标题/排序�
   };
   const tree = { projects: [], tasks: [local, remote] };
   const activity = { phase: "running" as const, lastActivityAt: 99, hasBackgroundWork: false };
-  const result = applyProjectTaskActivities(tree, [
+  const result = applyProjectTaskOverlays(tree, [
     {
       address: {
         taskId: "same",
@@ -52,5 +52,41 @@ it("远端 phase 只叠加完整身份匹配的现有行，不改标题/排序�
     projectId: "project",
   });
   expect(getTaskListRowActivity(result.tasks[1]!)).toEqual(activity);
-  expect(getTaskListRowActivity(applyProjectTaskActivities(tree, []).tasks[1]!)).toBeNull();
+  expect(getTaskListRowActivity(applyProjectTaskOverlays(tree, []).tasks[1]!)).toBeNull();
+});
+
+it("child-conversation facts overlay the matching row even without live activity (spec §7)", () => {
+  const parent: ProjectTask = {
+    taskId: "parent",
+    workspacePath: "/repo",
+    hostId: "local",
+    projectId: null,
+    title: "Parent",
+    traceId: "t",
+    createdAt: 1,
+    updatedAt: 2,
+    mode: "default",
+    pinned: false,
+    archived: false,
+  };
+  const tree = { projects: [], tasks: [parent] };
+  const childFacts = {
+    subagentCount: 3,
+    runningSubagentCount: 1,
+    childSessions: [
+      {
+        sessionId: "child",
+        title: "Child",
+        taskType: "subagent_child" as const,
+        lastActivityAt: 1,
+        running: true,
+      },
+    ],
+  };
+  const [row] = applyProjectTaskOverlays(tree, [
+    { address: { taskId: "parent", workspacePath: "/repo" }, childFacts },
+  ]).tasks;
+  expect(row).toMatchObject({ title: "Parent", updatedAt: 2, ...childFacts });
+  expect(getTaskListRowActivity(row!)).toBeNull();
+  expect(applyProjectTaskOverlays(tree, []).tasks[0]).toBe(parent);
 });

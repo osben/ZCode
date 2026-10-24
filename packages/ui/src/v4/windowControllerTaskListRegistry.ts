@@ -15,15 +15,41 @@ import {
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
 
+/** Host-owned child-conversation facts (spec: sidebar-child-conversation-counts.md §7). */
+export type TaskChildSessionFacts = Pick<
+  WindowHostControllerTaskRow["meta"],
+  "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+>;
+
+/** Live sidecars a task row carries on top of persisted task-index facts. */
+export interface WindowControllerTaskOverlay {
+  address: WindowHostControllerTaskRow["address"];
+  activity?: NonNullable<WindowHostControllerTaskRow["activity"]>;
+  childFacts?: TaskChildSessionFacts;
+}
+
+/** Defined child facts only; undefined when the task has none (plain rows stay byte-identical). */
+export function pickTaskChildSessionFacts(
+  meta: TaskChildSessionFacts,
+): TaskChildSessionFacts | undefined {
+  const facts: TaskChildSessionFacts = {
+    ...(meta.sideChatCount !== undefined ? { sideChatCount: meta.sideChatCount } : {}),
+    ...(meta.subagentCount !== undefined ? { subagentCount: meta.subagentCount } : {}),
+    ...(meta.runningSubagentCount !== undefined
+      ? { runningSubagentCount: meta.runningSubagentCount }
+      : {}),
+    ...(meta.childSessions !== undefined ? { childSessions: meta.childSessions } : {}),
+  };
+  return Object.keys(facts).length > 0 ? facts : undefined;
+}
+
 export interface WindowControllerTaskListRegistry {
   subscribe(listener: () => void): () => void;
   getRevision(): number;
   getDirectoryRevision(): number;
   getSourceRevision(): number;
-  readActivities(): Array<{
-    address: WindowHostControllerTaskRow["address"];
-    activity: NonNullable<WindowHostControllerTaskRow["activity"]>;
-  }>;
+  /** Online rows' live activity and child facts, keyed by task address. */
+  readTaskOverlays(): WindowControllerTaskOverlay[];
   list(
     queryKey: string,
     version: WindowControllerTaskListVersion,
@@ -253,12 +279,19 @@ export function getWindowControllerTaskListRegistry(
     getSourceRevision() {
       return sourceRevision;
     },
-    readActivities() {
-      return Array.from(taskRows.values()).flatMap((row) =>
-        row.sourceAvailability === "online" && row.activity
-          ? [{ address: row.address, activity: row.activity }]
-          : [],
-      );
+    readTaskOverlays() {
+      return Array.from(taskRows.values()).flatMap((row) => {
+        if (row.sourceAvailability !== "online") return [];
+        const childFacts = pickTaskChildSessionFacts(row.meta);
+        if (!row.activity && !childFacts) return [];
+        return [
+          {
+            address: row.address,
+            ...(row.activity ? { activity: row.activity } : {}),
+            ...(childFacts ? { childFacts } : {}),
+          },
+        ];
+      });
     },
     list(queryKey, version, query) {
       const versionKey = cacheVersionKey(version);

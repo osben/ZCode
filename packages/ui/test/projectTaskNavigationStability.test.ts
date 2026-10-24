@@ -30,7 +30,27 @@ it("keeps the row action stable across tree refreshes and uses the latest naviga
   expect(result.current).toBe(before);
   result.current("/same", "task");
   expect(first).not.toHaveBeenCalled();
-  expect(second).toHaveBeenCalledWith("/same", "task", undefined, undefined, undefined);
+  expect(second).toHaveBeenCalledWith("/same", "task", undefined, undefined, undefined, undefined);
+});
+
+it("forwards a child session's capability so a sidebar subagent opens read-only", async () => {
+  const select = vi.fn();
+  const { result } = renderHook(() =>
+    useProjectTaskNavigation({ onSelectTask: select } as unknown as ProjectSidebarProps, {
+      projects: [],
+      tasks: [],
+    }),
+  );
+  await act(async () => {
+    result.current("/same", "child", undefined, undefined, undefined, {
+      readOnly: true,
+      selectionSideChat: false,
+    });
+  });
+  expect(select).toHaveBeenCalledWith("/same", "child", undefined, undefined, undefined, {
+    readOnly: true,
+    selectionSideChat: false,
+  });
 });
 
 it.each(["task", "draft"])(

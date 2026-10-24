@@ -30,7 +30,7 @@ export function useProjectTaskNavigation(
   useLayoutEffect(() => {
     latest.current = { props, tree, remoteService, activeWorkspaceIdentity };
   });
-  return useCallback((path, taskId, identity, remoteSessionId, unreadAt) => {
+  return useCallback((path, taskId, identity, remoteSessionId, unreadAt, options) => {
     const request = ++sequence.current;
     const { props, tree, remoteService, activeWorkspaceIdentity } = latest.current;
     const readFocus = () =>
@@ -104,7 +104,8 @@ export function useProjectTaskNavigation(
           });
         }
       }
-      props.onSelectTask(path, taskId, identity, remoteSessionId, unreadAt);
+      // Child sessions carry their capability (subagent → read-only) through to the shell.
+      props.onSelectTask(path, taskId, identity, remoteSessionId, unreadAt, options);
     };
     void open().catch((error) => {
       logger.error("[project-sidebar] 打开任务失败", error);

@@ -376,7 +376,7 @@ describe("windowControllerTaskListRegistry", () => {
   });
 });
 
-it("项目活动读取复用 Controller 快照，过滤离线来源且不输出任务事实", async () => {
+it("project overlays reuse the Controller snapshot, drop offline sources, and carry only activity and child facts", async () => {
   const frames = new Emitter<WindowHostControllerFrame>();
   const controller = {
     onDynamicControllerFrame: () => frames.event,
@@ -400,6 +400,26 @@ it("项目活动读取复用 Controller 快照，过滤离线来源且不输出�
     },
     sourceAvailability: "offline" as const,
   };
+  // Idle parent: no live activity, but Host child facts must still reach the sidebar (spec §7).
+  const idleParent = taskRow();
+  const childFacts = {
+    subagentCount: 2,
+    runningSubagentCount: 0,
+    childSessions: [
+      {
+        sessionId: "child-1",
+        title: "child",
+        taskType: "subagent_child" as const,
+        lastActivityAt: 5,
+        running: false,
+      },
+    ],
+  };
+  const idle = {
+    ...idleParent,
+    address: { taskId: "task-2", workspacePath: "/work/demo" },
+    meta: { ...idleParent.meta, taskId: "task-2", title: "task-2", ...childFacts },
+  };
   frames.fire({
     topic: CONTROLLER_TASKS_INDEX_TOPIC,
     subscriptionId: CONTROLLER_TASKS_INDEX_TOPIC,
@@ -409,10 +429,13 @@ it("项目活动读取复用 Controller 快照，过滤离线来源且不输出�
     sentAt: 1,
     payload: {
       kind: "snapshot",
-      snapshot: { protocolVersion: 1, logEpoch: "e", tasks: [live, offline] },
+      snapshot: { protocolVersion: 1, logEpoch: "e", tasks: [live, offline, idle] },
     },
   });
-  expect(registry.readActivities()).toEqual([{ address: live.address, activity: live.activity }]);
+  expect(registry.readTaskOverlays()).toEqual([
+    { address: live.address, activity: live.activity },
+    { address: idle.address, childFacts },
+  ]);
   stop();
-  expect(registry.readActivities()).toEqual([]);
+  expect(registry.readTaskOverlays()).toEqual([]);
 });
