@@ -36,6 +36,7 @@ export const PUBLIC_ZCODE_ERROR_CODES = [
   "remote-connection-timeout",
   "remote-host-not-found",
   "remote-host-key-changed",
+  "remote-host-key-unknown",
   "remote-download-failed",
   "remote-upload-failed",
   "remote-preflight-failed",

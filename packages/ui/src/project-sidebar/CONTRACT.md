@@ -64,6 +64,8 @@ ProjectNode 从同一 dnd-kit active/over 派生项目插入蓝线的位置；�
 
 插件市场下胶囊按钮打开原全局搜索，旁侧筛选仅 projects / timeline。偏好 owner 保存 view，默认 projects，忽略旧 sort/time 偏好，保留展开状态。项目与 composer 读取当前控制端侧栏偏好的复合身份顺序。projects 保留全局置顶和运行优先；timeline 只取未归档任务（含置顶与已删除项目历史），按 CLI updatedAt / createdAt / taskId 倒序和完整身份稳定排序，20/+20；分页后只插入本地日历日期标题，不显示项目/Host 分组、不重排、不改变任务 key。最近更新向共享 TaskList 显式传递 timeline 行样式，显示标题、绑定 cwd 末级名、相对时间；无状态不显示圆点但保留对齐槽；按项目保留 default 行。筛选两项左侧使用 Folder/Clock，右侧保留单选勾。选择器和行渲染使用同一模式，不能再次按运行状态排序。切换只修改本客户端偏好，不改导航、归属、Host/CLI 时间或 continuous/replayable 边界。详见 virtual-project-design 的 SBV01–SBV06。
 
+Deferred rows (ISSUE-064): in the projects view an expanded project mounts its task rows only once they are within half a viewport of the sidebar scroll area, contain the active task, receive keyboard focus, or the user expands the project; until then a sized placeholder stands in, and once mounted rows stay mounted. CollapsibleContent stays mounted, ordering, expansion state and the collapsed unread dot are unchanged; pinned, local, timeline and grouped sections are not deferred. See `specs/project-sidebar-deferred-rows.md`.
+
 ## 2026-10-10 平铺项目与控制端排序
 
 项目区不按 Host 分组，本地/远程按复合 projectKey 在同一区排序。显示顺序由现有侧栏偏好唯一持有，远端组织态不接收 UI 排序写入；离线可排序，跨置顶边界不改变 pinned。远程项目显示设备状态，只有先选定并保存唯一固定目录才能新建会话；任务区只显示本地未归类任务。远程项目编辑器不允许更换/追加目录。

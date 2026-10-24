@@ -72,6 +72,47 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("Composer connection switching ownership", () => {
+  // ISSUE-058: a model row picked in a browsed connection switches to that model only.
+  it("uses the explicitly picked model and never falls back to another one", async () => {
+    mocks.base.modelSelectionService.getView.mockResolvedValue({
+      ...view,
+      providers: [
+        {
+          ...view.providers[0]!,
+          models: [
+            { modelId: "GLM-5.3", config: { optionSpecs: { reasoningLevel: { values: [] } } } },
+            { modelId: "GLM-5.2", config: { optionSpecs: { reasoningLevel: { values: [] } } } },
+          ],
+        },
+      ],
+    });
+    const onSelectModel = vi.fn();
+    const { result } = renderHook(() =>
+      useComposerConnectionSwitch({
+        workspacePath: "/work",
+        agentProvider: "glm",
+        normalizedValue: "",
+        onSelectModel,
+      }),
+    );
+    await act(async () => {
+      await result.current.select(connection, undefined, "GLM-5.2");
+    });
+    expect(onSelectModel).toHaveBeenCalledWith(encodeCustomModelValue(providerId, "GLM-5.2"));
+    onSelectModel.mockClear();
+    mocks.settings.providerFamilyConnectionSelections = {
+      bigmodel: { kind: "individual-coding-plan" },
+    };
+    await act(async () => {
+      await result.current.select(connection, undefined, "GLM-missing");
+    });
+    expect(onSelectModel).not.toHaveBeenCalled();
+    expect(result.current.error).toBeTruthy();
+    // The persisted connection is rolled back instead of staying on the target team.
+    expect(mocks.settings.providerFamilyConnectionSelections).toEqual({
+      bigmodel: { kind: "individual-coding-plan" },
+    });
+  });
   it("同步完成才选择目标模型，快速重复点击只提交一次", async () => {
     const wait = deferred<void>();
     mocks.base.providerSettingsService.refresh.mockReturnValueOnce(wait.promise);

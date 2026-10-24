@@ -44,7 +44,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu.js";
-import { ProjectTaskRows } from "@/project-sidebar/ProjectTaskRows.js";
+import { DeferredRowsSlot, useRowsReveal } from "@/project-sidebar/DeferredRows.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { resolveRemoteConnectionPresentation } from "@/lib/remoteConnectionPresentation.js";
 import { RemoteConnectionStateIcon } from "@/remote-connection/RemoteConnectionStateIcon.js";
@@ -120,6 +120,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
   }) {
   const { intl } = useZCodeIntl();
   const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });
+  const rows = useRowsReveal(isOpen, tasks);
   // Fork-only local preference (specs/workspace-sidebar-customization.md): the color is stored
   // under the project id, never in the project database or setting.json.
   const displayKey = buildProjectDisplayKey(project);
@@ -434,7 +435,7 @@ export const ProjectNodeContent = memo(function ProjectNodeContent({
       <CollapsibleContent data-testid="virtual-project-tasks">
         {/* 原因：旧任务文字的 34px 缩进外只需 8px 留白，空态与项目名称保持对齐。 */}
         <div className="pl-2 pt-1">
-          <ProjectTaskRows tasks={tasks} onSelect={onSelect} refresh={refresh} />
+          <DeferredRowsSlot rows={rows} tasks={tasks} onSelect={onSelect} refresh={refresh} />
         </div>
       </CollapsibleContent>
     </>

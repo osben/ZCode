@@ -14,7 +14,6 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Star,
   Trash2,
 } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
@@ -42,7 +41,11 @@ import {
 } from "@/components/PullRequestStatusIcon.js";
 import type { IntlInstance } from "@/i18n/createIntl.js";
 import { buildSessionManagerGridTemplate } from "./sessionManagerColumns.js";
-import { sessionManagerTaskType, type SessionManagerRow } from "./sessionManagerModel.js";
+import {
+  formatSessionManagerModelLabel,
+  sessionManagerTaskType,
+  type SessionManagerRow,
+} from "./sessionManagerModel.js";
 import type { SessionManagerToggleableColumn } from "./sessionManagerTypes.js";
 
 type SessionManagerLiveStatus = "idle" | "running" | "waiting" | "completed" | "error";
@@ -239,17 +242,21 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
 }: SessionManagerRowViewProps) {
   const { intl, locale } = useZCodeIntl();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { fileManagerLabel, handleOpenTaskPathInFileManager, handleCopyText } =
-    useTaskListItemContextActions({
-      workspacePath: row.task.workspacePath,
-      remoteSessionId: row.task.remoteSessionId,
-      workspaceIdentity: row.task.workspaceIdentity,
-      taskId: row.task.taskId,
-      provider: row.task.provider,
-      intl,
-      loadTaskPaths: menuOpen,
-      loadProviderConfig: false,
-    });
+  const {
+    fileManagerLabel,
+    canOpenInFileManager,
+    handleOpenTaskPathInFileManager,
+    handleCopyText,
+  } = useTaskListItemContextActions({
+    workspacePath: row.task.workspacePath,
+    remoteSessionId: row.task.remoteSessionId,
+    workspaceIdentity: row.task.workspaceIdentity,
+    taskId: row.task.taskId,
+    provider: row.task.provider,
+    intl,
+    loadTaskPaths: menuOpen,
+    loadProviderConfig: false,
+  });
 
   const cell = (column: SessionManagerToggleableColumn) => {
     switch (column) {
@@ -275,7 +282,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
               onTogglePinned(row);
             }}
           >
-            <Star className="size-3.5" fill={row.pinned ? "currentColor" : "none"} />
+            <Pin className="size-3.5" fill={row.pinned ? "currentColor" : "none"} />
           </button>
         );
       case "name":
@@ -321,7 +328,7 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
       case "model":
         return (
           <span className="block truncate text-ui-sm text-foreground-subtle" title={row.task.model}>
-            {row.task.model}
+            {formatSessionManagerModelLabel(row.task.model) ?? "—"}
           </span>
         );
       case "updated":
@@ -420,10 +427,12 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
               })}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void handleOpenTaskPathInFileManager()}>
-              <FolderOpen className="h-3.5 w-3.5" />
-              {fileManagerLabel}
-            </DropdownMenuItem>
+            {canOpenInFileManager ? (
+              <DropdownMenuItem onSelect={() => void handleOpenTaskPathInFileManager()}>
+                <FolderOpen className="h-3.5 w-3.5" />
+                {fileManagerLabel}
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               onSelect={() =>
                 void handleCopyText(

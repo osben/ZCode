@@ -50,6 +50,7 @@ import {
   ComposerModelMenu,
   ComposerThoughtIndicator,
   isGlmHighspeedModel,
+  type ComposerModelItemsOptions,
   type ComposerModelOptions,
 } from "@/chat-input-toolbar/ComposerModelMenu.js";
 import { ModelInputCapabilityBadge } from "@/components/ModelInputCapabilityBadge.js";
@@ -330,9 +331,9 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   }, [currentTriggerTitle, pending, pendingLabel, tooltipTitle]);
 
   const renderModelItem = useCallback(
-    (item: ModelSelectGroupItem) => {
+    (item: ModelSelectGroupItem, options?: ComposerModelItemsOptions) => {
       const itemLocked = isItemLocked(item.value);
-      const itemSelected = item.value === normalizedValue;
+      const itemSelected = item.value === (options ? options.selectedValue : normalizedValue);
       // React 的 key 不能跟随 props spread 传入，否则开发环境会在 CDP console 报警。
       const itemKey = item.key;
       const commonProps = {
@@ -402,7 +403,8 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
           value={item.value}
           className="min-h-8 gap-2 pl-2 pr-8 text-ui-base"
           onSelect={(event) => {
-            handleModelValueChange(item.value);
+            if (options) options.onSelect(item.value);
+            else handleModelValueChange(item.value);
             // 合并菜单选模型后还可继续调档，阻止菜单项默认关闭；外侧点击仍走原关闭链路。
             if (composerOptions) event.preventDefault();
             else handlePopoverOpenChange(false);
@@ -423,9 +425,9 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
   );
 
   const renderModelItems = useCallback(
-    (items: readonly ModelSelectGroupItem[]) => (
-      <DropdownMenuRadioGroup value={normalizedValue}>
-        {items.map((item) => renderModelItem(item))}
+    (items: readonly ModelSelectGroupItem[], options?: ComposerModelItemsOptions) => (
+      <DropdownMenuRadioGroup value={options ? (options.selectedValue ?? "") : normalizedValue}>
+        {items.map((item) => renderModelItem(item, options))}
       </DropdownMenuRadioGroup>
     ),
     [normalizedValue, renderModelItem],
@@ -704,7 +706,6 @@ export const ModelConfigSelect = memo(function ModelConfigSelectComponent({
               groups={modelGroups}
               normalizedValue={normalizedValue}
               options={composerOptions}
-              isItemLocked={isItemLocked}
               onSelectModel={handleModelValueChange}
               renderItems={renderModelItems}
               renderConnection={renderProviderConnectionHeader}

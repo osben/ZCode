@@ -35,7 +35,8 @@ import { BrowserSitePermissionsPage } from "@/browser-use/BrowserSitePermissions
 import { findScreenshotSurfaceTabForRender } from "@/browser-use/useBrowserScreenshotSurfaceRequest.js";
 import { HumanBrowserView } from "@/browser-use/HumanBrowserView.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
-import { GitPane } from "@/GitPane.js";
+import { GitPaneWithLastTurn } from "@/review-last-turn/index.js";
+import type { PaneWorkspaceScope } from "@/v4/paneLayoutStore.js";
 import { TreemappingPane } from "@/TreemappingPane.js";
 import { WhiteboardPane } from "@/WhiteboardPane.js";
 import { ModelTrajectoryPane } from "@/ModelTrajectoryPane.js";
@@ -483,6 +484,14 @@ export function AnimatedSidePanePanel({
   const isDragCollapsible = !isVisible;
   const isResizeDisabled = !isVisible;
   const workspaceKey = workspaceIdentity?.trim() || workspaceAbsPath;
+  const gitConversationScope = useMemo<PaneWorkspaceScope>(
+    () => ({
+      workspacePath: workspaceAbsPath,
+      ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      ...(workspaceRemoteSessionId ? { remoteSessionId: workspaceRemoteSessionId } : {}),
+    }),
+    [workspaceAbsPath, workspaceIdentity, workspaceRemoteSessionId],
+  );
   const composerClientNamespace = useComposerClientNamespace();
   const draftProjectId = useZCodeSessionStore(
     (state) => state.workspaces[workspaceKey]?.draftProjectId,
@@ -1379,7 +1388,9 @@ export function AnimatedSidePanePanel({
                             })}
                           />
                         ) : tab.type === "git" ? (
-                          <GitPane
+                          <GitPaneWithLastTurn
+                            sessionId={activeTaskId}
+                            conversationScope={gitConversationScope}
                             workspacePath={gitRepositoryWorkspacePath}
                             workspaceIdentity={workspaceIdentity}
                             workspaceRemoteSessionId={workspaceRemoteSessionId}

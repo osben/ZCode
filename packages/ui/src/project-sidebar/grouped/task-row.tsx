@@ -406,6 +406,7 @@ function GroupedTaskInteractiveRow({
     taskNativeSessionLogFile,
     providerConfigFile,
     fileManagerLabel,
+    canOpenInFileManager,
     handleCopyText,
     handleOpenTaskPathInFileManager,
     handleOpenProviderConfig,
@@ -719,6 +720,7 @@ function GroupedTaskInteractiveRow({
           groups={groups}
           intl={intl}
           fileManagerLabel={fileManagerLabel}
+          canOpenInFileManager={canOpenInFileManager}
           taskSessionFile={taskSessionFile}
           taskNativeSessionLogFile={taskNativeSessionLogFile}
           providerConfigFile={providerConfigFile}

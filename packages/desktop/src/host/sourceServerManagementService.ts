@@ -69,6 +69,7 @@ interface SourceServerManagementManager {
   }): Promise<ManagedSourceServerConnection>;
   disconnect(sourceServerId: string): void;
   removeProfile(profileId: string): void;
+  trustHostKey(profileId: string, fingerprint: string): Promise<void>;
 }
 
 export interface SourceServerManagementService extends ISourceServerManagementService {
@@ -200,6 +201,11 @@ export function createSourceServerManagementService(options: {
         confirmIdentityChange: true,
         ...(options.onConnectionLog ? { context: { onLog: options.onConnectionLog } } : {}),
       });
+      return await getSnapshot();
+    },
+    async trustHostKey(profileId, fingerprint) {
+      await readProfile(profileId);
+      await options.manager.trustHostKey(profileId, fingerprint);
       return await getSnapshot();
     },
     async disconnectSource(sourceServerId) {

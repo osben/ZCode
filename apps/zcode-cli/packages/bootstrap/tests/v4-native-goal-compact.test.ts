@@ -323,6 +323,33 @@ describe("v4 原生 sendGoalCommand", () => {
     expect(host.legacyMutations).toEqual(["goal_set", "goal_continuation_completed"]);
   });
 
+  it("ISSUE-063 (B07): held + clearQueueAndSend releases the stop hold before the new goal is set", async () => {
+    const calls: string[] = [];
+    const app = makeApp({
+      clearQueueItems: vi.fn().mockImplementation(async () => {
+        calls.push("clear");
+        return 1;
+      }),
+      setQueueAutoDrain: vi.fn().mockImplementation(async (autoDrain: boolean) => {
+        calls.push(`autoDrain:${autoDrain}`);
+      }),
+      completeExternalQueueDrain: vi.fn().mockImplementation(() => {
+        calls.push("completeDrain");
+      }),
+      setTarget: vi.fn().mockImplementation(async (input: { objective: string }) => {
+        calls.push("setTarget");
+        return { targetID: "g-063", objective: input.objective, status: "active" };
+      }),
+    });
+    const record = makeRecord({ app });
+    const host = makeHost(record, { getInputRoutingMode: () => "choice" });
+    await new V4CommandExecutor(host).execute(
+      envelope("sendGoalCommand", { text: "新目标", heldQueueDisposition: "clearQueueAndSend" }),
+    );
+    await settle();
+    expect(calls.slice(0, 4)).toEqual(["clear", "autoDrain:true", "completeDrain", "setTarget"]);
+  });
+
   it("重复 set：已有 target 收敛 replace 语义（reason=goal_replaced）", async () => {
     const app = makeApp({
       readTarget: vi

@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { ChevronDown, Folder, Search, SlidersHorizontal, Star, X } from "lucide-react";
+import { ChevronDown, Folder, Search, SlidersHorizontal, Pin, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -222,7 +222,7 @@ export function SessionManagerToolbar(props: SessionManagerToolbarProps) {
           className="gap-1"
           onClick={() => props.onViewStateChange({ pinnedOnly: !props.viewState.pinnedOnly })}
         >
-          <Star className="size-3" />
+          <Pin className="size-3" />
           {intl.formatMessage({ id: "sessionManager.filter.pinned" })}
         </Button>
         {props.hasActiveFilters ? (

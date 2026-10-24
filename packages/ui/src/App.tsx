@@ -6,7 +6,6 @@ import { resolveWorkspaceKey, type GitChangeSourceId, type WorkspacePurpose } fr
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { getVisibleTaskMetas, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { useTaskQueryCacheStore } from "@/store/taskQueryCacheStore.js";
-import { useBranchMergeStatusStore } from "@/store/branchMergeStatusStore.js";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { useAppPanels } from "@/hooks/useAppPanels.js";
 import { useGitAutoRefresh } from "@/hooks/useGitAutoRefresh.js";
@@ -67,6 +66,8 @@ import {
 } from "@/app-shell/useWorkspaceTaskNavigation.js";
 import { useTaskSidePaneMemoryBridge } from "@/app-shell/useTaskSidePaneMemoryBridge.js";
 import { resolveAppWorkspaceRpcTarget } from "@/app-shell/workspaceRpcTarget.js";
+import { selectTaskInNavigationWorkspace } from "@/app-shell/taskNavigationWorkspace.js";
+import { toast } from "@/components/ui/toast.js";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
 import { useWorkspaceTerminalTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { useMarketingTaskCompletionRefresh } from "@/components/marketing-touch/useMarketingTaskCompletionRefresh.js";
@@ -473,8 +474,7 @@ export function App({
   const hasGitTab = sidePaneState?.tabs.some((tab) => tab.type === "git") ?? false;
   const handleRefreshGit = useCallback(() => {
     setGitRefreshVersion((value) => value + 1);
-    // A successful git mutation (branch switch, commit) invalidates merge/PR probes; ask them to re-poll.
-    useBranchMergeStatusStore.getState().requestRefresh();
+    // A successful git mutation (branch switch, commit) invalidates PR probes; ask them to re-poll.
     usePullRequestStatusStore.getState().requestRefresh();
   }, []);
   const gitRepositoryWorkspacePath =
@@ -487,7 +487,6 @@ export function App({
       return;
     }
     setGitReviewRefreshVersion((value) => value + 1);
-    useBranchMergeStatusStore.getState().requestRefresh();
     usePullRequestStatusStore.getState().requestRefresh();
   }, [gitRepositoryWorkspacePath, handleRefreshGit, workspaceAbsPath]);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
@@ -1032,6 +1031,27 @@ export function App({
     },
     [handleOpenAutomations],
   );
+  // The palette searches local projects whose tab is closed; handleSelectTask alone cannot show those (ISSUE-069).
+  const handleSelectCommandCenterTask = useCallback(
+    (targetWorkspacePath: string, taskId: string, targetWorkspaceIdentity?: string) => {
+      if (webRemoteControlWorkspaceSwitcher) {
+        handleSelectTask(targetWorkspacePath, taskId, targetWorkspaceIdentity);
+        return;
+      }
+      selectTaskInNavigationWorkspace({
+        target: {
+          workspacePath: targetWorkspacePath,
+          taskId,
+          workspaceIdentity: targetWorkspaceIdentity,
+        },
+        activateTabByPath,
+        addLocalWorkspaceTab: (path) => addTab(path),
+        selectTask: handleSelectTask,
+        onRejected: () => toast(intl.formatMessage({ id: "automations.runs.openSessionFailed" })),
+      });
+    },
+    [activateTabByPath, addTab, handleSelectTask, intl, webRemoteControlWorkspaceSwitcher],
+  );
   const handleOpenPluginStoreForScope = useCallback(
     (_target: PluginStoreOpenTarget = {}) => {
       // 管理范围由市场内视图持有，重复打开只重置市场导航。
@@ -1280,7 +1300,7 @@ export function App({
         activeTaskChangeSummary={activeTaskChangeSummary}
         workspaceTabs={commandCenterWorkspaceTabs}
         onOpenChange={setIsQuickPickOpen}
-        onSelectTask={handleSelectTask}
+        onSelectTask={handleSelectCommandCenterTask}
         onCreateTaskInWorkspace={handleCreateTaskInWorkspace}
         onSearchResultHighlightRequest={handleSearchResultHighlightRequest}
         onOpenCodeViewer={handleOpenCodeViewerIfWritable}

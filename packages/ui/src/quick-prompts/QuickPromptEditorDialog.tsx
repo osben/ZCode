@@ -409,11 +409,7 @@ export function QuickPromptEditorDialog({
             triggerPanelContainer={panelContainer}
             enterSubmits={false}
             submitLabel={intl.formatMessage({ id: "quickPrompts.editor.save" })}
-            cancelLabel={intl.formatMessage({
-              id: "quickPrompts.editor.cancel",
-            })}
-            cancelTestId="quick-prompt-editor-cancel"
-            onCancel={onClose}
+            hideSubmit
             onChange={setBodyMarkdown}
             onSubmit={() => {
               void save();

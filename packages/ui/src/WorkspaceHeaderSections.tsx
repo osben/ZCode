@@ -191,6 +191,7 @@ export function WorkspaceHeaderTitleSection({
     taskNativeSessionLogFile,
     providerConfigFile,
     fileManagerLabel,
+    canOpenInFileManager,
     handleCopyText,
     handleOpenTaskPathInFileManager,
     handleOpenProviderConfig,
@@ -626,6 +627,7 @@ export function WorkspaceHeaderTitleSection({
                 intl={intl}
                 isPinned={isPinned}
                 fileManagerLabel={fileManagerLabel}
+                canOpenInFileManager={canOpenInFileManager}
                 taskSessionFile={taskSessionFile}
                 activeSessionId={activeSessionId}
                 taskNativeSessionLogFile={taskNativeSessionLogFile}

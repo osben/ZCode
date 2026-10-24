@@ -9,7 +9,10 @@ import {
   sortSessionManagerRows,
   type SessionManagerRowTask,
 } from "@/session-manager/sessionManagerModel.js";
-import { buildSessionManagerRowKey } from "@/session-manager/sessionManagerModel.js";
+import {
+  buildSessionManagerRowKey,
+  formatSessionManagerModelLabel,
+} from "@/session-manager/sessionManagerModel.js";
 
 function fixtureTask(
   overrides: Partial<SessionManagerRowTask> & { taskId: string },
@@ -268,3 +271,27 @@ function buildRowsForWorkspace(workspacePath: string) {
     pinnedKeys: new Set(),
   });
 }
+
+describe("formatSessionManagerModelLabel", () => {
+  it("keeps only the model name after the provider segment", () => {
+    expect(formatSessionManagerModelLabel("account:zai-individual-coding-plan/GLM-5.3")).toBe(
+      "GLM-5.3",
+    );
+    expect(formatSessionManagerModelLabel("account:zai-start-plan/GLM-5.3-Flash")).toBe(
+      "GLM-5.3-Flash",
+    );
+  });
+
+  it("splits on the last slash so model ids containing slashes keep their tail", () => {
+    expect(formatSessionManagerModelLabel("openrouter/anthropic/claude-sonnet-5")).toBe(
+      "claude-sonnet-5",
+    );
+  });
+
+  it("returns values without a provider segment unchanged and blanks as null", () => {
+    expect(formatSessionManagerModelLabel("gpt-5")).toBe("gpt-5");
+    expect(formatSessionManagerModelLabel("provider/")).toBe("provider/");
+    expect(formatSessionManagerModelLabel("  ")).toBeNull();
+    expect(formatSessionManagerModelLabel(undefined)).toBeNull();
+  });
+});

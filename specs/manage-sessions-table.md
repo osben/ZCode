@@ -67,14 +67,14 @@ Three stacked regions inside the section (toolbar row, filter bar ~44px, table f
 
 Empty states (review addition): zero workspaces in scope → centered hint with the unscoped explanation; no sessions after filters → "No sessions match these filters"; no sessions at all → "No sessions yet"; while loading → the existing `TaskListLoadingHint` idiom.
 
-Accessibility: the table is a real `<table>`-shaped grid with `role="row"` on virtualized rows; every row is focusable (`tabIndex={0}` in DOM order — no roving-tabindex machinery in v1) and activates on Enter/Space; checkboxes, menu buttons, and the star toggle are standard controls with `aria-label`s; the selection count bar is `aria-live="polite"`.
+Accessibility: the table is a real `<table>`-shaped grid with `role="row"` on virtualized rows; every row is focusable (`tabIndex={0}` in DOM order — no roving-tabindex machinery in v1) and activates on Enter/Space; checkboxes, menu buttons, and the pin toggle are standard controls with `aria-label`s; the selection count bar is `aria-live="polite"`.
 
 ### 4. Columns (v1)
 
 | #   | Column      | Source                                      | Rendering                                                                                                                              | Default                                     | Sort   |
 | --- | ----------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------ |
 | 1   | Selection   | —                                           | Checkbox; header = select-all-in-view (indeterminate on partial)                                                                       | always                                      | —      |
-| 2   | Pinned      | `membership.pinned`                         | Star icon button; filled amber when pinned; click = `setTaskPinned` toggle                                                             | on                                          | —      |
+| 2   | Pinned      | `membership.pinned`                         | Pin icon button (same `Pin` glyph as the row menu and sidebar); filled amber when pinned; click = `setTaskPinned` toggle               | on                                          | —      |
 | 3   | Name        | `meta.title` (fallback `taskList.untitled`) | `text-ui-base`; inline rename (§7)                                                                                                     | on                                          | client |
 | 4   | Status      | `liveStatus`                                | Pill 20px: Running (success, pulsing dot) / Waiting (warning) / Idle (neutral) / Done (subtle) / Error (destructive)                   | on                                          | —      |
 | 5   | Type        | `cronAutomationId` / `offPeakTaskId`        | Icon+label, sidebar vocabulary: message-square Session / clock Cron / moon Off-peak                                                    | on                                          | —      |
@@ -89,6 +89,10 @@ Accessibility: the table is a real `<table>`-shaped grid with `role="row"` on vi
 
 Column visibility persists per device (§5). Child-session counts and workflow-run lines are **not** columns in v1.
 
+**Model label (2026-10-23).** `meta.model` is the raw selection `providerId/modelName` (e.g. `account:zai-individual-coding-plan/GLM-5.3`). The cell renders only the model name (the part after the last `/`, via `formatSessionManagerModelLabel`); the full raw value stays in the tooltip. Values without `/` render unchanged; empty values render `—`.
+
+**Empty data columns auto-hide (2026-10-23).** `changes`, `branch` and `pullRequests` are hidden from the rendered grid while no row in the current view has data for them (`changes`: some row has non-zero `changeSummary`; `branch`/`pullRequests`: some row has `executionWorktree`, the only rows PR probing targets, `useSessionManagerPullRequests`). This is a render-time reduction of the persisted `columns` list (`resolveSessionManagerVisibleColumns`): persisted state is never rewritten, the Columns menu still lists the user's choice, and the column returns as soon as a row with data appears. PR probing stays inactive while its column is hidden.
+
 ### 5. View state ownership
 
 One namespaced localStorage JSON key `zcode.sessionManager.view.v1` (per device, never broadcast, never `setting.json` — fork-unsafe storage rule): `{ status, environment, type, pinnedOnly, sort: {column, direction}, columns: string[], collapsedGroups: string[] }` (search deliberately NOT persisted — ephemeral like Copilot's session filter typing). Parse is defensive (unknown fields dropped, defaults per §3/§4); malformed JSON falls back to defaults silently on read.
@@ -99,7 +103,7 @@ One namespaced localStorage JSON key `zcode.sessionManager.view.v1` (per device,
 - Group header row (34px, `bg-background`): chevron, folder glyph, workspace name (medium), path (mono, subtlest), count "N sessions · X active". Click toggles collapse.
 - Groups sort by most recent row `updatedAt` desc; rows inside a group follow the active sort. Collapsed state persists in the view key.
 - Workspace-scoped view: exactly one group, header still rendered (counts stay truthful), not collapsible.
-- Pinned sessions are **not** a separate section — rows with a filled star; the Pinned filter isolates them.
+- Pinned sessions are **not** a separate section — rows with a filled pin; the Pinned filter isolates them.
 
 ### 7. Row actions
 
@@ -122,7 +126,7 @@ Context menu on the row / `⋯` button:
 - **Bulk Archive**: no confirmation (reversible). Loops `archiveTask`; partial failures surface one error toast and keep the bar.
 - **Bulk Delete**: always opens the confirm dialog (Copilot `BulkDeleteSessionsDialog` parity — verified in its bundle: `bulk-delete.includePinned` flag, "Include N pinned session(s)" checkbox, pinned excluded by default):
   - Title "Delete N sessions?"; body explains permanent conversation-tree deletion, eligible worktree cleanup, retained Git branches and aggregate usage. Child counts and dirty-file previews follow the shared deletion spec.
-  - Compact list of up to 5 selected rows (icon: star when pinned / git-branch when worktree / message-square otherwise) + "+N more".
+  - Compact list of up to 5 selected rows (icon: pin when pinned / git-branch when worktree / message-square otherwise) + "+N more".
   - Pinned rows in the selection: checkbox "Include N pinned session(s)", **unchecked by default**; confirming with it unchecked deletes only the non-pinned subset (counts update). Pinned rows cannot be deleted without the explicit opt-in.
   - Execution (review-corrected): non-archived rows → loop `deleteTask` (no plural tombstone op exists; per-task failures are collected); archived rows → `deleteArchivedTasks` batch per workspace (its still-archived guard makes it race-safe: rows restored elsewhere are skipped and reported, `zcodeTaskService.ts:752-757`). Successfully tombstoned rows then pass through the shared permanent erase and worktree-cleanup flow. Known running trees block before the mutation; late failures are reported by category and remain retryable. Remote/read-only/unsupported selections cannot silently fall back to hiding. The table reflects persisted tombstones.
   - Confirm button label "Delete K" (K = rows actually deleted), destructive styling.

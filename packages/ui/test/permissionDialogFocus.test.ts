@@ -181,6 +181,29 @@ describe("PermissionDialog focus", () => {
     );
   });
 
+  it("binds every numbered row to its digit, so 4 selects Deny and 4 + Enter denies (ISSUE-057)", () => {
+    const { options, flush, onRespond } = renderPermission(true, true);
+    for (const [index, option] of options.entries()) {
+      expect(option.textContent).toContain(`${index + 1}.`);
+    }
+    for (const [index, option] of [...options.entries()].reverse()) {
+      fireEvent.keyDown(document.activeElement!, { key: String(index + 1) });
+      flush();
+      expect(document.activeElement).toBe(option);
+      expect(option.getAttribute("aria-selected")).toBe("true");
+    }
+    fireEvent.keyDown(document.activeElement!, { key: "4" });
+    flush();
+    expect(document.activeElement).toBe(options[3]);
+    expect(onRespond).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(onRespond).toHaveBeenCalledExactlyOnceWith(
+      "request-focus",
+      expect.objectContaining({ optionId: "deny", kind: "deny" }),
+      undefined,
+    );
+  });
+
   it("gives feedback its own numbered row in the arrow and Tab focus cycle", () => {
     const { input, options, flush, onRespond, confirm } = renderPermission();
     const feedbackRow = input!.parentElement!;

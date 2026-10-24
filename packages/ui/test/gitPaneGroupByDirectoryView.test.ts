@@ -7,6 +7,7 @@ import type { GitDiffResult } from "@zcode/shared";
 import type { GitPaneFileChange, GitPaneRepositoryState } from "@/hooks/useGitRepository.js";
 import { GIT_PANE_GROUP_BY_DIRECTORY_STORAGE_KEY } from "@/lib/gitPaneGroupByDirectoryPreference.js";
 import { GitPane } from "@/GitPane.js";
+import { buildLastTurnGitDataset, withLastTurnDataset } from "@/review-last-turn/index.js";
 
 // Renders the real GitPane. Services, store, i18n and file-context hooks are replaced with
 // stubs, and GitPaneChangeCard is replaced by a stub that exposes the props GitPane owns
@@ -184,7 +185,7 @@ function makeState(
 
 interface PaneProps {
   gitState: GitPaneRepositoryState;
-  selectedSourceId: "unstaged" | "staged";
+  selectedSourceId: "unstaged" | "staged" | "last-turn";
   fileChangeFindQuery: string;
   fileChangeFindActiveIndex: number;
   onFileChangeFindMatchCountChange: (count: number) => void;
@@ -484,5 +485,62 @@ describe("Review pane: expansion and active find across modes", () => {
     expect(rowIndexOf("packages/shared/src/git.ts")).toBe("4");
     expect(cardFor("packages/shared/src/git.ts").getAttribute("aria-expanded")).toBe("true");
     expect(onMatchCount).toHaveBeenLastCalledWith(1);
+  });
+});
+
+describe("Review pane: Last turn source (ISSUE-056)", () => {
+  function lastTurnState(withTurn: boolean): GitPaneRepositoryState {
+    const base = makeState();
+    const state = {
+      ...base,
+      sourceOptions: [
+        ...base.sourceOptions,
+        { id: "last-turn" as const, count: 0, readonly: true, disabled: false },
+      ],
+    };
+    if (!withTurn) return state;
+    const dataset = buildLastTurnGitDataset({
+      workspacePath: "/project",
+      result: {
+        files: 1,
+        additions: 4,
+        deletions: 0,
+        items: [
+          {
+            path: "/project/src/math.js",
+            additions: 4,
+            deletions: 0,
+            writeCount: 1,
+            toolNames: ["Edit"],
+            patches: [
+              {
+                oldStart: 3,
+                oldLines: 0,
+                newStart: 4,
+                newLines: 4,
+                lines: ["+export function square(x) {", "+  return x * x;", "+}", "+"],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    return withLastTurnDataset(state, { dataset, count: 1 });
+  }
+
+  it("lists the turn's file instead of the empty state and never asks Git for its diff", () => {
+    mountPane(paneProps({ gitState: lastTurnState(true), selectedSourceId: "last-turn" }));
+    expect(renderedCardPaths()).toEqual(["/project/src/math.js"]);
+    expect(screen.queryByText("git.empty.lastTurnTitle")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "toggle /project/src/math.js" }));
+    expect(cardFor("/project/src/math.js").getAttribute("aria-expanded")).toBe("true");
+    expect(gitService.getDiff).not.toHaveBeenCalled();
+  });
+
+  it("keeps the empty state when no turn changed files", () => {
+    mountPane(paneProps({ gitState: lastTurnState(false), selectedSourceId: "last-turn" }));
+    expect(renderedCardPaths()).toEqual([]);
+    expect(screen.getByText("git.empty.lastTurnTitle")).toBeTruthy();
   });
 });

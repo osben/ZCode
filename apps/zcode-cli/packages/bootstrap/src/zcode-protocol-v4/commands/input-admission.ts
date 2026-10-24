@@ -111,6 +111,28 @@ export async function applyHeldQueueDisposition(
   if (disposition === "clearQueueAndSend") {
     await record.app.clearQueueItems();
     host.clearQueuedTurnExecutions?.(record.app.sessionId);
+    await releaseClearedQueueHold(host, record);
+  }
+}
+
+/**
+ * ISSUE-063 (specs/stop-queue-hold.md rule 15): the Stop's hold protected the items it cleared; leaving
+ * autoDrain=false let it outlive its queue and hold the next item queued on an un-stopped turn. Released only
+ * after the clear, so no drain window opens over the old items. The false->true write arms core's external
+ * drain for old projected items; the queue is empty, so it is ended at once or inline Guide consumption stays off.
+ */
+async function releaseClearedQueueHold(
+  host: V4CommandCoreHost,
+  record: V4SessionRecordView,
+): Promise<void> {
+  try {
+    await record.app.setQueueAutoDrain(true);
+    record.app.completeExternalQueueDrain();
+  } catch (error) {
+    host.logger?.warn?.("v4 clearQueueAndSend failed to release queue hold", {
+      error: error instanceof Error ? error.message : String(error),
+      sessionId: record.app.sessionId,
+    });
   }
 }
 

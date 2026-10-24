@@ -35,6 +35,11 @@ export interface ISourceServerManagementService {
     options?: { retainedOnly?: boolean },
   ): Promise<SourceServerManagementSnapshot>;
   confirmIdentityChange(profileId: string): Promise<SourceServerManagementSnapshot>;
+  /**
+   * Appends the unknown SSH host key the user accepted for this profile to known_hosts. Only the fingerprint the last
+   * connect attempt observed is accepted; the caller connects again afterwards.
+   */
+  trustHostKey(profileId: string, fingerprint: string): Promise<SourceServerManagementSnapshot>;
   disconnectSource(sourceServerId: string): Promise<SourceServerManagementSnapshot>;
   ensureConversationWorkspace(sourceServerId: string): Promise<{
     path: string;

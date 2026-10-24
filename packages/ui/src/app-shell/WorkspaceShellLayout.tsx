@@ -2952,6 +2952,7 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
             onGoBack={primaryNavigationBack}
             onGoForward={handleTaskNavForward}
             hideTaskNavigationButtons={simplifyHeaderForNarrowRemote}
+            showWebSidebarToggle={!isDesktop && !isWebRemoteControlShell}
           />
         </ScopedErrorBoundary>
 
