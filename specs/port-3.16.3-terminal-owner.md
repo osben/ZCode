@@ -1,107 +1,96 @@
 # Port 3.16.3: terminals scoped to an owner window
 
-Status: analysis only, not ported
+Status: analysis only, not ported.
 
-Blockers (details in "Blockers" below): the phone-side producer of `terminalClientSessionId` is not in the desktop bundle and the fork's phone client (`packages/web`) does not send it. Porting only the desktop half would change the lifetime of every phone terminal in the fork, so the port waits for the real 3.16.3 source.
+Blockers (details below): the phone-side producer of `terminalClientSessionId` is not in the desktop bundle and the fork's phone client (`packages/web`) does not send it. Porting only the desktop half would change the lifetime of every phone terminal in the fork, so the port waits for the real 3.16.3 source.
 
 ## Evidence and method
 
-- Baseline: `integration` at `809fab71`. The fork is upstream 3.16.2 (`3c5b2276`) plus fork features, as recorded in `specs/upstream-sync-3.16.2.md` (3.16.3 ledger, binary-only).
-- Bundle: the extracted 3.16.3 app under the scratch directory, `asar/out/` (`main/`, `host/`, `preload/`, `renderer/assets/`) and `zcode.cjs`. Read-only, never executed.
-- Anchors below cite the bundle file plus an identifier. Identifiers wrapped by the bundler as `i(fn, "name")` keep the source name, so `createWindowHostTerminalOwners`, `createTerminalScope`, `endTerminalOwner`, `ensureTerminalOwner` and `setTerminalOwner` are reliable. Other minified names (`nre`, `zN`, `fB`, `x`, `_`, `oe`, `re`, `Ie`, `O$e`, `SI`) are local to their bundle file and are cited only as locations.
-- Fork anchors are the current `integration` tree.
+Baseline: `integration` at `809fab71`; fork = upstream 3.16.2 (`3c5b2276`) plus fork features (`specs/upstream-sync-3.16.2.md`). Evidence: the extracted 3.16.3 app `asar/out/` (`main/`, `host/`, `preload/`, `renderer/assets/`) and `zcode.cjs`, read-only. Identifiers wrapped by the bundler as `i(fn, "name")` keep the source name (`createWindowHostTerminalOwners`, `createTerminalScope`, `endTerminalOwner`, `ensureTerminalOwner`, `setTerminalOwner` are reliable); other minified names are cited only as locations.
 
-Anchor index (file, identifier, location):
-
-| Concern                    | Bundle anchor                                                                                                                                                                   | Fork anchor                                                                                                              |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Host owner registry        | `host/index.js` `nre` = `createWindowHostTerminalOwners`, `var fB = nre(...)`                                                                                                   | none                                                                                                                     |
-| Host terminal scope        | `host/index.js` `zN` = `createTerminalScope`                                                                                                                                    | none                                                                                                                     |
-| Host attachment with owner | `host/index.js` `O$e` = `exposeServicesOnMessagePort` (terminal override `l`, attachment scope `d`)                                                                             | `packages/desktop/src/host/index.ts` `exposeServicesOnMessagePort` (~2625)                                               |
-| Host set-owner message     | `host/index.js` `SetTerminalOwner` branch (`fB.setOwner(r.ownerId)`)                                                                                                            | `packages/desktop/src/host/index.ts` `AttachServicePort` branch (~3711)                                                  |
-| Host dispose               | `host/index.js` `Ine` (`fB.setOwner(null)`, then `oi.dispose()`)                                                                                                                | `disposeAttachedServicePorts` (~2815)                                                                                    |
-| Main owner state           | `main/index.js` `x` = `endTerminalOwner`, `_` = `ensureTerminalOwner`                                                                                                           | none                                                                                                                     |
-| Main bootstrap             | `main/index.js` `kd`, case `bootstrap-request` (`_(h, b.terminalClientSessionId)`)                                                                                              | `packages/desktop/src/main/webRemoteControlManager.ts` `routePayload` (~1392)                                            |
-| Main bridge open           | `main/index.js` `re` (session check), `oe` = `buildWorkspaceBridge` (`terminalOwnerId`)                                                                                         | `webRemoteControlManager.ts` `buildWorkspaceBridge` (~1002)                                                              |
-| Main mobile grace          | `main/index.js` `Ie` = `scheduleMobileDisconnectGrace` (calls `x`)                                                                                                              | `webRemoteControlManager.ts` `scheduleMobileDisconnectGrace` (~580, no owner end)                                        |
-| Main app failure           | `main/index.js` `Hn` (calls `x`)                                                                                                                                                | `webRemoteControlManager.ts` failure path                                                                                |
-| Main Host bridge           | `main/index.js` `SI` = `createWebRemoteControlSharedHostAttachments` (`setTerminalOwner`, `attachWorkspaceHost` with `terminalOwnerId`)                                         | `packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts`                                                     |
-| Shared host message        | `host/chunk-5YNPFY3L.js` `HostMessageTypes.SetTerminalOwner: "set-terminal-owner"`                                                                                              | `packages/shared/src/channels.ts` (~638)                                                                                 |
-| Shared schemas             | `renderer/assets/validation-Bm1aanb4.js` (`bootstrap-request`, `workspace-bridge-open`, bridge descriptor `IC`, `bridge-degraded`, `attach-service-port`, `set-terminal-owner`) | `packages/shared/src/validation.ts` (286, 311, 446, 760) and `packages/shared/src/web-remote-control.ts` (449, 478, 616) |
+| Concern                    | Bundle anchor                                                                                                                                                       | Fork anchor                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Host owner registry        | `host/index.js` `createWindowHostTerminalOwners`                                                                                                                    | none                                                                                |
+| Host terminal scope        | `host/index.js` `createTerminalScope`                                                                                                                               | none                                                                                |
+| Host attachment with owner | `host/index.js` `exposeServicesOnMessagePort` (terminal override, attachment scope)                                                                                 | `packages/desktop/src/host/index.ts` `exposeServicesOnMessagePort`                  |
+| Host set-owner message     | `host/index.js` `SetTerminalOwner` branch                                                                                                                           | `packages/desktop/src/host/index.ts` `AttachServicePort` branch                     |
+| Host dispose               | `host/index.js` (setOwner(null), then dispose)                                                                                                                      | `disposeAttachedServicePorts`                                                       |
+| Main owner state           | `main/index.js` `endTerminalOwner` / `ensureTerminalOwner`                                                                                                          | none                                                                                |
+| Main bootstrap             | `main/index.js` `bootstrap-request` case (passes `terminalClientSessionId`)                                                                                         | `packages/desktop/src/main/webRemoteControlManager.ts` `routePayload`               |
+| Main bridge open           | `main/index.js` session check, `buildWorkspaceBridge` (`terminalOwnerId`)                                                                                           | `webRemoteControlManager.ts` `buildWorkspaceBridge`                                 |
+| Main mobile grace          | `main/index.js` `scheduleMobileDisconnectGrace` (calls `endTerminalOwner`)                                                                                          | `webRemoteControlManager.ts` `scheduleMobileDisconnectGrace` (no owner end)         |
+| Main app failure           | `main/index.js` failure path (calls `endTerminalOwner`)                                                                                                             | `webRemoteControlManager.ts` failure path                                           |
+| Main Host bridge           | `main/index.js` `createWebRemoteControlSharedHostAttachments` (`setTerminalOwner`, `attachWorkspaceHost` with `terminalOwnerId`)                                    | `packages/desktop/src/main/webRemoteControlSharedHostAttachments.ts`                |
+| Shared host message        | `host/chunk-5YNPFY3L.js` `HostMessageTypes.SetTerminalOwner: "set-terminal-owner"`                                                                                  | `packages/shared/src/channels.ts`                                                   |
+| Shared schemas             | `renderer/assets/validation-*.js` (`bootstrap-request`, `workspace-bridge-open`, bridge descriptor, `bridge-degraded`, `attach-service-port`, `set-terminal-owner`) | `packages/shared/src/validation.ts` and `packages/shared/src/web-remote-control.ts` |
 
 ## What 3.16.3 does
 
-A phone (the mobile "terminal" role in relay V2) is a terminal page session. The desktop window that serves it owns one terminal owner at a time. Terminals that a phone creates through its web-remote attachment belong to that owner. When the owner ends, those terminals are disposed.
-
-Only `web-remote-replayable` attachments are scoped. `desktop-continuous` attachments keep the raw terminal service (`host/index.js` `O$e`, `l` is set only when `clientMode === "web-remote-replayable"`).
+A phone (the mobile "terminal" role in relay V2) is a terminal page session. The desktop window that serves it owns one terminal owner at a time. Terminals that a phone creates through its web-remote attachment belong to that owner; when the owner ends, those terminals are disposed. Only `web-remote-replayable` attachments are scoped; `desktop-continuous` attachments keep the raw terminal service.
 
 ### Owners
 
-| Owner                                         | Owned by                                         | Identity                                                                                                                                                                        | Created by                                       | Ended by                                                                                                                                                              |
-| --------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Main terminal owner (`runtime.terminalOwner`) | `main/index.js` `x`/`_`                          | `{ clientSessionId, id }`. `clientSessionId` is the phone's `terminalClientSessionId`. `id` is a fresh `Ka()` value, the same random helper used for start-authorization tokens | `ensureTerminalOwner` on `bootstrap-request`     | `endTerminalOwner`: bootstrap without `terminalClientSessionId` (only if an owner exists), bootstrap with a different id, mobile disconnect grace expiry, app failure |
-| Window Host registry (`fB`)                   | `host/index.js` `createWindowHostTerminalOwners` | one per window Host process (module-level)                                                                                                                                      | `SetTerminalOwner` message (`setOwner(ownerId)`) | `setOwner(null)` (message or `disposeAttachedServicePorts`) or a replacing `setOwner(otherId)`                                                                        |
-| Terminal scope (`createTerminalScope`)        | `host/index.js` `zN`                             | one per (owner, scopeKey) with `scopeKey` = `"local"` or `remote:<remoteSessionId>`; or one per web-remote attachment when no owner is given                                    | first `bind` for the key, or attachment setup    | owner change or Host dispose (owner scope); attachment close (attachment scope)                                                                                       |
+| Owner                                         | Owned by                                                 | Identity                                                                                                                                                        | Created by                                       | Ended by                                                                                                                                                              |
+| --------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Main terminal owner (`runtime.terminalOwner`) | `main/index.js` `endTerminalOwner`/`ensureTerminalOwner` | `{ clientSessionId, id }`; `clientSessionId` is the phone's `terminalClientSessionId`; `id` is a fresh random value (same helper as start-authorization tokens) | `ensureTerminalOwner` on `bootstrap-request`     | `endTerminalOwner`: bootstrap without `terminalClientSessionId` (only if an owner exists), bootstrap with a different id, mobile disconnect grace expiry, app failure |
+| Window Host registry                          | `host/index.js` `createWindowHostTerminalOwners`         | one per window Host process (module-level)                                                                                                                      | `SetTerminalOwner` message (`setOwner(ownerId)`) | `setOwner(null)` (message or `disposeAttachedServicePorts`) or a replacing `setOwner(otherId)`                                                                        |
+| Terminal scope (`createTerminalScope`)        | `host/index.js`                                          | one per (owner, scopeKey) with `scopeKey` = `"local"` or `remote:<remoteSessionId>`; or one per web-remote attachment when no owner is given                    | first `bind` for the key, or attachment setup    | owner change or Host dispose (owner scope); attachment close (attachment scope)                                                                                       |
 
-Terminal scope semantics (`createTerminalScope`):
+Terminal scope semantics:
 
 - `create` checks the scope is active, creates through the underlying service, and records the terminal id with an exit subscription. If the scope was disposed during the await, the new terminal is disposed and the call throws `Terminal owner has ended`.
 - `write`, `resize`, `onDynamicData`, `onDynamicExit` throw `Terminal owner has ended or does not own this terminal` unless the terminal id is owned by the scope.
 - `dispose({id})` is a silent no-op when the scope is inactive or does not own the id. Otherwise it releases the terminal in the underlying service.
 - `dispose()` marks the scope inactive and releases every owned terminal. Release failures go to the `onError` callback (`failed to dispose mobile terminal owner` for the owner registry, `failed to dispose mobile attachment terminal` for attachment scopes).
 
-Owner registry semantics (`createWindowHostTerminalOwners`):
+Owner registry semantics:
 
 - `setOwner(id)` is a no-op when `id` equals the current owner. Otherwise it replaces the owner and disposes every scope of the previous owner (terminals are killed). `setOwner(null)` clears the owner.
-- `bind(ownerId, scopeKey, underlying)` throws `Terminal owner has ended` when `ownerId` is not the current owner. Otherwise it returns the scope service for `scopeKey`, creating the scope on first use. The `underlying` service is captured on first use of a key. Later binds for the same key ignore the argument.
+- `bind(ownerId, scopeKey, underlying)` throws `Terminal owner has ended` when `ownerId` is not the current owner. Otherwise it returns the scope service for `scopeKey`, creating the scope on first use. The `underlying` service is captured on first use of a key; later binds for the same key ignore the argument.
 
-### Attachment wiring (`O$e` = `exposeServicesOnMessagePort`)
+### Attachment wiring (`exposeServicesOnMessagePort`)
 
-For each attachment the Host computes:
+For each attachment the Host computes `attachment services.getOptional(ITerminalService)`:
 
-- `c = attachment services.getOptional(ITerminalService)`.
-- If `clientMode === "web-remote-replayable"` and `c` exists:
-  - With `terminalOwnerId` (`a`): the Terminal channel is `fB.bind(a, scopeKey, c)`. The scope survives the attachment. Only owner end or a Host dispose kills its terminals.
-  - Without `terminalOwnerId`: the Terminal channel is a per-attachment `zN(c)`. Its terminals are disposed when the attachment closes (`pe.dispose` calls `d.dispose()`).
-- `desktop-continuous`: no Terminal override. Behavior is unchanged from 3.16.2.
+- If `clientMode === "web-remote-replayable"` and the terminal service exists:
+  - With `terminalOwnerId`: the Terminal channel is `registry.bind(ownerId, scopeKey, service)`. The scope survives the attachment; only owner end or a Host dispose kills its terminals.
+  - Without `terminalOwnerId`: the Terminal channel is a per-attachment scope. Its terminals are disposed when the attachment closes.
+- `desktop-continuous`: no Terminal override; behavior unchanged from 3.16.2.
 
-Note the consequence of the "without owner" branch. Before 3.16.3 (the fork today), a phone attachment has no terminal scope, so phone terminals survive attachment close. In 3.16.3 an attachment without an owner kills its terminals on close.
+Consequence of the "without owner" branch: before 3.16.3 (the fork today) a phone attachment has no terminal scope, so phone terminals survive attachment close. In 3.16.3 an attachment without an owner kills its terminals on close.
 
 ### Main owner lifecycle
 
-`ensureTerminalOwner(runtime, clientSessionId)` (`_`), called from `bootstrap-request` (`kd`):
+`ensureTerminalOwner(runtime, clientSessionId)`, called from `bootstrap-request`:
 
-1. `clientSessionId` undefined: if an owner exists, `endTerminalOwner`. Otherwise no-op.
+1. `clientSessionId` undefined: if an owner exists, `endTerminalOwner`; otherwise no-op.
 2. Same `clientSessionId` as the current owner: no-op.
-3. Otherwise `endTerminalOwner` (if an owner exists), then a new owner `{clientSessionId, id: Ka()}`, then `setTerminalOwner(windowId, id)`.
+3. Otherwise `endTerminalOwner` (if an owner exists), then a new owner `{clientSessionId, id}`, then `setTerminalOwner(windowId, id)`.
 
-`endTerminalOwner(runtime)` (`x`), in this order:
+`endTerminalOwner(runtime)`, in this order:
 
 1. Remember whether an owner existed and clear `runtime.terminalOwner`.
-2. `cancelBridgeOpen` (`$`).
-3. If `runtime.currentBridge` exists, set `pendingBridgeInvalidation = { zcode_type: "bridge-degraded", bridgeSessionId, bridgeGeneration?, recoveryId?, reason: "terminal-owner-ended" }`. This happens even when no owner existed (observed in `x`; see Reconciling).
-4. `disposeRuntimeBridgeResources` (`E`): dispose bridge pipes and release the attachment (`releaseWorkspaceHostAttachment`, which closes the port).
+2. `cancelBridgeOpen`.
+3. If `runtime.currentBridge` exists, set `pendingBridgeInvalidation = { zcode_type: "bridge-degraded", bridgeSessionId, bridgeGeneration?, recoveryId?, reason: "terminal-owner-ended" }`. This happens even when no owner existed (see Reconciling).
+4. `disposeRuntimeBridgeResources`: dispose bridge pipes and release the attachment (`releaseWorkspaceHostAttachment`, which closes the port).
 5. If an owner existed, `setTerminalOwner(windowId, null)` so the Host kills the owner's terminals.
-6. `sendPendingBridgeInvalidation` (`It`): send now if the transport is up. Otherwise it stays pending.
+6. `sendPendingBridgeInvalidation`: send now if the transport is up; otherwise it stays pending.
 
 Other triggers:
 
-- Mobile disconnect: `scheduleMobileDisconnectGrace` (`Ie`) fires after `uN` = 3000 ms (fork: `MOBILE_DISCONNECT_STATUS_GRACE_MS = 3_000`). If it fires while the runtime is current and not in `error`, it calls `endTerminalOwner`, sets `status = "running"` and `mobileConnected = false`, then emits status. A reconnect clears the timer first (`clearMobileDisconnectGraceTimer`).
-- App failure (`Hn`): posts `app-error`, then `endTerminalOwner`, then the usual disposal.
+- Mobile disconnect: `scheduleMobileDisconnectGrace` fires after 3000 ms (fork: `MOBILE_DISCONNECT_STATUS_GRACE_MS = 3_000`). If it fires while the runtime is current and not in `error`, it calls `endTerminalOwner`, sets `status = "running"` and `mobileConnected = false`, then emits status. A reconnect clears the timer first (`clearMobileDisconnectGraceTimer`).
+- App failure: posts `app-error`, then `endTerminalOwner`, then the usual disposal.
 
 ### Bridge open
 
-`workspace-bridge-open` (`ve` = handler, `re` = check, `oe` = `buildWorkspaceBridge`):
-
-- `re`: if the request carries `terminalClientSessionId` and it differs from the current owner's `clientSessionId`, reject with `Terminal page session has ended; bootstrap is required.`.
-- `oe`: `terminalOwnerId = request.terminalClientSessionId ? runtime.terminalOwner?.id : undefined`. It is put on the bridge (`ee`) and passed to `attachWorkspaceHost` as `terminalOwnerId` (only when defined).
-- `attachWorkspaceHost` (`SI`, `i`/`o`): local kind passes `terminalOwnerId` in `AttachServicePort`. Remote kind passes it to `attachRemoteWorkspaceSessionHost` (`Ee`), which posts `AttachServicePort` to the owning window Host with `scope: {kind: "remote", remoteSessionId, workspacePath, workspaceIdentity}`.
-- The bridge descriptor sent to the phone (`gN` = `toExternalBridge`, carried in `workspace-bridge-ready`) includes `terminalOwnerId` when set.
+- Session check: if the request carries `terminalClientSessionId` and it differs from the current owner's `clientSessionId`, reject with `Terminal page session has ended; bootstrap is required.`.
+- `buildWorkspaceBridge`: `terminalOwnerId = request.terminalClientSessionId ? runtime.terminalOwner?.id : undefined`. It is put on the bridge and passed to `attachWorkspaceHost` as `terminalOwnerId` (only when defined). Local kind passes it in `AttachServicePort`; remote kind passes it to `attachRemoteWorkspaceSessionHost`, which posts `AttachServicePort` to the owning window Host with `scope: {kind: "remote", remoteSessionId, workspacePath, workspaceIdentity}`.
+- The bridge descriptor sent to the phone (`toExternalBridge`, carried in `workspace-bridge-ready`) includes `terminalOwnerId` when set.
 
 ### Host side messages
 
-- `set-terminal-owner` (`HostMessageTypes.SetTerminalOwner`): Main posts `{ type: "set-terminal-owner", ownerId: string | null }` to the window Host process (`SI.setTerminalOwner`, `windowHostProcessMap.get(webContents.id ?? windowId)`). It is silently a no-op when the process is missing. The Host has no reply.
-- `attach-service-port`: gains an optional `terminalOwnerId`. The Host defers a local attachment while the database is starting (`pendingStartupAttachments`). The owner id is captured in the deferred closure, so `bind` runs at attach time. An owner change between queueing and attach makes `bind` throw. The Host catches it and logs `failed to attach scoped service port`.
+- `set-terminal-owner` (`HostMessageTypes.SetTerminalOwner`): Main posts `{ type: "set-terminal-owner", ownerId: string | null }` to the window Host process. Silently a no-op when the process is missing. The Host has no reply.
+- `attach-service-port`: gains an optional `terminalOwnerId`. The Host defers a local attachment while the database is starting (`pendingStartupAttachments`); the owner id is captured in the deferred closure, so `bind` runs at attach time. An owner change between queueing and attach makes `bind` throw; the Host catches it and logs `failed to attach scoped service port`.
 
 ## Event order
 
@@ -120,7 +109,7 @@ sequenceDiagram
     H->>H: setOwner(O1)
     M-->>P: bootstrap-response
     P->>M: workspace-bridge-open {terminalClientSessionId: S1}
-    Note over M: re(): S1 matches O1, else reject "bootstrap is required"
+    Note over M: session check: S1 matches O1, else reject "bootstrap is required"
     M->>H: AttachServicePort {clientMode: web-remote-replayable, terminalOwnerId: O1}
     H->>H: Terminal channel = fB.bind(O1, scopeKey, terminalService)
     M-->>P: workspace-bridge-ready {bridge.terminalOwnerId: O1}
@@ -139,7 +128,7 @@ sequenceDiagram
     Note over M: ensureTerminalOwner(S2): new owner O2
 ```
 
-Alternative branch: a second phone page bootstraps with `S2` while `O1` is live. `ensureTerminalOwner` ends `O1` (bridge invalidated, `setTerminalOwner(null)`, then `setTerminalOwner(O2)`). The Host disposes O1's scopes in `setOwner(O2)`. A stale bridge request carrying `S1` is rejected by `re`.
+Alternative branch: a second phone page bootstraps with `S2` while `O1` is live. `ensureTerminalOwner` ends `O1` (bridge invalidated, `setTerminalOwner(null)`, then `setTerminalOwner(O2)`). The Host disposes O1's scopes in `setOwner(O2)`. A stale bridge request carrying `S1` is rejected by the session check.
 
 ## Interfaces and message schemas
 
@@ -157,16 +146,10 @@ Host message schema (`packages/shared/src/validation.ts`):
 z.object({ type: z.literal("set-terminal-owner"), ownerId: z.string().nullable() }).strict();
 ```
 
-Attach (`attach-service-port`, validation.ts ~760): add `terminalOwnerId: z.string().optional()` after `type`.
-
-Phone to Main (`packages/shared/src/validation.ts` ~286 and ~311):
-
-- `bootstrap-request`: add `terminalClientSessionId: z.string().optional()`.
-- `workspace-bridge-open`: add `terminalClientSessionId: z.string().optional()`.
-
-Bridge descriptor (`IC`, discriminated on `kind`, both `local` and `remote` variants): add `terminalOwnerId: z.string().optional()`. Type: `packages/shared/src/web-remote-control.ts`.
-
-Bridge degraded (validation.ts ~446, web-remote-control.ts ~616-620): add `"terminal-owner-ended"` to the `reason` enum. The fork enum has `source-session-replaced` in validation.ts but not in the TypeScript interface. That gap predates this port and should be kept as is.
+- Attach (`attach-service-port`, validation.ts): add `terminalOwnerId: z.string().optional()` after `type`.
+- Phone to Main (`bootstrap-request`, `workspace-bridge-open`): add `terminalClientSessionId: z.string().optional()`.
+- Bridge descriptor (discriminated on `kind`, both `local` and `remote` variants): add `terminalOwnerId: z.string().optional()` (type in `packages/shared/src/web-remote-control.ts`).
+- Bridge degraded: add `"terminal-owner-ended"` to the `reason` enum. The fork enum has `source-session-replaced` in validation.ts but not in the TypeScript interface; that gap predates this port and should be kept as is.
 
 Internal interfaces (names from the bundle):
 
@@ -186,7 +169,7 @@ Web-remote-replayable (mobile recovery link, `clientMode: "web-remote-replayable
 
 4. Bootstrap with `S1`, bridge open with `S1`. Phone creates terminal T1. The bridge is rebuilt (`bridge-degraded` with a non-owner reason such as `rpc-transport-fault`) without a bootstrap. T1 survives. The new bridge uses the same `terminalOwnerId`.
 5. Phone disconnects and reconnects within 3 s. The grace timer is cleared. The owner and T1 survive.
-6. Phone disconnects for more than 3 s. `endTerminalOwner` runs. T1 is killed. The `bridge-degraded` payload with reason `terminal-owner-ended` stays in `pendingBridgeInvalidation` until the transport next flushes it (`sendPendingBridgeInvalidation`). A later bootstrap creates a new owner.
+6. Phone disconnects for more than 3 s. `endTerminalOwner` runs. T1 is killed. The `bridge-degraded` payload with reason `terminal-owner-ended` stays in `pendingBridgeInvalidation` until the transport next flushes it. A later bootstrap creates a new owner.
 7. Bootstrap with `S2` while `S1` is live. The bridge for `S1` is invalidated. T1 is killed. A bridge request carrying `S1` is rejected with `Terminal page session has ended; bootstrap is required.`.
 8. Bridge open without `terminalClientSessionId` on a window with no owner gets a per-attachment scope. Its terminals are disposed when the attachment closes. The fork today keeps them.
 9. Remote workspace: the same as 4 to 7 with `scopeKey = remote:<remoteSessionId>`. Two remote sessions on one owner keep separate scopes. Disposing one remote session does not kill the other's terminals.
@@ -196,19 +179,19 @@ Invariants for both links: no change to `desktop-continuous` owner, snapshot or 
 
 ## Divergences from the fork (3.16.2 plus fork features)
 
-- The fork has no owner state in `webRemoteControlManager.ts`. `bootstrap-request` does not call `ensureTerminalOwner`, and the bridge open path does not check owner state.
-- The fork's `scheduleMobileDisconnectGrace` does not end any owner. 3.16.3 ends the owner in the grace callback.
-- The fork's Host has no `ITerminalService` scoping. Phone terminals are not owned or disposed by the attachment today.
+- The fork has no owner state in `webRemoteControlManager.ts`; `bootstrap-request` does not call `ensureTerminalOwner`, and the bridge open path does not check owner state.
+- The fork's `scheduleMobileDisconnectGrace` does not end any owner; 3.16.3 ends the owner in the grace callback.
+- The fork's Host has no `ITerminalService` scoping; phone terminals are not owned or disposed by the attachment today.
 - The fork's `disposeAttachedServicePorts` does not clear an owner, because no owner exists.
-- The fork's phone client (`packages/web/src/main.tsx`) sends `bootstrap-request` (~1515) and `workspace-bridge-open` (~1683, ~1701) without `terminalClientSessionId`. It handles `bridge-degraded` generically (~1405, `recoverVisibleSession(reason)`). Whether that recovery re-bootstraps on `terminal-owner-ended` is not shown.
-- The fork's relay V2 has a `terminal_sid` in `auth_ack` (`packages/remote-relay/src/app/relay.ts`, `packages/shared/src/web-remote-relay/contract.ts`). It is assigned by the relay per phone connection. It is one candidate for the phone's id, but the bundle does not confirm it.
+- The fork's phone client (`packages/web/src/main.tsx`) sends `bootstrap-request` and `workspace-bridge-open` without `terminalClientSessionId`. It handles `bridge-degraded` generically (`recoverVisibleSession(reason)`). Whether that recovery re-bootstraps on `terminal-owner-ended` is not shown.
+- The fork's relay V2 has a `terminal_sid` in `auth_ack` (`packages/remote-relay/src/app/relay.ts`, `packages/shared/src/web-remote-relay/contract.ts`), assigned by the relay per phone connection. It is one candidate for the phone's id, but the bundle does not confirm it.
 
 ## Blockers
 
-1. Producer of `terminalClientSessionId` is not in the desktop bundle. I searched every file under `asar/out/` and `zcode.cjs`. The field appears only as schema declarations (`renderer/assets/validation-*.js`, `host/chunk-5YNPFY3L.js`, `preload/*`, `scheduler/index.js`) and as reads in `main/index.js` (`b.terminalClientSessionId`). No file assigns it a value, so the phone is the producer. Its 3.16.3 source is not in this artifact. The renderer `styles-CQuzX8si.js` also has `terminalOwnerId`, but that is a separate renderer xterm cache owner (`releaseStaleOwner(clientNamespace, owner)`). Its provider `Pl`/`n1n` receives the value by props, and no desktop caller passes it. It is not the Host owner.
-2. Consequence if only the desktop half is ported: an owner-less phone attachment gets a per-attachment scope (behavior 8). Every bridge rebuild or reconnect that drops the attachment kills the phone's terminals. Today the fork keeps them. The fork's phone client never sends an id, so the port would regress the fork's `web-remote-replayable` recovery link.
-3. Choosing the id source (per page load, per phone session in storage, or relay `terminal_sid`) and how the fork's phone client recovers after `terminal-owner-ended` is design work in `packages/web` and the relay client. The bundle does not say which one upstream uses, so guessing it would be a fallback hack.
-4. Remote-session scope capture: `bind` keeps the first `underlying` service per scope key. Whether a remote session generation change leaves a stale service in the owner scope is not verified from the bundle. The fork's `windowRemoteConnectionRegistry.resolveScopedServices` may differ.
+1. The producer of `terminalClientSessionId` is not in the desktop bundle. The field appears only as schema declarations and as reads in `main/index.js`; no file assigns it a value, so the phone is the producer and its 3.16.3 source is not in this artifact. The renderer `styles-*.js` `terminalOwnerId` is a separate renderer xterm cache owner (`releaseStaleOwner(clientNamespace, owner)`), not the Host owner.
+2. If only the desktop half is ported, an owner-less phone attachment gets a per-attachment scope (behavior 8): every bridge rebuild or reconnect that drops the attachment kills the phone's terminals. The fork's phone client never sends an id, so the port would regress the fork's `web-remote-replayable` recovery link.
+3. Choosing the id source (per page load, per phone session in storage, or relay `terminal_sid`) and how the fork's phone client recovers after `terminal-owner-ended` is design work in `packages/web` and the relay client. The bundle does not say which one upstream uses, so guessing would be a fallback hack.
+4. Remote-session scope capture: `bind` keeps the first `underlying` service per scope key. Whether a remote session generation change leaves a stale service in the owner scope is not verified from the bundle; the fork's `windowRemoteConnectionRegistry.resolveScopedServices` may differ.
 
 Gate result: blockers 1 to 3 make the behavior unverifiable with high confidence. Porting would require guessed design in fork-owned phone client code. Status stays "analysis only".
 
@@ -216,11 +199,11 @@ Gate result: blockers 1 to 3 make the behavior unverifiable with high confidence
 
 Check these against the upstream source when it is published:
 
-- Names: `createWindowHostTerminalOwners`, `createTerminalScope`, `endTerminalOwner`, `ensureTerminalOwner`, `setTerminalOwner`, `SetTerminalOwner`, `set-terminal-owner`, `terminal-owner-ended`, and the `terminalOwnerId` / `terminalClientSessionId` field names. These come from `keepNames` wrappers and string literals.
+- Names: `createWindowHostTerminalOwners`, `createTerminalScope`, `endTerminalOwner`, `ensureTerminalOwner`, `setTerminalOwner`, `SetTerminalOwner`, `set-terminal-owner`, `terminal-owner-ended`, and the `terminalOwnerId` / `terminalClientSessionId` field names.
 - Source of `terminalClientSessionId` on the phone (per page load, persisted, or relay `terminal_sid`), and whether it survives a reload.
-- `endTerminalOwner` invalidates the current bridge even when no owner existed (bundle `x` sets `pendingBridgeInvalidation` on any `currentBridge`). Confirm this is intended, since it means a bootstrap with a new id invalidates a bridge opened without an owner.
+- `endTerminalOwner` invalidates the current bridge even when no owner existed (a bootstrap with a new id invalidates a bridge opened without an owner). Confirm this is intended.
 - `ensureTerminalOwner` does not end an owner for a bootstrap without an id when none exists. Confirm.
-- Whether the mobile grace timer is 3000 ms in source (bundle `uN = 3e3`).
+- Whether the mobile grace timer is 3000 ms in source (bundle `3e3`).
 - Whether `bind` should capture the underlying service per call (bundle keeps the first).
 - Whether `setOwner(id)` disposes the previous owner's terminals before or after the new owner is installed (bundle: installs first, then disposes the old scopes).
 - Whether the phone-side `bridge-degraded` handler re-bootstraps on `terminal-owner-ended`.

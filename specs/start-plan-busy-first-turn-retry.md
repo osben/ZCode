@@ -7,10 +7,10 @@ Start Plan (`account:zai-start-plan`) rejects requests with provider business co
 admission limit. The adapter classifies these as non-retryable for `main_turn`; core owns a
 dedicated short admission retry (`getStartPlanBusyAdmissionRetryDelayMs`, delays 1s/2s).
 
-That retry was gated on `turnNumber <= 0 → no retry`, where `turnNumber` is the session's
-count of completed user turns. So a busy rejection anywhere in the first user turn failed the
-turn immediately — including mid-turn, after several model steps, visible output and tool
-calls had already happened.
+That retry is gated on more than `turnNumber` (the session's count of completed user turns):
+a plain `turnNumber <= 0 → no retry` rule failed the first user turn on the first busy
+rejection — including mid-turn, after several model steps, visible output and tool calls had
+already happened.
 
 ## Product rule
 
@@ -18,8 +18,8 @@ calls had already happened.
   model request in the current turn) is **not** retried. The busy error surfaces at once so the
   initial-busy upgrade banner shows immediately.
 - Every later model request is retried on Start Plan admission busy: requests in any later
-  user turn (`turnNumber > 0`, unchanged), and later model steps of the first user turn
-  (`modelStepCount > 0`, new).
+  user turn (`turnNumber > 0`), and later model steps of the first user turn
+  (`modelStepCount > 0`).
 - Retries still use the existing schedule (1s, then 2s; 2 retries max). When the busy rejection
   persists, the turn fails with `StartPlanBusyAutoRetryExhaustedError`
   (`START_PLAN_BUSY_AUTO_RETRY_EXHAUSTED_MESSAGE`, provider code preserved).

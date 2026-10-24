@@ -2,18 +2,18 @@
 
 ## Problem
 
-The v1 trajectory pane shows the normalized `request.messages` of each model call. It does not show what actually reached the provider or where time went:
+The v1 trajectory pane shows the normalized `request.messages` of each model call, not what actually reached the provider or where time went:
 
-- the tool catalog, about two thirds of the input on the wire (27–160 KB per call, measured over 549 local records);
+- the tool catalog, about two thirds of the input on the wire (27–160 KB per call);
 - request parameters (`max_tokens`, `thinking`, `effort`, `tool_choice`);
 - cache breakpoints, `cacheWriteTokens`, and the `cacheReadTokens` / `reasoningTokens` that v1 maps but never renders;
 - time to first token, tool execution time, and context fill per call.
 
-v2 is a second, independent view built for those questions. v1 stays unchanged and both can be open at once.
+v2 is a second, independent view for those questions; v1 stays unchanged and both can be open at once.
 
 ## Scope
 
-Seven blocks, agreed on a mockup with the user:
+Seven blocks:
 
 | Block            | Content                                                                                                               |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -77,8 +77,8 @@ Response shape (summary; the module contract is authoritative):
 
 1. Parameters come from the wire body. Anthropic: `max_tokens`, `thinking`, `output_config.effort`, `tool_choice`, `temperature`, `stream`. OpenAI-style: `max_completion_tokens` or `max_tokens`, `reasoning_effort`, `tool_choice`. Missing values stay absent.
 2. Cache breakpoints are recorded for `cache_control` on system blocks, tool definitions and message parts. Production trimming removes message bodies, so message-level breakpoints are reported only when the body messages are present; otherwise `cacheBreakpointsComplete` is `false`.
-3. A record without a wire body has no catalog or system prompt id. The UI then falls back to `request.toolNames` and to the system-role input messages.
-   3a. A subagent session's own loop is written to its own `model-io-<childSessionId>.jsonl` with `querySource: "subagent"`; parent sessions never carry those calls (they live in the child's file). The v2 Host projection (`promoteSubagentSessionLoop`, `model-trajectory-v2/domain/subagentLoop.ts`) therefore treats a window that has no `main` call but has `subagent` calls as a subagent session's trajectory: those calls become `callSource.kind = "main"` (their `querySource` stays `subagent`) before input deltas are decided, so its calls chain as deltas (an exception to input-deltas rule 1, which is about a parent's subagent calls). Main-call metrics, the context chart, the ledger turns and input deltas then work for a subagent trajectory opened from the Agent row (specs/conversation-agent-row-context-menu.md). A window with any `main` call is unchanged. The v1 viewer is unchanged (added 2026-10-24).
+3. A record without a wire body has no catalog or system prompt id. The UI falls back to `request.toolNames` and the system-role input messages.
+   3a. A subagent session's own loop lives in its own `model-io-<childSessionId>.jsonl` with `querySource: "subagent"`; parent sessions never carry those calls. The Host projection (`promoteSubagentSessionLoop`, `model-trajectory-v2/domain/subagentLoop.ts`) treats a window with no `main` call but with `subagent` calls as a subagent session's trajectory: those calls become `callSource.kind = "main"` (`querySource` stays `subagent`) before input deltas are decided, so they chain as deltas (an exception to input-deltas rule 1, which is about a parent's subagent calls). Main-call metrics, the context chart, ledger turns and input deltas then work for a subagent trajectory opened from the Agent row (specs/conversation-agent-row-context-menu.md). A window with any `main` call is unchanged, and so is the v1 viewer.
 
 ### Payload budget
 
@@ -89,7 +89,7 @@ Response shape (summary; the module contract is authoritative):
 ### Tool timing
 
 7. Tool timing is read from the CLI session database resolved by `resolveAgentSessionDbPath()`, opened read-only with a 250 ms busy timeout. The Host never writes it.
-8. Rows come from `tool_usage` by `(session_id, tool_call_id)` for the tool call ids present in the window, queried in chunks of 500. `scheduledAt` is `started_at` (includes permission wait). Execution end is `completed_at`; execution start is `completed_at - duration_ms`. `duration_ms` is recorded for completed and failed calls (verified on 92k local rows); when it is null (a call still running) execution times are absent. The `part` table is not read.
+8. Rows come from `tool_usage` by `(session_id, tool_call_id)` for the tool call ids present in the window, queried in chunks of 500. `scheduledAt` is `started_at` (includes permission wait). Execution end is `completed_at`; execution start is `completed_at - duration_ms`. `duration_ms` is recorded for completed and failed calls; when it is null (a call still running), execution times are absent. The `part` table is not read.
 9. Any failure (path unknown, file missing, read error) returns `source: "unavailable"` with the reason. The trajectory still loads; tool lanes, the Timing tab and block G show that timing is unavailable.
 10. Rows pruned by CLI retention simply have no timing. Tool rows without timing fall back to the parent call's `completedAt` as their start, with no duration.
 
@@ -139,7 +139,7 @@ Response shape (summary; the module contract is authoritative):
 
 ### Event categories: skills, memory, MCP (H1–H4)
 
-Agreed on a mockup with the user (2026-10-22). Classification is a pure UI function of the v2 response; the Host contract does not change. It relies on runtime names and text markers listed below, so a runtime change to any of them must update `domain/eventCategories.ts` and its tests.
+Classification is a pure UI function of the v2 response; the Host contract does not change. It relies on the runtime names and text markers listed below, so a runtime change to any of them must update `domain/eventCategories.ts` and its tests.
 
 34. Categories: `skill`, `memory` (operation `read` or `write`), `mcp`; everything else stays uncategorized.
 35. Skill: a tool call named `Skill`. The skill name is `input.skill`, arguments `input.args`. Slash commands also go through this tool (the Skill tool description instructs it; no other injection path exists in the runtime). Loaded size is the result's `truncated.originalBytes` when bounded, otherwise its serialized length.

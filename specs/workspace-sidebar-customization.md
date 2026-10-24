@@ -12,7 +12,7 @@ Changes to saved preferences from another window do not reset unsaved name or co
 
 Pressing Enter saves the customization dialog only when the input method is not composing a candidate. E2E scenarios that require the two-workspace startup fixture must be registered in both the full warmup fixture list and the small two-workspace list.
 
-## Project rows after the project-tree sidebar (3.16.1 sync)
+## Project rows after the project-tree sidebar
 
 The sidebar is organized by projects (`VirtualProject`), not workspace tabs. The display-preference record
 `zcode-workspace-display` is reused unchanged, but project rows key their entry as

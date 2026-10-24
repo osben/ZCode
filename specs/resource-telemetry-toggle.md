@@ -1,10 +1,10 @@
 # Resource telemetry toggle
 
-Status: implemented (2026-10-18). Unit tests cover schema defaults, main gating and the sync channel; the desktop E2E PRT-023 enables the toggle before asserting events but has not been run.
+Status: implemented. Unit tests cover schema defaults, main gating and the sync channel; the desktop E2E PRT-023 enables the toggle before asserting events but has not been run.
 
 ## Problem
 
-`packages/desktop/src/main/desktopResourceTelemetry.ts` runs unconditionally in main: every 10 s it reads `app.getAppMetrics()`, system, CLI, MCP and renderer-heap sample sources, aggregates them into windows and every 5 min sends `perf_process_window` / `perf_system_window` (plus immediate `perf_tool_exec_resource`) through the ARMS RUM SDK (`@arms/rum-electron`, Alibaba Cloud). Every ~60 s it also writes a local `[memory]` main-process log line.
+`packages/desktop/src/main/desktopResourceTelemetry.ts` samples unconditionally in main: every 10 s it reads `app.getAppMetrics()`, system, CLI, MCP and renderer-heap sample sources, aggregates them into windows and every 5 min sends `perf_process_window` / `perf_system_window` (plus immediate `perf_tool_exec_resource`) through the ARMS RUM SDK (`@arms/rum-electron`, Alibaba Cloud). Every ~60 s it also writes a local `[memory]` main-process log line.
 
 Where the data goes is decided at build time by `ZCODE_ARMS_RUM_ENDPOINT` (`scripts/build-time-config.mjs`: env, then `config/private/build-defaults.json`). Upstream release builds bake in an Alibaba SLS endpoint; fork builds have neither source, so the SDK initialises with `enable: false` and nothing leaves the machine. The sampling loop still costs main-process CPU and timers, and the user cannot switch it off.
 

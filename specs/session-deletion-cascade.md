@@ -1,6 +1,6 @@
 # Permanent session deletion
 
-Status: implemented locally (2026-10-19), with the multi-window worktree retention restriction below. Manual-review E2E cases remain unpromoted pending user review.
+Status: implemented, with the multi-window worktree retention restriction below. Manual-review E2E cases remain unpromoted pending user review.
 
 ## Product contract
 
@@ -13,9 +13,7 @@ The `deleted` tombstone remains an internal anti-resurrection mechanism; Hide is
 
 Descendants are the existing recursive `parent_id` children of types `selection_side_chat`, `subagent_child`, `workflow_child`, and `nested_workflow_child`, archived included. Independent forks and interactive primary sessions are not traversed. Surviving forks retain their content and source-session files they still reference.
 
-## Reviewed baseline
-
-Review at `a28996988bdd048480e814e6657c4c1b5f42320c` established:
+## Baseline facts
 
 - `deleteTask` and `deleteArchivedTasks` only tombstone. Archived batch deletion needs an explicit erase step.
 - The existing CLI erase chain guards running trees in the answering process, closes idle runtimes, removes known session directories with fork retention, and deletes rows transactionally.
@@ -98,7 +96,7 @@ Cleanup removes a worktree with `git worktree remove --force`, which deletes eve
 - It reads one status snapshot of the worktree and returns every entry (staged, unstaged, conflicted and untracked, including collapsed untracked directories) with a short status (`M`, `A`, `D`, `R`, `UU`, `??`, …). No line-stat filter and no workspace sub-scope: force removal deletes the whole worktree.
 - It throws when Git is unavailable, the path is not a repository or the folder is missing, and when the resolved repository root is not the worktree folder itself (for example a worktree whose `.git` link is broken resolving to an enclosing repository). The UI loader turns any throw, or a result without a `files` array (older peers, the Web home-only stub), into `null`, which is unknown mode.
 
-Known limitation (2026-10-21, no behavior change yet): force removal also deletes gitignored files (for example `.env` or local databases), which no status preview lists. Whenever the candidates include a worktree (the preview is non-empty or unknown), the dialog shows `taskDelete.worktreeIgnoredNotice` saying ignored files in the worktree are deleted too.
+Known limitation (no behavior change yet): force removal also deletes gitignored files (for example `.env` or local databases), which no status preview lists. Whenever the candidates include a worktree (the preview is non-empty or unknown), the dialog shows `taskDelete.worktreeIgnoredNotice` saying ignored files in the worktree are deleted too.
 
 Unknown mode rules:
 
@@ -161,7 +159,7 @@ Retry must work when content is gone. If the original workspace is missing, reso
 
 ## Anonymous usage preservation
 
-The user approved extra anonymous accounting on 2026-10-19 to preserve exact distinct-session counts and longest duration as well as additive metrics. A fresh opaque random identity may group a deleted session's time buckets; keep no mapping to its original ID. Detached records contain no original session IDs, titles, prompts or messages and never appear in Top Sessions.
+Extra anonymous accounting preserves exact distinct-session counts and longest duration as well as additive metrics. A fresh opaque random identity may group a deleted session's time buckets; keep no mapping to its original ID. Detached records contain no original session IDs, titles, prompts or messages and never appear in Top Sessions.
 
 Use additive fork-owned schema with `fork_usage_detached*` names and a separate noncolliding ledger ID (`9002_fork_usage_detached` if unused). Never change upstream migrations or existing `9001_fork_usage_rollup` schema/checksum inputs.
 
@@ -264,14 +262,16 @@ E2E: the pending manual-review cases under `packages/desktop/test/e2e/conversati
 
 ## Decisions and non-goals
 
-- 2026-10-19: permanent Delete supersedes conflicting 2026-10-18 Hide/Erase decisions. Archive remains unchanged.
+- Permanent Delete supersedes the earlier conflicting Hide/Erase decisions. Archive remains unchanged.
 - Remove worktree folders only; branches remain.
 - Preserve exact aggregate session metrics through approved anonymous accounting.
 - Historical maintenance remains in Sessions settings and covers content or pending cleanup.
 - Non-goals: undo, remote permanent deletion, branch deletion, tombstone removal, a new Hide action, retained per-session conversation details or cross-window running-session leases.
 
-## Local verification evidence
+## Verification evidence
 
-Desktop manual-review runs exercised sidebar cancel/confirm/reload (DEL01) and all-archived cancel/confirm. Both passed locally on macOS. Store tests cover anonymous counts/duration, old/shared/partially-pruned buckets, external updates, rollback, retry, privacy and retention. Service tests use controlled Git/inventory ports for guard and partial-result behavior. Dirty-worktree, cross-platform and mobile visual E2E scenarios remain pending; passing unit tests do not imply those E2E cases were run.
+Desktop manual-review runs exercised sidebar cancel/confirm/reload (DEL01) and all-archived cancel/confirm; both passed locally on macOS. Store tests cover anonymous counts/duration, old/shared/partially-pruned buckets, external updates, rollback, retry, privacy and retention. Service tests use controlled Git/inventory ports for guard and partial-result behavior. Dirty-worktree, cross-platform and mobile visual E2E scenarios remain pending; passing unit tests do not imply those E2E cases were run.
 
-The all-CLI typecheck/lint commands also inspect untouched packages. Their existing protocol-lifecycle type errors and widespread max-lines failures must be reported separately from targeted deletion checks. PR publication was subsequently authorized by the user on 2026-10-19.
+The all-CLI typecheck/lint commands also inspect untouched packages; their pre-existing protocol-lifecycle type errors and widespread max-lines failures must be reported separately from targeted deletion checks. PR publication was authorized by the user.
+
+Full history: `git show 01dd23cd:specs/session-deletion-cascade.md`
