@@ -1,19 +1,27 @@
 # Message Stream Display Settings
 
-常规设置中的两个开关独立控制对话详情消息流的展示内容：
+Two switches in General settings independently control what the conversation detail message stream shows:
 
-- `messageStreamShowReasoning`：开启时展示全部 reasoning / thought 行；关闭时每个 assistant 轮次仍展示第一条 reasoning，后续 reasoning 隐藏。
-- `messageStreamShowTodos`：开启时展示 Todo 工具卡片，关闭时不展示。
+- `messageStreamShowReasoning`: when on, all reasoning / thought rows show; when off, each assistant turn
+  still shows its first reasoning and later reasoning is hidden.
+- `messageStreamShowTodos`: when on, Todo tool cards show; when off, they do not.
 
-四种开关组合都必须成立：首条 reasoning 始终展示；“显示思考过程”只控制同一轮的后续 reasoning，“显示待办”独立控制 Todo。设置变化通过共享设置快照传入 V4 `SessionPane` 的行渲染上下文；每轮首条 reasoning 的 `rowId` 由 `ConversationTurnGroup` 根据该轮全序行派生，不复制 renderer-local 可见性状态。
+All four combinations must hold: the first reasoning always shows; "Show thinking process" controls only
+later reasoning of the same turn, and "Show todos" controls Todo independently. A setting change reaches
+the row-render context of the V4 `SessionPane` through the shared settings snapshot; the `rowId` of each
+turn's first reasoning is derived by `ConversationTurnGroup` from the turn's full ordered rows and copies
+no renderer-local visibility state.
 
-“显示思考过程”对新用户默认开启。切换默认值的版本使用
-`messageStreamShowReasoningMigrationInitialized` 执行一次性迁移：
+"Show thinking process" defaults to on for new users. The version that switched the default runs a one-time
+migration with `messageStreamShowReasoningMigrationInitialized`:
 
-- 旧 `setting.json` 没有迁移标记时，无论 `messageStreamShowReasoning` 原值为
-  `true`、`false` 还是缺失，都统一迁移为 `true`，并把迁移标记与结果一起通过设置服务的串行写入队列原子落盘。
-- 迁移标记存在后，磁盘中的 `true` / `false` 都是权威用户选择；用户再次关闭时，后续读取和升级不得重新开启。
-- 新安装直接解析为 `messageStreamShowReasoning=true` 且迁移已完成；首次正常设置写入会把这两个字段一起持久化。
+- An old `setting.json` without the migration marker is migrated to `true` whatever the original
+  `messageStreamShowReasoning` (`true`, `false` or missing), and marker and result are persisted atomically
+  through the settings service's serial write queue.
+- Once the marker exists, `true` / `false` on disk is the authoritative user choice; if the user turns it
+  off again, later reads and upgrades must not turn it back on.
+- A fresh install resolves directly to `messageStreamShowReasoning=true` with the migration done; the first
+  normal settings write persists both fields.
 
 ```text
 settings read
@@ -23,6 +31,8 @@ settings read
   +-- migration marker present --> preserve stored true/false
 ```
 
-这两个开关只裁剪 UI 渲染，不修改 CLI projection、session snapshot、工具执行结果或持久化消息。`ConversationStatusPanel` 继续按 `plan` / `todoGroups` 展示会话进度摘要，不受 `messageStreamShowTodos` 影响。
-
-桌面端 `desktop-continuous` 与手机 Web 端 `web-remote-replayable` 复用同一渲染规则；开关不参与传输、恢复、队列或 workspace identity 判定。
+The two switches only trim UI rendering; they do not modify the CLI projection, session snapshot, tool
+results or persisted messages. `ConversationStatusPanel` keeps showing the session progress summary by
+`plan` / `todoGroups`, unaffected by `messageStreamShowTodos`. Desktop `desktop-continuous` and mobile Web
+`web-remote-replayable` share the same rendering rule; the switches take no part in transport, recovery,
+queue or workspace identity decisions.

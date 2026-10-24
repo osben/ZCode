@@ -1,20 +1,23 @@
-# OAuth 头像接入
+# OAuth Avatar Integration
 
-这套实现把登录头像和用户信息一起从 provider 端传到 UI。
+This implementation carries the login avatar together with user info from the provider to the UI.
 
-## 数据流
+## Data Flow
 
-1. provider 的 `fetchUserInfo()` 读取第三方 `userinfo` 接口。
-2. provider 将头像地址写入 `OAuthUserProfile.avatarUrl`。
-3. `OAuthService` 把 `OAuthUserProfile` 转成 `UserInfo` 时保留 `avatarUrl`。
-4. `WorkspaceSidebarFooter` 使用 `AvatarImage` 渲染头像，加载失败时回退到首字母或用户图标。
+1. The provider's `fetchUserInfo()` reads the third-party `userinfo` endpoint.
+2. The provider writes the avatar address into `OAuthUserProfile.avatarUrl`.
+3. `OAuthService` keeps `avatarUrl` when converting `OAuthUserProfile` to `UserInfo`.
+4. `WorkspaceSidebarFooter` renders the avatar with `AvatarImage`, falling back to initials or a user icon on
+   load failure.
 
-## 当前 provider 映射
+## Current Provider Mapping
 
 - BigModel: `userData.avatar` -> `avatarUrl`
 - ZAI: `userData.picture` -> `avatarUrl`
 
-## 约束
+## Constraints
 
-- 旧登录态只保存用户名时，头像字段可以缺省，不影响登录恢复。
-- 新 provider 需要先确认 userinfo 响应里头像字段名，再补到 `OAuthUserProfile`。
+- When an old login state stored only the user name, the avatar field may be absent and login restore is
+  unaffected.
+- A new provider must first confirm the avatar field name in the userinfo response, then add it to
+  `OAuthUserProfile`.

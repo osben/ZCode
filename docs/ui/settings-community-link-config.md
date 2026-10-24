@@ -1,12 +1,12 @@
-# 用户社群入口配置
+# User Community Entry Configuration
 
-> Todo103：本文保留 staging 的既定行为与历史验收记录；历史通过数不计为本次通过。
-> 本次整合证据另记在 todo103-staging-integration-ledger.md，未改变 Provider/Selection 边界。
+The help menu's "User community" entry and the platform "Feedback" action both read from the current
+endpoint's `client/configs.data.configs.feedbackUrl`; the built-in `config/default.json` provides
+defaults. Historical acceptance counts from earlier staging are not counted as passing for this change;
+integration evidence is kept in `todo103-staging-integration-ledger.md` (no Provider/Selection boundary
+change).
 
-帮助菜单里的“用户社群”入口与平台“问题反馈”统一从当前 endpoint 的
-`client/configs.data.configs.feedbackUrl` 读取；内置 `config/default.json` 用作默认值。
-
-## 配置格式
+## Config Format
 
 ```json
 {
@@ -18,90 +18,85 @@
 }
 ```
 
-## 解析规则
+## Resolution Rules
 
-- 当前语言为 `zh-CN`：依次读取远端 `zh-CN`、内置 `zh-CN`
-- 当前语言为 `en-US`：依次读取远端 `en-US`、内置 `en-US`
-- 当前语言对应的远端与内置入口都没有：UI 不显示“用户社群”入口
+1. Current language `zh-CN`: read remote `zh-CN`, then built-in `zh-CN`.
+2. Current language `en-US`: read remote `en-US`, then built-in `en-US`.
+3. If neither remote nor built-in has an entry for the current language, the UI hides "User community".
 
-不同语言之间不互相回退，避免中文用户进入 Discord 或英文用户进入飞书。
+Languages never fall back to each other, so Chinese users do not land on Discord nor English users on
+Feishu.
 
 ```text
-切换语言
+switch language
    |
    v
-点击用户社群
+click User community
    |
-   +--> 远端当前语言 --> 内置当前语言 --> 不显示入口
-                              |
-                              v
-                           打开入口
+   +--> remote current language --> built-in current language --> hide entry
+                                          |
+                                          v
+                                       open entry
 ```
 
-## 当前默认入口
+## Current Defaults
 
-- `zh-CN` 默认入口使用飞书加好友链接：`https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&qr_code=true`
-- `en-US` 默认入口使用 Discord 邀请链接：`https://discord.gg/z9aBcQXZQ3`
+- `zh-CN`: Feishu add-friend link `https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&qr_code=true`
+- `en-US`: Discord invite `https://discord.gg/z9aBcQXZQ3`
 
-因此，中文界面的用户进入飞书社群，英文界面的用户进入 Discord；对应语言未配置时不显示入口。
+## Implementation Locations
 
-## 实现位置
+- Shared parsing: `packages/shared/src/remoteAppConfig.ts`
+- Desktop platform resolution and local config fallback: `packages/desktop/src/main/desktopCommandHandlers.ts`
+- Web platform resolution: `packages/web/src/communityUrl.ts`
+- Help menu display: `packages/ui/src/WorkspaceHelpMenuButton.tsx`
 
-- shared 解析：`packages/shared/src/remoteAppConfig.ts`
-- Desktop 平台解析与本地配置回退：`packages/desktop/src/main/desktopCommandHandlers.ts`
-- Web 平台解析：`packages/web/src/communityUrl.ts`
-- 帮助菜单显示：`packages/ui/src/WorkspaceHelpMenuButton.tsx`
+## client/configs Source (2026-09)
 
-## 2026-09：迁移到 client/configs
-
-新版帮助配置统一读取当前 endpoint 的 `GET /api/v1/client/configs`，携带现有
-`app_version` 和 `platform` 参数，严格验证 `code=0` 后读取
-`data.configs.feedbackUrl`。包含 `community_urls`、`feedback_url` 和
-`feedback_use_external_form`。旧 CDN 文件保留给旧版客户端，内置
-`config/default.json` 保留，Desktop 继续随包发布，Web 继续打包导入。
+Help config reads `GET /api/v1/client/configs` of the current endpoint with the existing `app_version`
+and `platform` parameters, strictly validates `code=0`, then reads `data.configs.feedbackUrl`, which
+contains `community_urls`, `feedback_url` and `feedback_use_external_form`. The old CDN file is kept for
+old clients; built-in `config/default.json` is kept (Desktop ships it with the package, Web imports it at
+build time).
 
 ```text
-可见性检查 / 点击入口
+visibility check / click entry
           |
-   平台注入 HTTP 请求（no-store，10 秒超时）
+   platform-injected HTTP request (no-store, 10 s timeout)
           |
-   当前 endpoint + version + platform 内存缓存（1 小时 / 并发合并）
+   in-memory cache per endpoint + version + platform (1 hour / concurrent coalescing)
           |
-   code=0 → feedbackUrl → 按字段解析
+   code=0 -> feedbackUrl -> resolve per field
           |
-   远端有效值 → 内置同语言默认值 → 隐藏社群 / 不打开无地址表单
+   valid remote value -> built-in same-language default -> hide community / do not open an address-less form
 ```
 
-公共读取器不写磁盘 HTTP cache、localStorage 或数据库。帮助配置是公开请求，不附带
-用户鉴权；缓存按完整请求 URL 隔离，失败不缓存。请求期间切换 endpoint 不得把旧结果
-写入新 endpoint 的缓存。字段缺失、无效类型、空链接均回退；布尔 false 是有效覆盖值。
-桌面原生帮助菜单及命令面板继续按开关选择内置弹窗或外部表单；问号菜单、Windows
-自绘菜单直接打开内置表单的行为不变。Web 的平台反馈动作仍打开外部地址。
+1. The common reader writes no disk HTTP cache, localStorage or database. Help config is a public
+   request with no user auth; the cache is isolated by the full request URL and failures are not cached.
+2. Switching endpoint during a request must not write the old result into the new endpoint's cache.
+3. Missing fields, invalid types and empty links fall back; boolean `false` is a valid override.
+4. The desktop native help menu and command palette keep choosing the built-in dialog or the external
+   form by the switch; the question-mark menu and the Windows custom-drawn menu still open the built-in
+   form directly. Web's platform feedback action still opens the external address.
+5. Web uses the same deployment endpoint config as OAuth / relay and adds no remote-control RPC, Host or
+   Agent; the desktop continuous / web remote replayable session chains are unchanged.
 
-Web 使用与现有 OAuth / relay 相同的部署 endpoint 配置，不新增远控 RPC、Host 或
-Agent，不改变 desktop continuous / web remote replayable 会话链路。
+Runtime finding: the server rejects `platform=web` (HTTP 400 / code 3001); Web omits the optional
+`platform` and the production endpoint returns HTTP 200 / code 0. Desktop keeps platform-arch.
 
-验证：单测覆盖 envelope、字段与语言回退、false 覆盖、HTTP/JSON/超时失败、并发合并、
-TTL 和 endpoint 隔离；交互验证覆盖社群外链及平台反馈动作。需执行 typecheck、lint，
-保留运行时请求证据。跨系统与手机实机未执行的项目需在交付时注明。
+Verification: unit tests cover envelope, field and language fallback, `false` override, HTTP/JSON/timeout
+failure, concurrent coalescing, TTL and endpoint isolation; interaction tests cover the community
+external link and the platform feedback action; typecheck and lint are required with runtime request
+evidence. 36 unit tests passed, and macOS Electron HC-01 passed (mocked new endpoint, community external
+link, no-store request option, `false` not opening the external form, switching endpoint then `true`
+opening the given feedback form). Windows/Linux and real mobile browsers were not run; Web is covered by
+request-parsing unit tests and the real endpoint. A cross-origin custom Web endpoint still needs server
+CORS, otherwise the built-in defaults apply. Do not run E2E in parallel with typecheck (`out/host` can be
+overwritten); interaction assertions wait for the actual external-link call.
 
-运行时验证：服务端不接受 `platform=web`（HTTP 400 / code 3001）；Web 省略可选
-platform，实测正式 endpoint 返回 HTTP 200 / code 0。桌面沿用 platform-arch。
+### Old CDN Path Cleanup
 
-### 本次验证结果
-
-- 公共解析/缓存、Web 解析及桌面配置单测共 36 项通过。
-- `pnpm typecheck` 与 `pnpm lint` 通过（lint 仅有仓库既有 warning）。
-- macOS Electron HC-01 已通过：运行时 mock 新接口、社群外链、no-store 请求选项、
-  false 不打开外部表单、切换 endpoint 后 true 打开指定反馈表单。
-- Windows/Linux 与手机浏览器实机未执行；Web 当前通过请求解析单测与真实接口验证。
-  跨域自定义 Web endpoint 仍需服务端允许 CORS，否则按约定使用内置默认值。
-- 首次 E2E 与 typecheck 并行导致 out/host 产物存在覆盖风险；单独重新构建后 Host 正常。
-  交互断言等待实际外链调用，避免把命令派发完成误认为异步动作完成。
-
-### 旧 CDN 链路清理
-
-新版不再导出旧 CDN 地址常量及版本 URL 构造函数；删除对应过时单测。
-保留 `remoteAppConfig.ts` 中仍使用的字段解析函数及其测试。
-内置 `config/default.json` 内容与 Desktop/Web 打包方式均不变；线上旧 CDN 文件仍供旧版使用。
-本次只清理无调用代码和说明，不改变交互；正式 HC-01～HC-05（8 个 case）继续覆盖新链路。
+The old CDN address constants and versioned URL builders are no longer exported and their stale unit
+tests are deleted. Field-parsing functions still used in `remoteAppConfig.ts` and their tests stay. The
+built-in `config/default.json` content and the Desktop/Web packaging are unchanged; the online old CDN
+file still serves old clients. Formal HC-01 to HC-05 (8 cases) keep covering the new path.

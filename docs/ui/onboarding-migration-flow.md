@@ -32,15 +32,15 @@ The current visible step order is:
 
 ## Claude → ZCode Session Import
 
-Claude Code 原生 `.jsonl` 与 ZCode 协议 snapshot **不是同一格式**，导入时会在 services 层做归一化：
+Native Claude Code `.jsonl` and the ZCode protocol snapshot are **not the same format**, so import normalizes in the services layer:
 
-1. `claudeNativeSessionImportParser.ts` 读取 jsonl，过滤 sidechain / synthetic assistant，把多段 assistant 聚合成「用户一轮 + 助手一轮」的 `ZCodePersistedMessage[]`。
-2. `session/create` 支持 `importedHistory`，导入服务会创建真实 ZCode Protocol session，并把归一后的历史消息写入 zcode-cli session store。导入后的 `taskId` 就是真实 `sessionId`，因此后续 `sendPrompt`、`setModel`、`setMode` 都继续命中同一个 runtime。
-3. `buildImportedClaudeTaskFile.ts` 仍会生成迁移备份 snapshot；生成前会按属性路径清洗来源端运行态字段，默认过滤 `meta.mode`、`meta.model`、`meta.provider`、`messages[].model`，避免 Claude Code 的模型/模式/provider 污染 ZCode 当前 workspace 的运行时选择。
-4. `persistImportedClaudeTask.ts` 写入 `~/.zcode/v2/sessions/{workspaceHash}/{taskId}.json`（legacy snapshot 备份），并同步 sqlite task index + `workspace_task_list_changed` 广播。新导入路径的列表元数据来自真实 ZCode session，同时保留 `migrationSource: "claudeCode"`。
-5. 原生 jsonl 副本复制到 `~/.zcode/v2/agent-config/claude/{workspaceHash}/projects/...`，供后续 Claude 续聊链路使用。
+1. `claudeNativeSessionImportParser.ts` reads the jsonl, filters sidechain / synthetic assistant entries, and aggregates multiple assistant segments into one user turn + one assistant turn as `ZCodePersistedMessage[]`.
+2. `session/create` supports `importedHistory`: the import service creates a real ZCode Protocol session and writes the normalized history into the zcode-cli session store. The imported `taskId` is the real `sessionId`, so later `sendPrompt`, `setModel` and `setMode` keep hitting the same runtime.
+3. `buildImportedClaudeTaskFile.ts` still generates a migration backup snapshot; before generation it cleans source-side runtime fields by property path, filtering `meta.mode`, `meta.model`, `meta.provider` and `messages[].model` by default, so Claude Code's model/mode/provider do not pollute the runtime selection of the current ZCode workspace.
+4. `persistImportedClaudeTask.ts` writes `~/.zcode/v2/sessions/{workspaceHash}/{taskId}.json` (legacy snapshot backup) and syncs the sqlite task index + the `workspace_task_list_changed` broadcast. For the new import path, list metadata comes from the real ZCode session while `migrationSource: "claudeCode"` is kept.
+5. The native jsonl copy is copied to `~/.zcode/v2/agent-config/claude/{workspaceHash}/projects/...` for the later Claude resume chain.
 
-打开迁移后的任务时，优先按真实 ZCode session 恢复；只有旧数据没有对应 protocol session 时，才 fallback 到 **legacy session JSON** 只读历史恢复。
+When opening a migrated task, the real ZCode session is restored first; only old data without a matching protocol session falls back to read-only history recovery from the **legacy session JSON**.
 
 ## Claude User Memory → ZCode Default AGENTS
 

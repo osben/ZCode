@@ -1,5 +1,7 @@
-# Plan Mode Status（当前事实）
+# Plan Mode Status (Current Facts)
 
-旧 `PlanModeToolPanel` 和“计划/原始数据”tab 已删除。当前 plan/goal/todo 状态统一显示在 V4 `ConversationStatusPanel`；协作模式切换走 `switchCollaborationMode` 和 composer toolbar。
+The old `PlanModeToolPanel` and its "Plan / Raw data" tabs are removed. Plan/goal/todo state is shown in
+the V4 `ConversationStatusPanel`; collaboration-mode switching goes through `switchCollaborationMode`
+and the composer toolbar.
 
-状态面板只渲染 projection，不持有独立计划事实，也不提供旧 raw-data tab。
+The status panel renders a projection only; it holds no independent plan facts and has no raw-data tab.

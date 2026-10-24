@@ -1,13 +1,15 @@
-# 设置列表项操作按钮
+# Settings List Row Action Buttons
 
-## 交互规范
+## Interaction Spec
 
-- 设置列表每一项右侧的纯图标操作统一使用 `Button variant="ghost" size="icon-md"`（28px）。
-- 编辑、删除等同组图标按钮使用 `gap-1`（4px）。
-- Switch、授权等独立控件与图标按钮组使用 `gap-2`（8px）。
-- 只有一个操作时不额外制造占位间距；Memory 行尾导航箭头不是操作按钮，不套用按钮尺寸。
+- Icon-only actions at the right of each settings list item use `Button variant="ghost" size="icon-md"`
+  (28px).
+- Same-group icon buttons such as edit and delete use `gap-1` (4px).
+- Independent controls such as Switch and authorization use `gap-2` (8px) from the icon button group.
+- With only one action no extra placeholder gap is created; the Memory row's trailing navigation arrow is
+  not an action button and does not take the button size.
 
-## 当前覆盖
+## Current Coverage
 
-- 命令、钩子、子智能体、MCP 列表项的编辑与删除。
-- 插件商店列表项的更多菜单。
+- Edit and delete of command, hook, subagent and MCP list items.
+- The more menu of plugin store list items.
