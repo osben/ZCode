@@ -1,48 +1,40 @@
-# 模型调用轨迹 E2E 覆盖矩阵
+# Model Call Trajectory E2E Coverage Matrix
 
-本文定义 Model Trajectory Viewer 的端到端验收语义。覆盖率门槛按固定区间
-`1f015ca1726a4e1f932c6e87b8b7ce64623317af..f5ce7b4b360eaec0a396b55f1e2ad36586ecd837`、
-且可归因于调用轨迹能力的可执行 TypeScript/TSX 变更行聚合计算，目标不低于 95%。归因集合固定为
-`3e00cec9d0`、`bfcef0c9c4`、`1d434a6dda`、`65156894ac`、`274ebbd8f4`、`f5ce7b4b36`，
-对应原生滚动、reasoning 落盘、tool metadata 投影、轨迹 UX、内容搜索和有界尾部读取；
-不得把同期进入 staging 的 provider、media、settings、通用 task action tracing 等无关变更计入
-分母。纯文档、测试代码、翻译字典与纯 CSS 不进入可执行行分母，但对应视觉和文案必须由 E2E
-断言覆盖。Renderer 使用 Istanbul 覆盖率，Desktop host / CLI 使用 V8 覆盖率。`094ac1c5a1`
-的默认展开是上界之后的当前行为，E2E 保留回归断言，但不进入本次固定分母。
+This document defines the end-to-end acceptance semantics of the Model Trajectory Viewer. The coverage threshold is computed over the fixed range `1f015ca1726a4e1f932c6e87b8b7ce64623317af..f5ce7b4b360eaec0a396b55f1e2ad36586ecd837`, aggregated over executable TypeScript/TSX changed lines attributable to the call-trajectory capability, with a target of at least 95%. The attribution set is fixed to `3e00cec9d0`, `bfcef0c9c4`, `1d434a6dda`, `65156894ac`, `274ebbd8f4`, `f5ce7b4b36`, corresponding to native scrolling, reasoning persistence, tool metadata projection, trajectory UX, content search and bounded tail reading. Unrelated changes that entered staging in the same period (provider, media, settings, generic task action tracing) must not enter the denominator. Pure docs, test code, translation dictionaries and pure CSS are not in the executable-line denominator, but the matching visuals and copy must be covered by E2E assertions. Renderer uses Istanbul coverage; Desktop host / CLI use V8 coverage. The default expansion of `094ac1c5a1` is current behavior after the upper bound; E2E keeps a regression assertion for it but it is not in this fixed denominator.
 
-## 状态维度与剪枝
+## State Dimensions and Pruning
 
-| 维度     | 接受状态                                                                 | 剪枝                                                                                                                 |
-| -------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| 数据     | records、`error-text`、record error；完整记录与旧格式兼容记录            | Pane 的 loading/empty/read-error 是既有通用状态，不进入本次 UX 重构的 changed-line E2E；JSONL 投影语义与模型厂商无关 |
-| 内容类型 | System、User、Reasoning、Assistant、Tool Call、Tool Result、record error | 不做六类内容的笛卡尔积；在一条复合 fixture 中覆盖                                                                    |
-| 展开     | 默认展开、单行收起、全部、自定义类型、溢出正文                           | 不逐条重复相同 toggle 断言                                                                                           |
-| 搜索     | 无结果、单结果、多结果、前后导航、折叠命中、虚拟区外命中                 | 大小写和空白归一化由单测覆盖，E2E 验证产品链路                                                                       |
-| 列表     | 短列表、长列表虚拟化、展开后动态测高                                     | 不按固定记录数量重复跑；长列表代表规模边界                                                                           |
-| 视口     | Desktop 标准宽度、窄侧栏                                                 | `/remote` 不新建 Agent runtime；共享 host 兼容由组件与现有 remote 回归覆盖                                           |
+| Dimension    | Accepted states                                                                | Pruning                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Data         | records, `error-text`, record error; complete records and old-format compatible records | The Pane's loading/empty/read-error are existing generic states and are not in the changed-line E2E of this UX refactor; JSONL projection semantics are vendor independent |
+| Content type | System, User, Reasoning, Assistant, Tool Call, Tool Result, record error       | No Cartesian product of the six kinds; covered in one composite fixture                                                       |
+| Expansion    | default expanded, single-row collapse, all, custom types, overflow body        | The same toggle assertion is not repeated per row                                                                             |
+| Search       | no result, one result, many results, previous/next, hit in a collapsed row, hit outside the virtual area | Case and whitespace normalization is covered by unit tests; E2E verifies the product chain                        |
+| List         | short list, long virtualized list, dynamic height after expansion              | Not rerun per fixed record count; the long list represents the scale boundary                                                 |
+| Viewport     | Desktop standard width, narrow side pane                                       | `/remote` creates no new Agent runtime; shared-host compatibility is covered by components and existing remote regression      |
 
-## 接受的 Cases
+## Accepted Cases
 
-| ID    | Setup                                                                                            | Action                                                     | Assertions                                                                                                                                                                                                   | 自动化归并                                                |
-| ----- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| TRJ01 | 真实 main-turn 建立 task/session，先读取 CLI 实际写入的 model-io，再追加包含六类内容的确定性记录 | 显式固定 `zh-CN` 后，从真实 task 右键菜单打开调用轨迹      | CLI 实际记录包含 main-turn response/reasoning；Host 读取当前 task 文件；来源、finish reason 与六类内容通过稳定语义属性正确投影；代表性中文文案、token、耗时、tool name/id 均正确，功能断言不依赖英文展示文本 | live writer/host-read spec                                |
-| TRJ02 | 注入兼容 JSONL：full → delta、顶层 tool metadata、`error-text`、record error                     | 打开轨迹并展开错误行                                       | delta 还原后的新增 user 可见且旧 assistant 不重复为 Input；tool name/id 分离；错误摘要取 value；展开为 destructive 样式；record error 可见                                                                   | fixture projection spec                                   |
-| TRJ03 | 复合内容含普通与超高正文                                                                         | 验证默认展开，点击整行收起/再展开、复制、展开/收起溢出全文 | 默认展开；整行可收起并恢复；复制只在展开态；超高正文 mask 与居中展开 pill 工作；换行保留                                                                                                                     | interaction spec                                          |
-| TRJ04 | 六类内容同时存在                                                                                 | 全部展开/收起；分别在菜单中切换 Reasoning 与 Tool Result   | 批量状态立即生效；两种自定义开关只影响目标类型；后发命令覆盖旧单行 override                                                                                                                                  | interaction spec                                          |
-| TRJ05 | 生成超过虚拟化阈值的多调用数据，若干行不同高度                                                   | 滚动到中段、展开稳定 key 的一行、滚出挂载窗口后再返回      | 只渲染窗口附近记录；动态测高不重叠；header 吸顶；展开状态在真实卸载/重挂载后保持                                                                                                                             | virtual/search spec                                       |
-| TRJ06 | 多处命中且分布于已渲染记录                                                                       | 搜索、上一个/下一个、关闭搜索                              | 总数与索引正确；活动命中和普通命中样式区分；导航不闪烁；关闭后高亮清空且用户展开状态恢复                                                                                                                     | virtual/search spec                                       |
-| TRJ07 | 唯一命中位于折叠正文且在虚拟窗口外                                                               | 搜索并导航到命中                                           | 目标记录滚入视口、对应行自动展开，命中高亮并居中定位                                                                                                                                                         | virtual/search spec                                       |
-| TRJ08 | 窄侧栏与完整 tool name/id                                                                        | 缩窄 Desktop renderer                                      | 页面无水平滚动；tool name 完整；可见操作列右边线误差不超过 2px                                                                                                                                               | narrow-layout spec                                        |
-| TRJ09 | 创建超过 32 MiB 的稀疏 model-io，尾部追加完整 recent record                                      | 刷新调用轨迹                                               | Host 只读取有界尾部、丢弃起点残行、保留 recent record，并显示 truncated 提示                                                                                                                                 | bounded-tail spec                                         |
-| TRJ10 | TRJ01 setup with the trajectory tab open                                                         | Close the tab, reopen from the `+` launcher                | The launcher offers the trajectory entry bound to the active task after the tab is closed; reopening remounts the timeline for the same task without the task context menu                                   | interaction spec                                          |
-| TRJ11 | 真实 task 追加一条 100 条输入（首条含 20 KB 段）的调用记录，默认收起并只挂载第一页               | 展开含超长段的首行、搜索第 90 条命中、点击“显示接下来”     | 首页 40 行全部收起；超长段显示“Truncated at source, N bytes”；命中时只挂载页加 20 行的窗口（共 60 行），间隙“显示接下来 40 of 100”；点击后挂载恰好 40 行（共 100 行）                                        | 窗口与标签由 `resolveInputRowWindow` 与 CallCard 单测覆盖 |
+| ID    | Setup                                                                                                   | Action                                                              | Assertions                                                                                                                                                                                                                           | Automation merge                                         |
+| ----- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| TRJ01 | A real main-turn creates the task/session; first read the model-io the CLI actually wrote, then append deterministic records covering the six kinds | Pin `zh-CN` explicitly, then open the call trajectory from the real task context menu | The CLI record contains main-turn response/reasoning; the Host reads the current task file; source, finish reason and the six kinds are projected correctly through stable semantic attributes; representative Chinese copy, token, duration, tool name/id are correct; functional assertions do not depend on English display text | live writer/host-read spec |
+| TRJ02 | Inject compatible JSONL: full -> delta, top-level tool metadata, `error-text`, record error             | Open the trajectory and expand the error row                        | After delta restore the added user is visible and the old assistant is not repeated as Input; tool name/id are separate; the error summary takes the value; expanded state uses the destructive style; the record error is visible       | fixture projection spec                                  |
+| TRJ03 | Composite content with normal and very tall bodies                                                      | Verify default expansion; click the whole row to collapse/expand, copy, expand/collapse the overflow full text | Default expanded; the whole row collapses and restores; copy only when expanded; the tall-body mask and centered expand pill work; line breaks preserved                                                         | interaction spec                                         |
+| TRJ04 | All six kinds present                                                                                   | Expand/collapse all; toggle Reasoning and Tool Result separately in the menu | Bulk state takes effect immediately; the two custom toggles affect only the target kind; the later command overrides old single-row overrides                                                                                       | interaction spec                                         |
+| TRJ05 | Generate multi-call data above the virtualization threshold with rows of different heights             | Scroll to the middle, expand a row with a stable key, scroll it out of the mounted window and back | Only records near the window render; dynamic height measurement does not overlap; header sticks; expansion state survives a real unmount/remount                                                                                  | virtual/search spec                                      |
+| TRJ06 | Several hits spread over rendered records                                                               | Search, previous/next, close search                                 | Total and index correct; active hit and ordinary hits are styled differently; navigation does not flicker; after closing, highlights clear and the user's expansion state is restored                                                | virtual/search spec                                      |
+| TRJ07 | The only hit is in a collapsed body outside the virtual window                                          | Search and navigate to the hit                                      | The target record scrolls into view, the row auto-expands, the hit is highlighted and centered                                                                                                                                      | virtual/search spec                                      |
+| TRJ08 | Narrow side pane with full tool name/id                                                                 | Narrow the Desktop renderer                                         | No horizontal scroll; tool name complete; the right edge of the visible action column is within 2px                                                                                                                                  | narrow-layout spec                                       |
+| TRJ09 | Create a sparse model-io above 32 MiB, with a complete recent record appended at the tail               | Refresh the call trajectory                                         | The Host reads only the bounded tail, drops the partial line at the start, keeps the recent record, and shows a truncated notice                                                                                                      | bounded-tail spec                                        |
+| TRJ10 | TRJ01 setup with the trajectory tab open                                                                | Close the tab, reopen from the `+` launcher                         | The launcher offers the trajectory entry bound to the active task after the tab is closed; reopening remounts the timeline for the same task without the task context menu                                                            | interaction spec                                         |
+| TRJ11 | A real task appends a call record with 100 inputs (the first has a 20 KB segment), collapsed by default and mounting only the first page | Expand the first row with the oversized segment, search for the 90th hit, click “显示接下来” (show next) | The first page of 40 rows is collapsed; the oversized segment shows “Truncated at source, N bytes”; on a hit only a window of page plus 20 rows (60 rows) mounts, with the gap “显示接下来 40 of 100”; clicking mounts exactly 40 rows (100 rows total) | Window and labels are covered by `resolveInputRowWindow` and CallCard unit tests |
 
 ## Trajectory v2 cases
 
-Spec: `specs/model-trajectory-v2.md`. Automation: `packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts`. v1 cases TRJ01–TRJ11 stay unchanged.
+Spec: `specs/model-trajectory-v2.md`. Automation: `packages/desktop/test/e2e/conversation-session/conversation-session-model-trajectory-v2-viewer.test.ts`. v1 cases TRJ01-TRJ11 stay unchanged.
 
 | ID    | Setup                                                                                                                                                                                                                                                              | Action                                                          | Assertions                                                                                                                                                                                                                                                                                                       |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | TRV01 | Live main turn: thinking stream, a real `Bash` tool_use, final text                                                                                                                                                                                                | Open v2 from the task context menu                              | Live model-io records carry `timing.timeToFirstContentMs`; the v1 entry still exists and both tabs coexist; summary values; ledger shows user, request, assistant and `Bash {command…} → preview`; tool Timing tab shows scheduled and execution times from the live `tool_usage`; request Timing tab shows TTFT |
 | TRV02 | Seeded records: two catalogs differing by one tool, cached system blocks, effort and `max_tokens` changes, usage with cache write and reasoning, a compact call, a legacy record without body or timing                                                            | Select request, tool and legacy rows                            | Separator chips show the deltas; Payload shows tool count, KB and breakpoints; Schema shows the call-time definition; legacy values render "—"; compaction marker present; context % shown for a known model and hidden for an unknown one                                                                       |
 | TRV03 | TRV02 data                                                                                                                                                                                                                                                         | Drag on the strip, clear, click a span, refresh, Ctrl+wheel     | Ledger filtered to the range (data attributes); clearing restores it; clicking a span selects its row; the range survives refresh; Ctrl+wheel on the strip is default-prevented and zooms the axis                                                                                                               |
@@ -52,55 +44,34 @@ Spec: `specs/model-trajectory-v2.md`. Automation: `packages/desktop/test/e2e/con
 | TRV07 | Narrow renderer                                                                                                                                                                                                                                                    | Select a row                                                    | Single column; drill-in with Back; no horizontal scroll. The mobile bottom sheet is covered by render tests; `/remote` is pruned as for v1                                                                                                                                                                       |
 | TRV08 | Seeded records: a `Skill` call with its result, `mcp__github__get_pull_request` and a second MCP server, a `Write` under `…/memories/projects/x/memory/`, a delta with the `MEMORY.md` index and a recall attachment, `project_memory_recall` and `dream` sidecars | Click each filter chip; select a skill, MCP and context row     | Rows carry `data-trajectory-v2-category` and badges; chips show counts (memory reads/writes, MCP servers) and filter to one category; memory sidecar markers show with sidecars hidden; strip has category colors and a memory lane; summary lists skills, memory counts and MCP servers                         |
 
-## 覆盖责任
+## Coverage Responsibilities
 
-| 层                    | E2E 责任                                               | 补充测试                                |
-| --------------------- | ------------------------------------------------------ | --------------------------------------- |
-| CLI writer            | TRJ01 验证 reasoningText 实际落盘                      | runner unit 验证提取与 bounded append   |
-| Service projection    | TRJ01/TRJ02 验证文件读取、delta、tool/error 元数据贯通 | modelTrajectory unit 覆盖异常行与 limit |
-| UI rendering          | TRJ01-TRJ04/TRJ08                                      | 纯 formatter、expansion state 单测      |
-| Virtualization/search | TRJ05-TRJ07                                            | search/highlight 纯逻辑单测             |
+| Layer                 | E2E responsibility                                                   | Supplementary tests                            |
+| --------------------- | -------------------------------------------------------------------- | ---------------------------------------------- |
+| CLI writer            | TRJ01 verifies reasoningText is actually persisted                   | runner unit verifies extraction and bounded append |
+| Service projection    | TRJ01/TRJ02 verify file read, delta, tool/error metadata end to end  | modelTrajectory unit covers bad lines and limit |
+| UI rendering          | TRJ01-TRJ04/TRJ08                                                    | pure formatter and expansion-state unit tests  |
+| Virtualization/search | TRJ05-TRJ07                                                          | pure search/highlight logic unit tests         |
 
-## 95% 审计规则
+## 95% Audit Rules
 
-1. 运行 trajectory E2E 时设置 `ZCODE_E2E_COVERAGE=1`。
-2. 合并 Renderer Istanbul 与 Node V8 报告后，仅筛选固定区间内、且由上述 trajectory commits 引入的相关可执行变更行；以目标 revision 的 blame 归因，Babel/Istanbul statement 起始行确定 TS/TSX 可执行行。
-3. 每个 case 必须具备 setup、action、assertion；仅路过代码不计作语义覆盖。
-4. 若聚合低于 95%，先补有产品意义的 case/断言；不可用无断言调用伪造覆盖率。
-5. 最终同时运行 `typecheck:e2e`、根 `typecheck`、`lint` 与 fixture check。
+1. Set `ZCODE_E2E_COVERAGE=1` when running the trajectory E2E.
+2. After merging Renderer Istanbul and Node V8 reports, select only the relevant executable changed lines inside the fixed range introduced by the trajectory commits above; attribute by blame at the target revision, and take TS/TSX executable lines from Babel/Istanbul statement start lines.
+3. Every case must have setup, action and assertion; merely passing through code does not count as semantic coverage.
+4. If the aggregate is below 95%, first add cases/assertions with product meaning; coverage must not be faked with assertion-less calls.
+5. Finally run `typecheck:e2e`, root `typecheck`, `lint` and the fixture check together.
 
-## 2026-08-24 历史执行证据
+## Execution Evidence
 
-- Formal case：`conversation-session-model-trajectory-viewer.test.ts`，TRJ01–TRJ08 全部自动化归并为一次真实 Desktop/host 链路运行，并已通过人工 review 与 formal admission audit。
-- Case-local provider fixture 与 manifest 已通过 `e2e:fixture:check`；运行时 model-io 文件由 spec 按真实 task id 创建。
-- `ZCODE_E2E_COVERAGE=1` 正式运行通过，artifact run id：
-  `desktop-e2e-20260824030501067-p90124-d7b5300b50c7a917`。
-- Renderer/host 源码报告与 CLI V8 dist 对应行合并后，保守计入 CLI 本次新增的全部 27 行，
-  changed-line 命中为 **1382 / 1437（96.17%）**，超过 95% 门槛。
-- CLI `runner-debug` 的 generate、stream、reasoning normalization 新增路径在同次 V8 报告中均有命中；
-  reasoning 数组内容与空值边界继续由 runner unit 精确断言。
+2026-08-24 (historical): formal case `conversation-session-model-trajectory-viewer.test.ts` ran TRJ01-TRJ08 as one real Desktop/host chain, passed manual review and the formal admission audit; changed-line hits were 1382 / 1437 (96.17%), CLI new lines (27) counted conservatively. This predates the bounded-tail reading fix of `f5ce7b4b36`, so it proves only the coverage of the UX refactor then and is not final proof of the current 95% threshold.
 
-该证据早于 `f5ce7b4b36` 的有界尾部读取修复，只能证明当时的 UX 重构覆盖率，不能作为当前
-95% 门槛的最终凭证。当前审计必须在 TRJ01–TRJ09 与固定分母上重新生成同一次运行证据。
+2026-08-27 (current): formal case `conversation-session-model-trajectory-viewer.test.ts`, TRJ01-TRJ09 in a single formal replay passed after a full rebuild (exit code `0`, first-time pass rate `100%`). The case-local DeepSeek fixture and the common fixture are combined explicitly; the case first lets the real CLI main-turn write model-io containing `response.reasoningText`, then appends deterministic records and enters the Pane through the real task context menu. The same run collected Renderer Istanbul, Host V8 and CLI V8. Fixed-revision blame and executable-line intersection audit:
 
-## 2026-08-27 当前执行证据
-
-- Formal case：`conversation-session-model-trajectory-viewer.test.ts`，TRJ01–TRJ09 单次正式 replay
-  通过；完整重建后的 run id：`desktop-e2e-20260827-131338-656`，exit code `0`，first-time pass
-  rate `100%`。
-- Case-local DeepSeek fixture 与 common fixture 显式组合；用例先让真实 CLI main-turn 写出包含
-  `response.reasoningText` 的 model-io，再追加确定性记录，并通过真实 task 右键菜单进入 Pane。
-- 同一次运行采集 Renderer Istanbul、Host V8 与 CLI V8。固定 revision blame 与 executable-line
-  交集审计结果如下：
-
-| 覆盖来源          | 命中 / changed executable lines |     覆盖率 |
+| Coverage source   | Hits / changed executable lines |   Coverage |
 | ----------------- | ------------------------------: | ---------: |
 | Renderer Istanbul |                       397 / 413 |     96.13% |
 | Host V8           |                         37 / 38 |     97.37% |
 | CLI V8            |                           6 / 6 |       100% |
-| 合计              |                   **440 / 457** | **96.28%** |
+| Total             |                   **440 / 457** | **96.28%** |
 
-- CLI 报告落在编译后的 `runner-debug.js`；对应 source executable lines 的 generate/stream
-  `reasoningText` 与 `modelIOReasoningText` 均在同次 V8 报告中命中。未命中的 17 行主要是不可达的
-  未引用旧组件、复制失败 catch、无内容 fallback、不可序列化 payload catch 与搜索 range 已在视口外的
-  滚动修正；它们不影响 95% 门槛，且未用无断言调用制造命中。
+The CLI report lands in the compiled `runner-debug.js`; the generate/stream `reasoningText` and `modelIOReasoningText` source lines were all hit in the same V8 report. The 17 uncovered lines are mainly unreachable unreferenced old components, the copy-failure catch, the no-content fallback, the unserializable-payload catch, and the scroll correction when a search range is already outside the viewport; they do not affect the 95% threshold and no assertion-less calls were used to create hits.
