@@ -2,7 +2,7 @@
 
 ## Goal
 
-To make desktop-related processes easier to find in both development and runtime, the app adopts a unified `zcode-*` naming convention.
+Desktop processes use a unified `zcode-*` naming convention so they are easy to find in development and at runtime.
 
 ## Naming Rules
 
@@ -11,7 +11,7 @@ To make desktop-related processes easier to find in both development and runtime
   - Main window: `zcode-renderer-main`
   - Remote window: `zcode-renderer-remote-<host>`
   - Resource Manager: `zcode-renderer-resource-manager`
-- host utility process：`zcode-host-<label>`
+- host utility process: `zcode-host-<label>`
 - Agent child process: `zcode-agent-<provider>-<workspace>`
 
 The shared string-construction logic is centralized in `packages/shared/src/process-names.ts`, avoiding scattered hard-coded names across main / host / preload / services.

@@ -459,7 +459,7 @@ condition is "nothing else changes", not "only this field was typed": `script`, 
 `subagent_model` and `name` each send the call down the amendment path, whatever they carry.
 The handler then calls the run port's `retuneConcurrency` in place of `port.amend`. A host
 whose port has no `retuneConcurrency` has no such route at all, and every call lands as the
-amendment it would have been before this existed, window and all.
+amendment it takes without this route, window and all.
 
 Here `max_concurrency` is the one place the tri-state is *not* normalized: the resolved input
 carries the number or `null`, and `null` travels to the port as itself. The route's own
@@ -617,8 +617,8 @@ step 2 only: `script_unchanged`, `workflow_script_file_unreadable` and
 `workflow_retune_unchanged`, `workflow_run_settled` and `workflow_run_not_retunable`
 ("Changing only the parallelism of a live run"), and all three leave the run untouched like the
 rest. There is no
-`not_amendable`: a running predecessor is stopped, not refused, so the race between a stop
-and the amend that follows it no longer exists.
+`not_amendable`: a running predecessor is stopped, not refused, so there is no race between a
+stop and the amend that follows it.
 
 The response the model reads names both runs: "Run A was stopped and superseded. The
 revised script started as run B …", or just the new run when the predecessor had already
@@ -640,7 +640,7 @@ is `ResumeWorkflowRun`. It then says to load the `dynamic-workflows` skill befor
 script, and that a call carrying `path` or `script` is refused until the skill has been
 loaded while a settings-only call is not.
 
-Everything else the description used to carry is the skill's §16.4, which the gate makes the
+Everything else is in the skill's §16.4, which the gate makes the
 model read first: the cache (unchanged asks of named subagents replay at zero cost until the
 revision's first write to the workspace; after that only asks that read and ran nothing keep
 replaying), the fact that a named subagent whose unfinished ask the revision did not change

@@ -633,7 +633,7 @@ replaces the line with its own and leaves the popover open: nothing was written.
 An agent too old to know `workflows/save` — detected the way the hub detects a missing
 `scope`, by the JSON-RPC error of the capability probe below — shows the lead alone: no
 divider, no fields, and the hint gains 「当前 agent 不支持直接保存」. The model path is the whole
-popover there, which is also what it was before this feature existed.
+popover there.
 
 Keyboard: opening focuses the name field; Tab runs lead → name → scope → description →
 「直接保存」; `⌘↩` / `Ctrl↩` triggers the lead from any field; Esc closes and drops the draft.
