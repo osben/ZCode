@@ -1,26 +1,26 @@
-# 功能影响发现（Feature Impact Discovery）
+# Feature Impact Discovery
 
-## 状态
+## Status
 
-- 本文是 `feature-boundary-planner` 在实现前执行功能扫描与影响分析的事实规范。
-- 本文描述分析方法和输出契约，不修改产品运行时行为。
-- 功能语义图位于 `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml`；代码事实以当前工作区和 codegraph 索引为准。
+- This document is the de-facto specification for how `feature-boundary-planner` runs feature scanning and impact analysis before implementation.
+- It describes the analysis method and output contract; it does not change product runtime behavior.
+- The feature semantic graph lives at `.agents/skills/feature-boundary-planner/references/zcode-feature-graph.yaml`; code facts follow the current workspace and codegraph index.
 
-## 目标
+## Goal
 
-当开发者准备修改一个功能时，在阅读大量实现或开始编码前回答以下问题：
+Before a developer reads large amounts of implementation or starts coding a feature change, answer:
 
-1. 这个能力出现在哪些 UI 入口、后台流程和运行模式中？
-2. 哪些入口共享组件、选项来源或服务，哪些只是名称或字段相似？
-3. 每个入口的草稿状态、默认值、校验、提交动作和最终状态归属分别在哪里？
-4. 修改后必须关注哪些相邻功能、协议边界、持久化路径、恢复链路和测试？
-5. 哪些关系来自稳定的产品语义，哪些只是静态代码的可达性证据？
+1. Which UI entries, background flows, and run modes does the capability appear in?
+2. Which entries share components, option sources, or services — and which merely share names or fields?
+3. Where do each entry's draft state, defaults, validation, commit action, and final state ownership live?
+4. Which neighboring features, protocol boundaries, persistence paths, recovery chains, and tests must be watched after the change?
+5. Which relationships are stable product semantics, and which are only static-code reachability evidence?
 
-最终产物是可检索的 **Impact Brief**。只有在需要定义产品行为或规划测试时，才继续展开状态笛卡尔积和用例剪枝。
+The final artifact is a searchable **Impact Brief**. Expand into state cartesian products and case pruning only when product behavior must be defined or tests planned.
 
-## 两层图模型
+## Two-layer graph model
 
-单独依赖静态调用图会把工具函数、通用组件和测试辅助代码全部扩散进结果；单独维护人工文档又容易随实现演进而过期。因此功能扫描使用两层证据：
+Relying only on a static call graph spreads utility functions, generic components, and test helpers into every result; maintaining hand-written documentation alone rots as the implementation evolves. Feature scanning therefore uses two evidence layers:
 
 ```text
 开发者的变更意图
@@ -40,103 +40,103 @@ Impact Brief（分级影响、证据、待确认项）
         +----> 可选：边界矩阵、用例剪枝、E2E 交接
 ```
 
-### 功能语义图
+### Feature semantic graph
 
-功能语义图维护产品层面的关系，节点至少包含以下类型：
+The graph maintains product-level relationships with at least these node types:
 
-- `capability`：用户或开发者能描述的能力，例如模型选择、自动化任务、Subagent。
-- `ui-surface`：能力实际出现的入口，例如对话工具栏、自动化编辑页。
-- `shared-ui`：多个入口复用的组件、选项构建器或 hook。
-- `state-owner`：草稿、运行态、默认值或权威投影的归属者。
-- `service`：提交命令、校验或数据来源的服务边界。
-- `persistence`：数据库、配置文件或 Markdown 等持久化落点。
-- `delivery-boundary`：桌面 continuous、手机 replayable、远程 workspace 等交付边界。
-- `evidence`：测试、spec 或其他可验证证据。
+- `capability`: something a user or developer can describe — model selection, automation tasks, Subagent.
+- `ui-surface`: an entry where the capability actually appears — conversation toolbar, automation edit page.
+- `shared-ui`: components, option builders, or hooks reused across entries.
+- `state-owner`: owner of drafts, runtime state, defaults, or authoritative projections.
+- `service`: service boundaries for commit commands, validation, or data sources.
+- `persistence`: persistence sinks — databases, config files, Markdown.
+- `delivery-boundary`: desktop continuous, mobile replayable, remote workspace, etc.
+- `evidence`: tests, specs, or other verifiable evidence.
 
-语义边使用有方向的动词表达，例如：
+Semantic edges are directed verbs, e.g.:
 
-- `renders-in`、`shares-component`、`options-from`
-- `owns-draft`、`inherits-from`、`validates-with`
-- `commits-to`、`persists-to`、`projects-to`、`recovers-via`
-- `covered-by`、`must-not-mutate`、`must-remain-isolated-from`
+- `renders-in`, `shares-component`, `options-from`
+- `owns-draft`, `inherits-from`, `validates-with`
+- `commits-to`, `persists-to`, `projects-to`, `recovers-via`
+- `covered-by`, `must-not-mutate`, `must-remain-isolated-from`
 
-图谱只保存高价值语义和 codegraph 起点，不试图复制完整代码调用图。
+The graph keeps only high-value semantics and codegraph seeds; it does not try to replicate the full code call graph.
 
-### 扫描结果如何沉淀
+### How scan results settle
 
-每次扫描都要把“当前图谱”和“当前代码事实”的差异单独列出来：
+Every scan lists the deltas between the current graph and current code facts separately:
 
-- 只要求扫描、解释或诊断时，在 Impact Brief 中给出建议的 graph delta，不直接修改图谱。
-- 进入功能规划或实现交接时，先确认产品语义，再把确认过的 capability、UI surface、owner、commit sink、不变量和 code seed 写回功能语义图。
-- 一个 surface 代表一套独立的用户场景和状态/提交语义；同一界面内部的多个组件调用点可以作为同一个 surface 的多个 code seed。
-- 保持 node ID 稳定。重命名产品文案时优先增加 alias，避免破坏历史检索。
-- 只把经过确认的产品关系写入图谱；纯静态可达、测试依赖和未解释的新调用方仍保留为 drift/evidence。
+- For scan/explain/diagnose requests, propose a graph delta in the Impact Brief without modifying the graph.
+- When entering feature planning or implementation handoff, confirm the product semantics first, then write the confirmed capability, UI surface, owner, commit sink, invariants, and code seeds back into the graph.
+- One surface represents one independent user scenario and state/commit semantics; multiple component call sites inside one screen are multiple code seeds of the same surface.
+- Keep node IDs stable. When product copy is renamed, prefer adding an alias to preserve historical searchability.
+- Only confirmed product relationships enter the graph; purely static reachability, test dependencies, and unexplained new callers stay as drift/evidence.
 
-这样后续开发者既能检索已确认的功能关系，也能通过 codegraph 发现图谱落后于实现的部分。
+Later developers can then search confirmed feature relationships and, via codegraph, discover where the graph lags the implementation.
 
-### codegraph 代码事实
+### codegraph code facts
 
-codegraph 用于验证当前实现，而不是替代产品语义：
+codegraph verifies the current implementation; it does not replace product semantics:
 
-- 从语义图声明的 symbol/file seed 开始探索。
-- 查找共享组件、构建器、hook、store 和服务方法的直接调用方。
-- 沿每个 UI 入口追踪“本地状态 -> 默认/继承 -> 校验 -> 提交动作 -> 权威状态或持久化”。
-- 默认只展开 2 层；只有关键归属仍不明确时扩展到 3 层。
-- `affected tests` 只作为证据，不能直接证明产品功能依赖。
-- 当前调用方与语义图不一致时记录为 `graph-drift-candidate`，由人确认后再更新图谱。
+- Start from the symbol/file seeds declared in the semantic graph.
+- Find direct callers of shared components, builders, hooks, stores, and service methods.
+- For each UI entry, trace "local state → defaults/inheritance → validation → commit action → authoritative state or persistence".
+- Expand 2 levels by default; go to 3 only when a key ownership is still unclear.
+- `affected tests` are evidence only — they do not prove product feature dependency.
+- Current callers disagreeing with the semantic graph are recorded as `graph-drift-candidate`; a human confirms before the graph updates.
 
-索引代码优先使用 codegraph；`rg` 用于查找 docs、配置、生成文件或尚未进入索引的内容。
+Prefer codegraph for indexed code; use `rg` for docs, configs, generated files, or anything not yet indexed.
 
-## 先判断改动层级
+## Classify the change layer first
 
-同一个“功能改动”在不同层级会产生完全不同的影响面。扫描前必须先分类：
+The same "feature change" has entirely different impact surfaces at different layers. Classify before scanning:
 
-| 改动层级 | 典型问题 | 默认关注范围 |
-| --- | --- | --- |
-| `presentation` | 文案、布局、可见性、交互控件 | 所有复用该 UI 的入口、主题、响应式、国际化 |
-| `option-source` | 候选项来源、分组、排序、过滤 | 共享构建器、provider registry、各入口的二次过滤 |
-| `draft-default` | 初始值、继承、fallback | 每个入口的草稿 owner、workspace/session 默认值 |
-| `validation` | 可用性、权限、阻塞条件 | 入口级 gating、提交前校验、错误呈现 |
-| `commit-effect` | 点击后真正改变什么 | 命令/服务、运行态 owner、隔离不变量 |
-| `persistence` | 保存位置、加载和迁移 | repo/config/Markdown、跨窗口或跨工作区隔离 |
-| `recovery` | 重连、snapshot、队列、恢复 | desktop continuous 与 web remote replayable 边界 |
+| Layer           | Typical questions                          | Default focus                                                       |
+| --------------- | ------------------------------------------- | -------------------------------------------------------------------- |
+| `presentation`  | copy, layout, visibility, controls          | every entry reusing the UI, theme, responsiveness, i18n              |
+| `option-source` | candidate sources, grouping, sorting, filters | shared builders, provider registry, per-entry secondary filtering |
+| `draft-default` | initial values, inheritance, fallback       | each entry's draft owner, workspace/session defaults                 |
+| `validation`    | availability, permissions, blocking conditions | per-entry gating, pre-commit validation, error presentation      |
+| `commit-effect`| what actually changes on click              | commands/services, runtime owner, isolation invariants              |
+| `persistence`   | save location, load and migration           | repo/config/Markdown, cross-window/cross-workspace isolation        |
+| `recovery`      | reconnect, snapshot, queue, recovery        | desktop continuous vs web remote replayable boundaries              |
 
-如果用户没有说明层级，先完成低成本扫描，再只询问会改变影响结论的歧义。
+If the user did not state the layer, do the cheap scan first, then ask only about ambiguities that would change the conclusion.
 
 ## UI Surface Matrix
 
-凡是一个能力出现在多个界面，都必须逐入口记录以下字段：
+Whenever a capability appears in multiple surfaces, record these fields per entry:
 
-| 字段 | 要回答的问题 |
-| --- | --- |
-| 用户场景 | 用户为什么在这里使用该能力？ |
-| UI 入口 | 页面、面板、弹窗或工具栏在哪里？ |
-| 共享实现 | 复用了哪个组件、选项构建器、hook 或服务？ |
-| 展示/草稿状态 | 当前值由谁展示，本地编辑值由谁持有？ |
-| 默认/继承 | 未显式配置时从哪里解析？ |
-| 校验/gating | 哪些条件会隐藏、禁用、回退或报错？ |
-| 提交动作 | 最终调用哪个 command/service？ |
-| 权威 owner/落点 | 运行时状态或持久化最终写到哪里？ |
-| 模式边界 | desktop/web/mobile、local/remote 是否不同？ |
-| 隔离不变量 | 这个入口绝不能意外改变什么？ |
+| Field                | Question to answer                                            |
+| -------------------- | -------------------------------------------------------------- |
+| User scenario        | Why does the user invoke the capability here?                  |
+| UI entry             | Which page, panel, dialog, or toolbar?                         |
+| Shared implementation| Which component, option builder, hook, or service is reused?   |
+| Display/draft state  | Who displays the current value; who holds the local edit?      |
+| Default/inheritance  | Where does it resolve when not explicitly configured?          |
+| Validation/gating    | What hides, disables, falls back, or errors?                   |
+| Commit action        | Which command/service is finally invoked?                      |
+| Authority/sink       | Where do runtime state or persistence finally land?            |
+| Mode boundary        | Do desktop/web/mobile, local/remote differ?                    |
+| Isolation invariants | What must this entry never change accidentally?                |
 
-“共享组件”不等于“共享行为”。同名 `model` 字段也不等于相同状态：对话模型可能改变当前 session，自动化模型保存到 automation record，Subagent 模型保存到 agent Markdown。
+"Shared component" does not mean "shared behavior". Same-named `model` fields are not the same state: the conversation model may change the current session, the automation model saves into the automation record, and the Subagent model saves into agent Markdown.
 
-## 影响分级
+## Impact ranking
 
-Impact Brief 中的关系按以下级别排序：
+Relationships in the Impact Brief rank as:
 
-1. `must-inspect`：共享修改点或同一权威状态/提交路径，遗漏很可能直接产生回归。
-2. `should-inspect`：共享候选源、校验、默认值或产品不变量，通常需要回归确认。
-3. `conditional`：只在特定运行模式、workspace 类型或改动层级下相关。
-4. `invariant-only`：无需改代码，但必须证明没有被意外改变。
-5. `evidence-only`：测试或静态可达节点，仅用于验证，不宣称产品依赖。
+1. `must-inspect`: shared modification points or the same authoritative state/commit path; missing one likely regresses directly.
+2. `should-inspect`: shared candidate sources, validation, defaults, or product invariants — usually needs regression confirmation.
+3. `conditional`: relevant only under specific run modes, workspace types, or change layers.
+4. `invariant-only`: no code change needed, but proof is required that it did not change accidentally.
+5. `evidence-only`: tests or statically reachable nodes — verification only, never claimed as product dependency.
 
-每条结论都要附带关系类型、原因和至少一个 code/doc 证据。不得把 codegraph 的所有可达节点平铺成“受影响功能”。
+Every conclusion carries a relationship type, a reason, and at least one code/doc evidence. Never flatten all codegraph-reachable nodes into "affected features".
 
-## 模型选择示例
+## Model selection example
 
-模型选择是典型的跨 UI 能力：
+Model selection is a typical cross-UI capability:
 
 ```text
                          +-> 对话工具栏 -> session/draft runtime
@@ -145,40 +145,40 @@ Impact Brief 中的关系按以下级别排序：
                          +-> 内置 Subagent -> built-in override
 ```
 
-扫描这个能力时至少要验证：
+Scanning this capability must at least verify:
 
-- `ModelConfigSelect` 和 `buildModelSelectGroups` 的当前调用方。
-- 各入口是否使用同一个 provider registry，以及是否存在入口级过滤。
-- 对话、自动化、Subagent 的草稿 owner 和 commit sink 是否仍然分离。
-- 打开或取消自动化编辑不能改变 workspace/session 的模型。
-- 修改共享候选生成逻辑时，各入口的默认/继承语义不能被错误统一。
-- 新增调用方但语义图中没有对应 UI surface 时，要报告图谱漂移。
+- Current callers of `ModelConfigSelect` and `buildModelSelectGroups`.
+- Whether all entries use the same provider registry and whether per-entry filtering exists.
+- That the draft owners and commit sinks of conversation, automation, and Subagent remain separate.
+- That opening or canceling the automation editor cannot change the workspace/session model.
+- That changing shared candidate-generation logic does not wrongly unify per-entry default/inheritance semantics.
+- That a new caller without a matching UI surface in the semantic graph is reported as graph drift.
 
-## 与边界规划的衔接
+## Handoff to boundary planning
 
-功能影响发现负责回答“还要看哪里”；边界规划负责回答“各状态组合应该是什么产品行为”。两者按以下顺序衔接：
+Impact discovery answers "what else must be inspected"; boundary planning answers "what product behavior each state combination should have". They connect in this order:
 
-1. 产出 Impact Brief 和 UI Surface Matrix。
-2. 将未定义或冲突的关系转成边界问题，与用户确认。
-3. 将确认后的 capability、surface、owner、commit sink 和不变量写回功能语义图。
-4. 只对已确认范围枚举状态组合。
-5. 将组合标记为 `accepted`、`undefined`、`pruned`、`ignored` 或 `bug-candidate`。
-6. 先更新对应 spec、case catalog 和 coverage matrix，再进入实现或 E2E 编写。
+1. Produce the Impact Brief and UI Surface Matrix.
+2. Turn undefined or conflicting relationships into boundary questions and confirm with the user.
+3. Write the confirmed capability, surface, owner, commit sink, and invariants back into the feature semantic graph.
+4. Enumerate state combinations only for the confirmed scope.
+5. Mark combinations `accepted`, `undefined`, `pruned`, `ignored`, or `bug-candidate`.
+6. Update the corresponding spec, case catalog, and coverage matrix before implementation or E2E writing.
 
-如果用户只要求扫描、解释或诊断，到 Impact Brief 为止，不修改产品代码或现有 spec。
+If the user only asked to scan, explain, or diagnose, stop at the Impact Brief — no product code or existing spec changes.
 
-## 输出契约
+## Output contract
 
-每次功能扫描至少输出：
+Every feature scan outputs at least:
 
-- 功能与改动层级摘要。
-- UI Surface Matrix。
-- 共享实现与差异化行为。
-- 分级的上游/下游功能关系。
-- 状态 owner、校验点、commit sink 和持久化落点。
-- 必须保持的不变量。
-- codegraph seeds、直接调用方、展开深度和相关测试证据。
-- `graph-drift-candidate`。
-- 会改变实现或测试范围的待确认问题。
+- Feature and change-layer summary.
+- UI Surface Matrix.
+- Shared implementations and divergent behaviors.
+- Ranked upstream/downstream feature relationships.
+- State owners, validation points, commit sinks, and persistence targets.
+- Invariants that must hold.
+- codegraph seeds, direct callers, expansion depth, and related test evidence.
+- `graph-drift-candidate`.
+- Open questions that would change implementation or test scope.
 
-需要继续做边界规划时，再追加状态维度、剪枝决定、formal-proof 用例和 E2E 交接材料。
+For continued boundary planning, append state dimensions, pruning decisions, formal-proof cases, and E2E handoff material.

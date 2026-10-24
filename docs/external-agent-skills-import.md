@@ -1,73 +1,73 @@
 # External Agent Skills Import
 
-## 目标
+## Goal
 
-设置页「技能」支持从外部 Agent 的本地技能目录一键导入到 ZCode。第一阶段只导入 Skills，不导入 MCP 服务器、插件、命令或模型供应商。
+The Settings "Skills" page supports one-click import from external agents' local skill directories into ZCode. Phase one imports skills only — no MCP servers, plugins, commands, or model providers.
 
-## 来源范围
+## Source scope
 
-导入入口自动扫描以下本地来源：
+The import entry auto-scans these local sources:
 
-- Claude Code：用户级 `~/.claude/skills` 与工作区级 `<workspace>/.claude/skills`
-- Codex CLI：用户级 `~/.codex/skills` 与工作区级 `<workspace>/.codex/skills`
-- OpenCode：用户级 `~/.config/opencode/skills` 与工作区级 `<workspace>/.opencode/skills`
-- OpenClaw：用户级 `~/.openclaw/skills` 与工作区级 `<workspace>/skills`
-- Augment：用户级 `~/.augment/skills` 与工作区级 `<workspace>/.augment/skills`
-- Continue：用户级 `~/.continue/skills` 与工作区级 `<workspace>/.continue/skills`
-- Goose：用户级 `~/.config/goose/skills` 与工作区级 `<workspace>/.goose/skills`
-- Qwen Code：用户级 `~/.qwen/skills` 与工作区级 `<workspace>/.qwen/skills`
-- Qoder：用户级 `~/.qoder/skills` 与工作区级 `<workspace>/.qoder/skills`
-- Qoder CN：用户级 `~/.qoder-cn/skills` 与工作区级 `<workspace>/.qoder/skills`
-- Windsurf：用户级 `~/.codeium/windsurf/skills` 与工作区级 `<workspace>/.windsurf/skills`
-- Trae：用户级 `~/.trae/skills` 与工作区级 `<workspace>/.trae/skills`
-- Trae CN：用户级 `~/.trae-cn/skills` 与工作区级 `<workspace>/.trae/skills`
-- Kiro CLI：用户级 `~/.kiro/skills` 与工作区级 `<workspace>/.kiro/skills`
-- Roo Code：用户级 `~/.roo/skills` 与工作区级 `<workspace>/.roo/skills`
-- CodeBuddy：用户级 `~/.codebuddy/skills` 与工作区级 `<workspace>/.codebuddy/skills`
+- Claude Code: user `~/.claude/skills` and workspace `<workspace>/.claude/skills`
+- Codex CLI: user `~/.codex/skills` and workspace `<workspace>/.codex/skills`
+- OpenCode: user `~/.config/opencode/skills` and workspace `<workspace>/.opencode/skills`
+- OpenClaw: user `~/.openclaw/skills` and workspace `<workspace>/skills`
+- Augment: user `~/.augment/skills` and workspace `<workspace>/.augment/skills`
+- Continue: user `~/.continue/skills` and workspace `<workspace>/.continue/skills`
+- Goose: user `~/.config/goose/skills` and workspace `<workspace>/.goose/skills`
+- Qwen Code: user `~/.qwen/skills` and workspace `<workspace>/.qwen/skills`
+- Qoder: user `~/.qoder/skills` and workspace `<workspace>/.qoder/skills`
+- Qoder CN: user `~/.qoder-cn/skills` and workspace `<workspace>/.qoder/skills`
+- Windsurf: user `~/.codeium/windsurf/skills` and workspace `<workspace>/.windsurf/skills`
+- Trae: user `~/.trae/skills` and workspace `<workspace>/.trae/skills`
+- Trae CN: user `~/.trae-cn/skills` and workspace `<workspace>/.trae/skills`
+- Kiro CLI: user `~/.kiro/skills` and workspace `<workspace>/.kiro/skills`
+- Roo Code: user `~/.roo/skills` and workspace `<workspace>/.roo/skills`
+- CodeBuddy: user `~/.codebuddy/skills` and workspace `<workspace>/.codebuddy/skills`
 
-不支持 Gemini。
+Gemini is unsupported.
 
-## 导入策略
+## Import policy
 
-- 只处理包含 `SKILL.md` 的技能目录。
-- 导入目标由用户在导入按钮下拉菜单中选择：
-  - `Global` 写入 `~/.zcode/skills/<skill-dir>/`。
-  - `Project` 写入 `<workspace>/.zcode/skills/<skill-dir>/`。
-- 导入方式由用户在弹窗底部切换：
-  - `软链`：在目标目录创建指向来源技能目录的符号链接，默认选项；Windows 下目录链接使用 `junction`。
-  - `直接复制`：复制整个技能目录到目标目录。
-- 若没有打开工作区，`Project` 目标不可选。
-- 没有打开工作区时仍扫描和导入用户级来源；工作区级来源只在存在 `workspacePath` 时参与。
-- 已存在同名目标目录，或目标 ZCode 技能目录中已存在相同 `name` 的技能时跳过，不覆盖现有 ZCode 技能。
-- 软链模式只对新导入技能生效；如果目标目录已经存在普通复制目录，不会自动替换为软链，仍按“目标目录已存在”跳过。
-- 导入结果按来源汇总 `importedCount` / `skippedCount` / `failedCount`。
-- 导入完成后刷新技能列表，让新技能立即出现在设置页。
+- Only skill directories containing `SKILL.md` are handled.
+- The import target is chosen in the import button's dropdown:
+  - `Global` writes to `~/.zcode/skills/<skill-dir>/`.
+  - `Project` writes to `<workspace>/.zcode/skills/<skill-dir>/`.
+- The import mode is switched at the bottom of the dialog:
+  - `软链` (symlink): create a symbolic link at the target pointing at the source skill directory; default. On Windows, directory links use `junction`.
+  - `直接复制` (direct copy): copy the whole skill directory.
+- `Project` is unavailable without an open workspace.
+- User-level sources still scan and import without a workspace; workspace-level sources participate only when a `workspacePath` exists.
+- An existing target directory with the same name, or an existing ZCode skill with the same `name`, is skipped — existing ZCode skills are never overwritten.
+- Symlink mode applies only to newly imported skills: an existing plain-copy target directory is not replaced by a link; it still counts as "target directory exists" and is skipped.
+- Results aggregate per source into `importedCount` / `skippedCount` / `failedCount`.
+- After import, the skill list refreshes so new skills appear in settings immediately.
 
-## UI 行为
+## UI behavior
 
-- 「技能」设置页在新建按钮旁展示导入图标按钮。
-- 点击后弹出导入对话框，默认扫描并列出可导入技能来源。
-- 弹窗参考 onboarding 向导的圆角、留白和工作区面板风格，但保持单栏结构；标题行右侧保留范围 Select 和刷新按钮，不展示标题说明文案。范围 Select 不显示额外 label，仅显示当前 `Global` / `Project` 值。当前视图使用两层来源树：第一层展示 Agent 与扫描路径，第二层展示该路径下的技能列表并默认折叠；点击箭头或来源文本展开确认技能明细。两个范围始终可选择，当前范围没有来源时在列表区展示空态。
-- 用户可在第二层单独勾选技能，第二层只展示可导入技能；已导入过、目标目录已存在或同名技能已存在的技能直接过滤，不展示在导入列表中。若 `SKILL.md` frontmatter 中存在 `version`，紧跟技能名称展示版本 badge，不展示路径。第一层复选框用于全选/取消该来源下全部可导入技能，并在部分选中时展示半选态。
-- 列表顶部提供当前范围的全选/取消全选 checkbox 控制，只作用于当前 `Global` / `Project` 范围内可导入的技能，不影响另一个范围的选择状态。打开弹窗或重新扫描后默认停留在 `Global`，但 `Global` 与 `Project` 来源都不默认勾选，需要用户显式选择。
-- 导入按钮采用分裂按钮：左侧点击后按当前目标和导入方式处理已选技能，右侧下拉菜单只切换导入目标，不直接触发导入；同名或同 `name` 的现有 ZCode 技能继续跳过，不覆盖。底部下拉菜单可在 `直接复制` 与 `软链` 间切换，旁边的叹号图标 hover 后通过 tooltip 说明当前导入方式的影响。
-- 导入完成页弱化顶部统计数字，并展示本次涉及的技能列表；每个技能显示状态图标、名称和可选版本，不展示文件路径，跳过项通过图标提示展示具体原因。
-- 空扫描结果保留弹窗并提示暂无可导入技能，避免用户误以为按钮无效。
+- The "Skills" settings page shows an import icon button next to the create button.
+- Clicking opens the import dialog, which scans and lists importable skill sources by default.
+- The dialog borrows the onboarding wizard's rounded corners, spacing, and workspace-panel styling but stays single-column; the title row keeps the scope Select and refresh button on the right with no descriptive subtitle. The scope Select shows no extra label — just the current `Global` / `Project` value. The view uses a two-level source tree: level one shows the agent and scan path; level two shows that path's skills, collapsed by default, expandable via arrow or source text. Both scopes are always selectable; an empty scope shows an empty state in the list area.
+- Users check skills individually at level two, which lists only importable skills: already-imported, existing-target, or same-name skills are filtered out of the list. A `version` in `SKILL.md` frontmatter renders as a version badge next to the name; paths are not shown. Level-one checkboxes select/deselect all importable skills of that source with a partial state when some are selected.
+- A select-all/deselect-all checkbox at the top controls only the current `Global` / `Project` scope's importable skills without touching the other scope's selections. Opening the dialog or rescanning defaults to `Global`, but neither scope's sources are pre-checked.
+- The import button is split: the left side imports selected skills with the current target and mode; the right dropdown only switches the import target without triggering import. Same-name or same-`name` skills keep being skipped. The bottom dropdown switches between `直接复制` and `软链`; the adjacent exclamation icon explains the current mode's effect via tooltip on hover.
+- The completion page downplays the top statistics and lists the skills involved: each shows a status icon, name, and optional version — no file paths; skipped items explain themselves via the icon tooltip.
+- An empty scan keeps the dialog open with a "nothing to import" hint, so the button never looks broken.
 
-## 兼容与边界
+## Compatibility and boundaries
 
-- `settings-sync` 继续承载导入状态机；本功能新增 `skills` 分类与外部 Agent source，但不改变 onboarding 的默认 `providers` 可见范围。
-- 导入弹窗不扫描用户级或项目级 `.agents/skills`，因为普通技能列表已经直接回读 `.agents` 技能目录；导入只负责把其它外部 Agent 来源复制到 ZCode 技能目录。
-- 工作区技能列表从当前目录向上遍历到 worktree 根时，每一层都合并读取 `.zcode/skills` 与 `.agents/skills`，与 Agent runtime 的默认 roots 保持一致；不得因为同层 `.zcode/skills` 已有技能就整根跳过 `.agents/skills`。两个根命中同一 realpath 时只保留一份，同名但路径不同的技能继续按安装项分别保留；废弃的 `.zcode/cli/skills` 与 `.claude/skills` 不参与发现。
-- 用户级技能列表同时读取 `~/.zcode/skills` 与 `~/.agents/skills`，避免导入一个全局技能后把剩余外部 Agent 全局技能从设置页隐藏；若 `.agents` 下某技能已按同目录名或相同 `name` 复制到 `.zcode/skills`，列表优先展示 `.zcode` 副本，避免重复。
-- Agent runtime 与设置页必须对 `SKILL.md` frontmatter 使用一致语义：`description` 支持 YAML 单行标量、`>` folded block 与 `|` literal block。`~/.agents/skills` 常见手写技能会用 `description: >` 编写多行触发说明，不能只读取顶层 `description: >` 字面值而丢弃缩进行；否则设置页能显示完整描述，但 Agent 注入的 skills 清单只剩 `>`。
-- 远程 workspace 只使用当前 host process 可访问的文件系统路径；身份隔离语义仍传递 `workspaceIdentity`，路径执行仍使用 `workspacePath`。
-- 直接复制模式不引用外部目录，避免外部 Agent 后续删除或修改影响 ZCode；软链模式会持续指向外部目录，适合希望跟随外部 Agent 技能变更的用户。
+- `settings-sync` keeps owning the import state machine; this feature adds the `skills` category and external agent sources without changing onboarding's default `providers` visibility.
+- The dialog does not scan `.agents/skills` (user or project level) — the ordinary skill list already reads the `.agents` skill directory directly; import only copies other external agent sources into ZCode skill directories.
+- The workspace skill list walks from the current directory up to the worktree root, merging `.zcode/skills` and `.agents/skills` at every level, matching the Agent runtime's default roots; `.agents/skills` is never skipped as a whole just because same-level `.zcode/skills` has skills. Two roots hitting the same realpath keep one copy; same-name skills at different paths stay as separate install entries. The deprecated `.zcode/cli/skills` and `.claude/skills` do not participate in discovery.
+- The user-level skill list reads both `~/.zcode/skills` and `~/.agents/skills`, so importing one global skill does not hide the remaining external-agent global skills from settings; if a skill under `.agents` was already copied to `.zcode/skills` (same directory name or same `name`), the list shows the `.zcode` copy to avoid duplicates.
+- Agent runtime and the settings page must share one semantics for `SKILL.md` frontmatter: `description` supports YAML single-line scalars, `>` folded blocks, and `|` literal blocks. Hand-written skills in `~/.agents/skills` commonly use `description: >` for multi-line trigger notes; reading only the literal top-level `>` and dropping indented lines would leave settings showing a full description while the Agent's injected skills list contains only `>`.
+- Remote workspaces use only paths the current host process can access; identity isolation still passes `workspaceIdentity`, path execution uses `workspacePath`.
+- Direct copy does not reference external directories, so later external deletion/modification cannot affect ZCode; symlink keeps pointing at the external directory — suitable for users who want to follow external agent changes.
 
-## 验证
+## Verification
 
-- 覆盖缺失目录、空目录、同名跳过、用户级导入、工作区级导入。
-- 覆盖工作区同层 `.zcode/skills` 与 `.agents/skills` 同时存在时两边都能发现，并继续忽略 `.zcode/cli/skills` 与 `.claude/skills`。
-- 覆盖 `.agents/skills` 中 `description: >` / `description: |` 多行 frontmatter，确保 Agent runtime 发现结果与设置页一致。
-- UI 覆盖导入按钮、弹窗来源列表、导入完成刷新。
-- 必须运行 `pnpm typecheck` 和 `pnpm lint`。
+- Cover missing directories, empty directories, same-name skips, user-level import, workspace-level import.
+- Cover same-level `.zcode/skills` + `.agents/skills` both being discoverable, and `.zcode/cli/skills` / `.claude/skills` staying ignored.
+- Cover `description: >` / `description: |` multi-line frontmatter in `.agents/skills`, keeping Agent runtime discovery consistent with settings.
+- UI covers the import button, dialog source list, and post-import refresh.
+- `pnpm typecheck` and `pnpm lint` must run.

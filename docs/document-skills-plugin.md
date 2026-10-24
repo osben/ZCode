@@ -1,50 +1,32 @@
-# 文档类官方插件
+# Document official plugins
 
-原 `document-skills` 按格式拆为四个独立内容插件，并内置独立 `image-search` 搜图插件，随客户端默认启用：
+The former `document-skills` aggregate was split into four independent content plugins, plus a built-in `image-search` plugin, all enabled by default with the client:
 
-| 插件          | Skill | 源码目录                                       |
-| ------------- | ----- | ---------------------------------------------- |
-| documents     | docx  | `apps/zcode-cli/packages/documents-plugin`     |
-| pdf           | pdf   | `apps/zcode-cli/packages/pdf-plugin`           |
-| presentations | pptx  | `apps/zcode-cli/packages/presentations-plugin` |
-| spreadsheets  | xlsx  | `apps/zcode-cli/packages/spreadsheets-plugin`  |
+| Plugin        | Skill | Source directory                                |
+| ------------- | ----- | ----------------------------------------------- |
+| documents     | docx  | `apps/zcode-cli/packages/documents-plugin`      |
+| pdf           | pdf   | `apps/zcode-cli/packages/pdf-plugin`            |
+| presentations | pptx  | `apps/zcode-cli/packages/presentations-plugin`  |
+| spreadsheets  | xlsx  | `apps/zcode-cli/packages/spreadsheets-plugin`   |
 
-同步来源为内部插件仓库 `zcode-marketplace/zcode-plugins-test`，
-`origin/main` 提交 `e19dca8be86cf981ed2e0c2b4855c6ee6ee15265` 的对应 `plugins/<插件名>` 目录。
-四个内置发布版本均为 `0.1.8`（高于旧聚合插件 `0.1.5`）。导入目录逐字节对齐上游，
-仅允许 package.json 与 .zcode-plugin/plugin.json 的内置版本字段差异；本次内容差异均来自上游导出，版本字段按内置发布序列升版。
+Sync source: the internal plugin repo `zcode-marketplace/zcode-plugins-test`, `origin/main` commit `e19dca8be86cf981ed2e0c2b4855c6ee6ee15265`, directory `plugins/<plugin-name>`. The four built-in releases are all `0.1.8` (above the old aggregate's `0.1.5`). Imported directories are byte-aligned with upstream; only the built-in version fields in package.json and .zcode-plugin/plugin.json may differ. Content differences come from upstream exports; version fields bump along the built-in release sequence.
 
-许可证：四个文档插件与搜图插件均为 Apache-2.0（2026-10-08 起，文档插件原为非商业许可，随开源改为 Apache-2.0，0.1.8 起生效；上游插件仓库需同步修改许可，否则下次同步会把旧许可带回）。
+Licenses: all four document plugins and the image-search plugin are Apache-2.0 (since 2026-10-08; the document plugins were previously non-commercial and changed to Apache-2.0 with the open-sourcing, effective from 0.1.8; the upstream plugin repo must update its license too, or the next sync would bring the old license back).
 
-展示名对应：Documents / Word文档、Presentations / 演示文档、PDF / PDF、Spreadsheets / 电子表格、Image Search / 搜图。
+Display names: Documents / Word文档, Presentations / 演示文档, PDF / PDF, Spreadsheets / 电子表格, Image Search / 搜图.
 
-## 发现、启用与升级
+## Discovery, enabling, and upgrades
 
-Bootstrap 官方 definition 是内置目录与默认启用的权威来源；Settings 默认名单须与其一致。
-启动 → seed 四个独立缓存 → 重建内置市场分片 → 既有插件发现读取分片 → 暴露 skills/agents。
-缓存分别为 `~/.zcode/cli/plugins/cache/zcode-plugins-official/<插件名>/0.1.8/`。
-每个插件可以独立启停、卸载与恢复，不再发布内置 `document-skills` 条目。
-旧聚合插件缓存和用户配置不删除；重建后的内置分片不再引用旧目录。
-用户另行安装的市场插件仍按既有安装与启用配置处理，不自动改写或卸载。
+The Bootstrap official definition is the authority for built-in directories and default enablement; the Settings default list must match it. Startup → seed the four independent caches → rebuild the built-in marketplace shard → existing plugin discovery reads the shard → skills/agents are exposed. Caches live at `~/.zcode/cli/plugins/cache/zcode-plugins-official/<plugin-name>/0.1.8/`. Each plugin can be independently disabled, uninstalled, and restored; no built-in `document-skills` entry is published anymore. Old aggregate caches and user settings are not deleted; the rebuilt built-in shard no longer references the old directory. Market plugins the user installed separately keep their existing install/enable handling — nothing is auto-rewritten or uninstalled.
 
-每个插件提供 `agents/visual-judge.md`，使用 `<插件名>:visual-judge` 限定名。
-原 `judge` 名称不再由内置插件提供。每个插件只携带自己的格式 skill；四个插件本身不再声明
-`image_search` MCP，图片搜索由默认启用的 `image-search` 插件提供，版本为 `0.1.1`，通过既有官方 JWT 认证访问 `${ZCODE_BASE_URL}/api/v1/mcp/server/image_search`；不新增本地 MCP runtime。
-`image-search` 缓存路径为 `~/.zcode/cli/plugins/cache/zcode-plugins-official/image-search/0.1.1/`。
+Each plugin ships `agents/visual-judge.md` under the qualified name `<plugin-name>:visual-judge`. The old `judge` name is no longer provided by built-in plugins. Each plugin carries only its own format skill; the four plugins no longer declare the `image_search` MCP — image search comes from the default-enabled `image-search` plugin, version `0.1.1`, accessing `${ZCODE_BASE_URL}/api/v1/mcp/server/image_search` with the existing official JWT auth; no new local MCP runtime. Its cache path is `~/.zcode/cli/plugins/cache/zcode-plugins-official/image-search/0.1.1/`.
 
-## 打包与验收
+## Packaging and acceptance
 
-filesystem seed、SEA、Electron Node bundle、remote prebuild、server remote 部署与容器评测
-必须使用五个目录，保留 `agents/`。每个发布单元必须校验自己的 `skills/<格式>/SKILL.md`
-与 `agents/visual-judge.md`；缺少任意必需资产不得标记成完整缓存。
-所有版本权威（package、manifest、Bootstrap、SEA）与缓存路径必须一致，内容变化必须升版。
+Filesystem seed, SEA, the Electron Node bundle, remote prebuild, server remote deployment, and container evaluation must all use the five directories, keeping `agents/`. Each release unit must verify its own `skills/<format>/SKILL.md` and `agents/visual-judge.md`; a missing required asset must never be marked as a complete cache. All version authorities (package, manifest, Bootstrap, SEA) and cache paths must agree; any content change requires a version bump.
 
-验收覆盖：四个插件默认发现且可独立关闭；旧聚合条目不再内置；四类技能与限定 Agent 名称
-分别可发现；filesystem/SEA 完整性拒绝缺失评审 Agent；桌面与远端打包清单不遗漏任何一个插件。
-本次只变更插件内容与分发清单，不改动桌面 continuous 或手机 replayable 会话语义。
+Acceptance covers: all four plugins discovered by default and independently disable-able; the old aggregate entry no longer built in; the four format skills and qualified agent names each discoverable; filesystem/SEA integrity rejects a missing review agent; desktop and remote packaging manifests omit none of the plugins. This work changes only plugin content and distribution manifests — desktop continuous and mobile replayable session semantics are untouched.
 
-## 依赖边界
+## Dependency boundary
 
-内置 skill 不等于内置系统依赖。LibreOffice、Poppler、Playwright、ReportLab、Tectonic、
-python-pptx、openpyxl 等由运行环境提供或按上游 skill 的环境检查安装。
-脚本相对路径以 Skill 工具返回的 base directory 为准。
+Built-in skills are not built-in system dependencies. LibreOffice, Poppler, Playwright, ReportLab, Tectonic, python-pptx, openpyxl, and friends come from the runtime environment or install via the upstream skill's environment checks. Script-relative paths resolve against the base directory the Skill tool returns.
