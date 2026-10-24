@@ -1,33 +1,33 @@
-# ZCode CLI 使用指南
+# ZCode CLI Usage Guide
 
-本指南面向从开源仓库构建 CLI 的使用者，重点介绍非交互调用、扩展配置和任务评测。无参数启动的 TUI 也可用于交互操作。本文随源码维护；不要仅凭 `0.16.x` 版本号判断两个构建的能力相同。
+This guide is for users who build the CLI from the open-source repository. It covers non-interactive invocation, extension configuration and task evaluation. The TUI started without arguments is also available for interactive use. The guide is maintained with the source; do not assume two builds have the same capabilities just because both report a `0.16.x` version.
 
-## 从哪里开始
+## Where to start
 
-1. [快速开始](01-quickstart.md)：源码构建、可执行文件、自检和第一次调用。
-2. [命令行参考](02-cli-reference.md)：参数、输出格式和退出码。
-3. [配置](03-config.md)：运行配置、个人模型配置、旧配置迁移和环境变量。
-4. [工具与评测配置](04-tools.md)：工具可见性、非交互限制和评测边界。
-5. [权限](05-permissions.md)：权限模式、拒绝行为和执行证据。
-6. [会话](06-sessions.md)：新建、恢复、目标、用量和持久化。
-7. [MCP](07-mcp.md)：连接外部工具服务。
-8. [Skills](08-skills.md)：技能发现、调用和自定义命令。
-9. [Hooks](09-hooks.md)：生命周期脚本与工作区信任。
-10. [Plugins](10-plugins.md)：安装、市场、本地插件和数据目录。
-11. [指令与记忆](11-memory.md)：`AGENTS.md`、记忆隔离与提取。
-12. [排障](12-troubleshooting.md)：启动、配置、权限和输出问题。
-13. [批量任务与运行记录](13-automation.md)：可复现运行、结果判定和轨迹导出。
+1. [Quick start](01-quickstart.md): build from source, executables, self-check and the first call.
+2. [CLI reference](02-cli-reference.md): flags, output formats and exit codes.
+3. [Configuration](03-config.md): runtime configuration, personal model configuration, legacy migration and environment variables.
+4. [Tools and evaluation setup](04-tools.md): tool visibility, non-interactive limits and evaluation boundaries.
+5. [Permissions](05-permissions.md): permission modes, denial behavior and execution evidence.
+6. [Sessions](06-sessions.md): create, resume, targets, usage and persistence.
+7. [MCP](07-mcp.md): connect external tool servers.
+8. [Skills](08-skills.md): skill discovery, invocation and custom commands.
+9. [Hooks](09-hooks.md): lifecycle scripts and workspace trust.
+10. [Plugins](10-plugins.md): install, marketplaces, local plugins and data directories.
+11. [Instructions and memory](11-memory.md): `AGENTS.md`, memory isolation and extraction.
+12. [Troubleshooting](12-troubleshooting.md): startup, configuration, permission and output problems.
+13. [Batch tasks and run records](13-automation.md): reproducible runs, result judgment and trajectory export.
 
-## 版本与验证
+## Versions and verification
 
-每次运行至少保存 `zcode --version`、`zcode doctor --json`、构建提交号或二进制 SHA-256。记录插件版本、模型 ID、模型配置和任务工作区。模型目录或插件市场可能独立更新，因此相同 CLI 版本不等于相同运行条件。
+For every run, save at least `zcode --version`, `zcode doctor --json`, and the build commit or the binary SHA-256. Record the plugin versions, model ID, model configuration and task workspace. The model catalog and plugin marketplaces can update independently, so the same CLI version does not mean the same run conditions.
 
-本指南描述当前源码接口。旧构建可能缺少 `--workflow-mode`，或仍使用旧模型配置。先用对应章节的小型自检确定能力；`--help` 可能没有展示解析器支持的全部参数，不能只靠帮助文本判定。
+This guide describes the current source interface. Older builds may lack `--workflow-mode` or still use the old model configuration. Use the small self-check in the relevant chapter to determine capabilities; `--help` may not list every flag the parser supports, so do not rely on help text alone.
 
-本次核对日期为 2026-10-14。具体验证范围和未验证项见[运行记录](13-automation.md#验证范围)。
+This guide was last checked on 2026-10-14. The verified scope and the unverified items are in the [run record](13-automation.md#verification-scope).
 
-## 开源构建的范围
+## Scope of the open-source build
 
-源码构建需要本仓库的 workspace 依赖和运行资源。不要只复制 `zcode.cjs` 就假设插件、模型配置和原生工具资源齐全。Computer Use 在开源导出中使用占位实现，不能据此宣称开源构建具备完整的原生桌面控制能力。Browser Use 是独立能力，仍需可用的 Chrome/Chromium 和对应插件。
+A source build needs this repository's workspace dependencies and runtime assets. Do not copy only `zcode.cjs` and assume plugins, model configuration and native tool assets are complete. Computer Use uses a placeholder implementation in the open-source export, so the open-source build cannot claim full native desktop control. Browser Use is a separate capability and still needs a usable Chrome/Chromium and the matching plugin.
 
-示例中的服务地址、API Key、模型 ID 和绝对路径必须换成自己的值。示例不会提供可用凭据。通用模型接口配置与账号登录是不同入口，应按实际使用的 provider 选择。
+Service addresses, API keys, model IDs and absolute paths in the examples must be replaced with your own values. The examples provide no usable credentials. The generic model API configuration and account login are different entry points; choose according to the provider you actually use.

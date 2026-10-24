@@ -1,16 +1,16 @@
-# 11 · 指令与记忆
+# 11 · Instructions and memory
 
-`AGENTS.md` 是用户或项目提供的指令，Memory 是运行过程中存取的记忆。二者都可能影响模型输入，但控制方式不同。
+`AGENTS.md` holds instructions provided by the user or project; Memory is what is stored and retrieved during runs. Both can affect the model input, but they are controlled differently.
 
 ## AGENTS.md
 
-当前指令装配会合并用户目录中的 `~/.zcode/AGENTS.md` 与工作区查找得到的项目 `AGENTS.md`，先用户、后项目。工作区范围与当前有效目录影响查找结果；不要默认每个父目录中的指令文件都会叠加，也不要默认其他产品的指令文件名会自动导入。
+The current instruction assembly merges `~/.zcode/AGENTS.md` in the user directory with the project `AGENTS.md` found from the workspace, user first and project second. The workspace scope and the current effective directory affect what is found; do not assume the instruction files of every parent directory stack, and do not assume instruction file names of other products are imported automatically.
 
-验证指令是否进入上下文时，使用受控的无敏感标记或检查实际请求，避免依靠模型声称“已阅读”。并发评测应使用隔离用户目录和固定工作区，记录这两处指令文件的内容哈希。
+To verify that instructions entered the context, use a controlled non-sensitive marker or inspect the actual request; do not rely on the model claiming it "has read" them. Concurrent evaluations should use an isolated user directory and a fixed workspace, and record the content hashes of these two instruction files.
 
-## Memory 开关
+## Memory switches
 
-记忆总能力由 `features.memory` 控制，使用行为还受 `memory.use` 控制。需要无记忆对照组时，在运行配置中显式关闭二者：
+The overall memory capability is controlled by `features.memory`, and use is also controlled by `memory.use`. For a no-memory control group, turn both off explicitly in the runtime configuration:
 
 ```json
 {
@@ -19,16 +19,16 @@
 }
 ```
 
-普通 `--prompt` 和 `--target` 不默认开启自动记忆提取；这不等于已有记忆不会被读取或影响上下文。需要隔离时，同时使用全新的用户目录和数据基目录。
+An ordinary `--prompt` and `--target` do not enable automatic memory extraction by default; this does not mean existing memories are not read or do not influence the context. For isolation, also use a fresh user directory and data base directory.
 
-## 记忆实验
+## Memory experiments
 
 ```sh
 zcode --prompt "执行本次记忆实验任务" --memory-bench --mode yolo --json
 ```
 
-`--memory-bench` 仅用于 prompt，要求先启用记忆。它开启自动提取，并在返回结果前等待提取工作结束。默认没有固定的提取等待截止时间；实验启动器应设置自己的运行时限并记录取消状态。
+(The sample prompt means "run this memory experiment task".) `--memory-bench` is for prompt only and requires memory to be enabled first. It enables automatic extraction and waits for the extraction work to finish before returning the result. By default there is no fixed deadline for waiting on extraction; the experiment launcher should set its own run limit and record the cancellation state.
 
-主任务成功不保证提取成功。分别观察主任务结果、提取诊断和后续召回表现。单轮结果、跨轮学习和跨任务复用应分别设计实验，避免把上一个样本的记忆带入下一个独立样本。
+A successful main task does not guarantee successful extraction. Observe the main task result, the extraction diagnostics and the later recall separately. Design single-round results, cross-round learning and cross-task reuse as separate experiments, so memory from one sample is not carried into the next independent sample.
 
-不要直接编辑活跃会话数据库来清理记忆。优先为实验创建新的数据目录；需要保留记忆做跨轮实验时显式复用，并记录复用关系。
+Do not edit the active session database directly to clean up memory. Prefer creating a new data directory for the experiment; when memory must be kept for a cross-round experiment, reuse it explicitly and record the reuse relationship.
