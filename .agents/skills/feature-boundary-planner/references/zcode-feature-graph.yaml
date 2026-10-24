@@ -5062,8 +5062,8 @@ nodes:
       ["plugin-creator", "创建插件", "插件本地化", "添加插件市场", "拼音搜索", "插件默认展开"]
     docs: ["docs/plugin-creator.md", "docs/plugin-capabilities-settings.md"]
     codeSeeds:
-      - file: "packages/ui/src/settings/PluginAddMenu.tsx"
-      - file: "packages/ui/src/hooks/usePluginCreator.ts"
+      - file: "packages/ui/src/conversation-workspace-target/PluginAddMenu.tsx"
+      - file: "packages/ui/src/conversation-workspace-target/usePluginCreator.ts"
       - file: "packages/ui/src/settings/pluginStoreListing.ts"
       - file: "packages/ui/src/settings/pluginSearch.ts"
       - file: "packages/ui/src/settings/PluginStoreListView.tsx"
