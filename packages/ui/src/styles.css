@@ -200,9 +200,9 @@ html[data-document-hidden] *::after {
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
   --color-quick-prompt-red: var(--color-red-500);
-  --color-quick-prompt-orange: var(--color-orange-500);
-  --color-quick-prompt-yellow: var(--color-yellow-500);
-  --color-quick-prompt-green: var(--color-green-500);
+  --color-quick-prompt-orange: var(--color-orange-600);
+  --color-quick-prompt-yellow: var(--color-yellow-700);
+  --color-quick-prompt-green: var(--color-green-600);
   --color-quick-prompt-blue: var(--color-blue-500);
   --color-quick-prompt-violet: var(--color-violet-500);
   --color-quick-prompt-pink: var(--color-pink-500);
@@ -579,9 +579,9 @@ html[data-document-hidden] *::after {
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
   --color-quick-prompt-red: var(--color-red-500);
-  --color-quick-prompt-orange: var(--color-orange-500);
-  --color-quick-prompt-yellow: var(--color-yellow-500);
-  --color-quick-prompt-green: var(--color-green-500);
+  --color-quick-prompt-orange: var(--color-orange-600);
+  --color-quick-prompt-yellow: var(--color-yellow-700);
+  --color-quick-prompt-green: var(--color-green-600);
   --color-quick-prompt-blue: var(--color-blue-500);
   --color-quick-prompt-violet: var(--color-violet-500);
   --color-quick-prompt-pink: var(--color-pink-500);

@@ -111,7 +111,9 @@ _Avoid_: "sticker", "prompt template", "snippet", "shortcut" (Example Prompt own
 23. **Where it shows**: a small dot before the name on the chip in the row above the composer (desktop and
     mobile web; the chip stays a neutral outline, the name keeps the standard text color), and the same dot
     before the name in Settings rows. The hover preview, the "/" panel and the Save draft popover are unchanged.
-    The dot is decoration: the accessible name of a chip stays the quick prompt name.
+    The dot is decoration: the accessible name of a chip stays the quick prompt name. Each hue's dot token keeps
+    3:1 or higher against the card surface of its theme (white in light, neutral-800 / `#2b2b2b` in dark), so
+    light themes use darker steps for the pale hues (`orange-600`, `yellow-700`, `green-600`).
 24. **Where it is set**: the editor (rule 15) gains a **Color** row of eight swatches (the seven hues and a dashed
     "No color" swatch), below Name and above Scope, one selected at a time, each with an accessible name.
     Save draft creates a prompt with no color; Duplicate copies the color. Color does not affect rule 12.
