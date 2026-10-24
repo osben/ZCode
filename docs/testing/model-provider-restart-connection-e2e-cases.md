@@ -2,9 +2,7 @@
 
 ## Feature scope
 
-本组 case 固定桌面端本地 `desktop-continuous` 下的模型选择恢复边界：App 重启后应恢复用户最后实际使用且仍可用的完整
-Provider/Model/Reasoning Selection。当前结构化 Provider Family Connection Selection 继续决定 Family 当前连接；旧
-`mode/selectedKey` 不参与当前运行判断。Todo88 已确认它属于需要导入的历史数据；本组恢复一个完整 Team 身份的冷启动代表，验证读取边界完成单向导入。
+This group fixes the model-selection restore boundary on desktop-local `desktop-continuous`: after an App restart, the full Provider/Model/Reasoning Selection that the user last actually used and that is still available must be restored. The current structured Provider Family Connection Selection keeps deciding the Family's current connection; the old `mode/selectedKey` does not take part in current runtime decisions. Todo88 confirmed it is historical data that must be imported; this group restores one complete Team identity cold start as a representative to verify that the read boundary completes the one-way import.
 
 ## State authority
 
@@ -19,64 +17,60 @@ Persisted Model Selection         |
 └─ options.reasoningLevel         |
           +-----------------------+
                                   v
-                 App 冷启动 -> Selection View
+                 App cold start -> Selection View
                                   |
                                   v
-                       deferred draft -> 首发请求
+                       deferred draft -> first request
 ```
 
-- 测试通过 `seedPersistedModelSelection(...)` 一次写入完整元组；
-- 禁止分两次写 model 和 reasoning，避免构造用户不可能产生的撕裂状态；
-- Provider 与模型是否仍可用由正式 Resolver/Registry/Selection View 判断；
-- Toolbar 只提供 UI 证据，实际首发请求仍负责证明执行身份。
+- Tests write the full tuple at once with `seedPersistedModelSelection(...)`.
+- Never write model and reasoning in two steps; that would build a torn state users cannot produce.
+- Whether a Provider and model are still available is decided by the official Resolver/Registry/Selection View.
+- The Toolbar gives UI evidence only; the actual first request still proves execution identity.
 
 ## Accepted cases
 
-2026-09-07 Todo88 R05 补充：I26 在完整旧 Team 键之外，再从仅含产品/项目的旧键重启。使用隔离 OAuth mock 的真实 `getCustomerInfo` 响应补组织；断言完整新版连接持久化、旧字段保留、原非首个模型不变并实际发送。查询失败/歧义、不创建 API Key、普通设置不等网络和并发保存由服务测试覆盖。
+2026-09-07 Todo88 R05 addition: besides the complete old Team key, I26 also restarts from an old key containing only product/project. The organization is filled from the real `getCustomerInfo` response of an isolated OAuth mock; assertions: the complete new connection is persisted, old fields are kept, the original non-first model is unchanged and actually sent. Query failure/ambiguity, no API Key creation, ordinary settings not waiting for the network, and concurrent saves are covered by service tests.
 
-| Catalog      | Case                                        | Setup                                                                    | Action                            | Assertions / evidence                              | Status   |
-| ------------ | ------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------- | -------------------------------------------------- | -------- |
-| I25 / MP-R01 | 重启保留可用 DeepSeek                       | 完整 persisted selection 指向可用 DeepSeek                               | 重启 App                          | toolbar、deferred draft、首发请求均为 DeepSeek     | covered  |
-| I26 / MP-R02 | 重启保留 Account Provider 内非首个模型      | Account Provider 暴露多个模型，完整 persisted selection 指向 Highspeed   | 重启 App                          | 不回退 `models[0]`；toolbar/request 均为 Highspeed | covered  |
-| I27 / MP-R03 | 旧 Start Plan 模型回退当前 Coding Plan      | Family 当前连接为 Team Plan，persisted selection 指向已不可用 Start Plan | 重启 App                          | toolbar/request 回退当前 Team Plan 默认模型        | covered  |
-| I28 / MP-R04 | 不可用 last-selected 回退当前连接           | Family 当前连接为 Team Plan，persisted selection 指向已删除模型          | 重启 App                          | toolbar/request 回退当前 Team Plan 默认模型        | covered  |
-| I29 / MP-S01 | 切换 Family 连接方式保留其它 Provider 草稿  | DeepSeek 草稿与 BigModel 按量 API 当前连接                               | 在设置页切换到 Team Plan          | DeepSeek 草稿与首发请求不变                        | covered  |
-| I30 / MP-S02 | 重选当前 Coding Plan 保留其它 Provider 草稿 | DeepSeek 草稿与 Team Plan 当前连接                                       | 再次选择同一 Team Plan            | DeepSeek 草稿与首发请求不变                        | covered  |
-| I31 / MP-S03 | Plan reconciliation 保留非首个模型          | 当前 Team Plan 选择与 Highspeed persisted selection                      | 主动重选当前 Team Plan            | toolbar/request 继续使用 Highspeed                 | covered  |
-| I35 / MP-T01 | Turbo off 重启保持二态                      | 完整 persisted selection 为 Turbo/off                                    | 重启 App                          | toolbar/draft 为 Turbo；思考选项只有 off/enabled   | accepted |
-| I36 / MP-T02 | Turbo enabled 重启并首发                    | 完整 persisted selection 为 Turbo/enabled                                | 重启并发送                        | toolbar/draft/request 均为 Turbo + enabled         | accepted |
-| I37 / MP-T03 | Turbo 二态连续切换                          | Turbo deferred draft                                                     | off→enabled→off                   | 模型不横跳；选项始终为二态                         | accepted |
-| I38 / MP-T04 | 隔离 workspace default 迟到回包             | Turbo deferred draft                                                     | 切换 reasoning 后等待异步配置同步 | draft 能力不被其它模型污染                         | accepted |
-| I39 / MP-T05 | GLM-5.2 切 Turbo 原子更新能力               | 当前 GLM-5.2 三态草稿                                                    | 选择 Turbo                        | model 与 reasoning options 一次性收敛到 Turbo 二态 | accepted |
-| I42 / MP-T06 | Turbo 切 GLM-5.2 丢弃源档位                 | 当前 Turbo/enabled                                                       | 选择 GLM-5.2                      | 使用目标模型默认档位，不继承 Turbo/enabled         | accepted |
+| Catalog      | Case                                                   | Setup                                                                       | Action                              | Assertions / evidence                                  | Status   |
+| ------------ | ------------------------------------------------------ | --------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------ | -------- |
+| I25 / MP-R01 | Restart keeps an available DeepSeek                    | Full persisted selection points at an available DeepSeek                    | Restart App                         | toolbar, deferred draft and first request are all DeepSeek | covered |
+| I26 / MP-R02 | Restart keeps a non-first model inside Account Provider | Account Provider exposes several models; full persisted selection points at Highspeed | Restart App                  | No fallback to `models[0]`; toolbar/request are both Highspeed | covered |
+| I27 / MP-R03 | Old Start Plan model falls back to the current Coding Plan | Family current connection is Team Plan; persisted selection points at an unavailable Start Plan | Restart App    | toolbar/request fall back to the current Team Plan default model | covered |
+| I28 / MP-R04 | Unavailable last-selected falls back to the current connection | Family current connection is Team Plan; persisted selection points at a deleted model | Restart App       | toolbar/request fall back to the current Team Plan default model | covered |
+| I29 / MP-S01 | Switching a Family connection keeps other Provider drafts | DeepSeek draft and BigModel pay-as-you-go API as current connection      | Switch to Team Plan in settings     | DeepSeek draft and first request unchanged             | covered  |
+| I30 / MP-S02 | Reselecting the current Coding Plan keeps other Provider drafts | DeepSeek draft and Team Plan as current connection                | Select the same Team Plan again     | DeepSeek draft and first request unchanged             | covered  |
+| I31 / MP-S03 | Plan reconciliation keeps a non-first model            | Current Team Plan selection and Highspeed persisted selection               | Actively reselect the current Team Plan | toolbar/request keep using Highspeed               | covered  |
+| I35 / MP-T01 | Turbo off keeps two states after restart               | Full persisted selection is Turbo/off                                       | Restart App                         | toolbar/draft are Turbo; thinking options are only off/enabled | accepted |
+| I36 / MP-T02 | Turbo enabled restart and first send                   | Full persisted selection is Turbo/enabled                                   | Restart and send                    | toolbar/draft/request are all Turbo + enabled          | accepted |
+| I37 / MP-T03 | Turbo two-state consecutive switching                  | Turbo deferred draft                                                        | off -> enabled -> off               | Model does not jump; options stay two-state            | accepted |
+| I38 / MP-T04 | Isolated workspace default late reply                  | Turbo deferred draft                                                        | Switch reasoning, wait for async config sync | Draft capabilities are not polluted by other models | accepted |
+| I39 / MP-T05 | GLM-5.2 -> Turbo updates capabilities atomically       | Current GLM-5.2 three-state draft                                           | Select Turbo                        | model and reasoning options converge to the Turbo two-state at once | accepted |
+| I42 / MP-T06 | Turbo -> GLM-5.2 drops the source level                | Current Turbo/enabled                                                       | Select GLM-5.2                      | Uses the target model default level, does not inherit Turbo/enabled | accepted |
 
 ## Removed legacy cases
 
-Todo88 补充：此前把所有旧连接格式都当成未发布数据而删除覆盖，遗漏了真实用户迁移。I26/MP-R02 现在先验证新版 Team 选择重启，再在退出窗口改成同身份的旧 mode/selectedKey，重新启动验证实际模型仍可用、新字段已持久化、旧字段仅为回滚保留。API 模式不伪造套餐，缺 organization 不猜 Team 身份，由 SettingService 测试覆盖；其与账号启动协调的联合行为仍需单独验收。以下 I32–I34 的移除记录是历史背景，不是继续拒绝旧数据的依据。
+Only I32-I34 were removed. They verified the unreleased old `mode/selectedKey` storage migration, not the current structured Family Selection:
 
-只删除 I32-I34。它们验证未发布的旧 `mode/selectedKey` 存储迁移，不是当前结构化 Family Selection 的产品行为：
+- I32: old api-key mode repairs the old Coding Plan selectedKey;
+- I33: old Team Plan selectedKey identity migration;
+- I34: old selectedKey repair when organization is missing.
 
-- I32：旧 api-key mode 修复旧 Coding Plan selectedKey；
-- I33：旧 Team Plan selectedKey identity 迁移；
-- I34：缺 organization 的旧 selectedKey 修复。
+Todo88 correction: treating all old connection formats as unreleased data and deleting coverage missed real user migration. I26/MP-R02 now first verifies a new Team selection restart, then changes it to the old mode/selectedKey of the same identity while the app is closed, restarts, and verifies that the actual model is still available, new fields are persisted, and old fields are kept only for rollback. API mode does not fake a plan and a missing organization does not guess a Team identity (covered by SettingService tests); the combined behavior with account startup coordination still needs separate acceptance. The I32-I34 removal is historical background and is not grounds for continuing to reject old data.
 
-I27-I31 验证当前连接回退、Family 切换与模型选择恢复，已按正式结构化 selection 恢复。
+I27-I31 verify current-connection fallback, Family switching and model-selection restore, and are restored per the official structured selection.
 
 ## Fixture contract
 
-- 每个请求使用稳定 marker；响应使用 case-local replay fixture；
-- 重启使用真实 Electron reload，证明 main/host/renderer/Agent 与磁盘状态重新水合；
-- 每个 case 至少断言 UI Selection 与真实 session/request 中的一层运行时证据；
-- Desktop 继续使用 continuous 链路，本组不引入 mobile replayable 状态。
+- Each request uses a stable marker; responses use a case-local replay fixture.
+- Restart uses a real Electron reload, proving main/host/renderer/Agent and disk state rehydrate.
+- Each case asserts at least the UI Selection and one layer of runtime evidence from the real session/request.
+- Desktop keeps using the continuous path; this group introduces no mobile replayable state.
 
+## BR117-F01: remote Built-in download failure does not block account connection
 
-## BR117-F01：远端 Built-in 下载失败不阻断账号连接
-
-- Pending spec：`settings/manual-review/pending/provider-builtin-refresh-failure.test.ts`。
-- Setup：隔离本地账号控制面、有效包内配置、有效 BigModel 登录，个人套餐为初始选择；
-  case-local 控制面下发 HTTP Built-in 地址，正式下载器必须拒绝，不覆盖产品 Active。
-- Action：通过设置页切换到 Team，返回 Composer 选择 Team 模型，再选择 Start 模型。
-- Assert：配置刷新 RPC 成功且存在远端失败告警；团队选择保留完整组织/项目身份，没有
-  被回滚；Team/Start 模型仍可选；不存在对非法下载地址的访问。
-- 本用例只证明 desktop-continuous 实际交互；共享服务单测覆盖错误分类，未声称手机、
-  远程 workspace 或真实付费模型请求已验收。无外部模型请求，账号响应复用本地 mock。
+- Pending spec: `settings/manual-review/pending/provider-builtin-refresh-failure.test.ts`.
+- Setup: isolated local account control plane, valid bundled config, valid BigModel login, personal plan as initial selection; the case-local control plane delivers an HTTP Built-in address, which the official downloader must reject without overriding the product Active.
+- Action: switch to Team in settings, return to the Composer and select a Team model, then select a Start model.
+- Assert: the config refresh RPC succeeds and a remote-failure warning exists; the Team selection keeps its full organization/project identity and is not rolled back; Team/Start models remain selectable; no access to the illegal download address.
+- This case only proves the desktop-continuous real interaction; shared service unit tests cover error classification. Mobile, remote workspace and real paid model requests are not claimed as accepted. No external model requests; account responses reuse the local mock.

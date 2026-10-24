@@ -1,70 +1,44 @@
-# BUG-GWT-007: «Open worktree» для stale-ветки молча открывает несуществующий каталог как проект
+# BUG-GWT-007: "Open worktree" for a stale branch silently opens a nonexistent directory as a project
 
 - Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
+- Severity: S3 (workaround: close the ghost project and press "Prune stale" on the setup page)
+- Cases: E4
+- Environment: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (branch `qa/git-worktree-20261017`), isolated QA instance (production build)
 
-- Severity: S3 (есть обход: закрыть ghost-проект и нажать «Prune stale» на setup-странице)
-- Кейсы: E4
-- Окружение: macOS 27.2, commit `bd6a05b3b7dd045d10a47bc7a193a27f86e8f355` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build)
+## Repro
 
-## Воспроизведение с нуля
+1. Fixture R11 (`make-fixtures.sh R11`): repo `$QA_ROOT/repos/has-worktrees` with worktree entries `live`, `stale` (folder removed with `rm -rf` without `git worktree prune`, so the entry is prunable) and `locked`.
+2. Settings -> Worktrees: set the `has-worktrees` project override `branchPrefix = sta` (so the typed name `stale` composes to the existing branch `stale`).
+3. Open `has-worktrees` -> `Cmd+K` -> "New task in worktree" -> pick `has-worktrees` -> type `stale` in Branch name.
+4. The hint "This branch already exists; the new worktree will check it out." appears with an "Open worktree" button (pointing at `has-worktrees-wt/stale`); Start is disabled (branch held by a prunable entry).
+5. Click "Open worktree".
 
-1. Фикстура R11 (`make-fixtures.sh R11`): репозиторий `$QA_ROOT/repos/has-worktrees` с worktree-записями `live`, `stale` (папка удалена `rm -rf` без `git worktree prune` → запись prunable), `locked`.
-2. В Settings → Worktrees задать для `has-worktrees` project override `branchPrefix = sta` (чтобы введённое имя `stale` скомпозировалось в существующую ветку `stale`).
-3. Открыть `has-worktrees` как проект → `Cmd+K` → «New task in worktree» → выбрать `has-worktrees` → в поле Branch name ввести `stale`.
-4. Наблюдать: подсказка «This branch already exists; the new worktree will check it out.», кнопка «Open worktree» (указывает на `has-worktrees-wt/stale`), Start отключён (ветка занята prunable-записью).
-5. Кликнуть «Open worktree».
+Actual: the palette closes and the sidebar shows a project `stale` with an empty-state composer. No error or warning about the missing directory (no toast, no missing badge). A v4-conversation subscription is created for the nonexistent path. `git worktree list` is unchanged (no auto-prune, which is correct).
 
-Факт: палитра закрывается, в сайдбаре появляется проект `stale` с empty-state композером. Ни ошибки, ни предупреждения о несуществующем каталоге (нет тоста и missing-бейджа). В логах создаётся подписка v4-conversation на workspace `has-worktrees-wt/stale` (несуществующий путь). `git worktree list` не меняется (автопруна нет — это ожидаемо и корректно).
+## Expected
 
-## Ожидание
+- `docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md`, WT-04: "Worktree created but opening the workspace/draft failed: the existing path is shown and a retry is available without creating a second worktree". Opening a nonexistent directory must count as an error and be shown as recoverable (path + retry), not pass silently.
+- Matrix E4 (`QA-PROMPT.md` §6, block E): "Branch `stale` (folder deleted) -> recoverable error, no automatic prune".
+- `docs/git/worktree-operations.md` §pruneWorktrees: stale entries are removed only by an explicit prune; opening must neither prune nor pretend the directory exists.
 
-- `docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md`, WT-04: «Создание worktree прошло, открытие workspace/draft завершилось ошибкой — показан существующий путь и доступен повторный запуск без создания второго worktree» — открытие несуществующего каталога должно считаться ошибкой и показываться как восстановимая (путь + retry), а не проходить молча.
-- Матрица E4 (`QA-PROMPT.md` §6, блок E): «Ветка `stale` (папка удалена) → восстановимая ошибка, без автоматического prune».
-- `docs/git/worktree-operations.md` §pruneWorktrees: stale-записи удаляются только явным действием prune — открытие не должно ни прунить, ни притворяться, что каталог есть.
+## Actual
 
-## Факт
+- Git before/after: 4 entries in `git worktree list --porcelain`, `stale` stays prunable; the disk keeps only `live/` and `locked/`. No auto-prune (OK).
+- UI: ghost project `stale` opened as a normal workspace, no error or badge; a draft session and a `v4-conversation` subscription to the nonexistent path were created.
+- No new `error`/`warn` log lines: no layer treats the open as an error.
 
-- Git до/после: 4 записи `git worktree list --porcelain`, `stale` остаётся prunable; диск `has-worktrees-wt/` содержит только `live/` и `locked/` — каталог не воссоздан. Автоматического prune НЕ произошло (OK).
-- UI: ghost-проект `stale` открыт как обычный workspace (empty-state композер), без ошибки/бейджа; создана черновая сессия и подписка `v4-conversation` на несуществующий путь (`sess_78d99fdd…` в логах).
-- Новых `error`/`warn` в логах нет — открытие не считается ошибкой ни в одном слое.
+## Cause (confirmed in code)
 
-## Доказательства
+- `packages/ui/src/command-center/CommandCenterDialog.tsx:1049-1090`: the existing-branch offer effect takes `listWorktrees` -> `findWorktreeForBranch(...)` (`worktreeTaskFlow.ts:387-392`) and stores `match.path` in `worktreeExistingBranchWorktreePath` without checking that the directory exists. The porcelain list legitimately contains stale/prunable entries (`docs/git/worktree-operations.md` §listWorktrees Parsing Rules: `prunable` is ignored at that layer; `GitWorktreeEntry` has no stale flag).
+- `CommandCenterDialog.tsx:2050-2063`: the "Open worktree" click calls `closeDialog(); openTaskWorkspace(worktreeExistingBranchWorktreePath)` directly, without path validation.
+- `CommandCenterDialog.tsx:1271-1298`: `openTaskWorkspace` only handles a reject of `onCreateTaskInWorkspace`; opening a nonexistent directory succeeds, so the WT-04 contract never triggers.
+- Contrast: the sibling creation-recovery path already checks: `worktreeCreation.ts:108-135` calls `gitService.verifyWorktreeUsable` (`packages/shared/src/git.ts:203-214`, returns `{ok:false, reason:"missing-directory"|"missing-git-link"}`) and returns the recoverable error `commandCenter.worktree.error.worktreeMissing`. The palette offer bypasses it.
+- Hypothesis (unverified): the workspace-open layer (`handleCreateTaskInWorkspace` in `packages/ui/src/App.tsx` and below) also does not check directory existence; Host/main not investigated.
 
-- `$QA_ROOT/evidence/E4-1-stale-offer.png` — оффер «Open worktree», Start disabled.
-- `$QA_ROOT/evidence/E4-2-after-open-click.png` — ghost-проект `stale` открыт, ошибки нет.
-- `$QA_ROOT/evidence/BUG-GWT-007-red-run.txt` — красный прогон теста до маркера.
-- `$QA_ROOT/evidence/BUG-GWT-007-green-run.txt` — прогон с `it.fails` (33 passed + 1 expected fail).
-- Скриншоты не коммитить; они остаются в `$QA_ROOT`.
+## Fix direction
 
-## Причина
+In the existing-branch offer, verify the real directory before opening: reuse `gitService.verifyWorktreeUsable` on the `CommandCenterDialog.tsx:1049-1090` / `2050-2063` paths. On `{ok:false}` do not call `onCreateTaskInWorkspace` with the nonexistent path; show a recoverable error per WT-04 (path + retry) with a hint about "Prune stale" / recreating the worktree. Do not add auto-prune. Optionally mark stale entries in the worktree list (requires extending `listWorktrees` with a prunable flag, a separate spec change to `docs/git/worktree-operations.md`).
 
-- Подтверждено (код):
-  - `packages/ui/src/command-center/CommandCenterDialog.tsx:1049-1090` — эффект existing-branch оффера берёт `listWorktrees` → `findWorktreeForBranch(...)` (`packages/ui/src/command-center/worktreeTaskFlow.ts:387-392`) и сохраняет `match.path` в `worktreeExistingBranchWorktreePath` без какой-либо проверки существования каталога. Porcelain-список легитимно содержит stale/prunable-записи (`docs/git/worktree-operations.md` §listWorktrees Parsing Rules: `prunable` игнорируется на этом слое, у `GitWorktreeEntry` нет флага stale).
-  - `packages/ui/src/command-center/CommandCenterDialog.tsx:2050-2063` — кнопка «Open worktree» по клику вызывает `closeDialog(); openTaskWorkspace(worktreeExistingBranchWorktreePath)` напрямую, без валидации пути.
-  - `packages/ui/src/command-center/CommandCenterDialog.tsx:1271-1298` — `openTaskWorkspace` обрабатывает только reject `onCreateTaskInWorkspace`; открытие несуществующего каталога завершается успешно, поэтому контракт WT-04 (ошибка открытия → путь + retry) не срабатывает.
-  - Контраст: соседний путь восстановления при создании уже делает нужную проверку — `packages/ui/src/command-center/worktreeCreation.ts:108-135` вызывает `gitService.verifyWorktreeUsable` (`packages/shared/src/git.ts:203-214`, возвращает `{ok:false, reason:"missing-directory"|"missing-git-link"}`) и на stale-записи возвращает recoverable-ошибку `commandCenter.worktree.error.worktreeMissing`. Оффер в палитре обходит эту проверку.
-- Гипотеза (не проверено): слой открытия workspace (`handleCreateTaskInWorkspace` в `packages/ui/src/App.tsx` и ниже) также не проверяет существование каталога — поэтому ghost-workspace и подписка v4-conversation создаются без ошибки; глубже (Host/main) не исследовалось.
+## Test
 
-## Предлагаемое исправление
-
-Направление, без реализации: в existing-branch оффере палитры проверять реальный каталог до открытия — переиспользовать `gitService.verifyWorktreeUsable` (как это уже делает `worktreeCreation.ts:115-119`) на пути `CommandCenterDialog.tsx:1049-1090`/`2050-2063`: при `{ok:false}` не вызывать `onCreateTaskInWorkspace` с несуществующим путём, а показать recoverable-ошибку по контракту WT-04 (путь + повторный запуск) с подсказкой о «Prune stale» / повторном создании worktree; автоматический prune не добавлять. Опционально помечать stale-записи в списке worktree (требует расширения контракта `listWorktrees` флагом prunable — отдельное изменение спеки `docs/git/worktree-operations.md`).
-
-## Тест
-
-- Путь: `packages/ui/test/commandCenterWorktreeFlow.test.ts`, describe `BUG-GWT-007 existing-branch offer vs stale registered worktree` (уровень UI-оркестрации; git RPC замокан, самодостаточный, без sleep).
-- Содержание: `listWorktrees` возвращает stale-запись ветки `zcode/stale`, `verifyWorktreeUsable` → `{ok:false, reason:"missing-directory"}`; клик «Open worktree» не должен молча звать `onCreateTaskInWorkspace` с несуществующим путём (блокировка или видимая ошибка).
-- Красный прогон без маркера (падает именно по багу, остальные 33 теста файла зелёные):
-
-```
-FAIL  unit packages/ui/test/commandCenterWorktreeFlow.test.ts > BUG-GWT-007 ... > BUG-GWT-007: opening a worktree whose registered directory is missing must be blocked or surface an error, not open silently
-AssertionError: expected true to be false // Object.is equality
-- Expected
-+ Received
-- false
-+ true
- ❯ packages/ui/test/commandCenterWorktreeFlow.test.ts:732:48
-Test Files  1 failed (1)
-     Tests  1 failed | 33 passed (34)
-```
-
-- Помечен `it.fails("BUG-GWT-007: …")`; прогон с маркером: `1 passed (1)` файл, `33 passed | 1 expected fail (34)`. Когда баг починят, тест уйдёт в зелёный и `it.fails` станет красным — снять маркер.
+`packages/ui/test/commandCenterWorktreeFlow.test.ts`, describe `BUG-GWT-007 existing-branch offer vs stale registered worktree` (UI orchestration level; git RPC mocked, self-contained, no sleeps). `listWorktrees` returns a stale entry for branch `zcode/stale`, `verifyWorktreeUsable` returns `{ok:false, reason:"missing-directory"}`; clicking "Open worktree" must not silently call `onCreateTaskInWorkspace` with the nonexistent path (blocked or visible error). The `it.fails` marker was removed after the fix.
