@@ -32,6 +32,24 @@ export async function chipLabels(): Promise<string[]> {
   }, QUICK_PROMPT_CHIP_TEST_ID);
 }
 
+/** The color label dot of a chip (data-color), or null when the chip has no dot (spec rule 23). */
+export async function chipColor(label: string): Promise<string | null> {
+  return browser.execute(
+    (testId: string, chipLabel: string) => {
+      const chip = Array.from(
+        document.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`),
+      ).find((candidate) => candidate.textContent?.trim() === chipLabel);
+      if (!chip) throw new Error(`quick prompt chip not found: ${chipLabel}`);
+      return (
+        chip.querySelector("[data-testid=quick-prompt-color-dot]")?.getAttribute("data-color") ??
+        null
+      );
+    },
+    QUICK_PROMPT_CHIP_TEST_ID,
+    label,
+  );
+}
+
 /**
  * Clicks the first chip with the given label. The send modifier (Cmd on macOS, Ctrl elsewhere) is
  * set on the click event itself, because the chip's onClick reads it (QuickPromptBar.tsx).

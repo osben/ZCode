@@ -37,3 +37,9 @@ Errors reach callers as `Error.message` with these stable codes:
 
 `delete` of an already removed prompt is a no-op without a broadcast. `duplicate` keeps the name and sets
 `pinned: true`. Moving a global to a project removes its hidden marks.
+
+**Color label** (spec rules 22-24): `QuickPrompt.color` is a palette hue or `null`. The column is added by the
+separate migration `9004_fork_quick_prompt_color`; the `9003` DDL and checksum never change. The repository keeps the
+raw column value and normalizes only in `toPrompt` (unknown, empty or non-string values read as `null`). `update`
+writes `color` only when the input carries it (`undefined` unchanged, `null` clears), `duplicate` copies the raw
+value, and the service schema degrades an unknown hue in a write to `null` instead of rejecting the write.

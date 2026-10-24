@@ -1,7 +1,7 @@
 # Composer quick prompts
 
 Status: product rules agreed 2026-10-22 (second review the same day simplified the model and added mentions);
-implementation in progress (ZCO-49). Mockups: Design canvas "Composer Quick Prompts" — accepted boards A, C, G,
+optional color label added 2026-10-23 (rules 22-24); implementation in progress (ZCO-49). Mockups: Design canvas "Composer Quick Prompts" — accepted boards A, C, G,
 I, J, K, L, F2 (F, H and the Settings row card are superseded by this text where they differ); rejected B, D, E.
 
 ## Problem
