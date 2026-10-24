@@ -32,7 +32,10 @@ export async function chipLabels(): Promise<string[]> {
   }, QUICK_PROMPT_CHIP_TEST_ID);
 }
 
-/** The color label dot of a chip (data-color), or null when the chip has no dot (spec rule 23). */
+/**
+ * The color label dot of a chip (data-color), or null only when the chip has no dot element (spec rule 23).
+ * A dot without data-color returns "", so a lingering dot never passes a `=== null` "no color" check.
+ */
 export async function chipColor(label: string): Promise<string | null> {
   return browser.execute(
     (testId: string, chipLabel: string) => {
@@ -40,10 +43,9 @@ export async function chipColor(label: string): Promise<string | null> {
         document.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`),
       ).find((candidate) => candidate.textContent?.trim() === chipLabel);
       if (!chip) throw new Error(`quick prompt chip not found: ${chipLabel}`);
-      return (
-        chip.querySelector("[data-testid=quick-prompt-color-dot]")?.getAttribute("data-color") ??
-        null
-      );
+      const dot = chip.querySelector("[data-testid=quick-prompt-color-dot]");
+      if (!dot) return null;
+      return dot.getAttribute("data-color") ?? "";
     },
     QUICK_PROMPT_CHIP_TEST_ID,
     label,
