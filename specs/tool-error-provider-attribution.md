@@ -8,14 +8,12 @@ When a foreground Agent tool call fails because its child hit a terminal provide
 
 Related but separate: `specs/subagent-inherited-model-invocation-context.md` (session-type classification of inherited subagent models). The 405/3012 block itself is provider-side and is not explained or handled here.
 
-## Facts from the code (at the time of the spec)
+## Mechanism (code facts the rules rely on)
 
-- `apps/zcode-cli/packages/core/src/errors/error-payload.ts` `projectExecutionErrorPayload` already projects `attribution` from the cause chain (`source`, `statusCode`, `providerErrorCode`, `retryable`, plus `providerId`, `modelId`, …). The innermost non-wrapper `retryable` wins over the turn wrapper's `retryable: true`.
-- `apps/zcode-cli/packages/core/src/tool/executor/errors.ts` `createErrorResult` drops `projectedError.attribution`.
-- `apps/zcode-cli/packages/core/src/runtime/helpers/tool-result.ts` `stringifyToolResultOutput` returns `modelContent` when set, else `error.message`.
-- Persistence (`runtime/methods/tool-result-settlement.ts`) saves a string `modelContent` into the error part's `metadata.modelContent`; cold resume (`agent/session-history-hydrator.ts`) replays that string, else `state.error` (= `error.message`). Model-facing text that is not stored as `modelContent` would differ between the live run and a resumed session.
+- `apps/zcode-cli/packages/core/src/errors/error-payload.ts` `projectExecutionErrorPayload` projects `attribution` from the cause chain (`source`, `statusCode`, `providerErrorCode`, `retryable`, plus `providerId`, `modelId`, …). The innermost non-wrapper `retryable` wins over the turn wrapper's `retryable: true`.
+- Persistence (`runtime/methods/tool-result-settlement.ts`) saves a string `modelContent` into the error part's `metadata.modelContent`; cold resume (`agent/session-history-hydrator.ts`) replays that string, else `state.error` (= `error.message`). Model-facing text not stored as `modelContent` would differ between the live run and a resumed session.
 - `tool/executor/call-runner.ts` rebuilds `modelContent` from `error.message` when PreToolUse/PostToolUseFailure hooks add context; only handler failures keep their own `modelContent`.
-- `result.error` is emitted as `ToolCallErrorPayload.error: ErrorPayload`. `ErrorPayload.attribution?: ErrorAttribution` already exists in `@zcode/contracts`; the v1 `tool.updated` error payload uses the strict `zcodeProtocolErrorDetailSchema`, which already declares `attribution`, and the v4 projection copies only `type`/`message`. No wire-contract change is needed.
+- `ErrorPayload.attribution?: ErrorAttribution` already exists in `@zcode/contracts`; the v1 `tool.updated` error payload uses the strict `zcodeProtocolErrorDetailSchema`, which already declares `attribution`, and the v4 projection copies only `type`/`message`. No wire-contract change is needed.
 - The foreground child turn throws the live error chain (`runtime/methods/turn.ts` throws `createTurnFailureError(error)` with the adapter error as `cause`), and the Agent handler does not catch it, so it reaches `call-runner`'s catch and `createErrorResult`.
 - The adapter (`adapters/src/model/runner-retry.ts`) sets `source: "provider"` whenever the failure has an HTTP status or is a provider business error.
 

@@ -319,16 +319,16 @@ Unit and component tests cover the rules above. The desktop E2E scenarios are wr
   "Changed on disk" state; after Show disk version, Overwrite writes the draft to disk.
 - SP-04: the same external write followed by Reload from disk discards the draft and adopts the disk text.
 
-Unit coverage added with the cleanup: the hook tests cover the patch-from-write save (no relist), the relist for hosts
-that return no revision, Overwrite against the reviewed revision while a newer disk revision exists, the focus
-throttle, and a rejected reset entry. They also cover the conflict revision kept when the follow-up refresh fails,
-its release by a listing that reports another revision, and restore or reset closing only the editor that was open
-when they started. The card tests cover Show refreshing instead of showing a stale listing, and Overwrite sending the
-shown revision. The model tests cover the too-large mapping and the prefix-trim diff against the reference walk
-(randomized).
+Unit coverage: the hook tests cover the patch-from-write save (no relist), the relist for hosts
+that return no revision, Overwrite against the reviewed revision while a newer disk revision exists,
+the focus throttle, and a rejected reset entry. They also cover the conflict revision kept when the
+follow-up refresh fails, its release by a listing that reports another revision, and restore or
+reset closing only the editor that was open when they started. The card tests cover Show refreshing
+instead of showing a stale listing, and Overwrite sending the shown revision. The model tests cover
+the too-large mapping and the prefix-trim diff against the reference walk (randomized).
 
-These E2E scenarios are not run in this round (the desktop E2E harness needs a built app); this is stated in
-the report.
+The desktop E2E scenarios are not run yet (the harness needs a built app); pending in
+`manual-review/pending/`.
 
 ## Ownership and event order
 

@@ -1,147 +1,17 @@
 # UI upstream sync: typecheck buckets after overlay
 
-Source: `pnpm typecheck` after the overlay, exit 2, 513 errors (503 in packages/ui, 10 in packages/web, which is out of scope).
+Snapshot of `pnpm typecheck` right after the 3.16.1 overlay: exit 2, 513 errors (503 in
+packages/ui, 10 in packages/web, out of scope). The three buckets drove the port work:
 
-- Stale fork-edited files still present (upstream deleted): 15 files. Remove after ledgering.
-- Fork-only files (not upstream, not deleted upstream) with errors: 38 files. Fork features to re-port.
+- Stale fork-edited files still present (upstream deleted): 15 files. Removed after ledgering.
+- Fork-only files (not upstream, not deleted upstream) with errors: 38 files. Fork features to
+  re-port.
 - Upstream-owned files with errors (missing services/shared exports, moved modules): 93 files.
 
-## Fork-only files with errors
-
-- `packages/ui/src/components/ChildSessionCountsMarker.tsx`
-- `packages/ui/src/components/TaskSidebarHoverCard.tsx`
-- `packages/ui/src/components/marketing-touch/MarketingDialogs.tsx`
-- `packages/ui/src/components/marketing-touch/MarketingTouchProvider.tsx`
-- `packages/ui/src/feedback/FeedbackSubmitForm.tsx`
-- `packages/ui/src/hooks/useOpenVoiceDictationSettings.ts`
-- `packages/ui/src/i18n/IntlProvider.tsx`
-- `packages/ui/src/lib/voiceDictationFeedbackSound.ts`
-- `packages/ui/src/project-sidebar/grouped/group-item.tsx`
-- `packages/ui/src/project-workflow/useWorkflowRunSave.ts`
-- `packages/ui/src/rewards/RewardsWebview.tsx`
-- `packages/ui/src/session-manager/HiddenSessionsMaintenance.tsx`
-- `packages/ui/src/session-manager/SessionManagerRowView.tsx`
-- `packages/ui/src/session-manager/SessionManagerTable.tsx`
-- `packages/ui/src/session-manager/SessionManagerToolbar.tsx`
-- `packages/ui/src/session-manager/sessionManagerTypes.ts`
-- `packages/ui/src/session-manager/useSessionManagerTasks.ts`
-- `packages/ui/src/settings/CodingPlanEmbeddedWebviewDialog.tsx`
-- `packages/ui/src/settings/PluginComponentGroups.tsx`
-- `packages/ui/src/settings/SessionsSettingsSection.tsx`
-- `packages/ui/src/settings/VoiceDictationSection.tsx`
-- `packages/ui/src/settings/usage-stats/AppUsageDetailMetrics.tsx`
-- `packages/ui/src/settings/usage-stats/appUsageRangeViewModel.ts`
-- `packages/ui/src/store/fontPreferences.ts`
-- `packages/ui/src/store/stateBroadcast.ts`
-- `packages/ui/src/store/systemThemeSync.ts`
-- `packages/ui/src/task-deletion/TaskDeleteConfirmationDialog.tsx`
-- `packages/ui/src/task-deletion/taskDeletion.ts`
-- `packages/ui/src/v4/ConversationFileSummaryList.tsx`
-- `packages/ui/src/v4/composer/ComposerDestinationControl.tsx`
-- `packages/ui/src/v4/composer/ComposerWorktreeRecovery.tsx`
-- `packages/ui/src/v4/composer/V4ComposerIncognitoControl.tsx`
-- `packages/ui/src/v4/composer/branchSwitchGuard.tsx`
-- `packages/ui/src/v4/composer/composerAttachmentSubmission.ts`
-- `packages/ui/src/v4/composer/composerRecoveryContexts.ts`
-- `packages/ui/src/v4/composer/composerWorktreeFailureReturn.ts` (deleted 2026-10-21: the first-submission lifecycle removed its only caller)
-- `packages/web/src/main.tsx`
-- `packages/web/src/share/ConversationShareLandingPage.tsx`
-
-## Upstream-owned files with errors
-
-- `packages/ui/src/App.tsx`
-- `packages/ui/src/PermissionDialog.tsx`
-- `packages/ui/src/Root.tsx`
-- `packages/ui/src/SettingsPage.tsx`
-- `packages/ui/src/ToolCallBlocks/renderers/explore.tsx`
-- `packages/ui/src/ToolCallBlocks/resolveRenderer.ts`
-- `packages/ui/src/WorkspaceHeaderSections.tsx`
-- `packages/ui/src/components/workflow-timeline/WorkflowRunSaveControls.tsx`
-- `packages/ui/src/feedback/FeatureRequestDialog.tsx`
-- `packages/ui/src/hooks/useAutomationProjectOptions.ts`
-- `packages/ui/src/hooks/useRemoteConnectionProfileEditor.ts`
-- `packages/ui/src/hooks/useSourceServerDisplayNames.ts`
-- `packages/ui/src/hooks/useSourceServerManagementSnapshot.ts`
-- `packages/ui/src/hooks/useSourceServerOperationLogs.ts`
-- `packages/ui/src/hooks/useSourceServerStatuses.ts`
-- `packages/ui/src/hooks/useWebRemoteControlStatus.ts`
-- `packages/ui/src/hooks/useWebRemoteControlTaskOpen.ts`
-- `packages/ui/src/i18n/LocaleSwitcher.tsx`
-- `packages/ui/src/lib/builtinSkillI18n.ts`
-- `packages/ui/src/lib/conversationShareError.ts`
-- `packages/ui/src/lib/exploreToolCall.ts`
-- `packages/ui/src/lib/sourceServerUpdateAction.ts`
-- `packages/ui/src/lib/toolDisplay.ts`
-- `packages/ui/src/lib/toolIdentity.ts`
-- `packages/ui/src/lib/treemappingActivity.ts`
-- `packages/ui/src/mentions/providers/fileMentionProvider.ts`
-- `packages/ui/src/mentions/providers/sessionsMentionProvider.ts`
-- `packages/ui/src/plugin-ui/adapters/pluginUiBackground.ts`
-- `packages/ui/src/plugin-ui/adapters/useRecommendedUiPlugins.ts`
-- `packages/ui/src/plugin-ui/adapters/useUiPluginRecommendations.ts`
-- `packages/ui/src/plugin-ui/components/PluginUiLauncherItems.tsx`
-- `packages/ui/src/project-sidebar/ArchiveManagement.tsx`
-- `packages/ui/src/project-sidebar/ChatRemoteFolderSelection.tsx`
-- `packages/ui/src/project-sidebar/HomeOnlyWorkspaceRows.tsx`
-- `packages/ui/src/project-sidebar/ProjectComposerMenu.tsx`
-- `packages/ui/src/project-sidebar/ProjectCreation.tsx`
-- `packages/ui/src/project-sidebar/ProjectEditor.tsx`
-- `packages/ui/src/project-sidebar/ProjectNodeContent.tsx`
-- `packages/ui/src/project-sidebar/ProjectSections.tsx`
-- `packages/ui/src/project-sidebar/RemoteConnectionProgressSection.tsx`
-- `packages/ui/src/project-sidebar/RemoteHostSection.tsx`
-- `packages/ui/src/project-sidebar/RemoteProjectList.tsx`
-- `packages/ui/src/project-sidebar/TaskGroupTaskMenu.tsx`
-- `packages/ui/src/project-sidebar/TaskGroupedView.tsx`
-- `packages/ui/src/project-sidebar/activity/refresh/contract.test.ts`
-- `packages/ui/src/project-sidebar/archive-view.ts`
-- `packages/ui/src/project-sidebar/contract.test.ts`
-- `packages/ui/src/project-sidebar/contract.ts`
-- `packages/ui/src/project-sidebar/grouped-view.ts`
-- `packages/ui/src/project-sidebar/index.tsx`
-- `packages/ui/src/project-sidebar/project-file-navigation.ts`
-- `packages/ui/src/project-sidebar/project-tree-reader.ts`
-- `packages/ui/src/project-sidebar/remote-navigation.ts`
-- `packages/ui/src/project-sidebar/remote-project-connection.ts`
-- `packages/ui/src/project-sidebar/useArchiveManagement.ts`
-- `packages/ui/src/project-sidebar/useProjectConnectionDiagnostics.ts`
-- `packages/ui/src/project-sidebar/useProjectFileTree.ts`
-- `packages/ui/src/project-sidebar/useProjectPinIntent.ts`
-- `packages/ui/src/project-sidebar/useProjectRemoteSync.tsx`
-- `packages/ui/src/project-sidebar/useProjectTaskNavigation.ts`
-- `packages/ui/src/project-sidebar/useProjectTree.ts`
-- `packages/ui/src/project-sidebar/useProjectUnreadSignals.ts`
-- `packages/ui/src/project-sidebar/useSavedWorkflowProjectOptions.ts`
-- `packages/ui/src/project-sidebar/useTaskGroups.ts`
-- `packages/ui/src/project-sidebar/view.ts`
-- `packages/ui/src/remote-connection-flow/index.ts`
-- `packages/ui/src/remote-connection-flow/requestRemoteProjectConnection.ts`
-- `packages/ui/src/remote-connection/EditConnectionProfileDialog.tsx`
-- `packages/ui/src/root/sourceServerUpdateNotifications.ts`
-- `packages/ui/src/root/types.ts`
-- `packages/ui/src/root/useConversationWorkspaceActions.ts`
-- `packages/ui/src/root/useRemoteWorkspaceHistory.ts`
-- `packages/ui/src/root/useRootWorkspaceActions.ts`
-- `packages/ui/src/settings/HooksSection.tsx`
-- `packages/ui/src/settings/ModelProviderSection.tsx`
-- `packages/ui/src/settings/PluginStoreDetailView.tsx`
-- `packages/ui/src/settings/PluginStorePage.tsx`
-- `packages/ui/src/settings/SourceServerManagementPanel.tsx`
-- `packages/ui/src/settings/model-provider-section/ProviderTemplatePicker.tsx`
-- `packages/ui/src/store/sourceServerDisplayNameRegistry.ts`
-- `packages/ui/src/store/sourceServerStatusRegistry.ts`
-- `packages/ui/src/v4/ConversationDraftSuggestedPromptsContainer.tsx`
-- `packages/ui/src/v4/SessionPane.tsx`
-- `packages/ui/src/web-remote-control/WebRemoteControlDialog.tsx`
-- `packages/ui/src/web-remote-control/app/useWebRemoteControlAuthSync.ts`
-- `packages/ui/src/web-remote-control/contract.ts`
-- `packages/ui/src/web-remote-control/domain/presentation.ts`
-- `packages/ui/src/workspace-config-catalog/catalog.ts`
-- `packages/ui/src/workspace-config-catalog/contract.test.ts`
-- `packages/ui/src/workspace-config-catalog/contract.ts`
-- `packages/ui/src/workspace-config-catalog/useConfigWorkspaceServices.ts`
-- `packages/ui/src/workspace-config-catalog/useConfigWorkspaceTargets.ts`
-- `packages/ui/src/workspace-grouped-tasks/view.ts`
+Outcome: the per-file bucket lists were the port worklists; the authoritative final state of each
+file is `specs/upstream-sync-final-ledger.md`, with per-bucket detail in
+`specs/ui-upstream-sync-ledger-b*.md` and `specs/ui-upstream-sync-ledger-2*.md`. The row kept open
+here is the rule violation below.
 
 ## Upstream-owned window.zcode users (rule violation, taken as-is, fix later)
 
@@ -154,3 +24,5 @@ Source: `pnpm typecheck` after the overlay, exit 2, 513 errors (503 in packages/
 - `packages/ui/src/v4/ConversationShareReadonlyTimeline.tsx`
 - `packages/ui/test/rewardsBridge.test.ts`
 - `packages/ui/test/workspaceFileSearchSection.test.ts`
+
+Full history: git show 127b9c78:specs/ui-upstream-sync-buckets.md
