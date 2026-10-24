@@ -20,6 +20,7 @@ export function GroupedTaskContextMenuContent({
   groups,
   intl,
   fileManagerLabel,
+  canOpenInFileManager,
   taskSessionFile,
   taskNativeSessionLogFile,
   providerConfigFile,
@@ -41,6 +42,7 @@ export function GroupedTaskContextMenuContent({
     formatMessage: (desc: { id: string }) => string;
   };
   fileManagerLabel: string;
+  canOpenInFileManager: boolean;
   taskSessionFile: { loading: boolean; path: string | null; exists: boolean };
   taskNativeSessionLogFile: { loading: boolean; path: string | null };
   providerConfigFile: { loading: boolean; path: string | null };
@@ -169,19 +171,21 @@ export function GroupedTaskContextMenuContent({
         onCopyText={onCopyText}
       />
       <ContextMenuSeparator />
-      <SidebarNativeTooltip>
-        <ContextMenuItem
-          disabled={Boolean(disabledReason)}
-          title={disabledReason}
-          onSelect={() => {
-            if (!disabledReason) {
-              onOpenTaskPathInFileManager();
-            }
-          }}
-        >
-          {fileManagerLabel}
-        </ContextMenuItem>
-      </SidebarNativeTooltip>
+      {canOpenInFileManager ? (
+        <SidebarNativeTooltip>
+          <ContextMenuItem
+            disabled={Boolean(disabledReason)}
+            title={disabledReason}
+            onSelect={() => {
+              if (!disabledReason) {
+                onOpenTaskPathInFileManager();
+              }
+            }}
+          >
+            {fileManagerLabel}
+          </ContextMenuItem>
+        </SidebarNativeTooltip>
+      ) : null}
       <ContextMenuItem
         onSelect={() =>
           onCopyText(intl.formatMessage({ id: "appHeader.copyPath" }), task.workspacePath)
@@ -219,14 +223,16 @@ export function GroupedTaskContextMenuContent({
       >
         {intl.formatMessage({ id: "appHeader.copySessionId" })}
       </ContextMenuItem>
-      <ContextMenuItem
-        disabled={providerConfigFile.loading || !providerConfigFile.path}
-        onSelect={onOpenProviderConfig}
-      >
-        <span className="truncate">
-          {intl.formatMessage({ id: "appHeader.goToProviderConfig" })}
-        </span>
-      </ContextMenuItem>
+      {canOpenInFileManager ? (
+        <ContextMenuItem
+          disabled={providerConfigFile.loading || !providerConfigFile.path}
+          onSelect={onOpenProviderConfig}
+        >
+          <span className="truncate">
+            {intl.formatMessage({ id: "appHeader.goToProviderConfig" })}
+          </span>
+        </ContextMenuItem>
+      ) : null}
       <ContextMenuSeparator />
       <ContextMenuItem onSelect={onOpenTaskFeedback}>
         {intl.formatMessage({ id: "taskList.feedback" })}

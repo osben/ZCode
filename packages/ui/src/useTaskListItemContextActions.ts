@@ -20,6 +20,8 @@ interface TaskListItemContextActionsResult {
   taskNativeSessionLogFile: TaskPathState;
   providerConfigFile: TaskPathState;
   fileManagerLabel: string;
+  /** Whether the file manager and provider config entries can run on this platform. */
+  canOpenInFileManager: boolean;
   handleCopyText: (label: string, value: string | null) => Promise<void>;
   handleOpenTaskPathInFileManager: () => Promise<void>;
   handleOpenProviderConfig: () => Promise<void>;
@@ -244,6 +246,9 @@ export function useTaskListItemContextActions({
     taskNativeSessionLogFile,
     providerConfigFile,
     fileManagerLabel: getFileManagerLabel(intl),
+    // ISSUE-066: web rejects openInFileManager ("Not supported in web mode"), so these menu
+    // entries were silent no-ops there. Gate them on the platform capability instead.
+    canOpenInFileManager: platform.canOpenLocalFiles === true,
     handleCopyText,
     handleOpenTaskPathInFileManager,
     handleOpenProviderConfig,

@@ -242,17 +242,21 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
 }: SessionManagerRowViewProps) {
   const { intl, locale } = useZCodeIntl();
   const [menuOpen, setMenuOpen] = useState(false);
-  const { fileManagerLabel, handleOpenTaskPathInFileManager, handleCopyText } =
-    useTaskListItemContextActions({
-      workspacePath: row.task.workspacePath,
-      remoteSessionId: row.task.remoteSessionId,
-      workspaceIdentity: row.task.workspaceIdentity,
-      taskId: row.task.taskId,
-      provider: row.task.provider,
-      intl,
-      loadTaskPaths: menuOpen,
-      loadProviderConfig: false,
-    });
+  const {
+    fileManagerLabel,
+    canOpenInFileManager,
+    handleOpenTaskPathInFileManager,
+    handleCopyText,
+  } = useTaskListItemContextActions({
+    workspacePath: row.task.workspacePath,
+    remoteSessionId: row.task.remoteSessionId,
+    workspaceIdentity: row.task.workspaceIdentity,
+    taskId: row.task.taskId,
+    provider: row.task.provider,
+    intl,
+    loadTaskPaths: menuOpen,
+    loadProviderConfig: false,
+  });
 
   const cell = (column: SessionManagerToggleableColumn) => {
     switch (column) {
@@ -423,10 +427,12 @@ export const SessionManagerRowView = memo(function SessionManagerRowView({
               })}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => void handleOpenTaskPathInFileManager()}>
-              <FolderOpen className="h-3.5 w-3.5" />
-              {fileManagerLabel}
-            </DropdownMenuItem>
+            {canOpenInFileManager ? (
+              <DropdownMenuItem onSelect={() => void handleOpenTaskPathInFileManager()}>
+                <FolderOpen className="h-3.5 w-3.5" />
+                {fileManagerLabel}
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               onSelect={() =>
                 void handleCopyText(
