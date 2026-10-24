@@ -23,6 +23,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof TaskActionMen
       },
       isPinned: false,
       fileManagerLabel: "Open in Finder",
+      canOpenInFileManager: true,
       taskSessionFile: {
         loading: false,
         path: "/tmp/task/session.md",
@@ -121,6 +122,16 @@ describe("TaskActionMenuContent", () => {
     expect(html).toContain("appHeader.copyPath");
     expect(html).toContain("appHeader.copyTaskPath");
     expect(html).toContain("appHeader.copyLogPath");
+  });
+
+  // ISSUE-066: the web platform cannot open the client's native file manager or editor.
+  it("hides the file manager and provider config items when the platform cannot open local files", () => {
+    const { html } = renderMenu({ canOpenInFileManager: false });
+
+    expect(html).not.toContain("Open in Finder");
+    expect(html).not.toContain("appHeader.goToProviderConfig");
+    expect(html).toContain("appHeader.copyPath");
+    expect(html).toContain("appHeader.copyTaskPath");
   });
 
   it("不再提供在分屏打开入口", () => {

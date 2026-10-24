@@ -22,6 +22,7 @@ export function TaskActionMenuContent({
   isPinned,
   isArchived = false,
   fileManagerLabel,
+  canOpenInFileManager,
   taskSessionFile,
   activeSessionId,
   taskNativeSessionLogFile,
@@ -55,6 +56,7 @@ export function TaskActionMenuContent({
   isPinned: boolean;
   isArchived?: boolean;
   fileManagerLabel: string;
+  canOpenInFileManager: boolean;
   taskSessionFile: { loading: boolean; path: string | null; exists: boolean };
   activeSessionId?: string | null;
   taskNativeSessionLogFile: {
@@ -149,7 +151,7 @@ export function TaskActionMenuContent({
         {intl.formatMessage({ id: "taskList.markAsUnread" })}
       </Item>
       <Separator />
-      {!hideMobileUnsupportedActions ? (
+      {canOpenInFileManager && !hideMobileUnsupportedActions ? (
         <Item
           disabled={disableTaskActions}
           title={disableTaskActions ? disabledReason : undefined}
@@ -203,7 +205,7 @@ export function TaskActionMenuContent({
           {intl.formatMessage({ id: "appHeader.copySessionId" })}
         </Item>
       ) : null}
-      {!hideMobileUnsupportedActions ? (
+      {canOpenInFileManager && !hideMobileUnsupportedActions ? (
         /* Bugfix: 手机远控运行在浏览器里，无法可靠打开桌面端 provider 配置文件。
            这里只在远控移动端隐藏入口，桌面端仍沿用“路径已知即可前往配置”的能力。 */
         <Item

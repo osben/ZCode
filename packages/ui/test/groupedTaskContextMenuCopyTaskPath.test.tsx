@@ -31,7 +31,10 @@ vi.mock("@/components/TaskPullRequestMenuItems.js", () => ({
 
 afterEach(cleanup);
 
-function renderMenu(taskSessionFile: { loading: boolean; path: string | null; exists: boolean }) {
+function renderMenu(
+  taskSessionFile: { loading: boolean; path: string | null; exists: boolean },
+  canOpenInFileManager = true,
+) {
   const noop = () => {};
   return render(
     createElement(GroupedTaskContextMenuContent, {
@@ -39,6 +42,7 @@ function renderMenu(taskSessionFile: { loading: boolean; path: string | null; ex
       groups: [],
       intl: { formatMessage: ({ id }: { id: string }) => enUS[id] ?? id },
       fileManagerLabel: "Finder",
+      canOpenInFileManager,
       taskSessionFile,
       taskNativeSessionLogFile: { loading: false, path: null, exists: false },
       providerConfigFile: { loading: false, path: null, exists: false },
@@ -82,5 +86,19 @@ describe("grouped task context menu: Copy task path", () => {
     });
 
     expect(container.textContent).toContain(copyTaskPathLabel);
+  });
+
+  // ISSUE-066: on web the item was shown and silently failed ("Not supported in web mode").
+  it("hides the file manager and provider config items when the platform cannot open local files", () => {
+    const file = { loading: false, path: "/w/t1.zcode-session", exists: true };
+    const shown = renderMenu(file).container.textContent;
+    cleanup();
+    const hidden = renderMenu(file, false).container.textContent;
+
+    expect(shown).toContain("Finder");
+    expect(shown).toContain(enUS["appHeader.goToProviderConfig"]);
+    expect(hidden).not.toContain("Finder");
+    expect(hidden).not.toContain(enUS["appHeader.goToProviderConfig"]);
+    expect(hidden).toContain(enUS["appHeader.copyPath"]);
   });
 });
