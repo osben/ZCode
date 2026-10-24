@@ -1,63 +1,46 @@
-# Todo 43：Models API 证据边界与 MiniMax M3 校正
+# Todo 43: Models API Evidence Boundary and MiniMax M3 Correction
 
-> 状态：完成
+> Status: Completed
 
-## 1. 新发现
+## 1. Finding
 
-Provider Endpoint 可能提供协议级 Models API。它查询的是当前 `Endpoint + API Schema + 访问材料` 可见的
-模型，而不是脱离账号的 Base URL：
+A Provider Endpoint may offer a protocol-level Models API. It lists the models visible to the current `Endpoint + API
+Schema + access material`, not to a Base URL detached from the account:
 
 ```text
-Endpoint + API Schema + Access
-               |
-               v
-       Models API 实时响应
-               |
-               +--> Model ID 成员证据
-               `--> 接口明确提供的能力元数据
-               |
-               v
-       发布者差异报告与人工审核
-               |
-               v
-          Built-in Release
+Endpoint + API Schema + Access -> live Models API response
+   ├─ Model ID membership evidence
+   └─ capability metadata the interface explicitly provides
+ -> publisher diff report and manual review -> Built-in Release
 ```
 
-它不直接覆盖运行时 Config，不形成第四层 Overlay。文档示例只证明接口形状，不能代替带当前访问材料的实时
-响应；厂商未返回的能力仍由官方文档和内容消费实测证明。
+It never directly overrides runtime Config and forms no fourth Overlay layer (Design states the Models API is only
+publish-time verification, a diff report, or user-initiated import evidence). A documentation example proves only the
+interface shape, not a live response with current access material; capabilities the vendor does not return are still
+proven by official docs and content-consumption tests.
 
-## 2. MiniMax 冲突校正
+## 2. MiniMax correction
 
-旧研究错误地依据过时接口概览和 Models API 示例，把 `MiniMax-M3` 当作未被官方直接 Endpoint 证明的候选。
-当前中国区官方“模型调用”文档明确声明：
+Old research wrongly relied on an outdated interface overview and a Models API example and treated `MiniMax-M3` as a
+candidate not proven by an official direct Endpoint. The current China-region official "model call" docs state: M3 is
+the newest M-series model; 1,000,000 context, Text/Image/Video; China Anthropic Endpoint
+`https://api.minimaxi.com/anthropic`; China OpenAI Endpoint `https://api.minimaxi.com/v1`; both compatible call
+examples use `MiniMax-M3` directly.
 
-- M3 是最新 M 系列模型；
-- 1,000,000 context，支持 Text/Image/Video；
-- 中国区 Anthropic Endpoint 为 `https://api.minimaxi.com/anthropic`；
-- 中国区 OpenAI Endpoint 为 `https://api.minimaxi.com/v1`；
-- 两套兼容调用示例都直接使用 `MiniMax-M3`。
+So revision 4 puts M3 first in MiniMax `builtinModelIds`, default enabled. M2.7 and highspeed remain enabled as
+speed/cost tiers; older M2.x stay disabled.
 
-因此 revision 4 必须把 M3 置于 MiniMax `builtinModelIds` 首位并默认启用。M2.7 与 highspeed 仍可作为速度/
-成本不同的可用档位继续默认启用；旧 M2.x 保持关闭。
+## 3. Acceptance (test first; revision 3 must fail)
 
-## 3. 测试先行与验收
+Real Built-in integrity test: release revision is 4; the first three MiniMax members are M3, M2.7,
+M2.7-highspeed; all three Exact Rules are `enabled=true`; M3 resolves on the current Anthropic Endpoint to 1M and
+Text/Image/Video. Verify Provider/Provider Node directed tests and typecheck, root `pnpm typecheck`, `pnpm lint`,
+format check and `git diff --check`.
 
-先修改真实 Built-in 完整性测试，使 revision 3 失败：
+## 4. Outcome
 
-- release revision 为 4；
-- MiniMax 前三个成员固定为 M3、M2.7、M2.7-highspeed；
-- 三者 Exact Rule 均 `enabled=true`；
-- M3 在当前 Anthropic Endpoint 解析为 1M、Text/Image/Video。
-
-随后最小修改 Built-in Config 与当前研究报告。验证 Provider/Provider Node 定向测试和 typecheck、根
-`pnpm typecheck`、`pnpm lint`、格式检查与 `git diff --check`。
-
-## 4. 实施记录
-
-- Built-in Config 升级到 revision 4，MiniMax 成员首段改为 M3、M2.7、M2.7-highspeed，三者默认启用；
-- M3 的既有 1M 与 Text/Image/Video Model Rule 保持不变，新增真实 Config 测试固定其在中国区 Anthropic
-  Endpoint 的 Effective Model Config；
-- Design 明确 Models API 只作为发布验证、差异报告或用户主动导入证据，不形成 Runtime 第四层 Overlay；
-- 旧研究中“M3 未被兼容 Endpoint 证明”的结论已标记并校正，Todo 41 保留历史轨迹但不再作为当前依据；
-- Provider Node 47 项、Provider 151 项测试通过，两个包 typecheck、根 typecheck 通过；根 lint 通过并保留
-  33 条与本轮无关的既有 warning。
+Built-in Config is revision 4 with MiniMax members M3, M2.7, M2.7-highspeed all default enabled; M3's existing 1M
+and Text/Image/Video Model Rule is unchanged, with a new real-Config test pinning its Effective Model Config on the
+China Anthropic Endpoint. The old research conclusion "M3 not proven on compatible Endpoint" was marked and
+corrected; Todo 41 keeps the historical trail but is no longer the current basis. Provider Node 47 and Provider 151
+tests, both packages' typecheck and root typecheck passed; root lint passed with 33 unrelated pre-existing warnings.

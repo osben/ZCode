@@ -1,303 +1,186 @@
-# Todo 52：Provider E2E 回归统一收口
+# Todo 52: Provider E2E Regression Consolidated Closeout
 
-> 当前状态（2026-09-09）：本验证 Todo 已关闭，剩余事项由 [Todo102](todo-102-verification-debt-closeout.md) 唯一承接，不再独立排期。下文状态及失败为历史记录，关闭不表示原失败已通过。
+> Current status (2026-09-09): this verification Todo is closed; remaining items are owned solely by
+> [Todo102](todo-102-verification-debt-closeout.md) and are not scheduled independently. The statuses and failures
+> below are historical records; closing does not mean the original failures passed.
 
-> 状态：已完成
+> Status: Completed
 >
-> 日期：2026-08-31
+> Date: 2026-08-31
 >
-> 证据来源：[`../research/e2e-regression-analysis-2026-08-31.md`](../research/e2e-regression-analysis-2026-08-31.md)
+> Evidence source: [`../research/e2e-regression-analysis-2026-08-31.md`](../research/e2e-regression-analysis-2026-08-31.md)
 
-## 1. 目标
+## 1. Goal
 
-Provider 重构破坏的 37 条 Desktop E2E 并不是 37 个独立产品问题。本 Todo 统一处理它们的测试基础设施漂移、过时产品
-行为和少量待裁决边界，不再按单个 Case 分散修补。
-
-本轮曾以未来展平 Provider 的假设为依据，提前删除了一部分仍属于当前产品的 Family 行为覆盖。后续裁决明确
-Z.ai / BigModel Family、结构化 Connection Selection 和 Family 内连接切换继续保留，因此本 Todo 的最终边界修正为：
-
-```text
-当前 Family / Connection Selection 行为
-                └── 按当前结构化 selection 恢复覆盖
-
-旧 mode / selectedKey 未发布兼容行为
-                └── 继续删除，不恢复兼容
-
-账号、模型、请求和恢复行为
-                └── 按独立 Provider 身份修复
-```
-
-恢复 Family Case 不新增兼容层，也不把旧 `mode/selectedKey` 翻译成另一套过渡结构。所有 Case 直接使用现行
-`providerFamilyConnectionSelections`、正式账号 mock 和当前 Resolver。
-
-## 2. 已确认的共性根因
-
-| 根因                                                    | 影响范围                                  | 处理方向                                                                         |
-| ------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------------- |
-| Account 场景被伪装为 Personal API-key Provider          | CTP、QR、CPUW、Restart、Transition、Turbo | 只准备账号 API、Credential 和产品事实，由正式 Resolver 生成正式 Account Provider |
-| 测试仍写旧 Family mode/selectedKey                      | Migration                                 | 删除旧格式兼容，不恢复                                                           |
-| 当前 Family connection selection 缺少覆盖               | CTP、Restart、Transition、Off-Peak        | 使用结构化 `providerFamilyConnectionSelections` 恢复正式行为证明                 |
-| CW/OTB/I08 等待已删除的 Workspace Registry push 日志    | CW、OTB、I08                              | 冷启动由真实请求证明；Personal 热更新统一等待 2 秒                               |
-| Bot harness 返回空 Model Selection View                 | 4 条 Bot E2E                              | 共用最小非空 Selection fixture                                                   |
-| Subagent E2E 仍读写旧双 map                             | I20 及相邻 Settings E2E                   | 删除兼容 reader，统一当前 structured selection                                   |
-| Upgrade WebView helper 把可见页面 origin 当 mock 控制面 | CPUW-01/03                                | 使用显式 mock control URL，观察正式账号刷新结果                                  |
-
-## 3. 正式 E2E 输入链
+The 37 Desktop E2E cases broken by Provider Refactor are not 37 independent product problems; this Todo handles
+their test-infrastructure drift, outdated product behavior and a few boundaries pending decision together rather than
+patching case by case. This round once deleted part of the still-current Family behavior coverage on the assumption
+that Providers would be flattened; later decisions made clear that the Z.ai / BigModel Family, structured Connection
+Selection and in-Family connection switching stay, so the final boundary is:
 
 ```text
-E2E 场景输入
-├─ Built-in Config（真实文件）
-├─ Personal Provider Overlay（仅用户配置）
-├─ Account API / Credential Mock（账号与套餐事实）
-└─ Persisted Model Selection（仅冷启动 Case）
-                |
-                v
-        正式 Resolver / Registry
-                |
-                v
-         Model Selection View
-                |
-                v
-       UI 操作 / 正式 Model 请求
-                |
-                v
-     请求、恢复、卡片与产品状态断言
+Current Family / Connection Selection behavior -> restore coverage by the current structured selection
+Old mode / selectedKey unreleased compat behavior -> keep deleting, no compat restored
+Account, model, request and recovery behavior -> repair by independent Provider identity
 ```
 
-禁止 E2E 直接构造 Effective Provider、Registry Snapshot、Account Personal API Key 或测试专用 executable 状态。
+Restoring Family cases adds no compat layer and does not translate old `mode/selectedKey` into a transitional
+structure; all cases use the current `providerFamilyConnectionSelections`, the formal account mock and the current
+Resolver.
 
-## 4. 公共测试基础设施
+## 2. Common root causes
 
-### 4.1 Personal Provider fixture
+| Root cause                                                         | Affected                                  | Direction                                                                        |
+| ------------------------------------------------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------- |
+| Account scenarios disguised as Personal API-key Providers          | CTP, QR, CPUW, Restart, Transition, Turbo | Prepare only account API, Credential and product facts; the formal Resolver generates formal Account Providers |
+| Tests still write old Family mode/selectedKey                      | Migration                                 | Delete the old format compat, do not restore                                     |
+| Current Family connection selection lacks coverage                 | CTP, Restart, Transition, Off-Peak        | Restore formal behavior proof with structured `providerFamilyConnectionSelections` |
+| CW/OTB/I08 wait for a deleted Workspace Registry push log          | CW, OTB, I08                              | Cold start is proven by real requests; Personal hot update waits a uniform 2s    |
+| Bot harness returns an empty Model Selection View                  | 4 Bot E2E                                 | Share a minimal non-empty Selection fixture                                      |
+| Subagent E2E still reads/writes the old double map                 | I20 and neighboring Settings E2E          | Delete the compat reader, use the current structured selection                   |
+| Upgrade WebView helper uses the visible page origin as the mock control plane | CPUW-01/03                     | Use an explicit mock control URL and observe the formal account refresh result   |
 
-本轮复用并收窄现有 `seedPersonalProviderConfig(...)`、`seedReplayProvider(...)` 与
-`createAndConfigurePersonalProvider(...)`，职责是：
-
-- 创建 Personal Provider；
-- 为普通 Built-in Provider 写 Personal Overlay；
-- 保存 API Key、Endpoint、Schema、Personal model members/order/rules；
-- 复用现有 Personal Config Repository/codec，不复制文件格式。
-
-正式修复 Case 不再用它们伪造 Account Provider。仍处于 manual-review pending、尚未晋升的历史 Case 不构成本轮正式覆盖；它们会在对应
-产品行为晋升或 Family 展平时单独迁移，不能作为恢复旧兼容的理由。
-
-### 4.2 Account 场景 fixture
-
-本轮没有再造一个总括式 `seedAccountScenario(...)`。现有 Coding Plan mock 已经是账号上游场景编排器，继续由
-`coding-plan-mock-env.ts`、`wdio.conf.ts` 和测试 Credential Store 共同提供场景，而不是注入 Account Config。
-
-职责：
-
-- 控制账号、套餐、quota、activity、reset opportunity 等现有 mock；
-- 写正式测试 Credential Store；
-- 提供 Start Plan allowed models、Individual/Team entitlement 和必要的组织/项目信息；
-- 由正式 Account Resolver 生成多个 Account Provider。
-
-它不写 Family Selection，不向 Personal Config 写 Account Provider，不直接控制 Registry。
-
-### 4.3 `seedPersistedModelSelection(...)`
-
-仅用于冷启动、重启恢复 Case，原子保存：
-
-```ts
-{
-  providerId,
-  modelId,
-  options: { reasoningLevel },
-}
-```
-
-退役分离的 `seedLastSelectedModel()` / `seedLastSelectedThoughtLevel()`，避免测试制造撕裂选择。
-
-### 4.4 `waitForSelectableModel(...)`
-
-通过正式 Selection View 等待 `providerId/modelId` 可选择。它不查询或注入 Registry 中间态，不用 Settings 卡片代替可执行事实。
-
-### 4.5 `waitForProviderConfigPolling()`
-
-Personal Config 被已运行 Agent 消费时允许存在时间差：
-
-```ts
-const PROVIDER_CONFIG_POLLING_SETTLE_MS = 2_000;
-```
-
-- 当前生产轮询约 1 秒，E2E 统一留 2 秒调度余量；
-- 如 CI 实证 2 秒仍偶发不足，只能在这一处统一提高到 3 秒；
-- 只用于 Personal Config 热更新；
-- 冷启动、Account 显式刷新和已有正式完成信号的流程不用；
-- 等待结束不是通过条件，最终仍由真实请求、模型选择或产品断言证明。
-
-### 4.6 Bot 最小 Selection Fixture
-
-Bot service harness 和 standalone streaming-card harness 共用一个最小、非空、合法的 Model Selection View。它只负责让 Bot
-进入正式模型执行，不引入完整 Account 环境，也不改变卡片/terminal 断言。
-
-## 5. 删除 Subagent 未发布兼容
-
-8 月 25 日将：
+## 3. Formal E2E input chain
 
 ```text
-builtInModelOverrides
-builtInThoughtLevelOverrides
+E2E scenario input: Built-in Config (real file); Personal Provider Overlay (user config only);
+  Account API / Credential Mock (account and plan facts); Persisted Model Selection (cold-start cases only)
+  -> formal Resolver / Registry -> Model Selection View -> UI action / formal Model request
+  -> request, recovery, card and product state assertions
 ```
 
-合并为：
+E2E must not construct Effective Provider, Registry Snapshots, Account Personal API keys or test-only executable
+state directly.
 
-```text
-builtInModelSelectionOverrides
-```
+## 4. Shared test infrastructure
 
-时保留了旧 `agents-state.json` reader。该格式尚未上线，本轮不承担兼容迁移：
+- **Personal Provider fixture.** Reuse and narrow `seedPersonalProviderConfig(...)`, `seedReplayProvider(...)` and
+  `createAndConfigurePersonalProvider(...)`: create Personal Providers, write Personal Overlay for normal Built-in
+  Providers, save API key / Endpoint / Schema / Personal model members, order and rules, reusing the existing Personal
+  Config Repository/codec (no copied file format). Formal repair cases no longer fake Account Providers with them;
+  historical manual-review pending cases are not formal coverage this round and will migrate when their product
+  behavior is promoted or Family flattened, never a reason to restore old compat.
+- **Account scenario fixture.** No overarching `seedAccountScenario(...)` is built: the existing Coding Plan mock is
+  already the account upstream scenario orchestrator, supplied by `coding-plan-mock-env.ts`, `wdio.conf.ts` and the
+  test Credential Store (not by injecting Account Config). It controls account, plan, quota, activity and reset
+  opportunity mocks, writes the formal test Credential Store, provides Start Plan allowed models, Individual/Team
+  entitlement and org/project info, and the formal Account Resolver generates the Account Providers. It writes no
+  Family Selection, no Account Provider into Personal Config and does not control the Registry.
+- **`seedPersistedModelSelection(...)`.** Only for cold-start / restart-recovery cases; atomically saves
+  `{ providerId, modelId, options: { reasoningLevel } }`. The separate `seedLastSelectedModel()` /
+  `seedLastSelectedThoughtLevel()` are retired to avoid torn selections.
+- **`waitForSelectableModel(...)`.** Waits through the formal Selection View for `providerId/modelId` to be
+  selectable; it neither queries nor injects Registry intermediate state, and Settings cards do not stand in for
+  executable facts.
+- **`waitForProviderConfigPolling()`.** A running Agent consuming a Personal Config change has a time lag:
+  `const PROVIDER_CONFIG_POLLING_SETTLE_MS = 2_000;` (production polls about 1s; if CI proves 2s occasionally
+  insufficient raise it to 3s in this one place only). Used only for Personal Config hot updates, not for cold start,
+  explicit Account refresh or flows with a formal completion signal; the wait itself is never the pass condition (real
+  request, model selection or product assertion proves).
+- **Bot minimal Selection fixture.** Bot service harness and standalone streaming-card harness share one minimal,
+  non-empty, valid Model Selection View; it only lets Bot enter formal model execution, introduces no full Account
+  environment and does not change card/terminal assertions.
 
-1. `readAgentStateFile()` 只读取 `builtInModelSelectionOverrides`；
-2. `normalizeBuiltInSelectionOverrides()` 删除 legacy model/thought 参数，必要时收缩为当前结构 parser；
-3. 删除 legacy reader 单测；
-4. I20、Settings Subagent E2E 和 `wdio.conf.ts` fixture 全部只写、只断言当前结构；
-5. `rg` 证明旧双 map 在正式代码、单测和 E2E 中归零。
+## 5. Delete the unreleased Subagent compat
 
-I20 本身保留：它继续证明 Settings 保存选择后，冷启动 child request 使用完整 Provider/Model/Reasoning Selection。
+On August 25 `builtInModelOverrides` and `builtInThoughtLevelOverrides` were merged into
+`builtInModelSelectionOverrides` while a legacy `agents-state.json` reader stayed. That format never shipped, so this
+round carries no compat migration: `readAgentStateFile()` reads only `builtInModelSelectionOverrides`;
+`normalizeBuiltInSelectionOverrides()` drops the legacy model/thought parameters (shrinking to the current structure
+parser if needed); the legacy reader unit test is deleted; I20, Settings Subagent E2E and `wdio.conf.ts` fixtures
+write and assert only the current structure; `rg` shows the old double map is zero in production code, unit tests and
+E2E. I20 itself stays: it proves that after Settings saves a selection, the cold-start child request uses the
+complete Provider/Model/Reasoning Selection.
 
-## 6. Case 处置矩阵
+## 6. Case disposition
 
-### 6.1 继续删除：3 条旧格式兼容 Case
+### 6.1 Keep deleting: 3 old-format compat cases
 
-这些 Case 只验证未发布的旧 `mode/selectedKey` 存储迁移，不属于当前 Family 产品行为。不得为了恢复 Family
-而恢复旧格式兼容。
+These verify only the unreleased old `mode/selectedKey` storage migration, not current Family product behavior; the
+old format compat is not restored to restore Family.
 
-| 原编号 | Case       | 删除原因                            |
-| -----: | ---------- | ----------------------------------- |
-|     27 | I32/MP-M01 | 旧 mode/selectedKey 迁移            |
-|     28 | I33/MP-M02 | Team Plan selectedKey identity 迁移 |
-|     29 | I34/MP-M03 | 缺 organization 的 selectedKey 修复 |
+| Original # | Case       | Reason                                          |
+| ---------: | ---------- | ----------------------------------------------- |
+|         27 | I32/MP-M01 | Old mode/selectedKey migration                  |
+|         28 | I33/MP-M02 | Team Plan selectedKey identity migration        |
+|         29 | I34/MP-M03 | selectedKey repair with missing organization    |
 
-可整文件删除：
+The whole file `conversation-session-model-provider-selected-key-migration.test.ts` can be deleted. Family settings
+switching, current connection recovery and fallback remain formal product behavior and use the current structured
+selection to restore the original case or build equivalent coverage.
 
-- `conversation-session-model-provider-selected-key-migration.test.ts`；
-  Family 设置切换、当前连接恢复与回退仍是正式产品行为，必须使用当前结构化 selection 恢复原 Case 或建立等价覆盖。
+### 6.2 Explicit repair: 24 cases
 
-### 6.2 明确修复：24 条
+| Original # | Case group                         | Handling                                                                                                                                                   |
+| ---------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1-4        | Bot                                | Use the shared minimal Selection fixture, keep the original card, terminal, AskUserQuestion assertions                                                    |
+| 5-17       | CTP/QR                             | Use the formal Account Scenario; restore Family connection menu, personal/team switching and OAuth recovery; keep activity, quota, Context, reset opportunity and Composer reminder assertions |
+| 20         | I20 Subagent                       | Delete old double-map compat, use structured selection, keep the cold-start child request                                                                  |
+| 21         | CW01-CW04                          | Delete the old Registry log parser; after startup prove by limits, Compact and cold-recovery requests                                                      |
+| 22         | OTB                                | Delete revision log comparison; after Personal hot update wait a uniform 2s, keep budget/request assertions                                                |
+| 23         | I08                                | Delete the old revision barrier; after the model appears wait 2s and assert the first Provider identity                                                    |
+| 24         | I26/MP-R02                         | Use the formal Account Provider and atomic persisted selection, keep non-first-model recovery                                                              |
+| 25-26      | I27/MP-R03, I28/MP-R04             | Restore current connection fallback semantics with structured Family selection                                                                             |
+| 30-32      | I29/MP-S01, I30/MP-S02, I31/MP-S03 | Restore connection switching, draft retention and Plan reconciliation with structured Family selection                                                     |
+| 33-37      | Turbo                              | Use the formal Account Provider and atomic selection, keep two-state reasoning, switching, late response and request assertions                            |
 
-| 原编号 | Case 组                            | 明确处理                                                                                                                                             |
-| ------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1-4    | Bot                                | 使用共享最小 Selection fixture，保留原卡片、terminal、AskUserQuestion 断言                                                                           |
-| 5-17   | CTP/QR                             | 使用正式 Account Scenario；恢复 Family 连接菜单、个人/团队切换与 OAuth 恢复，并保留 activity、quota、Context、reset opportunity 和 Composer 提醒断言 |
-| 20     | I20 Subagent                       | 删除旧双 map 兼容，改为 structured selection，保留冷启动 child request                                                                               |
-| 21     | CW01-CW04                          | 删除旧 Registry 日志 parser；启动后由 limits、Compact 和冷恢复请求证明                                                                               |
-| 22     | OTB                                | 删除 revision 日志比较；Personal 热更新后统一等待 2 秒，保留预算/请求断言                                                                            |
-| 23     | I08                                | 删除旧 revision barrier；模型出现后等待 2 秒并断言首发 Provider 身份                                                                                 |
-| 24     | I26/MP-R02                         | 使用正式 Account Provider 和原子 persisted selection，保留非首个模型恢复                                                                             |
-| 25-26  | I27/MP-R03、I28/MP-R04             | 使用结构化 Family selection 恢复当前连接回退语义                                                                                                     |
-| 30-32  | I29/MP-S01、I30/MP-S02、I31/MP-S03 | 使用结构化 Family selection 恢复连接切换、草稿保留与 Plan reconciliation                                                                             |
-| 33-37  | Turbo                              | 使用正式 Account Provider 和原子 selection，保留二态 reasoning、切换、迟到回包和请求断言                                                             |
+Model IDs may appear in tests as real Built-in Config fixture facts; production code must not restore branching on
+specific model IDs.
 
-模型 ID 可以作为真实 Built-in Config fixture 事实出现在测试中；生产代码不得恢复按具体模型 ID 分支。
+### 6.3 Fixed: 2 Upgrade WebView cases
 
-### 6.3 已修复：Upgrade WebView 2 条
+CPUW-01/CPUW-03 stay; the user-visible behavior after purchase is: purchase complete -> close WebView + refresh
+Account data (refresh the current account Provider; the Z.ai scenario also refreshes Team Plan products; no longer
+read or assert the Account Provider's Personal API key / old `enabled` state). Technical fixes: the mock control
+plane uses an explicit `ZCODE_CODING_PLAN_UPGRADE_MOCK_BASE_URL`; no Account Provider API key from Personal Config;
+no assertion on old `enabled`, Family current selection or private credentials; the refresh request is the formal
+result of the WebView completion event; model selection changes are not defined by the purchase dialog test.
 
-CPUW-01/CPUW-03 保留，购买完成后的用户可见行为收口为：
+## 7. Acceptance
 
-```text
-购买完成
-    |
-    v
-关闭 WebView + 刷新 Account 数据
-    |
-    +--> 刷新当前账号 Provider
-    +--> Z.ai 场景同时刷新 Team Plan products
-    `--> 不再读取或断言 Account Provider 的 Personal API Key / enabled 旧状态
-```
+Mechanical: `rg` shows these at zero in production code and related E2E — `modelProviderFamilyModes`;
+`modelProviderFamilySelectedKeys` (the old compat dependencies; the current `providerFamilyConnectionSelections` is
+formal product state and stays); `builtInModelOverrides`; `builtInThoughtLevelOverrides`;
+`seedReplayProvider(account:*)` in formal cases repaired/promoted this round; `workspace_update_provider_registry.completed`;
+Account Provider Personal API key fixtures.
 
-对应技术修复：
+Behavior: Account E2E prepares only upstream account facts and the formal Resolver generates Account Providers; the
+Bot harness enters real model execution with original lifecycle assertions restored; Subagent persists only a
+complete structured selection; Personal hot update shares one 2s settle helper; cold start and Account refresh do not
+depend on a fixed sleep; kept cases run their original business assertions (not just fixture-prep success); deleted
+cases leave the catalog, coverage matrix, Docker preset and fixture manifest together.
 
-- mock control plane 使用显式 `ZCODE_CODING_PLAN_UPGRADE_MOCK_BASE_URL`；
-- 不从 Personal Config 查 Account Provider API Key；
-- 不断言旧 `enabled`、Family current selection 或 private credential；
-- 使用刷新请求作为 WebView 完成事件的正式结果；模型选择变化不由购买弹窗测试代为定义。
+Verification commands: affected-case fixture check; native Desktop E2E and case-local replay as needed;
+`pnpm audit:conversation-session-coverage` after deleting/modifying formal cases;
+`pnpm --filter @zcode/desktop typecheck:e2e`, `pnpm typecheck`, `pnpm lint`, changed-file format check and `git diff
+--check`.
 
-## 7. 实施顺序
+## 8. Outcome and evidence
 
-1. 更新 E2E case catalog、coverage matrix，正式删除 11 条过时行为；
-2. 增加统一 Personal Config polling barrier 和 Bot 最小 Selection fixture；
-3. 删除 Subagent 未发布双 map reader，并迁移相邻 Settings、Runtime 与 CLI bootstrap 测试；
-4. 修复 Bot 4 条与 CTP/QR 保留场景；
-5. 修复 CW、OTB、I08、I26、Turbo Recovery 与 Turbo Switch；
-6. 修复 2 条 Upgrade WebView Case；
-7. 恢复 Off-Peak Team Plan pending Case，改为使用当前结构化 Family Selection；
-8. 清除已删除 catalog mock / fixture 对应的 unit contract 残余；
-9. 在 macOS 实机逐组运行正式 Desktop E2E，再运行根 typecheck、lint、unit 与覆盖审计。
+- Todo 53 merged into this Todo; no second Registry polling plan.
+- 11 originally failing E2E cases that lost their product object were deleted, plus 1 same-kind pending Off-Peak Team
+  Plan case; 24 valid E2E cases use the formal input chain with original business assertions restored; 2 Upgrade E2E
+  cases follow "close WebView + formal account data refresh". (Plan step order also listed restoring the Off-Peak Team
+  Plan pending case with current structured Family Selection; the result line records it as deleted — see report.)
+- E2E helpers do not copy Effective Provider/Registry Snapshots and add no Family Selection compat; the unreleased
+  Subagent double-map reader and its test input are zero; Turbo cases distinguish the Composer's next-submission
+  intent from the recent selection persisted after an accepted submission; leftover unit contracts for deleted
+  fixture/catalog mocks were removed.
 
-## 8. 测试与验收
+> 2026-09-01: Todo 57 re-ran this Todo's retained Provider cases on a MacBook Pro and fixed drift exposed after
+> Todo 55/56 (Account Draft Selection, Provider Template Fixture, OpenAI `max_completion_tokens`). The latest
+> case-level artifacts and environment blockers are in Todo 57 section 9; the 2026-08-31 results below are kept as
+> the first closeout trail.
 
-### 8.1 机械清理
+macOS native Desktop E2E: Bot automation / Feishu lifecycle 5/5; Coding Plan Team / quota reset 15/15
+(`desktop-e2e-20260831-171119-096`); Built-in Subagent model selection 1/1 (`desktop-e2e-20260831-173054-696`);
+Provider restart recovery 2/2 (`desktop-e2e-20260831-174125-075`); Turbo recovery 3/3
+(`desktop-e2e-20260831-175604-388`); Turbo switch 3/3 (`desktop-e2e-20260831-180819-116`); Upgrade WebView refresh
+2/2 (`desktop-e2e-20260831-180913-613`); Custom Provider add/send 1/1 (`desktop-e2e-20260831-152917-333`).
 
-`rg` 证明以下内容在正式代码与相关 E2E 中归零：
-
-- `modelProviderFamilyModes`；
-- `modelProviderFamilySelectedKeys`；
-- 旧 `modelProviderFamilyModes` / `modelProviderFamilySelectedKeys` 兼容依赖；当前
-  `providerFamilyConnectionSelections` 是正式产品状态，必须保留；
-- `builtInModelOverrides`；
-- `builtInThoughtLevelOverrides`；
-- 本轮晋升/修复的正式 Case 中的 `seedReplayProvider(account:*)`；
-- `workspace_update_provider_registry.completed`；
-- Account Provider Personal API Key fixture。
-
-### 8.2 行为验收
-
-- Account E2E 只准备上游账号事实，由正式 Resolver 生成 Account Provider；
-- Bot harness 能进入真实模型执行，原交互生命周期断言恢复；
-- Subagent 只持久化完整 structured selection；
-- Personal 热更新只共用一个 2 秒 settle helper；
-- 冷启动和 Account 刷新不依赖固定 sleep；
-- 被保留 Case 必须执行原始业务断言，不能只断言 fixture 准备成功；
-- 被删除 Case 从 catalog、coverage matrix、Docker preset 和 fixture manifest 一并退出。
-
-### 8.3 验证命令
-
-- 受影响 case 的 fixture check；
-- 原生 Desktop E2E 与必要的 case-local replay；
-- 删除/修改 formal Case 后运行 `pnpm audit:conversation-session-coverage`；
-- `pnpm --filter @zcode/desktop typecheck:e2e`；
-- `pnpm typecheck`；
-- `pnpm lint`；
-- 本轮文件格式检查与 `git diff --check`。
-
-## 9. 完成结果
-
-- Todo 53 已合并进本 Todo，不存在第二份 Registry polling 计划；
-- 11 条失去产品对象的原失败 E2E 已删除，另删除 1 条同类 pending Off-Peak Team Plan Case；
-- 24 条有效 E2E 使用正式输入链并恢复原业务断言；
-- 2 条 Upgrade E2E 已按“关闭 WebView + 正式刷新账号数据”收口；
-- E2E helper 没有复制 Effective Provider/Registry Snapshot，也没有新增 Family Selection 兼容；
-- 未发布 Subagent 双 map reader 与测试输入归零；
-- Turbo Case 明确区分 Composer 下一次提交意图与 accepted submission 后的 recent selection 持久化；
-- 全量 unit 暴露的已删除 fixture/catalog mock 单测残余已同步清除。
-
-## 10. 验证证据
-
-> 2026-09-01：Todo 57 已在 MacBook Pro 上重新实跑本 Todo 保留的 Provider Case，并修正 Todo 55/56 后暴露的
-> Account Draft Selection、Provider Template Fixture 与 OpenAI `max_completion_tokens` 漂移。最新 Case 级 artifact
-> 与环境 blocker 以 Todo 57 第 9 节为准；下列 2026-08-31 结果保留为首次收口轨迹。
-
-macOS 原生 Desktop E2E：
-
-| 范围                              |  结果 | Artifact                          |
-| --------------------------------- | ----: | --------------------------------- |
-| Bot automation / Feishu lifecycle |   5/5 | 分组运行通过                      |
-| Coding Plan Team / quota reset    | 15/15 | `desktop-e2e-20260831-171119-096` |
-| Built-in Subagent model selection |   1/1 | `desktop-e2e-20260831-173054-696` |
-| Provider restart recovery         |   2/2 | `desktop-e2e-20260831-174125-075` |
-| Turbo recovery                    |   3/3 | `desktop-e2e-20260831-175604-388` |
-| Turbo switch                      |   3/3 | `desktop-e2e-20260831-180819-116` |
-| Upgrade WebView refresh           |   2/2 | `desktop-e2e-20260831-180913-613` |
-| Custom Provider add/send          |   1/1 | `desktop-e2e-20260831-152917-333` |
-
-仓库验证：
-
-- `pnpm typecheck`：通过；
-- `pnpm lint`：通过，只有仓库既有 warning；
-- `pnpm --filter @zcode/desktop typecheck:e2e`：通过；
-- 修改文件 `oxfmt`：通过；全仓 `pnpm fmt:check` 被 Electron 文档示例的既有 HTML 语法和 `gb2312.js` 读取问题阻断；
-- `pnpm audit:conversation-session-coverage`：本轮 generated docs、manifest 与 fixture 均一致；仍被独立的
-  `conversation-session-hooks-lifecycle` request ledger 顺序/metadata 基线问题阻断；
-- `pnpm test:unit`：首次复跑发现并清除 8 个旧 fixture/catalog mock contract 残余；最终 1492 个 Test Files、12745 个 Tests 通过，1 个文件与 25 个测试按仓库既有配置跳过。
+Repo checks: `pnpm typecheck` passed; `pnpm lint` passed (pre-existing warnings); `pnpm --filter @zcode/desktop
+typecheck:e2e` passed; changed files `oxfmt` passed (repo-wide `pnpm fmt:check` blocked by Electron doc sample HTML
+syntax and `gb2312.js` read problems); `pnpm audit:conversation-session-coverage`: generated docs, manifest and
+fixtures consistent, still blocked by the independent `conversation-session-hooks-lifecycle` request ledger
+order/metadata baseline issue; `pnpm test:unit`: the first rerun found and cleared 8 leftover old fixture/catalog mock
+contract residues; final 1492 Test Files, 12745 Tests passed, 1 file and 25 tests skipped per existing config.
