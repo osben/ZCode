@@ -1,35 +1,31 @@
-# Explore 子 agent provider runtime headers 路由说明
+# Explore subagent provider runtime headers routing
 
-## 背景
+## Background
 
-桌面端通过父 task 的 sessionId 订阅动态 session event。Explore 子 agent 在 CLI 内部会创建独立的子 sessionId，用于子会话事件、持久化和 trace 归档。
+The desktop subscribes to dynamic session events by the parent task's sessionId. An Explore subagent creates its own child sessionId inside the CLI for child session events, persistence, and trace archival.
 
-Start Plan / bigmodel Start Plan 在每次真实模型请求前需要刷新 `provider-runtime-headers`，例如官方版本请求安全校验所需的一次性 header。这个刷新不是普通 session event，也不会经过 `mirrorSubagentToolEvent` 镜像回父 task，而是独立的 ZCode Protocol 请求。
+Start Plan / bigmodel Start Plan must refresh `provider-runtime-headers` before each real model request (for example a one-time header required by the official build's request security check). This refresh is not a normal session event and does not go through `mirrorSubagentToolEvent` back to the parent task; it is a separate ZCode Protocol request.
 
-## 问题
+## Problem
 
-修复前，Explore 子 agent 复用父 runtime 的 `providerRuntimeHeadersPort`，但刷新请求由子 runtime 发起，因此请求里带的是子 sessionId。
+The Explore subagent reuses the parent runtime's `providerRuntimeHeadersPort`, but the refresh request is issued by the child runtime, so it carries the child sessionId. The desktop agent service dispatches dynamic events by the request's sessionId, while the UI subscribes only to the parent task's sessionId, never to `sess_subagent_agent_*`. Routed as-is, the child's runtime headers request lands on an unlistened child session channel: the renderer never handles it or calls `respondProviderRuntimeHeaders`, and the child's model request waits until the user stops it or the request is cancelled.
 
-桌面 agent service 收到 `provider-runtime-headers` 请求后，会按请求里的 sessionId 派发动态事件；UI 只订阅父 task 的 sessionId，不会订阅 `sess_subagent_agent_*`。结果是子 agent 的 runtime headers 请求落到无人监听的子 session 通道，渲染端不会处理该请求，也不会调用 `respondProviderRuntimeHeaders`，子 agent 的模型请求就会一直等待，直到用户 stop 或请求被取消。
+## Routing rule
 
-## 修复原则
+The Explore subagent keeps its child sessionId for the CLI's internal ledger:
 
-Explore 子 agent 的子 sessionId 仍然保留，用于 CLI 内部账本：
+- Child session event persistence still writes to the child sessionId.
+- Subagent lifecycle/tool events still mirror to the parent task as before.
+- Trace context and parentSessionId relationships are unchanged.
 
-- 子 session 的事件持久化仍写入子 sessionId。
-- 子 agent lifecycle / tool event 仍按既有逻辑镜像到父 task。
-- trace context 和 parentSessionId 关系不变。
+Only when the subagent calls `providerRuntimeHeadersPort.refreshBeforeModelRequest` externally, the request sessionId is the parent task's sessionId. Runtime headers requests then route to the parent task channel the desktop UI already subscribes to, matching `mirrorSubagentToolEvent`'s external semantics: user-visible blocking interactions of a subagent belong to the parent task.
 
-只在子 agent 对外调用 `providerRuntimeHeadersPort.refreshBeforeModelRequest` 时，把请求 sessionId 改成父 task 的 sessionId。这样 runtime headers 请求会路由到桌面 UI 已订阅的父 task 通道，符合现有 `mirrorSubagentToolEvent` 的对外语义：子 agent 对用户可见的阻塞交互归属父 task。
+## Scope
 
-## 影响范围
+The rule affects only model requests that need `provider-runtime-headers`, currently Start Plan / bigmodel Start Plan. It does not change session storage primary keys and does not write child session persistence into the parent session.
 
-该修复只影响需要 `provider-runtime-headers` 的模型请求，目前主要是 Start Plan / bigmodel Start Plan。它不改变 session 存储主键，也不把子 session 的持久化数据写入父 session。
+Any future standalone blocking protocol request added for subagents must explicitly decide whether it routes to the child session or the parent task session; eventSink mirroring does not cover protocol requests.
 
-如果以后新增子 agent 的其他独立阻塞协议请求，也需要显式判断它应该路由到子 session 还是父 task session，不能假设 eventSink 镜像会覆盖协议请求。
+## Request isolation (2026-09-08)
 
-## 2026-09-08 请求隔离
-
-桌面生产消费者现为 workspace 常驻 controller；父 session 路由继续保留。
-runtime headers 响应通过唯一 requestId 返回子 agent 当前模型调用，Host 不再用子模型改写父 runtimeModel。
-每个子/父模型调用各自拥有独立的请求期重试预算，互不共享；不编辑父用户输入或重放已完成工具。
+The desktop production consumer is now the workspace-resident controller; parent session routing is kept. Runtime headers responses return to the subagent's current model call by unique requestId, and Host no longer rewrites the parent runtimeModel with the child model. Each child/parent model call owns its own per-request retry budget, never shared; parent user input is not edited and completed tools are not replayed.

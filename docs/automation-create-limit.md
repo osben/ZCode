@@ -1,18 +1,17 @@
-# 定时任务创建数量上限
+# Automation create limit
 
-## 产品语义
+## Product semantics
 
-- 单个本地任务索引最多保留 `20` 条定时任务定义。
-- 统计范围与管理页 `listAllAutomations()` 一致，覆盖所有项目；不是每个 workspace 各 20 条。
-- `active`、`paused`、`completed`、`failed` 等全部生命周期状态都占用名额。
-- 闲时任务属于独立领域，不计入定时任务的 20 条上限。
-- 更新、运行、暂停和恢复已有任务不受限制；只有删除定时任务定义才释放名额。
-- 手动表单、模板、会话 `CronCreate` 等所有创建入口都遵守同一上限。
+- A single local task index keeps at most `20` automation definitions.
+- The count scope matches the management page's `listAllAutomations()`: all projects, not 20 per workspace.
+- All lifecycle states — `active`, `paused`, `completed`, `failed` — occupy quota.
+- Off-peak tasks are a separate domain and do not count toward the 20-automation limit.
+- Updating, running, pausing, and resuming existing tasks are unrestricted; only deleting an automation definition releases quota.
+- Every creation entry point — manual form, template, session `CronCreate` — obeys the same limit.
 
-## 边界与时序
+## Boundary and ordering
 
-UI 根据已加载的全量列表提前阻止创建并展示国际化提示；该检查只用于交互反馈，不作为最终一致性边界。
-服务层创建最终由 SQLite 写事务串行检查总数，避免桌面多窗口或会话工具并发创建时同时通过旧计数。
+The UI pre-blocks creation from the fully loaded list and shows an internationalized message; that check is interaction feedback only, not the final consistency boundary. The service-level create is ultimately serialized by a SQLite write transaction that re-checks the total count, so desktop multi-window or session-tool concurrent creation cannot both pass on a stale count.
 
 ```text
 UI / CronCreate
@@ -28,19 +27,17 @@ BEGIN IMMEDIATE
       +-- COUNT < 20 --> INSERT --> commit
 ```
 
-达到上限时不得自动清理已完成或失败任务，也不得按 workspace、状态或是否启用过滤计数。
+At the limit, do not auto-clean completed or failed tasks, and do not filter the count by workspace, state, or enabled.
 
-## 会话工具失败边界
+## Session tool failure boundary
 
-`CronCreate` 命中全局上限后属于不可由 Agent 自行恢复的产品限制，不是普通可重试工具错误：
+A `CronCreate` that hits the global limit is a product limit the Agent cannot recover from itself, not an ordinary retryable tool error:
 
-- 本次创建不修改任何任务。
-- 当前模型轮次后续尚未执行的工具调用必须取消。
-- 当前用户 turn 仅允许再进行一次无工具的模型回复，用当前语言直接告知已达上限，并提示用户前往
-  “自动化”手动删除任务后重试。
-- 该回复阶段不得再暴露 `CronList`、`CronDelete`、`CronCreate`、Bash 或其他绕过入口。
-- Agent 不得自行选择、删除或覆盖已有任务；即使当前 workspace 的 `CronList` 少于 20 条，也不能据此
-  推断其他 workspace 的全局名额或执行清理。
+- The create modifies no task.
+- Remaining unexecuted tool calls in the current model step must be cancelled.
+- The current user turn allows exactly one more model reply without tools, stating in the current language that the limit is reached and directing the user to the Automations page (「自动化」) to delete a task manually and retry.
+- That reply stage must not expose `CronList`, `CronDelete`, `CronCreate`, Bash, or other bypass entries.
+- The Agent must not select, delete, or overwrite existing tasks itself; even if the current workspace's `CronList` shows fewer than 20, that does not infer other workspaces' global quota or justify cleanup.
 
 ```text
 CronCreate limit error

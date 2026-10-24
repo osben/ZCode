@@ -1,52 +1,50 @@
 # Agent Tool Call Renderer
 
-`packages/ui` 为子代理委派类工具新增了独立的 `AgentToolCallBlock`。
+`packages/ui` provides a dedicated `AgentToolCallBlock` for subagent delegation tools.
 
-当前约定：
+Current contract:
 
-- 摘要行显示 `agentName + primaryText + status`，不再给子智能体编号
-- v4 Agent/Task 行始终是单行摘要，不再展开 Prompt、输出、活动或子工具
-- 行拿到 `rootSessionId + parentSessionId + childSessionId` 和打开 callback 时，摘要行是详情动作：点击或按 Enter/Space 在桌面/普通 Web 打开右侧只读 tab，在手机 `/remote` 打开现有右侧抽屉
-- child 尚未投影或启动前失败时，摘要保持静态、不可点击；child 目标后到只切换为可点击，不自动打开详情
-- `agentName` 优先取已配对 `subagentRow.subagentType`、`output.agentType`、`input.subagent_type` / `input.agent_type` 等真实智能体名称，不使用协议实现名 `Agent`
-- `subagent_type` 采用三态展示：已解析出显式类型时立即显示；`raw.inputPreviewComplete !== true` 且尚未拿到权威类型时留空；仅当输入预览明确完整、仍省略类型时显示真实默认值 `general-purpose`
-- `primaryText` 会跳过 `Agent` / `Task` / `spawn_agent` 等实现名，优先展示 nickname、title、description 或 agent type
-- foreground/background 只影响 runtime 生命周期，不影响详情入口
-- child tool lifecycle 仍可用 `source: "subagent"` 镜像到父 runtime 供兼容消费者和诊断使用，但父 V4 ProductProjection 不得把这些 mirror 物化成 `ToolCallRow`；否则 child 的 Read/Bash 会被误画成 main 自己的工具调用。child session topic 继续物化完整工具历史，桌面 `desktop-continuous` 与手机 `web-remote-replayable` 使用同一隔离规则
-- 父会话只保留 Agent/Task 摘要、subagent 运行状态、background work 和带 `origin.kind: "subagent"` 的阻塞交互；等待 foreground child 仍属于 main turn 的真实运行态，不依赖 child tool row 续住
-- child 当前 `snapshot.control.lastError` 在只读详情展示，不新增父行 inline fallback、timeline row 或持久化字段
-- `Task` 是 Claude Code 历史兼容别名，和 `Agent` 使用同一 renderer；Workflow 不在本规则内
-- 不复用 `Explore` 语义，也不使用通用 `ToolCallBody`
+- The summary line shows `agentName + primaryText + status`; subagents are not numbered.
+- v4 Agent/Task rows are always a single summary line; Prompt, output, activity, and child tools are never expanded.
+- When a row has `rootSessionId + parentSessionId + childSessionId` and an open callback, the summary line is the details action: click or Enter/Space opens the read-only right tab on desktop and regular Web, and the existing right drawer on mobile `/remote`.
+- Before the child is projected, or when it failed before start, the summary stays static and non-clickable; when the child target arrives later the row only becomes clickable, details never open automatically.
+- `agentName` prefers real agent names — paired `subagentRow.subagentType`, `output.agentType`, `input.subagent_type` / `input.agent_type` — never the protocol implementation name `Agent`.
+- `subagent_type` is three-state: show a resolved explicit type immediately; leave empty while `raw.inputPreviewComplete !== true` and no authoritative type is known; show the real default `general-purpose` only when the input preview is definitely complete and the type is still omitted.
+- `primaryText` skips implementation names `Agent` / `Task` / `spawn_agent`, preferring nickname, title, description, or agent type.
+- foreground/background affects only the runtime lifecycle, not the details entry.
+- Child tool lifecycle may still mirror to the parent runtime with `source: "subagent"` for compatible consumers and diagnostics, but the parent V4 ProductProjection must not materialize these mirrors into `ToolCallRow`; otherwise the child's Read/Bash would be drawn as main's own tool calls. The child session topic still materializes the full tool history; desktop `desktop-continuous` and mobile `web-remote-replayable` use the same isolation rule.
+- The parent session keeps only Agent/Task summaries, subagent run status, background work, and blocking interactions with `origin.kind: "subagent"`; waiting on a foreground child is still the main turn's real running state and does not depend on child tool rows.
+- The child's current `snapshot.control.lastError` is shown in the read-only details; there is no parent-row inline fallback, timeline row, or persisted field for it.
+- `Task` is a Claude Code legacy alias sharing the `Agent` renderer; Workflow is out of scope.
+- Do not reuse `Explore` semantics or the generic `ToolCallBody`.
 
-命中条件：
+Match conditions:
 
 - `raw._meta.claudeCode.toolName === "Agent"`
 - `raw._meta.zcode.toolName === "Agent"`
-- `raw._meta.zcode.toolName === "spawn_agent"` / `raw.name === "spawn_agent"` / `kind === "spawn_agent"`（Codex）
-- `kind === "think"` 且 `title === "Agent"`（GLM/ZCode Agent）
-- 或 `kind === "think"` 且 `input.subagent_type` 存在
+- `raw._meta.zcode.toolName === "spawn_agent"` / `raw.name === "spawn_agent"` / `kind === "spawn_agent"` (Codex)
+- `kind === "think"` with `title === "Agent"` (GLM/ZCode Agent)
+- or `kind === "think"` with `input.subagent_type` present
 
-## 流式类型展示边界
+## Streaming type display boundary
 
-`inputText` 是增量 JSON。半截 JSON 尚未包含 `subagent_type`，不能等价为模型省略该字段；
-否则首个 `tool_input_start` 帧会短暂显示 `general-purpose`，后续真实类型到达后再跳变。
+`inputText` is incremental JSON. A partial JSON string that does not yet contain `subagent_type` is not equivalent to the model omitting the field; otherwise the first `tool_input_start` frame would briefly show `general-purpose` and jump once the real type arrives.
 
 ```text
-tool_input_start / row.inputText 增量
+tool_input_start / row.inputText incremental
                  |
                  v
        +----------------------+
-       | 已有权威/显式类型？   |
+       | authoritative/explicit type present?
        +----------------------+
-          | 是             | 否
-          v                v
-      显示真实类型   inputPreviewComplete === true ?
-                         | 是                  | 否
-                         v                     v
-                 显示 general-purpose        留空
+          | yes           | no
+          v               v
+      show real type   inputPreviewComplete === true ?
+                         | yes               | no
+                         v                   v
+                 show general-purpose      leave empty
 
-subagentRow.subagentType 到达后 --------------------> 显示该权威类型
+subagentRow.subagentType arrives --------------------> show that authoritative type
 ```
 
-这里保留 Agent 工具“完整输入省略 `subagent_type` 时默认为 `general-purpose`”的 runtime
-语义，只延迟 UI fallback；不得通过扫描半截 JSON 白名单来猜测字段是否还会到达。
+The Agent tool's runtime semantics — a complete input that omits `subagent_type` defaults to `general-purpose` — are unchanged; only the UI fallback is delayed. Do not guess whether a field will still arrive by scanning partial JSON whitelists.
