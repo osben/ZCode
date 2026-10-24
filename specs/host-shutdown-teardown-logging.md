@@ -13,7 +13,7 @@ An orderly app quit logged one `[warn]` per open workspace topic plus one more:
 
 `AGENTS.md` reserves `warn` for recoverable exceptions. None of these is one.
 
-## Event order (confirmed from the 2026-10-23 dev log and the source)
+## Event order
 
 ```text
 Main app-before-quit
@@ -66,6 +66,5 @@ force-kill fallback, so they stay fire-and-forget.
   a `saturated` failure before it is.
 - Unit: syncer `disposeAll()` with active subscriptions whose unsubscribe rejects
   logs no `订阅失败` warn; a live-path unsubscribe failure still warns.
-- Live (QA): quit the dev app with several workspaces open; the last 2 s of the log
-  contain neither `订阅失败` nor `failed to forward attachment connection flow state`
-  at `warn`.
+- Live (QA): quitting the dev app with several workspaces open must log neither
+  `订阅失败` nor `failed to forward attachment connection flow state` at `warn`.

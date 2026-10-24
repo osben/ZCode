@@ -5,17 +5,14 @@ Owner: `packages/services/src/setting/settingService.ts` (main `setting.json`) a
 
 ## Problem
 
-No file watcher covers `setting.json`: the desktop main `settingsFile` (desktop/src/main/index.ts:587)
-is only used once for the startup bootstrap. Change detection therefore uses a stat check.
-
-The per-read `reading settings from` and `read result` lines were already `debug` (gated to the
-development environment). The info-level payload lines were the write logs, now fixed as rule 3.
+No file watcher covers `setting.json`: the desktop main `settingsFile`
+(desktop/src/main/index.ts:587) is only used once for the startup bootstrap, so change detection
+uses a stat check.
 
 `settingService.get()` is called from many host paths (source server directory, provider
-resolution, terminal profile, bots, settings sync, startup reconnect). Each call re-read and
-re-parsed `setting.json` and `fork-settings.json` from disk, and emitted per-read diagnostics
-that included the full settings payload (recent project paths and other user data). An idle
-window produced 1 to 2 reads per second.
+resolution, terminal profile, bots, settings sync, startup reconnect); each call used to re-read
+and re-parse both files and emit per-read diagnostics that included the full settings payload
+(recent project paths and other user data).
 
 ## Ownership
 

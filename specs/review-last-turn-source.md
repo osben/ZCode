@@ -1,10 +1,8 @@
 # Review pane: "Last turn" source
 
-Fixes ISSUE-056 (Linear ZCO-50). The Review (Git) side pane offers a "Last turn" source. Before this fix it
-was always empty: `useGitRepository` hard-codes `lastFileChangeEntry = null` / `lastSummaryEntry = null`
-because the old per-turn store write path (`setPerTurnFileChanges` / `setPerTurnSummaries`) was removed
-with the legacy ChatView stream subscription before the open-source import. The v4 projection now owns
-per-turn file changes, and the chat's turn change summary already reads them.
+Fixes ISSUE-056 (Linear ZCO-50). The Review (Git) side pane offers a "Last turn" source whose rows come
+from the v4 projection, which owns per-turn file changes (the chat's turn change summary already reads
+them); the pane keeps no per-turn store of its own.
 
 ## Product rules
 
