@@ -35,13 +35,13 @@ flowchart LR
 
 ## Prerequisites
 
-| Item | Requirement |
-| --- | --- |
-| Docker | 20.10+, BuildKit enabled (default); able to pull `node:26.11.1-bookworm-slim` and reach GitLab, the npm registry, and `cdn-zcode.z.ai` |
-| Host tools | bash, jq, node ≥ 20 (for `prepare-auth.mjs`), python3 (summary report) |
-| GitLab access | Private repos need a read-only PAT (`read_repository`); without `--token-file` the script tries, in order, the `GITLAB_TOKEN` env var → a logged-in `glab` PAT → `git credential fill` |
-| ZCode login | Local ZCode logged in with a working provider/model; the eval container reuses those credentials |
-| Source under test | The ref must already contain the `zcode plugins install / disable --all` subcommands (staging after the subcommand MR merged, or that MR branch) |
+| Item              | Requirement                                                                                                                                                                            |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docker            | 20.10+, BuildKit enabled (default); able to pull `node:26.11.1-bookworm-slim` and reach GitLab, the npm registry, and `cdn-zcode.z.ai`                                                 |
+| Host tools        | bash, jq, node ≥ 20 (for `prepare-auth.mjs`), python3 (summary report)                                                                                                                 |
+| GitLab access     | Private repos need a read-only PAT (`read_repository`); without `--token-file` the script tries, in order, the `GITLAB_TOKEN` env var → a logged-in `glab` PAT → `git credential fill` |
+| ZCode login       | Local ZCode logged in with a working provider/model; the eval container reuses those credentials                                                                                       |
+| Source under test | The ref must already contain the `zcode plugins install / disable --all` subcommands (staging after the subcommand MR merged, or that MR branch)                                       |
 
 ## Step 1: build the image
 
@@ -99,17 +99,17 @@ One JSON per task in one directory (examples in `docker/plugin-eval/tasks/`):
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Task id; also the result subdirectory name and container name suffix |
-| `plugins` | Whitelist. Bare name or `name@marketplace`; the container runs `disable --all`, then `enable` each, and asserts the actual enabled set matches exactly |
-| `prompt` | Task text passed to `zcode --prompt` |
-| `timeoutSeconds` | Hard timeout per run (default 900); timeout counts as failure |
-| `expect.skills` | `Skill` invocations expected in `tool.updated` (`payload.input.skill`) |
-| `expect.mcpTools` | Substrings of MCP tool names expected to be invoked |
-| `expect.files` | Files expected in the working directory (relative paths) |
-| `expect.responseContains` | Strings the final reply must contain |
-| `xfail` | With a reason, failure is recorded as `xfail` (expected failure) and does not fail the suite |
+| Field                     | Meaning                                                                                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`                      | Task id; also the result subdirectory name and container name suffix                                                                                   |
+| `plugins`                 | Whitelist. Bare name or `name@marketplace`; the container runs `disable --all`, then `enable` each, and asserts the actual enabled set matches exactly |
+| `prompt`                  | Task text passed to `zcode --prompt`                                                                                                                   |
+| `timeoutSeconds`          | Hard timeout per run (default 900); timeout counts as failure                                                                                          |
+| `expect.skills`           | `Skill` invocations expected in `tool.updated` (`payload.input.skill`)                                                                                 |
+| `expect.mcpTools`         | Substrings of MCP tool names expected to be invoked                                                                                                    |
+| `expect.files`            | Files expected in the working directory (relative paths)                                                                                               |
+| `expect.responseContains` | Strings the final reply must contain                                                                                                                   |
+| `xfail`                   | With a reason, failure is recorded as `xfail` (expected failure) and does not fail the suite                                                           |
 
 If a sibling directory `<id>.workspace/` exists, it is mounted read-only at `/task/workspace` and copied into `/work` as the model cwd — for fixtures such as Excel or PDF files.
 
@@ -174,16 +174,16 @@ Verdict: `exitCode == 0` plus a `turn.completed`, then each `expect.*` checked i
 
 ## Troubleshooting
 
-| Symptom | Look at | Common cause |
-| --- | --- | --- |
-| Build stuck at clone / 401 | `build-image.sh` output | No PAT or PAT lacks `read_repository`; pass `--token-file` explicitly |
-| `pnpm install` fails on git deps | builder stage log | git+https deps from the `pnpm-workspace.yaml` catalog also need GitLab credentials |
-| Container exits 64 | `container.log` | task.json missing `id`/`prompt`, or a mount path is wrong |
-| Container exits 65 | `plugins.json`, `plugins-enable.log` | Whitelist plugin name typo; same name across marketplaces needs `name@marketplace` |
-| 422 / wrong model | `stderr.log`, `summary.json.source` | Incomplete `defaultModelSelection`; rerun `prepare-auth.mjs` with explicit `--model --reasoning` |
-| Everything 401 / auth_failed | `stderr.log` | `ZCODE_EVAL_CREDENTIAL_SECRET` differs from generation time, or the local login expired |
-| `plugin_variable_missing` | `plugins.json` diagnostics | Runtime overrode `ZCODE_BASE_URL` to empty |
-| Skill not invoked | `tool.updated` in `events.jsonl` | Prompt does not name the plugin/skill; or the plugin is not whitelisted |
+| Symptom                          | Look at                              | Common cause                                                                                     |
+| -------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Build stuck at clone / 401       | `build-image.sh` output              | No PAT or PAT lacks `read_repository`; pass `--token-file` explicitly                            |
+| `pnpm install` fails on git deps | builder stage log                    | git+https deps from the `pnpm-workspace.yaml` catalog also need GitLab credentials               |
+| Container exits 64               | `container.log`                      | task.json missing `id`/`prompt`, or a mount path is wrong                                        |
+| Container exits 65               | `plugins.json`, `plugins-enable.log` | Whitelist plugin name typo; same name across marketplaces needs `name@marketplace`               |
+| 422 / wrong model                | `stderr.log`, `summary.json.source`  | Incomplete `defaultModelSelection`; rerun `prepare-auth.mjs` with explicit `--model --reasoning` |
+| Everything 401 / auth_failed     | `stderr.log`                         | `ZCODE_EVAL_CREDENTIAL_SECRET` differs from generation time, or the local login expired          |
+| `plugin_variable_missing`        | `plugins.json` diagnostics           | Runtime overrode `ZCODE_BASE_URL` to empty                                                       |
+| Skill not invoked                | `tool.updated` in `events.jsonl`     | Prompt does not name the plugin/skill; or the plugin is not whitelisted                          |
 
 Verification record (2026-09-14, macOS arm64 + OrbStack Docker 29, source `feat-cli-plugins-parity@bf05821832`): image build succeeded (427 MB, 23 plugins, 121 skills, no error diagnostics), three parallel tasks ran — `finance-budget-variance` pass 22s, `builtin-docx-smoke` pass 38s, `finance-close-recap-mcp` xfail 32s; the xfail model reply stated MCP market tools were unavailable and stopped, with no Bash/curl bypass, matching the official-MCP limitation.
 

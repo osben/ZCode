@@ -338,13 +338,13 @@ Desktop E2E verifies real-window editing and cold-start effect:
 Settings CRUD uses a separate E2E without provider requests to verify saved artifacts; it is not
 chained with the child runtime scenarios above:
 
-| Scope / type | Create | Edit | Artifact checked after save |
-| --- | --- | --- | --- |
-| Builtin `general-purpose` | not supported, pruned | covered | atomic model / effort combination in `agents-state.json` |
-| Builtin `Explore` | not supported, pruned | covered | atomic model / effort combination in `agents-state.json` |
-| Custom user | covered | covered (incl. rename) | full frontmatter and body of `<user-data>/agents/<name>.md`, and old path deleted |
-| Custom workspace | covered | covered (incl. rename) | full frontmatter and body of `<workspace>/.zcode/agents/<name>.md`, and old path deleted |
-| Plugin | not supported, pruned | covered | model / effort atomic combination of `pluginAgent*Overrides` by agent id in `agents-state.json` |
+| Scope / type              | Create                | Edit                   | Artifact checked after save                                                                     |
+| ------------------------- | --------------------- | ---------------------- | ----------------------------------------------------------------------------------------------- |
+| Builtin `general-purpose` | not supported, pruned | covered                | atomic model / effort combination in `agents-state.json`                                        |
+| Builtin `Explore`         | not supported, pruned | covered                | atomic model / effort combination in `agents-state.json`                                        |
+| Custom user               | covered               | covered (incl. rename) | full frontmatter and body of `<user-data>/agents/<name>.md`, and old path deleted               |
+| Custom workspace          | covered               | covered (incl. rename) | full frontmatter and body of `<workspace>/.zcode/agents/<name>.md`, and old path deleted        |
+| Plugin                    | not supported, pruned | covered                | model / effort atomic combination of `pluginAgent*Overrides` by agent id in `agents-state.json` |
 
 This E2E only consumes the existing model/capability projection to drive the controls; it sends no
 prompt, does not restart to verify a child, and does not modify the CLI or model resolver. Custom user

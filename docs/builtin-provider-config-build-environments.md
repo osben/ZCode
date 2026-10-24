@@ -29,13 +29,13 @@ unchanged.
 Against `staging_backup@790884b1ce`, only these `zhipu-account` provider model URLs
 are rewritten:
 
-| Production Base URL                                        | Test Base URL                                              |
-| ---------------------------------------------------------- | ---------------------------------------------------------- |
-| https://api.z.ai/api/anthropic                             | https://api.z.ai/api/anthropic                             |
-| https://open.bigmodel.cn/api/anthropic                     | https://open.bigmodel.cn/api/anthropic                     |
-| https://zcode.z.ai/api/v1/zcode-plan/anthropic             | https://zcode.z.ai/api/v1/zcode-plan/anthropic             |
-| https://zcode.z.ai/api/v1/off-peak/anthropic               | https://zcode.z.ai/api/v1/off-peak/anthropic               |
-| https://zcode.z.ai/api/v1/highspeed/anthropic              | https://zcode.z.ai/api/v1/highspeed/anthropic              |
+| Production Base URL                            | Test Base URL                                  |
+| ---------------------------------------------- | ---------------------------------------------- |
+| https://api.z.ai/api/anthropic                 | https://api.z.ai/api/anthropic                 |
+| https://open.bigmodel.cn/api/anthropic         | https://open.bigmodel.cn/api/anthropic         |
+| https://zcode.z.ai/api/v1/zcode-plan/anthropic | https://zcode.z.ai/api/v1/zcode-plan/anthropic |
+| https://zcode.z.ai/api/v1/off-peak/anthropic   | https://zcode.z.ai/api/v1/off-peak/anthropic   |
+| https://zcode.z.ai/api/v1/highspeed/anthropic  | https://zcode.z.ai/api/v1/highspeed/anthropic  |
 
 - Regenerate from the full production config every time; never patch the old test
   config incrementally and never maintain a second copy of model capabilities.

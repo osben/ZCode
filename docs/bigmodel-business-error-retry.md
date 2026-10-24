@@ -23,15 +23,15 @@ The implementation keeps reusing the existing retry loop, stream retry boundarie
 
 ## BigModel business codes that retry
 
-| Code | Meaning | ZCode classification | retry reason |
-| --- | --- | --- | --- |
-| `1120` | temporary account access anomaly; docs suggest retrying later | `model_request_failed` | `server_error` |
-| `1230` | API call flow anomaly | `model_request_failed` | `server_error` |
-| `1234` | network error | `model_request_failed` | `network_error` |
-| `1302` | excessive concurrency | `model_rate_limited` | `rate_limited` |
-| `1303` | call rate too high | `model_rate_limited` | `rate_limited` |
-| `1305` | platform traffic limit or overload | `model_rate_limited` | `rate_limited` |
-| `1312` | model access overload | `model_request_failed` | `provider_overloaded` |
+| Code   | Meaning                                                       | ZCode classification   | retry reason          |
+| ------ | ------------------------------------------------------------- | ---------------------- | --------------------- |
+| `1120` | temporary account access anomaly; docs suggest retrying later | `model_request_failed` | `server_error`        |
+| `1230` | API call flow anomaly                                         | `model_request_failed` | `server_error`        |
+| `1234` | network error                                                 | `model_request_failed` | `network_error`       |
+| `1302` | excessive concurrency                                         | `model_rate_limited`   | `rate_limited`        |
+| `1303` | call rate too high                                            | `model_rate_limited`   | `rate_limited`        |
+| `1305` | platform traffic limit or overload                            | `model_rate_limited`   | `rate_limited`        |
+| `1312` | model access overload                                         | `model_request_failed` | `provider_overloaded` |
 
 These auto-retry only while no committed model events have been produced upstream. If a streaming request has already produced `text_delta`, `tool_call`, or `finish`, it is never auto-replayed, avoiding duplicate text or duplicate tool calls.
 
@@ -49,15 +49,15 @@ A cleanup failure or timeout must not overwrite the original provider error and 
 
 ## BigModel business codes that never retry
 
-| Code | Reason |
-| --- | --- |
+| Code   | Reason                                                              |
+| ------ | ------------------------------------------------------------------- |
 | `1113` | terminal business error from the provider; retrying changes nothing |
-| `1304` | daily call limit; short-term retry changes nothing |
-| `1308` | usage cap; must wait for reset |
-| `1309` | Coding Plan expired |
-| `1310` | weekly/monthly quota cap; must wait for reset |
-| `1311` | plan lacks model permission |
-| `1313` | fair usage restriction; retrying amplifies abnormal traffic |
+| `1304` | daily call limit; short-term retry changes nothing                  |
+| `1308` | usage cap; must wait for reset                                      |
+| `1309` | Coding Plan expired                                                 |
+| `1310` | weekly/monthly quota cap; must wait for reset                       |
+| `1311` | plan lacks model permission                                         |
+| `1313` | fair usage restriction; retrying amplifies abnormal traffic         |
 
 These stay non-retryable even when carried by HTTP 429: they are not transient concurrency or platform load issues — auto-retry wastes budget and can worsen provider-side throttling.
 

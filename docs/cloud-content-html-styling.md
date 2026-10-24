@@ -31,18 +31,18 @@ are dropped individually. Arbitrary variable definitions, resource URLs, escaped
 values, !important, and positioning/sizing/z-index/transform/animation are
 forbidden.
 
-| Property | Accepted values |
-| --- | --- |
-| color / background-color / text-decoration-color | Browser-recognized colors, currentColor; exact var(--color-foreground), foreground-subtle, foreground-subtlest, foreground-inverse, primary, primary-foreground, secondary, brand, icon-blue, success, warning, destructive, popover, surface, background tokens, no fallback |
-| font-size | exact var(--text-ui-xl/lg/base/caption/sm/xs); arbitrary sizes are not allowed |
-| font-weight / font-style | 1..1000, normal/bold/bolder/lighter; normal/italic/oblique |
-| line-height | normal or a unitless 1..3 |
-| text-align | start/end/left/right/center/justify |
-| white-space | normal/nowrap/pre/pre-wrap/pre-line/break-spaces |
-| overflow-wrap / word-break | normal/break-word/anywhere; normal/break-all/keep-all/break-word |
-| text-decoration / text-decoration-line / text-decoration-style | legal combinations of none/underline/overline/line-through with solid/double/dotted/dashed/wavy; color and thickness use their own properties |
-| text-decoration-thickness / text-underline-offset / letter-spacing | 0..32px, 0..2rem/em or unit zero; also auto/from-font or normal (per property) |
-| margin / padding and top/right/bottom/left | 1..4 non-negative finite lengths, single values 0..32px or 0..2rem/em; percentages, auto, and calc are rejected |
+| Property                                                           | Accepted values                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| color / background-color / text-decoration-color                   | Browser-recognized colors, currentColor; exact var(--color-foreground), foreground-subtle, foreground-subtlest, foreground-inverse, primary, primary-foreground, secondary, brand, icon-blue, success, warning, destructive, popover, surface, background tokens, no fallback |
+| font-size                                                          | exact var(--text-ui-xl/lg/base/caption/sm/xs); arbitrary sizes are not allowed                                                                                                                                                                                                |
+| font-weight / font-style                                           | 1..1000, normal/bold/bolder/lighter; normal/italic/oblique                                                                                                                                                                                                                    |
+| line-height                                                        | normal or a unitless 1..3                                                                                                                                                                                                                                                     |
+| text-align                                                         | start/end/left/right/center/justify                                                                                                                                                                                                                                           |
+| white-space                                                        | normal/nowrap/pre/pre-wrap/pre-line/break-spaces                                                                                                                                                                                                                              |
+| overflow-wrap / word-break                                         | normal/break-word/anywhere; normal/break-all/keep-all/break-word                                                                                                                                                                                                              |
+| text-decoration / text-decoration-line / text-decoration-style     | legal combinations of none/underline/overline/line-through with solid/double/dotted/dashed/wavy; color and thickness use their own properties                                                                                                                                 |
+| text-decoration-thickness / text-underline-offset / letter-spacing | 0..32px, 0..2rem/em or unit zero; also auto/from-font or normal (per property)                                                                                                                                                                                                |
+| margin / padding and top/right/bottom/left                         | 1..4 non-negative finite lengths, single values 0..32px or 0..2rem/em; percentages, auto, and calc are rejected                                                                                                                                                               |
 
 Default tag styles follow the previous implementation; allowed inline styles
 override classes by normal CSS precedence. Safe tags, link host callbacks, the

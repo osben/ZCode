@@ -58,11 +58,11 @@ Ordinary non-empty unknown tools keep `Tool not found: <name>`; the existing cop
 Runtime assistant/tool-result history always stores the provider's raw name. Only protocol
 boundaries that require non-empty use the fixed placeholder `empty_tool_name`:
 
-| API format               | assistant tool call               | tool-result wire                 |
-| ------------------------ | --------------------------------- | -------------------------------- |
-| `anthropic-messages`     | raw empty/whitespace string       | `tool_result` carries no name    |
-| `openai-chat-completions`| `empty_tool_name`                 | tool message carries no name     |
-| `openai-responses`       | `empty_tool_name`                 | `function_call_output` carries no name |
+| API format                | assistant tool call         | tool-result wire                       |
+| ------------------------- | --------------------------- | -------------------------------------- |
+| `anthropic-messages`      | raw empty/whitespace string | `tool_result` carries no name          |
+| `openai-chat-completions` | `empty_tool_name`           | tool message carries no name           |
+| `openai-responses`        | `empty_tool_name`           | `function_call_output` carries no name |
 
 - Explicit `apiFormat` wins; when absent, only `providerKind="anthropic"` keeps the raw name —
   other providers use `empty_tool_name`. Never guess the protocol from URLs.

@@ -20,19 +20,19 @@ confirmation, findings are written back to the rule table, case catalog, and cov
 
 ## Source Documents
 
-| Document | Current role |
-| --- | --- |
-| [conversation-protocol-declaration.md](./conversation-protocol-declaration.md) | Pre-V4 terminology and adjudication history; not a current-implementation authority on conflict |
-| [conversation-product-state-space.md](./conversation-product-state-space.md) | State-space and guard-pruning method; concrete fields follow the V4 schema |
-| [conversation-session-case-catalog.md](./conversation-session-case-catalog.md) | Existing natural-language case catalog with current accepted, undefined, and extended cases |
-| [testing/conversation-session-e2e-coverage-matrix.md](./testing/conversation-session-e2e-coverage-matrix.md) | Automation coverage matrix; states evidence status only, not a first source of product semantics |
-| [testing/conversation-session-compact-decision-worksheet.md](./testing/conversation-session-compact-decision-worksheet.md) | Decision worksheet for compact failures and pendingAction |
-| [testing/conversation-session-fork-cross-product-matrix.md](./testing/conversation-session-fork-cross-product-matrix.md) | Fork cross-product matrix: forkability, history boundaries, and future-state inheritance |
-| `packages/shared/src/validationAppSettings.ts` | Validation and default for the app setting `zcodeInteractionBehavior = queue | guide` |
-| `packages/shared/src/zcode-protocol-v4/` | Current schema for command, snapshot, delta, topic, and ACK |
-| `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/` | Current source of truth for command inbox, guards, projection, topic publishing, and recovery |
-| `packages/ui/src/v4/ConversationComposer.tsx`, `conversationStatusPanelModel.ts`, `SessionPane.tsx` | Composer control, stop/status panel, command dispatch, and projection consumption |
-| `packages/formal-proof/src/model.ts` | Current formal enumerator prototype, as the executable-protocol reference |
+| Document                                                                                                                   | Current role                                                                                     |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------ |
+| [conversation-protocol-declaration.md](./conversation-protocol-declaration.md)                                             | Pre-V4 terminology and adjudication history; not a current-implementation authority on conflict  |
+| [conversation-product-state-space.md](./conversation-product-state-space.md)                                               | State-space and guard-pruning method; concrete fields follow the V4 schema                       |
+| [conversation-session-case-catalog.md](./conversation-session-case-catalog.md)                                             | Existing natural-language case catalog with current accepted, undefined, and extended cases      |
+| [testing/conversation-session-e2e-coverage-matrix.md](./testing/conversation-session-e2e-coverage-matrix.md)               | Automation coverage matrix; states evidence status only, not a first source of product semantics |
+| [testing/conversation-session-compact-decision-worksheet.md](./testing/conversation-session-compact-decision-worksheet.md) | Decision worksheet for compact failures and pendingAction                                        |
+| [testing/conversation-session-fork-cross-product-matrix.md](./testing/conversation-session-fork-cross-product-matrix.md)   | Fork cross-product matrix: forkability, history boundaries, and future-state inheritance         |
+| `packages/shared/src/validationAppSettings.ts`                                                                             | Validation and default for the app setting `zcodeInteractionBehavior = queue                     | guide` |
+| `packages/shared/src/zcode-protocol-v4/`                                                                                   | Current schema for command, snapshot, delta, topic, and ACK                                      |
+| `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/`                                                                 | Current source of truth for command inbox, guards, projection, topic publishing, and recovery    |
+| `packages/ui/src/v4/ConversationComposer.tsx`, `conversationStatusPanelModel.ts`, `SessionPane.tsx`                        | Composer control, stop/status panel, command dispatch, and projection consumption                |
+| `packages/formal-proof/src/model.ts`                                                                                       | Current formal enumerator prototype, as the executable-protocol reference                        |
 
 ## Protocol Shape
 
@@ -115,11 +115,11 @@ request/response, connections, logging, and telemetry — never conversation pro
 `productTurnId`, phase, actions, inputRouting, revision, seq, and command ACK belong to the V4
 protocol/projection, not to RPC.
 
-| Layer | Should own | Must not own |
-| --- | --- | --- |
-| CLI / agent runtime | transcript, turn/runtime identity, active/background work, command guards, conversation projection | DOM, scrolling, hover, panel open state |
-| Host / service | trusted connection context, owned-subscription routing, owner/lease, continuous/replayable recovery, projection cache | new or modified conversation adjudication, a second conversation queue |
-| Renderer / Web UI | draft, cursor, scroll, hover, focus, panel open, optimistic pending/stopping overlay | turn grouping facts, timeline ownership, session endedness, action availability |
+| Layer               | Should own                                                                                                            | Must not own                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| CLI / agent runtime | transcript, turn/runtime identity, active/background work, command guards, conversation projection                    | DOM, scrolling, hover, panel open state                                         |
+| Host / service      | trusted connection context, owned-subscription routing, owner/lease, continuous/replayable recovery, projection cache | new or modified conversation adjudication, a second conversation queue          |
+| Renderer / Web UI   | draft, cursor, scroll, hover, focus, panel open, optimistic pending/stopping overlay                                  | turn grouping facts, timeline ownership, session endedness, action availability |
 
 ### Projection Shape
 
@@ -221,13 +221,13 @@ UI local intent
   -> UI reconciles optimistic overlay with projection
 ```
 
-| ACK | Meaning | UI result |
-| --- | --- | --- |
-| `accepted` | the command entered the authoritative command inbox or executed immediately | keep the optimistic display, wait for projection confirmation |
-| `rejected` | a guard explicitly rejected the command | remove the optimistic display, show the protocol reason |
-| `stale` | the command was based on an outdated projection; refresh first, then retry or confirm with the user | pull the latest projection; never silently replay non-idempotent actions |
-| `duplicate` | the same `commandId` was already processed | reuse the existing result; avoid duplicate messages or duplicate stops |
-| `failed` | the command was accepted but execution failed | show the error per the fault catalog and keep a recoverable state |
+| ACK         | Meaning                                                                                             | UI result                                                                |
+| ----------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `accepted`  | the command entered the authoritative command inbox or executed immediately                         | keep the optimistic display, wait for projection confirmation            |
+| `rejected`  | a guard explicitly rejected the command                                                             | remove the optimistic display, show the protocol reason                  |
+| `stale`     | the command was based on an outdated projection; refresh first, then retry or confirm with the user | pull the latest projection; never silently replay non-idempotent actions |
+| `duplicate` | the same `commandId` was already processed                                                          | reuse the existing result; avoid duplicate messages or duplicate stops   |
+| `failed`    | the command was accepted but execution failed                                                       | show the error per the fault catalog and keep a recoverable state        |
 
 Every conversation-changing command must have idempotent identity: `commandId`, `clientId`,
 `sessionId`, optional `baseRevision`, and a business target. `clientMode` is injected by the host
@@ -282,14 +282,14 @@ commands/query ─ await same promise ──────────────
 
 ### Session Phase
 
-| Value | Meaning |
-| --- | --- |
-| `draft` | no formal session created yet; the user is still typing the first query |
-| `prewarming` | the first send was submitted; the session is preparing or the first turn has not reached stable running |
-| `running` | the session has an active foreground turn or completion-blocking active work executing, including assistant/tool/foreground subagent/compact/goal verifier/goal continuation/turn-steer |
-| `completed(success)` | all completion-blocking active work of the session closed normally and next actions are accepted; background work may remain pending |
-| `completed(interrupted)` | a user stop or equivalent interrupt ended the completion-blocking active work; next actions are accepted; background work may remain pending |
-| `error` | the session entered an error state; recovery semantics come from the fault catalog |
+| Value                    | Meaning                                                                                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `draft`                  | no formal session created yet; the user is still typing the first query                                                                                                                 |
+| `prewarming`             | the first send was submitted; the session is preparing or the first turn has not reached stable running                                                                                 |
+| `running`                | the session has an active foreground turn or completion-blocking active work executing, including assistant/tool/foreground subagent/compact/goal verifier/goal continuation/turn-steer |
+| `completed(success)`     | all completion-blocking active work of the session closed normally and next actions are accepted; background work may remain pending                                                    |
+| `completed(interrupted)` | a user stop or equivalent interrupt ended the completion-blocking active work; next actions are accepted; background work may remain pending                                            |
+| `error`                  | the session entered an error state; recovery semantics come from the fault catalog                                                                                                      |
 
 `compacting` and `goalVerifying` are not top-level phases parallel to `running`; they are active
 work kinds inside `running`. Where this document needs those contexts it writes
@@ -356,19 +356,19 @@ session/
     `-- completed(success/interrupted) once foreground-work/ is empty
 ```
 
-| Completion-blocking active work | Meaning | Completion threshold |
-| --- | --- | --- |
-| `primaryTurn` | the main assistant turn, model stream, tool calls, or blocking requests triggered by the current user input | normal completion, failed closure, or stop interrupt |
-| `foregroundSubagent` | a child agent/child request derived by the main turn that must be summarized within the current assistant round | the foreground subagent completes, fails, or is stopped |
-| `compact` | the compaction request and pendingAction pre-maintenance of a manual or auto compact | the compact completes, noops, fails, or is stopped |
-| `goalVerifier` | the achievement-verification request for the goal target | the verifier returns pass/notSatisfied, fails, or is stopped |
-| `goalContinuation` | the next-step execution chain auto-continuing after an unmet goal | the continuation completes, enters the next active work, or is stopped |
-| `turnSteer` | guide-mode follow-up submitted to the runtime but not yet confirmed drained | confirmed by the runtime, rejected, fallen back to the queue, or closed by stop |
+| Completion-blocking active work | Meaning                                                                                                         | Completion threshold                                                            |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `primaryTurn`                   | the main assistant turn, model stream, tool calls, or blocking requests triggered by the current user input     | normal completion, failed closure, or stop interrupt                            |
+| `foregroundSubagent`            | a child agent/child request derived by the main turn that must be summarized within the current assistant round | the foreground subagent completes, fails, or is stopped                         |
+| `compact`                       | the compaction request and pendingAction pre-maintenance of a manual or auto compact                            | the compact completes, noops, fails, or is stopped                              |
+| `goalVerifier`                  | the achievement-verification request for the goal target                                                        | the verifier returns pass/notSatisfied, fails, or is stopped                    |
+| `goalContinuation`              | the next-step execution chain auto-continuing after an unmet goal                                               | the continuation completes, enters the next active work, or is stopped          |
+| `turnSteer`                     | guide-mode follow-up submitted to the runtime but not yet confirmed drained                                     | confirmed by the runtime, rejected, fallen back to the queue, or closed by stop |
 
-| Background work | Meaning | Product closure |
-| --- | --- | --- |
-| `backgroundBash` | bash/process work derived by the main turn but declared background | does not block `sessionEnded`; produces a background result on completion |
-| `backgroundSubagent` | a subagent derived by the main turn but declared background | does not block `sessionEnded`; produces a background result on completion |
+| Background work                | Meaning                                                                        | Product closure                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `backgroundBash`               | bash/process work derived by the main turn but declared background             | does not block `sessionEnded`; produces a background result on completion            |
+| `backgroundSubagent`           | a subagent derived by the main turn but declared background                    | does not block `sessionEnded`; produces a background result on completion            |
 | `backgroundResultContinuation` | follow-up input triggered when a background result returns to the main session | enters `continuation-inbox`; may start a new foreground run or queue while busy/held |
 
 `BackgroundTaskStarted/Updated/Completed` must carry the runtime-adjudicated
@@ -429,10 +429,10 @@ timing and does not make any hook a product completion gate. It must come from C
 facts or a host/service normalization of those facts; the UI must never judge it from the assistant
 text stream, timeline bars, or a local `streaming` flag.
 
-| Determination | Condition | Product meaning |
-| --- | --- | --- |
-| `sessionEnded=false` | `prewarming`, `running`, or any completion-blocking `activeWork!=empty` | the session has not ended; new composer input is a future intent and cannot start a second active turn directly |
-| `sessionEnded=true` | `completed(success)` or `completed(interrupted)` with completion-blocking `activeWork=empty`; `backgroundWork` may be non-empty | the session has ended; completed-only actions open; ordinary input may start the next turn per queue state |
+| Determination        | Condition                                                                                                                       | Product meaning                                                                                                 |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `sessionEnded=false` | `prewarming`, `running`, or any completion-blocking `activeWork!=empty`                                                         | the session has not ended; new composer input is a future intent and cannot start a second active turn directly |
+| `sessionEnded=true`  | `completed(success)` or `completed(interrupted)` with completion-blocking `activeWork=empty`; `backgroundWork` may be non-empty | the session has ended; completed-only actions open; ordinary input may start the next turn per queue state      |
 
 While `sessionEnded=false`, ordinary `sendText` defaults to the queue; in
 `running + followupInput.mode=guide` satisfying turn-steer conditions it is submitted to the
@@ -496,14 +496,14 @@ affect the background drawer, continuation inbox, and background cancel entry �
 The product control layer keeps the UI's interaction shell coarse and stable without losing
 internal detail:
 
-| Field | Values | Meaning |
-| --- | --- | --- |
-| `sessionEnded` | `true` / `false` | whether composer input may immediately become the next active turn |
-| `hasBackgroundWork` | `true` / `false` | whether the session still has background bash/subagent pending; does not drive the main stop button |
-| `canStop` | `true` / `false` | whether the session has completion-blocking active work that a user stop can terminate |
-| `stopState` | `idle`, `stoppable`, `stopping` | the stable stop-button display; clicking may optimistically enter `stopping` until the authoritative projection converges |
-| `stopTargetKind` | `assistant`, `tool`, `subagent`, `compact`, `goalVerifier`, `goalContinuation`, `mixed`, `unknown` | which work kind this stop will mainly act on; affects tooltip, logs, telemetry, and detail copy only — never button visibility/flicker |
-| `inputRouting` | `startNow`, `enqueue`, `guide`, `reject` | the product adjudication summary for the current composer input; must be traceable to a rule-table guard |
+| Field               | Values                                                                                             | Meaning                                                                                                                                |
+| ------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionEnded`      | `true` / `false`                                                                                   | whether composer input may immediately become the next active turn                                                                     |
+| `hasBackgroundWork` | `true` / `false`                                                                                   | whether the session still has background bash/subagent pending; does not drive the main stop button                                    |
+| `canStop`           | `true` / `false`                                                                                   | whether the session has completion-blocking active work that a user stop can terminate                                                 |
+| `stopState`         | `idle`, `stoppable`, `stopping`                                                                    | the stable stop-button display; clicking may optimistically enter `stopping` until the authoritative projection converges              |
+| `stopTargetKind`    | `assistant`, `tool`, `subagent`, `compact`, `goalVerifier`, `goalContinuation`, `mixed`, `unknown` | which work kind this stop will mainly act on; affects tooltip, logs, telemetry, and detail copy only — never button visibility/flicker |
+| `inputRouting`      | `startNow`, `enqueue`, `guide`, `reject`                                                           | the product adjudication summary for the current composer input; must be traceable to a rule-table guard                               |
 
 The stop button must not flicker across active-work handoffs like
 `assistant -> compact -> goalVerifier -> goalContinuation`. As long as `canStop=true` or
@@ -525,14 +525,14 @@ only an explicit resume may reactivate it.
 completed, `stop` outranks queue drain, guide injection, auto goal continuation, compact
 pendingAction, and late runtime terminal events.
 
-| Scenario | Protocol |
-| --- | --- |
-| `running + stop` | terminate the primary turn, tool/blocking requests, all running foreground subagents, goal continuation, goal verifier, and unconfirmed turn-steer |
-| `running + activeWork.kind=compact + stop` | terminate the current compact; manual/auto compacts may not keep writing success results, and an auto compact's pendingAction must not execute after the stop |
-| `running + activeWork.kind=goalVerifier + stop` | terminate the current verifier; this verifier run counts as `failed(cancelled)` and may no longer trigger pass/notSatisfied follow-ups |
-| `running + sendQueuedNow` | equivalent to executing the highest-priority `stop` first, then consuming the clicked queue item once completion-blocking active work is empty; `activeWork.kind=compact + sendQueuedNow` still rejects per the operation lock; `activeWork.kind=goalVerifier + sendQueuedNow` may drain after the stop barrier |
-| `stop requested + late terminal event` | a late foreground subagent/compact/verifier/assistant completion may only close out the stopped old work; it must not flip the session back to success or override a new round of active input |
-| `backgroundWork only + stop` | the main stop button is unavailable; cancelling from the background drawer is background task cancel, not a session stop |
+| Scenario                                        | Protocol                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `running + stop`                                | terminate the primary turn, tool/blocking requests, all running foreground subagents, goal continuation, goal verifier, and unconfirmed turn-steer                                                                                                                                                              |
+| `running + activeWork.kind=compact + stop`      | terminate the current compact; manual/auto compacts may not keep writing success results, and an auto compact's pendingAction must not execute after the stop                                                                                                                                                   |
+| `running + activeWork.kind=goalVerifier + stop` | terminate the current verifier; this verifier run counts as `failed(cancelled)` and may no longer trigger pass/notSatisfied follow-ups                                                                                                                                                                          |
+| `running + sendQueuedNow`                       | equivalent to executing the highest-priority `stop` first, then consuming the clicked queue item once completion-blocking active work is empty; `activeWork.kind=compact + sendQueuedNow` still rejects per the operation lock; `activeWork.kind=goalVerifier + sendQueuedNow` may drain after the stop barrier |
+| `stop requested + late terminal event`          | a late foreground subagent/compact/verifier/assistant completion may only close out the stopped old work; it must not flip the session back to success or override a new round of active input                                                                                                                  |
+| `backgroundWork only + stop`                    | the main stop button is unavailable; cancelling from the background drawer is background task cancel, not a session stop                                                                                                                                                                                        |
 
 `stop` is not an ordinary queue item and cannot wait in line. A transient `stopRequested` marker or
 a UI "stopping" display may exist, but it is not an independent product phase; ultimately there is
@@ -541,10 +541,10 @@ explicit failure, or a new active turn started later.
 
 ### Queue
 
-| Dimension | Values | Meaning |
-| --- | --- | --- |
-| `queue.length` | `0`, `1`, `2`, `3+` | length equivalence classes for GUI display and case convergence |
-| `queue.autoDrain` | `true`, `false` | whether the queue head is consumed automatically after the current turn |
+| Dimension         | Values              | Meaning                                                                 |
+| ----------------- | ------------------- | ----------------------------------------------------------------------- |
+| `queue.length`    | `0`, `1`, `2`, `3+` | length equivalence classes for GUI display and case convergence         |
+| `queue.autoDrain` | `true`, `false`     | whether the queue head is consumed automatically after the current turn |
 
 The queue holds future user intents, not completed history. All inputs already submitted from
 desktop or mobile that cannot start immediately while busy/running enter the authoritative FIFO of
@@ -600,10 +600,10 @@ reuse, arrival order, or refresh recovery.
 the same session is `running`. It is not a queue-item type; it is the routing strategy for running
 follow-ups.
 
-| Value | Default | Meaning |
-| --- | --- | --- |
-| `queue` | yes | follow-up text enters the CLI authoritative queue, waiting for the active turn to finish or an explicit `sendQueuedNow` |
-| `guide` | no | eligible follow-up text enters agent-side turn steering as guidance for the current active turn; ineligible input falls back to the CLI queue |
+| Value   | Default | Meaning                                                                                                                                       |
+| ------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queue` | yes     | follow-up text enters the CLI authoritative queue, waiting for the active turn to finish or an explicit `sendQueuedNow`                       |
+| `guide` | no      | eligible follow-up text enters agent-side turn steering as guidance for the current active turn; ineligible input falls back to the CLI queue |
 
 `guide` mode does not mean rewriting in-flight requests already sent to the provider. It only
 submits a complete input intent to the runtime's turn-steer mechanism and waits for confirmation,
@@ -627,25 +627,25 @@ and `/goal` both enter the queue as deferred input.
 
 Confirmed boundaries:
 
-| Scenario | Protocol |
-| --- | --- |
-| `running + followupInput.mode=queue + sendText` | queue as deferred `sendText`; the active turn is not interrupted |
-| `running + followupInput.mode=queue + sendGoalCommand` | queue as deferred `sendGoalCommand`; goal is set or updated on consumption |
-| `running + followupInput.mode=guide + sendText + guide eligible` | enter turn-steer submitting/queued, or project as a guided user message after runtime confirmation |
-| `running + followupInput.mode=guide + sendText + guide ineligible` | fall back to a deferred `sendText` queue item |
-| `running + followupInput.mode=guide + sendGoalCommand` | still follows `sendGoalCommand`'s state rules; currently queues as deferred `sendGoalCommand` unless a future rule table explicitly accepts goal steering |
-| `activeWork.kind=compact/goalVerifier + sendText/sendGoalCommand` | queue as deferred input; no new turn starts, the active work is not interrupted |
-| `running + sendCompactCommand/clickCompact` | unaffected by follow-up mode; always reject — not queued, not sent as an ordinary message, no compact started |
-| `sendQueuedNow` | an explicit queue-preempting consume action (zh UI may call it 「立即引导」); it is not the same as `followupInput.mode=guide` |
+| Scenario                                                           | Protocol                                                                                                                                                  |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `running + followupInput.mode=queue + sendText`                    | queue as deferred `sendText`; the active turn is not interrupted                                                                                          |
+| `running + followupInput.mode=queue + sendGoalCommand`             | queue as deferred `sendGoalCommand`; goal is set or updated on consumption                                                                                |
+| `running + followupInput.mode=guide + sendText + guide eligible`   | enter turn-steer submitting/queued, or project as a guided user message after runtime confirmation                                                        |
+| `running + followupInput.mode=guide + sendText + guide ineligible` | fall back to a deferred `sendText` queue item                                                                                                             |
+| `running + followupInput.mode=guide + sendGoalCommand`             | still follows `sendGoalCommand`'s state rules; currently queues as deferred `sendGoalCommand` unless a future rule table explicitly accepts goal steering |
+| `activeWork.kind=compact/goalVerifier + sendText/sendGoalCommand`  | queue as deferred input; no new turn starts, the active work is not interrupted                                                                           |
+| `running + sendCompactCommand/clickCompact`                        | unaffected by follow-up mode; always reject — not queued, not sent as an ordinary message, no compact started                                             |
+| `sendQueuedNow`                                                    | an explicit queue-preempting consume action (zh UI may call it 「立即引导」); it is not the same as `followupInput.mode=guide`                            |
 
 ### Compact
 
-| Dimension | Values | Meaning |
-| --- | --- | --- |
-| `compact.origin` | `manual`, `auto` | user-initiated or system pre-maintenance |
-| `compact.memory` | `never`, `compactable`, `justCompacted`, `notNeeded` | whether the context needs or allows further compaction |
-| `compact.canCompactAgain` | `true`, `false` | whether compacting again right after a compact can still produce useful compression |
-| `compact.pendingAction` | ordinary send, queue item, queued goal, edit rerun, etc. | the action to continue after a successful auto compact |
+| Dimension                 | Values                                                   | Meaning                                                                             |
+| ------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `compact.origin`          | `manual`, `auto`                                         | user-initiated or system pre-maintenance                                            |
+| `compact.memory`          | `never`, `compactable`, `justCompacted`, `notNeeded`     | whether the context needs or allows further compaction                              |
+| `compact.canCompactAgain` | `true`, `false`                                          | whether compacting again right after a compact can still produce useful compression |
+| `compact.pendingAction`   | ordinary send, queue item, queued goal, edit rerun, etc. | the action to continue after a successful auto compact                              |
 
 Auto compact is a system-inserted pre-maintenance step and takes no user queue slot. It runs around
 a `pendingAction`; on success it continues that action. After a stop, an auto compact must not
@@ -654,14 +654,14 @@ confirmation, or is dropped remains governed by the compact decision worksheet.
 
 ### Goal
 
-| Value | Meaning |
-| --- | --- |
-| `none` | the session has no goal target |
-| `active` | the session has an unfinished target |
-| `verifying` | the verifier is judging whether the target is achieved |
-| `verified` | the verifier judged it achieved |
-| `notSatisfied` | the verifier finished normally but judged the target not yet achieved |
-| `failed` | the verifier was cancelled, hit an API failure, timeout, or internal error and produced no valid verdict |
+| Value          | Meaning                                                                                                  |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| `none`         | the session has no goal target                                                                           |
+| `active`       | the session has an unfinished target                                                                     |
+| `verifying`    | the verifier is judging whether the target is achieved                                                   |
+| `verified`     | the verifier judged it achieved                                                                          |
+| `notSatisfied` | the verifier finished normally but judged the target not yet achieved                                    |
+| `failed`       | the verifier was cancelled, hit an API failure, timeout, or internal error and produced no valid verdict |
 
 `notSatisfied` and `failed` must stay separate. `notSatisfied` is a valid verification conclusion —
 the goal is not done; auto-continuation, waiting for user input, or queue handling per goal rules
@@ -688,31 +688,31 @@ copies the current window state nor copies the parent's future action queue or l
 work. The parent session may be running a new foreground turn or background work; as long as the
 fork target itself is already stable assistant history, the fork is allowed.
 
-| Dimension | Protocol |
-| --- | --- |
-| `fork.sourceSession` | the parent session that triggered the fork |
-| `fork.target` | must be the last completed assistant segment of a `completedSuccess` product turn; current streaming/interrupted/failed partials and middle assistant segments are not fork targets |
-| `fork.historyBoundary` | the single CLI resolver returns turnId, ordered messageIds, and boundaryMessageId; the child inherits only the boundary and the stable visible transcript before it |
-| `fork.configSnapshot` | the child inherits the provider/model/thinking config persisted at the fork point; it does not read the parent's later config |
-| `fork.goalSnapshot` | the child inherits the goal target, iterations, and verifier timeline from before the fork point |
-| `fork.queuePolicy` | the parent queue is kept; the child queue is empty |
+| Dimension               | Protocol                                                                                                                                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fork.sourceSession`    | the parent session that triggered the fork                                                                                                                                                                                      |
+| `fork.target`           | must be the last completed assistant segment of a `completedSuccess` product turn; current streaming/interrupted/failed partials and middle assistant segments are not fork targets                                             |
+| `fork.historyBoundary`  | the single CLI resolver returns turnId, ordered messageIds, and boundaryMessageId; the child inherits only the boundary and the stable visible transcript before it                                                             |
+| `fork.configSnapshot`   | the child inherits the provider/model/thinking config persisted at the fork point; it does not read the parent's later config                                                                                                   |
+| `fork.goalSnapshot`     | the child inherits the goal target, iterations, and verifier timeline from before the fork point                                                                                                                                |
+| `fork.queuePolicy`      | the parent queue is kept; the child queue is empty                                                                                                                                                                              |
 | `fork.backgroundPolicy` | the parent's live background bash/subagents, pending background results, and continuation inbox are not copied; only background results already materialized into stable transcript before the fork point are copied as history |
-| `fork.workspacePolicy` | a running fork copies conversation only and does not rewind the shared workspace; the existing checkpoint behavior of completed/idle forks is not expanded this round |
-| `fork.timeline` | the fork notice is a turn boundary; it enters neither the assistant work history nor the "worked" folding |
+| `fork.workspacePolicy`  | a running fork copies conversation only and does not rewind the shared workspace; the existing checkpoint behavior of completed/idle forks is not expanded this round                                                           |
+| `fork.timeline`         | the fork notice is a turn boundary; it enters neither the assistant work history nor the "worked" folding                                                                                                                       |
 
 Fork permissibility is adjudicated by history stability:
 
-| Precondition | Target | Decision | Notes |
-| --- | --- | --- | --- |
-| `completed(success)` or `completed(interrupted)` | assistant message/turn | `allow` | create the child session; inherit pre-fork history and the config persisted at the fork point |
-| `running + activeWork.kind=primaryTurn/foregroundSubagent/goalContinuation/turnSteer` | stable historical assistant message/turn | `allow` | a running parent does not make the fork target unstable; the child inherits only pre-fork history, not the current active work |
-| `backgroundWork!=empty`, whether or not the parent is completed | stable assistant message/turn | `allow` | background bash/subagents do not block fork; live background handles and pending results still belong to the parent only |
-| `prewarming` with no stable assistant target | any assistant message/turn | `reject` | no stable assistant history exists yet as a fork boundary |
-| `activeWork.kind=compact` | any assistant message/turn | `reject` | a compact is rewriting/maintaining the context boundary; a child cannot be created simultaneously |
-| `activeWork.kind=goalVerifier` | stable assistant message/turn | `allow` | a running verifier does not make the historical target unstable; the child inherits only pre-fork stable history, not the verifier or the later goal loop |
-| any state | the currently streaming assistant partial | `reject` | a partial is not yet a stable transcript boundary |
-| `error` or failed/error partial that has not formed a `completed(interrupted)` product terminal state | assistant partial | `reject` | the partial history is unstable |
-| any state | user message, tool message, timeline marker | `reject` or entry absent | fork points are defined only on assistant messages/turns |
+| Precondition                                                                                          | Target                                      | Decision                 | Notes                                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `completed(success)` or `completed(interrupted)`                                                      | assistant message/turn                      | `allow`                  | create the child session; inherit pre-fork history and the config persisted at the fork point                                                             |
+| `running + activeWork.kind=primaryTurn/foregroundSubagent/goalContinuation/turnSteer`                 | stable historical assistant message/turn    | `allow`                  | a running parent does not make the fork target unstable; the child inherits only pre-fork history, not the current active work                            |
+| `backgroundWork!=empty`, whether or not the parent is completed                                       | stable assistant message/turn               | `allow`                  | background bash/subagents do not block fork; live background handles and pending results still belong to the parent only                                  |
+| `prewarming` with no stable assistant target                                                          | any assistant message/turn                  | `reject`                 | no stable assistant history exists yet as a fork boundary                                                                                                 |
+| `activeWork.kind=compact`                                                                             | any assistant message/turn                  | `reject`                 | a compact is rewriting/maintaining the context boundary; a child cannot be created simultaneously                                                         |
+| `activeWork.kind=goalVerifier`                                                                        | stable assistant message/turn               | `allow`                  | a running verifier does not make the historical target unstable; the child inherits only pre-fork stable history, not the verifier or the later goal loop |
+| any state                                                                                             | the currently streaming assistant partial   | `reject`                 | a partial is not yet a stable transcript boundary                                                                                                         |
+| `error` or failed/error partial that has not formed a `completed(interrupted)` product terminal state | assistant partial                           | `reject`                 | the partial history is unstable                                                                                                                           |
+| any state                                                                                             | user message, tool message, timeline marker | `reject` or entry absent | fork points are defined only on assistant messages/turns                                                                                                  |
 
 The parent session continues afterwards per its own queue, goal, config, foreground/background
 work, and run state — unaffected by the child. A running fork does not pass through any
@@ -765,7 +765,7 @@ completed/idle forks is unchanged this round.
   messages/parts are not physically deleted but no longer belong to the active projection, model
   context, or cold-recovery branch; explicit `forkAssistant` is the only entry that creates a child.
 - The branch cut must apply before compact scope: first obtain `kept prefix + new messages after
-  the branch cut`, then choose the last compact boundary within that active branch to build model
+the branch cut`, then choose the last compact boundary within that active branch to build model
   history. Crossed compact summaries and full/microcompact derived state all invalidate; the most
   recent compact still on the active branch before the target is kept.
 - Conversation rewind appends no provider-visible `rewind_notice`; the model sees only the kept
@@ -840,16 +840,16 @@ completed/idle forks is unchanged this round.
 
 ### Target Object
 
-| Value | Meaning |
-| --- | --- |
-| `composer` | what the current input box submits |
-| `queueItem` | one item in the queue panel |
-| `latestUserQuery` | the latest real-user input; an ordinary text query or a user-submitted goal input |
-| `oldUserQuery` | a non-latest historical real-user input (text/goal) |
-| `latestAssistantTurn` | the latest assistant turn |
-| `oldAssistantTurn` | a historical assistant turn |
-| `toolMessage` | a tool block or tool result |
-| `timelineMarker` | compact, fork, goal verification, model change, and other timeline markers |
+| Value                 | Meaning                                                                           |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `composer`            | what the current input box submits                                                |
+| `queueItem`           | one item in the queue panel                                                       |
+| `latestUserQuery`     | the latest real-user input; an ordinary text query or a user-submitted goal input |
+| `oldUserQuery`        | a non-latest historical real-user input (text/goal)                               |
+| `latestAssistantTurn` | the latest assistant turn                                                         |
+| `oldAssistantTurn`    | a historical assistant turn                                                       |
+| `toolMessage`         | a tool block or tool result                                                       |
+| `timelineMarker`      | compact, fork, goal verification, model change, and other timeline markers        |
 
 Fork targets are defined only on assistant messages/turns; edit targets only on user queries. Tool
 messages and timeline markers offer no fork/edit entries unless a future protocol defines them.
@@ -858,56 +858,56 @@ messages and timeline markers offer no fork/edit entries unless a future protoco
 
 ### User Events
 
-| Event ID | Surface | Payload | Typical target |
-| --- | --- | --- | --- |
-| `sendText` | composer | ordinary text | `composer` |
-| `sendGoalCommand` | composer or goal control | `/goal xxx` or goal text | `composer` |
-| `sendCompactCommand` | composer | `/compact` | `composer` |
-| `clickCompact` | toolbar or action menu | compact intent | current session |
-| `stop` | toolbar | stop current session activity | current session active work |
-| `forkAssistant` | turn actions | fork intent | latest/old assistant turn |
-| `retryTurn` | protocol-compat entry (hidden in product UI) | retry intent | latest assistant turn |
-| `editUserQuery` | real-user row actions | edited text/goal text; keeps the original intent kind | latest real-user input |
-| `sendQueuedNow` | queue actions | queue item id | `queueItem` |
-| `editQueueItem` | queue actions | edited queue content | `queueItem` |
-| `reorderQueueItem` | queue actions | new order | `queueItem` |
-| `deleteQueueItem` | queue actions | queue item id | `queueItem` |
-| `switchModelConfig` | toolbar/model selector | provider/model/thought config | current session |
+| Event ID             | Surface                                      | Payload                                               | Typical target              |
+| -------------------- | -------------------------------------------- | ----------------------------------------------------- | --------------------------- |
+| `sendText`           | composer                                     | ordinary text                                         | `composer`                  |
+| `sendGoalCommand`    | composer or goal control                     | `/goal xxx` or goal text                              | `composer`                  |
+| `sendCompactCommand` | composer                                     | `/compact`                                            | `composer`                  |
+| `clickCompact`       | toolbar or action menu                       | compact intent                                        | current session             |
+| `stop`               | toolbar                                      | stop current session activity                         | current session active work |
+| `forkAssistant`      | turn actions                                 | fork intent                                           | latest/old assistant turn   |
+| `retryTurn`          | protocol-compat entry (hidden in product UI) | retry intent                                          | latest assistant turn       |
+| `editUserQuery`      | real-user row actions                        | edited text/goal text; keeps the original intent kind | latest real-user input      |
+| `sendQueuedNow`      | queue actions                                | queue item id                                         | `queueItem`                 |
+| `editQueueItem`      | queue actions                                | edited queue content                                  | `queueItem`                 |
+| `reorderQueueItem`   | queue actions                                | new order                                             | `queueItem`                 |
+| `deleteQueueItem`    | queue actions                                | queue item id                                         | `queueItem`                 |
+| `switchModelConfig`  | toolbar/model selector                       | provider/model/thought config                         | current session             |
 
 ### System Events
 
-| Event ID | Source | Applicable context |
-| --- | --- | --- |
-| `assistantComplete` | runtime/model stream | `running` |
-| `assistantFailed` | runtime/model stream | `running` |
-| `compactStarted` | runtime | auto/manual compact |
-| `compactComplete` | runtime | `activeWork.kind=compact` |
-| `compactNoop` | runtime | `activeWork.kind=compact`, or compacting again after completed |
-| `compactFailed` | runtime | `activeWork.kind=compact` |
-| `goalVerifyStart` | goal runtime | entering the verifier after a goal is active |
-| `goalVerifyPass` | goal runtime | `activeWork.kind=goalVerifier` |
-| `goalVerifyNotSatisfied` | goal runtime | `activeWork.kind=goalVerifier`, the verifier returned "target not yet achieved" normally |
-| `goalVerifyFailed` | goal runtime | `activeWork.kind=goalVerifier`, the verifier was cancelled, hit an API failure, timeout, or internal error |
-| `foregroundSubagentStarted` | runtime/tool | `running`, a foreground child agent derived by the primary turn |
-| `foregroundSubagentComplete` | runtime/tool | `running`, the corresponding foreground subagent active work closes |
-| `foregroundSubagentFailed` | runtime/tool | `running`, the corresponding foreground subagent fails or is stopped |
-| `backgroundWorkStarted` | runtime/tool | a background bash/subagent starts; does not block `sessionEnded` |
-| `backgroundWorkComplete` | runtime/tool | a background bash/subagent completes; produces a background result or no-op |
-| `backgroundWorkFailed` | runtime/tool | a background bash/subagent fails or is cancelled by background cancel |
-| `backgroundResultQueued` | runtime/tool | a background result entered the continuation inbox or a deferred queue |
-| `sessionRestored` | restore/snapshot | app reload, session switch, remote replayable |
+| Event ID                     | Source               | Applicable context                                                                                         |
+| ---------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `assistantComplete`          | runtime/model stream | `running`                                                                                                  |
+| `assistantFailed`            | runtime/model stream | `running`                                                                                                  |
+| `compactStarted`             | runtime              | auto/manual compact                                                                                        |
+| `compactComplete`            | runtime              | `activeWork.kind=compact`                                                                                  |
+| `compactNoop`                | runtime              | `activeWork.kind=compact`, or compacting again after completed                                             |
+| `compactFailed`              | runtime              | `activeWork.kind=compact`                                                                                  |
+| `goalVerifyStart`            | goal runtime         | entering the verifier after a goal is active                                                               |
+| `goalVerifyPass`             | goal runtime         | `activeWork.kind=goalVerifier`                                                                             |
+| `goalVerifyNotSatisfied`     | goal runtime         | `activeWork.kind=goalVerifier`, the verifier returned "target not yet achieved" normally                   |
+| `goalVerifyFailed`           | goal runtime         | `activeWork.kind=goalVerifier`, the verifier was cancelled, hit an API failure, timeout, or internal error |
+| `foregroundSubagentStarted`  | runtime/tool         | `running`, a foreground child agent derived by the primary turn                                            |
+| `foregroundSubagentComplete` | runtime/tool         | `running`, the corresponding foreground subagent active work closes                                        |
+| `foregroundSubagentFailed`   | runtime/tool         | `running`, the corresponding foreground subagent fails or is stopped                                       |
+| `backgroundWorkStarted`      | runtime/tool         | a background bash/subagent starts; does not block `sessionEnded`                                           |
+| `backgroundWorkComplete`     | runtime/tool         | a background bash/subagent completes; produces a background result or no-op                                |
+| `backgroundWorkFailed`       | runtime/tool         | a background bash/subagent fails or is cancelled by background cancel                                      |
+| `backgroundResultQueued`     | runtime/tool         | a background result entered the continuation inbox or a deferred queue                                     |
+| `sessionRestored`            | restore/snapshot     | app reload, session switch, remote replayable                                                              |
 
 ## Decision Types
 
-| Decision | Meaning | Must state |
-| --- | --- | --- |
-| `allow` | the action takes effect immediately | the next state, the protocol request produced, or the local state change |
-| `reject` | the action is explicitly rejected | user feedback, forbidden side effects, unchanged-state parts |
-| `enqueue` | the action does not execute now; it enters the queue | the deferred input event, payload, order, and whether autoDrain |
-| `noop` | the action may fire but changes no business state | user feedback and why no action is needed |
-| `system-transition` | a system event advances the state | event ownership, next state, whether follow-up actions trigger |
-| `undefined` | product semantics undefined | the question to confirm and candidate readings |
-| `bug-candidate` | the current implementation seems to violate a confirmed protocol | the confirmed protocol, the observed conflict, and the evidence entry |
+| Decision            | Meaning                                                          | Must state                                                               |
+| ------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `allow`             | the action takes effect immediately                              | the next state, the protocol request produced, or the local state change |
+| `reject`            | the action is explicitly rejected                                | user feedback, forbidden side effects, unchanged-state parts             |
+| `enqueue`           | the action does not execute now; it enters the queue             | the deferred input event, payload, order, and whether autoDrain          |
+| `noop`              | the action may fire but changes no business state                | user feedback and why no action is needed                                |
+| `system-transition` | a system event advances the state                                | event ownership, next state, whether follow-up actions trigger           |
+| `undefined`         | product semantics undefined                                      | the question to confirm and candidate readings                           |
+| `bug-candidate`     | the current implementation seems to violate a confirmed protocol | the confirmed protocol, the observed conflict, and the evidence entry    |
 
 `reject` is not a fallback error. Every reject must state its feedback and forbidden side effects,
 for example "not queued, not sent as an ordinary user message, no compact request sent".
@@ -920,99 +920,99 @@ confirmation is it written back into the rule table and case catalog.
 These invariants outrank individual cases. Any rule effect violating an invariant is marked
 `bug-candidate` or `undefined`, never accepted as an ordinary case.
 
-| Invariant ID | Statement | Status |
-| --- | --- | --- |
-| `sameSessionActiveTurnExclusive` | one session cannot run two active turns; same-session follow-up input must go through queue, turn-steer, or explicit stop/drain rules | accepted |
-| `sessionCompletionRequiresNoForegroundWork` | `completed(success/interrupted)` requires primary turn, foreground subagent, compact, goal verifier, goal continuation, and turn-steer all closed; background work takes no part in the completion gate | accepted |
-| `foregroundSubagentKeepsSessionBusy` | after the assistant stream or parts of the main turn finish, the session cannot enter completed while a foreground subagent owned by it still runs | accepted |
-| `backgroundWorkDoesNotBlockSessionEnd` | while background bash/subagents run, the session may still enter completed once foreground work empties, opening completed-only actions | accepted |
-| `sessionEndedDrivesImmediateStart` | only a completed context with `sessionEnded=true` lets ordinary composer input immediately become the next active turn; with `sessionEnded=false` a queue, guide, reject, or stop/drain guard must apply | accepted |
-| `runtimeFactsAreAuthoritative` | `sessionEnded`, `canStop`, `stopState`, `stopTargetKind` must come from CLI/runtime facts or normalized host/service projection; the UI must not guess from local message streams, timeline, or `streaming` state | accepted |
-| `persistentConversationFactsAreAuthoritative` | message, part, session metadata, and goal are the persistent authority; live/cold normalize into the same canonical facts before generating projection | accepted |
-| `rowIdentityIsDisplayOnly` | `rowId` is display-only; edit/retry/fork actions and command targets must bind to `entityId/productTurnId` | accepted |
-| `trustedDeliveryBoundary` | desktop (incl. SSH/WSL/Docker) is fixed continuous, mobile/Web remote fixed replayable; the profile is trusted-injected by the host attachment and not selectable by the UI | accepted |
-| `subscriptionOwnedByConnection` | every connection has an independent subscription registry; frames go only to the owning port; one slow subscriber must not pollute other connections | accepted |
-| `acceptedInputHasSingleAuthority` | all committed busy/running inputs from all clients enter the same FIFO in CLI admission order; host/runtime/UI keep no second authoritative queue | accepted |
-| `acceptedInputAlwaysAccountedFor` | every committed input must be in exactly one of queue, guided row, transcript, or explicit rejected/failed/discarded | accepted |
-| `sourceCommandIdEndToEnd` | queue item, drain/guided event, user row, message anchor, marker, and fork child metadata keep the original sourceCommandId | accepted |
-| `restartDiscardRespectsDeliveryLifetime` | after a CLI restart, unfinished admitted inputs are explicitly discarded; the old runtime's `queue/guide` and the `unknown` without an authoritative verdict settle silently with no UI error; only a `startNow` that never entered the transcript prompts a resend confirmation; automatic replay is forbidden | accepted |
-| `stopButtonStableAcrossActiveWork` | across handoffs between assistant, compact, goal verifier, goal continuation, and foreground subagent active work, the UI stop button must stay stable while the session is still stoppable, without flicker from internal phase switches | accepted |
-| `stopPausesActiveGoalTarget` | with an active goal target, a user stop — whether acting on assistant, compact, goal verifier, or goal continuation — must move the target to a non-active paused state | accepted |
-| `cancelledTurnColdHydrationParity` | typed/legacy ZCode cancellations from a user stop normalize to `TurnComplete(cancelled)` after both live and cold hydration; no `TurnError`, `phase=error`, or `control.lastError` | accepted |
-| `followupInputModeExplicit` | running follow-up ordinary input is adjudicated explicitly by `queue` or `guide` mode; the default is `queue` | accepted |
-| `runningPromptQueues` | in `running` with follow-up mode `queue`, ordinary text enters the queue and does not interrupt the in-flight request | accepted |
-| `unfinishedSessionPromptQueues` | with `sessionEnded=false` and no guide allow hit, ordinary text enters the queue and starts no second active turn | accepted |
-| `unfinishedSessionGoalQueues` | with `sessionEnded=false`, `/goal xxx` enters the queue and sets or updates the goal on consumption; this is `/goal`'s own rule and does not imply all commands may queue | accepted |
-| `guideModeEligibilityGuard` | `guide` mode applies only when turn-steer conditions hold; otherwise it must fall back to queue | accepted |
-| `guideModePreservesMessage` | in `guide` mode, follow-up text must survive in turn-steer/guided history or the fallback queue — never lost | accepted |
-| `runningCompactQueues` | in `running`, `/compact` enters the unified FIFO as a typed maintenance intent; it is not an ordinary message and cannot start a concurrent compact | accepted |
-| `runningStableAssistantForkAllowed` | in `running`, an earlier `completedSuccess` turn's last completed assistant may be forked; current streaming/interrupted/failed partials and middle assistant segments cannot | accepted |
-| `latestQueryEditPreemptsActiveTurn` | only the last real-user input (text or goal) may be edited; in running, submitting an edit equals stopping the active work first, then rerunning from that input with the original intent kind kept | accepted |
-| `compactCoveredLatestEditRewindsInPlace` | when the latest real-user input is covered by a stable compact summary, the original session takes an append-only branch cut, resets the crossed compact derived state, and replays per the original kind; no child is created, no rewind reminder appended | accepted |
-| `latestAssistantRetryOnly` | the capability layer first locks the projection's timeline-last `assistantText` row, then requires the same product turn to have a canonical user input with `origin=realUser`; synthetic turns (background result/goal continuation/mailbox) and earlier real-user turns get no capability. The product UI hides the ordinary assistant retry entry uniformly on desktop, Web, and mobile; `canRetry` / `retryTurn` remain protocol-compat only | accepted |
-| `retryPreservesFullIntent` | retry restores input kind, text, attachments, goal intent, delivery/fallback, and source cause from the canonical cause; rebuilding from visible text alone is forbidden | accepted |
-| `goalInputUsesUnifiedEditTarget` | `goalSet` lifecycle produces no marker; a user goal input produces a canonical visible real-user row sharing the `editUserQuery` target with text queries; the resend stays `sendGoalCommand` | accepted |
-| `stopHighestPriorityCancelsForegroundWork` | stop is highest priority; it must terminate the session's primary turn, foreground subagents, compact, goal verifier, goal continuation, and unconfirmed turn-steer | accepted |
-| `stopEndsAsInterruptedCompleted` | after stop terminates all completion-blocking active work, the session enters `completed(interrupted)`; there is no paused product state | accepted |
-| `stopKeepsQueueAndDisablesAutoDrain` | after a stop the queue is kept and `autoDrain=false` | accepted |
-| `lateTerminalEventsAfterStopDoNotRevive` | late assistant/foreground subagent/compact/verifier terminal events after a stop cannot flip old work back to success or override a new round of active input | accepted |
-| `heldQueueInputRequiresChoice` | in `completed` with a held queue (queue>0 + autoDrain=false), new composer input does not silently queue: the user chooses 「清空 queue 后发送」 or 「保留 queue 立即发送」 | accepted |
-| `queueContentIndependence` | the queue holds future intents and is not bound to completed history; edit, compact, and fork do not rewrite the queue | accepted |
-| `forkAssistantOnly` | only assistant messages may be forked; user/tool/timeline offer no fork | accepted |
-| `forkDoesNotCopyQueue` | a forked session does not copy the parent queue; the parent queue is kept | accepted |
-| `forkStableHistoryOnly` | the child inherits only the `completedSuccess` turn's last completed assistant and the stable history before it; a running parent does not automatically forbid fork, but current partials, middle assistants, and the compact operation lock cannot be stable fork boundaries | accepted |
-| `runningForkDoesNotRewindWorkspace` | a running fork is conversation-only; no shared workspace checkpoint is restored, the parent keeps running; the existing workspace behavior of completed/idle is not expanded | accepted |
-| `forkDoesNotCopyBackgroundWork` | a fork does not copy the parent's live background bash/subagents, pending background results, or continuation inbox; only background results already in pre-fork transcript are copied | accepted |
-| `forkInheritsSessionFutureState` | the child inherits the provider/model/thinking depth persisted at the fork point and the pre-fork goal state, but not the parent's later config or queue | accepted |
-| `forkTimelineIsBoundary` | the fork notice is a turn boundary and does not enter assistant work-history folding | accepted |
-| `editUserOnly` | only the latest real-user input (text query or user goal input) may be edited; assistant/tool/timeline offer no edit | accepted |
-| `editKeepsQueue` | editing the latest real-user input reruns the branch per the original intent kind, but the queue stays untouched | accepted |
-| `sessionConfigScoped` | model, provider, and thinking depth are session-scoped future config and must not leak across sessions | accepted |
-| `queuedSubmissionPreservesSelection` | the queue stores the complete Submission; on consumption it keeps the Provider, Model, and thinking depth fixed at enqueue time, while Provider config is read fresh at Model creation | accepted |
-| `crossSessionUnlimitedConcurrency` | different sessions may truly run concurrently with queue/model/sidebar isolated from each other | accepted |
-| `autoCompactIsSystemTurnPrefix` | auto compact is a pre-maintenance step for pendingAction and continues it on success | accepted |
-| `goalVerificationOutcomeSeparation` | a verifier's normal "not achieved" verdict is `notSatisfied`; only cancel, API failure, timeout, or internal error is `failed` | accepted |
-| `compactActiveWorkOperationLock` | `activeWork.kind=compact` is a maintenance state inside running; ordinary text and `/goal` queue, while compact, fork, edit, retry, and sendQueuedNow must reject | accepted |
-| `goalVerifierBusyRouting` | `activeWork.kind=goalVerifier` is a verification state inside running; ordinary text, `/goal`, and `/compact` all queue as future intents, stop may interrupt the verifier; latest-user-query edit reruns after a stop barrier, stable-history fork is allowed, and sendQueuedNow drains after a stop barrier | accepted |
-| `backgroundWakeStartsIndependentProductTurn` | a background model-only wake creates an independent product turn live or cold; it has no visible user trigger row and must not merge into the previous real-user turn | accepted |
-| `stableForkIsAtomicAndFullyRemapped` | a stable fork publishes only after child metadata, history, goal/provenance, and all child-local references are atomically written and remapped; a failure leaves no half-built child | accepted |
+| Invariant ID                                  | Statement                                                                                                                                                                                                                                                                                                                                                                                                                                        | Status   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| `sameSessionActiveTurnExclusive`              | one session cannot run two active turns; same-session follow-up input must go through queue, turn-steer, or explicit stop/drain rules                                                                                                                                                                                                                                                                                                            | accepted |
+| `sessionCompletionRequiresNoForegroundWork`   | `completed(success/interrupted)` requires primary turn, foreground subagent, compact, goal verifier, goal continuation, and turn-steer all closed; background work takes no part in the completion gate                                                                                                                                                                                                                                          | accepted |
+| `foregroundSubagentKeepsSessionBusy`          | after the assistant stream or parts of the main turn finish, the session cannot enter completed while a foreground subagent owned by it still runs                                                                                                                                                                                                                                                                                               | accepted |
+| `backgroundWorkDoesNotBlockSessionEnd`        | while background bash/subagents run, the session may still enter completed once foreground work empties, opening completed-only actions                                                                                                                                                                                                                                                                                                          | accepted |
+| `sessionEndedDrivesImmediateStart`            | only a completed context with `sessionEnded=true` lets ordinary composer input immediately become the next active turn; with `sessionEnded=false` a queue, guide, reject, or stop/drain guard must apply                                                                                                                                                                                                                                         | accepted |
+| `runtimeFactsAreAuthoritative`                | `sessionEnded`, `canStop`, `stopState`, `stopTargetKind` must come from CLI/runtime facts or normalized host/service projection; the UI must not guess from local message streams, timeline, or `streaming` state                                                                                                                                                                                                                                | accepted |
+| `persistentConversationFactsAreAuthoritative` | message, part, session metadata, and goal are the persistent authority; live/cold normalize into the same canonical facts before generating projection                                                                                                                                                                                                                                                                                           | accepted |
+| `rowIdentityIsDisplayOnly`                    | `rowId` is display-only; edit/retry/fork actions and command targets must bind to `entityId/productTurnId`                                                                                                                                                                                                                                                                                                                                       | accepted |
+| `trustedDeliveryBoundary`                     | desktop (incl. SSH/WSL/Docker) is fixed continuous, mobile/Web remote fixed replayable; the profile is trusted-injected by the host attachment and not selectable by the UI                                                                                                                                                                                                                                                                      | accepted |
+| `subscriptionOwnedByConnection`               | every connection has an independent subscription registry; frames go only to the owning port; one slow subscriber must not pollute other connections                                                                                                                                                                                                                                                                                             | accepted |
+| `acceptedInputHasSingleAuthority`             | all committed busy/running inputs from all clients enter the same FIFO in CLI admission order; host/runtime/UI keep no second authoritative queue                                                                                                                                                                                                                                                                                                | accepted |
+| `acceptedInputAlwaysAccountedFor`             | every committed input must be in exactly one of queue, guided row, transcript, or explicit rejected/failed/discarded                                                                                                                                                                                                                                                                                                                             | accepted |
+| `sourceCommandIdEndToEnd`                     | queue item, drain/guided event, user row, message anchor, marker, and fork child metadata keep the original sourceCommandId                                                                                                                                                                                                                                                                                                                      | accepted |
+| `restartDiscardRespectsDeliveryLifetime`      | after a CLI restart, unfinished admitted inputs are explicitly discarded; the old runtime's `queue/guide` and the `unknown` without an authoritative verdict settle silently with no UI error; only a `startNow` that never entered the transcript prompts a resend confirmation; automatic replay is forbidden                                                                                                                                  | accepted |
+| `stopButtonStableAcrossActiveWork`            | across handoffs between assistant, compact, goal verifier, goal continuation, and foreground subagent active work, the UI stop button must stay stable while the session is still stoppable, without flicker from internal phase switches                                                                                                                                                                                                        | accepted |
+| `stopPausesActiveGoalTarget`                  | with an active goal target, a user stop — whether acting on assistant, compact, goal verifier, or goal continuation — must move the target to a non-active paused state                                                                                                                                                                                                                                                                          | accepted |
+| `cancelledTurnColdHydrationParity`            | typed/legacy ZCode cancellations from a user stop normalize to `TurnComplete(cancelled)` after both live and cold hydration; no `TurnError`, `phase=error`, or `control.lastError`                                                                                                                                                                                                                                                               | accepted |
+| `followupInputModeExplicit`                   | running follow-up ordinary input is adjudicated explicitly by `queue` or `guide` mode; the default is `queue`                                                                                                                                                                                                                                                                                                                                    | accepted |
+| `runningPromptQueues`                         | in `running` with follow-up mode `queue`, ordinary text enters the queue and does not interrupt the in-flight request                                                                                                                                                                                                                                                                                                                            | accepted |
+| `unfinishedSessionPromptQueues`               | with `sessionEnded=false` and no guide allow hit, ordinary text enters the queue and starts no second active turn                                                                                                                                                                                                                                                                                                                                | accepted |
+| `unfinishedSessionGoalQueues`                 | with `sessionEnded=false`, `/goal xxx` enters the queue and sets or updates the goal on consumption; this is `/goal`'s own rule and does not imply all commands may queue                                                                                                                                                                                                                                                                        | accepted |
+| `guideModeEligibilityGuard`                   | `guide` mode applies only when turn-steer conditions hold; otherwise it must fall back to queue                                                                                                                                                                                                                                                                                                                                                  | accepted |
+| `guideModePreservesMessage`                   | in `guide` mode, follow-up text must survive in turn-steer/guided history or the fallback queue — never lost                                                                                                                                                                                                                                                                                                                                     | accepted |
+| `runningCompactQueues`                        | in `running`, `/compact` enters the unified FIFO as a typed maintenance intent; it is not an ordinary message and cannot start a concurrent compact                                                                                                                                                                                                                                                                                              | accepted |
+| `runningStableAssistantForkAllowed`           | in `running`, an earlier `completedSuccess` turn's last completed assistant may be forked; current streaming/interrupted/failed partials and middle assistant segments cannot                                                                                                                                                                                                                                                                    | accepted |
+| `latestQueryEditPreemptsActiveTurn`           | only the last real-user input (text or goal) may be edited; in running, submitting an edit equals stopping the active work first, then rerunning from that input with the original intent kind kept                                                                                                                                                                                                                                              | accepted |
+| `compactCoveredLatestEditRewindsInPlace`      | when the latest real-user input is covered by a stable compact summary, the original session takes an append-only branch cut, resets the crossed compact derived state, and replays per the original kind; no child is created, no rewind reminder appended                                                                                                                                                                                      | accepted |
+| `latestAssistantRetryOnly`                    | the capability layer first locks the projection's timeline-last `assistantText` row, then requires the same product turn to have a canonical user input with `origin=realUser`; synthetic turns (background result/goal continuation/mailbox) and earlier real-user turns get no capability. The product UI hides the ordinary assistant retry entry uniformly on desktop, Web, and mobile; `canRetry` / `retryTurn` remain protocol-compat only | accepted |
+| `retryPreservesFullIntent`                    | retry restores input kind, text, attachments, goal intent, delivery/fallback, and source cause from the canonical cause; rebuilding from visible text alone is forbidden                                                                                                                                                                                                                                                                         | accepted |
+| `goalInputUsesUnifiedEditTarget`              | `goalSet` lifecycle produces no marker; a user goal input produces a canonical visible real-user row sharing the `editUserQuery` target with text queries; the resend stays `sendGoalCommand`                                                                                                                                                                                                                                                    | accepted |
+| `stopHighestPriorityCancelsForegroundWork`    | stop is highest priority; it must terminate the session's primary turn, foreground subagents, compact, goal verifier, goal continuation, and unconfirmed turn-steer                                                                                                                                                                                                                                                                              | accepted |
+| `stopEndsAsInterruptedCompleted`              | after stop terminates all completion-blocking active work, the session enters `completed(interrupted)`; there is no paused product state                                                                                                                                                                                                                                                                                                         | accepted |
+| `stopKeepsQueueAndDisablesAutoDrain`          | after a stop the queue is kept and `autoDrain=false`                                                                                                                                                                                                                                                                                                                                                                                             | accepted |
+| `lateTerminalEventsAfterStopDoNotRevive`      | late assistant/foreground subagent/compact/verifier terminal events after a stop cannot flip old work back to success or override a new round of active input                                                                                                                                                                                                                                                                                    | accepted |
+| `heldQueueInputRequiresChoice`                | in `completed` with a held queue (queue>0 + autoDrain=false), new composer input does not silently queue: the user chooses 「清空 queue 后发送」 or 「保留 queue 立即发送」                                                                                                                                                                                                                                                                      | accepted |
+| `queueContentIndependence`                    | the queue holds future intents and is not bound to completed history; edit, compact, and fork do not rewrite the queue                                                                                                                                                                                                                                                                                                                           | accepted |
+| `forkAssistantOnly`                           | only assistant messages may be forked; user/tool/timeline offer no fork                                                                                                                                                                                                                                                                                                                                                                          | accepted |
+| `forkDoesNotCopyQueue`                        | a forked session does not copy the parent queue; the parent queue is kept                                                                                                                                                                                                                                                                                                                                                                        | accepted |
+| `forkStableHistoryOnly`                       | the child inherits only the `completedSuccess` turn's last completed assistant and the stable history before it; a running parent does not automatically forbid fork, but current partials, middle assistants, and the compact operation lock cannot be stable fork boundaries                                                                                                                                                                   | accepted |
+| `runningForkDoesNotRewindWorkspace`           | a running fork is conversation-only; no shared workspace checkpoint is restored, the parent keeps running; the existing workspace behavior of completed/idle is not expanded                                                                                                                                                                                                                                                                     | accepted |
+| `forkDoesNotCopyBackgroundWork`               | a fork does not copy the parent's live background bash/subagents, pending background results, or continuation inbox; only background results already in pre-fork transcript are copied                                                                                                                                                                                                                                                           | accepted |
+| `forkInheritsSessionFutureState`              | the child inherits the provider/model/thinking depth persisted at the fork point and the pre-fork goal state, but not the parent's later config or queue                                                                                                                                                                                                                                                                                         | accepted |
+| `forkTimelineIsBoundary`                      | the fork notice is a turn boundary and does not enter assistant work-history folding                                                                                                                                                                                                                                                                                                                                                             | accepted |
+| `editUserOnly`                                | only the latest real-user input (text query or user goal input) may be edited; assistant/tool/timeline offer no edit                                                                                                                                                                                                                                                                                                                             | accepted |
+| `editKeepsQueue`                              | editing the latest real-user input reruns the branch per the original intent kind, but the queue stays untouched                                                                                                                                                                                                                                                                                                                                 | accepted |
+| `sessionConfigScoped`                         | model, provider, and thinking depth are session-scoped future config and must not leak across sessions                                                                                                                                                                                                                                                                                                                                           | accepted |
+| `queuedSubmissionPreservesSelection`          | the queue stores the complete Submission; on consumption it keeps the Provider, Model, and thinking depth fixed at enqueue time, while Provider config is read fresh at Model creation                                                                                                                                                                                                                                                           | accepted |
+| `crossSessionUnlimitedConcurrency`            | different sessions may truly run concurrently with queue/model/sidebar isolated from each other                                                                                                                                                                                                                                                                                                                                                  | accepted |
+| `autoCompactIsSystemTurnPrefix`               | auto compact is a pre-maintenance step for pendingAction and continues it on success                                                                                                                                                                                                                                                                                                                                                             | accepted |
+| `goalVerificationOutcomeSeparation`           | a verifier's normal "not achieved" verdict is `notSatisfied`; only cancel, API failure, timeout, or internal error is `failed`                                                                                                                                                                                                                                                                                                                   | accepted |
+| `compactActiveWorkOperationLock`              | `activeWork.kind=compact` is a maintenance state inside running; ordinary text and `/goal` queue, while compact, fork, edit, retry, and sendQueuedNow must reject                                                                                                                                                                                                                                                                                | accepted |
+| `goalVerifierBusyRouting`                     | `activeWork.kind=goalVerifier` is a verification state inside running; ordinary text, `/goal`, and `/compact` all queue as future intents, stop may interrupt the verifier; latest-user-query edit reruns after a stop barrier, stable-history fork is allowed, and sendQueuedNow drains after a stop barrier                                                                                                                                    | accepted |
+| `backgroundWakeStartsIndependentProductTurn`  | a background model-only wake creates an independent product turn live or cold; it has no visible user trigger row and must not merge into the previous real-user turn                                                                                                                                                                                                                                                                            | accepted |
+| `stableForkIsAtomicAndFullyRemapped`          | a stable fork publishes only after child metadata, history, goal/provenance, and all child-local references are atomically written and remapped; a failure leaves no half-built child                                                                                                                                                                                                                                                            | accepted |
 
 ## Known Stable Guards
 
 These guards have stable consensus in existing documents and form the first batch of the future
 rule table.
 
-| Guard ID | Match | Decision | Core effect |
-| --- | --- | --- | --- |
-| `firstSend` | `draft + sendText` | `allow` | create the session, enter the detail page, the first user message is visible |
-| `runningPromptQueues` | `running + followupInput.mode=queue + sendText` | `enqueue` | deferred `sendText` grows by FIFO; no second same-session active turn |
-| `guideModeTurnSteer` | `running + followupInput.mode=guide + sendText + guide eligible` | `allow` | follow-up text enters turn-steer or a guided user message; no ordinary new turn |
-| `guideModeFallbackPreservesMessage` | `running + followupInput.mode=guide + sendText + guide ineligible` | `enqueue` | falls back to deferred `sendText`; user input not lost |
-| `unfinishedSessionPromptQueues` | `sessionEnded=false + sendText + guide ineligible/not applicable` | `enqueue` | deferred `sendText` grows by FIFO; no second active turn |
-| `unfinishedSessionGoalQueues` | `sessionEnded=false + sendGoalCommand` | `enqueue` | deferred `sendGoalCommand` keeps the goal intent; set/update on consumption |
-| `runningCompactQueues` | `running + sendCompactCommand/clickCompact` | `enqueue` | append a kind=`compact` queue item; not an ordinary user message; strictly FIFO after the current work ends |
-| `runningStableAssistantForkAllowed` | `running + forkAssistant + stable historical assistant target` | `allow` | create the child; the parent's current active work, queue, and background work stay with the parent |
-| `latestQueryEditPreemptsActiveTurn` | `running + editUserQuery + latest real-user input (text/goal)` | `allow` | stop barrier first; after old work empties, rewind and rerun per the original kind; on barrier failure keep old work/input/branch and start no text/goal |
-| `compactCoveredLatestEditRewindsInPlace` | `editUserQuery + latest real-user input + coveredByStableCompact` | `allow` | append-only branch cut in the original session; reset crossed compact/microcompact state, replay per the original kind, create or navigate no child |
-| `goalInputUsesUnifiedEditTarget` | `editUserQuery + latest real-user input (kind=goal)` | `allow` | rewind by stable entity target; resend the `sendGoalCommand` intent; the goal input row stays visible; no `goalSet` marker |
-| `latestQueryEditOnly` | `editUserQuery + non-latest real-user input` | `reject` | historical text/goal inputs offer no edit, preventing active-branch rollback to old context |
-| `latestAssistantRetryOnly` | `retryTurn + non-latest assistantText row`, or the latest assistant's turn has no canonical user input with `origin=realUser` | `reject` | historical assistant replies and background/synthetic result turns get no retry capability; skipping the latest synthetic assistant to roll back to old context is forbidden; no ordinary assistant retry capability is rendered as a product UI entry |
-| `activeWorkBlocksCompletion` | `assistantComplete + activeWork!=empty` | `system-transition` | close the finished work but keep the session busy; no completed-only actions |
-| `controlProjectionKeepsStopVisible` | `canStop=true OR stopState=stopping` | `system-transition` | the UI keeps the same stop button; `stopTargetKind` changes only update detail copy |
-| `stopBusySessionCancelsForegroundWork` | `prewarming/running/activeWork!=empty + stop` | `allow` | terminate the session's completion-blocking active work; once empty enter `completed(interrupted)`, queue kept with `autoDrain=false` |
-| `sendQueuedNowStopsBeforeDrain` | `running + queue>0 + sendQueuedNow` | `allow` | reserve the target item, run the stop barrier; remove only on successful start, otherwise release the reservation and keep the item in place |
-| `compactActiveWorkOperationLock` | `activeWork.kind=compact + sendCompactCommand/clickCompact/forkAssistant/editUserQuery/retryTurn/sendQueuedNow` | `reject` | a compact is running: no second compact, no fork/edit/retry, no preemptive queue drain |
-| `goalVerifierBusyRouting` | `activeWork.kind=goalVerifier + sendText/sendGoalCommand/sendCompactCommand` | `enqueue` | while verifying a goal, user input and maintenance intents are saved as typed queue items; no second active turn, no verifier interruption |
-| `goalVerifierStopBarrierDrain` | `activeWork.kind=goalVerifier + sendQueuedNow` | `allow` | stop the verifier first (marker failed/cancelled, goal paused), then drain the target item by explicit queue consumption rules |
-| `completedCanStartNextTurn` | `completed + sendText + queue=0` | `allow` | start the next turn immediately |
-| `backgroundOnlyCompletedCanForkOrCompact` | `completed + backgroundWork!=empty + forkAssistant/clickCompact` | `allow` | background work does not block completed-only actions; fork/compact still act only on stable transcript |
-| `heldQueueInputRequiresChoice` | `completed + queue>0 + autoDrain=false + sendText/sendGoalCommand` | `choice` | the client presents a choice: `clearQueueAndSend` or `keepQueueAndSend`; the command replay carries the chosen disposition |
-| `manualCompact` | `completed + clickCompact/sendCompactCommand` | `allow` | enter `running + activeWork.kind=compact`, insert the compact timeline |
-| `forkAssistantOnly` | `stable assistant target + forkAssistant` | `allow/reject` | assistant allows fork; user/tool/timeline forbid |
-| `editUserOnly` | `editUserQuery` | `allow/reject` | latest real-user input (text/goal) allows edit; non-latest real-user input, assistant/tool/timeline forbid |
-| `forkDoesNotCopyQueue` | `forkAssistant` | `allow` | the child inherits stable history and fork-point config, not the parent queue |
-| `forkDoesNotCopyBackgroundWork` | `forkAssistant` | `allow` | the child does not copy the parent's live background work or pending background result |
-| `queueContentIndependence` | `editQueueItem/reorderQueueItem/deleteQueueItem` | `allow` | queue-only edits; no consumption triggered |
+| Guard ID                                  | Match                                                                                                                         | Decision            | Core effect                                                                                                                                                                                                                                            |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `firstSend`                               | `draft + sendText`                                                                                                            | `allow`             | create the session, enter the detail page, the first user message is visible                                                                                                                                                                           |
+| `runningPromptQueues`                     | `running + followupInput.mode=queue + sendText`                                                                               | `enqueue`           | deferred `sendText` grows by FIFO; no second same-session active turn                                                                                                                                                                                  |
+| `guideModeTurnSteer`                      | `running + followupInput.mode=guide + sendText + guide eligible`                                                              | `allow`             | follow-up text enters turn-steer or a guided user message; no ordinary new turn                                                                                                                                                                        |
+| `guideModeFallbackPreservesMessage`       | `running + followupInput.mode=guide + sendText + guide ineligible`                                                            | `enqueue`           | falls back to deferred `sendText`; user input not lost                                                                                                                                                                                                 |
+| `unfinishedSessionPromptQueues`           | `sessionEnded=false + sendText + guide ineligible/not applicable`                                                             | `enqueue`           | deferred `sendText` grows by FIFO; no second active turn                                                                                                                                                                                               |
+| `unfinishedSessionGoalQueues`             | `sessionEnded=false + sendGoalCommand`                                                                                        | `enqueue`           | deferred `sendGoalCommand` keeps the goal intent; set/update on consumption                                                                                                                                                                            |
+| `runningCompactQueues`                    | `running + sendCompactCommand/clickCompact`                                                                                   | `enqueue`           | append a kind=`compact` queue item; not an ordinary user message; strictly FIFO after the current work ends                                                                                                                                            |
+| `runningStableAssistantForkAllowed`       | `running + forkAssistant + stable historical assistant target`                                                                | `allow`             | create the child; the parent's current active work, queue, and background work stay with the parent                                                                                                                                                    |
+| `latestQueryEditPreemptsActiveTurn`       | `running + editUserQuery + latest real-user input (text/goal)`                                                                | `allow`             | stop barrier first; after old work empties, rewind and rerun per the original kind; on barrier failure keep old work/input/branch and start no text/goal                                                                                               |
+| `compactCoveredLatestEditRewindsInPlace`  | `editUserQuery + latest real-user input + coveredByStableCompact`                                                             | `allow`             | append-only branch cut in the original session; reset crossed compact/microcompact state, replay per the original kind, create or navigate no child                                                                                                    |
+| `goalInputUsesUnifiedEditTarget`          | `editUserQuery + latest real-user input (kind=goal)`                                                                          | `allow`             | rewind by stable entity target; resend the `sendGoalCommand` intent; the goal input row stays visible; no `goalSet` marker                                                                                                                             |
+| `latestQueryEditOnly`                     | `editUserQuery + non-latest real-user input`                                                                                  | `reject`            | historical text/goal inputs offer no edit, preventing active-branch rollback to old context                                                                                                                                                            |
+| `latestAssistantRetryOnly`                | `retryTurn + non-latest assistantText row`, or the latest assistant's turn has no canonical user input with `origin=realUser` | `reject`            | historical assistant replies and background/synthetic result turns get no retry capability; skipping the latest synthetic assistant to roll back to old context is forbidden; no ordinary assistant retry capability is rendered as a product UI entry |
+| `activeWorkBlocksCompletion`              | `assistantComplete + activeWork!=empty`                                                                                       | `system-transition` | close the finished work but keep the session busy; no completed-only actions                                                                                                                                                                           |
+| `controlProjectionKeepsStopVisible`       | `canStop=true OR stopState=stopping`                                                                                          | `system-transition` | the UI keeps the same stop button; `stopTargetKind` changes only update detail copy                                                                                                                                                                    |
+| `stopBusySessionCancelsForegroundWork`    | `prewarming/running/activeWork!=empty + stop`                                                                                 | `allow`             | terminate the session's completion-blocking active work; once empty enter `completed(interrupted)`, queue kept with `autoDrain=false`                                                                                                                  |
+| `sendQueuedNowStopsBeforeDrain`           | `running + queue>0 + sendQueuedNow`                                                                                           | `allow`             | reserve the target item, run the stop barrier; remove only on successful start, otherwise release the reservation and keep the item in place                                                                                                           |
+| `compactActiveWorkOperationLock`          | `activeWork.kind=compact + sendCompactCommand/clickCompact/forkAssistant/editUserQuery/retryTurn/sendQueuedNow`               | `reject`            | a compact is running: no second compact, no fork/edit/retry, no preemptive queue drain                                                                                                                                                                 |
+| `goalVerifierBusyRouting`                 | `activeWork.kind=goalVerifier + sendText/sendGoalCommand/sendCompactCommand`                                                  | `enqueue`           | while verifying a goal, user input and maintenance intents are saved as typed queue items; no second active turn, no verifier interruption                                                                                                             |
+| `goalVerifierStopBarrierDrain`            | `activeWork.kind=goalVerifier + sendQueuedNow`                                                                                | `allow`             | stop the verifier first (marker failed/cancelled, goal paused), then drain the target item by explicit queue consumption rules                                                                                                                         |
+| `completedCanStartNextTurn`               | `completed + sendText + queue=0`                                                                                              | `allow`             | start the next turn immediately                                                                                                                                                                                                                        |
+| `backgroundOnlyCompletedCanForkOrCompact` | `completed + backgroundWork!=empty + forkAssistant/clickCompact`                                                              | `allow`             | background work does not block completed-only actions; fork/compact still act only on stable transcript                                                                                                                                                |
+| `heldQueueInputRequiresChoice`            | `completed + queue>0 + autoDrain=false + sendText/sendGoalCommand`                                                            | `choice`            | the client presents a choice: `clearQueueAndSend` or `keepQueueAndSend`; the command replay carries the chosen disposition                                                                                                                             |
+| `manualCompact`                           | `completed + clickCompact/sendCompactCommand`                                                                                 | `allow`             | enter `running + activeWork.kind=compact`, insert the compact timeline                                                                                                                                                                                 |
+| `forkAssistantOnly`                       | `stable assistant target + forkAssistant`                                                                                     | `allow/reject`      | assistant allows fork; user/tool/timeline forbid                                                                                                                                                                                                       |
+| `editUserOnly`                            | `editUserQuery`                                                                                                               | `allow/reject`      | latest real-user input (text/goal) allows edit; non-latest real-user input, assistant/tool/timeline forbid                                                                                                                                             |
+| `forkDoesNotCopyQueue`                    | `forkAssistant`                                                                                                               | `allow`             | the child inherits stable history and fork-point config, not the parent queue                                                                                                                                                                          |
+| `forkDoesNotCopyBackgroundWork`           | `forkAssistant`                                                                                                               | `allow`             | the child does not copy the parent's live background work or pending background result                                                                                                                                                                 |
+| `queueContentIndependence`                | `editQueueItem/reorderQueueItem/deleteQueueItem`                                                                              | `allow`             | queue-only edits; no consumption triggered                                                                                                                                                                                                             |
 
 ## Pending Product Boundaries
 
@@ -1021,25 +1021,25 @@ section keeps the rulings. Detailed sub-question conclusions live in
 [decision-answers](./testing/conversation-session-decision-answers.md) and the compact decision
 worksheet.
 
-| Boundary ID | Ruling | Source |
-| --- | --- | --- |
-| `PB-COMP-FAIL-F09` | stay completed (back to the pre-compact state) + failed marker (with retry entry); the queue is kept and not auto-consumed, autoDrain unchanged; all actions restored | compact worksheet F09.1–F09.4 |
-| `PB-AUTO-COMP-FAIL-G11` | continue pendingAction without compaction (stay running; the 4th request is the main model request); the retrying history and failed marker are kept but do not block; the circuit breaker engages and resets after a successful manual compact | compact worksheet G11.1–G11.4 |
-| `PB-AUTO-COMP-STOP-G12` | exactly like an ordinary stop: pendingAction stays as the current turn's interrupted user message (editable/retryable in the timeline, not copied back to the queue, not dropped); the session is `completed(interrupted)`; the compact marker becomes cancelled; explicitly appended queue items are all kept and not auto-consumed | compact worksheet G12.1–G12.4 |
-| `PB-AUTO-COMP-MODEL-N06` | switching is allowed: an already-sent compact is not interrupted and the config takes effect immediately; the race boundary = the pendingAction reads the then-latest config snapshot at the instant of consumption (V4 switchModelConfig uses revision CAS) | case catalog N06 |
+| Boundary ID              | Ruling                                                                                                                                                                                                                                                                                                                               | Source                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| `PB-COMP-FAIL-F09`       | stay completed (back to the pre-compact state) + failed marker (with retry entry); the queue is kept and not auto-consumed, autoDrain unchanged; all actions restored                                                                                                                                                                | compact worksheet F09.1–F09.4 |
+| `PB-AUTO-COMP-FAIL-G11`  | continue pendingAction without compaction (stay running; the 4th request is the main model request); the retrying history and failed marker are kept but do not block; the circuit breaker engages and resets after a successful manual compact                                                                                      | compact worksheet G11.1–G11.4 |
+| `PB-AUTO-COMP-STOP-G12`  | exactly like an ordinary stop: pendingAction stays as the current turn's interrupted user message (editable/retryable in the timeline, not copied back to the queue, not dropped); the session is `completed(interrupted)`; the compact marker becomes cancelled; explicitly appended queue items are all kept and not auto-consumed | compact worksheet G12.1–G12.4 |
+| `PB-AUTO-COMP-MODEL-N06` | switching is allowed: an already-sent compact is not interrupted and the config takes effect immediately; the race boundary = the pendingAction reads the then-latest config snapshot at the instant of consumption (V4 switchModelConfig uses revision CAS)                                                                         | case catalog N06              |
 
 ## Evidence Contract
 
 Every future rule or case declares at least one user-visible evidence and one non-UI evidence.
 
-| Layer | Use |
-| --- | --- |
-| UI | messages, queue, disabled buttons, toasts, and timeline markers the user actually sees |
+| Layer         | Use                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| UI            | messages, queue, disabled buttons, toasts, and timeline markers the user actually sees                                                                  |
 | Runtime/Store | `sessionId`, phase, queue, target, activeInputId, activeWork, backgroundWork, sessionEnded, canStop, stopState, stopTargetKind, autoDrain, model config |
-| Protocol | app/agent commands such as send, compact, goal, fork, stop; activity terminal events; runtime facts snapshots; product control projection |
-| Network/SSE | provider requests, compact requests, stream timing, retries |
-| Files | session snapshots, task index, compact summary, fork history |
-| Logs | UI logger, service logger, agent log — always with case/session/input attribution |
+| Protocol      | app/agent commands such as send, compact, goal, fork, stop; activity terminal events; runtime facts snapshots; product control projection               |
+| Network/SSE   | provider requests, compact requests, stream timing, retries                                                                                             |
+| Files         | session snapshots, task index, compact summary, fork history                                                                                            |
+| Logs          | UI logger, service logger, agent log — always with case/session/input attribution                                                                       |
 
 For reject rules, the evidence must also prove the forbidden side effects do not happen. For
 example, a `/compact` running reject must show not only the toast but also an unchanged queue, no

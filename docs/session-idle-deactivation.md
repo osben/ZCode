@@ -86,30 +86,30 @@ lowWater = 8
 
 "Lifecycle" here describes only whether a session stays resident **in the current CLI process**; disk session, task index, pin/archive/unread and other product states do not change. The pool only reclaims from `IDLE_WARM`; other states either still have an owner or are already out of memory.
 
-| Lifecycle | Entry condition | Pool-releasable | Behavior of new requests |
-| --- | --- | --- | --- |
-| `DEACTIVATED` | no record in this CLI's `context.sessions` | already released | existing cold resume rebuilds app/runtime and restores persistent history |
-| `COLD_RESUMING` | subscribe/query/resume creating or restoring the record | no | reuse/wait for the same recovery; an operation lease protects the whole async window |
-| `ACTIVE_PROTECTED` | any protection owner below exists | no | keep running/queued/subscribed per the original protocol |
-| `IDLE_WARM` | record persisted and all protection owners released | candidate | requests reuse the warm record directly and clear `eligibleSinceAt` |
-| `DEACTIVATING` | fresh re-check passed, record synchronously removed, `app.close()` unfinished | releasing, not repeatable | wait for close to settle, then cold resume; never hits a half-dismantled record |
+| Lifecycle          | Entry condition                                                               | Pool-releasable           | Behavior of new requests                                                             |
+| ------------------ | ----------------------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------ |
+| `DEACTIVATED`      | no record in this CLI's `context.sessions`                                    | already released          | existing cold resume rebuilds app/runtime and restores persistent history            |
+| `COLD_RESUMING`    | subscribe/query/resume creating or restoring the record                       | no                        | reuse/wait for the same recovery; an operation lease protects the whole async window |
+| `ACTIVE_PROTECTED` | any protection owner below exists                                             | no                        | keep running/queued/subscribed per the original protocol                             |
+| `IDLE_WARM`        | record persisted and all protection owners released                           | candidate                 | requests reuse the warm record directly and clear `eligibleSinceAt`                  |
+| `DEACTIVATING`     | fresh re-check passed, record synchronously removed, `app.close()` unfinished | releasing, not repeatable | wait for close to settle, then cold resume; never hits a half-dismantled record      |
 
 `ACTIVE_PROTECTED` is not a single boolean but the union of these owners:
 
-| owner / sub-lifecycle | Typical source | Releasable | Exact boundary of protection lift |
-| --- | --- | --- | --- |
-| foreground/background turn | prompt, model stream, tool await, compact, goal continuation | no | the runner's runtime work completes |
-| runtime command | queued prompt, terminal notification, command drain | no | queue empty and drain complete |
-| background task | background Bash, subagent, Workflow, MCP monitor | no | task registry no longer running and its completion notification drained |
-| detached sidecar | session/goal title, MCP startup, notification ledger, goal heartbeat | no | the tracker-wrapped Promise releases in `finally` together with fallback writes |
-| memory work | project-memory extraction, recall prefetch | no | scheduler has no pending/running, prefetch settled |
-| protocol finalization | command fact, ensure-model, snapshot, broadcast finalization | no | `residencyFinalizationCount` reaches zero |
-| pending interaction | permission, elicitation, AskUserQuestion | no | interaction answered, cancelled, or closed |
-| gateway command | V4 command queue, in-flight/live inbox pin | no | command completes and pin released |
-| conversation subscriber | desktop continuous, mobile replayable online subscription | no | unsubscribe completes |
-| legacy subscriber | old `session/subscribe` replayable/bot stream | no | the old protocol has no unsubscribe; conservatively protected until CLI exit |
-| protocol operation | subscribe hydration, rows query, resume, config read/write | no | the request dispatch's operation lease releases |
-| deferred draft | session record not yet immediately persisted | no | becomes immediate persistence; otherwise cold-resume equivalence cannot be guaranteed |
+| owner / sub-lifecycle      | Typical source                                                       | Releasable | Exact boundary of protection lift                                                     |
+| -------------------------- | -------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------- |
+| foreground/background turn | prompt, model stream, tool await, compact, goal continuation         | no         | the runner's runtime work completes                                                   |
+| runtime command            | queued prompt, terminal notification, command drain                  | no         | queue empty and drain complete                                                        |
+| background task            | background Bash, subagent, Workflow, MCP monitor                     | no         | task registry no longer running and its completion notification drained               |
+| detached sidecar           | session/goal title, MCP startup, notification ledger, goal heartbeat | no         | the tracker-wrapped Promise releases in `finally` together with fallback writes       |
+| memory work                | project-memory extraction, recall prefetch                           | no         | scheduler has no pending/running, prefetch settled                                    |
+| protocol finalization      | command fact, ensure-model, snapshot, broadcast finalization         | no         | `residencyFinalizationCount` reaches zero                                             |
+| pending interaction        | permission, elicitation, AskUserQuestion                             | no         | interaction answered, cancelled, or closed                                            |
+| gateway command            | V4 command queue, in-flight/live inbox pin                           | no         | command completes and pin released                                                    |
+| conversation subscriber    | desktop continuous, mobile replayable online subscription            | no         | unsubscribe completes                                                                 |
+| legacy subscriber          | old `session/subscribe` replayable/bot stream                        | no         | the old protocol has no unsubscribe; conservatively protected until CLI exit          |
+| protocol operation         | subscribe hydration, rows query, resume, config read/write           | no         | the request dispatch's operation lease releases                                       |
+| deferred draft             | session record not yet immediately persisted                         | no         | becomes immediate persistence; otherwise cold-resume equivalence cannot be guaranteed |
 
 The test is therefore not "is this feature called a background task" but "is there any async owner that will still read or modify the current record/runtime":
 
@@ -125,21 +125,21 @@ The test is therefore not "is this feature called a background task" but "is the
 
 ### User operations and feature scenarios
 
-| Scenario | Releasable | Boundary |
-| --- | --- | --- |
-| foreground prompt / model streaming / tool execution | no | active turn or runtime work holds an owner |
-| background Bash / subagent / Workflow | not while running | do not look at the foreground turn alone; idle only after task terminal and completion-notification drain |
-| goal long task / verifier / continuation | not while running or finalizing | active/runtime and finalization cover continuously; releasable when paused/completed with no continuation |
-| compact / memory extraction / recall prefetch | not while pending, running, or finalizing | releasable once all settled; never reuse the pre-work idle timestamp |
-| browser use | not during turn/tool await or cleanup | a merely idle browser connection is not a permanent owner; it closes with app/runtime on session reclamation |
-| MCP | not during startup or running monitor | releasable when the server is connected but idle; cold resume re-establishes connections |
-| permission / AskUserQuestion | no | reclamation would lose interaction state that exists only in memory |
-| queued prompt / command inbox pin | no | work awaiting execution even before any model call |
-| automation / scheduled / off-peak tasks | not during a triggered run; yes with only future definitions | a trigger must enter the prompt runner's unified owner chain; persistent future schedules must not pin a session forever |
-| renderer visible pane / mobile online subscription | no | subscriber is a protection owner |
-| renderer pane closed and keep-warm/unsubscribe done | yes | renderer projection released first, then the CLI starts its own idle TTL |
-| SSH / WSL / Docker session | same rules as local | the decision runs in the remote CLI actually hosting the session; connection type or workspace type adds no special case |
-| completed historical background tasks | yes | task index / persistent history remain, but terminal history itself holds no runtime owner |
+| Scenario                                             | Releasable                                                   | Boundary                                                                                                                 |
+| ---------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| foreground prompt / model streaming / tool execution | no                                                           | active turn or runtime work holds an owner                                                                               |
+| background Bash / subagent / Workflow                | not while running                                            | do not look at the foreground turn alone; idle only after task terminal and completion-notification drain                |
+| goal long task / verifier / continuation             | not while running or finalizing                              | active/runtime and finalization cover continuously; releasable when paused/completed with no continuation                |
+| compact / memory extraction / recall prefetch        | not while pending, running, or finalizing                    | releasable once all settled; never reuse the pre-work idle timestamp                                                     |
+| browser use                                          | not during turn/tool await or cleanup                        | a merely idle browser connection is not a permanent owner; it closes with app/runtime on session reclamation             |
+| MCP                                                  | not during startup or running monitor                        | releasable when the server is connected but idle; cold resume re-establishes connections                                 |
+| permission / AskUserQuestion                         | no                                                           | reclamation would lose interaction state that exists only in memory                                                      |
+| queued prompt / command inbox pin                    | no                                                           | work awaiting execution even before any model call                                                                       |
+| automation / scheduled / off-peak tasks              | not during a triggered run; yes with only future definitions | a trigger must enter the prompt runner's unified owner chain; persistent future schedules must not pin a session forever |
+| renderer visible pane / mobile online subscription   | no                                                           | subscriber is a protection owner                                                                                         |
+| renderer pane closed and keep-warm/unsubscribe done  | yes                                                          | renderer projection released first, then the CLI starts its own idle TTL                                                 |
+| SSH / WSL / Docker session                           | same rules as local                                          | the decision runs in the remote CLI actually hosting the session; connection type or workspace type adds no special case |
+| completed historical background tasks                | yes                                                          | task index / persistent history remain, but terminal history itself holds no runtime owner                               |
 
 Every "yes" still requires all authoritative protection facts below plus a synchronous re-check before actually removing the record. Any new request, subscription, or owner moves `IDLE_WARM` back to `ACTIVE_PROTECTED` and resets the idle TTL.
 
@@ -147,16 +147,16 @@ Every "yes" still requires all authoritative protection facts below plus a synch
 
 A session is reclaimable only when **all** of these hold:
 
-| Condition | Authority | Reason |
-| --- | --- | --- |
-| persisted | `record.persistence === "immediate"` | a deferred draft cannot cold-resume after reclamation |
-| runtime has no owned work | `AgentRuntime.hasResidencyBlockingWork()` | aggregates active/queued turns, task registry, detached sidecars, and unfinished memory work |
-| no protocol finalization work | `record.residencyFinalizationCount === 0` | the active lock must release before ready, but persistence/snapshot/broadcast still need the original record/runtime until done |
-| no pending interaction | `V4InteractionRegistry` | permission / AskUserQuestion live only in this process's memory |
-| V4 command queue / inbox pin empty | `ConversationV4Gateway` | gateway queue and in-flight/live commands are this process's runtime state |
-| conversation has no subscribers | `ConversationTopicPublisher` | both desktop continuous and mobile replayable online consumers are protected |
-| no legacy stream subscription | `record.legacyStreamSubscribed` | old replayable/bot streams have no unsubscribe RPC; conservatively kept alive until CLI exit |
-| no in-flight protocol request | `SessionResidentPool` operation lease | await windows of subscribe hydration, rows query, resume, config writes must not be reclaimed |
+| Condition                          | Authority                                 | Reason                                                                                                                          |
+| ---------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| persisted                          | `record.persistence === "immediate"`      | a deferred draft cannot cold-resume after reclamation                                                                           |
+| runtime has no owned work          | `AgentRuntime.hasResidencyBlockingWork()` | aggregates active/queued turns, task registry, detached sidecars, and unfinished memory work                                    |
+| no protocol finalization work      | `record.residencyFinalizationCount === 0` | the active lock must release before ready, but persistence/snapshot/broadcast still need the original record/runtime until done |
+| no pending interaction             | `V4InteractionRegistry`                   | permission / AskUserQuestion live only in this process's memory                                                                 |
+| V4 command queue / inbox pin empty | `ConversationV4Gateway`                   | gateway queue and in-flight/live commands are this process's runtime state                                                      |
+| conversation has no subscribers    | `ConversationTopicPublisher`              | both desktop continuous and mobile replayable online consumers are protected                                                    |
+| no legacy stream subscription      | `record.legacyStreamSubscribed`           | old replayable/bot streams have no unsubscribe RPC; conservatively kept alive until CLI exit                                    |
+| no in-flight protocol request      | `SessionResidentPool` operation lease     | await windows of subscribe hydration, rows query, resume, config writes must not be reclaimed                                   |
 
 `record.activeAbortController` is not the complete runtime-busy fact and must not be used alone for reclamation. `record.deliveryKind` is not a legacy subscription lease either: read paths like `session/read` write it. The compatibility layer writes `legacyStreamSubscribed` only on a real `session/subscribe`, so ordinary reads are not permanently exempt; since the old protocol has no unsubscribe, a marked stream protects and may keep resident above target temporarily.
 

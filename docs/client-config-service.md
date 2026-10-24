@@ -78,16 +78,16 @@ capability — this feature's semantic graph seeds the real code and the unique 
 
 ## Acceptance
 
-| ID     | Setup / action / assertion                                                                    |
-| ------ | --------------------------------------------------------------------------------------------- |
-| CCF-01 | Parallel reads in one context → one HTTP request only, later reads hit cache; no credentials read |
+| ID     | Setup / action / assertion                                                                                                                                                  |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CCF-01 | Parallel reads in one context → one HTTP request only, later reads hit cache; no credentials read                                                                           |
 | CCF-02 | Valid snapshot exists → plain reads during a forced refresh return the old value; on refresh failure the old value stays readable, and a successful withdrawal returns null |
-| CCF-03 | Switch endpoint/version/platform, late old requests → snapshots stay isolated per key, no cross-overwrite |
-| CCF-04 | Error envelope/HTTP/hanging body → rejected and retryable; timeout cancels the whole request  |
-| CCF-05 | RPC getSnapshot → strictly typed public fields, unknown fields not passed through, callers cannot mutate the cache |
-| CCF-06 | Multiple remote workspaces / server remote service sets → the same injected instance is registered |
-| CCF-07 | Real dev / browser → Code, Work, refresh, empty categories, and legacy guides merging hold; logs use client-config.getSnapshot |
-| CCF-08 | Diff the three subscription source files against the MR target branch → zero changes from this MR, legacy-path tests pass |
+| CCF-03 | Switch endpoint/version/platform, late old requests → snapshots stay isolated per key, no cross-overwrite                                                                   |
+| CCF-04 | Error envelope/HTTP/hanging body → rejected and retryable; timeout cancels the whole request                                                                                |
+| CCF-05 | RPC getSnapshot → strictly typed public fields, unknown fields not passed through, callers cannot mutate the cache                                                          |
+| CCF-06 | Multiple remote workspaces / server remote service sets → the same injected instance is registered                                                                          |
+| CCF-07 | Real dev / browser → Code, Work, refresh, empty categories, and legacy guides merging hold; logs use client-config.getSnapshot                                              |
+| CCF-08 | Diff the three subscription source files against the MR target branch → zero changes from this MR, legacy-path tests pass                                                   |
 
 Browser E2E keeps the existing manual-review/pending cases, injecting the new
 service contract; cases are not promoted on their own.

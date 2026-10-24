@@ -108,15 +108,15 @@ Concurrency diagnostics log only safe identifiers: process PID, adapter instance
 
 The integrity fix's scope is `persistence + validation/recovery`; settings-page interaction, MCP protocol DTOs, and desktop-continuous / web-remote-replayable delivery semantics are unchanged.
 
-| Trigger                                              | Boundary                | Required outcome                                                                        |
-| ---------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
-| two adapters authorize the same MCP config at once   | OAuth transaction state | both states read their own verifier/client and both pass strict PKCE and code/client binding |
-| two transactions succeed and publish tokens in turn  | OAuth config snapshot   | canonical client and tokens always come from one transaction; later refreshes never mismatch identities |
-| an old process registers a client interleaved with another old process's refresh | version-compat window | drop tokens of unprovable ownership without generations; re-authorize instead of stitching identities |
-| a failing transaction settles concurrently with a successful one | OAuth credential invalidation | the failing side only compare-and-deletes its own old snapshot, never the newly published pair |
-| CLI and desktop host write different credential keys simultaneously | shared credential persistence | both changes survive; no whole-file lost update |
-| credential file is invalid JSON or schema            | credential recovery     | save fails, the original file is not overwritten, and a diagnosable backup exists        |
-| a single authorization wait times out or closes      | OAuth transaction lifecycle | only that state's callback/verifier is cleaned; other pending states unaffected          |
+| Trigger                                                                          | Boundary                      | Required outcome                                                                                        |
+| -------------------------------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------- |
+| two adapters authorize the same MCP config at once                               | OAuth transaction state       | both states read their own verifier/client and both pass strict PKCE and code/client binding            |
+| two transactions succeed and publish tokens in turn                              | OAuth config snapshot         | canonical client and tokens always come from one transaction; later refreshes never mismatch identities |
+| an old process registers a client interleaved with another old process's refresh | version-compat window         | drop tokens of unprovable ownership without generations; re-authorize instead of stitching identities   |
+| a failing transaction settles concurrently with a successful one                 | OAuth credential invalidation | the failing side only compare-and-deletes its own old snapshot, never the newly published pair          |
+| CLI and desktop host write different credential keys simultaneously              | shared credential persistence | both changes survive; no whole-file lost update                                                         |
+| credential file is invalid JSON or schema                                        | credential recovery           | save fails, the original file is not overwritten, and a diagnosable backup exists                       |
+| a single authorization wait times out or closes                                  | OAuth transaction lifecycle   | only that state's callback/verifier is cleaned; other pending states unaffected                         |
 
 Merging the settings page and session adapter instances is not part of this fix.
 

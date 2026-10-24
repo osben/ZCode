@@ -83,11 +83,11 @@ Key design points:
 
 ### Timeout / latency semantics
 
-| Scenario                                          | First-Host latency                            |
-| ------------------------------------------------- | --------------------------------------------- |
-| Fast network/cache hit (request < 500ms)          | ~0ms (gate resolved before dom-ready)         |
-| Slow network (request > 2s)                       | at most +2s (fail-open continues with `false`) |
-| All forks after the first Host                    | ~0ms (latch resolved; live snapshot read)     |
+| Scenario                                 | First-Host latency                             |
+| ---------------------------------------- | ---------------------------------------------- |
+| Fast network/cache hit (request < 500ms) | ~0ms (gate resolved before dom-ready)          |
+| Slow network (request > 2s)              | at most +2s (fail-open continues with `false`) |
+| All forks after the first Host           | ~0ms (latch resolved; live snapshot read)      |
 
 The +2s on slow networks lands before "first workspace opens", not before the window shows. Accepted trade-off.
 
@@ -99,17 +99,17 @@ The +2s on slow networks lands before "first workspace opens", not before the wi
 
 ## 6. Test coverage index
 
-| File                                                    | Covers                                                                                                                                    |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| File                                                        | Covers                                                                                                                                                                                                         |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/desktop/test/desktopContextPromptRollout.test.ts` | rollout parsing, TTL, inFlight dedupe, 3s timeout; `awaitFirstDecision` slow-response/timeout-fallback/concurrency; CR-01 integration (slow `enabled=true` + bounded await → synchronous snapshot reads truth) |
-| `packages/desktop/test/desktopWindowLifecycle.test.ts`      | Local dom-ready → spawn flow; no spawn before the gate resolves, spawn after it resolves                                                    |
-| `packages/desktop/test/desktopRemoteSessions.test.ts`       | Remote fork points; gate blocks spawn, session completes after resolve; teardown during gate await → re-check intercepts, no spawn          |
+| `packages/desktop/test/desktopWindowLifecycle.test.ts`      | Local dom-ready → spawn flow; no spawn before the gate resolves, spawn after it resolves                                                                                                                       |
+| `packages/desktop/test/desktopRemoteSessions.test.ts`       | Remote fork points; gate blocks spawn, session completes after resolve; teardown during gate await → re-check intercepts, no spawn                                                                             |
 
 ## 7. Constants / env vars
 
-| Name                                                  | Location                                            | Meaning                                       |
-| ----------------------------------------------------- | --------------------------------------------------- | --------------------------------------------- |
-| `ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV`            | `packages/shared/src/runtimeEnv.ts`                 | Main→Host env name (`"0"`/`"1"`)               |
-| `DESKTOP_CONTEXT_PROMPT_REQUEST_TIMEOUT_MS`           | `desktopContextPromptRollout.ts:9`                  | Per-request timeout 3s                        |
-| `DESKTOP_CONTEXT_PROMPT_CACHE_TTL_MS`                 | `desktopContextPromptRollout.ts:10`                 | Success cache TTL 1h                          |
-| `DESKTOP_FIRST_HOST_SPAWN_DECISION_TIMEOUT_MS`        | `packages/desktop/src/main/index.ts`                | First-Host gate timeout 2s                    |
+| Name                                           | Location                             | Meaning                          |
+| ---------------------------------------------- | ------------------------------------ | -------------------------------- |
+| `ZCODE_DESKTOP_CONTEXT_PROMPT_ENABLED_ENV`     | `packages/shared/src/runtimeEnv.ts`  | Main→Host env name (`"0"`/`"1"`) |
+| `DESKTOP_CONTEXT_PROMPT_REQUEST_TIMEOUT_MS`    | `desktopContextPromptRollout.ts:9`   | Per-request timeout 3s           |
+| `DESKTOP_CONTEXT_PROMPT_CACHE_TTL_MS`          | `desktopContextPromptRollout.ts:10`  | Success cache TTL 1h             |
+| `DESKTOP_FIRST_HOST_SPAWN_DECISION_TIMEOUT_MS` | `packages/desktop/src/main/index.ts` | First-Host gate timeout 2s       |

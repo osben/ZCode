@@ -91,15 +91,15 @@ Prefer codegraph for indexed code; use `rg` for docs, configs, generated files, 
 
 The same "feature change" has entirely different impact surfaces at different layers. Classify before scanning:
 
-| Layer           | Typical questions                          | Default focus                                                       |
-| --------------- | ------------------------------------------- | -------------------------------------------------------------------- |
-| `presentation`  | copy, layout, visibility, controls          | every entry reusing the UI, theme, responsiveness, i18n              |
-| `option-source` | candidate sources, grouping, sorting, filters | shared builders, provider registry, per-entry secondary filtering |
-| `draft-default` | initial values, inheritance, fallback       | each entry's draft owner, workspace/session defaults                 |
-| `validation`    | availability, permissions, blocking conditions | per-entry gating, pre-commit validation, error presentation      |
-| `commit-effect`| what actually changes on click              | commands/services, runtime owner, isolation invariants              |
-| `persistence`   | save location, load and migration           | repo/config/Markdown, cross-window/cross-workspace isolation        |
-| `recovery`      | reconnect, snapshot, queue, recovery        | desktop continuous vs web remote replayable boundaries              |
+| Layer           | Typical questions                              | Default focus                                                     |
+| --------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
+| `presentation`  | copy, layout, visibility, controls             | every entry reusing the UI, theme, responsiveness, i18n           |
+| `option-source` | candidate sources, grouping, sorting, filters  | shared builders, provider registry, per-entry secondary filtering |
+| `draft-default` | initial values, inheritance, fallback          | each entry's draft owner, workspace/session defaults              |
+| `validation`    | availability, permissions, blocking conditions | per-entry gating, pre-commit validation, error presentation       |
+| `commit-effect` | what actually changes on click                 | commands/services, runtime owner, isolation invariants            |
+| `persistence`   | save location, load and migration              | repo/config/Markdown, cross-window/cross-workspace isolation      |
+| `recovery`      | reconnect, snapshot, queue, recovery           | desktop continuous vs web remote replayable boundaries            |
 
 If the user did not state the layer, do the cheap scan first, then ask only about ambiguities that would change the conclusion.
 
@@ -107,18 +107,18 @@ If the user did not state the layer, do the cheap scan first, then ask only abou
 
 Whenever a capability appears in multiple surfaces, record these fields per entry:
 
-| Field                | Question to answer                                            |
-| -------------------- | -------------------------------------------------------------- |
-| User scenario        | Why does the user invoke the capability here?                  |
-| UI entry             | Which page, panel, dialog, or toolbar?                         |
-| Shared implementation| Which component, option builder, hook, or service is reused?   |
-| Display/draft state  | Who displays the current value; who holds the local edit?      |
-| Default/inheritance  | Where does it resolve when not explicitly configured?          |
-| Validation/gating    | What hides, disables, falls back, or errors?                   |
-| Commit action        | Which command/service is finally invoked?                      |
-| Authority/sink       | Where do runtime state or persistence finally land?            |
-| Mode boundary        | Do desktop/web/mobile, local/remote differ?                    |
-| Isolation invariants | What must this entry never change accidentally?                |
+| Field                 | Question to answer                                           |
+| --------------------- | ------------------------------------------------------------ |
+| User scenario         | Why does the user invoke the capability here?                |
+| UI entry              | Which page, panel, dialog, or toolbar?                       |
+| Shared implementation | Which component, option builder, hook, or service is reused? |
+| Display/draft state   | Who displays the current value; who holds the local edit?    |
+| Default/inheritance   | Where does it resolve when not explicitly configured?        |
+| Validation/gating     | What hides, disables, falls back, or errors?                 |
+| Commit action         | Which command/service is finally invoked?                    |
+| Authority/sink        | Where do runtime state or persistence finally land?          |
+| Mode boundary         | Do desktop/web/mobile, local/remote differ?                  |
+| Isolation invariants  | What must this entry never change accidentally?              |
 
 "Shared component" does not mean "shared behavior". Same-named `model` fields are not the same state: the conversation model may change the current session, the automation model saves into the automation record, and the Subagent model saves into agent Markdown.
 

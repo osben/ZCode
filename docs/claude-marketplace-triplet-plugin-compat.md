@@ -22,18 +22,18 @@ Selection: read a marketplace entry's GitHub `tree` and confirm the plugin root
 contains all of `skills/*/SKILL.md`, `commands/*.md`, and `.mcp.json` or an MCP
 config referenced by manifest `mcpServers`. The fixed 10 samples:
 
-| Plugin | source shape | skills | commands | MCP |
-| --- | --- | ---: | ---: | --- |
-| `appwrite` | repo root | 11 | 2 | `.mcp.json` |
-| `aws-agents-for-devsecops` | `git-subdir` | 13 | 9 | `.mcp.json` |
-| `bigdata-com` | `git-subdir` | 1 | 27 | `.mcp.json` |
-| `cloudflare` | repo root | 11 | 2 | `.mcp.json` |
-| `confidence` | repo root | 11 | 5 | `.mcp.json` |
-| `convex` | repo root + manifest paths | 2 | 1 | `.mcp.json` |
-| `dominodatalab` | repo root | 23 | 4 | `.mcp.json` |
-| `fiftyone` | repo root | 16 | 2 | `.mcp.json` |
-| `legalzoom` | `git-subdir` | 1 | 1 | `.mcp.json` |
-| `logfire` | `git-subdir` | 3 | 4 | `.mcp.json` / `mcp.json` |
+| Plugin                     | source shape               | skills | commands | MCP                      |
+| -------------------------- | -------------------------- | -----: | -------: | ------------------------ |
+| `appwrite`                 | repo root                  |     11 |        2 | `.mcp.json`              |
+| `aws-agents-for-devsecops` | `git-subdir`               |     13 |        9 | `.mcp.json`              |
+| `bigdata-com`              | `git-subdir`               |      1 |       27 | `.mcp.json`              |
+| `cloudflare`               | repo root                  |     11 |        2 | `.mcp.json`              |
+| `confidence`               | repo root                  |     11 |        5 | `.mcp.json`              |
+| `convex`                   | repo root + manifest paths |      2 |        1 | `.mcp.json`              |
+| `dominodatalab`            | repo root                  |     23 |        4 | `.mcp.json`              |
+| `fiftyone`                 | repo root                  |     16 |        2 | `.mcp.json`              |
+| `legalzoom`                | `git-subdir`               |      1 |        1 | `.mcp.json`              |
+| `logfire`                  | `git-subdir`               |      3 |        4 | `.mcp.json` / `mcp.json` |
 
 Backup samples: `mercadopago`, `nimble`, `notion`.
 

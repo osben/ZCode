@@ -4,13 +4,13 @@ Updated 2026-09-11. Status: client implemented, verified in the macOS isolated A
 
 ## 1. Scope
 
-| Action | Status | Purpose |
-| --- | --- | --- |
-| close | implemented, kept | close marketing content |
-| open_url | implemented, kept | open HTTP/HTTPS pages |
-| claim_zcode_plan | implemented, kept | reuse eligibility, safety checks, and claim flow |
-| navigate | added this round, client implemented | settings section, provider settings, plugin marketplace and detail navigation |
-| copy_text | added this round, client implemented | copy raw plain text, never execute |
+| Action           | Status                               | Purpose                                                                       |
+| ---------------- | ------------------------------------ | ----------------------------------------------------------------------------- |
+| close            | implemented, kept                    | close marketing content                                                       |
+| open_url         | implemented, kept                    | open HTTP/HTTPS pages                                                         |
+| claim_zcode_plan | implemented, kept                    | reuse eligibility, safety checks, and claim flow                              |
+| navigate         | added this round, client implemented | settings section, provider settings, plugin marketplace and detail navigation |
+| copy_text        | added this round, client implemented | copy raw plain text, never execute                                            |
 
 Explicitly not done: `create_task`, `select_model`, prefilling prompts, installing/enabling plugins, auto-authorization, workspace selection, and feature onboarding tours. Never restore the old claim flow's auto-switching of plan connection and model.
 
@@ -25,11 +25,11 @@ Unchanged: image-only banners, empty-label buttons, ghost transparent close/load
 }
 ```
 
-| Location | Display and behavior |
-| --- | --- |
-| banner.buttons[] | at most one close and one regular action; the regular action binds to the whole image, its label may be empty and only supplies the accessibility label |
-| popup.buttons[] | visible buttons of the standalone popup |
-| banner.success_popup.buttons[] | visible buttons of the success popup |
+| Location                       | Display and behavior                                                                                                                                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| banner.buttons[]               | at most one close and one regular action; the regular action binds to the whole image, its label may be empty and only supplies the accessibility label |
+| popup.buttons[]                | visible buttons of the standalone popup                                                                                                                 |
+| banner.success_popup.buttons[] | visible buttons of the success popup                                                                                                                    |
 
 No new top-level banner.action and no action arrays. Text keeps the existing plaintext/html/markdown and optional/null style contract; style is never injected into the DOM.
 
@@ -37,12 +37,12 @@ No new top-level banner.action and no action arrays. Text keeps the existing pla
 
 Four top-level pages: settings, plugin_marketplace, upgrade, rewards. Stable protocol identifiers are mapped by the client onto existing entries; route paths and component names are never exposed to the server.
 
-| Param | Type | Required | Constraint |
-| --- | --- | --- | --- |
-| page | enum | yes | settings / plugin_marketplace / upgrade / rewards |
-| section | enum | no | settings only, from the whitelist below |
-| provider_id | string | no | settings + models only, real stable provider id |
-| plugin_id | string | no | plugin_marketplace only, full plugin id from the trusted catalog |
+| Param       | Type   | Required | Constraint                                                       |
+| ----------- | ------ | -------- | ---------------------------------------------------------------- |
+| page        | enum   | yes      | settings / plugin_marketplace / upgrade / rewards                |
+| section     | enum   | no       | settings only, from the whitelist below                          |
+| provider_id | string | no       | settings + models only, real stable provider id                  |
+| plugin_id   | string | no       | plugin_marketplace only, full plugin id from the trusted catalog |
 
 IDs are non-empty, at most 128 characters. Optional fields are omitted, never null. The new actions' args are strictly validated for unknown fields, enums, and parameter combinations; delivery keeps the existing single-item isolation policy.
 
@@ -63,22 +63,22 @@ Desktop uses the existing isolated WebView; Web/mobile use the existing HTTPS ex
 
 ### Settings section whitelist
 
-| Page | Delivered section | Current internal id |
-| --- | --- | --- |
-| General | general | general |
-| Appearance | appearance | appearance |
-| Model settings | models | modelProvider |
-| Browser control | browser | browser |
-| Computer control | computer_use | computerUse |
-| Memory | memory | memory |
-| Subagents | subagents | subagents |
-| Plugin management | plugins | plugin |
-| MCP servers | mcp | mcp |
-| Skills | skills | skill |
-| Commands | commands | commands |
-| Hooks | hooks | hooks |
-| Indexing | indexing | indexing |
-| Usage | usage | usage |
+| Page              | Delivered section | Current internal id |
+| ----------------- | ----------------- | ------------------- |
+| General           | general           | general             |
+| Appearance        | appearance        | appearance          |
+| Model settings    | models            | modelProvider       |
+| Browser control   | browser           | browser             |
+| Computer control  | computer_use      | computerUse         |
+| Memory            | memory            | memory              |
+| Subagents         | subagents         | subagents           |
+| Plugin management | plugins           | plugin              |
+| MCP servers       | mcp               | mcp                 |
+| Skills            | skills            | skill               |
+| Commands          | commands          | commands            |
+| Hooks             | hooks             | hooks               |
+| Indexing          | indexing          | indexing            |
+| Usage             | usage             | usage               |
 
 An omitted section keeps the settings default/last section; if already open, the existing settings page is activated. The bottom "guide" is not a normal settings section and is out of scope. Never pass through legacy internal ids such as plugins or automations verbatim.
 
@@ -105,10 +105,10 @@ Open skills:
 
 ### Plugin management and marketplace
 
-| Target | Full args | Boundary |
-| --- | --- | --- |
-| Manage installed plugins | `{"page":"settings","section":"plugins"}` | opens the management home only |
-| Browse the marketplace | `{"page":"plugin_marketplace"}` | opens the marketplace home only |
+| Target                    | Full args                                                      | Boundary                        |
+| ------------------------- | -------------------------------------------------------------- | ------------------------------- |
+| Manage installed plugins  | `{"page":"settings","section":"plugins"}`                      | opens the management home only  |
+| Browse the marketplace    | `{"page":"plugin_marketplace"}`                                | opens the marketplace home only |
 | Marketplace plugin detail | `{"page":"plugin_marketplace","plugin_id":"name@marketplace"}` | shows only that plugin's detail |
 
 ```json
@@ -150,9 +150,9 @@ Acceptance: reject extra upgrade fields strictly; no confirm on inventory unavai
 
 ## 4. copy_text parameters and feedback
 
-| Param | Type | Required | Constraint |
-| --- | --- | --- | --- |
-| text | string | yes | at most 20,000 characters; whitespace-only rejected; original text and newlines preserved |
+| Param | Type   | Required | Constraint                                                                                |
+| ----- | ------ | -------- | ----------------------------------------------------------------------------------------- |
+| text  | string | yes      | at most 20,000 characters; whitespace-only rejected; original text and newlines preserved |
 
 ```json
 {
@@ -249,16 +249,16 @@ Authorization: Bearer <present at login>
 
 The table is the client's intended semantics; the multi-event statistics rule for "keep view after copy" must be confirmed by the server before that delivery opens.
 
-| Event | Report | Marketing content |
-| --- | --- | --- |
-| navigate success | confirm | closed |
-| navigate failure | no success report | kept/restored with hint |
-| copy_text success | one confirm per real successful copy | kept |
-| copy_text failure | no success report | kept with hint |
-| close standalone popup/banner after copy | cancel | closed |
-| close claim success popup | no duplicate cancel | closed |
-| new navigate/copy inside the success popup | confirm after success | handled per action |
-| query, resource download, display | no show report | unchanged |
+| Event                                      | Report                               | Marketing content       |
+| ------------------------------------------ | ------------------------------------ | ----------------------- |
+| navigate success                           | confirm                              | closed                  |
+| navigate failure                           | no success report                    | kept/restored with hint |
+| copy_text success                          | one confirm per real successful copy | kept                    |
+| copy_text failure                          | no success report                    | kept with hint          |
+| close standalone popup/banner after copy   | cancel                               | closed                  |
+| close claim success popup                  | no duplicate cancel                  | closed                  |
+| new navigate/copy inside the success popup | confirm after success                | handled per action      |
+| query, resource download, display          | no show report                       | unchanged               |
 
 confirm/cancel are operation events, not mutually exclusive final conversion states. One campaign may confirm multiple times and cancel afterwards; closing does not undo a successful copy. Cross-polling deduplication must not be reintroduced for this.
 
@@ -268,15 +268,15 @@ Anonymous users report at device level with a valid device UUID; after login, us
 
 ## 7. Failure, security, and compatibility
 
-| Scenario | Handling |
-| --- | --- |
-| unknown action/page/section/field | rejected per the existing single-item isolation with the reason logged; other legal slots unaffected |
-| target or capability gone after display | revalidate on click, hint failure, run no other action |
-| page unsupported on platform | explicit hint; no compensating runtime |
-| clipboard permission/write failure | no success hint, no confirm; user may retry |
-| account change/unmount/target invalidation | invalidate old associations, discard late UI |
-| timeout with unknown result | hint to check state; do not repeat side effects automatically |
-| reporting failure | redacted log; navigation/copy not reversed |
+| Scenario                                   | Handling                                                                                             |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| unknown action/page/section/field          | rejected per the existing single-item isolation with the reason logged; other legal slots unaffected |
+| target or capability gone after display    | revalidate on click, hint failure, run no other action                                               |
+| page unsupported on platform               | explicit hint; no compensating runtime                                                               |
+| clipboard permission/write failure         | no success hint, no confirm; user may retry                                                          |
+| account change/unmount/target invalidation | invalidate old associations, discard late UI                                                         |
+| timeout with unknown result                | hint to check state; do not repeat side effects automatically                                        |
+| reporting failure                          | redacted log; navigation/copy not reversed                                                           |
 
 No arbitrary scripts, RPC, credentials, silent installs, global config changes, or paid operations. Logs record only campaign, action, result, and error code — never credentials or the full copied text; UI uses the existing logger.
 
@@ -284,18 +284,18 @@ New clients ship first; the server then opens delivery gated on client version/p
 
 ## 8. Both ends
 
-| Scope | Work |
-| --- | --- |
-| server enums/models | register both actions; strictly validate args by page/section |
-| settings navigation form | page/section dropdowns; optional provider for models |
-| marketplace navigation form | home page or a trusted-catalog plugin |
-| copy form | plain-text body with length and non-empty validation |
-| ops-to-client mapping | make the copy body source explicit; never mix button labels and body text |
-| delivery policy | version/platform limits; confirm multi-event statistics semantics |
-| Shared | action discriminated union; field and combination validation |
-| navigation adapter | reuse entries; add request correlation and completion/failure feedback |
-| clipboard adapter | cross-platform write and success/failure feedback |
-| Controller/display | navigation collapse, copy retention; reuse pending and reporting |
+| Scope                       | Work                                                                      |
+| --------------------------- | ------------------------------------------------------------------------- |
+| server enums/models         | register both actions; strictly validate args by page/section             |
+| settings navigation form    | page/section dropdowns; optional provider for models                      |
+| marketplace navigation form | home page or a trusted-catalog plugin                                     |
+| copy form                   | plain-text body with length and non-empty validation                      |
+| ops-to-client mapping       | make the copy body source explicit; never mix button labels and body text |
+| delivery policy             | version/platform limits; confirm multi-event statistics semantics         |
+| Shared                      | action discriminated union; field and combination validation              |
+| navigation adapter          | reuse entries; add request correlation and completion/failure feedback    |
+| clipboard adapter           | cross-platform write and success/failure feedback                         |
+| Controller/display          | navigation collapse, copy retention; reuse pending and reporting          |
 
 Whether the copy body is configured directly in ops or references the existing i18n catalog is a server-side decision; the client always receives the final localized args.text and never resolves i18n keys.
 
@@ -303,19 +303,19 @@ Order of work: agree spec/event semantics → scan call boundaries → schema/be
 
 ## 9. Acceptance matrix
 
-| Category | Must verify |
-| --- | --- |
-| Schema | all page/section values, missing/empty, wrong combinations, unknown fields, length bounds |
-| Settings | all sections, reuse when open, default page, provider exists/missing/loading |
-| Plugins | management vs marketplace, home/detail, missing target, no auto install/enable |
-| Side-effect-free navigation | no model switch, no connection/config change, no task creation |
-| Copy | original text/newlines/HTML as plain text, success, permission failure, repeated copy |
-| Display | navigation collapse, copy retention, neither triggers success_popup, failure recovery |
-| Reporting | confirm/cancel, anonymous, close-after-copy, new actions in the result popup, report failure |
-| State | debounce, account switch, unmount, target change, timeout, late results |
-| UI | empty-label banner, transparent close/loading, light/dark, zh/en, keyboard, narrow screens |
-| Multi-client | desktop/mobile supported and unsupported paths; task/remote chains unchanged |
-| Regression | claim, close, polling, same-ID re-delivery, Hero ZIP validation and cache unchanged |
+| Category                    | Must verify                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| Schema                      | all page/section values, missing/empty, wrong combinations, unknown fields, length bounds    |
+| Settings                    | all sections, reuse when open, default page, provider exists/missing/loading                 |
+| Plugins                     | management vs marketplace, home/detail, missing target, no auto install/enable               |
+| Side-effect-free navigation | no model switch, no connection/config change, no task creation                               |
+| Copy                        | original text/newlines/HTML as plain text, success, permission failure, repeated copy        |
+| Display                     | navigation collapse, copy retention, neither triggers success_popup, failure recovery        |
+| Reporting                   | confirm/cancel, anonymous, close-after-copy, new actions in the result popup, report failure |
+| State                       | debounce, account switch, unmount, target change, timeout, late results                      |
+| UI                          | empty-label banner, transparent close/loading, light/dark, zh/en, keyboard, narrow screens   |
+| Multi-client                | desktop/mobile supported and unsupported paths; task/remote chains unchanged                 |
+| Regression                  | claim, close, polling, same-ID re-delivery, Hero ZIP validation and cache unchanged          |
 
 Update the spec while implementing, write tests before code, and run architecture check, typecheck, lint, unit tests, and App E2E. Passing the isolated fixture does not prove live eligibility, real safety checks, or all-platform acceptance; unverified paths must be listed separately.
 
@@ -339,4 +339,4 @@ Fixes found at runtime: a marketplace mounted behind the settings layer must not
 
 Not verified: real server-side delivery of the new actions and multi-event statistics, real safety checks, Windows/Linux/mobile real devices, dual-theme narrow-screen manual visual review. The external server was not modified; the App Mock entry stays removed; Hero ZIP is unchanged.
 
-Full history: git show 43d52cbd:docs/marketing-touch-actions.md
+Full history: git show 45f808f7:docs/marketing-touch-actions.md

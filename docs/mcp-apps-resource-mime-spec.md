@@ -13,16 +13,16 @@ plugin page → instance credential and server ownership check → MCP resources
 
 ## Accepted entries
 
-| Category      | Accepted common formats                                                      |
-| ------------- | ---------------------------------------------------------------------------- |
-| existing      | `text/*`, JSON, PNG, JPEG, WebP, GLB, generic binary                          |
-| documents     | PDF, RTF, DOC/XLS/PPT, DOCX/XLSX/PPTX, ODT/ODS/ODP                            |
-| structured    | XML, YAML (including `application/x-yaml`)                                    |
-| images        | SVG, GIF, AVIF, BMP, TIFF, ICO, HEIC, HEIF                                    |
-| audio         | MP3, MP4 audio, Ogg, WAV, WebM audio, AAC, FLAC                               |
-| video         | MP4, WebM, Ogg, QuickTime, MPEG                                               |
-| archives      | ZIP, GZIP, TAR, 7z, RAR                                                       |
-| fonts & models| WOFF, WOFF2, TTF, OTF, JSON glTF                                              |
+| Category       | Accepted common formats                              |
+| -------------- | ---------------------------------------------------- |
+| existing       | `text/*`, JSON, PNG, JPEG, WebP, GLB, generic binary |
+| documents      | PDF, RTF, DOC/XLS/PPT, DOCX/XLSX/PPTX, ODT/ODS/ODP   |
+| structured     | XML, YAML (including `application/x-yaml`)           |
+| images         | SVG, GIF, AVIF, BMP, TIFF, ICO, HEIC, HEIF           |
+| audio          | MP3, MP4 audio, Ogg, WAV, WebM audio, AAC, FLAC      |
+| video          | MP4, WebM, Ogg, QuickTime, MPEG                      |
+| archives       | ZIP, GZIP, TAR, 7z, RAR                              |
+| fonts & models | WOFF, WOFF2, TTF, OTF, JSON glTF                     |
 
 MIME matching ignores case, surrounding whitespace, and the parameter after the semicolon; otherwise it is exact. The existing `text/` prefix behavior is kept. Common MIME aliases for WAV, GZIP, and ICO are listed explicitly; arbitrary extensions and vendor types are not inferred.
 

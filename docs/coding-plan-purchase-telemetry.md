@@ -87,31 +87,31 @@ never `undefined` / `null`.
 
 Common fields:
 
-| Field | Meaning |
-| --- | --- |
-| `purchase_funnel_id` | funnel id shared from entry through the purchase flow; prefer the App WebView-injected value |
-| `entry_plan_list` | plans the user already had when entering the flow; dynamic keys, comma-joined |
-| `purchase_attempt_id` | UUID shared by the click and the result |
-| `purchase_audience` | `personal` / `team` |
-| `provider_family` | `bigmodel` / `zai` / `unknown` |
-| `channel` | BigModel defaults to `MaaS`, Z.ai to `Z_AI` |
-| `product_id` | current product id |
-| `product_name` | display or backend name |
-| `plan_tier` | `lite` / `pro` / `max` / `team_standard` / `team_advanced` / raw value |
-| `billing_period` | `month` / `quarter` / `year` / `unknown` |
-| `purchase_method` | `continuous` / `one_time` / `unknown` |
-| `payment_method` | method of the final submitted payment: `alipay` / `paypal` / `stripe` / `unknown` |
-| `seat_count` | team seats; empty for personal |
-| `duration_months` | team one-time purchase duration; empty for personal and continuous |
-| `currency` | backend or product currency |
-| `cashAmount` | personal: single-product preview `cashAmount`; team: trial calculation `balanceDeductAmount` |
-| `giveAmount` | personal: single-product preview `giveAmount`; team: trial calculation `giveDeductAmount` |
-| `thirdPartyAmount` | personal: single-product preview `thirdPartyAmount`; team: trial calculation `thirdPayAmount` |
-| `refundAmount` | personal: single-product preview `refundAmount`; empty when the team API has no field |
-| `residualAmount` | personal: single-product preview `residualAmount`; empty when the team API has no field |
-| `totalOriginalAmount` | team trial-calculation original order price; empty for personal |
-| `campaignDiscountAmount` | team trial-calculation campaign discount; empty for personal |
-| `totalPayAmount` | team trial-calculation post-discount payable total; empty for personal |
+| Field                    | Meaning                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `purchase_funnel_id`     | funnel id shared from entry through the purchase flow; prefer the App WebView-injected value  |
+| `entry_plan_list`        | plans the user already had when entering the flow; dynamic keys, comma-joined                 |
+| `purchase_attempt_id`    | UUID shared by the click and the result                                                       |
+| `purchase_audience`      | `personal` / `team`                                                                           |
+| `provider_family`        | `bigmodel` / `zai` / `unknown`                                                                |
+| `channel`                | BigModel defaults to `MaaS`, Z.ai to `Z_AI`                                                   |
+| `product_id`             | current product id                                                                            |
+| `product_name`           | display or backend name                                                                       |
+| `plan_tier`              | `lite` / `pro` / `max` / `team_standard` / `team_advanced` / raw value                        |
+| `billing_period`         | `month` / `quarter` / `year` / `unknown`                                                      |
+| `purchase_method`        | `continuous` / `one_time` / `unknown`                                                         |
+| `payment_method`         | method of the final submitted payment: `alipay` / `paypal` / `stripe` / `unknown`             |
+| `seat_count`             | team seats; empty for personal                                                                |
+| `duration_months`        | team one-time purchase duration; empty for personal and continuous                            |
+| `currency`               | backend or product currency                                                                   |
+| `cashAmount`             | personal: single-product preview `cashAmount`; team: trial calculation `balanceDeductAmount`  |
+| `giveAmount`             | personal: single-product preview `giveAmount`; team: trial calculation `giveDeductAmount`     |
+| `thirdPartyAmount`       | personal: single-product preview `thirdPartyAmount`; team: trial calculation `thirdPayAmount` |
+| `refundAmount`           | personal: single-product preview `refundAmount`; empty when the team API has no field         |
+| `residualAmount`         | personal: single-product preview `residualAmount`; empty when the team API has no field       |
+| `totalOriginalAmount`    | team trial-calculation original order price; empty for personal                               |
+| `campaignDiscountAmount` | team trial-calculation campaign discount; empty for personal                                  |
+| `totalPayAmount`         | team trial-calculation post-discount payable total; empty for personal                        |
 
 The ambiguous `amount` is no longer reported. Amount fields keep the backend's
 composition semantics — never pass `payAmount` off as `thirdPartyAmount` and never
@@ -135,37 +135,37 @@ must freeze `totalOriginalAmount` / `campaignDiscountAmount` / `totalPayAmount` 
 
 Result fields:
 
-| Field | Meaning |
-| --- | --- |
-| `failure_stage` | failure stage; empty on success |
-| `error_code` | stable error code; empty on success |
+| Field           | Meaning                                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------------------- |
+| `failure_stage` | failure stage; empty on success                                                                                 |
+| `error_code`    | stable error code; empty on success                                                                             |
 | `error_message` | normalized short error text; uploading HTML, schema, tokens, card data, or other sensitive content is forbidden |
-| `order_status` | raw backend payment status; success normalizes to `SUCCESS`, timeout to `TIMEOUT` |
-| `biz_id` | personal payment check id |
-| `order_no` | team order number |
-| `elapsed_ms` | time from clicking continue-payment to reporting the result |
+| `order_status`  | raw backend payment status; success normalizes to `SUCCESS`, timeout to `TIMEOUT`                               |
+| `biz_id`        | personal payment check id                                                                                       |
+| `order_no`      | team order number                                                                                               |
+| `elapsed_ms`    | time from clicking continue-payment to reporting the result                                                     |
 
 ## Result mapping
 
 `purchase_result` has no separate `result` field; the outcome is expressed by
 `order_status` + `error_code`:
 
-| error_code | failure_stage | order_status | Flow | Meaning |
-| --- | --- | --- | --- | --- |
-| empty string | empty string | `SUCCESS` | personal / team | payment succeeded |
-| `create_sign_failed` | `create_sign` | `FAIL` | personal BigModel | first-purchase signing failed |
-| `update_sign_failed` | `update_sign` | `FAIL` | personal BigModel | plan-change signing failed |
-| `paypal_setup_failed` | `paypal_setup` | `FAIL` | personal Z.ai | PayPal setup failed |
-| `paypal_subscribe_failed` | `paypal_subscribe` | `FAIL` | personal Z.ai | PayPal subscribe failed |
-| `stripe_pay_failed` | `stripe_pay` | `FAIL` | personal Z.ai | Stripe payment failed |
-| `create_order_failed` | `create_order` | `FAIL` | team | order creation failed |
-| `continue_order_payment_failed` | `continue_order_payment` | `FAIL` | team | continuing a pending order failed |
-| `payment_status_failed` | `terminal_status` | `FAIL` | personal / team | backend failure terminal state |
-| `payment_status_closed` | `terminal_status` | `CLOSED` | team | backend closed terminal state |
-| `payment_status_cancelled` | `terminal_status` | `CANCELLED` | personal / team | cancelled terminal state |
-| `payment_check_timeout` | `timeout` | `TIMEOUT` | personal / team | polling timed out |
-| `user_cancelled` | `user_cancel` | `CANCELLED` | personal / team | the user closed or went back, ending the attempt |
-| `unknown_error` | `unknown` | `FAIL` | personal / team | unclassified exception |
+| error_code                      | failure_stage            | order_status | Flow              | Meaning                                          |
+| ------------------------------- | ------------------------ | ------------ | ----------------- | ------------------------------------------------ |
+| empty string                    | empty string             | `SUCCESS`    | personal / team   | payment succeeded                                |
+| `create_sign_failed`            | `create_sign`            | `FAIL`       | personal BigModel | first-purchase signing failed                    |
+| `update_sign_failed`            | `update_sign`            | `FAIL`       | personal BigModel | plan-change signing failed                       |
+| `paypal_setup_failed`           | `paypal_setup`           | `FAIL`       | personal Z.ai     | PayPal setup failed                              |
+| `paypal_subscribe_failed`       | `paypal_subscribe`       | `FAIL`       | personal Z.ai     | PayPal subscribe failed                          |
+| `stripe_pay_failed`             | `stripe_pay`             | `FAIL`       | personal Z.ai     | Stripe payment failed                            |
+| `create_order_failed`           | `create_order`           | `FAIL`       | team              | order creation failed                            |
+| `continue_order_payment_failed` | `continue_order_payment` | `FAIL`       | team              | continuing a pending order failed                |
+| `payment_status_failed`         | `terminal_status`        | `FAIL`       | personal / team   | backend failure terminal state                   |
+| `payment_status_closed`         | `terminal_status`        | `CLOSED`     | team              | backend closed terminal state                    |
+| `payment_status_cancelled`      | `terminal_status`        | `CANCELLED`  | personal / team   | cancelled terminal state                         |
+| `payment_check_timeout`         | `timeout`                | `TIMEOUT`    | personal / team   | polling timed out                                |
+| `user_cancelled`                | `user_cancel`            | `CANCELLED`  | personal / team   | the user closed or went back, ending the attempt |
+| `unknown_error`                 | `unknown`                | `FAIL`       | personal / team   | unclassified exception                           |
 
 The purchase security check is a `pay/preview` pre-validation. Only when the
 preview succeeds and the payment-submission chain is entered are

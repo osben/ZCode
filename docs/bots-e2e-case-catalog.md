@@ -9,14 +9,14 @@ This document records the Bot channel end-to-end behavior contract. Bot cases ar
 
 ## Scope decisions
 
-| Boundary | Decision | Reason |
-| --- | --- | --- |
-| Main scope of the original round | Feishu/Lark `streaming_card` full lifecycle | the most user-visible, cross-layer-risky behavior in the branch |
-| Provider environment | CI uses a mock Feishu HTTP API | avoids real tenant, credential, and network flakiness |
-| Task timing | `controlled-stream` | running expansion and terminal collapse must be observable; `fast-text` cannot prove intermediate states |
-| Client semantics | `bot-channel-continuous` | the Bot stream never enters mobile `web-remote-replayable` recovery semantics |
-| Multi-host runtime lock | later separate process E2E | service-integration regression already exists; multi-process fixtures are not mixed with card semantics |
-| Plan approval UI | excluded | no direct state crossing with Bot channel lifecycle |
+| Boundary                         | Decision                                    | Reason                                                                                                   |
+| -------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Main scope of the original round | Feishu/Lark `streaming_card` full lifecycle | the most user-visible, cross-layer-risky behavior in the branch                                          |
+| Provider environment             | CI uses a mock Feishu HTTP API              | avoids real tenant, credential, and network flakiness                                                    |
+| Task timing                      | `controlled-stream`                         | running expansion and terminal collapse must be observable; `fast-text` cannot prove intermediate states |
+| Client semantics                 | `bot-channel-continuous`                    | the Bot stream never enters mobile `web-remote-replayable` recovery semantics                            |
+| Multi-host runtime lock          | later separate process E2E                  | service-integration regression already exists; multi-process fixtures are not mixed with card semantics  |
+| Plan approval UI                 | excluded                                    | no direct state crossing with Bot channel lifecycle                                                      |
 
 ## Accepted cases
 
@@ -63,28 +63,28 @@ This document records the Bot channel end-to-end behavior contract. Bot cases ar
 
 ## Accepted and automated supplementary cases
 
-| Case ID | Candidate | Status | Reason |
-| --- | --- | --- | --- |
-| BOT-E2E-AQ-01 | AskUserQuestion multi-choice/custom updates on the same card | formal | controlled elicitation + callback fixture |
-| BOT-E2E-IL-01 | blocking interaction cuts the streaming card and keeps the final interaction card | formal | controlled stream + Feishu HTTP request sequence |
-| BOT-E2E-RT-01 | two local hosts contend for the same Feishu runtime lock | formal | real file-lock owner/contender/takeover evidence |
-| BOT-E2E-RT-02 | attached remote host starts no provider runtime | formal | startup state and zero provider network requests |
-| BOT-E2E-PV-01 | Feishu/Lark domain isolation | formal | full origin assertions on one HTTP mock |
-| BOT-E2E-RW-01 | disconnected remote workspace neither reconnects nor falls back locally | formal | remote service call counts and zero task calls |
-| BOT-E2E-CR-01 | bot-created automation pushes results back to the origin session | formal | Host injection, persisted reopen, subscribe-before-dispatch, provider outbound |
-| BOT-E2E-CF-01 | bound Feishu long-connection failure shows a diagnosable status | formal | real desktop UI + runtime state + binding joint evidence |
+| Case ID       | Candidate                                                                         | Status | Reason                                                                         |
+| ------------- | --------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------ |
+| BOT-E2E-AQ-01 | AskUserQuestion multi-choice/custom updates on the same card                      | formal | controlled elicitation + callback fixture                                      |
+| BOT-E2E-IL-01 | blocking interaction cuts the streaming card and keeps the final interaction card | formal | controlled stream + Feishu HTTP request sequence                               |
+| BOT-E2E-RT-01 | two local hosts contend for the same Feishu runtime lock                          | formal | real file-lock owner/contender/takeover evidence                               |
+| BOT-E2E-RT-02 | attached remote host starts no provider runtime                                   | formal | startup state and zero provider network requests                               |
+| BOT-E2E-PV-01 | Feishu/Lark domain isolation                                                      | formal | full origin assertions on one HTTP mock                                        |
+| BOT-E2E-RW-01 | disconnected remote workspace neither reconnects nor falls back locally           | formal | remote service call counts and zero task calls                                 |
+| BOT-E2E-CR-01 | bot-created automation pushes results back to the origin session                  | formal | Host injection, persisted reopen, subscribe-before-dispatch, provider outbound |
+| BOT-E2E-CF-01 | bound Feishu long-connection failure shows a diagnosable status                   | formal | real desktop UI + runtime state + binding joint evidence                       |
 
 ## Pruning
 
-| Decision | Combination | Class | Basis |
-| --- | --- | --- | --- |
-| BOT-PRUNE-01 | streaming card × Telegram/Weixin | pruned | `streaming_card` is a Feishu/Lark provider capability; other providers keep their reply semantics |
-| BOT-PRUNE-02 | streaming card × mobile replayable recovery | pruned | the Bot task stream is fixed to `bot-channel-continuous` |
-| BOT-PRUNE-03 | single-card rendering × multi-host runtime lock | pruned | different state owners and failure evidence; merging weakens failure localization |
-| BOT-PRUNE-04 | Bot lifecycle × plan approval dialog rendering | ignored | adjacent commit in the branch, not part of the Bot provider delivery contract |
-| BOT-PRUNE-05 | automation push-back × intermediate streaming messages | pruned | automations push only `summary_changes` terminal state, avoiding chat spam from tool progress |
-| BOT-PRUNE-06 | automation push-back × mobile replayable recovery | pruned | push-back keeps `bot-channel-continuous`, never entering mobile gap/snapshot recovery |
-| BOT-PRUNE-07 | connection-failure UI × Desktop re-coverage of unbound bots | pruned | the unbound branch has component contracts already; Desktop E2E focuses on the conflict state where binding and runtime error coexist |
+| Decision     | Combination                                                 | Class   | Basis                                                                                                                                 |
+| ------------ | ----------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| BOT-PRUNE-01 | streaming card × Telegram/Weixin                            | pruned  | `streaming_card` is a Feishu/Lark provider capability; other providers keep their reply semantics                                     |
+| BOT-PRUNE-02 | streaming card × mobile replayable recovery                 | pruned  | the Bot task stream is fixed to `bot-channel-continuous`                                                                              |
+| BOT-PRUNE-03 | single-card rendering × multi-host runtime lock             | pruned  | different state owners and failure evidence; merging weakens failure localization                                                     |
+| BOT-PRUNE-04 | Bot lifecycle × plan approval dialog rendering              | ignored | adjacent commit in the branch, not part of the Bot provider delivery contract                                                         |
+| BOT-PRUNE-05 | automation push-back × intermediate streaming messages      | pruned  | automations push only `summary_changes` terminal state, avoiding chat spam from tool progress                                         |
+| BOT-PRUNE-06 | automation push-back × mobile replayable recovery           | pruned  | push-back keeps `bot-channel-continuous`, never entering mobile gap/snapshot recovery                                                 |
+| BOT-PRUNE-07 | connection-failure UI × Desktop re-coverage of unbound bots | pruned  | the unbound branch has component contracts already; Desktop E2E focuses on the conflict state where binding and runtime error coexist |
 
 ### BOT-E2E-CF-01 bound Feishu long-connection failure status
 
@@ -190,16 +190,16 @@ BOT-UI-MN: the real formal bubble, preparation bubble, and queue component show 
 
 Scope: the Feishu group-collaboration branch's group chat, topics, materials, delivery, settings UI, and channel tools relative to staging. The user confirmed the full coverage completion; duplicate success receipts stay as-is with no dedup assertions added. State owners: the CLI CommandInbox owns admission/execution, the Bot Host owns binding, materials, and delivery, the UI only projects; no extra queue is created.
 
-| Case | Setup → Action → Assert | Evidence and status |
-| --- | --- | --- |
-| BOT-E2E-TP-04 | real CLI topic running → bot receives a new message → auto-stops the old run, resumes after the authoritative terminal state, zero queueing, old output never impersonates the new turn | Host/CLI/model HTTP, pending |
-| BOT-E2E-TP-05 | received history-file index → real ReadSessionContext → Host validates and downloads, CLI gets the right file; other tasks/revoked authorization download nothing | Host/CLI/mock platform HTTP, pending |
-| BOT-E2E-FN-01 | terminal contains the full body after tool output → adapter reconciliation → the full result is delivered exactly once; normal conversation still works | adapter/real stream/platform outbound, pending |
-| BOT-E2E-MN-02 | real CLI triggers ReplyToChannel → native mention succeeds → client follow-up queries new targets by name, no botGroupSource, no default approval popup | Host/CLI/mock platform HTTP, pending |
-| BOT-E2E-GR-02 | group input during a run → cancel and normal promotion separately → FIFO, original source, same-card terminal, no duplicate input | adjusts the existing runtime case |
-| BOT-E2E-GR-UI-01 | two bots/two groups → settings toggles, failure and recovery → isolation, persistence, no re-delivery | new UI candidate |
-| BOT-E2E-PS-01 | private-chat bound task → IM/desktop/mobile consecutive turns and restart → one delivery per turn, explicit failure retry | extends the existing candidate; simulated origin is not mobile UI |
-| BOT-E2E-MN-01/TP-03 | group/topic and multiple identities → reply and admin actions → quote, conditional @, admin reminder, idempotence | extends the existing service candidates |
+| Case                | Setup → Action → Assert                                                                                                                                                                 | Evidence and status                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| BOT-E2E-TP-04       | real CLI topic running → bot receives a new message → auto-stops the old run, resumes after the authoritative terminal state, zero queueing, old output never impersonates the new turn | Host/CLI/model HTTP, pending                                      |
+| BOT-E2E-TP-05       | received history-file index → real ReadSessionContext → Host validates and downloads, CLI gets the right file; other tasks/revoked authorization download nothing                       | Host/CLI/mock platform HTTP, pending                              |
+| BOT-E2E-FN-01       | terminal contains the full body after tool output → adapter reconciliation → the full result is delivered exactly once; normal conversation still works                                 | adapter/real stream/platform outbound, pending                    |
+| BOT-E2E-MN-02       | real CLI triggers ReplyToChannel → native mention succeeds → client follow-up queries new targets by name, no botGroupSource, no default approval popup                                 | Host/CLI/mock platform HTTP, pending                              |
+| BOT-E2E-GR-02       | group input during a run → cancel and normal promotion separately → FIFO, original source, same-card terminal, no duplicate input                                                       | adjusts the existing runtime case                                 |
+| BOT-E2E-GR-UI-01    | two bots/two groups → settings toggles, failure and recovery → isolation, persistence, no re-delivery                                                                                   | new UI candidate                                                  |
+| BOT-E2E-PS-01       | private-chat bound task → IM/desktop/mobile consecutive turns and restart → one delivery per turn, explicit failure retry                                                               | extends the existing candidate; simulated origin is not mobile UI |
+| BOT-E2E-MN-01/TP-03 | group/topic and multiple identities → reply and admin actions → quote, conditional @, admin reminder, idempotence                                                                       | extends the existing service candidates                           |
 
 Pruning: Feishu/Lark platform differences are covered by dual-platform service candidates; the real CLI main chain prefers Feishu; not every platform × theme is mechanically crossed. Theme/width is verified by component browsers; real mobile replayable, SSH identity, and platform tenant notifications are recorded separately — never replaced by narrow screens or stubs. New cases from the initial verification stage stayed manual-review/pending; after the 2026-09-23 user confirmation, the four new specs below were promoted, not into Docker/CI. Case-local fixtures and the canonical manifest come first, then controlled replays; all platform requests are isolated and no user bot is used.
 

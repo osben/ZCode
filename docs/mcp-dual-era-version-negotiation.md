@@ -18,12 +18,12 @@ Ordinary MCP servers default to client-side era detection; the built-in `node_re
 protocolVersion?: "legacy" | "auto" | "2026-07-28";
 ```
 
-| Config                                       | Client behavior                                                                | Use case                              |
-| -------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------- |
-| unset, `stdio` / `http`                      | equivalent to `auto`                                                           | ordinary third-party MCP, both eras   |
-| `auto`                                       | probe modern first; fall back to `initialize` only on definite legacy evidence | explicit dual-era                     |
-| `legacy`                                     | no modern probe; go straight to the old handshake                              | known old servers; avoids stdio sibling |
-| `2026-07-28`                                 | pin modern; fail if unsupported, no fallback                                   | built-in stateless `node_repl`        |
+| Config                                          | Client behavior                                                                                 | Use case                                   |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| unset, `stdio` / `http`                         | equivalent to `auto`                                                                            | ordinary third-party MCP, both eras        |
+| `auto`                                          | probe modern first; fall back to `initialize` only on definite legacy evidence                  | explicit dual-era                          |
+| `legacy`                                        | no modern probe; go straight to the old handshake                                               | known old servers; avoids stdio sibling    |
+| `2026-07-28`                                    | pin modern; fail if unsupported, no fallback                                                    | built-in stateless `node_repl`             |
 | unset or any non-modern config, `sse` transport | go straight to legacy; the old HTTP+SSE transport cannot carry MCP `2026-07-28` per-request era | explicitly chosen deprecated SSE endpoints |
 
 Built-in server pinned configs:
@@ -95,17 +95,17 @@ An HTTP probe timeout means a network failure and must not classify the server a
 
 ## 6. Acceptance cases
 
-| ID    | Config/server                       | Expected                                                                                                        |
-| ----- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| MVN01 | plain stdio, version unset, modern  | defaults to `auto`, negotiates `modern`, no legacy initialize                                                     |
-| MVN02 | plain stdio, version unset, legacy  | sibling probe detects legacy; the real child completes initialize; tools usable                                   |
-| MVN03 | plain Streamable HTTP, version unset| defaults to `auto`; recognized modern errors do not downgrade, legacy responses do                                |
-| MVN04 | any transport, explicit `legacy`    | no probe, keeps the old initialize behavior                                                                       |
-| MVN05 | built-in `node_repl`                | pinned `2026-07-28`, `protocolEra=modern`, connection fails if unsupported; workspace may share the connection    |
-| MVN06 | explicit legacy / `sse`             | fixed legacy, no disposable modern probe                                                                          |
-| MVN07 | auto stdio server not answering     | probe ends within its bound; after fallback/total-connect timeout no sibling or derived process remains            |
-| MVN08 | any server connected                | `mcp.server.connected` includes client identity, negotiation policy, actual era, and exact protocol version       |
-| MVN09 | session/workspace isolation links   | connection, lease, and close logs correlate via `mcpConnectionId`; stdio logs the PID; shared links correlate sessions via multiple lease logs |
+| ID    | Config/server                        | Expected                                                                                                                                       |
+| ----- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| MVN01 | plain stdio, version unset, modern   | defaults to `auto`, negotiates `modern`, no legacy initialize                                                                                  |
+| MVN02 | plain stdio, version unset, legacy   | sibling probe detects legacy; the real child completes initialize; tools usable                                                                |
+| MVN03 | plain Streamable HTTP, version unset | defaults to `auto`; recognized modern errors do not downgrade, legacy responses do                                                             |
+| MVN04 | any transport, explicit `legacy`     | no probe, keeps the old initialize behavior                                                                                                    |
+| MVN05 | built-in `node_repl`                 | pinned `2026-07-28`, `protocolEra=modern`, connection fails if unsupported; workspace may share the connection                                 |
+| MVN06 | explicit legacy / `sse`              | fixed legacy, no disposable modern probe                                                                                                       |
+| MVN07 | auto stdio server not answering      | probe ends within its bound; after fallback/total-connect timeout no sibling or derived process remains                                        |
+| MVN08 | any server connected                 | `mcp.server.connected` includes client identity, negotiation policy, actual era, and exact protocol version                                    |
+| MVN09 | session/workspace isolation links    | connection, lease, and close logs correlate via `mcpConnectionId`; stdio logs the PID; shared links correlate sessions via multiple lease logs |
 
 Focused adapter/process tests prove negotiation and cleanup; the Browser Use bundle smoke test keeps proving a real modern stdio server. The change does not alter conversation UI/product state and adds no conversation E2E state combinations.
 

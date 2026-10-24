@@ -127,4 +127,4 @@ Acceptance: unit tests cover both file/no-file and truncation metadata producing
 
 Performance benchmark: `apps/zcode-cli/packages/adapters/tests/fixtures/bash-output-benchmark.cjs`; each sample launches an isolated parent Node with warm-up and GC, 256 MiB output per task, concurrency 1/4, at least three runs each, old/new alternating (old = collector implementation at `65ed641886`). Direct writes cut the parent Node's output-processing peak RSS delta by ~99.3%–99.8% (from 78–377 MiB to 0.3–1 MiB across hosts and concurrencies) and clearly reduce CPU. This is not a 99% total-Agent memory claim, excludes child processes and OS file cache, and does not promise better total execution time — the macOS 4-concurrency median wall time rose ~30% in the pre-truncation-removal comparison. Raw samples: `.tmp/bash-direct-file-validation/{windows,macos}-memory-results.json`.
 
-Full history: git show f26734ad:docs/bash-background-parity.md
+Full history: git show 45f808f7:docs/bash-background-parity.md

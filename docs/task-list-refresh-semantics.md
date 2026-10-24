@@ -15,18 +15,18 @@ Emit surface: `taskIndexSyncer.emitWorkspaceTaskListChanged(target, meta, reason
 required** (design fix: the former default `task_meta_changed` silently put every non-committal emit
 point into the heaviest refresh semantics, the root of the whole defect chain).
 
-| reason | Meaning | Full-list refresh¹ | Membership refetch² | Meta incremental write-back³ | Typical emit point |
-| --- | --- | --- | --- | --- | --- |
-| `task_pinned` / `task_unpinned` | pin membership flip | yes | yes | n/a | setTaskPinned |
-| `task_archived` / `task_unarchived` | archive membership flip | yes | yes | n/a | archiveTask/unarchiveTask |
-| `task_meta_changed` | membership-related meta (unread) or a fallback with no finer class | no (with meta) | yes | preserve-membership | setTaskUnread, group operations, bulk archive, first broadcast |
-| `task_status_changed` | status/snapshot convergence (close-out, resync, open/resume task, compact/goal) | no | no | preserve-membership | applyTerminalTransition, resync, resumeSession |
-| `task_model_changed` | model switch (pure config) | no | no | preserve-membership | zcodeSessionService.setModel |
-| `task_title_changed` | title (first message / auto title / manual rename) | no | no | preserve-membership | applyTitleChange, renameTask |
-| `task_created` | new task (tasks-index positive row set grows) | yes (without meta) | yes | insert-active | adapter/create, first grouped-order commit |
-| `user_message_saved` / `assistant_message_saved` | message persisted | no (with meta) | no | preserve-membership | legacy protocol path |
-| `task_deleted` | delete tombstone | yes | yes | n/a | deleteTask; removes the cache at once and bumps the deleted-membership generation |
-| `stream_mirror_*` | stream recovery fallback | yes | no | n/a | remote-control recovery path |
+| reason                                           | Meaning                                                                         | Full-list refresh¹ | Membership refetch² | Meta incremental write-back³ | Typical emit point                                                                |
+| ------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------ | ------------------- | ---------------------------- | --------------------------------------------------------------------------------- |
+| `task_pinned` / `task_unpinned`                  | pin membership flip                                                             | yes                | yes                 | n/a                          | setTaskPinned                                                                     |
+| `task_archived` / `task_unarchived`              | archive membership flip                                                         | yes                | yes                 | n/a                          | archiveTask/unarchiveTask                                                         |
+| `task_meta_changed`                              | membership-related meta (unread) or a fallback with no finer class              | no (with meta)     | yes                 | preserve-membership          | setTaskUnread, group operations, bulk archive, first broadcast                    |
+| `task_status_changed`                            | status/snapshot convergence (close-out, resync, open/resume task, compact/goal) | no                 | no                  | preserve-membership          | applyTerminalTransition, resync, resumeSession                                    |
+| `task_model_changed`                             | model switch (pure config)                                                      | no                 | no                  | preserve-membership          | zcodeSessionService.setModel                                                      |
+| `task_title_changed`                             | title (first message / auto title / manual rename)                              | no                 | no                  | preserve-membership          | applyTitleChange, renameTask                                                      |
+| `task_created`                                   | new task (tasks-index positive row set grows)                                   | yes (without meta) | yes                 | insert-active                | adapter/create, first grouped-order commit                                        |
+| `user_message_saved` / `assistant_message_saved` | message persisted                                                               | no (with meta)     | no                  | preserve-membership          | legacy protocol path                                                              |
+| `task_deleted`                                   | delete tombstone                                                                | yes                | yes                 | n/a                          | deleteTask; removes the cache at once and bumps the deleted-membership generation |
+| `stream_mirror_*`                                | stream recovery fallback                                                        | yes                | no                  | n/a                          | remote-control recovery path                                                      |
 
 ¹ `shouldRefreshTaskListForWorkspaceEvent`; ² `shouldRefetchTaskListMembershipForWorkspaceEvent` →
 `bumpTaskListMembershipVersion` (a global version; one bump makes all list instances refetch the
@@ -277,13 +277,13 @@ before = [A, B, C]             after = [B, C]
                                        └─ retain C store/subscription/watermark
 ```
 
-| Scope change | Allowed side effect | Forbidden side effect | Class |
-| --- | --- | --- | --- |
-| remove A | unsubscribe/release A | rebuild or clear B/C | accepted |
-| add D | acquire D; D hydrates independently | clear existing A/B/C rows while waiting for D | accepted |
-| only reorder scopes | none | any subscribe/unsubscribe | pruned: set identity unchanged |
-| B's endpoint/service generation changes | replace only B | rebuild other workspaces on the same endpoint | accepted |
-| hook really unmounts | release all current entries | keep leaked references | accepted |
+| Scope change                            | Allowed side effect                 | Forbidden side effect                         | Class                          |
+| --------------------------------------- | ----------------------------------- | --------------------------------------------- | ------------------------------ |
+| remove A                                | unsubscribe/release A               | rebuild or clear B/C                          | accepted                       |
+| add D                                   | acquire D; D hydrates independently | clear existing A/B/C rows while waiting for D | accepted                       |
+| only reorder scopes                     | none                                | any subscribe/unsubscribe                     | pruned: set identity unchanged |
+| B's endpoint/service generation changes | replace only B                      | rebuild other workspaces on the same endpoint | accepted                       |
+| hook really unmounts                    | release all current entries         | keep leaked references                        | accepted                       |
 
 Key invariant: after going from `[A, B, C]` to `[B, C]`, the `SessionsIndexStore` instance,
 subscription, watermark and session set of B/C must keep their values, and the renderer must not publish
@@ -388,11 +388,11 @@ display path.
 
 ### 6.2 Three changes
 
-| Change | Implementation boundary | Expected gain |
-| --- | --- | --- |
-| Narrow refresh conditions | the existing registry distinguishes pure activity from fact changes; the directory re-reads only on facts, recovery and existing explicit refresh entries. The observation query is established or restored by the effective scope set, connection generation and owner lifecycle and is not resent on ordinary activity | fewer useless listTaskList, readTree and following whole-tree computations |
-| Grouping and project computation use stable facts | reuse the raw fact tree already in useProjectTree without a new store; the group signature is computed only when fact inputs change, the sort key is serialized once; project sorting depends on the project set and the original sort preference | removes full group sorting, duplicate JSON allocation and unrelated project sorting on every activity |
-| RPC control messages check the marker first | in the existing protocol check, test the control marker first and enumerate fields only for candidate control messages, keeping strict validation | large binary messages are no longer enumerated byte by byte for type checks |
+| Change                                            | Implementation boundary                                                                                                                                                                                                                                                                                                  | Expected gain                                                                                         |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| Narrow refresh conditions                         | the existing registry distinguishes pure activity from fact changes; the directory re-reads only on facts, recovery and existing explicit refresh entries. The observation query is established or restored by the effective scope set, connection generation and owner lifecycle and is not resent on ordinary activity | fewer useless listTaskList, readTree and following whole-tree computations                            |
+| Grouping and project computation use stable facts | reuse the raw fact tree already in useProjectTree without a new store; the group signature is computed only when fact inputs change, the sort key is serialized once; project sorting depends on the project set and the original sort preference                                                                        | removes full group sorting, duplicate JSON allocation and unrelated project sorting on every activity |
+| RPC control messages check the marker first       | in the existing protocol check, test the control marker first and enumerate fields only for candidate control messages, keeping strict validation                                                                                                                                                                        | large binary messages are no longer enumerated byte by byte for type checks                           |
 
 Mainly touches `windowControllerTaskListRegistry`, `useProjectTree`, `ProjectDirectoryProvider`,
 `useTaskGroups` and the RPC message check, plus tests. The Controller protocol is not extended, the

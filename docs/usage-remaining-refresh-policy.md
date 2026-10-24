@@ -18,7 +18,7 @@ billing requests when several components mount at once.
 2. The three entries echo the cache snapshot of the same account/plan scope on the first frame, and
    background correction does not block panel display; loading shows only when there is no cache.
 3. Automatic access refresh shares a 1-minute freshness window by `usageStatsService + providerId +
-   organizationId + projectId + provider credential fingerprint`. Once any entry has just requested,
+organizationId + projectId + provider credential fingerprint`. Once any entry has just requested,
    repeated hovers or opening another entry within 1 minute do not request again.
 4. Usage refresh must follow the entitlement scheduling state:
    - `unknown` / `active` / `none` / `unavailable` all allow user-access-triggered correction, subject to

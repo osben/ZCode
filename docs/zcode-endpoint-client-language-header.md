@@ -41,9 +41,9 @@ UI locale --immediately--> Main.currentApplicationLocale (live owner)
 E2E: `packages/desktop/test/e2e/settings/settings-client-language-header.test.ts`. It uses
 `x-request-id` to tell Host (`NodeApiClient`) from Main (Electron `net`) `client/configs` requests.
 
-| Case   | Scenario                                                                                          | Assertion                                                                                  |
-| ------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| CLH-01 | Persist `en-US` (different from the startup default `zh-CN`), then restart the App                | Startup prewarm and Host requests both carry `en-US`                                       |
+| Case   | Scenario                                                                                                 | Assertion                                                                                  |
+| ------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| CLH-01 | Persist `en-US` (different from the startup default `zh-CN`), then restart the App                       | Startup prewarm and Host requests both carry `en-US`                                       |
 | CLH-02 | The second window's Host fails to write `setting.json`; switch to `zh-CN` on that window's settings page | New requests from both windows' Hosts and Main carry `zh-CN`; the disk still holds `en-US` |
 
 Constraints E2E cannot hold stably:

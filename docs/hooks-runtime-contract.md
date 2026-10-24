@@ -54,13 +54,13 @@ HooksService / conversation projection
 
 ## Configuration sources and merge
 
-| Source                          | Runtime executes | Settings edits | Effect rule                                                     |
-| ------------------------------- | ---------------- | -------------- | ---------------------------------------------------------------- |
-| `~/.zcode/cli/config.json`      | yes              | yes            | user hooks run first                                             |
-| workspace `.zcode/config.json`  | conditional      | yes            | runs after rollout is on and exact Trust/policy admission passes |
-| enabled plugin hooks            | yes              | no             | runs per the existing plugin source rules                        |
-| `.agents/settings.json`         | no               | no             | read-only display; explicit import into `.zcode` allowed         |
-| `.claude/settings.json`         | no               | no             | read-only display; explicit import into `.zcode` allowed         |
+| Source                         | Runtime executes | Settings edits | Effect rule                                                      |
+| ------------------------------ | ---------------- | -------------- | ---------------------------------------------------------------- |
+| `~/.zcode/cli/config.json`     | yes              | yes            | user hooks run first                                             |
+| workspace `.zcode/config.json` | conditional      | yes            | runs after rollout is on and exact Trust/policy admission passes |
+| enabled plugin hooks           | yes              | no             | runs per the existing plugin source rules                        |
+| `.agents/settings.json`        | no               | no             | read-only display; explicit import into `.zcode` allowed         |
+| `.claude/settings.json`        | no               | no             | read-only display; explicit import into `.zcode` allowed         |
 
 Merge constraints:
 
@@ -126,18 +126,18 @@ Base fields:
 
 Event fields:
 
-| Event                | Required Claude-compatible fields                                          |
-| -------------------- | -------------------------------------------------------------------------- |
-| `SessionStart`       | `source`; optional `agent_type`, `model`                                   |
-| `UserPromptSubmit`   | `prompt`                                                                   |
-| `PreToolUse`         | `tool_name`, `tool_input`, `tool_use_id`                                   |
-| `PermissionRequest`  | `tool_name`, `tool_input`; optional `permission_suggestions`               |
-| `PostToolUse`        | `tool_name`, `tool_input`, `tool_use_id`, full `tool_response`             |
-| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, string `error`, `is_interrupt`   |
-| `Stop`               | `stop_hook_active`, `last_assistant_message`                               |
-| `PreCompact`         | `trigger`; optional `custom_instructions`                                  |
-| `PostCompact`        | `trigger`                                                                  |
-| `SessionEnd`         | `reason`                                                                   |
+| Event                | Required Claude-compatible fields                                        |
+| -------------------- | ------------------------------------------------------------------------ |
+| `SessionStart`       | `source`; optional `agent_type`, `model`                                 |
+| `UserPromptSubmit`   | `prompt`                                                                 |
+| `PreToolUse`         | `tool_name`, `tool_input`, `tool_use_id`                                 |
+| `PermissionRequest`  | `tool_name`, `tool_input`; optional `permission_suggestions`             |
+| `PostToolUse`        | `tool_name`, `tool_input`, `tool_use_id`, full `tool_response`           |
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `tool_use_id`, string `error`, `is_interrupt` |
+| `Stop`               | `stop_hook_active`, `last_assistant_message`                             |
+| `PreCompact`         | `trigger`; optional `custom_instructions`                                |
+| `PostCompact`        | `trigger`                                                                |
+| `SessionEnd`         | `reason`                                                                 |
 
 `PreCompact` / `PostCompact` stdin also carries the ZCode extension fields `preCompactTokenCount` / `postCompactTokenCount` (camelCase, estimates) with no Claude-compatible alias. `SessionEnd.reason` currently has only `close`, reserved to distinguish exit reasons later.
 
@@ -163,18 +163,18 @@ Exit code rules:
 
 Event output effects:
 
-| Event                | Blocking                | Can modify                                        | Model-visible context                                |
-| -------------------- | ----------------------- | -------------------------------------------------- | ---------------------------------------------------- |
-| `SessionStart`       | no                      | no                                                | `additionalContext` injected before the first round   |
-| `UserPromptSubmit`   | yes                     | never modifies the original prompt                 | `additionalContext` injected before this round        |
-| `PreToolUse`         | yes                     | `updatedInput`, then re-run tool schema validation | both success and failure tool results carry `additionalContext` |
-| `PermissionRequest`  | yes                     | on allow may return `updatedInput` and permissions | no                                                   |
-| `PostToolUse`        | no                      | does not replace tool output this round            | appends `additionalContext`                          |
-| `PostToolUseFailure` | no                      | no                                                | appends recovery `additionalContext`                 |
-| `Stop`               | yes — means do not stop | no                                                | block reason/context injected next round, max 3 consecutive |
-| `PreCompact`         | yes — skip this compaction | no                                             | no (diagnostic)                                      |
-| `PostCompact`        | no                      | no                                                | no (diagnostic)                                      |
-| `SessionEnd`         | no                      | no                                                | no (best effort)                                     |
+| Event                | Blocking                   | Can modify                                         | Model-visible context                                           |
+| -------------------- | -------------------------- | -------------------------------------------------- | --------------------------------------------------------------- |
+| `SessionStart`       | no                         | no                                                 | `additionalContext` injected before the first round             |
+| `UserPromptSubmit`   | yes                        | never modifies the original prompt                 | `additionalContext` injected before this round                  |
+| `PreToolUse`         | yes                        | `updatedInput`, then re-run tool schema validation | both success and failure tool results carry `additionalContext` |
+| `PermissionRequest`  | yes                        | on allow may return `updatedInput` and permissions | no                                                              |
+| `PostToolUse`        | no                         | does not replace tool output this round            | appends `additionalContext`                                     |
+| `PostToolUseFailure` | no                         | no                                                 | appends recovery `additionalContext`                            |
+| `Stop`               | yes — means do not stop    | no                                                 | block reason/context injected next round, max 3 consecutive     |
+| `PreCompact`         | yes — skip this compaction | no                                                 | no (diagnostic)                                                 |
+| `PostCompact`        | no                         | no                                                 | no (diagnostic)                                                 |
+| `SessionEnd`         | no                         | no                                                 | no (best effort)                                                |
 
 `PreCompact` fires after `compactActiveConversationImpl` determines there is content to compact and before `CompactStarted` is written; when blocked, the call returns `outcome: "skipped"` and writes no compact timeline failure. `PostCompact` fires only after a real compaction completes successfully (history replaced); early skip, failure, and mid-retry never fire it. Microcompact does not pass through these two events. `SessionEnd` fires exactly once at the start of the session facade's `close()` memoized block, before `beginShutdown()`; it shares a 5-second total budget, timeouts mark the hook cancelled, hook failures only log and never block close. A hard kill or crash gives no delivery guarantee (same semantics as Claude Code).
 
@@ -223,20 +223,20 @@ The hooks settings page must use the same components on desktop and Web UI and s
 
 ## Acceptance matrix
 
-| ID    | Event                | Proof point                                                                          | Automation layer         |
-| ----- | -------------------- | -------------------------------------------------------------------------------------- | ------------------------ |
-| HK-01 | `SessionStart`       | startup matcher, snake_case stdin, first-round context                                 | core + desktop E2E       |
-| HK-02 | `UserPromptSubmit`   | prompt stdin, matcher does not filter, block/context                                   | core + desktop E2E       |
-| HK-03 | `PreToolUse`         | tool matcher, deny/ask/allow, updatedInput, context; all three early-failure exits keep context | core + desktop E2E |
-| HK-04 | `PermissionRequest`  | fires only on the ask path, allow/deny/modify, permission updates                      | core + desktop E2E       |
-| HK-05 | `PostToolUse`        | full `tool_response`, context                                                          | core + desktop E2E       |
-| HK-06 | `PostToolUseFailure` | string error, interrupt, recovery context                                              | core + desktop E2E       |
-| HK-07 | `Stop`               | last assistant, transcript, block continuation cap                                     | core + desktop E2E       |
-| HK-11 | `PreCompact`         | trigger matcher, `custom_instructions` stdin, block skips this compaction              | core                     |
-| HK-12 | `PostCompact`        | fires only after real successful compaction; skip/failure do not fire; diagnostics do not affect the result | core       |
-| HK-13 | `SessionEnd`         | exactly once on close, 5-second total budget, hook failure never blocks close          | core + bootstrap         |
-| HK-08 | Config/source        | user+project+plugin order, per-hook disabled really skipped                            | adapter/bootstrap/core   |
-| HK-09 | Settings             | `.zcode` writable, legacy importable, plugin read-only visible                         | service/UI + desktop E2E |
-| HK-10 | Executors/async      | process argv, command shell/fire-and-forget, parent cancellation, background lifecycle, error isolation | core + desktop E2E |
+| ID    | Event                | Proof point                                                                                                 | Automation layer         |
+| ----- | -------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------ |
+| HK-01 | `SessionStart`       | startup matcher, snake_case stdin, first-round context                                                      | core + desktop E2E       |
+| HK-02 | `UserPromptSubmit`   | prompt stdin, matcher does not filter, block/context                                                        | core + desktop E2E       |
+| HK-03 | `PreToolUse`         | tool matcher, deny/ask/allow, updatedInput, context; all three early-failure exits keep context             | core + desktop E2E       |
+| HK-04 | `PermissionRequest`  | fires only on the ask path, allow/deny/modify, permission updates                                           | core + desktop E2E       |
+| HK-05 | `PostToolUse`        | full `tool_response`, context                                                                               | core + desktop E2E       |
+| HK-06 | `PostToolUseFailure` | string error, interrupt, recovery context                                                                   | core + desktop E2E       |
+| HK-07 | `Stop`               | last assistant, transcript, block continuation cap                                                          | core + desktop E2E       |
+| HK-11 | `PreCompact`         | trigger matcher, `custom_instructions` stdin, block skips this compaction                                   | core                     |
+| HK-12 | `PostCompact`        | fires only after real successful compaction; skip/failure do not fire; diagnostics do not affect the result | core                     |
+| HK-13 | `SessionEnd`         | exactly once on close, 5-second total budget, hook failure never blocks close                               | core + bootstrap         |
+| HK-08 | Config/source        | user+project+plugin order, per-hook disabled really skipped                                                 | adapter/bootstrap/core   |
+| HK-09 | Settings             | `.zcode` writable, legacy importable, plugin read-only visible                                              | service/UI + desktop E2E |
+| HK-10 | Executors/async      | process argv, command shell/fire-and-forget, parent cancellation, background lifecycle, error isolation     | core + desktop E2E       |
 
 The full window-level suites use `HK-LC-01`, `HK-EF-01`, `HK-ST-01`, `HK-UP-01`, defined in `docs/testing/hooks-e2e-coverage-matrix.md`. Parent cancellation stays in core's deterministic AbortSignal test; window level verifies that an async command really starts/completes and its stdout decisions cannot retroactively change the already-continued event.

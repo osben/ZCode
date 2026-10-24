@@ -45,14 +45,14 @@ interval: 1..200;
 
 The service executes the real interval from `scheduleRule`; callers only provide a legal cron without out-of-range steps:
 
-| Real semantics                | carrier           | Legal compat cron example |
-| ------------------------------ | ----------------- | ------------------------- |
-| every 200 minutes              | `minute`, `200`   | `* * * * *`               |
-| every 31 hours at minute 49    | `hourly`, `31`    | `49 * * * *`              |
-| every 40 days at 09:00         | `daily`, `40`     | `0 9 * * *`               |
-| every 8 weeks Mon/Wed/Fri 09:00| `weekly`, `8`     | `0 9 * * 1,3,5`           |
-| every 13 months on day 15 09:00| `monthly`, `13`   | `0 9 15 * *`              |
-| every 2 years on Jun 15 09:00  | `yearly`, `2`     | `0 9 15 6 *`              |
+| Real semantics                  | carrier         | Legal compat cron example |
+| ------------------------------- | --------------- | ------------------------- |
+| every 200 minutes               | `minute`, `200` | `* * * * *`               |
+| every 31 hours at minute 49     | `hourly`, `31`  | `49 * * * *`              |
+| every 40 days at 09:00          | `daily`, `40`   | `0 9 * * *`               |
+| every 8 weeks Mon/Wed/Fri 09:00 | `weekly`, `8`   | `0 9 * * 1,3,5`           |
+| every 13 months on day 15 09:00 | `monthly`, `13` | `0 9 15 * *`              |
+| every 2 years on Jun 15 09:00   | `yearly`, `2`   | `0 9 15 6 *`              |
 
 ## Data flow
 

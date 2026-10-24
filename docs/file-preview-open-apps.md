@@ -4,7 +4,7 @@
 
 Append installed apps that match the current file's extension to the existing Open menu. Existing editor, terminal, and Finder/QSpace/Explorer entries and their order stay unchanged. No new entries, groups, default-app item, or "choose other app"; copy-path and the main Open button are unchanged.
 
-| Type | macOS                                                | Windows                                                  | Linux                                 |
+| Type | macOS                                                 | Windows                                                  | Linux                                 |
 | ---- | ----------------------------------------------------- | -------------------------------------------------------- | ------------------------------------- |
 | PDF  | Preview, Adobe Acrobat/Reader, PDF Expert, WPS Office | Adobe Acrobat/Reader, Foxit PDF Reader, WPS Office, Edge | Evince, Okular, Firefox               |
 | DOCX | Word, Pages, WPS Office, LibreOffice Writer           | Word, WPS Office, LibreOffice Writer                     | WPS Office, LibreOffice Writer        |

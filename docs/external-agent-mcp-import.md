@@ -21,20 +21,20 @@ The MCP migration inside the onboarding flow only handles the legacy generic MCP
 
 First-batch external MCP sources:
 
-| Agent        | Global                            | Project                                                            | Format                        |
-| ------------ | --------------------------------- | ------------------------------------------------------------------ | ----------------------------- |
-| Claude Code  | `~/.claude/settings.json`         | `<workspace>/.claude/settings.json`, `<workspace>/.mcp.json`       | `mcpServers` JSON             |
-| Codex CLI    | `~/.codex/config.toml`            | `<workspace>/.codex/config.toml`                                   | `mcp_servers` / `mcpServers` TOML |
-| OpenCode     | `~/.config/opencode/opencode.json`| `<workspace>/.opencode/opencode.json`                              | `mcp` JSON                    |
-| OpenClaw     | `~/.openclaw/settings.json`       | `<workspace>/settings.json`                                        | `mcpServers` JSON             |
-| Qwen Code    | `~/.qwen/settings.json`           | `<workspace>/.qwen/settings.json`                                  | `mcpServers` JSON             |
-| Qoder        | `~/.qoder/settings.json`          | `<workspace>/.qoder/settings.json`                                 | `mcpServers` JSON             |
-| Qoder CN     | `~/.qoder-cn/settings.json`       | `<workspace>/.qoder/settings.json`                                 | `mcpServers` JSON             |
-| Trae         | `~/.trae/settings.json`           | `<workspace>/.trae/settings.json`                                  | `mcpServers` JSON             |
-| Kiro CLI     | `~/.kiro/settings.json`           | `<workspace>/.kiro/settings.json`                                  | `mcpServers` JSON             |
-| Roo Code     | `~/.roo/settings.json`            | `<workspace>/.roo/settings.json`                                   | `mcpServers` JSON             |
-| CodeBuddy    | `~/.codebuddy/settings.json`      | `<workspace>/.codebuddy/settings.json`                             | `mcpServers` JSON             |
-| Generic `.agents` | `~/.agents/mcp.json`         | `<workspace>/.agents/mcp.json`                                     | `mcpServers` JSON             |
+| Agent             | Global                             | Project                                                      | Format                            |
+| ----------------- | ---------------------------------- | ------------------------------------------------------------ | --------------------------------- |
+| Claude Code       | `~/.claude/settings.json`          | `<workspace>/.claude/settings.json`, `<workspace>/.mcp.json` | `mcpServers` JSON                 |
+| Codex CLI         | `~/.codex/config.toml`             | `<workspace>/.codex/config.toml`                             | `mcp_servers` / `mcpServers` TOML |
+| OpenCode          | `~/.config/opencode/opencode.json` | `<workspace>/.opencode/opencode.json`                        | `mcp` JSON                        |
+| OpenClaw          | `~/.openclaw/settings.json`        | `<workspace>/settings.json`                                  | `mcpServers` JSON                 |
+| Qwen Code         | `~/.qwen/settings.json`            | `<workspace>/.qwen/settings.json`                            | `mcpServers` JSON                 |
+| Qoder             | `~/.qoder/settings.json`           | `<workspace>/.qoder/settings.json`                           | `mcpServers` JSON                 |
+| Qoder CN          | `~/.qoder-cn/settings.json`        | `<workspace>/.qoder/settings.json`                           | `mcpServers` JSON                 |
+| Trae              | `~/.trae/settings.json`            | `<workspace>/.trae/settings.json`                            | `mcpServers` JSON                 |
+| Kiro CLI          | `~/.kiro/settings.json`            | `<workspace>/.kiro/settings.json`                            | `mcpServers` JSON                 |
+| Roo Code          | `~/.roo/settings.json`             | `<workspace>/.roo/settings.json`                             | `mcpServers` JSON                 |
+| CodeBuddy         | `~/.codebuddy/settings.json`       | `<workspace>/.codebuddy/settings.json`                       | `mcpServers` JSON                 |
+| Generic `.agents` | `~/.agents/mcp.json`               | `<workspace>/.agents/mcp.json`                               | `mcpServers` JSON                 |
 
 ## Compatibility
 

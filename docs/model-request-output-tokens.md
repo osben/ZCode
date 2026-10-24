@@ -123,10 +123,10 @@ const finalMaxOutputTokens =
 
 Two fixed seed sets validate the full chain from baseline, continuous cap to Auto Compact:
 
-| Scenario                            | effective input window  |                cap start | Auto Compact threshold |
-| ----------------------------------- | ----------------------: | -----------------------: | ---------------------: |
-| `64K context + 48K maxOutputTokens` |      `64K - 21K = 43K` |  `64K - 48K - 1K = 15K` |     `43K - 13K = 30K`  |
-| `200K context + 128K maxOutputTokens` |  `200K - 21K = 179K` | `200K - 128K - 1K = 71K` |   `179K - 13K = 166K`  |
+| Scenario                              | effective input window |                cap start | Auto Compact threshold |
+| ------------------------------------- | ---------------------: | -----------------------: | ---------------------: |
+| `64K context + 48K maxOutputTokens`   |      `64K - 21K = 43K` |   `64K - 48K - 1K = 15K` |      `43K - 13K = 30K` |
+| `200K context + 128K maxOutputTokens` |    `200K - 21K = 179K` | `200K - 128K - 1K = 71K` |    `179K - 13K = 166K` |
 
 ```text
 empty session
@@ -195,11 +195,11 @@ change non-streaming metadata pass-through.
 Protocol adapter normalization boundary — the runtime consumes only normalized/raw facts and never
 re-infers from HTTP event names:
 
-| Protocol             | provider raw terminal state                                              | adapter normalized finish reason |
-| -------------------- | ------------------------------------------------------------------------ | ------------------------------- |
-| Anthropic Messages   | `stop_reason=max_tokens`                                                 | `length`                        |
-| Chat Completions     | `finish_reason=length`                                                   | `length`                        |
-| OpenAI Responses API | `response.incomplete` + `incomplete_details.reason=max_output_tokens`    | `length`                        |
+| Protocol             | provider raw terminal state                                           | adapter normalized finish reason |
+| -------------------- | --------------------------------------------------------------------- | -------------------------------- |
+| Anthropic Messages   | `stop_reason=max_tokens`                                              | `length`                         |
+| Chat Completions     | `finish_reason=length`                                                | `length`                         |
+| OpenAI Responses API | `response.incomplete` + `incomplete_details.reason=max_output_tokens` | `length`                         |
 
 Some non-standard OpenAI-compatible services return `finish_reason=max_tokens` on Chat Completions.
 AI SDK keeps `rawFinishReason=max_tokens` for the unknown enum and the normalized value may be
@@ -392,13 +392,13 @@ outer `APICallError.message` alone is not enough because compatibility layers of
 Only forms stably distinguishable from other 400/422 errors in official docs or repos are
 collected:
 
-| Source                         | Recognizable signal                                                                                 |
-| ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Source                           | Recognizable signal                                                                                                     |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | OpenAI-compatible / Azure OpenAI | existing context codes like `context_length_exceeded`; or an explicit token-limit message like `maximum context length` |
-| Anthropic                      | `prompt is too long`; the existing `model_context_window_exceeded` stop reason/code                  |
-| Google Gemini                  | `input token count ... exceeds the maximum number of tokens allowed`                                 |
-| Alibaba Cloud Model Studio     | `Range of input length should be [1, ...]`; `Total message token length exceed model limit`          |
-| BigModel                       | existing provider business code `1261`                                                              |
+| Anthropic                        | `prompt is too long`; the existing `model_context_window_exceeded` stop reason/code                                     |
+| Google Gemini                    | `input token count ... exceeds the maximum number of tokens allowed`                                                    |
+| Alibaba Cloud Model Studio       | `Range of input length should be [1, ...]`; `Total message token length exceed model limit`                             |
+| BigModel                         | existing provider business code `1261`                                                                                  |
 
 References:
 

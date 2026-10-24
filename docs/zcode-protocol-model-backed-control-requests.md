@@ -197,15 +197,15 @@ Two independent defects stacked:
 
 ### Verification checklist
 
-| Assertion                                                                                        | Coverage                                                                                                   |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| dwf actor's headers refresh goes through the parent runtime's bound port, input has no `sessionId` | `bootstrap/tests/script-workflow-child-runtime.test.ts` (real adapter attempt chain)                     |
-| The parent-minted permission broker carries the parent session identity + subagent origin        | same                                                                                                       |
-| With two nesting levels `sessionId` converges to the root and `origin` keeps the innermost       | `core/tests/child-client-ports.test.ts`                                                                    |
+| Assertion                                                                                                   | Coverage                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| dwf actor's headers refresh goes through the parent runtime's bound port, input has no `sessionId`          | `bootstrap/tests/script-workflow-child-runtime.test.ts` (real adapter attempt chain)                                 |
+| The parent-minted permission broker carries the parent session identity + subagent origin                   | same                                                                                                                 |
+| With two nesting levels `sessionId` converges to the root and `origin` keeps the innermost                  | `core/tests/child-client-ports.test.ts`                                                                              |
 | core subagent routing is unchanged (covered by the unified derivation after the private wrapper is deleted) | `core/tests/subagent-explore.test.ts` (including the regression guard "port input must no longer contain sessionId") |
-| When the desktop runtime model config push throws, the CLI still receives a response             | `packages/services/test/zcodeAgentService.providerRegistry.test.ts`                                        |
-| An unbound `SessionRoutedProviderRuntimeHeadersPort` cannot enter runtime deps                   | `pnpm typecheck` (the two types are incompatible; all three child assemblies are inside src)               |
-| legacy workflow child and dwf actor take the same derivation                                     | same call point + types; the facade currently has no test assembly, so no separate case                   |
+| When the desktop runtime model config push throws, the CLI still receives a response                        | `packages/services/test/zcodeAgentService.providerRegistry.test.ts`                                                  |
+| An unbound `SessionRoutedProviderRuntimeHeadersPort` cannot enter runtime deps                              | `pnpm typecheck` (the two types are incompatible; all three child assemblies are inside src)                         |
+| legacy workflow child and dwf actor take the same derivation                                                | same call point + types; the facade currently has no test assembly, so no separate case                              |
 
 > **Addendum 2026-09-11 (sync with staging: Contract 1's implementation form changed, Contract 2 unchanged)**
 >

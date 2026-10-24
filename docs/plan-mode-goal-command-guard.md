@@ -31,13 +31,13 @@ rejected input.
 
 ## Concept map and state owners
 
-| Concept               | Why it matters                        | Source / owner                                                        |
-| --------------------- | ------------------------------------- | --------------------------------------------------------------------- |
-| collaboration mode    | decides the Plan guard                | CLI projection `snapshot.config.mode`; mirrored by draft config in draft state |
-| visible slash command | separates goal-control intent from text | `parseV4VisibleSlashCommand`                                         |
-| command dispatch      | entry to any goal/session side effect | `SessionPane.dispatchSendTextAfterConfig`                             |
-| composer draft        | must survive rejection                | `ConversationComposer` + Lexical editor/draft store                   |
-| toast copy            | all-surface, bilingual                | UI i18n + shared toast component                                      |
+| Concept               | Why it matters                          | Source / owner                                                                 |
+| --------------------- | --------------------------------------- | ------------------------------------------------------------------------------ |
+| collaboration mode    | decides the Plan guard                  | CLI projection `snapshot.config.mode`; mirrored by draft config in draft state |
+| visible slash command | separates goal-control intent from text | `parseV4VisibleSlashCommand`                                                   |
+| command dispatch      | entry to any goal/session side effect   | `SessionPane.dispatchSendTextAfterConfig`                                      |
+| composer draft        | must survive rejection                  | `ConversationComposer` + Lexical editor/draft store                            |
+| toast copy            | all-surface, bilingual                  | UI i18n + shared toast component                                               |
 
 ```text
 composer submit
@@ -54,11 +54,11 @@ web-remote-replayable -----/
 
 ## Cases
 
-| Case ID | Setup                                             | Action                  | Assertions                                                                                                  | Status   |
-| ------- | ------------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------- | -------- |
-| PG01    | plan mode (snapshot or draft effective), `/goal`  | Enter or click send     | correct toast; `sendGoalCommand`/`resumeGoal`/`createSession` none dispatched; editor not cleared; no prompt history write | covered  |
-| PG02    | build/edit/yolo                                   | submit `/goal objective`| still dispatches `sendGoalCommand`                                                                          | existing |
-| PG05    | plan mode                                         | submit a goal alias     | identical to PG01 — aliases cannot bypass                                                                   | covered  |
+| Case ID | Setup                                            | Action                   | Assertions                                                                                                                 | Status   |
+| ------- | ------------------------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------- |
+| PG01    | plan mode (snapshot or draft effective), `/goal` | Enter or click send      | correct toast; `sendGoalCommand`/`resumeGoal`/`createSession` none dispatched; editor not cleared; no prompt history write | covered  |
+| PG02    | build/edit/yolo                                  | submit `/goal objective` | still dispatches `sendGoalCommand`                                                                                         | existing |
+| PG05    | plan mode                                        | submit a goal alias      | identical to PG01 — aliases cannot bypass                                                                                  | covered  |
 
 Pruned: ordinary text/`/compact` under plan (existing semantics), goal-looking text with
 attachment/context (parser returns plain text), desktop/mobile terminal-state duplication (shared

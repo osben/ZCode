@@ -23,17 +23,17 @@ Screenshots are not a pass criterion. Screenshots and video are manual-review ar
 
 MVP UI verdicts come only from these deterministic signals:
 
-| Signal                        | Purpose                    | Examples                                                  |
-| ----------------------------- | -------------------------- | --------------------------------------------------------- |
-| `data-testid`                 | Locate stable elements     | queue item, message, compact marker                       |
-| `data-state`                  | State-machine projection   | `running`, `completed-interrupted`, `compacting`          |
-| `data-status`                 | Operation outcome          | `queued`, `started`, `completed`, `failed`, `interrupted` |
-| `data-role`                   | Message role               | `user`, `assistant`, `tool`, `timeline`                   |
-| `data-session-id`             | Which session owns element | active session, message list, queue panel                 |
-| `data-message-id`             | Message identity           | fork target, edit target                                  |
-| `data-queue-item-id`          | Queue item identity        | send-now, edit, remove, reorder                           |
-| `aria-disabled` / `disabled`  | Whether an action is allowed | fork/edit/compact/send buttons                          |
-| input value / normalized text | User input and content     | queue item text, composer value                           |
+| Signal                        | Purpose                      | Examples                                                  |
+| ----------------------------- | ---------------------------- | --------------------------------------------------------- |
+| `data-testid`                 | Locate stable elements       | queue item, message, compact marker                       |
+| `data-state`                  | State-machine projection     | `running`, `completed-interrupted`, `compacting`          |
+| `data-status`                 | Operation outcome            | `queued`, `started`, `completed`, `failed`, `interrupted` |
+| `data-role`                   | Message role                 | `user`, `assistant`, `tool`, `timeline`                   |
+| `data-session-id`             | Which session owns element   | active session, message list, queue panel                 |
+| `data-message-id`             | Message identity             | fork target, edit target                                  |
+| `data-queue-item-id`          | Queue item identity          | send-now, edit, remove, reorder                           |
+| `aria-disabled` / `disabled`  | Whether an action is allowed | fork/edit/compact/send buttons                            |
+| input value / normalized text | User input and content       | queue item text, composer value                           |
 
 Copy may be asserted as content but never used for locating. Asserting that a queue item's text contains “继续解释” is fine; locating a button with `button=继续解释` is not.
 
@@ -50,14 +50,14 @@ V4 formal E2E reads the product protocol materialization, not the old M3/M4 debu
 
 Dynamic test id suffixes must be stable, correlatable, and never derived from volatile display copy.
 
-| Object             | Suffix source                                       | Forbidden                  |
-| ------------------ | --------------------------------------------------- | -------------------------- |
-| session/task       | `sessionId` / `taskId`                              | session title, list index  |
-| message            | `messageId`; stable `turnIndex` fallback if absent  | message body, DOM index    |
-| queue item         | `queueItemId`                                       | queue text, DOM index      |
-| compact marker     | `inputId` preferred; compact `operationId` fallback | displayed time text        |
-| model/thought item | config option value                                 | translatable label         |
-| toast/error        | stable reason code                                  | translatable copy          |
+| Object             | Suffix source                                       | Forbidden                 |
+| ------------------ | --------------------------------------------------- | ------------------------- |
+| session/task       | `sessionId` / `taskId`                              | session title, list index |
+| message            | `messageId`; stable `turnIndex` fallback if absent  | message body, DOM index   |
+| queue item         | `queueItemId`                                       | queue text, DOM index     |
+| compact marker     | `inputId` preferred; compact `operationId` fallback | displayed time text       |
+| model/thought item | config option value                                 | translatable label        |
+| toast/error        | stable reason code                                  | translatable copy         |
 
 To verify ordering, do not encode order into test ids. Query the list with one selector, then read each element's `data-queue-item-id` or `data-message-id` sequence.
 
@@ -76,16 +76,16 @@ Conversation-area E2E cannot assume an empty project just works. The MVP compact
 
 This precondition chain is itself product protocol: tests must not bypass the welcome page by writing login state directly, unless the case explicitly targets non-UI service verification.
 
-| Constant                             | Element                              | Required attributes                |
-| ------------------------------------ | ------------------------------------ | ---------------------------------- |
-| `TID_LOGIN_USE_API_KEY_BUTTON`       | Welcome-page API Key login entry     | `disabled`                         |
-| `TID_LOGIN_API_KEY_PROVIDER_TRIGGER` | API Key login provider selector      | current provider value             |
-| `TID_LOGIN_API_KEY_PROVIDER_ITEM`    | API Key login provider option        | dynamic suffix = provider choice   |
-| `TID_LOGIN_API_KEY_INPUT`            | API Key input                        | value                              |
-| `TID_LOGIN_API_KEY_CONTINUE_BUTTON`  | API Key login continue button        | `disabled`                         |
-| `TID_LOGIN_API_KEY_CANCEL_BUTTON`    | API Key login cancel button          | `disabled`                         |
-| `TID_LOGIN_API_KEY_SKIP_BUTTON`      | API Key login skip-for-now button    | `disabled`                         |
-| `TID_LOGIN_API_KEY_ERROR`            | API Key login error message          | normalized text                    |
+| Constant                             | Element                           | Required attributes              |
+| ------------------------------------ | --------------------------------- | -------------------------------- |
+| `TID_LOGIN_USE_API_KEY_BUTTON`       | Welcome-page API Key login entry  | `disabled`                       |
+| `TID_LOGIN_API_KEY_PROVIDER_TRIGGER` | API Key login provider selector   | current provider value           |
+| `TID_LOGIN_API_KEY_PROVIDER_ITEM`    | API Key login provider option     | dynamic suffix = provider choice |
+| `TID_LOGIN_API_KEY_INPUT`            | API Key input                     | value                            |
+| `TID_LOGIN_API_KEY_CONTINUE_BUTTON`  | API Key login continue button     | `disabled`                       |
+| `TID_LOGIN_API_KEY_CANCEL_BUTTON`    | API Key login cancel button       | `disabled`                       |
+| `TID_LOGIN_API_KEY_SKIP_BUTTON`      | API Key login skip-for-now button | `disabled`                       |
+| `TID_LOGIN_API_KEY_ERROR`            | API Key login error message       | normalized text                  |
 
 `TID_MODEL_PROVIDER_NAV_ITEM` in model provider settings must expose `aria-selected` and `data-state`. When E2E selects DeepSeek, GLM, or another provider it may only read `aria-selected="true"` or `data-state="selected"` — never infer selection from CSS classes such as `border-*` / `bg-*`.
 
@@ -93,30 +93,30 @@ When the chat toolbar model selector is two-level, provider groups expose `TID_C
 
 ### Root container and state
 
-| Constant               | Element                    | Required attributes                                                                                                                                                                           |
-| ---------------------- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TID_CHAT_VIEW`        | Conversation detail root   | `data-session-id`, `data-state`, `data-queue-count`, `data-target-id`, `data-target-objective`, `data-target-status`, `data-runtime-status`, `data-active-input-id`, `data-stop-requested`     |
-| `TID_CHAT_MESSAGES`    | Message list               | `data-session-id`                                                                                                                                                                             |
-| `TID_CHAT_INPUT`       | composer input             | value                                                                                                                                                                                         |
-| `TID_CHAT_SEND_BUTTON` | send button                | `disabled`                                                                                                                                                                                    |
-| `TID_CHAT_STOP_BUTTON` | stop button                | `disabled`                                                                                                                                                                                    |
-| `TID_CHAT_LOADING`     | generating indicator       | `data-session-id`                                                                                                                                                                             |
+| Constant               | Element                  | Required attributes                                                                                                                                                                        |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TID_CHAT_VIEW`        | Conversation detail root | `data-session-id`, `data-state`, `data-queue-count`, `data-target-id`, `data-target-objective`, `data-target-status`, `data-runtime-status`, `data-active-input-id`, `data-stop-requested` |
+| `TID_CHAT_MESSAGES`    | Message list             | `data-session-id`                                                                                                                                                                          |
+| `TID_CHAT_INPUT`       | composer input           | value                                                                                                                                                                                      |
+| `TID_CHAT_SEND_BUTTON` | send button              | `disabled`                                                                                                                                                                                 |
+| `TID_CHAT_STOP_BUTTON` | stop button              | `disabled`                                                                                                                                                                                 |
+| `TID_CHAT_LOADING`     | generating indicator     | `data-session-id`                                                                                                                                                                          |
 
 ### Messages and turns
 
-| Constant                                       | Element                                  | Dynamic suffix                | Required attributes                                                                    |
-| ---------------------------------------------- | ---------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------- |
-| `TID_CHAT_TURN`                                | turn group container                     | `turnIndex`                   | `data-turn-index`, `data-session-id`                                                    |
-| `TID_CHAT_MESSAGE`                             | single message container                 | `messageId`                   | `data-message-id`, `data-role`, `data-turn-index`                                       |
-| `TID_CHAT_USER_MESSAGE`                        | user message container                   | `messageId`                   | `data-message-id`                                                                       |
-| `TID_CHAT_ASSISTANT_MESSAGE`                   | assistant message container              | `messageId`                   | `data-message-id`                                                                       |
-| `TID_CHAT_ASSISTANT_HISTORY_TRIGGER`           | assistant history collapse trigger       | `historyStateKey`             | `data-history-state-key`, `data-history-open`, `data-history-has-content`               |
-| `TID_CHAT_ASSISTANT_HISTORY_CONTENT`           | assistant history collapse content       | `historyStateKey`             | `data-history-state-key`, `data-history-open`                                           |
-| `TID_CHAT_TOOL_MESSAGE`                        | tool message container                   | `messageId` or `toolCallId`   | `data-tool-call-id`                                                                     |
-| `TID_CHAT_TOOL_CALL_BLOCK`                     | tool call block inside assistant message | `toolCallId`                  | `data-tool-call-id`, `data-tool-name`, `data-status`                                    |
-| `TID_CHAT_TIMELINE_MARKER` / `TID_V4_ROW`      | timeline marker                          | marker id / rowId             | `data-row-kind`, `data-marker-type`, `data-status`; compact adds `data-origin`          |
-| `TID_CHAT_COMPACT_MARKER`                      | compact marker                           | `inputId` or `operationId`    | `data-trigger`, `data-status`, `data-operation-id`, `data-input-id`                     |
-| `TID_CHAT_CHANGE_SUMMARY_TOGGLE_FILES_BUTTON`  | change summary undo/reapply button       | `messageId`                   | `data-message-id`, button label                                                         |
+| Constant                                      | Element                                  | Dynamic suffix              | Required attributes                                                            |
+| --------------------------------------------- | ---------------------------------------- | --------------------------- | ------------------------------------------------------------------------------ |
+| `TID_CHAT_TURN`                               | turn group container                     | `turnIndex`                 | `data-turn-index`, `data-session-id`                                           |
+| `TID_CHAT_MESSAGE`                            | single message container                 | `messageId`                 | `data-message-id`, `data-role`, `data-turn-index`                              |
+| `TID_CHAT_USER_MESSAGE`                       | user message container                   | `messageId`                 | `data-message-id`                                                              |
+| `TID_CHAT_ASSISTANT_MESSAGE`                  | assistant message container              | `messageId`                 | `data-message-id`                                                              |
+| `TID_CHAT_ASSISTANT_HISTORY_TRIGGER`          | assistant history collapse trigger       | `historyStateKey`           | `data-history-state-key`, `data-history-open`, `data-history-has-content`      |
+| `TID_CHAT_ASSISTANT_HISTORY_CONTENT`          | assistant history collapse content       | `historyStateKey`           | `data-history-state-key`, `data-history-open`                                  |
+| `TID_CHAT_TOOL_MESSAGE`                       | tool message container                   | `messageId` or `toolCallId` | `data-tool-call-id`                                                            |
+| `TID_CHAT_TOOL_CALL_BLOCK`                    | tool call block inside assistant message | `toolCallId`                | `data-tool-call-id`, `data-tool-name`, `data-status`                           |
+| `TID_CHAT_TIMELINE_MARKER` / `TID_V4_ROW`     | timeline marker                          | marker id / rowId           | `data-row-kind`, `data-marker-type`, `data-status`; compact adds `data-origin` |
+| `TID_CHAT_COMPACT_MARKER`                     | compact marker                           | `inputId` or `operationId`  | `data-trigger`, `data-status`, `data-operation-id`, `data-input-id`            |
+| `TID_CHAT_CHANGE_SUMMARY_TOGGLE_FILES_BUTTON` | change summary undo/reapply button       | `messageId`                 | `data-message-id`, button label                                                |
 
 ### Compact marker minimal loop
 
@@ -130,30 +130,30 @@ A manual `/compact` success is the first conversation-area E2E case verified end
 
 ### Queue
 
-| Constant                             | Element                     | Dynamic suffix  | Required attributes                                    |
-| ------------------------------------ | --------------------------- | --------------- | ------------------------------------------------------ |
-| `TID_CHAT_QUEUE_PANEL`               | queue panel                 | none            | `data-session-id`, `data-auto-drain`                   |
-| `TID_CHAT_QUEUE_ITEM`                | queue item                  | `queueItemId`   | `data-queue-item-id`, `data-kind`, `data-index`        |
-| `TID_CHAT_QUEUE_ITEM_CONTENT`        | queue item content          | `queueItemId`   | normalized text                                        |
-| `TID_CHAT_QUEUE_SEND_NOW_BUTTON`     | send-now button             | `queueItemId`   | `disabled`                                             |
-| `TID_CHAT_QUEUE_EDIT_BUTTON`         | edit queue item button      | `queueItemId`   | `disabled`                                             |
-| `TID_CHAT_QUEUE_EDIT_INPUT`          | queue item edit input       | `queueItemId`   | value                                                  |
-| `TID_CHAT_QUEUE_EDIT_SAVE_BUTTON`    | save queue item edit button | `queueItemId`   | `disabled`                                             |
-| `TID_CHAT_QUEUE_EDIT_CANCEL_BUTTON`  | cancel queue item edit      | `queueItemId`   | `disabled`                                             |
-| `TID_CHAT_QUEUE_REMOVE_BUTTON`       | remove queue item button    | `queueItemId`   | `disabled`                                             |
-| `TID_CHAT_QUEUE_DRAG_HANDLE`         | reorder drag handle         | `queueItemId`   | `aria-disabled`                                        |
+| Constant                            | Element                     | Dynamic suffix | Required attributes                             |
+| ----------------------------------- | --------------------------- | -------------- | ----------------------------------------------- |
+| `TID_CHAT_QUEUE_PANEL`              | queue panel                 | none           | `data-session-id`, `data-auto-drain`            |
+| `TID_CHAT_QUEUE_ITEM`               | queue item                  | `queueItemId`  | `data-queue-item-id`, `data-kind`, `data-index` |
+| `TID_CHAT_QUEUE_ITEM_CONTENT`       | queue item content          | `queueItemId`  | normalized text                                 |
+| `TID_CHAT_QUEUE_SEND_NOW_BUTTON`    | send-now button             | `queueItemId`  | `disabled`                                      |
+| `TID_CHAT_QUEUE_EDIT_BUTTON`        | edit queue item button      | `queueItemId`  | `disabled`                                      |
+| `TID_CHAT_QUEUE_EDIT_INPUT`         | queue item edit input       | `queueItemId`  | value                                           |
+| `TID_CHAT_QUEUE_EDIT_SAVE_BUTTON`   | save queue item edit button | `queueItemId`  | `disabled`                                      |
+| `TID_CHAT_QUEUE_EDIT_CANCEL_BUTTON` | cancel queue item edit      | `queueItemId`  | `disabled`                                      |
+| `TID_CHAT_QUEUE_REMOVE_BUTTON`      | remove queue item button    | `queueItemId`  | `disabled`                                      |
+| `TID_CHAT_QUEUE_DRAG_HANDLE`        | reorder drag handle         | `queueItemId`  | `aria-disabled`                                 |
 
 ### Message actions
 
-| Constant                       | Element                   | Dynamic suffix   | Required attributes                                   |
-| ------------------------------ | ------------------------- | ---------------- | ----------------------------------------------------- |
-| `TID_CHAT_MESSAGE_FORK_BUTTON` | fork assistant button     | `messageId`      | `disabled` / `aria-disabled`                          |
-| `TID_CHAT_MESSAGE_EDIT_BUTTON` | edit user query button    | `messageId`      | `disabled` / `aria-disabled`                          |
-| `TID_CHAT_MESSAGE_EDIT_INPUT`  | edit input                | `messageId`      | value                                                 |
-| `TID_CHAT_MESSAGE_EDIT_SUBMIT` | edit submit button        | `messageId`      | `disabled`                                            |
-| `TID_CHAT_MESSAGE_EDIT_CANCEL` | edit cancel button        | `messageId`      | `disabled`                                            |
-| `TID_V4_HOOK_DETAILS_TRIGGER`  | turn-end hook details     | `productTurnId`  | `aria-label`, `aria-expanded`                         |
-| `TID_V4_HOOK_DETAILS_CONTENT`  | hook details popover      | `productTurnId`  | event/tool, source and status text; no commands or absolute paths |
+| Constant                       | Element                | Dynamic suffix  | Required attributes                                               |
+| ------------------------------ | ---------------------- | --------------- | ----------------------------------------------------------------- |
+| `TID_CHAT_MESSAGE_FORK_BUTTON` | fork assistant button  | `messageId`     | `disabled` / `aria-disabled`                                      |
+| `TID_CHAT_MESSAGE_EDIT_BUTTON` | edit user query button | `messageId`     | `disabled` / `aria-disabled`                                      |
+| `TID_CHAT_MESSAGE_EDIT_INPUT`  | edit input             | `messageId`     | value                                                             |
+| `TID_CHAT_MESSAGE_EDIT_SUBMIT` | edit submit button     | `messageId`     | `disabled`                                                        |
+| `TID_CHAT_MESSAGE_EDIT_CANCEL` | edit cancel button     | `messageId`     | `disabled`                                                        |
+| `TID_V4_HOOK_DETAILS_TRIGGER`  | turn-end hook details  | `productTurnId` | `aria-label`, `aria-expanded`                                     |
+| `TID_V4_HOOK_DETAILS_CONTENT`  | hook details popover   | `productTurnId` | event/tool, source and status text; no commands or absolute paths |
 
 A tool call is not a standalone message; it is a structured block inside an assistant message. To verify "tool cannot be edited / forked", locate `TID_CHAT_TOOL_CALL_BLOCK` and assert it has no `TID_CHAT_MESSAGE_EDIT_BUTTON` or `TID_CHAT_MESSAGE_FORK_BUTTON` descendant. The assistant message itself may still show fork per assistant rules; that does not mean the tool block can be forked.
 
@@ -163,40 +163,40 @@ Current failing probe: `conversation-session-tool-actions.test.ts` proved the pe
 
 By default a positive conversation E2E must assert that `TID_CHAT_ERROR_BANNER` is absent. If a case intentionally covers error recovery, provider/network fault, permission failure, or another negative path, its case doc must explicitly allow the error banner and assert the error cause and recovery state. "Error banner appeared but the flow eventually continued" does not make a positive case pass.
 
-| Constant                | Element                                          | Dynamic suffix                                                | Required attributes                                                     |
-| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `TID_CHAT_TOAST`        | toast container                                  | reason code                                                   | `data-reason`, `data-severity`                                          |
+| Constant                | Element                                             | Dynamic suffix                                                    | Required attributes                                                   |
+| ----------------------- | --------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `TID_CHAT_TOAST`        | toast container                                     | reason code                                                       | `data-reason`, `data-severity`                                        |
 | `TID_CHAT_ERROR_BANNER` | `ChatViewErrorBanner` / `ChatErrorBanner` container | none; use `data-reason` / `data-error-code` to distinguish causes | `data-reason`, `data-error-code`, `data-trace-id`, `data-dismissible` |
-| `TID_CHAT_GOAL_STATE`   | goal state projection                            | session id                                                    | `data-goal-status`, `data-target-id`                                    |
+| `TID_CHAT_GOAL_STATE`   | goal state projection                               | session id                                                        | `data-goal-status`, `data-target-id`                                  |
 
 ### Session switching and settings
 
-| Constant                                 | Element                          | Dynamic suffix     | Required attributes                                       |
-| ---------------------------------------- | -------------------------------- | ------------------ | --------------------------------------------------------- |
-| `TID_TASK_ITEM`                          | session/task list item           | `sessionId` / `taskId` | `data-session-id`, `data-active`, `data-state`         |
-| `TID_CHAT_MODEL_SELECT_TRIGGER`          | per-session model selector       | none               | `data-session-id`, `data-model-value`                     |
-| `TID_CHAT_MODEL_SELECT_GROUP`            | per-session model provider group | provider group key | `data-model-provider-key`, `data-model-provider-selected` |
-| `TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER`  | per-session thought-level selector | none             | `data-session-id`, `data-thought-level`                   |
+| Constant                                | Element                            | Dynamic suffix         | Required attributes                                       |
+| --------------------------------------- | ---------------------------------- | ---------------------- | --------------------------------------------------------- |
+| `TID_TASK_ITEM`                         | session/task list item             | `sessionId` / `taskId` | `data-session-id`, `data-active`, `data-state`            |
+| `TID_CHAT_MODEL_SELECT_TRIGGER`         | per-session model selector         | none                   | `data-session-id`, `data-model-value`                     |
+| `TID_CHAT_MODEL_SELECT_GROUP`           | per-session model provider group   | provider group key     | `data-model-provider-key`, `data-model-provider-selected` |
+| `TID_CHAT_THOUGHT_LEVEL_SELECT_TRIGGER` | per-session thought-level selector | none                   | `data-session-id`, `data-thought-level`                   |
 
 ### Project sidebar (after the 2026-09 virtual-project refactor)
 
 The old workspace sidebar nodes (`workspace-item` / `workspace-list` / `workspace-close` / `workspace-file-tree-button` / `conversation-new-task`) were removed together with the Group view and directory nodes, and their constants were deleted from `test-ids.ts`. E2E locates projects via `data-project-id` / `data-project-name` on the project `<section>` (an old workspace migrates into a same-named root project; project name = directory basename). Helper: `packages/desktop/test/e2e/helpers/project-sidebar.ts`.
 
-| Constant                                                     | Value                                                   | Purpose                                                                                                               |
-| ------------------------------------------------------------ | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `TID_PROJECT_SECTION` / `TID_CONVERSATION_SECTION`           | `project-section` / `conversation-section`              | project / task section containers (`data-slot="collapsible-trigger"` with aria-expanded)                              |
-| `TID_VIRTUAL_PROJECT_ADD`                                    | `virtual-project-add`                                   | new-project button in the project section                                                                              |
-| `TID_VIRTUAL_PROJECT_NEW_TASK`                               | `virtual-project-new-task`                              | global new-task button in the task section                                                                             |
-| `TID_VIRTUAL_PROJECT_ROW`                                    | `virtual-project-row`                                   | project row (parent section carries `data-project-id` / `data-project-name`)                                          |
-| `TID_VIRTUAL_PROJECT_TOGGLE`                                 | `virtual-project-toggle`                                | project row expand trigger; `aria-expanded` shows whether the task list is expanded                                   |
-| `TID_VIRTUAL_PROJECT_UNREAD`                                 | `virtual-project-unread`                                | collapsed-state unread indicator                                                                                      |
-| `TID_VIRTUAL_PROJECT_TASKS`                                  | `virtual-project-tasks`                                 | project row task-list container; task rows inside remain `TID_TASK_ITEM`                                              |
-| `TID_VIRTUAL_PROJECT_ACTIONS` / `TID_VIRTUAL_PROJECT_MENU`   | `virtual-project-actions` / `virtual-project-menu`      | hover actions and more-menu trigger (Radix trigger; needs pointerdown gesture)                                        |
-| `TID_VIRTUAL_PROJECT_FILES`                                  | `virtual-project-files`                                 | open the main directory file tree (dropdown trigger when multiple roots)                                              |
-| `TID_VIRTUAL_PROJECT_CREATE_TASK`                            | `virtual-project-create-task`                           | per-project new task (cwd = main directory)                                                                           |
-| `virtualProjectActionTestId(id, context)`                    | `virtual-project-<id>` / `virtual-project-context-<id>` | more-menu / context-menu action items: `edit`, `pin`, `delete`, `remove-entry`, `device-settings`, `create-task`, `files-<index>` |
-| `TID_PROJECT_PINNED_TASKS`                                   | `project-pinned-tasks`                                  | global pinned-tasks section                                                                                           |
-| `TID_REMOTE_PROJECT_HOST`                                    | `remote-project-host`                                   | remote host group; `data-host-id` is the host id; connect button icon `lucide-plug`                                   |
+| Constant                                                   | Value                                                   | Purpose                                                                                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `TID_PROJECT_SECTION` / `TID_CONVERSATION_SECTION`         | `project-section` / `conversation-section`              | project / task section containers (`data-slot="collapsible-trigger"` with aria-expanded)                                          |
+| `TID_VIRTUAL_PROJECT_ADD`                                  | `virtual-project-add`                                   | new-project button in the project section                                                                                         |
+| `TID_VIRTUAL_PROJECT_NEW_TASK`                             | `virtual-project-new-task`                              | global new-task button in the task section                                                                                        |
+| `TID_VIRTUAL_PROJECT_ROW`                                  | `virtual-project-row`                                   | project row (parent section carries `data-project-id` / `data-project-name`)                                                      |
+| `TID_VIRTUAL_PROJECT_TOGGLE`                               | `virtual-project-toggle`                                | project row expand trigger; `aria-expanded` shows whether the task list is expanded                                               |
+| `TID_VIRTUAL_PROJECT_UNREAD`                               | `virtual-project-unread`                                | collapsed-state unread indicator                                                                                                  |
+| `TID_VIRTUAL_PROJECT_TASKS`                                | `virtual-project-tasks`                                 | project row task-list container; task rows inside remain `TID_TASK_ITEM`                                                          |
+| `TID_VIRTUAL_PROJECT_ACTIONS` / `TID_VIRTUAL_PROJECT_MENU` | `virtual-project-actions` / `virtual-project-menu`      | hover actions and more-menu trigger (Radix trigger; needs pointerdown gesture)                                                    |
+| `TID_VIRTUAL_PROJECT_FILES`                                | `virtual-project-files`                                 | open the main directory file tree (dropdown trigger when multiple roots)                                                          |
+| `TID_VIRTUAL_PROJECT_CREATE_TASK`                          | `virtual-project-create-task`                           | per-project new task (cwd = main directory)                                                                                       |
+| `virtualProjectActionTestId(id, context)`                  | `virtual-project-<id>` / `virtual-project-context-<id>` | more-menu / context-menu action items: `edit`, `pin`, `delete`, `remove-entry`, `device-settings`, `create-task`, `files-<index>` |
+| `TID_PROJECT_PINNED_TASKS`                                 | `project-pinned-tasks`                                  | global pinned-tasks section                                                                                                       |
+| `TID_REMOTE_PROJECT_HOST`                                  | `remote-project-host`                                   | remote host group; `data-host-id` is the host id; connect button icon `lucide-plug`                                               |
 
 Note: `packages/ui/src/project-sidebar/*` still hardcodes these strings; the constants and implementation match by value. Switching the components to the constants is outstanding src-side work.
 

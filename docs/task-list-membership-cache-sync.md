@@ -53,14 +53,14 @@ the list again on receiving the event.
 
 ## Delete tombstone boundary rulings
 
-| Boundary | Ruling | Pruning reason |
-| --- | --- | --- |
-| Data ownership | The CLI session store keeps owning session content; tasks-index `deleted` owns task-list invisibility | Deleting an archived task does not mean physically erasing session storage, avoiding a wider data-destruction scope |
-| List surface | regular, pinned, archived, timeline, workspace and grouped all exclude deleted | `deleted` is a negative guard before every list kind, with no per-kind duplicate implementation |
-| Archive contrast | `archived=1, deleted=0` still shows only in the archived list | Prevents the fix from hiding normal archives |
-| session type | interactive, fork and workflow parent share the same deleted guard; side chat/subagent/workflow child are still excluded by the task-type guard | Task type decides whether it can be a task, deleted decides whether an existing task is still visible; the two dimensions are orthogonal |
-| client/delivery | desktop continuous and mobile replayable converge to the same final membership | Delivery only changes how facts arrive and creates no second deleted state |
-| workspace | Reads and events keep using `workspaceIdentity?.trim() || workspacePath` | A remote workspace with the same path must not cross-contaminate tombstones |
+| Boundary         | Ruling                                                                                                                                          | Pruning reason                                                                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------------- | --------------------------------------------------------------------------- |
+| Data ownership   | The CLI session store keeps owning session content; tasks-index `deleted` owns task-list invisibility                                           | Deleting an archived task does not mean physically erasing session storage, avoiding a wider data-destruction scope                      |
+| List surface     | regular, pinned, archived, timeline, workspace and grouped all exclude deleted                                                                  | `deleted` is a negative guard before every list kind, with no per-kind duplicate implementation                                          |
+| Archive contrast | `archived=1, deleted=0` still shows only in the archived list                                                                                   | Prevents the fix from hiding normal archives                                                                                             |
+| session type     | interactive, fork and workflow parent share the same deleted guard; side chat/subagent/workflow child are still excluded by the task-type guard | Task type decides whether it can be a task, deleted decides whether an existing task is still visible; the two dimensions are orthogonal |
+| client/delivery  | desktop continuous and mobile replayable converge to the same final membership                                                                  | Delivery only changes how facts arrive and creates no second deleted state                                                               |
+| workspace        | Reads and events keep using `workspaceIdentity?.trim()                                                                                          |                                                                                                                                          | workspacePath` | A remote workspace with the same path must not cross-contaminate tombstones |
 
 Confirmation trail: the user reported "conversations deleted after archiving all came back after
 restart" and confirmed a direct change. The chosen approach keeps CLI session content and adds a deleted

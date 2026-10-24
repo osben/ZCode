@@ -43,15 +43,15 @@ Plugin entry URL artifact type:
 
 Field semantics:
 
-| Field | Semantics |
-| --- | --- |
-| `source` | Fixed `"url"` — this is the plugin entry source, not the marketplace source. |
-| `type` | Required `"zip"` for zip artifacts. Missing or `"git"` keeps legacy git clone. Unknown values diagnose/error, never fall back. |
-| `url` | Required; remote CDN must be `https://`. Local test/fixture use allows loopback HTTP (`localhost` / `127.0.0.1` / `::1`). |
-| `sha256` | Required for zip sources, 64 lowercase hex. The digest is verified before extraction is allowed. |
-| `path` | Optional plugin subdirectory inside the zip, matching git source `path` semantics: extract safely to a temp root, then `resolveInside(path)` within it. |
-| `headers` | Optional, plain string headers only; sensitive headers such as `Authorization` and `Cookie` are forbidden in marketplace JSON. Phase 1 targets public CDNs and writes no credentials into marketplaces. |
-| `stripRoot` | Optional boolean. `true` strips the single safe top-level directory when all entries share one; recommended default `true`, with a defined priority versus `path`. |
+| Field       | Semantics                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source`    | Fixed `"url"` — this is the plugin entry source, not the marketplace source.                                                                                                                            |
+| `type`      | Required `"zip"` for zip artifacts. Missing or `"git"` keeps legacy git clone. Unknown values diagnose/error, never fall back.                                                                          |
+| `url`       | Required; remote CDN must be `https://`. Local test/fixture use allows loopback HTTP (`localhost` / `127.0.0.1` / `::1`).                                                                               |
+| `sha256`    | Required for zip sources, 64 lowercase hex. The digest is verified before extraction is allowed.                                                                                                        |
+| `path`      | Optional plugin subdirectory inside the zip, matching git source `path` semantics: extract safely to a temp root, then `resolveInside(path)` within it.                                                 |
+| `headers`   | Optional, plain string headers only; sensitive headers such as `Authorization` and `Cookie` are forbidden in marketplace JSON. Phase 1 targets public CDNs and writes no credentials into marketplaces. |
+| `stripRoot` | Optional boolean. `true` strips the single safe top-level directory when all entries share one; recommended default `true`, with a defined priority versus `path`.                                      |
 
 Why `{ "source": "url", "url": "https://...zip" }` without `type` is not accepted:
 
@@ -118,7 +118,7 @@ Zip dispatch inside `resolvePluginSourceRoot()` for `sourceKind === "url"`:
    - with `path`: `resolveInside(extractRoot, path)`, directory must exist;
    - else with `stripRoot === true` (or default single-root detection): the shared single top-level directory;
    - else `extractRoot`.
-   The root then goes through `validatePluginRoot()` / `resolveInstalledPluginVersion()` and must contain a valid plugin manifest, except entries with `strict:false` following the existing synthetic manifest rules.
+     The root then goes through `validatePluginRoot()` / `resolveInstalledPluginVersion()` and must contain a valid plugin manifest, except entries with `strict:false` following the existing synthetic manifest rules.
 6. Return `{ path: pluginRoot, cleanup }`. Cleanup retries finitely; failure paths keep the original download/verify/extract error and attach the cleanup failure as an extra diagnostic.
 7. `cacheMarketplacePlugin()` copies the plain directory to `~/.zcode/cli/plugins/cache/{marketplace}/{plugin}/{version}/` as today. Post-copy source cleanup is best-effort and must not block the install record or `saveInstalledPlugins()`, avoiding a cache/`installed_plugins.json` split. `ensureMarketplaceEntryManifest()`, the install-record `source` write-back, and `saveInstalledPlugins()` are unchanged; the record keeps the full zip source object so later `sha256` update-pin comparisons work.
 

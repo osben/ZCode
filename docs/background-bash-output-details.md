@@ -51,16 +51,16 @@ output viewport -> scroll up -> paused -> floating down arrow
 
 ## Acceptance
 
-| ID | Scenario | Assertions |
-| --- | --- | --- |
-| BGV01 | Explicit background, two-segment barrier output | Both segments seen before exit; repeated clicks reuse the tab; no new model queries; no success-poll logs persisted in normal runs |
-| BGV02 | Timeout-to-background, over 8 KiB, multi-line output | New tail visible, old head evicted, full file not truncated |
-| BGV03 | Scroll up, hide/activate, task completes | Pause does not jump, returning to latest resumes; hidden means no queries; terminal state preserved, refresh stops |
-| BGV04 | Multi-session/workspace, child session and remote scope | Requests always hit the frozen scope, no cross-output; foreign tasks/paths rejected |
-| BGV05 | Missing file, slow response, close, runtime exit | Explicit errors keep last content; no overlapping/late updates; no runtime started |
-| BGV06 | Observe details after Stop on the original entry | Details have no Stop; the original entry cancel keeps terminal output and the process exits |
+| ID    | Scenario                                                | Assertions                                                                                                                         |
+| ----- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| BGV01 | Explicit background, two-segment barrier output         | Both segments seen before exit; repeated clicks reuse the tab; no new model queries; no success-poll logs persisted in normal runs |
+| BGV02 | Timeout-to-background, over 8 KiB, multi-line output    | New tail visible, old head evicted, full file not truncated                                                                        |
+| BGV03 | Scroll up, hide/activate, task completes                | Pause does not jump, returning to latest resumes; hidden means no queries; terminal state preserved, refresh stops                 |
+| BGV04 | Multi-session/workspace, child session and remote scope | Requests always hit the frozen scope, no cross-output; foreign tasks/paths rejected                                                |
+| BGV05 | Missing file, slow response, close, runtime exit        | Explicit errors keep last content; no overlapping/late updates; no runtime started                                                 |
+| BGV06 | Observe details after Stop on the original entry        | Details have no Stop; the original entry cancel keeps terminal output and the process exits                                        |
 
-Unit tests cover schema, runtime authorization, adapter real-file tail reads and encoding, tab isolation, and hook ordering. Desktop E2E uses case-local provider/file fixtures and barriers; BGV01–BGV06 were promoted to formal cases after a user-confirmed live demo (2026-09-10), replaying 7/7 on both common + case-local and default fixtures. Full history: git show f26734ad:docs/background-bash-output-details.md.
+Unit tests cover schema, runtime authorization, adapter real-file tail reads and encoding, tab isolation, and hook ordering. Desktop E2E uses case-local provider/file fixtures and barriers; BGV01–BGV06 were promoted to formal cases after a user-confirmed live demo (2026-09-10), replaying 7/7 on both common + case-local and default fixtures. Full history: git show 45f808f7:docs/background-bash-output-details.md.
 
 ### Sub-session execution ownership
 

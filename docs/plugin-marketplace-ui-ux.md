@@ -27,54 +27,54 @@ CDN catalog shard ──────────┘                    └─ al
 
 Boundary decisions (user-confirmed 2026-07-15):
 
-| Boundary | Decision | Pruned / non-goal |
-| --- | --- | --- |
-| Marketplace identity | Built-in and CDN both use `zcode-plugins-official` | No `zcode-plugins` alias; no migration of old test data |
-| Refresh semantics | Refreshing the official marketplace replaces only the CDN shard, then re-merges with the current built-in shard | A CDN refresh must not delete or rewrite the built-in plugin cache |
-| Name conflicts | CDN entries win; same-name directory entries in the built-in shard are ignored | Only changes merge selection; never deletes or rewrites the built-in cache |
-| Update source | The built-in shard updates with the app version; the CDN shard via marketplace refresh | No converting built-in plugin binaries to CDN hot updates |
-| UI | Marketplace source management shows one refreshable ZCode official marketplace | No separate built-in or CDN source rows |
+| Boundary             | Decision                                                                                                        | Pruned / non-goal                                                          |
+| -------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Marketplace identity | Built-in and CDN both use `zcode-plugins-official`                                                              | No `zcode-plugins` alias; no migration of old test data                    |
+| Refresh semantics    | Refreshing the official marketplace replaces only the CDN shard, then re-merges with the current built-in shard | A CDN refresh must not delete or rewrite the built-in plugin cache         |
+| Name conflicts       | CDN entries win; same-name directory entries in the built-in shard are ignored                                  | Only changes merge selection; never deletes or rewrites the built-in cache |
+| Update source        | The built-in shard updates with the app version; the CDN shard via marketplace refresh                          | No converting built-in plugin binaries to CDN hot updates                  |
+| UI                   | Marketplace source management shows one refreshable ZCode official marketplace                                  | No separate built-in or CDN source rows                                    |
 
 State ownership and persistence:
 
-| State | Authority | Local projection | Evidence |
-| --- | --- | --- | --- |
-| Built-in catalog shard | Current app bundle / SEA assets | Built-in shard snapshot under the official marketplace directory | seed unit tests, cache marker |
-| CDN catalog shard | Official CDN manifest | CDN shard snapshot under the official marketplace directory | refresh unit tests, network responses |
-| Merged catalog | The two shards merged by name | `marketplaces/zcode-plugins-official/marketplace.json` | overview / install unit tests |
-| Marketplace source and refresh time | The single `zcode-plugins-official` record in `known_marketplaces.json` | UI marketplace summary | protocol results, settings page |
+| State                               | Authority                                                               | Local projection                                                 | Evidence                              |
+| ----------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------- |
+| Built-in catalog shard              | Current app bundle / SEA assets                                         | Built-in shard snapshot under the official marketplace directory | seed unit tests, cache marker         |
+| CDN catalog shard                   | Official CDN manifest                                                   | CDN shard snapshot under the official marketplace directory      | refresh unit tests, network responses |
+| Merged catalog                      | The two shards merged by name                                           | `marketplaces/zcode-plugins-official/marketplace.json`           | overview / install unit tests         |
+| Marketplace source and refresh time | The single `zcode-plugins-official` record in `known_marketplaces.json` | UI marketplace summary                                           | protocol results, settings page       |
 
 Accepted regression cases:
 
-| Case | Setup | Action | Assertions | Evidence |
-| --- | --- | --- | --- | --- |
-| `official-merge-initial` | Fresh storage, built-in shard only | Open the plugins page | One official marketplace; built-in plugins visible; source points at the CDN | manifest + overview |
-| `official-merge-refresh` | Built-in shard present, CDN returns new plugins | Refresh the official marketplace | New plugins use `@zcode-plugins-official`; built-in plugins still present | manifest + protocol |
-| `official-merge-conflict` | CDN has an entry named like a built-in | Refresh the official marketplace | The CDN entry wins; the built-in same-name directory entry ignored | manifest + adapter test |
-| `official-merge-reseed` | CDN shard cached | Restart / re-seed built-in plugins | CDN entries persist; the merged catalog rebuilds from the new built-in shard | filesystem test |
+| Case                      | Setup                                           | Action                             | Assertions                                                                   | Evidence                |
+| ------------------------- | ----------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- | ----------------------- |
+| `official-merge-initial`  | Fresh storage, built-in shard only              | Open the plugins page              | One official marketplace; built-in plugins visible; source points at the CDN | manifest + overview     |
+| `official-merge-refresh`  | Built-in shard present, CDN returns new plugins | Refresh the official marketplace   | New plugins use `@zcode-plugins-official`; built-in plugins still present    | manifest + protocol     |
+| `official-merge-conflict` | CDN has an entry named like a built-in          | Refresh the official marketplace   | The CDN entry wins; the built-in same-name directory entry ignored           | manifest + adapter test |
+| `official-merge-reseed`   | CDN shard cached                                | Restart / re-seed built-in plugins | CDN entries persist; the merged catalog rebuilds from the new built-in shard | filesystem test         |
 
 Desktop, Web, and mobile share `IPluginManagementService` and the same CLI storage contract; no new client mode, workspace identity, or replayable branches. Shared components are covered by representative UI unit tests; refresh interactions are verified with desktop CDP. The conversation E2E state space is untouched, so the conversation case catalog is not modified.
 
 ## Non-goals (this round, YAGNI)
 
-| Item | Reason / future anchor |
-| --- | --- |
+| Item                                                                                 | Reason / future anchor                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Per-item enable/disable switches for MCP servers / skills (row Switch, MCP row gear) | The backend has only plugin-level `plugins/setEnabled`. This round's component sections are list-only, no switches; per-item switches need per-component disable config + protocol methods + runtime effects (MCP merge, skill discovery) in a later iteration |
-| Top-bar “Plugins / Skills” dual pill tabs | Skills are a separate settings section; not merged this round |
-| Top-bar “Local / Remote” dropdown | The existing SSH remote sync entry is folded into the manage-installed view; no view switching |
-| “Create plugin” scaffolding | The top-bar Add menu covers create-plugin and add-marketplace (see 2026-09-16 below) |
-| Filter/sort icons at the right of the section row | Undefined semantics; category blocks already navigate — omitted for now |
-| Ratings, download counts, README rendering | No data source |
+| Top-bar “Plugins / Skills” dual pill tabs                                            | Skills are a separate settings section; not merged this round                                                                                                                                                                                                  |
+| Top-bar “Local / Remote” dropdown                                                    | The existing SSH remote sync entry is folded into the manage-installed view; no view switching                                                                                                                                                                 |
+| “Create plugin” scaffolding                                                          | The top-bar Add menu covers create-plugin and add-marketplace (see 2026-09-16 below)                                                                                                                                                                           |
+| Filter/sort icons at the right of the section row                                    | Undefined semantics; category blocks already navigate — omitted for now                                                                                                                                                                                        |
+| Ratings, download counts, README rendering                                           | No data source                                                                                                                                                                                                                                                 |
 
 ### Lifecycle E2E known gaps
 
 The 2026-07-15 plugin management lifecycle cases build green contracts only for entries that exist with confirmed product semantics. These entries disagree with the spec or underlying capability and are registered as bug candidates — not hidden in this round's E2E by bypassing the UI or loosening assertions:
 
-| Bug candidate | Current fact | Test boundary this round |
-| --- | --- | --- |
-| Install cancel entry missing | The install button only shows loading/disabled; the protocol can cancel but the store UI has no cancel action | Verify the busy installing state; do not claim cancel coverage |
-| Source Validate/Diagnose entry missing | Adding a source validates; source management only exposes update and delete | Cover add-time validation, update, delete; not standalone diagnostics |
-| Inline plugins expose uninstall | The store's generic menu renders uninstall, but inline plugins have no marketplace install record to uninstall against | Cover inline display and usability only; never execute uninstall |
+| Bug candidate                          | Current fact                                                                                                           | Test boundary this round                                              |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Install cancel entry missing           | The install button only shows loading/disabled; the protocol can cancel but the store UI has no cancel action          | Verify the busy installing state; do not claim cancel coverage        |
+| Source Validate/Diagnose entry missing | Adding a source validates; source management only exposes update and delete                                            | Cover add-time validation, update, delete; not standalone diagnostics |
+| Inline plugins expose uninstall        | The store's generic menu renders uninstall, but inline plugins have no marketplace install record to uninstall against | Cover inline display and usability only; never execute uninstall      |
 
 ### Removing a Personal Source keeps installed plugins
 
@@ -223,17 +223,17 @@ existing catalog after upgrade
 
 `marketplace.json` already has top-level `name` / `description(_i18n)` / `owner` / `plugins[]`; added:
 
-| Field | Level | Type | Use |
-| --- | --- | --- | --- |
-| `featured` | top | `string[]` (plugin names) | Public section Featured list and order |
-| `displayName` / `displayName_i18n` | entry | `string` / `Record<locale,string>` | Card/detail display name (falls back to the `name` slug) |
-| `icon` | entry | `string` (https URL or in-package relative path) | Card, installed row, detail header icon |
-| `homepage` | entry | `string` (https URL) | Info · website |
-| `privacyPolicy` | entry | `string` (https URL) | Info · privacy policy |
-| `termsOfService` | entry | `string` (https URL) | Info · terms of service |
-| `heroImage` | entry | `string` (https URL or in-package relative path) | Detail hero banner |
-| `examplePrompts` / `examplePrompts_i18n` | entry | `string[]` / `Record<locale,string[]>` | Hero prompt pills |
-| `requiresPaidPlan` | entry | `boolean` (only `true` applies) | Apricot coding-plan badge right of the card/detail title |
+| Field                                    | Level | Type                                             | Use                                                      |
+| ---------------------------------------- | ----- | ------------------------------------------------ | -------------------------------------------------------- |
+| `featured`                               | top   | `string[]` (plugin names)                        | Public section Featured list and order                   |
+| `displayName` / `displayName_i18n`       | entry | `string` / `Record<locale,string>`               | Card/detail display name (falls back to the `name` slug) |
+| `icon`                                   | entry | `string` (https URL or in-package relative path) | Card, installed row, detail header icon                  |
+| `homepage`                               | entry | `string` (https URL)                             | Info · website                                           |
+| `privacyPolicy`                          | entry | `string` (https URL)                             | Info · privacy policy                                    |
+| `termsOfService`                         | entry | `string` (https URL)                             | Info · terms of service                                  |
+| `heroImage`                              | entry | `string` (https URL or in-package relative path) | Detail hero banner                                       |
+| `examplePrompts` / `examplePrompts_i18n` | entry | `string[]` / `Record<locale,string[]>`           | Hero prompt pills                                        |
+| `requiresPaidPlan`                       | entry | `boolean` (only `true` applies)                  | Apricot coding-plan badge right of the card/detail title |
 
 Existing fields keep passing through: `category`, `author{name,url?}`, `description_i18n`, `keywords`.
 
@@ -286,19 +286,19 @@ Public/community/personal bucketing: the official marketplace splits public vs c
 
 ## Degradation matrix
 
-| Missing | List page | Detail page |
-| --- | --- | --- |
-| `icon` | `bg-surface` rounded square + neutral Blocks default icon, no border | Same (64px, detail radius) |
-| `displayName` | Falls back to the `name` slug | Same |
-| `heroImage` | — | No image; prompts-only pill list if prompts exist, else the zone is not rendered |
-| `examplePrompts` | — | Hero is just the banner; with no heroImage either, the zone is not rendered |
-| `category` | Falls into the “Other” block | Info · category row omitted |
-| `homepage` / `privacyPolicy` / `termsOfService` | — | Corresponding info row omitted (only after the manifest fallback also misses) |
-| `author` | — | Developer row: listing → manifest → omitted |
-| `requiresPaidPlan` (missing or not `true`) | No plan badge on the card title | No plan badge on the detail title |
-| `featured` empty/missing | No Featured zone; straight to category blocks | — |
-| Image load failure | Same as missing (avatar fallback), no broken image | Same; a hero failure treats the zone as no-image |
-| describe failure/timeout | — | Components fall back to componentTypes tags + honest notice (V1 rule) |
+| Missing                                         | List page                                                            | Detail page                                                                      |
+| ----------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `icon`                                          | `bg-surface` rounded square + neutral Blocks default icon, no border | Same (64px, detail radius)                                                       |
+| `displayName`                                   | Falls back to the `name` slug                                        | Same                                                                             |
+| `heroImage`                                     | —                                                                    | No image; prompts-only pill list if prompts exist, else the zone is not rendered |
+| `examplePrompts`                                | —                                                                    | Hero is just the banner; with no heroImage either, the zone is not rendered      |
+| `category`                                      | Falls into the “Other” block                                         | Info · category row omitted                                                      |
+| `homepage` / `privacyPolicy` / `termsOfService` | —                                                                    | Corresponding info row omitted (only after the manifest fallback also misses)    |
+| `author`                                        | —                                                                    | Developer row: listing → manifest → omitted                                      |
+| `requiresPaidPlan` (missing or not `true`)      | No plan badge on the card title                                      | No plan badge on the detail title                                                |
+| `featured` empty/missing                        | No Featured zone; straight to category blocks                        | —                                                                                |
+| Image load failure                              | Same as missing (avatar fallback), no broken image                   | Same; a hero failure treats the zone as no-image                                 |
+| describe failure/timeout                        | —                                                                    | Components fall back to componentTypes tags + honest notice (V1 rule)            |
 
 ## Manage installed view
 

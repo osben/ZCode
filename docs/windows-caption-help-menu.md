@@ -44,13 +44,13 @@ menu path, and Windows/Linux have no native menu bar, so there was no entry at a
 
 ### E2E scenarios
 
-| Scenario | Acceptance |
-| --- | --- |
-| English draft state, Chinese settings page | About menu copy and order are correct; a real click opens the About window with the version |
-| English draft state, Chinese settings page, export logs | The desktop group's first item is export logs; a real click generates a ZIP, requests system reveal and ends the export prompt; the original export implementation is reused |
-| production initial state | Check for updates shows; a real click receives a development-build `dev-skipped` receipt through the existing command |
-| production state events | checking is disabled; available version and download progress show the matching copy; on download complete the action copy and the version pill are asserted separately (not depending on parentheses or child-node whitespace concatenation); after close and reopen the version pill keeps the latest state |
-| Preview | Neither draft state nor the settings page has an update item, and an injected update event does not make it appear |
+| Scenario                                                | Acceptance                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| English draft state, Chinese settings page              | About menu copy and order are correct; a real click opens the About window with the version                                                                                                                                                                                                                   |
+| English draft state, Chinese settings page, export logs | The desktop group's first item is export logs; a real click generates a ZIP, requests system reveal and ends the export prompt; the original export implementation is reused                                                                                                                                  |
+| production initial state                                | Check for updates shows; a real click receives a development-build `dev-skipped` receipt through the existing command                                                                                                                                                                                         |
+| production state events                                 | checking is disabled; available version and download progress show the matching copy; on download complete the action copy and the version pill are asserted separately (not depending on parentheses or child-node whitespace concatenation); after close and reopen the version pill keeps the latest state |
+| Preview                                                 | Neither draft state nor the settings page has an update item, and an injected update event does not make it appear                                                                                                                                                                                            |
 
 State events use a case-local synthetic `UpdateStatePayload` and verify only main→preload→menu display; the
 real updater is not modified and nothing is downloaded or installed. The tests no longer depend on the

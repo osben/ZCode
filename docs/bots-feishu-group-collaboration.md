@@ -101,7 +101,7 @@ Preparation messages join the ConversationTurnGroup and participate in existing 
 - Automation: group service 81, agent projection 177 cases, plus dedicated stop-coordinator, runtime stop-barrier, preparation-state, original-message display, and interruption-label tests. Pre-submit `NODE_OPTIONS=--max-old-space-size=8192 pnpm verify:pre-push` passed (lint 43 pre-existing warnings, 0 errors); staged content checked separately — 15 modified test files and the 24 modified source files' full related set (893 test files, 9,916 tests, 4 skipped) pass. Node 24.14.0's threads pool SIGSEGV'd in V8 GC threads even with a raised heap cap; the final run used isolated processes — no check rules were disabled.
 - Open: real Desktop/mobile preparation display, persisted restart, and mobile replayable display await manual acceptance; dev not started, no UI E2E run. Real Feishu/Lark, Desktop/mobile, cross-OS, and real restart recovery follow the materials doc's manual steps; automated tests do not replace these.
 
-Full history: git show f26734ad:docs/bots-feishu-group-collaboration.md
+Full history: git show 45f808f7:docs/bots-feishu-group-collaboration.md
 
 ### Migration and verification boundaries
 

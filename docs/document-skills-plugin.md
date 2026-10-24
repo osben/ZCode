@@ -2,12 +2,12 @@
 
 The former `document-skills` aggregate was split into four independent content plugins, plus a built-in `image-search` plugin, all enabled by default with the client:
 
-| Plugin        | Skill | Source directory                                |
-| ------------- | ----- | ----------------------------------------------- |
-| documents     | docx  | `apps/zcode-cli/packages/documents-plugin`      |
-| pdf           | pdf   | `apps/zcode-cli/packages/pdf-plugin`            |
-| presentations | pptx  | `apps/zcode-cli/packages/presentations-plugin`  |
-| spreadsheets  | xlsx  | `apps/zcode-cli/packages/spreadsheets-plugin`   |
+| Plugin        | Skill | Source directory                               |
+| ------------- | ----- | ---------------------------------------------- |
+| documents     | docx  | `apps/zcode-cli/packages/documents-plugin`     |
+| pdf           | pdf   | `apps/zcode-cli/packages/pdf-plugin`           |
+| presentations | pptx  | `apps/zcode-cli/packages/presentations-plugin` |
+| spreadsheets  | xlsx  | `apps/zcode-cli/packages/spreadsheets-plugin`  |
 
 Sync source: the internal plugin repo `zcode-marketplace/zcode-plugins-test`, `origin/main` commit `e19dca8be86cf981ed2e0c2b4855c6ee6ee15265`, directory `plugins/<plugin-name>`. The four built-in releases are all `0.1.8` (above the old aggregate's `0.1.5`). Imported directories are byte-aligned with upstream; only the built-in version fields in package.json and .zcode-plugin/plugin.json may differ. Content differences come from upstream exports; version fields bump along the built-in release sequence.
 

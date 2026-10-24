@@ -27,15 +27,15 @@ node scripts/multimodal-tool-result-p0.mjs
 
 ## Cases
 
-| ID                         | Input block order                       | Goal                                            | Failure meaning                    |
-| -------------------------- | --------------------------------------- | ----------------------------------------------- | ---------------------------------- |
-| `text-three-blocks`        | `text0, text1, text2`                   | all three nonces visible, order preserved       | compat layer drops later text      |
-| `mcp-text-image-text`      | `text, image, text`                     | both texts and the in-image marker visible      | plain MCP mixed result loses parts |
-| `android-screenshot-shape` | `text, image`                           | metadata and in-screenshot marker both visible  | Android screenshot image dropped   |
-| `ios-screenshot-shape`     | `text, image`                           | metadata and in-screenshot marker both visible  | iOS screenshot image dropped       |
-| `browser-multiple-images`  | `imageA, imageB, text`                  | both images and the text visible                | Browser Use drops later images/text|
-| `cua-observation`          | `image, frame_ref, ax_tree, outcome`    | raster, frame, AX tree, outcome all visible     | CUA state barrier/action lost      |
-| `multiple-tool-results`    | two `tool_result`, each with two texts  | every `tool_use_id` result fully visible        | projection truncation across results |
+| ID                         | Input block order                      | Goal                                           | Failure meaning                      |
+| -------------------------- | -------------------------------------- | ---------------------------------------------- | ------------------------------------ |
+| `text-three-blocks`        | `text0, text1, text2`                  | all three nonces visible, order preserved      | compat layer drops later text        |
+| `mcp-text-image-text`      | `text, image, text`                    | both texts and the in-image marker visible     | plain MCP mixed result loses parts   |
+| `android-screenshot-shape` | `text, image`                          | metadata and in-screenshot marker both visible | Android screenshot image dropped     |
+| `ios-screenshot-shape`     | `text, image`                          | metadata and in-screenshot marker both visible | iOS screenshot image dropped         |
+| `browser-multiple-images`  | `imageA, imageB, text`                 | both images and the text visible               | Browser Use drops later images/text  |
+| `cua-observation`          | `image, frame_ref, ax_tree, outcome`   | raster, frame, AX tree, outcome all visible    | CUA state barrier/action lost        |
+| `multiple-tool-results`    | two `tool_result`, each with two texts | every `tool_use_id` result fully visible       | projection truncation across results |
 
 Every marker is uniquified by a per-run nonce; prompts never contain marker values, so the model
 cannot guess answers from instructions.

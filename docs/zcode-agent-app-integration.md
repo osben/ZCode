@@ -28,12 +28,12 @@ Renderer / Web UI
 
 ## State ownership
 
-| State                                                                                              | Authority                                                                                                                  |
-| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| transcript, turn/row, phase, actions, queue, interaction, goal, background work, session config    | CLI V4 projection/runtime                                                                                                  |
-| Provider Config, Registry and credentials                                                          | The current Environment; Host/Worker build from that Environment's Config/Credential Source, no cross-Environment Registry |
-| pin/archive/group/unread, list-search compatibility metadata                                       | host tasks-index                                                                                                           |
-| draft, scroll, focus, panel, optimistic pending overlay                                            | renderer/web local                                                                                                         |
+| State                                                                                           | Authority                                                                                                                  |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| transcript, turn/row, phase, actions, queue, interaction, goal, background work, session config | CLI V4 projection/runtime                                                                                                  |
+| Provider Config, Registry and credentials                                                       | The current Environment; Host/Worker build from that Environment's Config/Credential Source, no cross-Environment Registry |
+| pin/archive/group/unread, list-search compatibility metadata                                    | host tasks-index                                                                                                           |
+| draft, scroll, focus, panel, optimistic pending overlay                                         | renderer/web local                                                                                                         |
 
 `zcodeSessionStore` still holds the workspace shell, task-list cache, unread/optimistic organization
 state and some compatibility service projections, but no longer owns the V4 conversation transcript or

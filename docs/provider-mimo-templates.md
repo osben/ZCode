@@ -4,9 +4,9 @@
 
 MiMo pay-as-you-go API and Token Plan are separate products. Settings must offer two templates so users do not paste a subscription key into the pay-as-you-go endpoint.
 
-| Template ID | Name | Anthropic Base URL | Credentials |
-| --- | --- | --- | --- |
-| `xiaomi-mimo` | Xiaomi MiMo API | `https://api.xiaomimimo.com/anthropic` | pay-as-you-go API key, `sk-` |
+| Template ID              | Name                   | Anthropic Base URL                               | Credentials                   |
+| ------------------------ | ---------------------- | ------------------------------------------------ | ----------------------------- |
+| `xiaomi-mimo`            | Xiaomi MiMo API        | `https://api.xiaomimimo.com/anthropic`           | pay-as-you-go API key, `sk-`  |
 | `xiaomi-mimo-token-plan` | Xiaomi MiMo Token Plan | `https://token-plan-cn.xiaomimimo.com/anthropic` | personal `tp-` or team `ttp-` |
 
 Credentials come from the [official console](https://platform.xiaomimimo.com/). The two key kinds are not interchangeable, but the client adds no prefix validation. The actual Token Plan endpoint follows the user's console; the same protocol also has `token-plan-sgp.xiaomimimo.com` and `token-plan-ams.xiaomimimo.com` clusters, which users override through the existing Base URL edit entry.
@@ -33,10 +33,10 @@ The source file is `config/provider/zcode-builtin.json` with an incremented revi
 
 ## Acceptance
 
-| ID | Scenario | Assertions and evidence |
-| --- | --- | --- |
-| MIMO-01 | Production/test config read, both templates resolve | Names, protocol, URLs, model members, and enable rules correct; V2.6 capabilities and parameter mappings complete |
-| MIMO-02 | Existing instances and overseas URL overrides | Name, disabled state, key, URL, and personal model config preserved; resolution does not modify Personal |
-| MIMO-03 | Mobile-width zh-CN light / desktop-width en dark | Both templates, tooltips, and icons render correctly; each click delivers only its templateId; details use their own Base URL with no extra writes or horizontal overflow |
+| ID      | Scenario                                            | Assertions and evidence                                                                                                                                                   |
+| ------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MIMO-01 | Production/test config read, both templates resolve | Names, protocol, URLs, model members, and enable rules correct; V2.6 capabilities and parameter mappings complete                                                         |
+| MIMO-02 | Existing instances and overseas URL overrides       | Name, disabled state, key, URL, and personal model config preserved; resolution does not modify Personal                                                                  |
+| MIMO-03 | Mobile-width zh-CN light / desktop-width en dark    | Both templates, tooltips, and icons render correctly; each click delivers only its templateId; details use their own Base URL with no extra writes or horizontal overflow |
 
 Config/Resolver unit tests cover MIMO-01/02. Pending browser cases cover the shared components of MIMO-03 — see the [case matrix](testing/provider-settings-batch-20260910.md). Browser fixtures isolate service writes and are not equivalent to full Electron, mobile shared-host, or real paid official-request verification.

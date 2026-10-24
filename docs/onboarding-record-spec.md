@@ -154,10 +154,10 @@ startup / login-state change (zustand user changes)
   2. `storage.sessionDbPath` in `~/.zcode/cli/config.json` (the CLI `createConfig` default user
      config lives in home, **not following the app dataBaseDir**);
   3. default `~/.zcode/cli/db/db.sqlite` (`~/` expanded by homedir).
-  Only absolute paths (including `~/`-expanded) count as evidence locations; relative → unknown →
-  skip this source (continue with the legacy snapshot directory), never guess against the host cwd.
-  Config read/parse failure (non-ENOENT) throws: with the config unreadable the session DB location
-  is unknown, and guessing the default would miss existing users with a custom session DB.
+     Only absolute paths (including `~/`-expanded) count as evidence locations; relative → unknown →
+     skip this source (continue with the legacy snapshot directory), never guess against the host cwd.
+     Config read/parse failure (non-ENOENT) throws: with the config unreadable the session DB location
+     is unknown, and guessing the default would miss existing users with a custom session DB.
 - The session DB is queried over a read-only connection; WAL rows not yet checkpointed are visible
   to it regardless of backfill timing. A missing DB file (stat ENOENT) means no evidence; **other
   errors (EACCES/ENOTDIR etc.) are rethrown** and the UI conservatively does not prompt (review
@@ -170,14 +170,14 @@ startup / login-state change (zustand user changes)
 
 ## 5. Service interface (IOnboardingRecordService)
 
-| Method                                | Behavior                                                                                                                                     |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `appendRecord(deviceMid, entry)`      | create the file and fix deviceMid if absent; append if present; warn and rebuild on corruption; service completes the userId                  |
-| `shouldOnboard(deviceMid)`            | trigger decision; writes existing_local_user when tasks exist (see §4)                                                                       |
+| Method                                | Behavior                                                                                                                                                                                                                               |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appendRecord(deviceMid, entry)`      | create the file and fix deviceMid if absent; append if present; warn and rebuild on corruption; service completes the userId                                                                                                           |
+| `shouldOnboard(deviceMid)`            | trigger decision; writes existing_local_user when tasks exist (see §4)                                                                                                                                                                 |
 | `getOnboardingEligibility(deviceMid)` | like `shouldOnboard`, also returns `{ shouldOnboard, recordFileExisted }` (whether the record file existed before deciding). UI distinguishes `auto_first_open` from `auto_identity_change` (file exists, no entry for this identity). |
-| `dismissOnboarding(deviceMid)`        | write dismissed on closing first-run onboarding; no-op if answers exist                                                                     |
-| `getRecords()`                        | read the whole file (for later upload)                                                                                                       |
-| `clearRecords()`                      | delete the file (debug)                                                                                                                      |
+| `dismissOnboarding(deviceMid)`        | write dismissed on closing first-run onboarding; no-op if answers exist                                                                                                                                                                |
+| `getRecords()`                        | read the whole file (for later upload)                                                                                                                                                                                                 |
+| `clearRecords()`                      | delete the file (debug)                                                                                                                                                                                                                |
 
 The RPC exposure chain matches settingService: `ServiceChannels.OnboardingRecord` → descriptor →
 `createLocalServices` registration → `RemoteServiceAccess` getter → UI hook.

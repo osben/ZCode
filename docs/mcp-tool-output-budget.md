@@ -48,13 +48,13 @@ Rules:
 
 ### Source and outcome matrix
 
-| Source        | Original base64 | ImageProcessor       | Outcome                            | Status   |
-| ------------- | --------------: | -------------------- | ---------------------------------- | -------- |
-| `node_repl/js` | `<= 200 KiB`   | any                  | original inline                    | accepted |
-| `node_repl/js` | `> 200 KiB`    | compressed in budget | compressed inline                  | accepted |
-| `node_repl/js` | `> 200 KiB`    | missing/failed/over  | artifact or no-store text fallback | accepted |
-| other MCP     | `<= 200 KiB`    | any                  | original inline                    | accepted |
-| other MCP     | `> 200 KiB`     | any                  | artifact or no-store text fallback | accepted |
+| Source         | Original base64 | ImageProcessor       | Outcome                            | Status   |
+| -------------- | --------------: | -------------------- | ---------------------------------- | -------- |
+| `node_repl/js` |    `<= 200 KiB` | any                  | original inline                    | accepted |
+| `node_repl/js` |     `> 200 KiB` | compressed in budget | compressed inline                  | accepted |
+| `node_repl/js` |     `> 200 KiB` | missing/failed/over  | artifact or no-store text fallback | accepted |
+| other MCP      |    `<= 200 KiB` | any                  | original inline                    | accepted |
+| other MCP      |     `> 200 KiB` | any                  | artifact or no-store text fallback | accepted |
 
 Only the agent tool-result projection changes: no new protocol fields, no session/task state change,
 no divergence between `desktop-continuous` and `web-remote-replayable` — both share the same

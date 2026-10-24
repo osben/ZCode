@@ -41,17 +41,17 @@ task delete / explicit reload / source or runtime invalidation / window close â†
 
 Verified in real Electron with the production page owner, the Agent, and a controlled MCP page without a private execution protocol:
 
-| Scenario                                | Must assert                                                                                        |
-| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Scenario                                | Must assert                                                                                                                         |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Switch away before a tool result        | Created by a real Agent result with no tool card or conversation subscription; work completes in background, guest reused on return |
-| No anchor / hidden tab cold start       | Multi-frame initialization after handshake with the session idle; page size non-zero               |
-| Session idle / stopped turn             | Internal rAF work still completes, without a new model turn or host tool call                      |
-| Window minimized                        | Background work completes; guest identity and edit state unchanged after restore                   |
-| Off-screen deadline / capacity pressure | Existing MCP guests and in-memory state retained; new creation refused when nothing is reclaimable |
-| Native isolation                        | Bypass guests that never requested activity are not woken; wrong owner / old initId rejected       |
-| Hide and restore                        | Background surface receives no mouse; inline scroll does not drift; normal display after restore   |
-| Delete / runtime invalidation           | Activity, guest, and lease released; late events do not resurrect                                  |
-| Web / remote                            | No local sandbox created; no extra subscriptions                                                   |
+| No anchor / hidden tab cold start       | Multi-frame initialization after handshake with the session idle; page size non-zero                                                |
+| Session idle / stopped turn             | Internal rAF work still completes, without a new model turn or host tool call                                                       |
+| Window minimized                        | Background work completes; guest identity and edit state unchanged after restore                                                    |
+| Off-screen deadline / capacity pressure | Existing MCP guests and in-memory state retained; new creation refused when nothing is reclaimable                                  |
+| Native isolation                        | Bypass guests that never requested activity are not woken; wrong owner / old initId rejected                                        |
+| Hide and restore                        | Background surface receives no mouse; inline scroll does not drift; normal display after restore                                    |
+| Delete / runtime invalidation           | Activity, guest, and lease released; late events do not resurrect                                                                   |
+| Web / remote                            | No local sandbox created; no extra subscriptions                                                                                    |
 
 Entry points: `node packages/desktop/scripts/mcp-apps-host-e2e.mjs --background-only`; existing lifecycle and fallbacks use `--managed-only`. Real-plugin verification uses the unmodified PhotoCraft 0.2.2:
 `ZCODE_PHOTOCRAFT_SERVER=/path/to/photocraft/dist/server.mjs node packages/desktop/scripts/mcp-apps-host-e2e.mjs --photocraft-background-only`.

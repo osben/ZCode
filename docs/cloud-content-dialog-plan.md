@@ -54,17 +54,17 @@ The authoritative v1 schema is now `packages/shared/src/cloudContent.ts`
 (documented in `docs/cloud-content-dialog.md`); this section records the plan-time
 contract decisions:
 
-| Field               | Semantics / consumer                                | Validation / failure handling                                    |
-| ------------------- | --------------------------------------------------- | ---------------------------------------------------------------- |
-| schemaVersion      | decoder protocol version                            | unsupported major version: refuse to display and log why          |
-| id / revision      | content identity and version; used by logs, close records | non-empty id, positive integer revision; not the ZIP cache key |
-| kind               | campaign / feature / notice classification          | no kind-based Weekend special-casing                             |
-| locale             | actual language of returned content                 | request carries locale; mock provides zh/en fixtures; fallback language is visible |
-| dialog.title       | shared title component                              | plain text, length cap                                           |
-| dialog.description | format + text                                       | plain_text / html; markdown's official support policy is an open item |
-| dialog.hero        | union-type renderer                                 | unknown type never executes; degrade to no Hero; shell and close stay usable |
-| dialog.buttons[]   | render id, label, variant, actionId in order        | unique ids, count/copy caps, actionId must resolve               |
-| actions            | host ActionDispatcher whitelist                     | undeclared/unavailable actions are not executable; no dynamic code or arbitrary service names |
+| Field              | Semantics / consumer                                      | Validation / failure handling                                                                 |
+| ------------------ | --------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| schemaVersion      | decoder protocol version                                  | unsupported major version: refuse to display and log why                                      |
+| id / revision      | content identity and version; used by logs, close records | non-empty id, positive integer revision; not the ZIP cache key                                |
+| kind               | campaign / feature / notice classification                | no kind-based Weekend special-casing                                                          |
+| locale             | actual language of returned content                       | request carries locale; mock provides zh/en fixtures; fallback language is visible            |
+| dialog.title       | shared title component                                    | plain text, length cap                                                                        |
+| dialog.description | format + text                                             | plain_text / html; markdown's official support policy is an open item                         |
+| dialog.hero        | union-type renderer                                       | unknown type never executes; degrade to no Hero; shell and close stay usable                  |
+| dialog.buttons[]   | render id, label, variant, actionId in order              | unique ids, count/copy caps, actionId must resolve                                            |
+| actions            | host ActionDispatcher whitelist                           | undeclared/unavailable actions are not executable; no dynamic code or arbitrary service names |
 
 Hero-specific fields (image: src/darkSrc?/alt/fit?; video: src/darkSrc?/poster/
 autoplay?/loop?/muted:true/fit?; lottie: src/darkSrc?/autoplay?/loop?/speed?/
@@ -126,14 +126,14 @@ ContentSource -> HTTP JSON -> runtime schema -> shared ContentDialog
                                        load -> init -> ready
 ```
 
-| State / fact            | Authority                        | Cache or mirror            | Side effects                    |
-| ----------------------- | -------------------------------- | -------------------------- | ------------------------------- |
-| content payload         | mock / future content service    | ContentSource memory cache | never changes claim results     |
-| display/focus/loading   | the single Dialog instance       | no cross-window sync       | React local state               |
-| ZIP and integrity       | content asset service            | cached by hash             | App cache, never the workspace  |
-| Hero-internal animation | iframe                           | no business mirror         | the iframe's own DOM/RAF        |
-| navigate/share/claim    | existing host capability / business controller | not copied into the iframe | injected handlers     |
-| dismissal               | dev preview namespace only, for now | by id+revision           | formal account scope TBD        |
+| State / fact            | Authority                                      | Cache or mirror            | Side effects                   |
+| ----------------------- | ---------------------------------------------- | -------------------------- | ------------------------------ |
+| content payload         | mock / future content service                  | ContentSource memory cache | never changes claim results    |
+| display/focus/loading   | the single Dialog instance                     | no cross-window sync       | React local state              |
+| ZIP and integrity       | content asset service                          | cached by hash             | App cache, never the workspace |
+| Hero-internal animation | iframe                                         | no business mirror         | the iframe's own DOM/RAF       |
+| navigate/share/claim    | existing host capability / business controller | not copied into the iframe | injected handlers              |
+| dismissal               | dev preview namespace only, for now            | by id+revision             | formal account scope TBD       |
 
 Main only injects necessary platform paths and registers/forwards the asset
 channel; it does not own ZIP download or unzip business. The UI goes through
@@ -194,24 +194,24 @@ Pattern: planning. Layers: presentation, validation, commit-effect, persistence.
 Main seeds: CloudDialogHero, createWeekendPlanResultDialogMock,
 ManualClaimPlanResultDialog.
 
-| Surface / entry          | Shared implementation      | Default source and validation     | Commit / persistence                 | Mode isolation                              |
-| ------------------------ | -------------------------- | --------------------------------- | ------------------------------------ | ------------------------------------------- |
-| Weekend claim result     | shared Dialog + business adapter | existing claim result, shared schema | original controller navigate/share/claim | no change to login/security/provider refresh |
-| App dev preview (new)    | same Dialog                | HTTP fixture, explicit scenario   | mock actions, dev dismissal/cache    | no real claim, no production entry          |
-| plain Web/mobile         | same UI, different asset adapter | same schema + capability check | current navigation/platform capabilities | no desktop file paths copied, no task-recovery state |
+| Surface / entry       | Shared implementation            | Default source and validation        | Commit / persistence                     | Mode isolation                                       |
+| --------------------- | -------------------------------- | ------------------------------------ | ---------------------------------------- | ---------------------------------------------------- |
+| Weekend claim result  | shared Dialog + business adapter | existing claim result, shared schema | original controller navigate/share/claim | no change to login/security/provider refresh         |
+| App dev preview (new) | same Dialog                      | HTTP fixture, explicit scenario      | mock actions, dev dismissal/cache        | no real claim, no production entry                   |
+| plain Web/mobile      | same UI, different asset adapter | same schema + capability check       | current navigation/platform capabilities | no desktop file paths copied, no task-recovery state |
 
 Shared: field parsing, typography, Hero protocol, action whitelist. Different:
 asset loading method, platform action availability, entry business data, and
 dismissal scope — business owners are not forcibly unified.
 
-| Level          | Relation and reason                                                      | Evidence                                                                                                            |
-| -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| must-inspect   | ManualClaimPlanBanner -> ResultDialog -> Hero/mock; the only found production entry | the component sources, direct rg callers, depth 2                                                        |
-| must-inspect   | mock fixture -> types -> renderer, the three were not fully aligned       | the cloud-content-dialog directory                                                                                |
-| should-inspect | platform services, asset channel and cache; new IO boundary               | `packages/shared/src/platform.ts`; `packages/desktop/src/main/localMediaPreviewProtocol.ts` as an adjacent seed, not assumed reusable |
-| conditional    | Web/mobile reachable asset plan                                          | transport adaptation TBD, no task/Agent protocol extension                                                        |
-| invariant-only | login/claim/provider authority, continuous/replayable, workspace isolation | existing manual-claim coverage and repository architecture constraints                                            |
-| evidence-only  | Hero unit tests, manualClaimPlanBannerInteraction, start-plan-manual-claim-experience | existing tests; they do not replace new ZIP-flow tests                                                 |
+| Level          | Relation and reason                                                                   | Evidence                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| must-inspect   | ManualClaimPlanBanner -> ResultDialog -> Hero/mock; the only found production entry   | the component sources, direct rg callers, depth 2                                                                                     |
+| must-inspect   | mock fixture -> types -> renderer, the three were not fully aligned                   | the cloud-content-dialog directory                                                                                                    |
+| should-inspect | platform services, asset channel and cache; new IO boundary                           | `packages/shared/src/platform.ts`; `packages/desktop/src/main/localMediaPreviewProtocol.ts` as an adjacent seed, not assumed reusable |
+| conditional    | Web/mobile reachable asset plan                                                       | transport adaptation TBD, no task/Agent protocol extension                                                                            |
+| invariant-only | login/claim/provider authority, continuous/replayable, workspace isolation            | existing manual-claim coverage and repository architecture constraints                                                                |
+| evidence-only  | Hero unit tests, manualClaimPlanBannerInteraction, start-plan-manual-claim-experience | existing tests; they do not replace new ZIP-flow tests                                                                                |
 
 The codegraph tool was unavailable; exact rg traced the seeds and direct callers,
 and statically-reachable components were not counted as impact. The existing
@@ -237,15 +237,15 @@ in types and docs — production is not claimed to be cloud-connected.
 Each phase runs spec/cases -> tests -> implementation -> verification, and ends
 with artifact paths, test output, and remaining risks.
 
-| Phase                        | Work                                                                      | Completion gate                                                                      |
-| ---------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| P0 contract and validation   | freeze fields, error policy, action permissions; verify Desktop/Web asset loading; resolve the unfinished HTML test state | schema/fixture/adapter interface designs agree; cross-platform plan evidenced; open items explicit |
-| P1 assets and mock HTTP      | pack the current HTML into a ZIP; generate real hash/size; JSON/ZIP/error-scenario routes and a startup command | real JSON fetchable, ZIP downloads, unzipped animation is self-contained; no Vite URL swapping |
-| P2 asset service             | async download, verification, safe unzip, cache, URL resolution, cancel/cleanup/error codes | first download and cache hit, polluted cache, malicious ZIP, and concurrency pass integration tests |
-| P3 shared components         | Dialog shell, four Hero kinds, title, simple HTML, dynamic buttons, ActionDispatcher, loading/error states | editing JSON changes every visible field and allowed behavior; no Weekend special-casing; keyboard and focus work |
-| P4 App mock loop             | dev-only preview entry; scenario selection, theme/language, cache clear, retry, status info | the HTTP -> ZIP/cache/iframe-ready chain is visible in-App without login or claiming  |
-| P5 migration and regression  | migrate the Weekend adapter to the shared components; remove the temporary duplicate description/button implementations; add cross-platform verification | original claim flow, failure result, navigate and share intact; four Hero kinds pass zh/en, both themes, narrow screens |
-| P6 production cloud integration (separate follow-up) | replace the data source, trusted CDN/publishing auth, account isolation, formal delivery policy, gray release/rollback | server contract integration, security and release gates pass; before that, only "mock complete" |
+| Phase                                                | Work                                                                                                                                                     | Completion gate                                                                                                         |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| P0 contract and validation                           | freeze fields, error policy, action permissions; verify Desktop/Web asset loading; resolve the unfinished HTML test state                                | schema/fixture/adapter interface designs agree; cross-platform plan evidenced; open items explicit                      |
+| P1 assets and mock HTTP                              | pack the current HTML into a ZIP; generate real hash/size; JSON/ZIP/error-scenario routes and a startup command                                          | real JSON fetchable, ZIP downloads, unzipped animation is self-contained; no Vite URL swapping                          |
+| P2 asset service                                     | async download, verification, safe unzip, cache, URL resolution, cancel/cleanup/error codes                                                              | first download and cache hit, polluted cache, malicious ZIP, and concurrency pass integration tests                     |
+| P3 shared components                                 | Dialog shell, four Hero kinds, title, simple HTML, dynamic buttons, ActionDispatcher, loading/error states                                               | editing JSON changes every visible field and allowed behavior; no Weekend special-casing; keyboard and focus work       |
+| P4 App mock loop                                     | dev-only preview entry; scenario selection, theme/language, cache clear, retry, status info                                                              | the HTTP -> ZIP/cache/iframe-ready chain is visible in-App without login or claiming                                    |
+| P5 migration and regression                          | migrate the Weekend adapter to the shared components; remove the temporary duplicate description/button implementations; add cross-platform verification | original claim flow, failure result, navigate and share intact; four Hero kinds pass zh/en, both themes, narrow screens |
+| P6 production cloud integration (separate follow-up) | replace the data source, trusted CDN/publishing auth, account isolation, formal delivery policy, gray release/rollback                                   | server contract integration, security and release gates pass; before that, only "mock complete"                         |
 
 P2 and P3 both depend on the P0/P1 contract; only after P4 merges is the mock
 user-verifiable end to end. Building React components alone is not "done".
@@ -273,19 +273,19 @@ Windows path rules; multi-instance cancel/cleanup; mobile vs desktop resource
 URLs; HTML with links/dynamic interpolation; iframe events vs business
 permissions.
 
-| Case ID | setup -> action                            | Assertions and evidence layers                                                        | Status                                       |
-| ------- | ------------------------------------------ | -------------------------------------------------------------------------------------- | -------------------------------------------- |
-| CCD-01  | empty cache -> open the interactive Hero in App preview | HTTP JSON/ZIP requests, cache file matching the hash, iframe ready, content from the fixture | accepted/planned E2E                         |
-| CCD-02  | cached -> reopen / switch revision with the same hash | No repeat ZIP download; new copy takes effect; package content identical; network + file evidence | accepted/planned integration + E2E           |
-| CCD-03  | 404/interrupt/timeout/wrong hash/malicious ZIP -> open | Bad assets not executed; no ready polluted cache; fallback and close usable            | accepted/planned integration, representative error E2E |
-| CCD-04  | four Hero kinds -> open, theme switch, background, close | Correct display, pause/destroy, no leftover listeners or animations; UI + runtime      | accepted/planned E2E                         |
-| CCD-05  | zh/en, narrow screens, long HTML -> display/keyboard   | Typography, scrolling, focus restoration, tag whitelist, safe URLs; UI + DOM           | accepted/planned unit + E2E                  |
-| CCD-06  | fixture changes button order/copy/action -> click     | Renders from data; only registered handlers hit; unknown actions not executable        | accepted/planned unit + E2E                  |
-| CCD-07  | wrong window/instanceId/event -> postMessage          | No state cross-writes, navigation, copy, or claim side effects                          | accepted/planned unit + runtime test         |
-| CCD-08  | multiple windows same hash, close one, clear cache -> keep using | Download not mis-cancelled; in-use packages not deleted; lease/file evidence       | accepted/planned integration                 |
-| CCD-09  | Weekend success/pending/failure -> operate             | Original claim refresh/navigate/share assertions unchanged; success uses the shared description, failure builds no Hero | accepted/update existing E2E      |
-| CCD-10  | Desktop local/remote workspace, Web/mobile -> open     | No new runtime; assets reachable or explicit degradation; task flow unchanged          | accepted/planned; transport plan TBD         |
-| CCD-11  | markdown / dismiss_content formal policy              | Product semantics not frozen; no coverage claimed                                      | undefined                                    |
+| Case ID | setup -> action                                                  | Assertions and evidence layers                                                                                          | Status                                                 |
+| ------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| CCD-01  | empty cache -> open the interactive Hero in App preview          | HTTP JSON/ZIP requests, cache file matching the hash, iframe ready, content from the fixture                            | accepted/planned E2E                                   |
+| CCD-02  | cached -> reopen / switch revision with the same hash            | No repeat ZIP download; new copy takes effect; package content identical; network + file evidence                       | accepted/planned integration + E2E                     |
+| CCD-03  | 404/interrupt/timeout/wrong hash/malicious ZIP -> open           | Bad assets not executed; no ready polluted cache; fallback and close usable                                             | accepted/planned integration, representative error E2E |
+| CCD-04  | four Hero kinds -> open, theme switch, background, close         | Correct display, pause/destroy, no leftover listeners or animations; UI + runtime                                       | accepted/planned E2E                                   |
+| CCD-05  | zh/en, narrow screens, long HTML -> display/keyboard             | Typography, scrolling, focus restoration, tag whitelist, safe URLs; UI + DOM                                            | accepted/planned unit + E2E                            |
+| CCD-06  | fixture changes button order/copy/action -> click                | Renders from data; only registered handlers hit; unknown actions not executable                                         | accepted/planned unit + E2E                            |
+| CCD-07  | wrong window/instanceId/event -> postMessage                     | No state cross-writes, navigation, copy, or claim side effects                                                          | accepted/planned unit + runtime test                   |
+| CCD-08  | multiple windows same hash, close one, clear cache -> keep using | Download not mis-cancelled; in-use packages not deleted; lease/file evidence                                            | accepted/planned integration                           |
+| CCD-09  | Weekend success/pending/failure -> operate                       | Original claim refresh/navigate/share assertions unchanged; success uses the shared description, failure builds no Hero | accepted/update existing E2E                           |
+| CCD-10  | Desktop local/remote workspace, Web/mobile -> open               | No new runtime; assets reachable or explicit degradation; task flow unchanged                                           | accepted/planned; transport plan TBD                   |
+| CCD-11  | markdown / dismiss_content formal policy                         | Product semantics not frozen; no coverage claimed                                                                       | undefined                                              |
 
 Pruning: malicious-ZIP path variants are enumerated at the service integration
 layer, E2E keeps one; theme/language pair on the shared renderer instead of

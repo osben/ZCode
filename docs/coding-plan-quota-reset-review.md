@@ -20,10 +20,10 @@ UI components (packages/ui/components/coding-plan-quota-reset/*)
 
 ## 2. Integration contract changes
 
-| Date | Change                                                                                              | Commit      | Notes                                                                                                                        |
-| ---- | --------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Date  | Change                                                                                                                                                | Commit       | Notes                                                                                                                                                                          |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 08-12 | `X-Bigmodel-Authorization` changed from the Coding Plan API key to the **MaaS login JWT** (`oauth:bigmodel:access_token`, passed directly, no Bearer) | `6a06e7e8dd` | the backend identifies the user by JWT; the provider now only confirms the Coding Plan is configured and derives the Team scope; Team no longer duplicates the project API key |
-| 08-12 | envelope business-error messages append ` (x-request-id:xxx)`                                        | `3cc99c4f69` | RPC FAIL logs and UI warns can be reconciled with the backend by request-id; the prefix contract is unchanged; without the header the message stays as-is |
+| 08-12 | envelope business-error messages append ` (x-request-id:xxx)`                                                                                         | `3cc99c4f69` | RPC FAIL logs and UI warns can be reconciled with the backend by request-id; the prefix contract is unchanged; without the header the message stays as-is                      |
 
 ## 3. Open issues
 
@@ -73,13 +73,13 @@ Optional improvements:
 The main loop closes once the APIs work; these cases remain to verify, in
 priority order:
 
-| Priority | Case                                  | Expected verification point                                                       |
-| -------- | ------------------------------------- | --------------------------------------------------------------------------------- |
-| P0       | click "reset" -> send a message now   | whether newly redeemed quota is immediately consumable (UI-optimistic 100% vs real rate limiting) |
-| P0       | use succeeds but status confirms slowly | whether the contradictory "failure toast then completed" feedback reproduces   |
-| P1       | first mount after overnight unread history | whether the completed verdict and 100% overlay flash match product expectations |
+| Priority | Case                                                      | Expected verification point                                                                               |
+| -------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| P0       | click "reset" -> send a message now                       | whether newly redeemed quota is immediately consumable (UI-optimistic 100% vs real rate limiting)         |
+| P0       | use succeeds but status confirms slowly                   | whether the contradictory "failure toast then completed" feedback reproduces                              |
+| P1       | first mount after overnight unread history                | whether the completed verdict and 100% overlay flash match product expectations                           |
 | P1       | two windows clicking "reset" at once (2-voucher scenario) | whether MAAS redeeming the earliest-expiring voucher consumes both vouchers; product semantics to confirm |
-| P2       | clicking a near-expiry voucher in status | toast experience when use is rejected by MAAS at the expiry moment        |
+| P2       | clicking a near-expiry voucher in status                  | toast experience when use is rejected by MAAS at the expiry moment                                        |
 
 ## 5. Backend alignment leftovers
 

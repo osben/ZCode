@@ -19,15 +19,15 @@ persistence fail in some environments.
 
 ## Path conventions
 
-| Scenario | New path | Lifecycle |
-| --- | --- | --- |
-| zcode-cli Bash persisted output | `<os.tmpdir()>/zcode-bash-<random id>/<session>/<tool>-stdout.log`; fallback to `<storageRoot>/cli/exec` | named temp file, keeps the foreground/background retention rules, accepts system cleanup |
-| zcode-cli clipboard image | `~/.zcode/clipboard` | deleted after a single read |
-| log export staging | `~/.zcode/export-log-stage` | deleted after packaging; leftovers allowed on abnormal exit |
-| log export result | `~/.zcode/export-log` | user-visible export result, kept by default |
-| feedback attachments and log bundle | `~/.zcode/feedback` | deleted after upload completes |
-| Git checkpoint temporary index | `~/.zcode/git-checkpoint-index` | deleted after the checkpoint build completes |
-| Desktop editor icon conversion | `~/.zcode/editor-icon` | deleted after a single conversion |
+| Scenario                            | New path                                                                                                 | Lifecycle                                                                                |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| zcode-cli Bash persisted output     | `<os.tmpdir()>/zcode-bash-<random id>/<session>/<tool>-stdout.log`; fallback to `<storageRoot>/cli/exec` | named temp file, keeps the foreground/background retention rules, accepts system cleanup |
+| zcode-cli clipboard image           | `~/.zcode/clipboard`                                                                                     | deleted after a single read                                                              |
+| log export staging                  | `~/.zcode/export-log-stage`                                                                              | deleted after packaging; leftovers allowed on abnormal exit                              |
+| log export result                   | `~/.zcode/export-log`                                                                                    | user-visible export result, kept by default                                              |
+| feedback attachments and log bundle | `~/.zcode/feedback`                                                                                      | deleted after upload completes                                                           |
+| Git checkpoint temporary index      | `~/.zcode/git-checkpoint-index`                                                                          | deleted after the checkpoint build completes                                             |
+| Desktop editor icon conversion      | `~/.zcode/editor-icon`                                                                                   | deleted after a single conversion                                                        |
 
 ## Constraints
 

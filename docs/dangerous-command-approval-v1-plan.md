@@ -51,14 +51,14 @@ Presentation only: the Guarded trigger uses the existing `icon-blue` light blue 
 
 Guarded replaces only the Edit entry in menus; YOLO is untouched and existing edit sessions/settings are not migrated.
 
-| Entry/relationship                    | Candidates, display, submission                                        | Single authority / compatibility boundary                                                | Priority      |
-| ------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------- |
-| Desktop/mobile Composer → shared mode catalog | build/guarded/plan/yolo; draft submits with Submission             | Old edit drafts/restored values still display as edit, not filtered to build/guarded        | must-inspect  |
-| Automation/OffPeak forms → same catalog | New selections exclude edit; untouched old edit saves as-is          | Each record is separate; no writes to the current conversation or global defaults           | must-inspect  |
-| TUI /mode suggestions, shortcut cycling | plan/build/guarded/yolo; only explicit selection submits the mode   | Runtime is authority; explicit old `/mode edit` and `--mode edit` stay compatible           | should-inspect |
-| Session/config/protocol normalization | The optional menu is not a restore-value allowlist; edit stays accepted | Existing permissions, Plan round-trips, and persistence are not migrated                    | invariant-only |
-| full-auto/full_auto aliases           | Restore maps to yolo; guarded maps separately                          | Other providers' aliases are unaffected                                                     | must-inspect  |
-| executor → logger                     | Restored evaluated/denied/resolved/hook_race_forfeited levels, event/module/status/reason, trace/tool correlation fields | Logs are derived observation, not part of approval; inputSummary keeps type/keys/lengths only, never input bodies | must-inspect |
+| Entry/relationship                            | Candidates, display, submission                                                                                          | Single authority / compatibility boundary                                                                         | Priority       |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | -------------- |
+| Desktop/mobile Composer → shared mode catalog | build/guarded/plan/yolo; draft submits with Submission                                                                   | Old edit drafts/restored values still display as edit, not filtered to build/guarded                              | must-inspect   |
+| Automation/OffPeak forms → same catalog       | New selections exclude edit; untouched old edit saves as-is                                                              | Each record is separate; no writes to the current conversation or global defaults                                 | must-inspect   |
+| TUI /mode suggestions, shortcut cycling       | plan/build/guarded/yolo; only explicit selection submits the mode                                                        | Runtime is authority; explicit old `/mode edit` and `--mode edit` stay compatible                                 | should-inspect |
+| Session/config/protocol normalization         | The optional menu is not a restore-value allowlist; edit stays accepted                                                  | Existing permissions, Plan round-trips, and persistence are not migrated                                          | invariant-only |
+| full-auto/full_auto aliases                   | Restore maps to yolo; guarded maps separately                                                                            | Other providers' aliases are unaffected                                                                           | must-inspect   |
+| executor → logger                             | Restored evaluated/denied/resolved/hook_race_forfeited levels, event/module/status/reason, trace/tool correlation fields | Logs are derived observation, not part of approval; inputSummary keeps type/keys/lengths only, never input bodies | must-inspect   |
 
 ```text
 模式目录（新选择） -> Composer/表单/TUI -> 原提交链路 -> runtime.mode
@@ -70,21 +70,21 @@ Dimensions: entry × new-selection/historical-edit × guarded/yolo. Pruned: no p
 
 ## Command catalog / Boundary Decisions
 
-| ruleId (prefix `safety.bash.`) | Explicit hit                                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| remove-critical-path           | rm recursive, or at least two targets / unquoted unescaped glob; no path-risk analysis           |
-| system-storage                 | dd, mount, umount, mkfs/mkfs.\*; declared help/version and argument-less mount listing exempt     |
-| git-reset-hard                 | git reset --hard                                                                                |
-| git-clean-force                | effective force, except a true dry-run                                                           |
-| git-push-force                 | effective force/force-with-lease/mirror/+refspec, except a true dry-run                          |
-| git-discard-tree               | checkout -f, or checkout/restore whole-tree rollback of ., ./, :/; pure staged restore exempt    |
-| git-stash-clear                | git stash clear                                                                                 |
-| git-worktree-force-remove      | git worktree remove -f/--force, including repeated force                                         |
-| rsync-delete                   | delete/del/delete-before/during/delay/after/excluded, except a true dry-run                      |
-| cmd-remove-tree                | CMD rd/rmdir /s; standalone help exempt                                                          |
-| cmd-delete-files               | CMD del/erase actually deleting; no target and standalone help exempt                            |
-| find-delete                    | POSIX/Git Bash find `-delete` action; exec payloads not interpreted                              |
-| robocopy-delete                | CMD/Git Bash robocopy /MIR or /PURGE; reliable /L listing exempt                                 |
+| ruleId (prefix `safety.bash.`) | Explicit hit                                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------------------------- |
+| remove-critical-path           | rm recursive, or at least two targets / unquoted unescaped glob; no path-risk analysis        |
+| system-storage                 | dd, mount, umount, mkfs/mkfs.\*; declared help/version and argument-less mount listing exempt |
+| git-reset-hard                 | git reset --hard                                                                              |
+| git-clean-force                | effective force, except a true dry-run                                                        |
+| git-push-force                 | effective force/force-with-lease/mirror/+refspec, except a true dry-run                       |
+| git-discard-tree               | checkout -f, or checkout/restore whole-tree rollback of ., ./, :/; pure staged restore exempt |
+| git-stash-clear                | git stash clear                                                                               |
+| git-worktree-force-remove      | git worktree remove -f/--force, including repeated force                                      |
+| rsync-delete                   | delete/del/delete-before/during/delay/after/excluded, except a true dry-run                   |
+| cmd-remove-tree                | CMD rd/rmdir /s; standalone help exempt                                                       |
+| cmd-delete-files               | CMD del/erase actually deleting; no target and standalone help exempt                         |
+| find-delete                    | POSIX/Git Bash find `-delete` action; exec payloads not interpreted                           |
+| robocopy-delete                | CMD/Git Bash robocopy /MIR or /PURGE; reliable /L listing exempt                              |
 
 Per-word parsing preserves literalness, dynamism, and position; only direct calls, ordering, AND/OR, and pipelines are extracted. Strings/comments/redirect targets are not commands. A dynamic target does not erase an explicit rm recursive+force.
 
@@ -102,17 +102,17 @@ A shell AST proves words, boundaries, and positions — not how the invoked prog
 - Generic option parsing must explicitly declare `stop-at-operand` or `interspersed`; there is no default. Wrappers and Git leading parameters stop at the first operand; the rm existence rule, Git subcommands, and rsync keep scanning per declared grammar.
 - A new exemption must state its command, valid option positions, arity, cancellation precedence, and independent verification basis; it cannot be derived from one platform's help behavior. Parameter values, operands after `--`, and same-named words inside other commands never create exemptions.
 
-| Rule                  | Verified hit-cancellation conditions                                                                     |
-| --------------------- | ---------------------------------------------------------------------------------------------------------- |
-| rm recursive + force  | no query/interactive exemption; the rm help/version exemption was removed                                 |
-| system-storage        | only standalone single-argument `--help/--version`, argument-less mount; help words in other args not scanned |
-| git reset --hard      | Git help, explicit other reset modes/patch; rm scan semantics are not borrowed                             |
-| git clean force       | Git help, effective dry-run; exclude values and paths after `--` do not create dry-run                     |
-| git push force        | Git help, effective dry-run; force/lease/mirror reduce via their respective cancel options                 |
-| git discard tree      | Git help; staged-only restore; cancelling checkout force does not erase an independent whole-tree target    |
-| git stash clear       | Git help; stash drop is out of scope                                                                       |
-| git worktree force remove | Git help, effective no-force; repeated force still hits                                                |
-| rsync delete          | declared dry-run/help/version; filter/exclude parameter values and operands after `--` give no exemption   |
+| Rule                      | Verified hit-cancellation conditions                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| rm recursive + force      | no query/interactive exemption; the rm help/version exemption was removed                                     |
+| system-storage            | only standalone single-argument `--help/--version`, argument-less mount; help words in other args not scanned |
+| git reset --hard          | Git help, explicit other reset modes/patch; rm scan semantics are not borrowed                                |
+| git clean force           | Git help, effective dry-run; exclude values and paths after `--` do not create dry-run                        |
+| git push force            | Git help, effective dry-run; force/lease/mirror reduce via their respective cancel options                    |
+| git discard tree          | Git help; staged-only restore; cancelling checkout force does not erase an independent whole-tree target      |
+| git stash clear           | Git help; stash drop is out of scope                                                                          |
+| git worktree force remove | Git help, effective no-force; repeated force still hits                                                       |
+| rsync delete              | declared dry-run/help/version; filter/exclude parameter values and operands after `--` give no exemption      |
 
 ### Unknown options, tail redirection, and missing shell selection
 
@@ -205,12 +205,12 @@ The matcher, mode passthrough, and ordinary-subagent routing are kept; the share
 
 ## UI Surface Matrix / State Owners
 
-| Scenario           | Entry / shared source                     | Authority and submission                        | Must stay isolated                            |
-| ------------------ | ------------------------------------------ | ------------------------------------------------ | ---------------------------------------------- |
-| Mode selection     | V4 Composer/mobile/TUI/CLI mode catalog    | draft or runtime.mode, existing submit commands  | Other tasks and defaults                       |
-| Automation mode    | Existing edit/create settings              | automation record → runtime                      | No write-back to the current conversation      |
-| Approval           | V4/TUI/broker options                      | CLI pending/requestId → executor                 | UI computes no danger; no project persistence  |
-| Mobile recovery    | shared-host projection                     | Existing owner routing                           | replayable does not replace continuous         |
+| Scenario        | Entry / shared source                   | Authority and submission                        | Must stay isolated                            |
+| --------------- | --------------------------------------- | ----------------------------------------------- | --------------------------------------------- |
+| Mode selection  | V4 Composer/mobile/TUI/CLI mode catalog | draft or runtime.mode, existing submit commands | Other tasks and defaults                      |
+| Automation mode | Existing edit/create settings           | automation record → runtime                     | No write-back to the current conversation     |
+| Approval        | V4/TUI/broker options                   | CLI pending/requestId → executor                | UI computes no danger; no project persistence |
+| Mobile recovery | shared-host projection                  | Existing owner routing                          | replayable does not replace continuous        |
 
 The broker owns pending; the executor owns the input snapshot; sessionStore owns project rules; projections are derived facts. `workspaceIdentity?.trim() || workspacePath` is the identity key; execution uses workspacePath. No second state/queue.
 
@@ -218,14 +218,14 @@ Hook-rewrite confirmation replacement (Desktop `desktop-continuous` E2E contract
 
 ## Feature Relationships
 
-| rank           | Shared start and direct chain                                        | Depth        |
-| -------------- | --------------------------------------------------------------------- | ------------ |
-| must-inspect   | Bash AST → ToolEntry → PermissionService → permission-flow            | 2-3          |
-| must-inspect   | mode schema/catalog → submission/command → runtime/persistence        | 2            |
-| must-inspect   | workflow/subagent factory → child mode/executor                       | 2            |
-| should-inspect | broker/event → buildProtocolPermissionOptions → V4/TUI                | 2            |
-| invariant-only | continuous/replayable/workspace identity                              | 1            |
-| evidence-only  | existing permission/BPR/PVD tests                                     | not new coverage |
+| rank           | Shared start and direct chain                                  | Depth            |
+| -------------- | -------------------------------------------------------------- | ---------------- |
+| must-inspect   | Bash AST → ToolEntry → PermissionService → permission-flow     | 2-3              |
+| must-inspect   | mode schema/catalog → submission/command → runtime/persistence | 2                |
+| must-inspect   | workflow/subagent factory → child mode/executor                | 2                |
+| should-inspect | broker/event → buildProtocolPermissionOptions → V4/TUI         | 2                |
+| invariant-only | continuous/replayable/workspace identity                       | 1                |
+| evidence-only  | existing permission/BPR/PVD tests                              | not new coverage |
 
 ## Dimensions / Pruning / Accepted Cases
 

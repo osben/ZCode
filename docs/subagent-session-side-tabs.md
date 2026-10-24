@@ -230,12 +230,12 @@ workspace identity and cwd; a missing, cyclic or cross-workspace parent relation
 ordinary remote main task must still have a project; children are not recognized by ID prefix or old
 index rows, no child task row is created, and the directory scope is not widened.
 
-| Persisted type | Project resolution | Main list | User input |
-| --- | --- | --- | --- |
-| `interactive`, `fork`, `workflow_parent` | the task's own project | visible | existing admission |
-| `subagent_child`, `workflow_child` | the owning main task's project after validating the parent chain | hidden | read-only |
-| `selection_side_chat` | the owning main task's project after validating the parent chain | hidden | chat allowed, keeps the auxiliary conversation's own command limits |
-| `nested_workflow_child` | handled as a persisted workflow child session; no new creation entry | hidden | read-only |
+| Persisted type                           | Project resolution                                                   | Main list | User input                                                          |
+| ---------------------------------------- | -------------------------------------------------------------------- | --------- | ------------------------------------------------------------------- |
+| `interactive`, `fork`, `workflow_parent` | the task's own project                                               | visible   | existing admission                                                  |
+| `subagent_child`, `workflow_child`       | the owning main task's project after validating the parent chain     | hidden    | read-only                                                           |
+| `selection_side_chat`                    | the owning main task's project after validating the parent chain     | hidden    | chat allowed, keeps the auxiliary conversation's own command limits |
+| `nested_workflow_child`                  | handled as a persisted workflow child session; no new creation entry | hidden    | read-only                                                           |
 
 2026-10-19 regression: the original fix recognized only `subagent_child`, so workflow and auxiliary
 conversations still looked up projects by the child ID. Project inheritance and read-only admission

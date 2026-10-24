@@ -76,30 +76,30 @@ account_uuid ─────────────────fixed empty stri
 | Change layer     | `commit-effect`, `persistence`                                                                                       |
 | Operating mode   | `planning`                                                                                                           |
 | Primary seeds    | `ensureDesktopDeviceMidSync`, `createTelemetryCore`, `runGenerateText`, `runStreamText`, `createGenerateTextOptions` |
-| Out of scope     | UI, app services request headers, protocol, conversation/replay state, non-Anthropic providers                        |
+| Out of scope     | UI, app services request headers, protocol, conversation/replay state, non-Anthropic providers                       |
 
 UI Surface Matrix: no UI entry. The authoritative persistence is `telemetry-state.json.deviceMid` on the Agent's host; the zcode-cli model adapter is the metadata commit sink.
 
-| Rank           | Relationship                                  | Reason                                              |
-| -------------- | --------------------------------------------- | --------------------------------------------------- |
-| must-inspect   | CLI deviceMid ensure → telemetry state        | reuse the same field, keep other telemetry state    |
-| must-inspect   | model runner → Anthropic provider options     | generate/stream and retry share one injection path  |
-| should-inspect | session attribution header → metadata session | header and body must not use two prefix rule sets   |
-| conditional    | local Agent → remote Agent data root          | device identity follows the actual Agent environment |
-| invariant-only | non-Anthropic providers                       | no new metadata, no provider option changes         |
+| Rank           | Relationship                                  | Reason                                                |
+| -------------- | --------------------------------------------- | ----------------------------------------------------- |
+| must-inspect   | CLI deviceMid ensure → telemetry state        | reuse the same field, keep other telemetry state      |
+| must-inspect   | model runner → Anthropic provider options     | generate/stream and retry share one injection path    |
+| should-inspect | session attribution header → metadata session | header and body must not use two prefix rule sets     |
+| conditional    | local Agent → remote Agent data root          | device identity follows the actual Agent environment  |
+| invariant-only | non-Anthropic providers                       | no new metadata, no provider option changes           |
 | invariant-only | desktop continuous / mobile replayable        | message flow, snapshot, and recovery bounds unchanged |
 
 Graph drift: the existing feature graph does not declare Anthropic request metadata or shared deviceMid persistence; this capability, its service, persistence, and semantic edges are to be added there.
 
 ## Accepted Cases
 
-| Case  | Setup                                     | Action                    | Assertions                                        |
-| ----- | ----------------------------------------- | ------------------------- | ------------------------------------------------- |
-| ARM01 | state already has `deviceMid`             | Anthropic generate        | body uses the existing value and normalized session |
-| ARM02 | state lacks `deviceMid`                   | standalone/remote CLI first request | CLI generates a UUID, preserves other state, persists |
-| ARM03 | concurrent first requests                 | Anthropic generate/stream | the same state file yields and consumes one persisted ID |
-| ARM04 | static Anthropic metadata plus `thinking` | request issued            | dynamic userId overrides static; other options kept |
-| ARM05 | OpenAI-compatible provider                | request issued            | no Anthropic metadata injected                     |
-| ARM06 | state IO failure                          | Anthropic retry           | request continues; same fallback ID within the process |
+| Case  | Setup                                     | Action                              | Assertions                                               |
+| ----- | ----------------------------------------- | ----------------------------------- | -------------------------------------------------------- |
+| ARM01 | state already has `deviceMid`             | Anthropic generate                  | body uses the existing value and normalized session      |
+| ARM02 | state lacks `deviceMid`                   | standalone/remote CLI first request | CLI generates a UUID, preserves other state, persists    |
+| ARM03 | concurrent first requests                 | Anthropic generate/stream           | the same state file yields and consumes one persisted ID |
+| ARM04 | static Anthropic metadata plus `thinking` | request issued                      | dynamic userId overrides static; other options kept      |
+| ARM05 | OpenAI-compatible provider                | request issued                      | no Anthropic metadata injected                           |
+| ARM06 | state IO failure                          | Anthropic retry                     | request continues; same fallback ID within the process   |
 
 No conversation case catalog, coverage matrix, or E2E handoff required; adapter unit tests and real Anthropic wire body tests are the evidence.

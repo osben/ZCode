@@ -15,30 +15,30 @@ Goal: expand the product semantics of desktop “plugin-provided MCP skills” f
 
 ## Enumeration boundary
 
-| Dimension | Equivalence classes |
-| --- | --- |
-| Install state | `not-installed`, `installed-enabled`, `installed-disabled` |
-| Trigger surface | `installed_plugins.json` present/absent; `config.json#plugins.enabledPlugins[id]` true/false/missing |
-| MCP server start | `lazy` (spawn only on listTools); `eager` (spawn on plugin enable) |
-| Conversation tool exposure | namespaced tool name present/absent in `tools[]` |
-| Soft evidence | `chat-tool-call-block-<toolName>` block present/absent in chat |
-| Fixture reuse | `fixtures/upstream/plugin-mcp-skill/conversation-session-plugin-mcp-skill-{baselines,installed-enabled}.json` |
+| Dimension                  | Equivalence classes                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Install state              | `not-installed`, `installed-enabled`, `installed-disabled`                                                    |
+| Trigger surface            | `installed_plugins.json` present/absent; `config.json#plugins.enabledPlugins[id]` true/false/missing          |
+| MCP server start           | `lazy` (spawn only on listTools); `eager` (spawn on plugin enable)                                            |
+| Conversation tool exposure | namespaced tool name present/absent in `tools[]`                                                              |
+| Soft evidence              | `chat-tool-call-block-<toolName>` block present/absent in chat                                                |
+| Fixture reuse              | `fixtures/upstream/plugin-mcp-skill/conversation-session-plugin-mcp-skill-{baselines,installed-enabled}.json` |
 
 ## Review states
 
-| State | Meaning |
-| --- | --- |
-| accepted | Product expectation clear; test can be generated |
-| undefined | Product expectation undefined; pending |
+| State         | Meaning                                                                  |
+| ------------- | ------------------------------------------------------------------------ |
+| accepted      | Product expectation clear; test can be generated                         |
+| undefined     | Product expectation undefined; pending                                   |
 | bug-candidate | Implementation conflicts with the case; not necessarily a protocol issue |
 
 ## Case list
 
-| ID | Precondition | User/system event | Rule hit | Expected | Review |
-| --- | --- | --- | --- | --- | --- |
-| P01 | `installed_plugins.json` lacks the plugin | User sends plain text in chat | `not-installed` baseline | Request `tools[]` lacks `mcp__plugin_e2e-plugin-mcp-ping_ping__ping`; no corresponding tool-call block in chat | accepted |
-| P02 | `installed_plugins.json` has the plugin, `enabledPlugins[id] = true` | User sends a “call the tool” prompt | `installed-enabled` strong evidence | Request `tools[]` contains `mcp__plugin_e2e-plugin-mcp-ping_ping__ping`; chat shows that tool's tool-call block | accepted |
-| P03 | `installed_plugins.json` has the plugin, `enabledPlugins[id] = false` | User sends plain text | `installed-disabled` | Request `tools[]` lacks `mcp__plugin_e2e-plugin-mcp-ping_ping__ping`; no corresponding tool-call block | accepted |
+| ID  | Precondition                                                          | User/system event                   | Rule hit                            | Expected                                                                                                        | Review   |
+| --- | --------------------------------------------------------------------- | ----------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------- |
+| P01 | `installed_plugins.json` lacks the plugin                             | User sends plain text in chat       | `not-installed` baseline            | Request `tools[]` lacks `mcp__plugin_e2e-plugin-mcp-ping_ping__ping`; no corresponding tool-call block in chat  | accepted |
+| P02 | `installed_plugins.json` has the plugin, `enabledPlugins[id] = true`  | User sends a “call the tool” prompt | `installed-enabled` strong evidence | Request `tools[]` contains `mcp__plugin_e2e-plugin-mcp-ping_ping__ping`; chat shows that tool's tool-call block | accepted |
+| P03 | `installed_plugins.json` has the plugin, `enabledPlugins[id] = false` | User sends plain text               | `installed-disabled`                | Request `tools[]` lacks `mcp__plugin_e2e-plugin-mcp-ping_ping__ping`; no corresponding tool-call block          | accepted |
 
 ## v1 verified constraints
 

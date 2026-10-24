@@ -60,17 +60,17 @@ Acceptance of the current instructions: with no global CLI/Node the skill can st
 
 ## Acceptance and impact
 
-| Case | State/action | Asserts |
-| --- | --- | --- |
-| PLM-LC-018 | zh/en management list and search | Full-ID listing linkage; name/description/feedback consistent; original and Chinese names searchable; missing translations fall back to the original |
-| PLM-LC-019 | Both add menus/create | Two menu items; real skill chip and trailing space; not sent; remount restores the same draft |
-| PLM-LC-020 | Add source success/failure/cancel | Navigation consumed once; success goes to the personal section; failure keeps input; cancel writes nothing |
-| creator-boundary | Duplicate clicks, identity/attachment switches, disabled/missing | Only the current target commits once; errors cause no prefill/enable side effects |
-| creator-assets | Node/SEA/Desktop/remote | manifest, skill, scripts, references all present and discoverable |
-| creator-scaffold | Minimal, skill, MCP, hook, marketplace, update | ZCode validation passes; invalid input, out-of-scope, duplicate/overwrite, TODO rejected |
-| creator-dev-market | Create/update dev listing, same-name workspaces, write races | Stable ID; unrelated data and source preserved; source conflicts, duplicates, out-of-scope, lock contention rejected; exclusive temp-file failure does not delete existing files |
-| creator-dev-workflow | Real CLI create, register, install, version update | available/installed IDs and versions match; install directory separate from source; content updates take effect with explicit disables preserved |
-| creator-manual-handoff | No CLI/Node, first add, existing-plugin update, cancel/failure | Real directories and UI steps given; no auto register/install; no invented install references; incomplete states explicit |
+| Case                   | State/action                                                     | Asserts                                                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PLM-LC-018             | zh/en management list and search                                 | Full-ID listing linkage; name/description/feedback consistent; original and Chinese names searchable; missing translations fall back to the original                             |
+| PLM-LC-019             | Both add menus/create                                            | Two menu items; real skill chip and trailing space; not sent; remount restores the same draft                                                                                    |
+| PLM-LC-020             | Add source success/failure/cancel                                | Navigation consumed once; success goes to the personal section; failure keeps input; cancel writes nothing                                                                       |
+| creator-boundary       | Duplicate clicks, identity/attachment switches, disabled/missing | Only the current target commits once; errors cause no prefill/enable side effects                                                                                                |
+| creator-assets         | Node/SEA/Desktop/remote                                          | manifest, skill, scripts, references all present and discoverable                                                                                                                |
+| creator-scaffold       | Minimal, skill, MCP, hook, marketplace, update                   | ZCode validation passes; invalid input, out-of-scope, duplicate/overwrite, TODO rejected                                                                                         |
+| creator-dev-market     | Create/update dev listing, same-name workspaces, write races     | Stable ID; unrelated data and source preserved; source conflicts, duplicates, out-of-scope, lock contention rejected; exclusive temp-file failure does not delete existing files |
+| creator-dev-workflow   | Real CLI create, register, install, version update               | available/installed IDs and versions match; install directory separate from source; content updates take effect with explicit disables preserved                                 |
+| creator-manual-handoff | No CLI/Node, first add, existing-plugin update, cancel/failure   | Real directories and UI steps given; no auto register/install; no invented install references; incomplete states explicit                                                        |
 
 UI/draft owners: management and store components own display/entry, Root owns the new task, the Composer draft store owns the prefill facts; skill/plugin content is decided by target-host discovery. The shared menu, prefill builder, and both searches are must-inspect; the runtime is invariant-only. Codegraph was used to locate old-workspace files; the implementation workspace has no index — read the located files for current source. The architecture gate's ui/zcode-cli is currently unmanaged; passing the gate does not replace semantic review.
 

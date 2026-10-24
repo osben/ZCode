@@ -241,19 +241,19 @@ Server-delivery authority regressions (2026-09-10): same-ID banner re-display an
 
 Order: P0 spec/fixture → P1 DTO/service/adapter → P2 assets → P3 controller/poll → P4 banner/actions → P5 popup/report → P6 E2E/migration.
 
-| Case   | Scenario and assertion                                                              | Layer            |
-| ------ | ----------------------------------------------------------------------------------- | ---------------- |
-| MTC-01 | both slots parse independently; a bad banner does not affect the popup; unknown action/layout rejected | unit             |
-| MTC-02 | GET/POST required headers and original IDs; account switch rejects late reports; POST never retried | service          |
-| MTC-03 | banner hidden before validated decode; wrong hash rejected; same hash cached and reused | integration/E2E  |
-| MTC-04 | rapid double-clicks produce one claim; X→loading; safety-check cancel restores       | unit/E2E         |
-| MTC-05 | polling content changes never replace the pending action snapshot; late responses isolated | unit/E2E      |
-| MTC-06 | success fact never reversed by refresh failure; preload/failure degradation/no result popup | unit/E2E    |
-| MTC-07 | standalone popups never stack; same-ID re-delivery reopens after close; withdrawn candidates cancel | unit/E2E |
-| MTC-08 | close cancel, success confirm, result close not re-reported; failure never blocks    | unit/E2E         |
-| MTC-09 | hidden pause/resume, serialization, failure backoff, empty array, language/identity generation | unit      |
-| MTC-10 | no cross-window history blocking; narrow/theme/keyboard; Web bundle degradation      | integration/E2E  |
-| MTC-11 | same-ID banner re-displays and reports after close/success; old responses cannot revive an instance | unit/E2E |
+| Case   | Scenario and assertion                                                                                 | Layer           |
+| ------ | ------------------------------------------------------------------------------------------------------ | --------------- |
+| MTC-01 | both slots parse independently; a bad banner does not affect the popup; unknown action/layout rejected | unit            |
+| MTC-02 | GET/POST required headers and original IDs; account switch rejects late reports; POST never retried    | service         |
+| MTC-03 | banner hidden before validated decode; wrong hash rejected; same hash cached and reused                | integration/E2E |
+| MTC-04 | rapid double-clicks produce one claim; X→loading; safety-check cancel restores                         | unit/E2E        |
+| MTC-05 | polling content changes never replace the pending action snapshot; late responses isolated             | unit/E2E        |
+| MTC-06 | success fact never reversed by refresh failure; preload/failure degradation/no result popup            | unit/E2E        |
+| MTC-07 | standalone popups never stack; same-ID re-delivery reopens after close; withdrawn candidates cancel    | unit/E2E        |
+| MTC-08 | close cancel, success confirm, result close not re-reported; failure never blocks                      | unit/E2E        |
+| MTC-09 | hidden pause/resume, serialization, failure backoff, empty array, language/identity generation         | unit            |
+| MTC-10 | no cross-window history blocking; narrow/theme/keyboard; Web bundle degradation                        | integration/E2E |
+| MTC-11 | same-ID banner re-displays and reports after close/success; old responses cannot revive an instance    | unit/E2E        |
 
 Fixtures use a local controlled endpoint, real ZIP/hashes, and a request ledger, claiming no live plans. Required: architecture:check, typecheck, lint, related unit tests, and App E2E; platforms/paths not actually run are listed as gaps. Test and completion states are backfilled separately; old mock tests never stand in for real integration passes.
 
@@ -286,7 +286,7 @@ Promoted 2026-09-12: the three specs (delivery, entitlement, anonymous) live in 
 
 Open/unverified: live campaigns and claims, the real safety-check service, multi-window on real machines, Windows/Linux, mobile Web, and dual-theme narrow-screen visual acceptance — local fixtures never stand in for these. Typecheck, E2E typecheck, and architecture checks pass; lint reports 0 errors with ~46 pre-existing warnings.
 
-Full history: git show 43d52cbd:docs/marketing-touch-client.md
+Full history: git show 45f808f7:docs/marketing-touch-client.md
 
 ## Push regression-fix constraints
 

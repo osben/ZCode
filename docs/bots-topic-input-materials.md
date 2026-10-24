@@ -45,12 +45,12 @@ This spec replaces the old body-concatenation reference, auto-summary, and bot_t
 
 ## Input and ordering
 
-| Material | Existing mechanism |
-| --- | --- |
-| Message body | normal input |
-| Explicit quoted text | standard conversation quote, carrying the real original |
-| Explicit quoted image/file | normal attachment, fully prepared before submit |
-| Topic history | reference long-paste mechanism generating a viewable text attachment |
+| Material                   | Existing mechanism                                                   |
+| -------------------------- | -------------------------------------------------------------------- |
+| Message body               | normal input                                                         |
+| Explicit quoted text       | standard conversation quote, carrying the real original              |
+| Explicit quoted image/file | normal attachment, fully prepared before submit                      |
+| Topic history              | reference long-paste mechanism generating a viewable text attachment |
 
 ```text
 trusted inbound -> authorization, topic, and join-state checks -> body + quotes + attachment prep

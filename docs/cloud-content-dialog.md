@@ -63,23 +63,23 @@ The authoritative definition is the Zod schema in
 `packages/shared/src/cloudContent.ts`; UI types derive from it and no second wire
 type is maintained.
 
-| Field                     | Consumer and constraint                                                          |
-| ------------------------- | -------------------------------------------------------------------------------- |
-| schemaVersion             | must be 1                                                                         |
+| Field                     | Consumer and constraint                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| schemaVersion             | must be 1                                                                                             |
 | id / revision             | non-empty content id (max 128 chars) / positive integer version; isolates dialog-instance async state |
-| kind / locale             | campaign, feature, notice / zh-CN, en-US; kind never injects campaign business    |
-| dialog.title              | plain text, 1–500 characters                                                      |
-| dialog.description        | format, text; text up to 20,000 characters                                        |
-| dialog.hero               | four-kind union, see below                                                        |
-| dialog.buttons            | at most 4, unique ids; label up to 200 characters; variant is primary/secondary/link |
-| button.actionId / actions | references must exist; at most 16 actions; only registered host handlers execute  |
+| kind / locale             | campaign, feature, notice / zh-CN, en-US; kind never injects campaign business                        |
+| dialog.title              | plain text, 1–500 characters                                                                          |
+| dialog.description        | format, text; text up to 20,000 characters                                                            |
+| dialog.hero               | four-kind union, see below                                                                            |
+| dialog.buttons            | at most 4, unique ids; label up to 200 characters; variant is primary/secondary/link                  |
+| button.actionId / actions | references must exist; at most 16 actions; only registered host handlers execute                      |
 
-| Hero type          | Fields                                                                                        |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| image              | src, darkSrc?, alt, fit?                                                                       |
-| video              | src, darkSrc?, poster, autoplay?, loop?, muted:true, fit?                                       |
-| lottie             | src, darkSrc?, autoplay?, loop?, speed? (0.1–4), fallback?                                      |
-| interactive_bundle | runtime:zcode-hero-sandbox-v1, bundle, viewport:{aspectRatio:"4:3"}, data, events, fallback?    |
+| Hero type          | Fields                                                                                       |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| image              | src, darkSrc?, alt, fit?                                                                     |
+| video              | src, darkSrc?, poster, autoplay?, loop?, muted:true, fit?                                    |
+| lottie             | src, darkSrc?, autoplay?, loop?, speed? (0.1–4), fallback?                                   |
+| interactive_bundle | runtime:zcode-hero-sandbox-v1, bundle, viewport:{aspectRatio:"4:3"}, data, events, fallback? |
 
 The bundle must contain `format:"zip"`, `url`, `entry`, `sha256` (64 lowercase hex);
 `sizeBytes` is optional and, when present, must be a positive integer matching the

@@ -114,13 +114,13 @@ Group titles show `LOC · 入 · 出` — three dimensions distinguishing code s
 
 ## Edge types
 
-| Type | Meaning | Example |
-| --- | --- | --- |
-| `state` | state projection, authoritative facts, or persistence | ProductProjection projecting to Conversation UI |
-| `runtime` | triggers execution, calls, or runtime hosting | Automation Scheduler triggering Agent Turn Runtime |
-| `shared` | shared candidates, components, config, or extension resources | Provider Registry offering candidates to Model Selector |
-| `delivery` | cross-process, cross-client delivery or recovery path | Mobile Replayable entering the same Host via Shared Host Attachment |
-| `invariant` | a boundary that must stay isolated, unprivileged, or unshared | Task Index must not become the conversation-body authority |
+| Type        | Meaning                                                       | Example                                                             |
+| ----------- | ------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `state`     | state projection, authoritative facts, or persistence         | ProductProjection projecting to Conversation UI                     |
+| `runtime`   | triggers execution, calls, or runtime hosting                 | Automation Scheduler triggering Agent Turn Runtime                  |
+| `shared`    | shared candidates, components, config, or extension resources | Provider Registry offering candidates to Model Selector             |
+| `delivery`  | cross-process, cross-client delivery or recovery path         | Mobile Replayable entering the same Host via Shared Host Attachment |
+| `invariant` | a boundary that must stay isolated, unprivileged, or unshared | Task Index must not become the conversation-body authority          |
 
 ## Three runtime layers and engineering infrastructure
 
@@ -140,11 +140,11 @@ ZCode CLI
   session event journal / usage SQLite
 ```
 
-| Layer | Owns | Explicitly does not own |
-| --- | --- | --- |
-| Renderer | input drafts, selection state, filter ranges, chart range, UI projection cache | Agent runtime state, conversation body, CLI queue, usage facts |
-| Host | window-scoped services, credentials, remote connections, process supervision, attachment routing, platform IO, remote entitlement requests, Telemetry/ARMS sending | conversation body, Agent turns, mobile replayable business state |
-| ZCode CLI | Agent/Turn, CommandInbox, ProductProjection, session events, model/tool execution, session recovery, usage SQLite authoritative facts | Renderer drafts, window layout, Electron platform state |
+| Layer     | Owns                                                                                                                                                               | Explicitly does not own                                          |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Renderer  | input drafts, selection state, filter ranges, chart range, UI projection cache                                                                                     | Agent runtime state, conversation body, CLI queue, usage facts   |
+| Host      | window-scoped services, credentials, remote connections, process supervision, attachment routing, platform IO, remote entitlement requests, Telemetry/ARMS sending | conversation body, Agent turns, mobile replayable business state |
+| ZCode CLI | Agent/Turn, CommandInbox, ProductProjection, session events, model/tool execution, session recovery, usage SQLite authoritative facts                              | Renderer drafts, window layout, Electron platform state          |
 
 - Desktop Renderer, the future Web App, and Mobile Renderer reuse product semantics but attach to the Host through different attachments.
 - SSH, WSL, Docker, and local windows all establish workspace-level connections through the Host; remote workspaces must carry `workspaceIdentity` and `remoteSessionId` end to end.
@@ -175,35 +175,35 @@ Engineering Infrastructure
 
 ## Capability groups
 
-| Top-level area | Group | Maintenance boundary |
-| --- | --- | --- |
-| Renderer | 对话与任务体验 | Composer, Projection Store, Timeline, session actions, task navigation, attachment experience |
-| Renderer | 模型与账户体验 | Provider Settings, Model Selector, plan status/purchase, plan usage UI |
-| Renderer | 扩展体验 | Plugin/Skill/MCP settings, marketplace and import entries |
-| Renderer | 浏览器与开发工作台体验 | Browser, File, Terminal, Git/Diff product UI |
-| Renderer | 办公套件与计算机操作孵化 | PDF/Office preview and editing roadmap, Computer Use task experience, manual takeover and security confirmation |
-| Renderer | 自动化体验 | scheduled automation, off-peak tasks, Bot config/history UI |
-| Renderer | UI 平台 | design system, theming, i18n, responsive, Settings/Onboarding |
-| Renderer | 数据洞察与反馈体验 | App Usage charts, Feedback entry, Resource Manager display |
-| Host | 账户与权益 | OAuth/Credential, Plan Identity, Start/Coding/Team Plan, payments, remote quota/monitor |
-| Host | 扩展管理与同步 | plugin install/upgrade, resource contribution, cross-local/remote sync |
-| Host | 浏览器与计算机操作平台 | BrowserView/WebContentsView, CDP backend, Computer Use Helper lifecycle, trust broker, system observation and input execution |
-| Host | 工作区与交付 | workspace identity, Local/Remote Host, mobile remote, continuous/replayable |
-| Host | 工作台服务 | File/Terminal/Git services |
-| Host | 自动化与渠道运行时 | scheduler, automation record, off-peak, Bots, third-party channels |
-| Host | 客户端平台 | Electron lifecycle, client update, Feedback tickets and diagnostic bundles |
-| Host | 数据与可观测性 | App Usage bridge, product analytics, Conversation telemetry, ARMS, performance reliability, logs and process monitoring |
-| ZCode CLI | 智能体核心 | runtime assembly, turn state machine, context, memory, compact, stream recovery, goal/target, fault finalization |
-| ZCode CLI | 对话运行时 | session lifecycle, input admission, CLI queue, event journal, ProductProjection, fork/rewind |
-| ZCode CLI | 模型能力 | provider runtime, catalog capabilities, token budget, multimodal, reasoning and tool capabilities |
-| ZCode CLI | 工具运行时与安全 | built-in tools, scheduling, permissions, mode policy, tool artifacts |
-| ZCode CLI | 多智能体 | Subagent profiles, child runtime, coordination and background tasks |
-| ZCode CLI | 扩展运行时 | MCP, Skills, Hooks, Commands, Memory resources |
-| ZCode CLI | 浏览器运行时 | Browser Use Plugin, Node REPL/Playwright, Headless backend |
-| ZCode CLI | 用量可观测存储 | model/turn/tool usage facts, SQLite 30-day retention and App Usage SQL aggregation |
-| 基础设施 | 构建与发布工程 | GitLab pipeline, cross-platform builds, packaging/signing, notarization, artifacts, CDN, canary/stable release |
-| 基础设施 | 测试自动化平台 | Desktop/CLI E2E harness, capture/replay, cross-platform execution, fault injection, case admission and promotion |
-| 基础设施 | 质量数据与工程治理 | E2E reports, coverage, quality trends, static gates, engineering performance and failure artifacts |
+| Top-level area | Group                    | Maintenance boundary                                                                                                          |
+| -------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Renderer       | 对话与任务体验           | Composer, Projection Store, Timeline, session actions, task navigation, attachment experience                                 |
+| Renderer       | 模型与账户体验           | Provider Settings, Model Selector, plan status/purchase, plan usage UI                                                        |
+| Renderer       | 扩展体验                 | Plugin/Skill/MCP settings, marketplace and import entries                                                                     |
+| Renderer       | 浏览器与开发工作台体验   | Browser, File, Terminal, Git/Diff product UI                                                                                  |
+| Renderer       | 办公套件与计算机操作孵化 | PDF/Office preview and editing roadmap, Computer Use task experience, manual takeover and security confirmation               |
+| Renderer       | 自动化体验               | scheduled automation, off-peak tasks, Bot config/history UI                                                                   |
+| Renderer       | UI 平台                  | design system, theming, i18n, responsive, Settings/Onboarding                                                                 |
+| Renderer       | 数据洞察与反馈体验       | App Usage charts, Feedback entry, Resource Manager display                                                                    |
+| Host           | 账户与权益               | OAuth/Credential, Plan Identity, Start/Coding/Team Plan, payments, remote quota/monitor                                       |
+| Host           | 扩展管理与同步           | plugin install/upgrade, resource contribution, cross-local/remote sync                                                        |
+| Host           | 浏览器与计算机操作平台   | BrowserView/WebContentsView, CDP backend, Computer Use Helper lifecycle, trust broker, system observation and input execution |
+| Host           | 工作区与交付             | workspace identity, Local/Remote Host, mobile remote, continuous/replayable                                                   |
+| Host           | 工作台服务               | File/Terminal/Git services                                                                                                    |
+| Host           | 自动化与渠道运行时       | scheduler, automation record, off-peak, Bots, third-party channels                                                            |
+| Host           | 客户端平台               | Electron lifecycle, client update, Feedback tickets and diagnostic bundles                                                    |
+| Host           | 数据与可观测性           | App Usage bridge, product analytics, Conversation telemetry, ARMS, performance reliability, logs and process monitoring       |
+| ZCode CLI      | 智能体核心               | runtime assembly, turn state machine, context, memory, compact, stream recovery, goal/target, fault finalization              |
+| ZCode CLI      | 对话运行时               | session lifecycle, input admission, CLI queue, event journal, ProductProjection, fork/rewind                                  |
+| ZCode CLI      | 模型能力                 | provider runtime, catalog capabilities, token budget, multimodal, reasoning and tool capabilities                             |
+| ZCode CLI      | 工具运行时与安全         | built-in tools, scheduling, permissions, mode policy, tool artifacts                                                          |
+| ZCode CLI      | 多智能体                 | Subagent profiles, child runtime, coordination and background tasks                                                           |
+| ZCode CLI      | 扩展运行时               | MCP, Skills, Hooks, Commands, Memory resources                                                                                |
+| ZCode CLI      | 浏览器运行时             | Browser Use Plugin, Node REPL/Playwright, Headless backend                                                                    |
+| ZCode CLI      | 用量可观测存储           | model/turn/tool usage facts, SQLite 30-day retention and App Usage SQL aggregation                                            |
+| 基础设施       | 构建与发布工程           | GitLab pipeline, cross-platform builds, packaging/signing, notarization, artifacts, CDN, canary/stable release                |
+| 基础设施       | 测试自动化平台           | Desktop/CLI E2E harness, capture/replay, cross-platform execution, fault injection, case admission and promotion              |
+| 基础设施       | 质量数据与工程治理       | E2E reports, coverage, quality trends, static gates, engineering performance and failure artifacts                            |
 
 ## Plans, App Usage, and observability boundaries
 
@@ -333,14 +333,14 @@ ZCode CLI
 
 Finer-grained recently landed capabilities are in the map; they still follow the Renderer → Host/transport → CLI runtime authority boundaries.
 
-| Capability | Current facts | Map boundary |
-| --- | --- | --- |
-| Office file preview | Preview Pane supports PDF, DOCX/DOC, XLSX (read-only, workspace file service bytes); native editing, saving, comments, and revisions remain planned | Preview connects to `file-service`; a future Office Document Service carries only the native editing/conversion path |
-| Video input and sent media | Composer can attach image/video; model capabilities and provider wire jointly decide sendability; sent media shows as ordered gallery/video preview; audio input still undelivered | Media preview consumes only safe local/remote previews; attachment drafts or media state never go to the relay |
-| Per-turn Hook summary | Only real client-visible Hook executions show an Anchor/Popover summary of safe facts: source, status, duration | Projected from ProductProjection to desktop-continuous and web-remote-replayable; no commands/paths or other sensitive details |
-| MCP settings and official Server MCP | Settings show localized initialize/tools/list diagnostics attributed by `pluginId`; official Server MCP handles auth/quota/unavailable separately — advertised capability is not entitlement | Diagnostics are a Renderer settings projection; credentials, quota, and request state stay with Host/Account & Entitlements |
-| Browser tab lifecycle | Embedded Browser has a 32-tab hard cap and in-process lifecycle; `open` reuses an agent-owned same-site tab by default, creating new only without a candidate; `tabs.new` semantics unchanged | Reuse/cap are Browser runtime + Host hosting facts; no task-end cleanup or cross-process persistence added |
-| `/plan` shortcut entry | Empty `/plan` only toggles Plan Mode; with task text it switches and submits compare-and-set; attachment scenarios reject the shortcut | This is Composer/Commands UI intent — no new protocol fields, persistence events, or a second input queue |
+| Capability                           | Current facts                                                                                                                                                                                 | Map boundary                                                                                                                   |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Office file preview                  | Preview Pane supports PDF, DOCX/DOC, XLSX (read-only, workspace file service bytes); native editing, saving, comments, and revisions remain planned                                           | Preview connects to `file-service`; a future Office Document Service carries only the native editing/conversion path           |
+| Video input and sent media           | Composer can attach image/video; model capabilities and provider wire jointly decide sendability; sent media shows as ordered gallery/video preview; audio input still undelivered            | Media preview consumes only safe local/remote previews; attachment drafts or media state never go to the relay                 |
+| Per-turn Hook summary                | Only real client-visible Hook executions show an Anchor/Popover summary of safe facts: source, status, duration                                                                               | Projected from ProductProjection to desktop-continuous and web-remote-replayable; no commands/paths or other sensitive details |
+| MCP settings and official Server MCP | Settings show localized initialize/tools/list diagnostics attributed by `pluginId`; official Server MCP handles auth/quota/unavailable separately — advertised capability is not entitlement  | Diagnostics are a Renderer settings projection; credentials, quota, and request state stay with Host/Account & Entitlements    |
+| Browser tab lifecycle                | Embedded Browser has a 32-tab hard cap and in-process lifecycle; `open` reuses an agent-owned same-site tab by default, creating new only without a candidate; `tabs.new` semantics unchanged | Reuse/cap are Browser runtime + Host hosting facts; no task-end cleanup or cross-process persistence added                     |
+| `/plan` shortcut entry               | Empty `/plan` only toggles Plan Mode; with task text it switches and submits compare-and-set; attachment scenarios reject the shortcut                                                        | This is Composer/Commands UI intent — no new protocol fields, persistence events, or a second input queue                      |
 
 ## Authoritative state boundary
 

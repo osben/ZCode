@@ -28,7 +28,7 @@ no longer opening the old secondary confirmation and QR dialogs.
 - One-time yearly products are no longer sold; the frontend must filter
   `ONE_TIME + YEARLY` — not shown and not selectable even if the API returns it.
 - The right-side purchase-method switch dedupes by `subscribeMode +
-  subscribePeriod`; button labels use only the API-provided `purchaseMethodName`;
+subscribePeriod`; button labels use only the API-provided `purchaseMethodName`;
   display order is fixed as 连续包月, 连续包年, 按月采购. On desktop width the three
   options sit in a row; narrow screens wrap adaptively.
 - Plan configuration layout is fixed: plan seats, service method, balance
@@ -45,7 +45,7 @@ no longer opening the old secondary confirmation and QR dialogs.
   back to `2`, above the maximum to `10000`, and empty or non-numeric reverts to
   the previous valid value.
 - Service method shows 连续包月, 连续包年, 按月采购 by `subscribeMode +
-  subscribePeriod`; yearly plans show a renewal-discount badge when one exists.
+subscribePeriod`; yearly plans show a renewal-discount badge when one exists.
 - The `ONE_TIME + MONTHLY` purchase duration always shows at the right of the same
   row as the "按月采购" tab, as a small ghost dropdown — visible even when 按月采购
   is not selected. Only `1 / 3 / 6 / 12` months are allowed, default `1`. The

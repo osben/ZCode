@@ -7,15 +7,15 @@ equals toggling the toolbar's standard Plan switch. The list shows the localized
 "计划模式 / Plan mode" and description "开启计划模式 / Enable Plan mode", and no command-argument
 syntax.
 
-| Action                                        | Result                                                              |
-| --------------------------------------------- | ------------------------------------------------------------------- |
-| Type `/plan`                                  | Show the plan-mode action; current mode unchanged.                  |
-| Select via Tab, Enter or click                | Turn standard Plan on; delete only the slash search token, close the list, keep input focus. |
-| Select again while Plan is on                 | Stays on; never toggles off.                                        |
-| Other body text, attachments or structured context | Kept as-is, never auto-sent.                                   |
-| Escape closes the list or nothing selected    | Mode unchanged.                                                     |
-| After closing the list, send raw `/plan` or `/plan <text>` | Sent as plain text, original text and current mode kept, no hidden parsing. |
-| Exit Plan                                     | Use the existing toolbar switch or the Plan marker's close button.  |
+| Action                                                     | Result                                                                                       |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Type `/plan`                                               | Show the plan-mode action; current mode unchanged.                                           |
+| Select via Tab, Enter or click                             | Turn standard Plan on; delete only the slash search token, close the list, keep input focus. |
+| Select again while Plan is on                              | Stays on; never toggles off.                                                                 |
+| Other body text, attachments or structured context         | Kept as-is, never auto-sent.                                                                 |
+| Escape closes the list or nothing selected                 | Mode unchanged.                                                                              |
+| After closing the list, send raw `/plan` or `/plan <text>` | Sent as plain text, original text and current mode kept, no hidden parsing.                  |
+| Exit Plan                                                  | Use the existing toolbar switch or the Plan marker's close button.                           |
 
 ## Single state and execution chain
 

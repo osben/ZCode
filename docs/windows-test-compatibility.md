@@ -12,12 +12,12 @@ must follow from now on. Branch: `fix/windows-unit-test-compat`.
 After rebasing onto the latest staging, the full unit test run was **9 failed / 12444 passed**, with no crash.
 Remaining composition:
 
-| Category | Count | Note |
-| --- | --- | --- |
-| Windows process-tree reclaim residue | 3 | `zcodeAgentProcessManager`; the lifecycle fixtures work took this from 8 to 3 |
-| staging pre-existing drift (fails on any platform) | 3 | settings MCP/skill/subagent scope badge `formatCanonicalPluginName` assertions; `a9263f3d03` removed the call from the list component without syncing the tests, needs a business ruling |
-| cross-platform drift | 2 | `feedbackHttpClient`, `stdioDesktopPresentationSurface` (see below) |
-| flaky (load timeout) | 1 | `appUsagePanel`, passes when run alone |
+| Category                                           | Count | Note                                                                                                                                                                                     |
+| -------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows process-tree reclaim residue               | 3     | `zcodeAgentProcessManager`; the lifecycle fixtures work took this from 8 to 3                                                                                                            |
+| staging pre-existing drift (fails on any platform) | 3     | settings MCP/skill/subagent scope badge `formatCanonicalPluginName` assertions; `a9263f3d03` removed the call from the list component without syncing the tests, needs a business ruling |
+| cross-platform drift                               | 2     | `feedbackHttpClient`, `stdioDesktopPresentationSurface` (see below)                                                                                                                      |
+| flaky (load timeout)                               | 1     | `appUsagePanel`, passes when run alone                                                                                                                                                   |
 
 Handled along with the rebase: staging's CUA single-package merge (the 51 broker files folded into
 `@zcode/zcode-cua`) removed `launchSocketPath` / `reservedTransport` (the rendezvous `.pending` handover
@@ -27,15 +27,15 @@ always fails closed as warming up).
 
 ## Environment facts (read this section first)
 
-| Fact | Impact |
-| --- | --- |
-| The repo has `core.autocrlf=true` and workspace text is CRLF | Every test that "reads source and asserts a snippet" must normalize newlines |
-| Git Bash injects `/usr/bin` (GNU tar 1.35) at the front of PATH | GNU tar treats the `C:` in an archive argument as a remote host; macOS/Linux commands such as `zip`/`ditto` are missing |
-| The real Windows user PATH has System32 in front (bsdtar) | The product uses bsdtar on user machines; the test environment must restore the same order in vitest.setup.ts |
-| NTFS does not keep POSIX exec bits (0o111 is always 0) | exec-bit assertions apply only on POSIX hosts |
-| Windows cannot delete the directory that is any process's cwd; renaming the same target while an open handle is held gives EPERM | Child-process lifecycle tests have a hard constraint on teardown order |
-| `node:fs` globSync returns backslash paths on Windows | glob results must be normalized before prefix filtering |
-| The product control endpoint on Windows uses a `\\\\.\\pipe\\...` named pipe | IPC tests must construct the endpoint per platform; the product chain must not be skipped because a POSIX socket fixture reports EACCES on Windows |
+| Fact                                                                                                                             | Impact                                                                                                                                             |
+| -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The repo has `core.autocrlf=true` and workspace text is CRLF                                                                     | Every test that "reads source and asserts a snippet" must normalize newlines                                                                       |
+| Git Bash injects `/usr/bin` (GNU tar 1.35) at the front of PATH                                                                  | GNU tar treats the `C:` in an archive argument as a remote host; macOS/Linux commands such as `zip`/`ditto` are missing                            |
+| The real Windows user PATH has System32 in front (bsdtar)                                                                        | The product uses bsdtar on user machines; the test environment must restore the same order in vitest.setup.ts                                      |
+| NTFS does not keep POSIX exec bits (0o111 is always 0)                                                                           | exec-bit assertions apply only on POSIX hosts                                                                                                      |
+| Windows cannot delete the directory that is any process's cwd; renaming the same target while an open handle is held gives EPERM | Child-process lifecycle tests have a hard constraint on teardown order                                                                             |
+| `node:fs` globSync returns backslash paths on Windows                                                                            | glob results must be normalized before prefix filtering                                                                                            |
+| The product control endpoint on Windows uses a `\\\\.\\pipe\\...` named pipe                                                     | IPC tests must construct the endpoint per platform; the product chain must not be skipped because a POSIX socket fixture reports EACCES on Windows |
 
 ## The 8 fixed root-cause classes and rules
 

@@ -42,10 +42,10 @@ compile-time global `ZCODE_ENV` inside a service/provider.
 
 Default domain matrix:
 
-| Product environment | ZCode API              | ZAI OAuth             | ZAI Business API     | BigModel API          |
-| ------------------- | ---------------------- | --------------------- | -------------------- | --------------------- |
-| `test`              | `https://zcode.z.ai`   | `https://chat.z.ai`   | `https://api.z.ai`   | `https://bigmodel.cn` |
-| `production`        | `https://zcode.z.ai`   | `https://chat.z.ai`   | `https://api.z.ai`   | `https://bigmodel.cn` |
+| Product environment | ZCode API            | ZAI OAuth           | ZAI Business API   | BigModel API          |
+| ------------------- | -------------------- | ------------------- | ------------------ | --------------------- |
+| `test`              | `https://zcode.z.ai` | `https://chat.z.ai` | `https://api.z.ai` | `https://bigmodel.cn` |
+| `production`        | `https://zcode.z.ai` | `https://chat.z.ai` | `https://api.z.ai` | `https://bigmodel.cn` |
 
 Override priority:
 

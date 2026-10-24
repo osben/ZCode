@@ -104,11 +104,11 @@ Both share the same webPreferences (contextIsolation=true / sandbox=true / nodeI
 
 Three call sites in `components/coding-plan/coding-plan-page.tsx` (the helper `notifyZcodeBridgePurchaseComplete(provider)` has a built-in no-op guard, so the site runs standalone with zero impact):
 
-| Payment scenario                                  | Location                    | provider   |
-| ------------------------------------------------- | --------------------------- | ---------- |
-| Alipay QR polling success (bigmodel personal)     | alipay-qr useEffect         | `bigmodel` |
-| Enterprise order polling onSuccess (bigmodel team)| `pollEnterpriseOrderStatus` | `bigmodel` |
-| Stripe payment success (zai personal + overseas team) | `onStripePay`            | `zai`      |
+| Payment scenario                                      | Location                    | provider   |
+| ----------------------------------------------------- | --------------------------- | ---------- |
+| Alipay QR polling success (bigmodel personal)         | alipay-qr useEffect         | `bigmodel` |
+| Enterprise order polling onSuccess (bigmodel team)    | `pollEnterpriseOrderStatus` | `bigmodel` |
+| Stripe payment success (zai personal + overseas team) | `onStripePay`               | `zai`      |
 
 ### Security
 

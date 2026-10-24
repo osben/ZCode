@@ -18,12 +18,12 @@ Done:
 
 ## SSH vs WSL
 
-| Dimension       | SSH                                   | WSL                                    |
-| --------------- | ------------------------------------- | -------------------------------------- |
-| Connection      | TCP protocol, ssh2 library            | Local subprocess, `wsl.exe`            |
-| Authentication  | Password / private key / SSH Agent    | Windows user identity (none needed)    |
-| File system     | SFTP / exec pipe                      | Windows path mapping `\\wsl$\Distro`   |
-| Deploy path     | Remote `~/.zcode/server`              | WSL path `/home/user/.zcode/server`    |
+| Dimension      | SSH                                | WSL                                  |
+| -------------- | ---------------------------------- | ------------------------------------ |
+| Connection     | TCP protocol, ssh2 library         | Local subprocess, `wsl.exe`          |
+| Authentication | Password / private key / SSH Agent | Windows user identity (none needed)  |
+| File system    | SFTP / exec pipe                   | Windows path mapping `\\wsl$\Distro` |
+| Deploy path    | Remote `~/.zcode/server`           | WSL path `/home/user/.zcode/server`  |
 
 ## Release lifecycle
 

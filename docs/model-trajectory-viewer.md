@@ -183,7 +183,7 @@ Each model-io record is "one model call". The view organizes the trajectory in t
 - Input reconstruction runs before these display rules: a record with `inputDeltaOf` takes, in time
   order, the **nearest preceding record** with `requestId === previousRequestId`, uses its already
   reconstructed full input `base`, and reconstructs `[...base.slice(0, sharedPrefixCount),
-  ...request.messages]`. Reconstruction reuses base message object references only, never copies
+...request.messages]`. Reconstruction reuses base message object references only, never copies
   content. Records without the field are full inputs, behaving as before.
 - On a missing base (no preceding record, the preceding record itself missing, or
   `base.length !== sharedPrefixCount`), the record renders its carried delta rows with **no

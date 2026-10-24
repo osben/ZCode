@@ -66,20 +66,20 @@ bounded-backoff fresh subscribe (`forceSnapshot`) returns the authoritative curr
 
 ## Key evidence index
 
-| #  | Fact                                                                                   | Location                                                                                              |
-| -- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 1  | List spinner trusts only sessions-index live phase, not persisted status               | `packages/ui/src/v4/taskListRowActivity.ts:35`, `packages/ui/src/lib/taskListItemPresentation.ts:24` |
-| 2  | `error` keeps the old projection with no exit; only dormant clears correctly           | `packages/ui/src/v4/sessionsIndexStore.ts:522-527,459-468` (compare :585-590)                         |
-| 3  | Consumer ignores status; error excluded from hydrating                                 | `packages/ui/src/v4/useWorkspaceSessionsIndexItems.ts:85-91,177-191`                                  |
-| 4  | Store is a long-lived workspace-level object; tab switch/panel close do not rebuild it | `packages/ui/src/v4/sessionsIndexRegistry.ts:88-142`                                                  |
-| 5  | CLI no-subscriber gate + existing publisher does not replay the seed                   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts:816,932-960`                   |
-| 6  | `flushIndex` is a no-op with no subscribers; deltaLog is bounded (removing the gate is safe) | `v4-gateway.ts:845-850`, `sessions-index-publisher.ts:93-99`                                    |
-| 7  | sessions-index is a narrow downstream projection of conversation (same source)         | `v4-gateway.ts:817-822`                                                                               |
-| 8  | Cold-start seed is unconditionally completedSuccess (never publishes running)          | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts:1239-1250`                         |
-| 9  | Hydration closes an unfinished turn as cancelled (chat self-heals)                     | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts:786-788`             |
-| 10 | Remote lifecycle/restart passes through two RPC hops implicitly, no explicit relay; RepoWiki had a prior failure | `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts:173,300-307`          |
-| 11 | Conversation-side generation change uses `ReplaceableConversationTransport.replace()`; each open builds fresh | `packages/ui/src/v4/workspaceConnectionRegistry.ts:167-189`                              |
-| 12 | Production renderer logs are all no-ops (largest diagnostic blind spot)                | `packages/ui/src/logger.ts:38-41`                                                                     |
+| #   | Fact                                                                                                             | Location                                                                                             |
+| --- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 1   | List spinner trusts only sessions-index live phase, not persisted status                                         | `packages/ui/src/v4/taskListRowActivity.ts:35`, `packages/ui/src/lib/taskListItemPresentation.ts:24` |
+| 2   | `error` keeps the old projection with no exit; only dormant clears correctly                                     | `packages/ui/src/v4/sessionsIndexStore.ts:522-527,459-468` (compare :585-590)                        |
+| 3   | Consumer ignores status; error excluded from hydrating                                                           | `packages/ui/src/v4/useWorkspaceSessionsIndexItems.ts:85-91,177-191`                                 |
+| 4   | Store is a long-lived workspace-level object; tab switch/panel close do not rebuild it                           | `packages/ui/src/v4/sessionsIndexRegistry.ts:88-142`                                                 |
+| 5   | CLI no-subscriber gate + existing publisher does not replay the seed                                             | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/v4-gateway.ts:816,932-960`                  |
+| 6   | `flushIndex` is a no-op with no subscribers; deltaLog is bounded (removing the gate is safe)                     | `v4-gateway.ts:845-850`, `sessions-index-publisher.ts:93-99`                                         |
+| 7   | sessions-index is a narrow downstream projection of conversation (same source)                                   | `v4-gateway.ts:817-822`                                                                              |
+| 8   | Cold-start seed is unconditionally completedSuccess (never publishes running)                                    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/v4-bridge.ts:1239-1250`                        |
+| 9   | Hydration closes an unfinished turn as cancelled (chat self-heals)                                               | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/transcript-hydration.ts:786-788`            |
+| 10  | Remote lifecycle/restart passes through two RPC hops implicitly, no explicit relay; RepoWiki had a prior failure | `packages/desktop/src/host/remoteWorkspaceServiceCollection.ts:173,300-307`                          |
+| 11  | Conversation-side generation change uses `ReplaceableConversationTransport.replace()`; each open builds fresh    | `packages/ui/src/v4/workspaceConnectionRegistry.ts:167-189`                                          |
+| 12  | Production renderer logs are all no-ops (largest diagnostic blind spot)                                          | `packages/ui/src/logger.ts:38-41`                                                                    |
 
 ## Excluded candidate causes
 
@@ -93,6 +93,7 @@ bounded-backoff fresh subscribe (`forceSnapshot`) returns the authoritative curr
 ## Fix (two complementary root-cause repairs)
 
 **R-A: `packages/ui/src/v4/sessionsIndexStore.ts`, loading needs live proof and eventual convergence.**
+
 1. `failRecovery`, the resync-failure branch and the non-transient `connect` failure branch clear the projection when entering `error`, same as `dormant` (`this.state = EMPTY_SESSIONS_INDEX_STATE; this.cachedList = null`).
 2. `error` is no longer terminal: after entering it, automatically start a fresh `connect(transport, { forceSnapshot: true })` with bounded backoff (5s/15s/60s, capped, looping). A runtime-unavailable error goes `dormant` through the existing branch (no reconnect storm; lifecycle available wakes it).
 
@@ -104,6 +105,7 @@ Remove `!indexPublisher.hasSubscribers()` from the early-return condition (keep 
 Implementation notes (verified in review): the `failAndScheduleRecovery` retry callback has `closed` / transport reference / generation guards so any external connect / replaceTransport / generation change invalidates old timers; after clearing, `subscriptionId = null` so `handleFrame` rejects late frames of the dead subscription; the retry chain threads `errorRecoveryRetryAttempt` (only an external connect resets it) and is independent of the transient (EBUSY) retry backoff; runtime-unavailable in connect/resync failures goes through `handleRuntimeUnavailable()` to dormant, which also fixed the earlier residue "connect failure enters dormant without clearing the projection"; the `notOwned` special case, dormant->available wake and restart backoff are intact.
 
 **Not part of the fix (decisions / follow-ups):**
+
 - R-C (defense in depth, strongly recommended): production renderer `logger.ts` should let at least `warn/error` through the bridge to disk. It is the largest diagnostic blind spot and the prerequisite to upgrade probable to confirmed. Not implemented.
 - Remote two-hop event pass-through lacks an explicit relay contract (RepoWiki precedent): add a cross-bridge lifecycle e2e assertion.
 - Workspace-dispose hard-killing the agent leaves persisted running+activeTurnId; chat hydration closes it and the cold seed is completedSuccess. Hygiene, not the root cause.

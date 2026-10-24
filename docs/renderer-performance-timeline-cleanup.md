@@ -19,7 +19,7 @@ This preserves React dev-build behavior and does not monkey patch `performance.m
 After a long dev-mode run, check in the DevTools Console:
 
 ```js
-performance.getEntriesByType("measure").length
+performance.getEntriesByType("measure").length;
 ```
 
 The count must stay in a low range and not grow unboundedly with runtime.

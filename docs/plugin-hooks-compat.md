@@ -74,16 +74,16 @@ For compatibility with existing plugins, these are also injected and substituted
 
 The ZCode runtime keeps camelCase `HookInput` as its internal contract; the stdin delivered to plugin hook subprocesses must additionally carry the snake_case aliases common in the Claude Marketplace, so scripts reading only the old fields run, without breaking ZCode's own fields:
 
-| ZCode field       | Claude alias      | Events                                                                   | Notes                                        |
-| ----------------- | ----------------- | ------------------------------------------------------------------------ | -------------------------------------------- |
-| `hookEventName`   | `hook_event_name` | all events                                                               | existing compatibility field, kept           |
-| `sessionId`       | `session_id`      | all events                                                               | existing compatibility field, kept           |
-| `toolName`        | `tool_name`       | `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | lossless alias                               |
-| `toolInput`       | `tool_input`      | `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | lossless alias, original input structure kept |
-| `toolCallId`      | `tool_use_id`     | `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | lossless alias, current ZCode tool call id   |
-| `toolResponse`    | `tool_response`   | `PostToolUse`                                                            | full structured output of the successful tool |
-| `isInterrupt`     | `is_interrupt`    | `PostToolUseFailure`                                                     | marks whether the error came from an interrupt |
-| `transcriptPath`  | `transcript_path` | all events                                                               | temp transcript file path of the current session |
+| ZCode field      | Claude alias      | Events                                                                    | Notes                                            |
+| ---------------- | ----------------- | ------------------------------------------------------------------------- | ------------------------------------------------ |
+| `hookEventName`  | `hook_event_name` | all events                                                                | existing compatibility field, kept               |
+| `sessionId`      | `session_id`      | all events                                                                | existing compatibility field, kept               |
+| `toolName`       | `tool_name`       | `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | lossless alias                                   |
+| `toolInput`      | `tool_input`      | `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | lossless alias, original input structure kept    |
+| `toolCallId`     | `tool_use_id`     | `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | lossless alias, current ZCode tool call id       |
+| `toolResponse`   | `tool_response`   | `PostToolUse`                                                             | full structured output of the successful tool    |
+| `isInterrupt`    | `is_interrupt`    | `PostToolUseFailure`                                                      | marks whether the error came from an interrupt   |
+| `transcriptPath` | `transcript_path` | all events                                                                | temp transcript file path of the current session |
 
 `PostToolUse` also keeps ZCode's `toolResultPreview`, but Claude-compatible scripts must read the full `tool_response`; the preview is not a substitute for the structured result. `PostToolUseFailure.error` is always a string externally.
 

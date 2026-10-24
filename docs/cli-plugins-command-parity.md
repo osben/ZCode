@@ -17,17 +17,17 @@ keep working.
 
 ## Command surface
 
-| Subcommand | Behavior | Implementation |
-|---|---|---|
-| `list [--json] [--available]` | List loaded plugins (built-in + installed); `--available` appends the marketplace catalog | `listZCodePlugins` / `getZCodePluginsOverview` |
-| `install <plugin>[@marketplace] [-s <scope>]` | A bare name installs only if it matches uniquely across all marketplaces; multiple same-name hits error and require `@marketplace` | `installZCodeMarketplacePlugin` |
-| `uninstall <plugin> [-s <scope>] [--keep-data] [--force]` | `--keep-data` removes only the install cache and keeps `data/<plugin-id>`; a non-TTY run without `--force` refuses | `uninstallZCodeMarketplacePlugin` (added `keepData`) |
-| `enable <plugin> [-s <scope>]` / `disable [plugin] [-a\|--all] [-s <scope>]` | `--all` disables each currently enabled plugin; `--all` cannot be combined with a plugin name or `--scope` | `setZCodePluginEnabled` |
-| `update <plugin> [-s <scope>]` | Refreshes the owning marketplace catalog, then reinstalls the same entry; preserves installedAt and user switches | added `updateZCodeMarketplacePlugin` |
-| `validate <path>` | Read-only validation of a local plugin directory / plugin.json / marketplace directory / marketplace.json | added `validateZCodePluginPath` → adapters `validateLocalPluginPath` |
-| `marketplace add <source> [--scope] [--sparse <path>]` | `--sparse` is repeatable and applies only to git/github sources (reuses the existing `sparsePaths`) | `addZCodePluginMarketplace` (added `sparsePaths`) |
-| `marketplace list [--json]` / `remove <name>` / `update [name]` | List, remove, refresh known marketplaces | `getZCodePluginsOverview` / `removeZCodePluginMarketplace` / `updateZCodePluginMarketplace` |
-| alias `zcode plugin ...` | Singular alias, identical behavior to `zcode plugins` | `run.ts` |
+| Subcommand                                                                   | Behavior                                                                                                                           | Implementation                                                                              |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `list [--json] [--available]`                                                | List loaded plugins (built-in + installed); `--available` appends the marketplace catalog                                          | `listZCodePlugins` / `getZCodePluginsOverview`                                              |
+| `install <plugin>[@marketplace] [-s <scope>]`                                | A bare name installs only if it matches uniquely across all marketplaces; multiple same-name hits error and require `@marketplace` | `installZCodeMarketplacePlugin`                                                             |
+| `uninstall <plugin> [-s <scope>] [--keep-data] [--force]`                    | `--keep-data` removes only the install cache and keeps `data/<plugin-id>`; a non-TTY run without `--force` refuses                 | `uninstallZCodeMarketplacePlugin` (added `keepData`)                                        |
+| `enable <plugin> [-s <scope>]` / `disable [plugin] [-a\|--all] [-s <scope>]` | `--all` disables each currently enabled plugin; `--all` cannot be combined with a plugin name or `--scope`                         | `setZCodePluginEnabled`                                                                     |
+| `update <plugin> [-s <scope>]`                                               | Refreshes the owning marketplace catalog, then reinstalls the same entry; preserves installedAt and user switches                  | added `updateZCodeMarketplacePlugin`                                                        |
+| `validate <path>`                                                            | Read-only validation of a local plugin directory / plugin.json / marketplace directory / marketplace.json                          | added `validateZCodePluginPath` → adapters `validateLocalPluginPath`                        |
+| `marketplace add <source> [--scope] [--sparse <path>]`                       | `--sparse` is repeatable and applies only to git/github sources (reuses the existing `sparsePaths`)                                | `addZCodePluginMarketplace` (added `sparsePaths`)                                           |
+| `marketplace list [--json]` / `remove <name>` / `update [name]`              | List, remove, refresh known marketplaces                                                                                           | `getZCodePluginsOverview` / `removeZCodePluginMarketplace` / `updateZCodePluginMarketplace` |
+| alias `zcode plugin ...`                                                     | Singular alias, identical behavior to `zcode plugins`                                                                              | `run.ts`                                                                                    |
 
 ## JSON output contract
 
@@ -42,13 +42,13 @@ Fields reuse existing zcode naming:
 
 ## Parameter and behavior notes
 
-| Item | zcode behavior | Reason |
-|---|---|---|
-| scope values | `user` / `project` (project maps to internal `workspace`); `local` errors out | zcode has no local settings layer |
-| `uninstall --force` | Non-interactive terminals refuse to uninstall without `--force` | existing zcode safety valve, kept |
-| `marketplace add --scope` / `uninstall -s` | Spelling is validated only; behavior is unchanged | known marketplaces / install records are Host User inventory |
-| `marketplace add --sparse` | No varargs; repeat as `--sparse a --sparse b` | the global parser is strict `parseArgs` |
-| `list --json` entry fields | existing zcode fields + `diagnostics` | do not break existing consumers |
+| Item                                       | zcode behavior                                                                | Reason                                                       |
+| ------------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| scope values                               | `user` / `project` (project maps to internal `workspace`); `local` errors out | zcode has no local settings layer                            |
+| `uninstall --force`                        | Non-interactive terminals refuse to uninstall without `--force`               | existing zcode safety valve, kept                            |
+| `marketplace add --scope` / `uninstall -s` | Spelling is validated only; behavior is unchanged                             | known marketplaces / install records are Host User inventory |
+| `marketplace add --sparse`                 | No varargs; repeat as `--sparse a --sparse b`                                 | the global parser is strict `parseArgs`                      |
+| `list --json` entry fields                 | existing zcode fields + `diagnostics`                                         | do not break existing consumers                              |
 
 ## Implementation notes
 

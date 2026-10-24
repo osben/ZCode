@@ -43,11 +43,11 @@ DEPRECATED: Background tasks return their output file path in the tool result, a
 
 The input schema is a strict object:
 
-| Field | Provider schema | Runtime |
-| --- | --- | --- |
-| `task_id` | required string, `The task ID to get output from` | an empty string reports `Task ID is required` |
-| `block` | required boolean, default `true`, `Whether to wait for completion` | the default is still filled when omitted; the strings `"true"` / `"false"` are also accepted |
-| `timeout` | required number, default `30000`, min `0`, max `600000`, `Max wait time in ms` | the default is still filled when omitted; unit is milliseconds |
+| Field     | Provider schema                                                                | Runtime                                                                                      |
+| --------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| `task_id` | required string, `The task ID to get output from`                              | an empty string reports `Task ID is required`                                                |
+| `block`   | required boolean, default `true`, `Whether to wait for completion`             | the default is still filled when omitted; the strings `"true"` / `"false"` are also accepted |
+| `timeout` | required number, default `30000`, min `0`, max `600000`, `Max wait time in ms` | the default is still filled when omitted; unit is milliseconds                               |
 
 Provider `input_schema.required` is fixed as `["task_id", "block", "timeout"]`. `block` and
 `timeout` also keep a runtime default: `required` constrains the model-generated wire input, while the

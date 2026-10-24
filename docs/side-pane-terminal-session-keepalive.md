@@ -171,11 +171,11 @@ useEffect(() => {
 
 ### 8.2 Evidence: three drifts already happened
 
-| # | Item | Consequence | Status |
-|---|----|------|------|
-| 1 | `flushTerminalServiceResize()` | persistentKey path did not flush queued resizes after id ready; PTY stuck at wrong cols/rows | Fixed (f8cfca38b7) |
-| 2 | exit subscription checking `exitHandlerRef` | persistentKey path's exit subscription did not check the onExit callback, asymmetric with the original path | Fixed (f8cfca38b7) |
-| 3 | paste shortcut `logger.debug("[Terminal] paste via shortcut")` | persistentKey path's customKeyEventHandler missed this debug log | Aligned |
+| #   | Item                                                           | Consequence                                                                                                 | Status             |
+| --- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------ |
+| 1   | `flushTerminalServiceResize()`                                 | persistentKey path did not flush queued resizes after id ready; PTY stuck at wrong cols/rows                | Fixed (f8cfca38b7) |
+| 2   | exit subscription checking `exitHandlerRef`                    | persistentKey path's exit subscription did not check the onExit callback, asymmetric with the original path | Fixed (f8cfca38b7) |
+| 3   | paste shortcut `logger.debug("[Terminal] paste via shortcut")` | persistentKey path's customKeyEventHandler missed this debug log                                            | Aligned            |
 
 All three are direct products of two inevitably-drifting copies.
 

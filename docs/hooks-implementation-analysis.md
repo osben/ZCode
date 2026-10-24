@@ -10,10 +10,10 @@
 
 ZCode hooks are **not a single module** — there are two layers whose behavior can differ:
 
-| Layer                | Path                                                                                                     | Responsibility                               | Actually executed?              |
-| -------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------- |
-| **UI / settings**    | `packages/services/src/hooks/hooksService.ts`<br>`packages/ui/src/store/hooksStore.ts`                    | read, display, edit, and write runtime hooks config | takes effect via `.zcode/config.json` |
-| **CLI runtime**      | `apps/zcode-cli/packages/core/src/hooks/`<br>`apps/zcode-cli/packages/core/src/runtime/methods/hooks.ts` | trigger, execute, aggregate decisions in the agent loop | **yes**                    |
+| Layer             | Path                                                                                                     | Responsibility                                          | Actually executed?                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------- |
+| **UI / settings** | `packages/services/src/hooks/hooksService.ts`<br>`packages/ui/src/store/hooksStore.ts`                   | read, display, edit, and write runtime hooks config     | takes effect via `.zcode/config.json` |
+| **CLI runtime**   | `apps/zcode-cli/packages/core/src/hooks/`<br>`apps/zcode-cli/packages/core/src/runtime/methods/hooks.ts` | trigger, execute, aggregate decisions in the agent loop | **yes**                               |
 
 **Key conclusion**: the UI layer can read legacy hooks from `.claude/settings.json` / `.agents/settings.json`, but the **runtime does not automatically execute** them. Only hooks written into `.zcode/config.json` or injected by **enabled plugins** run in a session.
 
@@ -23,15 +23,15 @@ ZCode hooks are **not a single module** — there are two layers whose behavior 
 
 Defined in `apps/zcode-cli/packages/contracts/src/hooks/index.ts`
 
-| Event                | Trigger point                                     | Blocking                            | Main code entry                                     |
-| -------------------- | ------------------------------------------------- | ----------------------------------- | ---------------------------------------------------- |
-| `SessionStart`       | after session create/resume, before first prompt  | no (P0 ignores `continue:false`)    | `runtime/methods/hooks.ts` → `turn.ts` / `resume.ts` |
-| `UserPromptSubmit`   | user input enters the turn, before message history write | yes                           | `runtime/methods/turn.ts`                            |
-| `PreToolUse`         | after tool input schema validation, before permission check | yes                        | `tool/executor/hook-flow.ts`                         |
-| `PermissionRequest`  | permission returns `ask`, before broker UI        | yes                                 | `tool/executor/hook-flow.ts`                         |
-| `PostToolUse`        | after tool success, before result serialization to the model | no                          | `tool/executor/hook-flow.ts`                         |
-| `PostToolUseFailure` | after tool failure                                | no                                  | `tool/executor/hook-flow.ts`                         |
-| `Stop`               | just before the turn completes                    | yes (can continue, max 3 times)     | `runtime/methods/turn-stop.ts`                       |
+| Event                | Trigger point                                                | Blocking                         | Main code entry                                      |
+| -------------------- | ------------------------------------------------------------ | -------------------------------- | ---------------------------------------------------- |
+| `SessionStart`       | after session create/resume, before first prompt             | no (P0 ignores `continue:false`) | `runtime/methods/hooks.ts` → `turn.ts` / `resume.ts` |
+| `UserPromptSubmit`   | user input enters the turn, before message history write     | yes                              | `runtime/methods/turn.ts`                            |
+| `PreToolUse`         | after tool input schema validation, before permission check  | yes                              | `tool/executor/hook-flow.ts`                         |
+| `PermissionRequest`  | permission returns `ask`, before broker UI                   | yes                              | `tool/executor/hook-flow.ts`                         |
+| `PostToolUse`        | after tool success, before result serialization to the model | no                               | `tool/executor/hook-flow.ts`                         |
+| `PostToolUseFailure` | after tool failure                                           | no                               | `tool/executor/hook-flow.ts`                         |
+| `Stop`               | just before the turn completes                               | yes (can continue, max 3 times)  | `runtime/methods/turn-stop.ts`                       |
 
 `SessionStart` `source` matcher values: `startup | resume | clear | compact`.
 
@@ -39,14 +39,14 @@ Defined in `apps/zcode-cli/packages/contracts/src/hooks/index.ts`
 
 ## 3. Hook types
 
-| Type                   | Runtime support | Notes                                                                     |
-| ---------------------- | --------------- | ------------------------------------------------------------------------- |
-| `process`              | yes             | argv form: `command` + `args[]`, executed via `ExecutionPort`, **no default shell** |
-| `command`              | yes             | shell string, for Claude plugin compatibility (e.g. superpowers `run-hook.cmd`) |
-| `prompt`               | no              | LLM-evaluated hook                                                        |
-| `agent`                | no              | agentic verifier hook                                                     |
-| `http`                 | no              | HTTP POST hook                                                            |
-| `callback` / `function` | tests/SDK only | `InMemoryHookRunner` in-memory callback; not a persisted user-config form  |
+| Type                    | Runtime support | Notes                                                                               |
+| ----------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| `process`               | yes             | argv form: `command` + `args[]`, executed via `ExecutionPort`, **no default shell** |
+| `command`               | yes             | shell string, for Claude plugin compatibility (e.g. superpowers `run-hook.cmd`)     |
+| `prompt`                | no              | LLM-evaluated hook                                                                  |
+| `agent`                 | no              | agentic verifier hook                                                               |
+| `http`                  | no              | HTTP POST hook                                                                      |
+| `callback` / `function` | tests/SDK only  | `InMemoryHookRunner` in-memory callback; not a persisted user-config form           |
 
 Entry point: `apps/zcode-cli/packages/core/src/hooks/configured-runner.ts`
 
@@ -104,12 +104,12 @@ Hook trigger
 
 ### 5.1 Matcher match fields
 
-| Event                                                                      | `matchValue`                             |
-| -------------------------------------------------------------------------- | ---------------------------------------- |
-| `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure`  | `toolName`                               |
-| `UserPromptSubmit`                                                         | no query; runs all matcher groups under the event |
-| `SessionStart`                                                             | `source`                                 |
-| `Stop`                                                                     | no query; runs all matcher groups under the event |
+| Event                                                                     | `matchValue`                                      |
+| ------------------------------------------------------------------------- | ------------------------------------------------- |
+| `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` | `toolName`                                        |
+| `UserPromptSubmit`                                                        | no query; runs all matcher groups under the event |
+| `SessionStart`                                                            | `source`                                          |
+| `Stop`                                                                    | no query; runs all matcher groups under the event |
 
 Implementation: `matchesHookMatcher()` in `apps/zcode-cli/packages/core/src/hooks/output.ts`. A simple `A|B` uses exact option matching, `*` matches all, other strings are treated as regex; tool names also accept compatibility aliases.
 
@@ -161,14 +161,14 @@ Lifecycle additional context is injected into message history as a `hook_context
 
 ### 6.2 Per event
 
-| Event                               | Output capabilities                                                                                     |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `PreToolUse`                        | `permissionDecision` (allow/ask/deny), `permissionDecisionReason`, `updatedInput`, `additionalContext`  |
-| `PermissionRequest`                 | `decision.behavior` (allow/deny), `updatedInput`, `permissionUpdates`                                   |
-| `UserPromptSubmit`                  | `additionalContext`; `continue:false` blocks the prompt                                                 |
-| `SessionStart`                      | `additionalContext`                                                                                     |
-| `PostToolUse` / `PostToolUseFailure`| `additionalContext`                                                                                     |
-| `Stop`                              | `additionalContext`; `continue:true` + context continues; `decision:"block"` compatibility              |
+| Event                                | Output capabilities                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `PreToolUse`                         | `permissionDecision` (allow/ask/deny), `permissionDecisionReason`, `updatedInput`, `additionalContext` |
+| `PermissionRequest`                  | `decision.behavior` (allow/deny), `updatedInput`, `permissionUpdates`                                  |
+| `UserPromptSubmit`                   | `additionalContext`; `continue:false` blocks the prompt                                                |
+| `SessionStart`                       | `additionalContext`                                                                                    |
+| `PostToolUse` / `PostToolUseFailure` | `additionalContext`                                                                                    |
+| `Stop`                               | `additionalContext`; `continue:true` + context continues; `decision:"block"` compatibility             |
 
 ### 6.3 Not yet supported output fields
 
@@ -206,15 +206,15 @@ The settings page clearly splits "configured hooks", "compatibility config", and
 
 ### 8.2 Feature gaps (rough priority)
 
-| Priority | Gap                                                    | Note                              |
-| -------- | ------------------------------------------------------- | --------------------------------- |
-| P1 eco   | `PreCompact` / `PostCompact`                            | integration with context compaction |
-| P1 eco   | `SubagentStart` / `SubagentStop`                        | subagent-scenario plugin dependency |
-| P1 eco   | `SessionEnd`                                            | cleanup/reporting hooks           |
-| P2       | `prompt` / `agent` / `http` hook types                  | advanced hook forms               |
-| P2       | `asyncRewake` / `once` / `if` pre-filtering             | performance and safety refinement |
-| P2       | config snapshot                                         | prevents in-session config drift  |
-| P3       | Notification / Elicitation / Worktree / FileChanged etc.| full event coverage               |
+| Priority | Gap                                                      | Note                                |
+| -------- | -------------------------------------------------------- | ----------------------------------- |
+| P1 eco   | `PreCompact` / `PostCompact`                             | integration with context compaction |
+| P1 eco   | `SubagentStart` / `SubagentStop`                         | subagent-scenario plugin dependency |
+| P1 eco   | `SessionEnd`                                             | cleanup/reporting hooks             |
+| P2       | `prompt` / `agent` / `http` hook types                   | advanced hook forms                 |
+| P2       | `asyncRewake` / `once` / `if` pre-filtering              | performance and safety refinement   |
+| P2       | config snapshot                                          | prevents in-session config drift    |
+| P3       | Notification / Elicitation / Worktree / FileChanged etc. | full event coverage                 |
 
 The P1 plan in the design doc: `apps/zcode-cli/docs/design/v2/hooks.md`.
 
@@ -226,22 +226,22 @@ The P1 plan in the design doc: `apps/zcode-cli/docs/design/v2/hooks.md`.
 
 ## 9. Key code index
 
-| Module                    | Path                                                                                           |
-| ------------------------- | ---------------------------------------------------------------------------------------------- |
-| event / IO schema         | `apps/zcode-cli/packages/contracts/src/hooks/index.ts`                                         |
-| hook runner               | `apps/zcode-cli/packages/core/src/hooks/runner.ts`                                             |
-| config → callback adapter | `apps/zcode-cli/packages/core/src/hooks/configured-runner.ts`                                  |
-| output parse and aggregate| `apps/zcode-cli/packages/core/src/hooks/output.ts`                                             |
-| lifecycle triggers        | `apps/zcode-cli/packages/core/src/runtime/methods/hooks.ts`                                    |
-| tool-chain triggers       | `apps/zcode-cli/packages/core/src/tool/executor/hook-flow.ts`                                  |
-| runtime config merge      | `apps/zcode-cli/packages/bootstrap/src/app/runtime-config.ts`                                  |
-| plugin hook discovery     | `apps/zcode-cli/packages/adapters/src/plugins/index.ts`                                        |
-| UI config read/write      | `packages/services/src/hooks/hooksService.ts`                                                  |
-| shared UI types           | `packages/shared/src/hooks.ts`                                                                 |
-| plugin compat spec        | `docs/plugin-hooks-compat.md`                                                                  |
-| v2 design / acceptance    | `apps/zcode-cli/docs/design/v2/hooks.md`                                                       |
-| 10-event contract tests   | `apps/zcode-cli/packages/core/tests/hooks-event-contract.test.ts`                              |
-| desktop E2E               | `packages/desktop/test/e2e/conversation-session/conversation-session-hooks-lifecycle.test.ts`  |
+| Module                     | Path                                                                                          |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
+| event / IO schema          | `apps/zcode-cli/packages/contracts/src/hooks/index.ts`                                        |
+| hook runner                | `apps/zcode-cli/packages/core/src/hooks/runner.ts`                                            |
+| config → callback adapter  | `apps/zcode-cli/packages/core/src/hooks/configured-runner.ts`                                 |
+| output parse and aggregate | `apps/zcode-cli/packages/core/src/hooks/output.ts`                                            |
+| lifecycle triggers         | `apps/zcode-cli/packages/core/src/runtime/methods/hooks.ts`                                   |
+| tool-chain triggers        | `apps/zcode-cli/packages/core/src/tool/executor/hook-flow.ts`                                 |
+| runtime config merge       | `apps/zcode-cli/packages/bootstrap/src/app/runtime-config.ts`                                 |
+| plugin hook discovery      | `apps/zcode-cli/packages/adapters/src/plugins/index.ts`                                       |
+| UI config read/write       | `packages/services/src/hooks/hooksService.ts`                                                 |
+| shared UI types            | `packages/shared/src/hooks.ts`                                                                |
+| plugin compat spec         | `docs/plugin-hooks-compat.md`                                                                 |
+| v2 design / acceptance     | `apps/zcode-cli/docs/design/v2/hooks.md`                                                      |
+| 10-event contract tests    | `apps/zcode-cli/packages/core/tests/hooks-event-contract.test.ts`                             |
+| desktop E2E                | `packages/desktop/test/e2e/conversation-session/conversation-session-hooks-lifecycle.test.ts` |
 
 ---
 

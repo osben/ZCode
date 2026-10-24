@@ -37,20 +37,20 @@ This design uses that dual-channel semantics.
 
 ## Design trade-offs
 
-| Capability                        | Semantics                                                                                       | ZCode plan                                          |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| process-scoped tool catalog LRU   | 32 entries, 30-minute TTL; read only while startup is pending                                  | adopted in Phase 1/2                                 |
-| transport identity                | stdio command/args/env/cwd/environment/client capability; HTTP skipped because auth identity is unstable | adopted, plus workspace identity boundaries    |
-| payload sanitization              | strip connection instructions and tool annotations before publish                               | adopted; cache plays no role in permissions          |
-| concurrent publish                | entry-local generation; an older fetch cannot overwrite a newer snapshot                          | adopted                                              |
-| cold miss                         | tool listing waits for the live client; MCP is never silently hidden for speed                   | aggregate complete-hit adopted                       |
-| live execution                    | wait for the current client before the call, then re-resolve tool/visibility/annotations from live inventory before approval | adopted, adapted to ZCode's schema-validation order |
-| lifecycle                         | per-server startup future, startup cancellation, manager shutdown, stdio cleanup                 | keep existing session ownership, add regressions     |
-| status / auth / elicitation       | per-server startup update, auth state, ready wait, elicitation routing                           | not taken over by the catalog                        |
-| connector-specific cache          | long-term cache use after failure, background reconnect, hard refresh — semantics differ from ordinary MCP | not generalized to ordinary MCP          |
-| required server                   | marking some servers required and blocking until ready                                           | no matching ZCode product semantics; not introduced here |
-| resources / templates             | keep querying the live client; no ordinary tool-catalog cache                                    | out of scope                                         |
-| `tools/list_changed`              | the ordinary catalog cache has no full dynamic invalidation yet                                   | Phase 3 may mark dirty on notification               |
+| Capability                      | Semantics                                                                                                                    | ZCode plan                                               |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| process-scoped tool catalog LRU | 32 entries, 30-minute TTL; read only while startup is pending                                                                | adopted in Phase 1/2                                     |
+| transport identity              | stdio command/args/env/cwd/environment/client capability; HTTP skipped because auth identity is unstable                     | adopted, plus workspace identity boundaries              |
+| payload sanitization            | strip connection instructions and tool annotations before publish                                                            | adopted; cache plays no role in permissions              |
+| concurrent publish              | entry-local generation; an older fetch cannot overwrite a newer snapshot                                                     | adopted                                                  |
+| cold miss                       | tool listing waits for the live client; MCP is never silently hidden for speed                                               | aggregate complete-hit adopted                           |
+| live execution                  | wait for the current client before the call, then re-resolve tool/visibility/annotations from live inventory before approval | adopted, adapted to ZCode's schema-validation order      |
+| lifecycle                       | per-server startup future, startup cancellation, manager shutdown, stdio cleanup                                             | keep existing session ownership, add regressions         |
+| status / auth / elicitation     | per-server startup update, auth state, ready wait, elicitation routing                                                       | not taken over by the catalog                            |
+| connector-specific cache        | long-term cache use after failure, background reconnect, hard refresh — semantics differ from ordinary MCP                   | not generalized to ordinary MCP                          |
+| required server                 | marking some servers required and blocking until ready                                                                       | no matching ZCode product semantics; not introduced here |
+| resources / templates           | keep querying the live client; no ordinary tool-catalog cache                                                                | out of scope                                             |
+| `tools/list_changed`            | the ordinary catalog cache has no full dynamic invalidation yet                                                              | Phase 3 may mark dirty on notification                   |
 
 The core trade-off: build only the "startup advertisement fast path" — no connector-style long-term stale fallback, and the cache never grows into a second MCP runtime.
 
@@ -67,22 +67,22 @@ The core trade-off: build only the "startup advertisement fast path" — no conn
 
 ### Feature summary
 
-| Item    | Content                                                                                    |
-| ------- | ------------------------------------------------------------------------------------------- |
-| Goal    | on a warm catalog hit, the first provider request does not wait for this session's live MCP startup |
-| Value   | new/resumed sessions get a faster first response while real MCP calls still use this session's live servers |
-| Boundary| the catalog handles capability advertisement only; the live adapter owns connection, permission facts, and execution |
-| Not doing | live MCP LRU, cross-session client/process sharing, HTTP/SSE catalog cache, long-term stale fallback |
+| Item      | Content                                                                                                              |
+| --------- | -------------------------------------------------------------------------------------------------------------------- |
+| Goal      | on a warm catalog hit, the first provider request does not wait for this session's live MCP startup                  |
+| Value     | new/resumed sessions get a faster first response while real MCP calls still use this session's live servers          |
+| Boundary  | the catalog handles capability advertisement only; the live adapter owns connection, permission facts, and execution |
+| Not doing | live MCP LRU, cross-session client/process sharing, HTTP/SSE catalog cache, long-term stale fallback                 |
 
 ### UI surface matrix
 
-| Surface                    | UI change | Behavioral impact                                              | Evidence/regression                |
-| -------------------------- | --------- | --------------------------------------------------------------- | ----------------------------------- |
-| Conversation first sampling | no       | on complete-hit, the provider request goes out early            | core/bootstrap deterministic tests  |
-| MCP settings page          | no        | keeps showing control-plane live status; cache hit is not "connected" | `MO01-MO03` + status unit tests |
-| MCP tool call / approval   | no        | waits for and resolves the live descriptor before permission    | `Y01/Y02` + tool executor tests     |
-| Subagent                   | no        | keeps borrowing the parent live snapshot; never inherits the advertisement cache | borrowed port tests          |
-| Desktop / mobile remote    | no        | shares agent facts; continuous / replayable delivery unchanged  | invariant regression                |
+| Surface                     | UI change | Behavioral impact                                                                | Evidence/regression                |
+| --------------------------- | --------- | -------------------------------------------------------------------------------- | ---------------------------------- |
+| Conversation first sampling | no        | on complete-hit, the provider request goes out early                             | core/bootstrap deterministic tests |
+| MCP settings page           | no        | keeps showing control-plane live status; cache hit is not "connected"            | `MO01-MO03` + status unit tests    |
+| MCP tool call / approval    | no        | waits for and resolves the live descriptor before permission                     | `Y01/Y02` + tool executor tests    |
+| Subagent                    | no        | keeps borrowing the parent live snapshot; never inherits the advertisement cache | borrowed port tests                |
+| Desktop / mobile remote     | no        | shares agent facts; continuous / replayable delivery unchanged                   | invariant regression               |
 
 ### Shared vs. divergent behavior
 
@@ -94,13 +94,13 @@ The core trade-off: build only the "startup advertisement fast path" — no conn
 
 ### State owners
 
-| State                                             | Owner                                             | Lifecycle                   |
-| -------------------------------------------------- | -------------------------------------------------- | ---------------------------- |
-| sanitized tool catalog LRU                         | the `McpToolCatalogPort` implementation injected by agent/bootstrap | agent process         |
-| live MCP client/process/status                     | each session's `McpPort` / `NodeMcpAdapter`       | session                      |
-| startup Promise / AbortController / coordinator    | the `AgentRuntime` session runtime                | session                      |
-| cached/live MCP `ToolEntry` set                    | the session `ToolRegistry`                        | session                      |
-| control-plane MCP status                           | control-plane adapter                             | agent process control plane  |
+| State                                           | Owner                                                               | Lifecycle                   |
+| ----------------------------------------------- | ------------------------------------------------------------------- | --------------------------- |
+| sanitized tool catalog LRU                      | the `McpToolCatalogPort` implementation injected by agent/bootstrap | agent process               |
+| live MCP client/process/status                  | each session's `McpPort` / `NodeMcpAdapter`                         | session                     |
+| startup Promise / AbortController / coordinator | the `AgentRuntime` session runtime                                  | session                     |
+| cached/live MCP `ToolEntry` set                 | the session `ToolRegistry`                                          | session                     |
+| control-plane MCP status                        | control-plane adapter                                               | agent process control plane |
 
 `AgentRuntime` owns only startup coordination; `SessionFacade.closeSessionResources()` keeps owning the actual `McpPort.close()` scheduling and process cleanup. The two owners must not merge into one async finally, or shutdown ordering becomes implicit again.
 
@@ -108,16 +108,16 @@ The core trade-off: build only the "startup advertisement fast path" — no conn
 
 The following are recommended defaults for v1; change this document first if they must change before implementation.
 
-| Condition                                                              | First provider tools            | Tool call                                                   | Later model steps                                  |
-| ---------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------ | --------------------------------------------------- |
-| all cacheable servers hit a fresh catalog, live startup pending         | use the cached catalog immediately | wait on the same startup promise; validate and approve with the live descriptor | use the live catalog after startup success |
-| a legal empty catalog exists in cache                                  | use the empty MCP tool set immediately | no callable MCP tool exists                              | use the live catalog after startup success          |
-| any enabled server cold-misses, is expired, or its transport does not support caching | wait for live startup    | use the live descriptor                                       | use the live catalog                                 |
-| warm hit, then live startup succeeds                                   | the in-flight request keeps cached contracts | executes after live revalidation                        | atomically swap to live contracts                   |
-| warm hit, then ordinary MCP startup fails                              | the in-flight request may still contain cached tools | returns structured unavailable/startup failure         | no longer advertised; an execution-only tombstone serves old calls |
-| warm hit, then startup cancelled by session shutdown                   | the current waiter gets cancellation | not executed                                                 | session closes                                       |
-| a cached tool was deleted or hidden by the live server                 | the model may produce an old tool call | rejected as unavailable before permission                    | the live catalog no longer contains the tool        |
-| cached schema differs from live schema                                 | the model may produce old-schema arguments | re-validate with the live schema; errors return as recoverable tool results | the live catalog replaces the old schema |
+| Condition                                                                             | First provider tools                                 | Tool call                                                                       | Later model steps                                                  |
+| ------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| all cacheable servers hit a fresh catalog, live startup pending                       | use the cached catalog immediately                   | wait on the same startup promise; validate and approve with the live descriptor | use the live catalog after startup success                         |
+| a legal empty catalog exists in cache                                                 | use the empty MCP tool set immediately               | no callable MCP tool exists                                                     | use the live catalog after startup success                         |
+| any enabled server cold-misses, is expired, or its transport does not support caching | wait for live startup                                | use the live descriptor                                                         | use the live catalog                                               |
+| warm hit, then live startup succeeds                                                  | the in-flight request keeps cached contracts         | executes after live revalidation                                                | atomically swap to live contracts                                  |
+| warm hit, then ordinary MCP startup fails                                             | the in-flight request may still contain cached tools | returns structured unavailable/startup failure                                  | no longer advertised; an execution-only tombstone serves old calls |
+| warm hit, then startup cancelled by session shutdown                                  | the current waiter gets cancellation                 | not executed                                                                    | session closes                                                     |
+| a cached tool was deleted or hidden by the live server                                | the model may produce an old tool call               | rejected as unavailable before permission                                       | the live catalog no longer contains the tool                       |
+| cached schema differs from live schema                                                | the model may produce old-schema arguments           | re-validate with the live schema; errors return as recoverable tool results     | the live catalog replaces the old schema                           |
 
 On a true cold miss, keep waiting for MCP. v1 does not adopt the more aggressive "silently omit MCP tools in round one, add them in round two", to avoid the model misjudging capability absence when the user explicitly asked for MCP.
 
@@ -259,10 +259,7 @@ interface McpToolCatalogContext {
 
   beginFetch(): McpToolCatalogFetchTicket;
 
-  publishIfNewest(
-    ticket: McpToolCatalogFetchTicket,
-    tools: McpToolDescriptor[],
-  ): void;
+  publishIfNewest(ticket: McpToolCatalogFetchTicket, tools: McpToolDescriptor[]): void;
 
   invalidate(): void;
 }
@@ -279,12 +276,7 @@ interface McpToolCatalogPort {
 ```ts
 type McpCatalogToolDescriptor = Pick<
   McpToolDescriptor,
-  | "serverName"
-  | "toolName"
-  | "name"
-  | "description"
-  | "inputSchema"
-  | "outputSchema"
+  "serverName" | "toolName" | "name" | "description" | "inputSchema" | "outputSchema"
 >;
 ```
 
@@ -578,14 +570,14 @@ Service-layer logs use `createServiceLogger(scope)`; agent/bootstrap keeps the e
 
 Suggested events:
 
-| Event                           | Level | Key fields                                              |
-| -------------------------------- | ----- | --------------------------------------------------------- |
-| `mcp.catalog.lookup`            | debug | fingerprint, hit/miss/expired/unsupported, serverCount    |
-| `mcp.catalog.published`         | debug | fingerprint, toolCount, generation                        |
-| `mcp.catalog.publish_discarded` | debug | fingerprint, generation, lastAcceptedGeneration           |
-| `mcp.startup.sampling_ready`    | info  | source=cache/live, waitMs, serverCount, toolCount         |
-| `mcp.tool.live_preflight`       | debug | serverName, toolName, waitMs, outcome                     |
-| `mcp.startup.failed`            | warn  | existing failure summary, no sensitive config             |
+| Event                           | Level | Key fields                                             |
+| ------------------------------- | ----- | ------------------------------------------------------ |
+| `mcp.catalog.lookup`            | debug | fingerprint, hit/miss/expired/unsupported, serverCount |
+| `mcp.catalog.published`         | debug | fingerprint, toolCount, generation                     |
+| `mcp.catalog.publish_discarded` | debug | fingerprint, generation, lastAcceptedGeneration        |
+| `mcp.startup.sampling_ready`    | info  | source=cache/live, waitMs, serverCount, toolCount      |
+| `mcp.tool.live_preflight`       | debug | serverName, toolName, waitMs, outcome                  |
+| `mcp.startup.failed`            | warn  | existing failure summary, no sensitive config          |
 
 Suggested aggregate metrics:
 
@@ -655,30 +647,30 @@ Main changes:
 
 ## Estimated code impact
 
-| Rank           | Area                                                                              | Expected change                                            |
-| -------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| invariant-only | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                     | existing live port interface unchanged                      |
-| must-inspect   | `apps/zcode-cli/packages/contracts/src/interfaces/`                                | new catalog port, scope, sanitized descriptor types         |
-| must-inspect   | `apps/zcode-cli/packages/adapters/src/mcp-tool-catalog/`                           | in-memory LRU, identity, TTL, generation, sanitization       |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`               | process-scoped cache owner                                  |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-types.ts`             | catalog port enters the protocol process context            |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts`        | local scope and remote classification; Phase 3 optional session id threading |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace-model-catalog.ts` | pass the same port to every workspace session app           |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/app/create-app.ts`                          | catalog port dependency injection into the session runtime  |
-| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts`                      | keep actual MCP close ownership and cleanup                 |
-| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`                        | shutdown synchronously closes coordinator, aborts startup   |
-| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`                          | cached/live startup state and reconcile                     |
-| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/methods/turn-loop.ts`                    | warm/cold selection before sampling                         |
-| must-inspect   | `apps/zcode-cli/packages/core/src/mcp/index.ts`                                    | advertisement entry and live entry construction             |
-| must-inspect   | `apps/zcode-cli/packages/core/src/tool/executor/call-runner.ts`                    | live preflight before permission; waiter abort              |
-| should-inspect | `apps/zcode-cli/packages/core/src/tool/registry.ts`                                | reconcile / provider-invisible tombstone                    |
-| should-inspect | `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`                     | parent startup and borrowed snapshot                        |
-| should-inspect | `apps/zcode-cli/packages/core/src/subagent/borrowed-mcp-port.ts`                   | keep live-only, scope-filtered                              |
-| conditional    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/mcp.ts`                      | control-plane successful results seed the cache             |
-| conditional    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace.ts`                | Phase 3 threads the real remoteSessionId                    |
-| conditional    | `packages/shared/src/zcode-protocol/index.ts`                                      | strict schema if cross-process interfaces expand            |
-| invariant-only | `packages/ui/src/settings/McpSettingsSection.tsx`                                  | status UI never reads the catalog                           |
-| invariant-only | web remote / relay / desktop main                                                  | no new cache authority or runtime state                     |
+| Rank           | Area                                                                              | Expected change                                                              |
+| -------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| invariant-only | `apps/zcode-cli/packages/contracts/src/interfaces/mcp.port.ts`                    | existing live port interface unchanged                                       |
+| must-inspect   | `apps/zcode-cli/packages/contracts/src/interfaces/`                               | new catalog port, scope, sanitized descriptor types                          |
+| must-inspect   | `apps/zcode-cli/packages/adapters/src/mcp-tool-catalog/`                          | in-memory LRU, identity, TTL, generation, sanitization                       |
+| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`              | process-scoped cache owner                                                   |
+| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-types.ts`            | catalog port enters the protocol process context                             |
+| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/server-operations.ts`       | local scope and remote classification; Phase 3 optional session id threading |
+| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace-model-catalog.ts` | pass the same port to every workspace session app                            |
+| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/app/create-app.ts`                         | catalog port dependency injection into the session runtime                   |
+| must-inspect   | `apps/zcode-cli/packages/bootstrap/src/app/session-facade.ts`                     | keep actual MCP close ownership and cleanup                                  |
+| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`                       | shutdown synchronously closes coordinator, aborts startup                    |
+| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`                         | cached/live startup state and reconcile                                      |
+| must-inspect   | `apps/zcode-cli/packages/core/src/runtime/methods/turn-loop.ts`                   | warm/cold selection before sampling                                          |
+| must-inspect   | `apps/zcode-cli/packages/core/src/mcp/index.ts`                                   | advertisement entry and live entry construction                              |
+| must-inspect   | `apps/zcode-cli/packages/core/src/tool/executor/call-runner.ts`                   | live preflight before permission; waiter abort                               |
+| should-inspect | `apps/zcode-cli/packages/core/src/tool/registry.ts`                               | reconcile / provider-invisible tombstone                                     |
+| should-inspect | `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`                    | parent startup and borrowed snapshot                                         |
+| should-inspect | `apps/zcode-cli/packages/core/src/subagent/borrowed-mcp-port.ts`                  | keep live-only, scope-filtered                                               |
+| conditional    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/mcp.ts`                     | control-plane successful results seed the cache                              |
+| conditional    | `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/workspace.ts`               | Phase 3 threads the real remoteSessionId                                     |
+| conditional    | `packages/shared/src/zcode-protocol/index.ts`                                     | strict schema if cross-process interfaces expand                             |
+| invariant-only | `packages/ui/src/settings/McpSettingsSection.tsx`                                 | status UI never reads the catalog                                            |
+| invariant-only | web remote / relay / desktop main                                                 | no new cache authority or runtime state                                      |
 
 ## Test plan
 
@@ -739,21 +731,21 @@ v1 relies on adapter/core/bootstrap deterministic tests; no new GUI E2E required
 
 ## State combinations and pruning
 
-| Case ID | Status   | Representative combination                    | Expected                                                        |
-| ------- | -------- | ---------------------------------------------- | ---------------------------------------------------------------- |
-| `MCA01` | accepted | warm complete-hit + startup pending           | provider samples immediately; tool call waits for live           |
-| `MCA02` | accepted | cold / expired / partial / unsupported        | first round waits for live; capability completeness kept         |
-| `MCA03` | accepted | legal cached empty                            | sample immediately; no MCP tools exposed                         |
+| Case ID | Status   | Representative combination                       | Expected                                                                 |
+| ------- | -------- | ------------------------------------------------ | ------------------------------------------------------------------------ |
+| `MCA01` | accepted | warm complete-hit + startup pending              | provider samples immediately; tool call waits for live                   |
+| `MCA02` | accepted | cold / expired / partial / unsupported           | first round waits for live; capability completeness kept                 |
+| `MCA03` | accepted | legal cached empty                               | sample immediately; no MCP tools exposed                                 |
 | `MCA04` | accepted | startup success / partial failure / cancellation | successful items publish + live reconcile; failure/cancel do not publish |
-| `MCA05` | accepted | cached present + live missing/hidden          | tombstone returns recoverable unavailable before permission      |
-| `MCA06` | accepted | cached schema / annotations differ from live  | live schema validation, live metadata approval                   |
-| `MCA07` | accepted | concurrent generation + LRU eviction          | newest wins; an evicted old fetch never revives an entry         |
-| `MCA08` | accepted | control-plane connect / status-only           | Phase 3 seeds only on successful connect; status-only never seeds |
-| `MCA09` | accepted | parent / subagent                             | Phase 2 gate: child borrows only the live connected snapshot     |
-| `MCA10` | accepted | local / SSH / WSL / Docker                    | Phase 2 remote cold; Phase 3 may hit only on full identity       |
-| `MCA11` | ignored  | HTTP/SSE/OAuth catalog                        | v1 lacks a normalized auth principal identity                    |
-| `MCA12` | ignored  | live server LRU / sharing                     | user confirmed not doing it                                      |
-| `MCA13` | accepted | shutdown / late startup completion            | after CLOSED no publish/reconcile; the facade still completes close |
+| `MCA05` | accepted | cached present + live missing/hidden             | tombstone returns recoverable unavailable before permission              |
+| `MCA06` | accepted | cached schema / annotations differ from live     | live schema validation, live metadata approval                           |
+| `MCA07` | accepted | concurrent generation + LRU eviction             | newest wins; an evicted old fetch never revives an entry                 |
+| `MCA08` | accepted | control-plane connect / status-only              | Phase 3 seeds only on successful connect; status-only never seeds        |
+| `MCA09` | accepted | parent / subagent                                | Phase 2 gate: child borrows only the live connected snapshot             |
+| `MCA10` | accepted | local / SSH / WSL / Docker                       | Phase 2 remote cold; Phase 3 may hit only on full identity               |
+| `MCA11` | ignored  | HTTP/SSE/OAuth catalog                           | v1 lacks a normalized auth principal identity                            |
+| `MCA12` | ignored  | live server LRU / sharing                        | user confirmed not doing it                                              |
+| `MCA13` | accepted | shutdown / late startup completion               | after CLOSED no publish/reconcile; the facade still completes close      |
 
 Pruning notes:
 
@@ -779,21 +771,21 @@ Pruning notes:
 
 ## Risks and rollback
 
-| Risk                                   | Handling                                                            |
-| --------------------------------------- | --------------------------------------------------------------------- |
-| model calls a stale tool               | live preflight; recoverable unavailable when absent                    |
-| stale schema generates wrong arguments | re-validate with the live schema; errors return to the model           |
-| stale annotation causes wrong approval | annotations never cached; resolve the live entry before permission     |
-| old initialization overwrites new      | entry generation newest-wins                                          |
-| remote workspaces cross-share the cache | disabled in Phase 2; Phase 3 enables only with full identity + cwd/env |
-| env/token leaks                        | store digests only; logs record only opaque fingerprints               |
-| dynamic descriptions go stale/leak across sessions | limited to the same workspace identity; ephemeral config in the key; internal bypass available |
-| unsafe HTTP sharing                    | v1 never caches HTTP/SSE                                              |
-| a few huge schemas inflate cache memory | 2 MiB/entry + 16 MiB/process byte guard; oversize clears old values   |
-| long-term advertising after a warm-hit server keeps failing | stops entering contracts after terminal; tombstone serves old responses only |
-| reconcile turns old responses into ToolNotFound | missing items keep provider-invisible tombstones until session close |
-| late completion writes back after shutdown | beginShutdown synchronously CLOSED + abort; completion checks state/generation |
-| regressions from the cache path        | write-only shadow first, then enable reads; internal mode allows rollback |
+| Risk                                                        | Handling                                                                                       |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| model calls a stale tool                                    | live preflight; recoverable unavailable when absent                                            |
+| stale schema generates wrong arguments                      | re-validate with the live schema; errors return to the model                                   |
+| stale annotation causes wrong approval                      | annotations never cached; resolve the live entry before permission                             |
+| old initialization overwrites new                           | entry generation newest-wins                                                                   |
+| remote workspaces cross-share the cache                     | disabled in Phase 2; Phase 3 enables only with full identity + cwd/env                         |
+| env/token leaks                                             | store digests only; logs record only opaque fingerprints                                       |
+| dynamic descriptions go stale/leak across sessions          | limited to the same workspace identity; ephemeral config in the key; internal bypass available |
+| unsafe HTTP sharing                                         | v1 never caches HTTP/SSE                                                                       |
+| a few huge schemas inflate cache memory                     | 2 MiB/entry + 16 MiB/process byte guard; oversize clears old values                            |
+| long-term advertising after a warm-hit server keeps failing | stops entering contracts after terminal; tombstone serves old responses only                   |
+| reconcile turns old responses into ToolNotFound             | missing items keep provider-invisible tombstones until session close                           |
+| late completion writes back after shutdown                  | beginShutdown synchronously CLOSED + abort; completion checks state/generation                 |
+| regressions from the cache path                             | write-only shadow first, then enable reads; internal mode allows rollback                      |
 
 ## First-version default decisions
 
@@ -807,13 +799,13 @@ This plan adopts these defaults; if implementation review overturns any, update 
 
 ## Planning handoff
 
-| Deliverable                   | Status              | Notes                                                                            |
-| ------------------------------ | --------------------- | ---------------------------------------------------------------------------------- |
-| Feature spec                   | complete             | this document defines warm/cold, execution safety, ownership, remote, and rollback |
-| Feature graph                  | updated              | `capability.mcp-async-tool-catalog` and its cache/live/status/subagent/identity relations registered |
-| Case catalog                   | planned              | currently core/adapter/bootstrap tests; register `MCA*` first if GUI conversation E2E is needed |
-| Coverage matrix                | planned              | sync with the case catalog before manual-review/capture                           |
-| Fixture / replay / Docker      | not-needed for v1    | deterministic fake MCP servers and barriers suffice                               |
+| Deliverable               | Status            | Notes                                                                                                |
+| ------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------- |
+| Feature spec              | complete          | this document defines warm/cold, execution safety, ownership, remote, and rollback                   |
+| Feature graph             | updated           | `capability.mcp-async-tool-catalog` and its cache/live/status/subagent/identity relations registered |
+| Case catalog              | planned           | currently core/adapter/bootstrap tests; register `MCA*` first if GUI conversation E2E is needed      |
+| Coverage matrix           | planned           | sync with the case catalog before manual-review/capture                                              |
+| Fixture / replay / Docker | not-needed for v1 | deterministic fake MCP servers and barriers suffice                                                  |
 
 No product-semantics blocker before implementation. Two items tracked separately, not blocking this plan:
 

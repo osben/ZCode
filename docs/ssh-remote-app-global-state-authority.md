@@ -35,17 +35,17 @@ The old `workspace/updateProviderRegistry`, `ZCodeProviderRegistrySnapshot`, and
 
 ## State ownership
 
-| State | Authority | Read path for Desktop-attached remote |
-| --- | --- | --- |
-| Workspace files, Git, Terminal | Remote Environment | remote service |
-| Task, Session, Agent execution | Remote Environment | remote service |
-| Provider Settings View (remote runtime) | Remote Environment | remote `provider-settings` facade |
-| Desktop model settings page (app-global) | Desktop Environment | local `IProviderSettingsService` |
-| Model Selection View (remote runtime) | Remote Environment | remote `model-selection` facade |
-| Provider Config / Registry | Remote Environment | no Registry object or snapshot crosses Environments |
-| Provider Credential / Request Auth | Remote Environment | never injected from the Desktop Credential Store |
-| Desktop theme, windows, local UI state | Desktop Environment | local service |
-| Desktop continuous / Mobile replayable | their existing delivery owners | unchanged by the Provider boundary |
+| State                                    | Authority                      | Read path for Desktop-attached remote               |
+| ---------------------------------------- | ------------------------------ | --------------------------------------------------- |
+| Workspace files, Git, Terminal           | Remote Environment             | remote service                                      |
+| Task, Session, Agent execution           | Remote Environment             | remote service                                      |
+| Provider Settings View (remote runtime)  | Remote Environment             | remote `provider-settings` facade                   |
+| Desktop model settings page (app-global) | Desktop Environment            | local `IProviderSettingsService`                    |
+| Model Selection View (remote runtime)    | Remote Environment             | remote `model-selection` facade                     |
+| Provider Config / Registry               | Remote Environment             | no Registry object or snapshot crosses Environments |
+| Provider Credential / Request Auth       | Remote Environment             | never injected from the Desktop Credential Store    |
+| Desktop theme, windows, local UI state   | Desktop Environment            | local service                                       |
+| Desktop continuous / Mobile replayable   | their existing delivery owners | unchanged by the Provider boundary                  |
 
 The remote workspace ServiceCollection facing the renderer may mix local UI services with remote business services, but the mixing is only a facade assembly and never changes the ownership above. A remote workspace's runtime, session, and model execution must use the target Environment's Provider Settings and Model Selection; the Desktop settings page's app-global model-config editing is the explicit exception — it reads/writes the Desktop Local Environment only and never implicitly routes edits to the remote side.
 
@@ -136,15 +136,15 @@ Provisioning must write the target Environment's official Store first and let th
 
 Activating a remote workspace changes workspace services only, never the owner of Desktop settings. The settings page loads and saves per consumer:
 
-| Setting | Read/write owner | Reason |
-| --- | --- | --- |
-| Chromium hardware acceleration, Windows tray, built-in browser cert policy | base Local Host | Desktop Main reads only local bootstrap config at startup |
-| Data storage directory | base Local Host | the native picker returns a local path; the copy and bootstrap pointer must be on the same machine |
-| Integrated terminal shell choice | base Local Host | candidates come from the local systemService; a local shell path must not be written to the Source |
-| HTTP proxy, No Proxy, custom CA paths | base Local Host | startup config of the desktop renderer, built-in browser, and local subprocesses; never implicitly configures another Environment |
-| Terminal profile inheritance, terminal font | current workspace Environment | read by the target terminalService when creating the PTY |
-| Task auto-archive toggle and days | current workspace Environment | executed by the target taskService holding the tasks |
-| Skills/MCP/Plugins/Hooks/Subagents | existing target scope resolver | keeps current User / Source / workspace ownership |
+| Setting                                                                    | Read/write owner               | Reason                                                                                                                            |
+| -------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Chromium hardware acceleration, Windows tray, built-in browser cert policy | base Local Host                | Desktop Main reads only local bootstrap config at startup                                                                         |
+| Data storage directory                                                     | base Local Host                | the native picker returns a local path; the copy and bootstrap pointer must be on the same machine                                |
+| Integrated terminal shell choice                                           | base Local Host                | candidates come from the local systemService; a local shell path must not be written to the Source                                |
+| HTTP proxy, No Proxy, custom CA paths                                      | base Local Host                | startup config of the desktop renderer, built-in browser, and local subprocesses; never implicitly configures another Environment |
+| Terminal profile inheritance, terminal font                                | current workspace Environment  | read by the target terminalService when creating the PTY                                                                          |
+| Task auto-archive toggle and days                                          | current workspace Environment  | executed by the target taskService holding the tasks                                                                              |
+| Skills/MCP/Plugins/Hooks/Subagents                                         | existing target scope resolver | keeps current User / Source / workspace ownership                                                                                 |
 
 ```text
 Desktop 设置页（可在远程 tab 打开）

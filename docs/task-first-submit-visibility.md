@@ -55,13 +55,13 @@ CommandInbox accepts input → existing deferred promotion → publishCurrentSum
 
 ## Acceptance
 
-| Case | Scenario/action | Must assert | Layer |
-| --- | --- | --- | --- |
-| FSV01 | First submit of a warmed-up draft, initialization has not produced the next event | The promoted summary is published before accepted; an uncommitted draft still does not enter the list | CLI unit test |
-| FSV02 | Receive a persisted summary with phase=draft | A real task row + task_created; zero readSession/resumeSession; a duplicate summary does not re-broadcast creation | Host unit test |
-| FSV03 | A directory read is in flight when the first submit completes, with continuous invalidation notices | No concurrent stacking, no starvation; the directory contains the row and the detail binding commit together; same cwd with different identity does not match | UI unit test |
-| FSV04 | service switch/unmount, directory error | A stale response does not navigate, the error is observable, input is not resubmitted | UI unit test |
-| FSV05 | Real desktop sends a draft | Per-frame sampling: the first detail frame already has the sidebar row selected; the corresponding facts exist in CLI/Host; no task row before the first submit | pending E2E |
+| Case  | Scenario/action                                                                                     | Must assert                                                                                                                                                     | Layer          |
+| ----- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| FSV01 | First submit of a warmed-up draft, initialization has not produced the next event                   | The promoted summary is published before accepted; an uncommitted draft still does not enter the list                                                           | CLI unit test  |
+| FSV02 | Receive a persisted summary with phase=draft                                                        | A real task row + task_created; zero readSession/resumeSession; a duplicate summary does not re-broadcast creation                                              | Host unit test |
+| FSV03 | A directory read is in flight when the first submit completes, with continuous invalidation notices | No concurrent stacking, no starvation; the directory contains the row and the detail binding commit together; same cwd with different identity does not match   | UI unit test   |
+| FSV04 | service switch/unmount, directory error                                                             | A stale response does not navigate, the error is observable, input is not resubmitted                                                                           | UI unit test   |
+| FSV05 | Real desktop sends a draft                                                                          | Per-frame sampling: the first detail frame already has the sidebar row selected; the corresponding facts exist in CLI/Host; no task row before the first submit | pending E2E    |
 
 Text and attachments share the first-submit callback and keep their original prewarm and
 createSession(firstInput) paths respectively. Mobile is covered by shared-component and identity unit

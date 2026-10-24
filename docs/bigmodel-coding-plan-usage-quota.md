@@ -59,19 +59,19 @@ Success example:
 
 Field semantics:
 
-| Field | Meaning |
-|---|---|
-| `data.level` | GLM Coding Plan tier, e.g. `lite`, `pro`, `max` |
-| `unit=3` | hour dimension; `number` is hours |
-| `unit=5` | month dimension; `number` is months |
-| `unit=6` | week dimension; `number` is weeks |
-| `TOKENS_LIMIT + unit=3 + number=5` | 5-hour prompt pool |
+| Field                              | Meaning                                                                  |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| `data.level`                       | GLM Coding Plan tier, e.g. `lite`, `pro`, `max`                          |
+| `unit=3`                           | hour dimension; `number` is hours                                        |
+| `unit=5`                           | month dimension; `number` is months                                      |
+| `unit=6`                           | week dimension; `number` is weeks                                        |
+| `TOKENS_LIMIT + unit=3 + number=5` | 5-hour prompt pool                                                       |
 | `TOKENS_LIMIT + unit=6 + number=1` | 1-week prompt pool; not returned for some accounts, hide it when missing |
-| `TIME_LIMIT + unit=5 + number=1` | MCP / tools monthly quota pool |
-| `TIME_LIMIT.remaining` | remaining tool quota |
-| `TIME_LIMIT.percentage` | used percentage of tool quota |
-| `TIME_LIMIT.nextResetTime` | next tool-quota reset, ms timestamp |
-| `TIME_LIMIT.usageDetails` | per-item tool usage, e.g. web search, web reader, open-repo MCP |
+| `TIME_LIMIT + unit=5 + number=1`   | MCP / tools monthly quota pool                                           |
+| `TIME_LIMIT.remaining`             | remaining tool quota                                                     |
+| `TIME_LIMIT.percentage`            | used percentage of tool quota                                            |
+| `TIME_LIMIT.nextResetTime`         | next tool-quota reset, ms timestamp                                      |
+| `TIME_LIMIT.usageDetails`          | per-item tool usage, e.g. web search, web reader, open-repo MCP          |
 
 `nextResetTime` is optional. The frontend must not use it to judge whether a quota item is valid; if missing, only hide that item's reset time.
 
@@ -80,10 +80,10 @@ Field semantics:
 The frontend uses only the API's `level` as the current real tier. Tier descriptions help the user and never replace the API value:
 
 | Tier | 5-hour prompt pool | MCP / tools monthly | Concurrency priority |
-|---|---:|---:|---|
-| Lite | ~120 uses | 100/month | low |
-| Pro | ~600 uses | 1000/month | medium |
-| Max | ~2400 uses | 4000/month | high |
+| ---- | -----------------: | ------------------: | -------------------- |
+| Lite |          ~120 uses |           100/month | low                  |
+| Pro  |          ~600 uses |          1000/month | medium               |
+| Max  |         ~2400 uses |          4000/month | high                 |
 
 These numbers may change with platform policy; the latest wording follows the official Z.AI / BigModel usage docs.
 
@@ -109,34 +109,34 @@ When both Z.AI and BigModel sources are enabled with API keys, settings shows a 
 
 Coding Plan "Usage stats" keeps the `getCodingPlanUsageSnapshot` / `useCodingPlanUsageStats` entry and cache strategy, with the data sources aligned to BigModel's official personal usage page:
 
-| Page area | API | Notes |
-|---|---|---|
-| Remaining quota card | `/api/monitor/usage/quota/limit` | 5-hour, weekly, MCP monthly only. `percentage` is used percentage; ZCode's `Usage remaining` view must uniformly invert it to remaining percentage. |
-| Token activity | `/api/monitor/credit-usage/activity` | 365-day activity series and totals. Feeds the heatmap and totals like cumulative tokens, peak tokens, total active time, streak days. |
-| Usage trend / usage details | `/api/monitor/credit-usage/usage-detail` | Per `usageType=MODEL/MCP`: model and tool credit/token/call series, cache hit rate, total credits, daily average credits. |
-| System health | `/api/monitor/usage/model-performance-day` | Peak-hour average decode speed for Max&Pro / Lite; feeds the health line chart. |
+| Page area                   | API                                        | Notes                                                                                                                                               |
+| --------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Remaining quota card        | `/api/monitor/usage/quota/limit`           | 5-hour, weekly, MCP monthly only. `percentage` is used percentage; ZCode's `Usage remaining` view must uniformly invert it to remaining percentage. |
+| Token activity              | `/api/monitor/credit-usage/activity`       | 365-day activity series and totals. Feeds the heatmap and totals like cumulative tokens, peak tokens, total active time, streak days.               |
+| Usage trend / usage details | `/api/monitor/credit-usage/usage-detail`   | Per `usageType=MODEL/MCP`: model and tool credit/token/call series, cache hit rate, total credits, daily average credits.                           |
+| System health               | `/api/monitor/usage/model-performance-day` | Peak-hour average decode speed for Max&Pro / Lite; feeds the health line chart.                                                                     |
 
 The old `/api/monitor/usage/model-usage` and `/api/monitor/usage/tool-usage` are no longer the primary Coding Plan data sources. At most a compat fallback when the backend returns no new credit data, they must not override token activity, cache hit rate, or credit statistics.
 
 Coding Plan does not follow the settings-top `All / 30d / 7d` App Usage dimension (local usage stats only); it has its own "Usage details" ranges:
 
-| Range | Request window | `granularity` | `x_time` |
-|---|---|---|---|
-| Today | 00:00:00–23:59:59 local | `hour` | `00:00:00`–`23:00:00` |
-| 7 days | last 7 calendar days | `day` | consecutive `YYYY-MM-DD` |
-| 30 days | last 30 calendar days | `day` | consecutive `YYYY-MM-DD` |
-| Custom | user-selected calendar days, max 30 | `day` | consecutive `YYYY-MM-DD` |
+| Range   | Request window                      | `granularity` | `x_time`                 |
+| ------- | ----------------------------------- | ------------- | ------------------------ |
+| Today   | 00:00:00–23:59:59 local             | `hour`        | `00:00:00`–`23:00:00`    |
+| 7 days  | last 7 calendar days                | `day`         | consecutive `YYYY-MM-DD` |
+| 30 days | last 30 calendar days               | `day`         | consecutive `YYYY-MM-DD` |
+| Custom  | user-selected calendar days, max 30 | `day`         | consecutive `YYYY-MM-DD` |
 
 The service layer aligns model and tool series by `x_time`, filling 0 for missing monitor buckets; the frontend charts consume by `x_time` index only and infer no own timeline.
 
 "Usage details" charts split into two-level tabs like the official page:
 
-| Level 1 | Level 2 | Metric | Source |
-|---|---|---|---|
-| Credit usage | Model | model credits | `usageType=MODEL` `totalCreditsUsage`, merging cached / uncached / output credits when missing |
-| Credit usage | Tool | tool credits | `usageType=MCP` `creditsUsage` |
-| Token usage | Model | tokens | `usageType=MODEL` `totalTokensUsage`, merging cached / uncached / output tokens when missing |
-| Token usage | Tool | call count | `usageType=MCP` `mcpCallCount` / `usageCount` |
+| Level 1      | Level 2 | Metric        | Source                                                                                         |
+| ------------ | ------- | ------------- | ---------------------------------------------------------------------------------------------- |
+| Credit usage | Model   | model credits | `usageType=MODEL` `totalCreditsUsage`, merging cached / uncached / output credits when missing |
+| Credit usage | Tool    | tool credits  | `usageType=MCP` `creditsUsage`                                                                 |
+| Token usage  | Model   | tokens        | `usageType=MODEL` `totalTokensUsage`, merging cached / uncached / output tokens when missing   |
+| Token usage  | Tool    | call count    | `usageType=MCP` `mcpCallCount` / `usageCount`                                                  |
 
 Chart shape follows the official page:
 
@@ -155,11 +155,11 @@ Legend above the charts:
 
 `credit-usage/activity` ignores the Today/7d/30d range and always reads the last 365 calendar days; the frontend switches over one 52-week grid:
 
-| Token activity tab | Cell metric | Hover copy |
-|---|---|---|
-| Daily | that day's tokens and message/call turns | `{date}\n{tokens} tokens · {turns} 轮消息` |
-| Weekly | 7-day column sum, first row Sunday | `{date} 当周\n{tokens} tokens · {turns} 轮消息` |
-| Cumulative | cumulative through that week; hover still highlights the column | `截至 {date} 当周累计\n{tokens} tokens · {turns} 轮消息` |
+| Token activity tab | Cell metric                                                     | Hover copy                                               |
+| ------------------ | --------------------------------------------------------------- | -------------------------------------------------------- |
+| Daily              | that day's tokens and message/call turns                        | `{date}\n{tokens} tokens · {turns} 轮消息`               |
+| Weekly             | 7-day column sum, first row Sunday                              | `{date} 当周\n{tokens} tokens · {turns} 轮消息`          |
+| Cumulative         | cumulative through that week; hover still highlights the column | `截至 {date} 当周累计\n{tokens} tokens · {turns} 轮消息` |
 
 "System health" has its own range, independent of "Usage details": last 7 days (default) or last 30 days (user-selected). Its line chart shows two series — `proMaxDecodeSpeed` (Max&Pro peak-hour average decode speed) and `liteDecodeSpeed` (Lite) — with the y axis in `tokens/s` and tooltips showing each series' `tokens/s` like the official page.
 

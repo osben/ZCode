@@ -131,14 +131,14 @@ Diagnostics are recorded at file load time, not per parent turn. The CLI only co
 no longer parses Markdown. State updates use the fixed path resolved at preparation and do not
 re-read CLI config; changing `storage.dir` still needs an explicit reload.
 
-| Change | Config I/O |
-| --- | --- |
-| add/update A | read and parse only A |
-| delete A | remove the cache entry, read no other Markdown |
-| rename A→B | remove the old path, read the new path; state is read only if it actually changed |
-| state | read only state; compute enable/override in memory |
-| init, explicit reload, directory rebuild, scope failure recovery | scan the affected scope |
-| parent-turn RPC / spawn / resume / unrelated workspace | no config file reads, no repeated parsing |
+| Change                                                           | Config I/O                                                                        |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| add/update A                                                     | read and parse only A                                                             |
+| delete A                                                         | remove the cache entry, read no other Markdown                                    |
+| rename A→B                                                       | remove the old path, read the new path; state is read only if it actually changed |
+| state                                                            | read only state; compute enable/override in memory                                |
+| init, explicit reload, directory rebuild, scope failure recovery | scan the affected scope                                                           |
+| parent-turn RPC / spawn / resume / unrelated workspace           | no config file reads, no repeated parsing                                         |
 
 The cache is keyed by file path and keeps same-name files and the original sort/override; a state
 change does not re-read documents. Each scope merges pending paths so events during a read are not
@@ -217,15 +217,15 @@ regression and does not freeze a parent/mapping implementation.
 
 Kept as business assertions, not CI admission:
 
-| Scenario | Kept or migrated evidence |
-| --- | --- |
-| SHR01-SHR03 | runtime-refresh: new parent turn, failed-child recovery, same-turn old config and compact |
-| SHR04-SHR08 | catalog-refresh: add/delete/rename/enable-disable, same-name update, user/MCS, parent trajectory and cache prefix |
-| SHR09 | profile-fields: single-field reasoning/prompt/tools spawn/resume |
-| SHR10-SHR13, SHR15 | context-boundaries: running child, same-turn resume, RPC fault, retry/cancel, child trajectory |
-| SHR14, SHR17 | multi-workspace: real multiple CLIs, project isolation, faults not blocking save |
-| SHR16, SHR18-SHR21 | cross-host: bidirectional save and external edit, each side's next turn, state override, I/O-failure fallback/event recovery, late background results, Host close |
-| SHR22 | cross-host: differently-cased user directory update, project directory first creation and rebuild; two existing sessions consume the new config next turn; the real-watcher unit test adds add/delete/rename and lifecycle |
+| Scenario           | Kept or migrated evidence                                                                                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SHR01-SHR03        | runtime-refresh: new parent turn, failed-child recovery, same-turn old config and compact                                                                                                                                  |
+| SHR04-SHR08        | catalog-refresh: add/delete/rename/enable-disable, same-name update, user/MCS, parent trajectory and cache prefix                                                                                                          |
+| SHR09              | profile-fields: single-field reasoning/prompt/tools spawn/resume                                                                                                                                                           |
+| SHR10-SHR13, SHR15 | context-boundaries: running child, same-turn resume, RPC fault, retry/cancel, child trajectory                                                                                                                             |
+| SHR14, SHR17       | multi-workspace: real multiple CLIs, project isolation, faults not blocking save                                                                                                                                           |
+| SHR16, SHR18-SHR21 | cross-host: bidirectional save and external edit, each side's next turn, state override, I/O-failure fallback/event recovery, late background results, Host close                                                          |
+| SHR22              | cross-host: differently-cased user directory update, project directory first creation and rebuild; two existing sessions consume the new config next turn; the real-watcher unit test adds add/delete/rename and lifecycle |
 
 Broadcast send failure / illegal payload / loopback are no longer product branches; their tests and
 fixtures are removed. Delayed/duplicate/unrelated events are verified as file events and I/O
@@ -239,12 +239,12 @@ Accepted using real Settings operations, the same running parent session and rea
 requests. Continuity scenarios use a large enough context window and forbid compact; the original
 SHR01-SHR03 compact scenarios are kept separately.
 
-| Scenario | Action and required assertions |
-| --- | --- |
-| SHR04 dynamic add | after the parent session completed a turn, create A; the next turn's listing appends A, and the provider request for Agent A uses the selected profile |
-| SHR05 rename | rename A to B; the next turn's listing removes A and adds B; spawn by the old name and SendMessage to the old instance fail explicitly with no new child; B runs |
-| SHR06 delete/toggle | after disabling B, spawn/resume fail; after re-enabling they work; after deleting B the listing removal and spawn/resume failures are verified again; failure paths must not create a child/session |
-| SHR07 same-name update | update B's model, reasoning, prompt, description and tool constraints; the next turn's provider uses the new values and tool set; the original history listing keeps the old body and no same-name notice is appended |
+| Scenario                    | Action and required assertions                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SHR04 dynamic add           | after the parent session completed a turn, create A; the next turn's listing appends A, and the provider request for Agent A uses the selected profile                                                                                                                                                                                                                    |
+| SHR05 rename                | rename A to B; the next turn's listing removes A and adds B; spawn by the old name and SendMessage to the old instance fail explicitly with no new child; B runs                                                                                                                                                                                                          |
+| SHR06 delete/toggle         | after disabling B, spawn/resume fail; after re-enabling they work; after deleting B the listing removal and spawn/resume failures are verified again; failure paths must not create a child/session                                                                                                                                                                       |
+| SHR07 same-name update      | update B's model, reasoning, prompt, description and tool constraints; the next turn's provider uses the new values and tool set; the original history listing keeps the old body and no same-name notice is appended                                                                                                                                                     |
 | SHR08 trajectory continuity | the MCS and user-reminder projections each run through all the above; raw model-io is kept before cleanup and exported via prompt-trajectory; each parent session yields exactly one segment covering all main requests; per request check system/tools unchanged, history append-only, tool_use/result paired, and cache breakpoints and the prefix they cover untouched |
 
 ```text

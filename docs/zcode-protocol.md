@@ -68,15 +68,15 @@ the command inbox.
 The full command set is typed in `packages/shared/src/zcode-protocol-v4/command.ts` (the single type
 source of truth); main groups:
 
-| Group                    | Commands                                                                                                       |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Session / input          | `createSession`, `createSelectionSideSession`, `sendText`, `sendGoalCommand`, `renameSession`, `deleteSession` |
-| Generation control       | `stop`, `compact`, `retryTurn`, `editUserQuery`, `forkAssistant`                                               |
-| File rewind              | `applyFileRewind`                                                                                              |
-| Queue                    | `sendQueuedNow`, `editQueueItem`, `reorderQueueItem`, `deleteQueueItem`, `setAutoDrain`                        |
-| Config                   | `switchModelConfig`, `switchCollaborationMode`, `setFollowupMode`                                              |
-| Goal / background work   | `pauseGoal`, `resumeGoal`, `cancelBackgroundWork`                                                              |
-| Blocking interaction     | `resolveInteraction`, `snoozeInteractionAutoResolution`                                                        |
+| Group                  | Commands                                                                                                       |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Session / input        | `createSession`, `createSelectionSideSession`, `sendText`, `sendGoalCommand`, `renameSession`, `deleteSession` |
+| Generation control     | `stop`, `compact`, `retryTurn`, `editUserQuery`, `forkAssistant`                                               |
+| File rewind            | `applyFileRewind`                                                                                              |
+| Queue                  | `sendQueuedNow`, `editQueueItem`, `reorderQueueItem`, `deleteQueueItem`, `setAutoDrain`                        |
+| Config                 | `switchModelConfig`, `switchCollaborationMode`, `setFollowupMode`                                              |
+| Goal / background work | `pauseGoal`, `resumeGoal`, `cancelBackgroundWork`                                                              |
+| Blocking interaction   | `resolveInteraction`, `snoozeInteractionAutoResolution`                                                        |
 
 `session/steer`, `session/rewind` and the standalone rewind command are deleted. Guide input is
 adjudicated by `sendText` + `inputRouting`/follow-up mode; retry and edit use `retryTurn` and

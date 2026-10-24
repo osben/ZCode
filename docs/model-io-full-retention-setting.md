@@ -86,11 +86,11 @@ mixes semantics.
 
 ## Owners
 
-| State/fact | Draft/display owner | Authoritative owner | Commit command/service | Persistence/cache |
-| --- | --- | --- | --- | --- |
-| User choice | Settings React snapshot | `ISettingService` | `update()` | `setting.json` |
+| State/fact            | Draft/display owner             | Authoritative owner            | Commit command/service               | Persistence/cache   |
+| --------------------- | ------------------------------- | ------------------------------ | ------------------------------------ | ------------------- |
+| User choice           | Settings React snapshot         | `ISettingService`              | `update()`                           | `setting.json`      |
 | Active CLI preference | Host latest preference snapshot | workspace CLI protocol context | `workspace/updateModelIoPreferences` | process memory only |
-| Per-write mode | `AiSdkModelAdapter` | adapter attempt snapshot | runner input | none |
+| Per-write mode        | `AiSdkModelAdapter`             | adapter attempt snapshot       | runner input                         | none                |
 
 Single UI entry: `GeneralSectionContent` + `Switch` via `useSettings`; all workspaces read the app
 global default (`false`) from `appSettingsSchema`. Standalone CLIs have no UI and stay `false`.
@@ -107,14 +107,14 @@ global default (`false`) from `appSettingsSchema`. Standalone CLIs have no UI an
 
 ## Acceptance cases
 
-| Case ID | Setup | Action | Assertions |
-| --- | --- | --- | --- |
-| MIO-FR-01 | empty historical settings | load settings | switch/default is false |
-| MIO-FR-02 | bounded production writer | write multiple sessions and growing context | max 3 files; delta/tail and size reset unchanged |
-| MIO-FR-03 | full retention enabled | write multiple sessions and repeated context | all files remain; each record is full; production duplicate fields remain |
-| MIO-FR-04 | full retention enabled with oversized session file | append next record | existing file is not reset and no `modelIOReset` marker is emitted |
-| MIO-FR-05 | active local/remote services | toggle switch | setting persists, active Host ACKs, cross-window payload includes full snapshot |
-| MIO-FR-06 | full retention record contains credentials in headers | write record | sensitive headers remain `[redacted]` |
+| Case ID   | Setup                                                 | Action                                       | Assertions                                                                      |
+| --------- | ----------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------- |
+| MIO-FR-01 | empty historical settings                             | load settings                                | switch/default is false                                                         |
+| MIO-FR-02 | bounded production writer                             | write multiple sessions and growing context  | max 3 files; delta/tail and size reset unchanged                                |
+| MIO-FR-03 | full retention enabled                                | write multiple sessions and repeated context | all files remain; each record is full; production duplicate fields remain       |
+| MIO-FR-04 | full retention enabled with oversized session file    | append next record                           | existing file is not reset and no `modelIOReset` marker is emitted              |
+| MIO-FR-05 | active local/remote services                          | toggle switch                                | setting persists, active Host ACKs, cross-window payload includes full snapshot |
+| MIO-FR-06 | full retention record contains credentials in headers | write record                                 | sensitive headers remain `[redacted]`                                           |
 
 Case pruning: the writer mode does not read/write session phase, queue or delivery kind (no
 conversation coupling); the retention branch is provider-neutral after record construction (one

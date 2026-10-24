@@ -76,12 +76,12 @@ sequenceDiagram
 - The website's /invite, /invite/accept, /invite/unavailable, and /referrals/unavailable are real invitation business and keep their semantics; only the old /{cn|en}/referrals root page returns 404.
 - Upgrade, redemption, marketing reporting, task/session, mobile replayable, and desktop continuous are unchanged. User data/rewards stay server-owned; page display state belongs to the website; login continuation belongs to the window Provider.
 
-| Acceptance | Setup/action | Assertions/evidence |
-| --- | --- | --- |
-| REW-13 | Build and validate URLs for three environments, cn/en, light/dark | Exact rewards path only; old paths, similar paths, and old config rejected/not read (unit tests) |
-| REW-14 | Dispatch old and new events after bridge install | Old events do not update state, new ones do; partitions use only new names (unit/desktop E2E) |
-| REW-15 | Open from login menu and marketing button | Gift + 邀请好友 [奖励] / Refer a friend [Rewards]; rewards routing, auth, language/theme, and single report work (real Electron E2E) |
-| REW-16 | Website plain/embedded new and old homepages and invite pages | New pages 200, old home 404; invite routes unchanged; cn/en light/dark at 390/900/1440px with no horizontal overflow (browser tests) |
+| Acceptance | Setup/action                                                      | Assertions/evidence                                                                                                                  |
+| ---------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| REW-13     | Build and validate URLs for three environments, cn/en, light/dark | Exact rewards path only; old paths, similar paths, and old config rejected/not read (unit tests)                                     |
+| REW-14     | Dispatch old and new events after bridge install                  | Old events do not update state, new ones do; partitions use only new names (unit/desktop E2E)                                        |
+| REW-15     | Open from login menu and marketing button                         | Gift + 邀请好友 [奖励] / Refer a friend [Rewards]; rewards routing, auth, language/theme, and single report work (real Electron E2E) |
+| REW-16     | Website plain/embedded new and old homepages and invite pages     | New pages 200, old home 404; invite routes unchanged; cn/en light/dark at 390/900/1440px with no horizontal overflow (browser tests) |
 
 These cases are accepted per the user's decision; migration/old-version compatibility combinations are pruned with no migration tests added. The original REF-01…12 login/bridge-isolation case ids are reused; initially new E2E stayed pending — the 2026-09-16 promotion decision is below, without Docker. The graph keeps stable capability ids, adding the Rewards alias and marketing entry relations; codegraph was unavailable, so a two-level static call check was used instead of a claimed full index scan.
 
@@ -91,32 +91,32 @@ Credential keys match the purchase page: the current channel's oauth:zai:access_
 
 ## Impact surface (static check)
 
-| Layer | Entry/shared implementation | Ownership/constraint |
-| --- | --- | --- |
-| must-inspect | WorkspaceSidebar avatar menu, Root | Rewards opening is independent of Coding Plan inventory |
-| must-inspect | Web shell, Rewards Provider | Reuse display controls; auth and callback stay separate |
-| must-inspect | desktop will-attach-webview, preload, partition cleanup | Bridge permissions limited to trusted pages, not spread to normal browsers |
-| should-inspect | CodingPlanEmbeddedWebviewDialog | Purchase navigation, close, refresh, and callback keep original behavior |
-| invariant-only | Mobile remote, task flow | No runtime, queue, or workspace-identity changes |
-| evidence-only | UI unit tests, Electron WebView E2E, website unit tests | Assert setup/action/result; static samples do not stand in for server integration |
+| Layer          | Entry/shared implementation                             | Ownership/constraint                                                              |
+| -------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| must-inspect   | WorkspaceSidebar avatar menu, Root                      | Rewards opening is independent of Coding Plan inventory                           |
+| must-inspect   | Web shell, Rewards Provider                             | Reuse display controls; auth and callback stay separate                           |
+| must-inspect   | desktop will-attach-webview, preload, partition cleanup | Bridge permissions limited to trusted pages, not spread to normal browsers        |
+| should-inspect | CodingPlanEmbeddedWebviewDialog                         | Purchase navigation, close, refresh, and callback keep original behavior          |
+| invariant-only | Mobile remote, task flow                                | No runtime, queue, or workspace-identity changes                                  |
+| evidence-only  | UI unit tests, Electron WebView E2E, website unit tests | Assert setup/action/result; static samples do not stand in for server integration |
 
 codegraph was unavailable — the above is a static source check, not a full call-graph scan; the semantic graph gained the Rewards node plus purchase-shell reuse and remote-boundary relations.
 
 ## Acceptance and handover
 
-| Case | Setup and action | Assertions |
-| --- | --- | --- |
-| REF-01 | Build URL for cn/en, three environments, light/dark | Domain, exact path, embedded/theme correct |
-| REF-02 | Menu click, repeated open, close | Entry below Upgrade; independent container; original tasks unchanged |
-| REF-03 | Bridge ready before/after, switch theme | Snapshot readable, one notification, no page reload, unsubscribe works |
-| REF-04 | Switch language | Route replaced keeping theme/embedded; no token carried |
-| REF-05 | Injection/account switch/close/late async | Old values cleared, only current channel kept, stale injection ineffective |
-| REF-06 | Foreign domain, similar path, malicious URL | No bridge/no credential injection |
-| REF-07 | Load failure, refresh, reopen | Recoverable; old events do not leak into the new page |
-| REF-08 | Plain website/mobile | No-bridge does not crash; app token never handed over |
-| REF-09 | Coding Plan regression | Original purchase bridge and completion refresh unchanged |
-| REF-10 | Scroll invite page in light/dark | WebView edges match the window; page scrollable; top navigation position unchanged |
-| REF-11 | Banner / standalone dialog dispatches navigate rewards | Opens the existing invite page; one report per confirm; no redemption triggered |
+| Case   | Setup and action                                                               | Assertions                                                                                                                                       |
+| ------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| REF-01 | Build URL for cn/en, three environments, light/dark                            | Domain, exact path, embedded/theme correct                                                                                                       |
+| REF-02 | Menu click, repeated open, close                                               | Entry below Upgrade; independent container; original tasks unchanged                                                                             |
+| REF-03 | Bridge ready before/after, switch theme                                        | Snapshot readable, one notification, no page reload, unsubscribe works                                                                           |
+| REF-04 | Switch language                                                                | Route replaced keeping theme/embedded; no token carried                                                                                          |
+| REF-05 | Injection/account switch/close/late async                                      | Old values cleared, only current channel kept, stale injection ineffective                                                                       |
+| REF-06 | Foreign domain, similar path, malicious URL                                    | No bridge/no credential injection                                                                                                                |
+| REF-07 | Load failure, refresh, reopen                                                  | Recoverable; old events do not leak into the new page                                                                                            |
+| REF-08 | Plain website/mobile                                                           | No-bridge does not crash; app token never handed over                                                                                            |
+| REF-09 | Coding Plan regression                                                         | Original purchase bridge and completion refresh unchanged                                                                                        |
+| REF-10 | Scroll invite page in light/dark                                               | WebView edges match the window; page scrollable; top navigation position unchanged                                                               |
+| REF-11 | Banner / standalone dialog dispatches navigate rewards                         | Opens the existing invite page; one report per confirm; no redemption triggered                                                                  |
 | REF-12 | Navigate while logged out, then success/cancel/failure/replaced login attempts | Continue only for the same id with user ready; no other login triggers a jump after cancel/failure/replacement; the web external link opens once |
 
 2026-09-16 user-confirmed promotion: the 3 Rewards E2E cases moved to `packages/desktop/test/e2e/ui-shell/marketing-touch-rewards.test.ts`, included in the default spec scan, without Docker. The standard promotion dry run does not support ui-shell, so the marketing-domain manual migration applies. The official run has the runner start an isolated website fixture with a random loopback origin before the build instead of a manually started localhost:3000; the fixture implements only the website-side bridge consumption protocol and a long scrollable page and does not replace real website business or visual acceptance. Earlier real-website integration evidence is retained; real server-side verification, deployment, and reward issuance are out of scope for these cases.
