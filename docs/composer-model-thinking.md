@@ -80,7 +80,7 @@ ModelSelectionView（支持的模型与档位）
 - 布局：各级收缩与逆向恢复、缺失 Computer/Plan、最终图标＋绿条；真实浏览器桌面与手机宽度、深浅主题。
 - Desktop E2E：模型与档位修改仍更新 Composer；普通模式不再渲染独立 Think 入口；合并菜单与 Mode 互斥。
 
-本次验证：相关单测 7 个文件共 155 条通过，Desktop 工具栏 E2E 覆盖 Provider 自动选模型和子菜单模型管理跳转；typecheck、lint（0 errors）及 architecture:check --changed 通过。实际桌面窗口确认三档收缩；浏览器组件验证 320、390、1200 像素及深浅主题，未执行手机 `/remote` 真机链路验证。
+本次验证：相关单测 7 个文件共 155 条通过，Desktop 工具栏 E2E 覆盖 Provider 自动选模型（该行为已由 ISSUE-058 改为浏览后选模型）和子菜单模型管理跳转；typecheck、lint（0 errors）及 architecture:check --changed 通过。实际桌面窗口确认三档收缩；浏览器组件验证 320、390、1200 像素及深浅主题，未执行手机 `/remote` 真机链路验证。
 
 ## 调档期间的焦点
 

@@ -1394,6 +1394,11 @@ it("after a display failure, retrying the current connection is allowed instead 
   expect(selected).toBeDefined();
   menu!.onSelectModel(selected, selected.items[0]!.value);
   expect(mocks.selectConnection).toHaveBeenCalledTimes(1);
+  expect(mocks.selectConnection).toHaveBeenCalledWith(
+    expect.objectContaining({ key: selected.key }),
+    selected.key,
+    selected.items[0]!.name,
+  );
 });
 
 it("a model picked in the selected connection without an error skips the connection switch", () => {

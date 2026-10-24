@@ -99,6 +99,11 @@ export function ComposerProviderMenu({
               data-testid={testId(TID_CHAT_MODEL_SELECT_GROUP, candidate.key)}
               data-model-provider-key={candidate.key}
               className="min-h-8 gap-2 pl-2 pr-8"
+              // ISSUE-058: on the desktop submenu, hovering or arrowing to a row (Radix focuses it)
+              // browses it too; the narrow page only browses on an explicit choice.
+              onFocus={() => {
+                if (!narrow) onSelect(candidate);
+              }}
               onSelect={(event) => {
                 event.preventDefault();
                 onSelect(candidate);

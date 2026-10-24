@@ -91,7 +91,8 @@ describe("Composer direct team provider menu", () => {
         "aria-checked",
       ),
     ).toBe("true");
-    fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "Escape" });
+    // Reopening focuses (and so browses) the first row; browse Team Two again.
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "BigModel Team Two" }));
     fireEvent.click(screen.getByRole("menuitemradio", { name: "GLM-5.3", exact: true }));
     fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
     expect(

@@ -137,13 +137,26 @@ describe.each([true, false])("browse-only provider rows (providerMenu=%s)", (wit
     expect(screen.getByRole("slider").getAttribute("aria-valuetext")).toBe("Off");
   });
 
-  it("hovering a provider row writes nothing", () => {
+  it("hovering (focusing) a provider row shows its models and writes nothing", async () => {
     render(createElement(Harness, { withProviderMenu }));
     openProviders();
-    fireEvent.pointerMove(providerRow("Provider B Local"));
-    fireEvent.mouseEnter(providerRow("Provider B Local"));
+    fireEvent.focus(providerRow("Provider B Local"));
+    await waitFor(() => expect(modelRow("Local model")).toBeTruthy());
     expectNoWrites();
-    expect(modelRow("Flash").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("a model change ends the browse so the old provider does not come back", async () => {
+    render(createElement(Harness, { withProviderMenu }));
+    openProviders();
+    fireEvent.click(providerRow("Provider B Local"));
+    fireEvent.click(await waitFor(() => modelRow("Local model")));
+    await waitFor(() => expect(modelRow("Local model").getAttribute("aria-checked")).toBe("true"));
+    openProviders();
+    fireEvent.click(providerRow("Provider A API"));
+    fireEvent.click(await waitFor(() => modelRow("Flash")));
+    // Back on a/flash, the menu shows the selected provider A, not the earlier browse of B.
+    await waitFor(() => expect(modelRow("Flash").getAttribute("aria-checked")).toBe("true"));
+    expect(screen.getByTestId("composer-provider-trigger").textContent).toContain("Provider A");
   });
 
   it("keyboard Enter on a provider row behaves the same", async () => {
@@ -196,4 +209,50 @@ describe.each([true, false])("browse-only provider rows (providerMenu=%s)", (wit
     expect(screen.queryByTestId("composer-provider-back")).toBeNull();
     expectNoWrites();
   });
+});
+
+it("routes a pick in the display fallback group through the connection owner when nothing is selected", () => {
+  const pick = vi.fn();
+  const direct = vi.fn();
+  render(
+    createElement(
+      ZCodeIntlProvider,
+      { initialLocale: "en-US" },
+      createElement(
+        TooltipProvider,
+        null,
+        createElement(ModelConfigSelect, {
+          modelGroups: groups,
+          normalizedValue: "",
+          triggerLabel: "Select model",
+          tooltipTitle: "Select model",
+          lockReasonMessage: "",
+          isItemLocked: () => false,
+          onValueChange: direct,
+          open: true,
+          onOpenChange: () => {},
+          focusSelectorOnClose: null,
+          composerOptions: {
+            providerLabel: "Provider",
+            modelsLabel: "Models",
+            effortLabel: "Effort",
+            selectModelLabel: "Select model",
+            levels: [],
+            value: "",
+            onValueChange: () => {},
+            providerMenu: {
+              groups,
+              selectedKey: undefined,
+              pending: false,
+              error: null,
+              onSelectModel: (group: ComposerPlanGroup, value: string) => pick(group.key, value),
+            },
+          },
+        }),
+      ),
+    ),
+  );
+  fireEvent.click(screen.getByRole("menuitemradio", { name: "Flash", exact: true }));
+  expect(pick).toHaveBeenCalledWith("a", "a/flash");
+  expect(direct).not.toHaveBeenCalled();
 });

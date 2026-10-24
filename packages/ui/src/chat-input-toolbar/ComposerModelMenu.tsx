@@ -126,6 +126,9 @@ export function ComposerModelMenu({
   // ISSUE-058: provider rows are browse-only (specs/composer-model-picker-browse-only-providers.md).
   // Browse is UI-local; model, effort and connection change only on a model row pick.
   const [browse, setBrowse] = useState<{ key: string; selection: string } | null>(null);
+  // A model change ends the browse; dropping it keeps the old group from reappearing if the
+  // selection later returns to the value captured when browsing.
+  if (browse && browse.selection !== normalizedValue) setBrowse(null);
   const menuGroups: readonly ComposerPlanGroup[] = options.providerMenu?.groups ?? groups;
   const selected =
     menuGroups.find((group) => group.key === options.providerMenu?.selectedKey) ??
@@ -159,9 +162,10 @@ export function ComposerModelMenu({
     selectedValue: browsingOther ? undefined : normalizedValue,
     onSelect: (value) => {
       if (!group) return;
-      // Team rows share model values, so a pick in a browsed group must carry the group to the
-      // connection owner; a retry after a failed switch goes the same way.
-      if (providerMenu && (browsingOther || (currentGroupSelected && providerMenu.error))) {
+      // Team rows share model values, so a pick outside the selected group (browsed, or the
+      // display fallback when nothing is selected) must carry the group to the connection
+      // owner; a retry after a failed switch goes the same way.
+      if (providerMenu && (!currentGroupSelected || providerMenu.error)) {
         providerMenu.onSelectModel(group as ComposerPlanGroup, value);
         return;
       }

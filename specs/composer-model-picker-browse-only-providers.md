@@ -10,8 +10,9 @@ Browsing never changes the selection.
 ## Rules
 
 1. A provider row (submenu on desktop, provider page on narrow < 640px) only chooses which
-   provider's models the Models list shows. Clicking it, pressing Enter/Space on it, or
-   hovering it never calls a model, effort, or connection write.
+   provider's models the Models list shows. Clicking it or pressing Enter/Space on it browses
+   it; on the desktop submenu hovering or arrowing to a row (Radix focuses it) browses it too.
+   None of these ever calls a model, effort, or connection write.
 2. The model, the effort, and the account connection (Individual / Team / API) change only
    when the user picks a model row.
 3. Browsing never touches effort. While a non-selected provider is browsed the Effort area
@@ -37,8 +38,10 @@ Browsing never changes the selection.
    the switch then re-checks that model against the synchronized catalog (rule 6a).
 7. The provider list's check mark stays on the selected provider, not the browsed one. The
    provider trigger row shows the browsed provider.
-8. Browse state is UI-local to the open menu. It resets when the menu closes or when the
-   selected model changes.
+8. Browse state is UI-local to the open menu. It resets when the menu closes (the menu content
+   unmounts) and is dropped as soon as the selected model changes.
+9. A pick outside the selected group — a browsed group, or the display fallback group when no
+   model is selected — goes through the connection owner (rule 6).
 
 Unchanged: Recent is written only on an accepted send; an unresolvable stored pick is never
 dropped (ISSUE-026/035); locked models are not selectable; Ctrl+M only opens the menu.
@@ -71,7 +74,7 @@ same React component on both.
 - Model `deepseek/...flash` with effort Off; open the picker, browse LM Studio, Local, then
   OpenRouter: `data-model-current-value` and effort stay as they were after every step.
 - Same with keyboard: ArrowRight into the provider list, Enter on another provider — no change.
-- Hovering a provider row only highlights it; nothing is written.
+- Hovering a provider row on desktop shows its models; nothing is written.
 - Narrow width: choosing a provider on the provider page returns to the model page showing that
   provider's models; nothing is selected.
 - Browse to another provider and pick a model: the model changes and effort becomes the target
