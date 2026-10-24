@@ -196,6 +196,11 @@ usePullRequestStatuses (sidebar driver) · useSessionManagerPullRequests (visibl
    │ invalidating triggers (bypass TTL; both drivers):
    │   worktree session turn ends (running → completed/idle) · onRefreshGit (commit/push) ·
    │   explicit Refresh
+   │ version signals (usePullRequestGitMutationRefresh, usePullRequestExplicitRefresh; shared):
+   │   onRefreshGit is consumed only while the driver is active and has targets; otherwise it
+   │   stays pending and the next probe with targets forces · explicit Refresh fires once per
+   │   version and a targets change never replays it · the newest probe per workspace wins, so
+   │   explicit Refresh is issued after turn-end and git-mutation probes of the same commit
    ▼
 IGitService.getSessionPullRequests  ── on the workspace host (local or remote) ──
    │ cache key: (workspaceIdentity?.trim() || workspacePath) + branch

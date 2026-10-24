@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
+import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import {
   collectPullRequestTurnEndTargets,
+  forceTaskIdsForRequestedKeys,
   runningPullRequestTaskKeys,
   type PullRequestStatusProber,
   type PullRequestStatusTarget,
@@ -36,4 +38,58 @@ export function usePullRequestTurnEndInvalidation(
       void prober.probe(finishedTargets, { force: true });
     }
   }, [prober, targets, active, runningSignature]);
+}
+
+/**
+ * Git-mutation refresh shared by both pull request drivers. Callers must memoize `targets`: this
+ * effect is also the mount, targets-change and reconnect re-request (no force, the TTL applies).
+ * A git mutation (`refreshVersion`, commit/push) forces every worktree task in view. The version
+ * is consumed only while there are targets, so a mutation that lands with nothing in view (or
+ * while inactive) forces the next probe that has targets instead of being lost.
+ *
+ * Effect order matters: the prober keeps only the newest response per workspace, so callers
+ * keep their relative order with the turn-end hook and call usePullRequestExplicitRefresh last.
+ */
+export function usePullRequestGitMutationRefresh(
+  prober: PullRequestStatusProber,
+  targets: readonly PullRequestStatusTarget[],
+  active: boolean,
+): void {
+  const refreshVersion = usePullRequestStatusStore((state) => state.refreshVersion);
+  const handledRefreshVersionRef = useRef(refreshVersion);
+  useEffect(() => {
+    if (!active || targets.length === 0) {
+      // Left unhandled so the mutation is re-probed once targets are in view and active.
+      return;
+    }
+    const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
+    handledRefreshVersionRef.current = refreshVersion;
+    void prober.probe(targets, gitMutated ? { force: true } : undefined);
+  }, [prober, targets, active, refreshVersion]);
+}
+
+/**
+ * Explicit refresh (`forceRefresh`) shared by both pull request drivers: only the requested tasks
+ * bypass the TTL, once per version; a targets change re-runs the effect but must not replay the
+ * request. Task ids come from the targets, not from parsing the composite task key. Call it after
+ * the other probing hooks: its probe carries every task in view, so it must be the newest one.
+ */
+export function usePullRequestExplicitRefresh(
+  prober: PullRequestStatusProber,
+  targets: readonly PullRequestStatusTarget[],
+  active: boolean,
+): void {
+  const forceRefresh = usePullRequestStatusStore((state) => state.forceRefresh);
+  const handledForceVersionRef = useRef(forceRefresh.version);
+  useEffect(() => {
+    if (!active || forceRefresh.version === handledForceVersionRef.current) {
+      return;
+    }
+    handledForceVersionRef.current = forceRefresh.version;
+    const forceTaskIdsByWorkspace = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
+    if (forceTaskIdsByWorkspace.size === 0) {
+      return;
+    }
+    void prober.probe(targets, { forceTaskIdsByWorkspace });
+  }, [prober, targets, active, forceRefresh]);
 }

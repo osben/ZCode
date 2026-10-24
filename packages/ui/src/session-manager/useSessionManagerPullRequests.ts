@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import {
   createPullRequestStatusProber,
-  forceTaskIdsForRequestedKeys,
   type PullRequestStatusTarget,
   type PullRequestStatusTargetTask,
 } from "@/lib/pullRequestStatusProbeRunner.js";
@@ -11,7 +10,11 @@ import { useBaseWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
-import { usePullRequestTurnEndInvalidation } from "@/hooks/usePullRequestTurnEndInvalidation.js";
+import {
+  usePullRequestExplicitRefresh,
+  usePullRequestGitMutationRefresh,
+  usePullRequestTurnEndInvalidation,
+} from "@/hooks/usePullRequestTurnEndInvalidation.js";
 import type { SessionManagerRow } from "./sessionManagerModel.js";
 
 /**
@@ -42,8 +45,6 @@ export function useSessionManagerPullRequests(
   const markWorkspaceTasksStale = usePullRequestStatusStore(
     (state) => state.markWorkspaceTasksStale,
   );
-  const refreshVersion = usePullRequestStatusStore((state) => state.refreshVersion);
-  const forceRefresh = usePullRequestStatusStore((state) => state.forceRefresh);
 
   const prober = useMemo(
     () =>
@@ -128,30 +129,9 @@ export function useSessionManagerPullRequests(
   );
 
   // Same invalidation contract as the sidebar driver (usePullRequestStatuses): a turn end, a git
-  // mutation (commit/push) or an explicit refresh force the affected rows. The turn-end diff is the
-  // shared hook; the version signals are not replayed by a targets change.
+  // mutation (commit/push) or an explicit refresh force the affected rows. Both are shared hooks; the
+  // version signals are not replayed by a targets change.
   usePullRequestTurnEndInvalidation(prober, targets, active);
-
-  const handledRefreshVersionRef = useRef(refreshVersion);
-  useEffect(() => {
-    if (!active || targets.length === 0) {
-      return;
-    }
-    const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
-    handledRefreshVersionRef.current = refreshVersion;
-    void prober.probe(targets, gitMutated ? { force: true } : undefined);
-  }, [prober, targets, active, refreshVersion]);
-
-  const handledForceVersionRef = useRef(forceRefresh.version);
-  useEffect(() => {
-    if (!active || forceRefresh.version === handledForceVersionRef.current) {
-      return;
-    }
-    handledForceVersionRef.current = forceRefresh.version;
-    const forceTaskIdsByWorkspace = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
-    if (forceTaskIdsByWorkspace.size === 0) {
-      return;
-    }
-    void prober.probe(targets, { forceTaskIdsByWorkspace });
-  }, [prober, targets, active, forceRefresh]);
+  usePullRequestGitMutationRefresh(prober, targets, active);
+  usePullRequestExplicitRefresh(prober, targets, active);
 }
