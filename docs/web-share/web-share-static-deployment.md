@@ -1,12 +1,13 @@
-# Share 落地页 Jenkins 静态发布
+# Share Landing Page: Jenkins Static Release
 
-## 目标
+## Goal
 
-Share 落地页单独构建并发布为 nginx 静态镜像，不和手机远控 `/remote` 镜像或
-Deployment 共用。Jenkins Job 通过 `ZCODE_ENV=test|production` 选择构建时注入的
-ZCode API/OAuth endpoint；页面入口为 `/cn/share`（中文）或 `/share`（英文）。
+The Share landing page is built and released as a separate nginx static image, not sharing an image or
+Deployment with the phone remote control `/remote` image. A Jenkins Job selects the build-time injected ZCode
+API/OAuth endpoint through `ZCODE_ENV=test|production`; the page entries are `/cn/share` (Chinese) and
+`/share` (English).
 
-## 发布链路
+## Release chain
 
 ```text
 Jenkins checkout z-code
@@ -18,29 +19,30 @@ Jenkins checkout z-code
   -> rollout status
 ```
 
-Jenkins 不把 API token 或 Docker 密码放入 Docker ARG、镜像标签、构建上下文或日志。
-Share 构建只安装 `@zcode/web-share` 的轻量依赖，并使用仓库锁文件保证渲染依赖可复现；
-过滤安装不会把完整 Web/Remote 的 CUA 依赖带入闭包，也不需要 CUA Git token。运行时镜像只有
-nginx 和静态产物，material-icons 从 `packages/web/public` 一并复制。
+Jenkins keeps API tokens and Docker passwords out of Docker ARGs, image tags, the build context and logs. The
+Share build installs only the lightweight dependencies of `@zcode/web-share` and uses the repo lockfile for
+reproducible rendering dependencies; a filtered install does not bring in the CUA dependencies of the full
+Web/Remote closure and needs no CUA Git token. The runtime image contains only nginx and static artifacts;
+material-icons are copied from `packages/web/public`.
 
-## Jenkins 配置
+## Jenkins configuration
 
-`Jenkinsfile.web-share` 按现有 remote Job 使用 Kubernetes Pod 模板 `default`，要求
-该模板包含 `buildkit` 和 `kubectl` 容器。Pipeline 默认配置面向 staging：
+`Jenkinsfile.web-share` uses the Kubernetes Pod template `default` like the existing remote Job, which must
+contain the `buildkit` and `kubectl` containers. Pipeline defaults target staging:
 
-- registry：`openwebui-hk-registry-vpc.cn-hongkong.cr.aliyuncs.com/glm-chat`
-- 镜像：`staging-zcode-conversation-share`
-- Deployment 与容器：`staging-zcode-conversation-share`
-- namespace/context：`zcode` / `openwebui`
-- `ZCODE_ENV=test`，构建 endpoint 为 `https://zcode.z.ai`
+- registry: `openwebui-hk-registry-vpc.cn-hongkong.cr.aliyuncs.com/glm-chat`
+- image: `staging-zcode-conversation-share`
+- Deployment and container: `staging-zcode-conversation-share`
+- namespace/context: `zcode` / `openwebui`
+- `ZCODE_ENV=test`, build endpoint `https://zcode.z.ai`
 
-可通过 Pipeline 参数切换 `production`，并覆盖镜像名、Deployment 名和容器名。Git 仓库
-credential 沿用 remote Pipeline 的值；Share 不需要 CUA credential。share 专属的镜像和
-Deployment 命名需要由基础设施维护方确认。
+Pipeline parameters can switch to `production` and override the image name, Deployment name and container
+name. The Git repo credential follows the remote Pipeline's value; Share needs no CUA credential. Share-specific
+image and Deployment names must be confirmed by the infrastructure maintainer.
 
-Jenkins 需要启用 Pipeline script from SCM，并将脚本路径设为 `Jenkinsfile.web-share`。
-Pipeline 会浅克隆 `BRANCH_TO_BUILD`，以 `<clean-branch>-<commit sha 前 8 位>` 生成不可变 tag，
-使用 BuildKit 构建并推送 `Dockerfile.web-share`，然后执行：
+Jenkins must enable Pipeline script from SCM with script path `Jenkinsfile.web-share`. The Pipeline shallow
+clones `BRANCH_TO_BUILD`, generates an immutable tag `<clean-branch>-<first 8 of commit sha>`, builds and
+pushes `Dockerfile.web-share` with BuildKit, then runs:
 
 ```text
 kubectl set image deployment/<DEPLOYMENT_NAME>
@@ -48,14 +50,14 @@ kubectl set image deployment/<DEPLOYMENT_NAME>
 kubectl rollout status deployment/<DEPLOYMENT_NAME> -n zcode --context openwebui --timeout=4m
 ```
 
-## 验收路径
+## Acceptance paths
 
-镜像启动后必须满足：
+After the image starts:
 
-- `/cn/share`、`/cn/share/callback`、`/share`、`/share/callback` 返回 200；
-- `/cn/share/` 重定向到 `/cn/share`，`/share/` 重定向到 `/share`；
-- 两个入口都能访问 SPA、mock fixture 和资源；构建产物默认使用 `/cn/share/assets/` 前缀；
-- `/remote/v4` 不由 share 镜像提供。
+- `/cn/share`, `/cn/share/callback`, `/share`, `/share/callback` return 200;
+- `/cn/share/` redirects to `/cn/share`, `/share/` redirects to `/share`;
+- both entries can reach the SPA, mock fixtures and assets; build artifacts use the `/cn/share/assets/` prefix by default;
+- `/remote/v4` is not served by the share image.
 
-本地构建和 nginx 路由的完整 smoke test 仍可使用 `scripts/test-web-share-build.sh`；它只需要
-Docker，不需要 CUA Git 凭据。
+The full smoke test of local build and nginx routing can still use `scripts/test-web-share-build.sh`; it needs
+only Docker, not CUA Git credentials.
