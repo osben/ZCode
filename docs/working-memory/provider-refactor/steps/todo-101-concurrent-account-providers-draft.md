@@ -45,15 +45,15 @@ Guidance for current fixes:
 
 ## III. Structural Limitations Confirmed in Code (baseline `86bbe157`)
 
-| Current structure                                            | Why future must adjust                                                             | Code entry                                                                                                       |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| One fixed Team Provider ID per domain                        | Team A/B share an ID; Selection cannot specify them independently                 | `packages/shared/src/model-provider-types.ts`                                                                    |
-| Each Family saves one connection selection                   | Expresses a mutually exclusive current connection, not multiple instances          | `packages/shared/src/provider-family-connection-selection.ts`                                                    |
-| Settings navigation writes connection selection              | Browsing pages changes execution-side facts                                        | `packages/ui/src/settings/ModelProviderSection.tsx` `persistProviderFamilyModeForNavItem`                        |
-| Account Resolver limits execution scope by current           | Not needed once multiple specific Providers coexist                                | `packages/provider/src/resolver.ts`, `packages/services/src/model-provider/accountProviderConnectionResolver.ts` |
-| Request auth reads current-compatible connections            | UI selecting Team A cannot switch to Team B credentials at request time            | `accountProviderConnectionResolver.ts` `resolveCurrentAccountAccess`                                             |
-| Old Coding Plan uniformly maps to Individual                 | Correctness depends on later automatic mapping; removing it needs a new migration  | `packages/shared/src/legacy-model-provider-identity.ts`                                                          |
-| Account selector builds group labels by fixed Family/Plan    | Dynamic team instances need unique keys, accurate labels, same-name model sources  | `packages/ui/src/lib/modelSelectionGroups.ts`, `packages/ui/src/ModelConfigSelect.tsx`                           |
+| Current structure                                         | Why future must adjust                                                            | Code entry                                                                                                       |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| One fixed Team Provider ID per domain                     | Team A/B share an ID; Selection cannot specify them independently                 | `packages/shared/src/model-provider-types.ts`                                                                    |
+| Each Family saves one connection selection                | Expresses a mutually exclusive current connection, not multiple instances         | `packages/shared/src/provider-family-connection-selection.ts`                                                    |
+| Settings navigation writes connection selection           | Browsing pages changes execution-side facts                                       | `packages/ui/src/settings/ModelProviderSection.tsx` `persistProviderFamilyModeForNavItem`                        |
+| Account Resolver limits execution scope by current        | Not needed once multiple specific Providers coexist                               | `packages/provider/src/resolver.ts`, `packages/services/src/model-provider/accountProviderConnectionResolver.ts` |
+| Request auth reads current-compatible connections         | UI selecting Team A cannot switch to Team B credentials at request time           | `accountProviderConnectionResolver.ts` `resolveCurrentAccountAccess`                                             |
+| Old Coding Plan uniformly maps to Individual              | Correctness depends on later automatic mapping; removing it needs a new migration | `packages/shared/src/legacy-model-provider-identity.ts`                                                          |
+| Account selector builds group labels by fixed Family/Plan | Dynamic team instances need unique keys, accurate labels, same-name model sources | `packages/ui/src/lib/modelSelectionGroups.ts`, `packages/ui/src/ModelConfigSelect.tsx`                           |
 
 ## IV. Suggested Architecture Direction (Not Frozen)
 
@@ -104,12 +104,12 @@ Selection -> specific Team A Provider -> verify Provider/Model/Reasoning in one 
 
 ### 5.1 No Runtime Automatic Mapping
 
-| Original data evidence                                  | Suggested handling                                                                         |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Ordinary custom/API Providers with explicit identities  | Keep identities; normal format migration                                                   |
-| Explicit personal or complete team identities           | Migrate to the specific Provider; no requirement that entitlements/models are executable now |
-| Only old general Coding Plan IDs, no specific ownership | Historical teams cannot be recovered; a one-time ownership strategy must be decided        |
-| Personal model overrides/sorting under old Team Provider| Must decide which instance receives them; never default-copy to all teams                  |
+| Original data evidence                                   | Suggested handling                                                                           |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Ordinary custom/API Providers with explicit identities   | Keep identities; normal format migration                                                     |
+| Explicit personal or complete team identities            | Migrate to the specific Provider; no requirement that entitlements/models are executable now |
+| Only old general Coding Plan IDs, no specific ownership  | Historical teams cannot be recovered; a one-time ownership strategy must be decided          |
+| Personal model overrides/sorting under old Team Provider | Must decide which instance receives them; never default-copy to all teams                    |
 
 Candidate approach: use records' own verifiable old association; when insufficient, use the pre-upgrade saved old
 connection as a one-time default (this does not represent historical true ownership and is not yet user-confirmed). How

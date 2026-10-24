@@ -51,7 +51,7 @@ The same files typically mix correct domain logic with bridging logic; estimated
 
 | Field            | Value                                                                                                                                            |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Developer intent | Review whether Provider Refactor formal implementation conforms to confirmed architecture, and build an issue list for subsequent rulings          |
+| Developer intent | Review whether Provider Refactor formal implementation conforms to confirmed architecture, and build an issue list for subsequent rulings        |
 | Capability       | Provider Config, Account Overlay, Registry, Settings/Selection Facade, Repository                                                                |
 | Change layer     | option-source / validation / commit-effect / persistence                                                                                         |
 | Operating mode   | Impact-only; records findings and candidate directions only                                                                                      |

@@ -66,7 +66,7 @@ Effective Provider Config + Effective Model Config Rules
 | `ModelFactory`            | Assemble Selection, Registry facts, and request dependencies into complete `Model`                                     |
 | `Model`                   | Immutable model facts for current execution and the sole model call interface                                          |
 | Adapter                   | Encode `ModelRequest` into specific Provider API requests; do not output a second model abstraction to business layers |
-| Model Identity            | If events, Telemetry truly need it, record only actual model identity; carries no Selection or Options semantics        |
+| Model Identity            | If events, Telemetry truly need it, record only actual model identity; carries no Selection or Options semantics       |
 
 Core recognizes only `ModelSelection` and `Model` (at most a minimal read-only Model Identity). Core must not recognize AI SDK Adapters, Provider Connections, baseURL, providerKind, old Catalog capabilities, or capabilities inferred by specific modelId.
 

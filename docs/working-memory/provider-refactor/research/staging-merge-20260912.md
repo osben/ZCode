@@ -1,6 +1,6 @@
 # Provider Branch Merge into staging: 2026-09-12
 
-> Full history: `git show f85b156c:docs/working-memory/provider-refactor/research/staging-merge-20260912.md`
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/research/staging-merge-20260912.md`
 
 ## Targets and Boundaries
 

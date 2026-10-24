@@ -50,10 +50,10 @@ Provider Config is the assembly input for the model API call; it may save static
 references but is not a credential center, does not manage dynamic credential lifecycles and does not carry the
 server's final authorization decision.
 
-| Access type     | Config saves                                            | Behavior at request time                                                  |
-| --------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `api-key`       | Static `apiKey`                                         | Adapter uses the Key from Config                                          |
-| `zhipu-account` | Stable non-sensitive `accessId`                         | Account Request Auth Service resolves current dynamic credentials         |
+| Access type     | Config saves                                                        | Behavior at request time                                                     |
+| --------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `api-key`       | Static `apiKey`                                                     | Adapter uses the Key from Config                                             |
+| `zhipu-account` | Stable non-sensitive `accessId`                                     | Account Request Auth Service resolves current dynamic credentials            |
 | `request-auth`  | No credentials; declares authentication is supplied at request time | ModelRequest consumes the Request Auth the caller provides at execution time |
 
 `request-auth` is a normal Access type, not bound to `visibility`, idle tasks or "trusted execution"; any Provider can
@@ -170,27 +170,27 @@ the user's queue items to the idle Provider.
 
 ## 13. State Ownership
 
-| State or fact                             | Authority owner                                       | Lifecycle               | Must not write                                |
-| ----------------------------------------- | ----------------------------------------------------- | ----------------------- | --------------------------------------------- |
-| Provider static facts                     | Effective Provider Config                             | Config revision         | Static snapshot in the Turn payload           |
-| Model static facts                        | Effective Model Config                                | Config revision         | Host hardcode, modelId special case           |
-| The user's subsequent main model          | Session Selection                                     | Session                 | The idle execution context                    |
-| The current execution model               | Loop Active Model                                     | Loop                    | Session persistent preference                 |
-| Account connection identity               | Account Provider Config `accessId`                    | Account connection      | API Key/JWT/Header                            |
-| Account dynamic credentials               | Account Request Auth Service                          | Request attempt         | Provider Config                               |
-| Idle dynamic credentials and Ticket       | Off-Peak Scheduler / Request Auth context             | Valid dispatch          | Config, Registry View, Session snapshot, logs |
-| Queue, Ticket, task and resumption state | CLI CommandInbox / Off-Peak Scheduler / Off-Peak Repo | Their own domain lifecycles | The Registry                              |
+| State or fact                            | Authority owner                                       | Lifecycle                   | Must not write                                |
+| ---------------------------------------- | ----------------------------------------------------- | --------------------------- | --------------------------------------------- |
+| Provider static facts                    | Effective Provider Config                             | Config revision             | Static snapshot in the Turn payload           |
+| Model static facts                       | Effective Model Config                                | Config revision             | Host hardcode, modelId special case           |
+| The user's subsequent main model         | Session Selection                                     | Session                     | The idle execution context                    |
+| The current execution model              | Loop Active Model                                     | Loop                        | Session persistent preference                 |
+| Account connection identity              | Account Provider Config `accessId`                    | Account connection          | API Key/JWT/Header                            |
+| Account dynamic credentials              | Account Request Auth Service                          | Request attempt             | Provider Config                               |
+| Idle dynamic credentials and Ticket      | Off-Peak Scheduler / Request Auth context             | Valid dispatch              | Config, Registry View, Session snapshot, logs |
+| Queue, Ticket, task and resumption state | CLI CommandInbox / Off-Peak Scheduler / Off-Peak Repo | Their own domain lifecycles | The Registry                                  |
 
 ## 14. UI Surface Matrix
 
-| Scenario                  | Candidate/config source                            | Visibility and validation                                    | Submission/execution owner       | Must isolate                               |
-| ------------------------- | -------------------------------------------------- | ------------------------------------------------------------ | -------------------------------- | ------------------------------------------ |
-| Provider Settings         | Settings Facade                                    | Only `visibility=visible`                                    | Personal Config Repository       | Hidden Provider, Session Selection         |
-| Conversation Model Picker | Selection Facade                                   | Only complete, enabled, visible models                       | Composer/Submission              | Hidden Provider, Active Model              |
-| Off-Peak Creation Page    | Product projection of the Built-in idle Provider   | Product gray release; not a Registry fact source             | Off-Peak Service/Scheduler       | Personal Config, normal model selector     |
-| Off-Peak Automatic Turn   | Precise idle ModelSelection                        | Core start-now admission                                     | CLI Loop Active Model            | Session Selection, normal Queue            |
-| Subagent Settings         | Visible Registry candidates / Profile              | Saves the Profile, does not change the current Session       | Subagent Config/Markdown         | Off-Peak single-turn override              |
-| Off-Peak Foreground Child | Current idle override                              | Background rejected by Tool Policy                           | Child Runtime / ModelFactory     | Profile's other Provider, Session state    |
+| Scenario                  | Candidate/config source                          | Visibility and validation                              | Submission/execution owner   | Must isolate                            |
+| ------------------------- | ------------------------------------------------ | ------------------------------------------------------ | ---------------------------- | --------------------------------------- |
+| Provider Settings         | Settings Facade                                  | Only `visibility=visible`                              | Personal Config Repository   | Hidden Provider, Session Selection      |
+| Conversation Model Picker | Selection Facade                                 | Only complete, enabled, visible models                 | Composer/Submission          | Hidden Provider, Active Model           |
+| Off-Peak Creation Page    | Product projection of the Built-in idle Provider | Product gray release; not a Registry fact source       | Off-Peak Service/Scheduler   | Personal Config, normal model selector  |
+| Off-Peak Automatic Turn   | Precise idle ModelSelection                      | Core start-now admission                               | CLI Loop Active Model        | Session Selection, normal Queue         |
+| Subagent Settings         | Visible Registry candidates / Profile            | Saves the Profile, does not change the current Session | Subagent Config/Markdown     | Off-Peak single-turn override           |
+| Off-Peak Foreground Child | Current idle override                            | Background rejected by Tool Policy                     | Child Runtime / ModelFactory | Profile's other Provider, Session state |
 
 ## 15. Invariants
 
@@ -239,17 +239,17 @@ name).
 
 ## 18. Acceptance Cases
 
-| Case  | Setup                                                     | Action                                                   | Assertions                                                                                         | Evidence layer    |
-| ----- | --------------------------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ----------------- |
-| M4-01 | Hidden idle Provider fully configured                     | Read Settings/Selection/Registry                         | Two user Views exclude idle; Registry can look it up exactly                                       | domain unit       |
-| M4-02 | `request-auth` Provider has no call-level credentials     | generate/stream                                          | Typed authentication-missing error before the network; no request sent                             | adapter unit      |
-| M4-03 | Idle Session's user Selection = U                         | Dispatch idle Selection = I                              | Active Model = I; Session Selection still U                                                        | protocol/runtime  |
-| M4-04 | Idle Turn running                                         | User sends a normal prompt                               | Input enters the unique Queue; after terminal uses U                                               | protocol/network  |
-| M4-05 | Idle Turn triggers Automatic Compact                      | Compact request                                          | Request uses I, idle Endpoint and current Request Auth                                             | runtime/network   |
-| M4-06 | Profiles configure other models                           | Idle parent turn starts multiple Foreground Children     | Children each create their Model but all use the idle override; Background has no request          | runtime/network   |
-| M4-07 | Idle Turn requests permission                             | approve / deny                                           | Off-Peak task stays running; same Turn still hits the idle Endpoint                                | protocol/network  |
-| M4-08 | Current Ticket becomes invalid                            | Scheduler re-obtains ticket and resumes                  | New dispatch, new Model, new dynamic materials; Session/transcript continues                       | service/runtime   |
-| M4-09 | Idle Turn ends                                            | User continues the normal conversation                   | Uses U; no idle Header, Ticket or attribution leakage                                              | network/telemetry |
+| Case  | Setup                                                 | Action                                               | Assertions                                                                                | Evidence layer    |
+| ----- | ----------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------- |
+| M4-01 | Hidden idle Provider fully configured                 | Read Settings/Selection/Registry                     | Two user Views exclude idle; Registry can look it up exactly                              | domain unit       |
+| M4-02 | `request-auth` Provider has no call-level credentials | generate/stream                                      | Typed authentication-missing error before the network; no request sent                    | adapter unit      |
+| M4-03 | Idle Session's user Selection = U                     | Dispatch idle Selection = I                          | Active Model = I; Session Selection still U                                               | protocol/runtime  |
+| M4-04 | Idle Turn running                                     | User sends a normal prompt                           | Input enters the unique Queue; after terminal uses U                                      | protocol/network  |
+| M4-05 | Idle Turn triggers Automatic Compact                  | Compact request                                      | Request uses I, idle Endpoint and current Request Auth                                    | runtime/network   |
+| M4-06 | Profiles configure other models                       | Idle parent turn starts multiple Foreground Children | Children each create their Model but all use the idle override; Background has no request | runtime/network   |
+| M4-07 | Idle Turn requests permission                         | approve / deny                                       | Off-Peak task stays running; same Turn still hits the idle Endpoint                       | protocol/network  |
+| M4-08 | Current Ticket becomes invalid                        | Scheduler re-obtains ticket and resumes              | New dispatch, new Model, new dynamic materials; Session/transcript continues              | service/runtime   |
+| M4-09 | Idle Turn ends                                        | User continues the normal conversation               | Uses U; no idle Header, Ticket or attribution leakage                                     | network/telemetry |
 
 No full Cartesian product over theme, language, OS, Provider family, workspace type or delivery kind: shared
 Core/Adapter behavior is proven by focused tests; Desktop continuous uses the existing Off-Peak representative E2E;

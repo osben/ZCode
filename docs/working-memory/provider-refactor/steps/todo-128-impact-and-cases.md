@@ -11,10 +11,10 @@ scope: Composer, persistence, account sync refactor, off-peak remote support, ac
 
 ## UI Surface Matrix
 
-| Scenario / entry      | Shared implementation                    | Display / draft                  | Guard                                      | Commit / authority                                          | Mode / isolation                                      |
-| --------------------- | ---------------------------------------- | -------------------------------- | ------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------- |
-| Automations create entry | Store + Provider Settings completion notification | Store eligibility; form draft independent | current connection supported and quota ready | getCodingPlanSupport -> getTakeNumberAvailability; Host Registry / server | existing desktop-local scope only; scheduled tasks unaffected |
-| OffPeakNewTaskEntry   | same Store / refresh Hook                | banner and navigation draft      | navigation uses any plan; does not replace create validation | navigation only, no ticket taking                       | currently not mounted; the fix does not reopen the entry |
+| Scenario / entry         | Shared implementation                             | Display / draft                           | Guard                                                        | Commit / authority                                                        | Mode / isolation                                              |
+| ------------------------ | ------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Automations create entry | Store + Provider Settings completion notification | Store eligibility; form draft independent | current connection supported and quota ready                 | getCodingPlanSupport -> getTakeNumberAvailability; Host Registry / server | existing desktop-local scope only; scheduled tasks unaffected |
+| OffPeakNewTaskEntry      | same Store / refresh Hook                         | banner and navigation draft               | navigation uses any plan; does not replace create validation | navigation only, no ticket taking                                         | currently not mounted; the fix does not reopen the entry      |
 
 Shared: the latest completed Provider facts (no layout change; the home page and the create gate differ); unconfirmed
 state does not let through, and eligibility and quota are of the same generation; no new cache or database change; actual
@@ -29,12 +29,12 @@ Should-inspect: Node start -> Protocol startup log (return value changes to void
 Invariant-only: create / dispatch / authentication (same credential-resolution closure, eligibility not relaxed); Web
 shared-host / workspace identity (no new Host, no continuous/replayable change).
 
-| Fact                    | Owner                          | Mirror / sink                           |
-| ----------------------- | ------------------------------ | --------------------------------------- |
-| Current model eligibility | Registry                     | Store keeps only the masked support result |
-| Take-number quota       | server                         | Store same-generation result; non-persisted |
-| Startup readiness       | Runtime lifecycle `Promise<void>` | not a data cache                     |
-| Connection selection    | Settings                       | UI only compares, never writes back or falls back |
+| Fact                      | Owner                             | Mirror / sink                                     |
+| ------------------------- | --------------------------------- | ------------------------------------------------- |
+| Current model eligibility | Registry                          | Store keeps only the masked support result        |
+| Take-number quota         | server                            | Store same-generation result; non-persisted       |
+| Startup readiness         | Runtime lifecycle `Promise<void>` | not a data cache                                  |
+| Connection selection      | Settings                          | UI only compares, never writes back or falls back |
 
 Invariants: start dedup, retry after failure, dispose and background refresh unchanged; API Key and account model
 eligibility not relaxed; eligibility/quota are published together only for the latest generation (old success, failure and
@@ -55,15 +55,15 @@ creation and Composer submission are excluded.
 
 ## Accepted Cases
 
-| ID | Setup -> action                                              | Assertions                                                                 | Evidence / E2E           |
-| -- | ------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------ |
-| S1 | four Runtimes start concurrently; change Personal then start again | void; the read interface is latest; resources not duplicated        | unit test                |
-| S2 | start failure / release                                      | original retry/release boundary kept                                       | existing tests + types   |
-| Q1 | cold start with no plan -> Registry Team ready notification  | no page reopen needed; support and quota update once                       | Store + pending UI       |
-| Q2 | old support/quota in flight -> connection change             | serial merged recheck; old success/error does not override; no intermediate ready | Store              |
-| Q3 | two entries initialize at once / receive the same revision   | one shared check, no duplicate concurrent quota queries                    | Store + pending UI       |
-| Q4 | manual refresh, eligibility false->true / true->false        | eligibility first then quota; failure does not open creation               | Store + pending UI       |
-| Q5 | no grayscale / no eligibility / quota error                  | stays blocked; a later notification can recover                            | Store                    |
+| ID  | Setup -> action                                                    | Assertions                                                                        | Evidence / E2E         |
+| --- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------- | ---------------------- |
+| S1  | four Runtimes start concurrently; change Personal then start again | void; the read interface is latest; resources not duplicated                      | unit test              |
+| S2  | start failure / release                                            | original retry/release boundary kept                                              | existing tests + types |
+| Q1  | cold start with no plan -> Registry Team ready notification        | no page reopen needed; support and quota update once                              | Store + pending UI     |
+| Q2  | old support/quota in flight -> connection change                   | serial merged recheck; old success/error does not override; no intermediate ready | Store                  |
+| Q3  | two entries initialize at once / receive the same revision         | one shared check, no duplicate concurrent quota queries                           | Store + pending UI     |
+| Q4  | manual refresh, eligibility false->true / true->false              | eligibility first then quota; failure does not open creation                      | Store + pending UI     |
+| Q5  | no grayscale / no eligibility / quota error                        | stays blocked; a later notification can recover                                   | Store                  |
 
 Store unit tests reuse deferred Promises (no sleep); the browser pending case reuses the shared Hook/Store with controlled
 service events, in temporary directories and without Provider network (no replay provider fixture needed since this group

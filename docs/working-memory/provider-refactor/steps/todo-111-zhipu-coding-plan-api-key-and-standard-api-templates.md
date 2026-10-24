@@ -28,12 +28,12 @@
 The existing `zai-api` / `bigmodel-api` templates use Coding Plan endpoints, so they are renamed to Coding Plan API and
 join request-safety validation; two genuinely ordinary API templates are added, giving four manual-Key templates.
 
-| Template display name    | Default API protocol      | Default Base URL                         | Access                            |
-| ------------------------ | ------------------------- | ---------------------------------------- | --------------------------------- |
-| Z.AI Coding Plan API     | `anthropic-messages`      | `https://api.z.ai/api/anthropic`         | new `zhipu-coding-plan-api-key`   |
-| BigModel Coding Plan API | `anthropic-messages`      | `https://open.bigmodel.cn/api/anthropic` | new `zhipu-coding-plan-api-key`   |
-| Z.AI API                 | `openai-chat-completions` | `https://api.z.ai/api/paas/v4`           | existing `api-key`                |
-| BigModel API             | `openai-chat-completions` | `https://open.bigmodel.cn/api/paas/v4`   | existing `api-key`                |
+| Template display name    | Default API protocol      | Default Base URL                         | Access                          |
+| ------------------------ | ------------------------- | ---------------------------------------- | ------------------------------- |
+| Z.AI Coding Plan API     | `anthropic-messages`      | `https://api.z.ai/api/anthropic`         | new `zhipu-coding-plan-api-key` |
+| BigModel Coding Plan API | `anthropic-messages`      | `https://open.bigmodel.cn/api/anthropic` | new `zhipu-coding-plan-api-key` |
+| Z.AI API                 | `openai-chat-completions` | `https://api.z.ai/api/paas/v4`           | existing `api-key`              |
+| BigModel API             | `openai-chat-completions` | `https://open.bigmodel.cn/api/paas/v4`   | existing `api-key`              |
 
 - Coding Plan also has a Chat Completions endpoint at `/api/coding/paas/v4`, never mixed with ordinary `/api/paas/v4`;
   defaults are as in the table, not expanded to all protocol/template combinations.
@@ -105,14 +105,14 @@ Other  | 12px
 - Group titles align with the card left edge; no icon, rule, count badge, group background or outer frame. Follow
   `DESIGN.md` with existing semantic tokens; font sizes below are defaults and follow the UI font-size setting.
 
-| Element                      | Style                                                                   |
-| ---------------------------- | ----------------------------------------------------------------------- |
-| "Add provider" page title    | unchanged `text-ui-lg font-semibold text-foreground`, default 16px      |
-| "Zhipu / Other" group titles | `text-ui-base font-medium text-foreground-subtle`, default 14px         |
-| title bar -> first group     | 20px                                                                    |
-| group title -> its cards     | 12px                                                                    |
-| card gap                     | 8px                                                                     |
-| last cards -> next title     | 24px                                                                    |
+| Element                      | Style                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------- |
+| "Add provider" page title    | unchanged `text-ui-lg font-semibold text-foreground`, default 16px        |
+| "Zhipu / Other" group titles | `text-ui-base font-medium text-foreground-subtle`, default 14px           |
+| title bar -> first group     | 20px                                                                      |
+| group title -> its cards     | 12px                                                                      |
+| card gap                     | 8px                                                                       |
+| last cards -> next title     | 24px                                                                      |
 | card size                    | base height 64px, 16px side padding, existing radius, logo, color, states |
 
 Desktop/wide Web two columns, phone narrow single column; long names may wrap to two lines without relying on a tooltip,
@@ -157,12 +157,12 @@ authentication and account entitlement are not mixed into one judgment.
 2026-09-11 correction: the personal/team dual entry did not match user expectation and is fully revoked by
 [Todo116](./todo-116-single-api-key-management-url.md): only `apiKeyManagementUrl` and one "Get API Key" button remain.
 
-| Product / identity   | Official-doc link                                   |
-| -------------------- | --------------------------------------------------- |
+| Product / identity    | Official-doc link                                   |
+| --------------------- | --------------------------------------------------- |
 | BigModel ordinary API | `https://bigmodel.cn/usercenter/proj-mgmt/apikeys`  |
-| BigModel Coding Plan | `https://bigmodel.cn/coding-plan/personal/overview` |
-| Z.ai ordinary API    | `https://z.ai/manage-apikey/apikey-list`            |
-| Z.ai Coding Plan     | `https://z.ai/manage-apikey/apikey-list`            |
+| BigModel Coding Plan  | `https://bigmodel.cn/coding-plan/personal/overview` |
+| Z.ai ordinary API     | `https://z.ai/manage-apikey/apikey-list`            |
+| Z.ai Coding Plan      | `https://z.ai/manage-apikey/apikey-list`            |
 
 Z.ai ordinary and plan templates use the same main link (no invented URLs to reach four distinct ones); one plan template
 accepts personal/team Keys but the acquisition entry is not split by identity and personal/team navigation inside the

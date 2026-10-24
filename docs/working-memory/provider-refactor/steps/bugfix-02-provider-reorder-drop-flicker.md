@@ -49,24 +49,24 @@ the async save, so it already has the optimistic projection. No second Pending l
 
 State ownership:
 
-| State                    | Owner                     | Lifetime                               | Purpose                              |
-| ------------------------ | ------------------------- | -------------------------------------- | ------------------------------------ |
-| `providerOrder`          | Personal Config           | Persisted                              | User order authority                 |
-| Order in Settings View   | Provider Settings Service | Registry revision                      | Formal read fact for the UI          |
-| Pending Provider Reorder | Provider Settings UI      | One page, one Environment, one or more drags | Immediate visual projection    |
-| `dnd-kit transform`      | Sortable component        | One pointer/keyboard drag              | In-drag displacement                 |
+| State                    | Owner                     | Lifetime                                     | Purpose                     |
+| ------------------------ | ------------------------- | -------------------------------------------- | --------------------------- |
+| `providerOrder`          | Personal Config           | Persisted                                    | User order authority        |
+| Order in Settings View   | Provider Settings Service | Registry revision                            | Formal read fact for the UI |
+| Pending Provider Reorder | Provider Settings UI      | One page, one Environment, one or more drags | Immediate visual projection |
+| `dnd-kit transform`      | Sortable component        | One pointer/keyboard drag                    | In-drag displacement        |
 
 ## 3. Acceptance Cases
 
-| Case    | Setup                                | Action             | Assertions                                                  |
-| ------- | ------------------------------------ | ------------------ | ----------------------------------------------------------- |
-| BF02-01 | Provider save Promise delayed        | Drag and drop      | Target order rendered before the Promise resolves           |
-| BF02-02 | Provider save fails                  | Drag and drop      | Optimistic first; on failure roll back to formal order, log |
-| BF02-03 | First Provider save unfinished       | Drag twice         | Second based on optimistic order; late result cannot override final target |
-| BF02-04 | New Settings View matches target     | Save completes     | Pending cleared; later formal refresh does not jump again   |
-| BF02-05 | Model save Promise delayed           | Drag Model, drop   | Existing form optimistic order stable; no second Pending    |
-| BF02-06 | Keyboard sortable operation          | Reorder Provider   | Same optimistic update and confirmation as pointer drag     |
-| BF02-07 | Environment switch / page unmount    | Pending exists     | Old Environment's order not carried to the new page         |
+| Case    | Setup                             | Action           | Assertions                                                                 |
+| ------- | --------------------------------- | ---------------- | -------------------------------------------------------------------------- |
+| BF02-01 | Provider save Promise delayed     | Drag and drop    | Target order rendered before the Promise resolves                          |
+| BF02-02 | Provider save fails               | Drag and drop    | Optimistic first; on failure roll back to formal order, log                |
+| BF02-03 | First Provider save unfinished    | Drag twice       | Second based on optimistic order; late result cannot override final target |
+| BF02-04 | New Settings View matches target  | Save completes   | Pending cleared; later formal refresh does not jump again                  |
+| BF02-05 | Model save Promise delayed        | Drag Model, drop | Existing form optimistic order stable; no second Pending                   |
+| BF02-06 | Keyboard sortable operation       | Reorder Provider | Same optimistic update and confirmation as pointer drag                    |
+| BF02-07 | Environment switch / page unmount | Pending exists   | Old Environment's order not carried to the new page                        |
 
 Interaction tests must control the save Promise and assert the DOM order before save completion; keep the existing
 pure sort-function tests.

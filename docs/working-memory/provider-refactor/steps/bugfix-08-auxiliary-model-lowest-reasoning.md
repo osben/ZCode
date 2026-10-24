@@ -35,11 +35,11 @@ entries explicitly declared as auxiliary low-cost requests change.
    Factory Input or Request Option.
 2. Entries:
 
-| Entry                      | Behavior                                                                                                                          |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Session Title / Goal Title | Auxiliary Model created with the lowest public tier (shared implementation)                                                       |
-| Git Commit Message         | Auxiliary Model uses the lowest tier regardless of the current session's tier                                                     |
-| Memory Recall Selector     | Single request passes `reasoningLevel: values[0]`; Active Model options unchanged (immutable); output budget inherited from the Active Model |
+| Entry                      | Behavior                                                                                                                                                                                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Session Title / Goal Title | Auxiliary Model created with the lowest public tier (shared implementation)                                                                                                                                                                                                |
+| Git Commit Message         | Auxiliary Model uses the lowest tier regardless of the current session's tier                                                                                                                                                                                              |
+| Memory Recall Selector     | Single request passes `reasoningLevel: values[0]`; Active Model options unchanged (immutable); output budget inherited from the Active Model                                                                                                                               |
 | Provider Connectivity Test | Formal Model from the current Registry bound to `values[0]` through the same Registry, ModelFactory, runtime headers and Adapter chain; nothing bound without a Spec; provider-neutral user message, no Start Plan-specific body, Provider ID branch or test-specific auth |
 
 3. `reasoningMode`, its dedicated Model Request Options, Factory Input, hidden closed-Mapping scanning and

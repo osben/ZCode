@@ -253,15 +253,15 @@ interface ProviderConfig {
 }
 ```
 
-| Field              | Meaning                                                                                                        |
-| ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| `group`            | Personal or Account Family grouping; not Access Mode                                                           |
-| `logo`             | Display resource key; unknown key falls back to a generic icon                                                 |
-| `access`           | Static method for obtaining access materials needed for calls                                                  |
-| `api`              | Final API Schema, Base URL, and static Header                                                                  |
-| `builtinModelIds`  | Model members owned by ZCode or Account layers                                                                 |
-| `personalModelIds` | Model members owned by the Personal layer                                                                      |
-| `modelOrder`       | User's total ordering intent for the final member set                                                          |
+| Field              | Meaning                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `group`            | Personal or Account Family grouping; not Access Mode                                                               |
+| `logo`             | Display resource key; unknown key falls back to a generic icon                                                     |
+| `access`           | Static method for obtaining access materials needed for calls                                                      |
+| `api`              | Final API Schema, Base URL, and static Header                                                                      |
+| `builtinModelIds`  | Model members owned by ZCode or Account layers                                                                     |
+| `personalModelIds` | Model members owned by the Personal layer                                                                          |
+| `modelOrder`       | User's total ordering intent for the final member set                                                              |
 | `visibility`       | Whether the Provider enters ordinary settings/selection projection; does not affect internal exact Registry lookup |
 
 Member sets preserve source: Built-in members first, Personal members last; duplicates within a single set

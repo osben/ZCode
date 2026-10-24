@@ -34,18 +34,18 @@ reading was used; read-only checks and memory validations only, no real accounts
 
 ## Investigation Items (all completed)
 
-| ID  | Item                                                  | Outcome                                                                                                   |
-| --- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| I01 | Process and service assembly (Host, Workers, CLI, SSH) | Report §2                                                                                                 |
-| I02 | Account fact production and publishing                | §3, §7; async identity mixing risk listed, not claimed reproduced                                         |
-| I03 | Provider applied snapshots                            | §3, P100-01/02                                                                                            |
-| I04 | Temporary sync correctness                            | §6; existing queues retained; do not rebuild a sync platform first                                        |
-| I05 | Session / Composer                                    | §3, §5; existing public hooks/freezing are correct                                                        |
-| I06 | Automation / Bot / Wiki                               | §5; P100-04/05 record the Bot subsequent-round and attachment passing gaps                                |
-| I07 | Subagent / Workflow                                   | Static chain P100-03, §5; real child network validation not executed                                      |
-| I08 | Request authentication and internal model calls       | §5; dynamic auth is not model selection; Tickets are not rebound                                          |
-| I09 | Evidence and test modification review                 | §10; 52 existing unit tests pass, ACK difference reproduced in memory; test modifications stay suspended  |
-| I10 | Target architecture and order                         | §8/9: pure public parsing + applied snapshot + explicit new-dispatch / fixed-execution boundaries         |
+| ID  | Item                                                   | Outcome                                                                                                  |
+| --- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| I01 | Process and service assembly (Host, Workers, CLI, SSH) | Report §2                                                                                                |
+| I02 | Account fact production and publishing                 | §3, §7; async identity mixing risk listed, not claimed reproduced                                        |
+| I03 | Provider applied snapshots                             | §3, P100-01/02                                                                                           |
+| I04 | Temporary sync correctness                             | §6; existing queues retained; do not rebuild a sync platform first                                       |
+| I05 | Session / Composer                                     | §3, §5; existing public hooks/freezing are correct                                                       |
+| I06 | Automation / Bot / Wiki                                | §5; P100-04/05 record the Bot subsequent-round and attachment passing gaps                               |
+| I07 | Subagent / Workflow                                    | Static chain P100-03, §5; real child network validation not executed                                     |
+| I08 | Request authentication and internal model calls        | §5; dynamic auth is not model selection; Tickets are not rebound                                         |
+| I09 | Evidence and test modification review                  | §10; 52 existing unit tests pass, ACK difference reproduced in memory; test modifications stay suspended |
+| I10 | Target architecture and order                          | §8/9: pure public parsing + applied snapshot + explicit new-dispatch / fixed-execution boundaries        |
 
 ## Conclusions
 

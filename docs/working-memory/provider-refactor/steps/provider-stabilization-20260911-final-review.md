@@ -8,27 +8,27 @@ Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/pro
 
 ## Item Results
 
-| Todo          | Requirement implemented and reviewed                                                                                         | Commit         |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| Todo          | Requirement implemented and reviewed                                                                                                               | Commit       |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
 | 113 round two | Verified new model directory, smart configuration, aggregated differences, retired-member cleanup; real SDK request and frozen capability transfer | `262c42e592` |
-| 115           | Provider title bar, menu and switch hit area; model row layout unchanged                                                     | `8d16f98136`   |
-| 116           | Single fetch-Key URL; cleaned up the team second entry in config, types, Schema, transmission and display                    | `3c22794269`   |
-| 117           | Keep account domain and explicit plan selection; account Provider cannot be disabled; manual Key can still be enabled/disabled | `30bb5f7005` |
-| 118           | First import keeps custom Provider outer-layer enabled; no re-migration overwriting new config                               | `8481a34543`   |
-| 119           | Connectivity test restores green feedback and shows the Provider name                                                        | `875b5578ac`   |
-| 120           | Two official URLs and explicit Coding Plan Key share the complete signature chain; paired and real request acceptance        | `ad3277af02`   |
-| 121           | Appended 0022 supplements recoverable historical tier; covers upgrade paths with 0020 executed and not executed              | `7b2bd3968d`   |
-| 122           | Subagent failure reason and model identity projection; does not claim the un-reproduced startup root cause                   | `e1a28f23eb`   |
-| 123           | History capacity queries the Registry by saved model identity; unknown is null; keeps history usage                          | `6d4c3cc571`   |
-| 124           | Disabled Provider connectivity test prompt changed to non-executable, avoiding a false "non-existent" report                 | `875b5578ac`   |
-| 125           | 9 help descriptions and dual-size interaction                                                                                | `1c1da97537`   |
-| 126           | Coding Plan GLM-5.3 hidden visual badge (display only), Flash PDF, plan API Turbo default                                    | `1bf21bee22`   |
-| 127           | Online Built-in download, strict validation, lifecycle update, expired-request failure, atomic release fact                  | `036c3dd3c8`   |
-| 128           | Provider startup contract and idle qualification consistent; merge concurrent startup; discard old account query results     | `b2e2b31ea3`   |
-| 129           | Telemetry boundary restores old ID, Team classification and home-page idle gate; report and actual model identity unchanged  | `ba119dde2f`   |
-| 130           | Manual field editing contract; keeps non-edited fields and the formal save boundary                                          | `dcb231de22`   |
-| 131           | Smart configuration placement, atomic recovery, old-request failure                                                          | `1c1da97537`   |
-| 132           | Name explicit confirmation save, option background color, interaction feedback                                               | `8d16f98136`   |
+| 115           | Provider title bar, menu and switch hit area; model row layout unchanged                                                                           | `8d16f98136` |
+| 116           | Single fetch-Key URL; cleaned up the team second entry in config, types, Schema, transmission and display                                          | `3c22794269` |
+| 117           | Keep account domain and explicit plan selection; account Provider cannot be disabled; manual Key can still be enabled/disabled                     | `30bb5f7005` |
+| 118           | First import keeps custom Provider outer-layer enabled; no re-migration overwriting new config                                                     | `8481a34543` |
+| 119           | Connectivity test restores green feedback and shows the Provider name                                                                              | `875b5578ac` |
+| 120           | Two official URLs and explicit Coding Plan Key share the complete signature chain; paired and real request acceptance                              | `ad3277af02` |
+| 121           | Appended 0022 supplements recoverable historical tier; covers upgrade paths with 0020 executed and not executed                                    | `7b2bd3968d` |
+| 122           | Subagent failure reason and model identity projection; does not claim the un-reproduced startup root cause                                         | `e1a28f23eb` |
+| 123           | History capacity queries the Registry by saved model identity; unknown is null; keeps history usage                                                | `6d4c3cc571` |
+| 124           | Disabled Provider connectivity test prompt changed to non-executable, avoiding a false "non-existent" report                                       | `875b5578ac` |
+| 125           | 9 help descriptions and dual-size interaction                                                                                                      | `1c1da97537` |
+| 126           | Coding Plan GLM-5.3 hidden visual badge (display only), Flash PDF, plan API Turbo default                                                          | `1bf21bee22` |
+| 127           | Online Built-in download, strict validation, lifecycle update, expired-request failure, atomic release fact                                        | `036c3dd3c8` |
+| 128           | Provider startup contract and idle qualification consistent; merge concurrent startup; discard old account query results                           | `b2e2b31ea3` |
+| 129           | Telemetry boundary restores old ID, Team classification and home-page idle gate; report and actual model identity unchanged                        | `ba119dde2f` |
+| 130           | Manual field editing contract; keeps non-edited fields and the formal save boundary                                                                | `dcb231de22` |
+| 131           | Smart configuration placement, atomic recovery, old-request failure                                                                                | `1c1da97537` |
+| 132           | Name explicit confirmation save, option background color, interaction feedback                                                                     | `8d16f98136` |
 
 The final browser batch exposed a test-fixture issue (global subscriptions overwriting each other); scene
 initialization was isolated and rerun, all pass (`0ac735ee98`); not an account-state product regression.
@@ -58,18 +58,18 @@ passed (`/tmp/provider-final-help-browser3.log`). No MR created, no other branch
 
 ## Batch Verification
 
-| Check                                    | Result and evidence                                                                                                                                  |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Root related unit tests, 68 files        | **1028/1028** (`/tmp/provider-final-root-tests2.log`)                                                                                                |
-| Agent SDK / Signature / Model, 6 files   | **173/173**, including 58 new round-two real SDK wire tests (`/tmp/provider113-sdk-final.log`)                                                       |
-| Migration / Bootstrap / Core, 7 files    | **241/241** (`/tmp/provider-final-cli-tests.log`)                                                                                                    |
-| Independent entry contract               | **4/4** (`/tmp/provider-final-entry-tests.log`)                                                                                                      |
-| Real React browser interaction           | **20/20**, desktop width English dark and mobile width Chinese light (`/tmp/provider-final-browser2.log`, screenshots `/tmp/zcode-provider-settings-batch`) |
-| Typecheck                                | Root, Adapter and Bootstrap pass (`/tmp/provider-final-{types,adapter-types,bootstrap-types}.log`)                                                   |
-| Root lint / architecture                 | Lint **0 errors / 42 warnings**; architecture **0 violations** (`/tmp/provider-final-lint3.log`, `/tmp/provider-final-architecture2.log`)           |
-| CLI Adapter full lint                    | **Not passed**, 26 max-lines; error files and rule set match the opening log; the original long files were not expanded (`/tmp/provider-final-cli-lint.log`) |
-| Fresh Desktop / Agent build              | Passes; the later Electron startup SIGTRAP cannot be recorded as E2E pass (`/tmp/provider-final-electron.log`)                                       |
-| Final release file integrity             | Revision **22**, 14 tests pass; SHA256 `f94d2fe55eebbfda79c667c6ea90c71eb28d40bf2d020013c20288ab2a70f623` (`/tmp/provider-final-release.log`)       |
+| Check                                  | Result and evidence                                                                                                                                          |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Root related unit tests, 68 files      | **1028/1028** (`/tmp/provider-final-root-tests2.log`)                                                                                                        |
+| Agent SDK / Signature / Model, 6 files | **173/173**, including 58 new round-two real SDK wire tests (`/tmp/provider113-sdk-final.log`)                                                               |
+| Migration / Bootstrap / Core, 7 files  | **241/241** (`/tmp/provider-final-cli-tests.log`)                                                                                                            |
+| Independent entry contract             | **4/4** (`/tmp/provider-final-entry-tests.log`)                                                                                                              |
+| Real React browser interaction         | **20/20**, desktop width English dark and mobile width Chinese light (`/tmp/provider-final-browser2.log`, screenshots `/tmp/zcode-provider-settings-batch`)  |
+| Typecheck                              | Root, Adapter and Bootstrap pass (`/tmp/provider-final-{types,adapter-types,bootstrap-types}.log`)                                                           |
+| Root lint / architecture               | Lint **0 errors / 42 warnings**; architecture **0 violations** (`/tmp/provider-final-lint3.log`, `/tmp/provider-final-architecture2.log`)                    |
+| CLI Adapter full lint                  | **Not passed**, 26 max-lines; error files and rule set match the opening log; the original long files were not expanded (`/tmp/provider-final-cli-lint.log`) |
+| Fresh Desktop / Agent build            | Passes; the later Electron startup SIGTRAP cannot be recorded as E2E pass (`/tmp/provider-final-electron.log`)                                               |
+| Final release file integrity           | Revision **22**, 14 tests pass; SHA256 `f94d2fe55eebbfda79c667c6ea90c71eb28d40bf2d020013c20288ab2a70f623` (`/tmp/provider-final-release.log`)                |
 
 A previous batched Core run (410 passed / 5 failed) reproduces at the baseline: old cold-recovery fixture, remote Cron
 disable list, account Provider serialization expectation. The failures are kept; this round is not full green, nor

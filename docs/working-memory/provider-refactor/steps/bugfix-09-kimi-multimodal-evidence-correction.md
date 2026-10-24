@@ -11,11 +11,11 @@
 The Built-in Config recorded wrong model capabilities, and `packages/provider-node/test/zcode-builtin-integrity.test.ts`
 asserted the first two wrong values, so the error passed tests:
 
-| Model            | Was                      | Official fact                                                           | Target       |
-| ---------------- | ------------------------ | ----------------------------------------------------------------------- | ------------ |
-| `kimi-k3`        | Image=false, Video=false | Native visual; image and video understanding                            | true / true  |
-| `kimi-k2.7-code` | Image=false, Video=false | Kimi official FAQ: Text, Image, Video                                   | true / true  |
-| `k3-256k`        | Image=true, Video=true   | Kimi Code model table: Image only                                       | true / false |
+| Model            | Was                      | Official fact                                | Target       |
+| ---------------- | ------------------------ | -------------------------------------------- | ------------ |
+| `kimi-k3`        | Image=false, Video=false | Native visual; image and video understanding | true / true  |
+| `kimi-k2.7-code` | Image=false, Video=false | Kimi official FAQ: Text, Image, Video        | true / true  |
+| `k3-256k`        | Image=true, Video=true   | Kimi Code model table: Image only            | true / false |
 
 Cause: the 2026-08-28 Built-in refresh recorded only K3's context length in its research summary; "not recorded"
 was read as "not supported" and positive values were demoted to `false`. This is not a Resolver, Overlay or Adapter

@@ -80,11 +80,11 @@ Capability: Model Selection, Provider Registry, ModelFactory, Off-Peak execution
 seeds `ModelSelectionFacade`, `IModelSelectionService`, `ApiProviderModelRuntime.modelFactory`, `dispatchOffPeakRun`;
 out of scope: candidate UI, selection state, persistence, Access/Auth, Runtime composition, Telemetry.
 
-| User scenario                 | Candidate source                          | Commit sink                | Final validation                                  | Visible change |
-| ----------------------------- | ----------------------------------------- | -------------------------- | ------------------------------------------------- | -------------- |
-| Ordinary chat model selection | `ModelSelectionFacade.getView()`          | Submission / Session       | Agent Registry + ModelFactory                     | none           |
-| Automation/Subagent/Repo Wiki | same candidate View, each with its own Draft | each entry's own config/command | when the Model is actually created          | none           |
-| Off-Peak hidden model         | internal product config / exact Selection | Off-Peak dispatch          | early Registry check + ModelFactory final check   | none           |
+| User scenario                 | Candidate source                             | Commit sink                     | Final validation                                | Visible change |
+| ----------------------------- | -------------------------------------------- | ------------------------------- | ----------------------------------------------- | -------------- |
+| Ordinary chat model selection | `ModelSelectionFacade.getView()`             | Submission / Session            | Agent Registry + ModelFactory                   | none           |
+| Automation/Subagent/Repo Wiki | same candidate View, each with its own Draft | each entry's own config/command | when the Model is actually created              | none           |
+| Off-Peak hidden model         | internal product config / exact Selection    | Off-Peak dispatch               | early Registry check + ModelFactory final check | none           |
 
 Must-inspect: Facade -> Services/RPC/mocks (full-chain deletion of `validate()` with no empty implementation);
 ModelFactory -> Registry (full Selection validation before build, shared error mapping); Off-Peak dispatch -> Registry
@@ -95,15 +95,15 @@ identity. No codegraph interface was available; evidence is Feature Graph, `dep:
 
 ## 4. Accepted Cases and Pruning
 
-| Case ID | Setup                                          | Action                         | Assertions                                                          |
-| ------- | ---------------------------------------------- | ------------------------------ | ------------------------------------------------------------------- |
-| MSV-01  | visible Provider/Model                         | submit normally and create Model | Registry validation passes, Model created once                    |
-| MSV-02  | Provider or Model gone from the current Registry | start building the Model     | stable Provider/Model error before creation                         |
-| MSV-03  | invalid Reasoning or Max Output option         | start building the Model       | `InvalidModelRequest` before creation, never reaching the Adapter   |
-| MSV-04  | hidden Off-Peak Provider complete and enabled  | dispatch and build the Model   | early check and final validation pass, user View still hides it     |
-| MSV-05  | Registry changes after the Off-Peak early check | final Model build             | ModelFactory fails closed on the latest Registry                    |
-| MSV-06  | ordinary model candidate UI                    | read and switch candidates     | View, selection state and submission unchanged, no Facade validate call |
-| MSV-07  | created and validated Active Model             | `bind()` or Automatic Compact  | inherits frozen facts, no re-read of the current Registry           |
+| Case ID | Setup                                            | Action                           | Assertions                                                              |
+| ------- | ------------------------------------------------ | -------------------------------- | ----------------------------------------------------------------------- |
+| MSV-01  | visible Provider/Model                           | submit normally and create Model | Registry validation passes, Model created once                          |
+| MSV-02  | Provider or Model gone from the current Registry | start building the Model         | stable Provider/Model error before creation                             |
+| MSV-03  | invalid Reasoning or Max Output option           | start building the Model         | `InvalidModelRequest` before creation, never reaching the Adapter       |
+| MSV-04  | hidden Off-Peak Provider complete and enabled    | dispatch and build the Model     | early check and final validation pass, user View still hides it         |
+| MSV-05  | Registry changes after the Off-Peak early check  | final Model build                | ModelFactory fails closed on the latest Registry                        |
+| MSV-06  | ordinary model candidate UI                      | read and switch candidates       | View, selection state and submission unchanged, no Facade validate call |
+| MSV-07  | created and validated Active Model               | `bind()` or Automatic Compact    | inherits frozen facts, no re-read of the current Registry               |
 
 Pruned: no UI surface x Provider API expansion (candidates and Adapter encoding are unchanged) and no new large E2E;
 ModelFactory and Off-Peak cross-boundary unit tests are enough, existing representative UI/Off-Peak E2E only regress.

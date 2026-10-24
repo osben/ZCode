@@ -30,7 +30,7 @@ How executions obtain, maintain, or switch Models after a Submission enters Core
 | Automatic Compact       | Current Loop Active Model                | Current Loop                                      | Not updated                                      |
 | Manual Compact          | Compact Submission                       | New Loop                                          | Normal rules                                     |
 | Subagent                | override > Profile > Parent Selection    | Child lifecycle                                   | Does not update parent Session                   |
-| Background              | Selection determined at each round start | Current background model round                    | Not reverse-updated                               |
+| Background              | Selection determined at each round start | Current background model round                    | Not reverse-updated                              |
 | Goal continuation       | Session Selection at continuation time   | New main Loop per round                           | No extra save                                    |
 | Off-Peak automatic turn | idle Submission's ModelSelection         | Model rounds within the item's resident execution | Temporarily updated, not persisted               |
 

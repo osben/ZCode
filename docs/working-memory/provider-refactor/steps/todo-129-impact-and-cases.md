@@ -33,13 +33,13 @@ collector.
 
 ## Acceptance Matrix
 
-| Group    | Must hold                                                                                                                           |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Identity | personal/Team/Start/off-peak symmetric for both families; old values unchanged; UUID/unknown not guessed; slash/colon/percent in model unchanged |
+| Group    | Must hold                                                                                                                                           |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity | personal/Team/Start/off-peak symmetric for both families; old values unchanged; UUID/unknown not guessed; slash/colon/percent in model unchanged    |
 | Event    | send, request step/completion, subtask, compaction, automation and off-peak actual builder/report payloads match old values, other fields unchanged |
-| Plan     | Team-only entitled=true belongs to Coding Plan; false does not count; Start independent; empty view unknown; a switch is not an unsubscription |
-| Funnel   | BigModel Team is MaaS / bigmodel, Z.ai is Z_AI / z.ai; context freeze and one-shot upgrade reporting unchanged                     |
-| Home     | Team-only can enter creation; grayscale off, dismiss and explicitly no Coding Plan still block; the form eligibility is not bypassed |
+| Plan     | Team-only entitled=true belongs to Coding Plan; false does not count; Start independent; empty view unknown; a switch is not an unsubscription      |
+| Funnel   | BigModel Team is MaaS / bigmodel, Z.ai is Z_AI / z.ai; context freeze and one-shot upgrade reporting unchanged                                      |
+| Home     | Team-only can enter creation; grayscale off, dismiss and explicitly no Coding Plan still block; the form eligibility is not bypassed                |
 
 No real-charge purchase tests and no report or historical statistics changes. Real Electron batch verification is recorded
 separately in the ledger and component tests do not stand in for whole-machine verification.

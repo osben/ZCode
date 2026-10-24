@@ -7,11 +7,11 @@
 
 ## 1. Round Overview
 
-| Todo                                                  | Scope                                                                                                                         | Status      |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| [105](./todo-105-account-provider-model-list-trim.md) | Remove GLM-5-Turbo and GLM-5.2 from personal/team Account Provider preset lists                                               | Implemented |
-| [106](./todo-106-mcs-capability-rule-correction.md)   | MCS scope, default Opus 4.8 capability, Start/off-peak MCS and native search, one site rule per URL                           | Implemented |
-| This Todo                                             | Delete feedback, close button for connection tests, vertical dragging, API Key entry, Provider `enabled`, status indicator    | Implemented |
+| Todo                                                  | Scope                                                                                                                      | Status      |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| [105](./todo-105-account-provider-model-list-trim.md) | Remove GLM-5-Turbo and GLM-5.2 from personal/team Account Provider preset lists                                            | Implemented |
+| [106](./todo-106-mcs-capability-rule-correction.md)   | MCS scope, default Opus 4.8 capability, Start/off-peak MCS and native search, one site rule per URL                        | Implemented |
+| This Todo                                             | Delete feedback, close button for connection tests, vertical dragging, API Key entry, Provider `enabled`, status indicator | Implemented |
 
 105/106 requirements live in their own documents. 106 follows the [Design V2](../design-v2/design.md) principle
 "mainstream configuration, official sources first; do not lower default capabilities for outdated third parties". If

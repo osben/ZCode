@@ -122,8 +122,7 @@ Open: whole-package Bootstrap probe on Pro was 24 failed / 1437 passed (two test
 ## 71: Composer persistence and Submission (done; closed 2026-09-04)
 
 - Draft storage (v1 key kept) gains optional `mode` / `modelSelection`; a valid mode marks "initialized"; an empty model
-  is kept; empty text no longer deletes a record holding mode/selection; the per-scope cap was removed (earlier 50 ->
-  500) with the original updated-time eviction; the Reader reads draft and new leaves per entry, old text drafts stay
+  is kept; empty text no longer deletes a record holding mode/selection; the per-scope cap was removed (earlier 50 -> 500) with the original updated-time eviction; the Reader reads draft and new leaves per entry, old text drafts stay
   readable, bad options keep the determinable current model identity, no old flat alias is read;
   `localStorage.getItem` throwing no longer propagates to the UI (a same-key failure logs once and resets after a
   successful write). No new business Store/Host Repo and no attachment serialization.

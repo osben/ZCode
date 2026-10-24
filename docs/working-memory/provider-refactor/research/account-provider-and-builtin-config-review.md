@@ -198,17 +198,17 @@ References: [Grok 4.6](https://docs.x.ai/developers/models/grok-4.6),
 Confirmed items have been written to Config; members not proven by official direct Endpoints or superseded remain disabled for Personal/compatible services.
 
 | Provider Family | Default enabled candidates                                                            | Default disabled / pending-confirmation                         |
-| --------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| GLM API         | `glm-5.3`, `glm-5.3-flash`, `glm-5v-turbo`                                            | Old 5.1/5/4.x                                                    |
-| Coding Plan     | Individual/Team: 5.3, 5.3 Flash, 5.2, 5-Turbo; Start determined by Account return set | Do not statically expand Start account set                       |
-| Kimi            | Unique tiers among K3, K2.7 Code, K2.6 still on current Endpoint                      | Old K2.x, Moonshot V1, duplicate aliases                         |
-| MiniMax         | M3, M2.7, M2.7-highspeed                                                              | Older M2.x                                                       |
-| DeepSeek        | `deepseek-v4-flash`, `deepseek-v4-pro`                                                | Strict Schema promoted only by official Responses Endpoint Rule  |
-| Qwen            | `qwen3.8-max`, `qwen3.8-flash`                                                        | Replaced 3.5/3.x models                                          |
-| MiMo            | `mimo-v2.5-pro`, `mimo-v2.5`                                                          | Retired v2-pro/v2-omni/v2-flash                                  |
-| OpenAI          | Sol/Terra/Luna                                                                        | `gpt-5.6` alias, replaced Codex models                           |
-| Anthropic       | Fable/Opus/Sonnet/Haiku each unique tier                                              | No clear duplicates                                              |
-| xAI             | `grok-4.6`, `grok-build-0.1`                                                          | `grok-4.3`                                                       |
+| --------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| GLM API         | `glm-5.3`, `glm-5.3-flash`, `glm-5v-turbo`                                            | Old 5.1/5/4.x                                                   |
+| Coding Plan     | Individual/Team: 5.3, 5.3 Flash, 5.2, 5-Turbo; Start determined by Account return set | Do not statically expand Start account set                      |
+| Kimi            | Unique tiers among K3, K2.7 Code, K2.6 still on current Endpoint                      | Old K2.x, Moonshot V1, duplicate aliases                        |
+| MiniMax         | M3, M2.7, M2.7-highspeed                                                              | Older M2.x                                                      |
+| DeepSeek        | `deepseek-v4-flash`, `deepseek-v4-pro`                                                | Strict Schema promoted only by official Responses Endpoint Rule |
+| Qwen            | `qwen3.8-max`, `qwen3.8-flash`                                                        | Replaced 3.5/3.x models                                         |
+| MiMo            | `mimo-v2.5-pro`, `mimo-v2.5`                                                          | Retired v2-pro/v2-omni/v2-flash                                 |
+| OpenAI          | Sol/Terra/Luna                                                                        | `gpt-5.6` alias, replaced Codex models                          |
+| Anthropic       | Fable/Opus/Sonnet/Haiku each unique tier                                              | No clear duplicates                                             |
+| xAI             | `grok-4.6`, `grok-build-0.1`                                                          | `grok-4.3`                                                      |
 
 On final write, each Provider's `builtinModelIds` physical order is "default enabled first, default disabled last"; no new enabled-first sorting at runtime; user ordering still only via Personal `modelOrder`.
 
@@ -231,7 +231,7 @@ Change layers are mainly `option-source`, `draft-default`, `validation`, and `pe
 | -------------------------- | --------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
 | Built-in Provider settings | Effective Provider + Model Config | Personal Overlay                                 | Does not write back to Built-in Release                              |
 | Account Provider settings  | Built-in + Account + Personal     | Personal Overlay; account facts still by Account | Team/Individual identity and members do not cross                    |
-| Personal Provider settings | Generic Built-in Rules + Personal | Personal Provider/Model Rules                    | Personal Models also get complete conservative baseline             |
+| Personal Provider settings | Generic Built-in Rules + Personal | Personal Provider/Model Rules                    | Personal Models also get complete conservative baseline              |
 | Ordinary model selector    | Registry's selectable projection  | Session Selection                                | Only filters and preserves member order, does not re-sort by enabled |
 | Runtime / Adapter          | Frozen Active Model               | Model API Request                                | Does not infer capabilities by modelId, Provider ID                  |
 

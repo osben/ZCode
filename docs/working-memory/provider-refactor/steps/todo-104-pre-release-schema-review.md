@@ -123,17 +123,17 @@ Structure is approved; old-data migration and consumer adaptation are still veri
 
 ## 3. ProviderConfig (confirmed changes and retained items)
 
-| Item                               | Ruling                                                  | Background                                                                                                        |
-| ---------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `modelIds`                         | renamed `personalModelIds`                              | The old name only meant user-added models and misreads as the full set next to `builtinModelIds`.                 |
-| `api.baseURL`                      | renamed `api.baseUrl`                                   | Matches `apiKeyManagementUrl` naming; limited to this schema, not all SDK parameters.                             |
-| `label`                            | removed from ProviderConfig; outer rule uses `providerName` | Templates keep only `templateNameMap`; the default Provider name is generated at creation (6.5).             |
-| `api` / `ProviderApiConfig`        | kept nested and independent                             | Flattening was proposed and withdrawn; the user wants `api` kept for a possible future OAuth.                     |
-| `access`                           | existing union kept                                     | No OAuth type or fields added; "maybe OAuth later" is a reason to keep grouping, not to implement it.             |
-| `entitled`                         | name, position and semantics kept                       | See section 4.                                                                                                    |
-| `group`, `logo`, `visibility`      | existing design kept                                    | No rename, type change or extension.                                                                              |
-| `ProviderConfigOverlay` etc. names | no rename                                               | Naming discussion ended by the user.                                                                              |
-| optionality and `null`             | unchanged                                               | No new ruling on clearing semantics.                                                                              |
+| Item                               | Ruling                                                      | Background                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `modelIds`                         | renamed `personalModelIds`                                  | The old name only meant user-added models and misreads as the full set next to `builtinModelIds`.     |
+| `api.baseURL`                      | renamed `api.baseUrl`                                       | Matches `apiKeyManagementUrl` naming; limited to this schema, not all SDK parameters.                 |
+| `label`                            | removed from ProviderConfig; outer rule uses `providerName` | Templates keep only `templateNameMap`; the default Provider name is generated at creation (6.5).      |
+| `api` / `ProviderApiConfig`        | kept nested and independent                                 | Flattening was proposed and withdrawn; the user wants `api` kept for a possible future OAuth.         |
+| `access`                           | existing union kept                                         | No OAuth type or fields added; "maybe OAuth later" is a reason to keep grouping, not to implement it. |
+| `entitled`                         | name, position and semantics kept                           | See section 4.                                                                                        |
+| `group`, `logo`, `visibility`      | existing design kept                                        | No rename, type change or extension.                                                                  |
+| `ProviderConfigOverlay` etc. names | no rename                                                   | Naming discussion ended by the user.                                                                  |
+| optionality and `null`             | unchanged                                                   | No new ruling on clearing semantics.                                                                  |
 
 `builtinModelIds` and `modelOrder` keep their names. providerId and templateId moved out of ProviderConfig into the
 instance rule (6.4).
@@ -208,11 +208,11 @@ Static usage map (for understanding only, not a rectification list):
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Account result parsing       | `available` -> true; `pending`/`unavailable` -> false; unknown reuses the same identity's old result, else false                  |
 | App Off-Peak                 | derived from whether the selected same-account personal/team plan is available                                                    |
-| Standalone CLI               | from local account identity and API Key presence; config check looks for any entitled account Provider                             |
+| Standalone CLI               | from local account identity and API Key presence; config check looks for any entitled account Provider                            |
 | Provider Resolver / Registry | account Provider execution eligibility requires `entitled` true plus current and completeness; selectability also uses visibility |
 | Settings page                | nav account state, plan cards, Start Plan visibility, connect/re-authorize completion, first backfill sync                        |
 | Quota/plan queries           | sidebar, settings, composer, plan identity snapshot via public helper access object and refresh fingerprint                       |
-| Plan read-only inspection    | dedicated helper lets some not-yet-entitled states query benefits; falls back to `entitled` only without `accountState`          |
+| Plan read-only inspection    | dedicated helper lets some not-yet-entitled states query benefits; falls back to `entitled` only without `accountState`           |
 | Purchase-entry telemetry     | infers plan state from entitled Providers for Automations, Off-Peak create entries                                                |
 | Types/projections            | Provider Access Config, AccountProviderState projection, protocol account access object (unchanged)                               |
 
@@ -382,7 +382,7 @@ Rules:
 
 1. One providerId + modelId belongs to exactly one personal collection; switching mode moves the entry between
    collections; no second mode boolean; save validation reuses the owning collection's rule schema.
-2. Leaf fields of Complete* are required and non-null. `CompleteModelConfig` is derived from shared field schemas (there
+2. Leaf fields of Complete\* are required and non-null. `CompleteModelConfig` is derived from shared field schemas (there
    is no existing standalone complete schema to reuse); `ManualModelConfig` relaxes only `enabled`.
 3. During resolution a manual rule keeps the previous layer's `enabled` and applies its own `enabled` override;
    `properties`/`optionSpecs` use the complete manual value without filling from smart config. Turning smart config off
@@ -460,12 +460,12 @@ A config/commit audit found one account Provider wildcard rule in the Model laye
 in the Model + API layer. Retaining `providerMatch` "because it is in use" was rejected: schema follows layer
 responsibility.
 
-| Original position and condition                                         | Covered content                    | Handling                                                                            |
-| ----------------------------------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------- |
-| Model: account personal/team/Start Plan Provider, modelMatch `".*"`      | image, video input true            | Endpoint condition in `providerSiteRules`; keep modelMatch `".*"`                   |
-| Model + API: anthropic, Claude models, Anthropic Messages               | native search, mid-conv System true | `providerSiteRules` by Anthropic Endpoint; keep model and API conditions            |
-| Model + API: moonshot-kimi, K3 series, Anthropic Messages               | MFJS tool Schema true              | `providerSiteRules` by Moonshot Endpoint; keep K3 model and API conditions; not made site-wide |
-| Model + API: deepseek, all models, Anthropic Messages                   | native search, mid-conv System true | `providerSiteRules` by DeepSeek Endpoint; keep `".*"` and API conditions            |
+| Original position and condition                                     | Covered content                     | Handling                                                                                       |
+| ------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Model: account personal/team/Start Plan Provider, modelMatch `".*"` | image, video input true             | Endpoint condition in `providerSiteRules`; keep modelMatch `".*"`                              |
+| Model + API: anthropic, Claude models, Anthropic Messages           | native search, mid-conv System true | `providerSiteRules` by Anthropic Endpoint; keep model and API conditions                       |
+| Model + API: moonshot-kimi, K3 series, Anthropic Messages           | MFJS tool Schema true               | `providerSiteRules` by Moonshot Endpoint; keep K3 model and API conditions; not made site-wide |
+| Model + API: deepseek, all models, Anthropic Messages               | native search, mid-conv System true | `providerSiteRules` by DeepSeek Endpoint; keep `".*"` and API conditions                       |
 
 Endpoints (from current config/templates; do not widen to the whole domain):
 
@@ -565,17 +565,17 @@ Todo. Code: `packages/provider/src/config-service.ts`, `config/provider-config.t
 
 Each rule kind owns one array, so no rule object stores a redundant `type`:
 
-| Collection                                       | Member type                   |
-| ------------------------------------------------ | ----------------------------- |
-| providerConfigRules.templateRules                | ProviderTemplateConfigRule    |
-| providerConfigRules.providerRules                | ProviderConfigRule            |
-| modelConfigRules.modelRules                      | ModelMatchConfigRule          |
-| modelConfigRules.modelApiRules                   | ModelApiMatchConfigRule       |
-| modelConfigRules.providerSiteRules               | ProviderSiteMatchConfigRule   |
-| modelConfigRules.templateModelRules              | TemplateModelConfigRule       |
-| built-in modelConfigRules.builtinProviderModelRules | ProviderModelConfigRule    |
-| personal modelConfigRules.providerModelRules     | ProviderModelConfigRule       |
-| personal modelConfigRules.manualProviderModelRules | ManualProviderModelConfigRule |
+| Collection                                          | Member type                   |
+| --------------------------------------------------- | ----------------------------- |
+| providerConfigRules.templateRules                   | ProviderTemplateConfigRule    |
+| providerConfigRules.providerRules                   | ProviderConfigRule            |
+| modelConfigRules.modelRules                         | ModelMatchConfigRule          |
+| modelConfigRules.modelApiRules                      | ModelApiMatchConfigRule       |
+| modelConfigRules.providerSiteRules                  | ProviderSiteMatchConfigRule   |
+| modelConfigRules.templateModelRules                 | TemplateModelConfigRule       |
+| built-in modelConfigRules.builtinProviderModelRules | ProviderModelConfigRule       |
+| personal modelConfigRules.providerModelRules        | ProviderModelConfigRule       |
+| personal modelConfigRules.manualProviderModelRules  | ManualProviderModelConfigRule |
 
 Internal execution may add a category tag from the owning collection but files never store one, and the category must not
 be guessed back from Map/API/URL fields. The UI smart-config switch maps to the personal ordinary/manual collection. Only
@@ -627,12 +627,12 @@ A public `ProviderConfig` for every rule's `config` would hide that sources may 
 same public config with different allowed fields per writing entry, not a new file or domain structure. Targeted audit
 found no structure problem.
 
-| Source   | Verified allowed/restricted fields                                                                                                                                                      |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Template | logo, api, builtinModelIds and API Key Access metadata without apiKey; no personal models; old label deleted, name only in `templateNameMap`                                            |
-| Built-in | `group` required and limited to zai-family / bigmodel-family; allows logo, api, access, builtinModelIds, visibility; no personalModelIds / modelOrder; identity and name moved out (6.4/6.5) |
+| Source   | Verified allowed/restricted fields                                                                                                                                                                                           |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Template | logo, api, builtinModelIds and API Key Access metadata without apiKey; no personal models; old label deleted, name only in `templateNameMap`                                                                                 |
+| Built-in | `group` required and limited to zai-family / bigmodel-family; allows logo, api, access, builtinModelIds, visibility; no personalModelIds / modelOrder; identity and name moved out (6.4/6.5)                                 |
 | Personal | no builtinModelIds; group only the standard-personal override; fixed Account Provider access cannot be overridden by the personal layer; personal Endpoint may keep an unfinished string until final completeness validation |
-| Account  | only builtinModelIds and the zhipu-account Access `entitled` override; not an arbitrary ProviderConfig write path                                                                        |
+| Account  | only builtinModelIds and the zhipu-account Access `entitled` override; not an arbitrary ProviderConfig write path                                                                                                            |
 
 Keep these limits via derivation from base schemas with the confirmed renames and identity/name move; add no source
 reorganization or dedicated type naming. Validations depending on providerId (such as forbidding personal access on a
@@ -695,17 +695,17 @@ The path shows the default environment; real paths come from the environment's p
 (never a hard-coded home). Downloaded config and refresh records keep the platform / app version / server-address
 isolation dimensions.
 
-| Current implementation or resource               | Target                                            | Reason                                                                                              |
-| ------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| provider_config.json                             | kept                                              | personal config in one place, not the old combined config.json                                     |
-| model-selection.json                             | merged into config.defaultModelSelection          | 6.9                                                                                                 |
-| active.json                                      | `runtime/provider/<isolation dir>/zcode-builtin.json` | downloaded active built-in config; rebuildable from the bundled config when missing             |
-| refresh-control.json                             | same directory `zcode-builtin-refresh.json`       | multi-process refresh lease, refresh time and failure retry info; not user config                   |
-| provider-provisioning-state.json                 | `runtime/provider/provisioning.json`              | successful distribution request IDs and results, so resent requests do not overwrite targets; not a config copy and lost history cannot be rebuilt |
-| bot-config.v3.json                               | kept as the current new file                      | imported from staging `bot-config.json`; old file stays; no continuous dual-write                  |
-| bot-state.v3.json                                | kept as the current new file                      | imported from staging `bot-state.v2.json` etc.; old file stays                                      |
-| bundled `zcode-builtin.json`                     | kept bundled resource                             | first-start/offline baseline; same release schema as remote content                                |
-| embedded-resource `zcode-builtin-<hash>.json`    | fixed `runtime/provider/bundled/zcode-builtin.json` | reused by single-file CLI / Server read chain; a resource copy, not a user config                  |
+| Current implementation or resource            | Target                                                | Reason                                                                                                                                             |
+| --------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| provider_config.json                          | kept                                                  | personal config in one place, not the old combined config.json                                                                                     |
+| model-selection.json                          | merged into config.defaultModelSelection              | 6.9                                                                                                                                                |
+| active.json                                   | `runtime/provider/<isolation dir>/zcode-builtin.json` | downloaded active built-in config; rebuildable from the bundled config when missing                                                                |
+| refresh-control.json                          | same directory `zcode-builtin-refresh.json`           | multi-process refresh lease, refresh time and failure retry info; not user config                                                                  |
+| provider-provisioning-state.json              | `runtime/provider/provisioning.json`                  | successful distribution request IDs and results, so resent requests do not overwrite targets; not a config copy and lost history cannot be rebuilt |
+| bot-config.v3.json                            | kept as the current new file                          | imported from staging `bot-config.json`; old file stays; no continuous dual-write                                                                  |
+| bot-state.v3.json                             | kept as the current new file                          | imported from staging `bot-state.v2.json` etc.; old file stays                                                                                     |
+| bundled `zcode-builtin.json`                  | kept bundled resource                                 | first-start/offline baseline; same release schema as remote content                                                                                |
+| embedded-resource `zcode-builtin-<hash>.json` | fixed `runtime/provider/bundled/zcode-builtin.json`   | reused by single-file CLI / Server read chain; a resource copy, not a user config                                                                  |
 
 Resource copy overwrite semantics: no hash-named history copies. On startup the new program compares the bundled config;
 if different it writes a temp file and atomically replaces, if equal it reuses. This assumes the old program and child
@@ -733,13 +733,13 @@ After merging the standalone Model Selection file, new version boundaries drop f
 transport format), each starting at version 1. A version identifies the format, selects a migration or rejects
 unsupported input, and does not change with ordinary value edits.
 
-| Version boundary           | Target           | Scope                                                                              |
-| -------------------------- | ---------------- | ---------------------------------------------------------------------------------- |
-| PersonalProviderConfigFile | `schemaVersion: 1` | whole personal config incl. defaultModelSelection                                |
-| ZCodeBuiltinRelease        | `schemaVersion: 1` | release format shared by bundled, released copy and downloaded content (3 -> 1)  |
-| built-in refresh record    | `schemaVersion: 1` | lease, time, failure count                                                       |
-| Provider distribution state file | `schemaVersion: 1` | saved completed requests and results                                      |
-| Provider distribution envelope | `schemaVersion: 1` | whole package of config, settings, credentials sent to the target environment |
+| Version boundary                 | Target             | Scope                                                                           |
+| -------------------------------- | ------------------ | ------------------------------------------------------------------------------- |
+| PersonalProviderConfigFile       | `schemaVersion: 1` | whole personal config incl. defaultModelSelection                               |
+| ZCodeBuiltinRelease              | `schemaVersion: 1` | release format shared by bundled, released copy and downloaded content (3 -> 1) |
+| built-in refresh record          | `schemaVersion: 1` | lease, time, failure count                                                      |
+| Provider distribution state file | `schemaVersion: 1` | saved completed requests and results                                            |
+| Provider distribution envelope   | `schemaVersion: 1` | whole package of config, settings, credentials sent to the target environment   |
 
 ProviderConfig, ModelConfig, ModelSelection have no own version (their file/envelope manages it). The standalone Model
 Selection file and its version shell are gone; Bot `version` pre-exists in staging and is not a new boundary. A version
@@ -909,8 +909,8 @@ overturn the passed structure.
 
 New columns, all in the existing `tasks-index.sqlite` (no new database or table):
 
-| Existing table  | New column             | Ruling                       |
-| --------------- | ---------------------- | ---------------------------- |
+| Existing table  | New column             | Ruling                        |
+| --------------- | ---------------------- | ----------------------------- |
 | automations     | `model_selection TEXT` | reuses ModelSelection, passed |
 | automation_runs | `model_selection TEXT` | reuses ModelSelection, passed |
 | off_peak_tasks  | `model_selection TEXT` | reuses ModelSelection, passed |
@@ -943,16 +943,16 @@ physical files and new table columns, schemaVersion, revision and the directly r
 discussion added the 6.18 old-field preservation; 6.19 narrowed to the 13 supporting items. Design review is not
 implementation or release verification.
 
-| Review item                                        | Conclusion                         |
-| -------------------------------------------------- | ---------------------------------- |
-| ModelSelection, ProviderConfig, ModelConfig        | sections 2, 3, 5                   |
-| smart/manual, layered rules, Provider/Template outer, names | 6.1-6.7                    |
-| source-specific field limits                       | 6.8 kept, review passed            |
-| default selection, file paths, Bot files, resource overwrite, new columns | 6.9-6.10, 6.14      |
-| five format versions, release revision, runtime identifier | 6.11-6.12                  |
-| refresh / distribution records                     | 6.13 shrunk                        |
-| other ModelSelection attachments, account selection, credential key | 6.14 passed / not adjusted |
-| schema single source                               | 1.1, 7 as implementation principle |
+| Review item                                                               | Conclusion                         |
+| ------------------------------------------------------------------------- | ---------------------------------- |
+| ModelSelection, ProviderConfig, ModelConfig                               | sections 2, 3, 5                   |
+| smart/manual, layered rules, Provider/Template outer, names               | 6.1-6.7                            |
+| source-specific field limits                                              | 6.8 kept, review passed            |
+| default selection, file paths, Bot files, resource overwrite, new columns | 6.9-6.10, 6.14                     |
+| five format versions, release revision, runtime identifier                | 6.11-6.12                          |
+| refresh / distribution records                                            | 6.13 shrunk                        |
+| other ModelSelection attachments, account selection, credential key       | 6.14 passed / not adjusted         |
+| schema single source                                                      | 1.1, 7 as implementation principle |
 
 Release needs real results proving: a fresh install writes the final format; staging published data upgrades directly into
 the same final format; unreleased intermediate branch formats are not supported.
@@ -972,14 +972,14 @@ widening to unaddressed behaviors (illegal hand-edited files, future-version com
 Maps rulings to actual entries so schema definitions are not changed while write-back, migration or standalone CLI is
 missed. Staging reference checked: `790884b1ce`; re-check diffs if the baseline moves.
 
-| Ruling                         | Entries to check together                                                                                                                                                                                       |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Field renames, rule grouping, type removal | `provider/config/schema.ts` parsing, `provider-config.ts` / `model-config.ts` constructors and `toJSON`, `toPersonalJSON`, `toZCodeBuiltinJSON`; write-back must not emit old fields                |
-| Personal config envelope and default merge | provider-node `provider-config-file-codec.ts`, `personal-provider-config-repository.ts`, `model-selection-config-repository.ts`, host assembly and default-selection subscription; no second continuously written `model-selection.json` |
-| Staging personal config import | App `legacyPersonalProviderConfigImporter.ts` and standalone CLI `legacy-cli-personal-provider-config-importer.ts` both output the final format; keep user-intent extraction and old identity conversion; do not freeze old Effective Config system default capabilities as user overrides |
-| Bot keeps v3 files             | `bots/repo.ts`, `storageMigration.ts` keep the new-file import chain; verify old config/draft selections enter v3 files and old files are not overwritten; no original-path migration                           |
-| Built-in release and runtime source identifier | `config/provider/zcode-builtin.json`, release codec, download Source, fixed resource release path, CLI / Server embedded resource chain; bundled and downloaded use one final release schema          |
-| Distribution adaptation        | `shared/provider-provisioning.ts` with Source / Target / state result codecs change together; send, receive and failure rollback read the same `personalConfig`                                                 |
+| Ruling                                         | Entries to check together                                                                                                                                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Field renames, rule grouping, type removal     | `provider/config/schema.ts` parsing, `provider-config.ts` / `model-config.ts` constructors and `toJSON`, `toPersonalJSON`, `toZCodeBuiltinJSON`; write-back must not emit old fields                                                                                                       |
+| Personal config envelope and default merge     | provider-node `provider-config-file-codec.ts`, `personal-provider-config-repository.ts`, `model-selection-config-repository.ts`, host assembly and default-selection subscription; no second continuously written `model-selection.json`                                                   |
+| Staging personal config import                 | App `legacyPersonalProviderConfigImporter.ts` and standalone CLI `legacy-cli-personal-provider-config-importer.ts` both output the final format; keep user-intent extraction and old identity conversion; do not freeze old Effective Config system default capabilities as user overrides |
+| Bot keeps v3 files                             | `bots/repo.ts`, `storageMigration.ts` keep the new-file import chain; verify old config/draft selections enter v3 files and old files are not overwritten; no original-path migration                                                                                                      |
+| Built-in release and runtime source identifier | `config/provider/zcode-builtin.json`, release codec, download Source, fixed resource release path, CLI / Server embedded resource chain; bundled and downloaded use one final release schema                                                                                               |
+| Distribution adaptation                        | `shared/provider-provisioning.ts` with Source / Target / state result codecs change together; send, receive and failure rollback read the same `personalConfig`                                                                                                                            |
 
 Existing migration entries: `packages/services/src/model-provider/legacyPersonalProviderConfigImporter.ts`,
 `apps/zcode-cli/packages/bootstrap/src/app/legacy-cli-personal-provider-config-importer.ts`,
@@ -995,19 +995,19 @@ reorganization mixed in workload; this section replaces it. Every group has cons
 the default merge, revision passing and resource overwrite need fuller integration/packaging verification but have clear
 methods. "Verifiable" does not mean "current tests already prove the final design".
 
-| Change group                                       | Decidable result                                                                              | Verification and current boundary                                                                                                              |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| ModelSelection and existing attachments            | same providerId / modelId / reasoningLevel survives read/write; upper empty semantics kept     | reuse existing consumers and migration tests; the three new columns still check upgrade read/write                                           |
-| Provider/Model renames, property moves, option `type` deletion | final file has only target fields; round trip loses nothing; effective semantics kept | schema positive/negative cases, serialization assertions, before/after effective-value comparison; no self-consistent same-codec round trip as proof |
-| Provider/Template outer reorg and names            | IDs, template relations, overrides and order kept; creation name by language, deduplicated, stable across restart | adapt creation / concurrent dedup / Overlay tests; add array/field-move assertions and settings E2E                              |
-| smart/manual grouping, source-specific schemas     | illegal source fields and incomplete manual rules are rejected leaving no half edit; `enabled` independent; manual params do not follow earlier layers | existing fixed-config / source-limit / atomic-edit tests plus collection exclusivity cases                                  |
-| Match layering, `providerMatch` deletion, four rules to Site | each layer rejects out-of-layer fields; specified Endpoint/API/model hits, near misses do not; order kept | explicit hit/miss matrix incl. ordinary API Key on the same Endpoint, Start Plan and Off-Peak boundaries; verifies declared local scope, not real remote capability |
-| Default merge and distribution adaptation          | editing any member loses no others; cleared default does not return after restart; concurrent edits all kept; failed distribution restores the original without overwriting newer edits | file update, import and fault injection; plus real two-process write/notify and real distribution integration |
-| Staging import and Bot files                       | fresh install and legacy import both produce the final format; repeated start does not re-import; Bot writes v3 and old file untouched | existing App/CLI importer and Bot tests with old-file fixtures and independent expected results                                  |
-| schemaVersion and built-in release revision        | five boundaries accept version 1 and reject malformed input; higher revision accepted, same revision with different content rejected | codec/release tests; real packaging/online release must also check revision vs content in one release scope                  |
-| Built-in runtime revision source fix               | two Endpoints with the same revision but different content converge across Source, Account, Registry and Worker and really use the new config | formal regression from the real Source / Config / Registry repro, covering real Host / Worker; in-memory mocks are not enough        |
-| `runtime/provider` paths and fixed resource overwrite | correct isolated directories per host; replace on change, reuse on no change, no hash-growing copies, no half-file reads | temp-dir file tests, concurrent/failure cases, plus Desktop / CLI / Server built-artifact startup checks; atomic replace on supported systems |
-| Schema single source and two distribution tweaks   | types derive from schema without confusing pre-parse and class serialization; no `sourceRevision` consumer left; result value is still the config identifier | typecheck, negative type cases as needed, codec behavior tests, dependency check, send/receive protocol cases; typecheck alone cannot show runtime validation was not widened |
+| Change group                                                   | Decidable result                                                                                                                                                                        | Verification and current boundary                                                                                                                                             |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ModelSelection and existing attachments                        | same providerId / modelId / reasoningLevel survives read/write; upper empty semantics kept                                                                                              | reuse existing consumers and migration tests; the three new columns still check upgrade read/write                                                                            |
+| Provider/Model renames, property moves, option `type` deletion | final file has only target fields; round trip loses nothing; effective semantics kept                                                                                                   | schema positive/negative cases, serialization assertions, before/after effective-value comparison; no self-consistent same-codec round trip as proof                          |
+| Provider/Template outer reorg and names                        | IDs, template relations, overrides and order kept; creation name by language, deduplicated, stable across restart                                                                       | adapt creation / concurrent dedup / Overlay tests; add array/field-move assertions and settings E2E                                                                           |
+| smart/manual grouping, source-specific schemas                 | illegal source fields and incomplete manual rules are rejected leaving no half edit; `enabled` independent; manual params do not follow earlier layers                                  | existing fixed-config / source-limit / atomic-edit tests plus collection exclusivity cases                                                                                    |
+| Match layering, `providerMatch` deletion, four rules to Site   | each layer rejects out-of-layer fields; specified Endpoint/API/model hits, near misses do not; order kept                                                                               | explicit hit/miss matrix incl. ordinary API Key on the same Endpoint, Start Plan and Off-Peak boundaries; verifies declared local scope, not real remote capability           |
+| Default merge and distribution adaptation                      | editing any member loses no others; cleared default does not return after restart; concurrent edits all kept; failed distribution restores the original without overwriting newer edits | file update, import and fault injection; plus real two-process write/notify and real distribution integration                                                                 |
+| Staging import and Bot files                                   | fresh install and legacy import both produce the final format; repeated start does not re-import; Bot writes v3 and old file untouched                                                  | existing App/CLI importer and Bot tests with old-file fixtures and independent expected results                                                                               |
+| schemaVersion and built-in release revision                    | five boundaries accept version 1 and reject malformed input; higher revision accepted, same revision with different content rejected                                                    | codec/release tests; real packaging/online release must also check revision vs content in one release scope                                                                   |
+| Built-in runtime revision source fix                           | two Endpoints with the same revision but different content converge across Source, Account, Registry and Worker and really use the new config                                           | formal regression from the real Source / Config / Registry repro, covering real Host / Worker; in-memory mocks are not enough                                                 |
+| `runtime/provider` paths and fixed resource overwrite          | correct isolated directories per host; replace on change, reuse on no change, no hash-growing copies, no half-file reads                                                                | temp-dir file tests, concurrent/failure cases, plus Desktop / CLI / Server built-artifact startup checks; atomic replace on supported systems                                 |
+| Schema single source and two distribution tweaks               | types derive from schema without confusing pre-parse and class serialization; no `sourceRevision` consumer left; result value is still the config identifier                            | typecheck, negative type cases as needed, codec behavior tests, dependency check, send/receive protocol cases; typecheck alone cannot show runtime validation was not widened |
 
 Verification boundaries found: the test named "multiple processes concurrently first read" in
 `provider-node-runtime.test.ts` creates two Repositories in one process, so it cannot independently prove cross-process
@@ -1141,21 +1141,21 @@ earlier A/B/C list that mixed existing branch behavior.
 
 #### 6.19.1 The 13 Supporting Items
 
-| No. | Item                       | Confirmed change and boundary                                                                                                                                                       |
-| --- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Session selection migration | `modelSelection` added to the original `entry.data`, old `providerId` / `modelId` / `thoughtLevel` kept; read, save, restore and fork copy entries adapt; no new table or entry type (6.18.3) |
-| 2   | Off-Peak save              | the UPDATE no longer sets old `model` / `thought_level` to NULL; existing save chain (6.18.1)                                                                                        |
-| 3   | Wiki / Draft save          | storage layer keeps old model, level and `maxOutputTokens` on save, reusing existing lock and atomic write; no restored budget feature, no save-mechanism refactor (6.18.2)         |
-| 4   | Default-selection merge    | `model-selection.json` merged into `provider_config.json` `config.defaultModelSelection`; read/write, locked update, conflict check and notification adjust; clearing does not delete the file; no authorization to delete the old file (6.9) |
-| 5   | Downloaded config path     | `active.json` -> `runtime/provider/<platform>/<app-version>/<server-address-id>/zcode-builtin.json`, keeping three isolation dimensions                                              |
-| 6   | Refresh record path        | `refresh-control.json` -> same-directory `zcode-builtin-refresh.json`; fields, lease and retry unchanged                                                                             |
-| 7   | Distribution record path   | `provider-provisioning-state.json` -> `runtime/provider/provisioning.json`; `records` / `syncId` and dedup semantics kept                                                           |
-| 8   | Embedded resource copy     | fixed `runtime/provider/bundled/zcode-builtin.json`, atomic overwrite on startup when content differs, no per-hash copies (6.10)                                                    |
-| 9   | Format version closure     | five `schemaVersion` boundaries set to 1; default-selection own version shell removed; Bot keeps `version: 3` (6.11)                                                                |
-| 10  | Source-switch refresh fix  | runtime built-in identifier includes the Endpoint source across existing consumers; no new persisted revision field (6.12)                                                          |
-| 11  | Envelope and rollback adaptation | `sourceRevision` removed; default selection travels in `personalConfig` without outer `configuredDefault`; whole personal file applied, validated and rolled back as one with concurrent-edit protection (6.13) |
-| 12  | Distribution result rename | `registryRevision` -> `configRevision`, value and other result fields unchanged; `records` wrapper not trimmed (6.13)                                                               |
-| 13  | Duplicate type cleanup     | data types derive from the schema within this Todo, including the account connection selection duplicate types without changing persisted fields (1.1 / 7)                          |
+| No. | Item                             | Confirmed change and boundary                                                                                                                                                                                                                 |
+| --- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Session selection migration      | `modelSelection` added to the original `entry.data`, old `providerId` / `modelId` / `thoughtLevel` kept; read, save, restore and fork copy entries adapt; no new table or entry type (6.18.3)                                                 |
+| 2   | Off-Peak save                    | the UPDATE no longer sets old `model` / `thought_level` to NULL; existing save chain (6.18.1)                                                                                                                                                 |
+| 3   | Wiki / Draft save                | storage layer keeps old model, level and `maxOutputTokens` on save, reusing existing lock and atomic write; no restored budget feature, no save-mechanism refactor (6.18.2)                                                                   |
+| 4   | Default-selection merge          | `model-selection.json` merged into `provider_config.json` `config.defaultModelSelection`; read/write, locked update, conflict check and notification adjust; clearing does not delete the file; no authorization to delete the old file (6.9) |
+| 5   | Downloaded config path           | `active.json` -> `runtime/provider/<platform>/<app-version>/<server-address-id>/zcode-builtin.json`, keeping three isolation dimensions                                                                                                       |
+| 6   | Refresh record path              | `refresh-control.json` -> same-directory `zcode-builtin-refresh.json`; fields, lease and retry unchanged                                                                                                                                      |
+| 7   | Distribution record path         | `provider-provisioning-state.json` -> `runtime/provider/provisioning.json`; `records` / `syncId` and dedup semantics kept                                                                                                                     |
+| 8   | Embedded resource copy           | fixed `runtime/provider/bundled/zcode-builtin.json`, atomic overwrite on startup when content differs, no per-hash copies (6.10)                                                                                                              |
+| 9   | Format version closure           | five `schemaVersion` boundaries set to 1; default-selection own version shell removed; Bot keeps `version: 3` (6.11)                                                                                                                          |
+| 10  | Source-switch refresh fix        | runtime built-in identifier includes the Endpoint source across existing consumers; no new persisted revision field (6.12)                                                                                                                    |
+| 11  | Envelope and rollback adaptation | `sourceRevision` removed; default selection travels in `personalConfig` without outer `configuredDefault`; whole personal file applied, validated and rolled back as one with concurrent-edit protection (6.13)                               |
+| 12  | Distribution result rename       | `registryRevision` -> `configRevision`, value and other result fields unchanged; `records` wrapper not trimmed (6.13)                                                                                                                         |
+| 13  | Duplicate type cleanup           | data types derive from the schema within this Todo, including the account connection selection duplicate types without changing persisted fields (1.1 / 7)                                                                                    |
 
 Parsing, serialization, App / standalone-CLI staging import and consumer adaptation required by the core schema rulings
 still execute fully per 6.16. The unified monotonic release revision rule (6.12) stays but is not a new storage change.
@@ -1191,15 +1191,15 @@ selection and gets no clear feature. No new null format or global compatibility 
 
 Scope: the core structures discussed and directly related complete config/protocol types; not a repository-wide audit.
 
-| Structure                                          | Verified fact                                                                                                                   | Direction                                                                                                  |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| ModelSelection                                     | `shared/model-selection.ts` already uses `z.infer`; `provider/registry.ts` re-exports and derives options                       | keep                                                                                                       |
-| ProviderConfig, API, Access, Logo, Template        | `config/schema.ts` has runtime definitions; `provider-config.ts` still hand-writes Input / Object / interfaces                  | derive from base data schemas; separate class input from serialized object                                 |
-| ModelConfig, Properties, input/output format, OptionSpecs | `config/schema.ts` has runtime definitions; `model-config.ts` hand-writes Input / Object                                  | share schemas, derive data types; class deletion is not a precondition                                     |
-| ModelConfigRule members                            | schema factory defines rule structure, `model-config.ts` hand-writes rule interfaces                                            | derive from each concrete rule schema; the factory parameter uses `ZodTypeAny`, so keep the concrete `config` type and avoid `any` |
-| Registry complete config                           | `resolver.ts` hand-writes `RegistryModelConfig` / `RegistryModelConfigObject`; completeness relies on `validateComplete`, no standalone complete schema | share field definitions with complete / sparse / manual configs; do not claim a complete schema already exists |
-| Protocol `ZCodeProviderAccountAccess`              | `shared/zcode-protocol/index.ts` already infers from schema; Resolver has a same-shape hand-written Registry account access structure | keep derived protocol types; obey package dependency direction when sharing shapes                         |
-| Account connection selection and settings          | `shared/provider-family-connection-selection.ts` defines two schemas but hand-writes union and settings-map types                | derive from schema; no change to kind, team IDs or persisted shape                                         |
+| Structure                                                 | Verified fact                                                                                                                                           | Direction                                                                                                                          |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| ModelSelection                                            | `shared/model-selection.ts` already uses `z.infer`; `provider/registry.ts` re-exports and derives options                                               | keep                                                                                                                               |
+| ProviderConfig, API, Access, Logo, Template               | `config/schema.ts` has runtime definitions; `provider-config.ts` still hand-writes Input / Object / interfaces                                          | derive from base data schemas; separate class input from serialized object                                                         |
+| ModelConfig, Properties, input/output format, OptionSpecs | `config/schema.ts` has runtime definitions; `model-config.ts` hand-writes Input / Object                                                                | share schemas, derive data types; class deletion is not a precondition                                                             |
+| ModelConfigRule members                                   | schema factory defines rule structure, `model-config.ts` hand-writes rule interfaces                                                                    | derive from each concrete rule schema; the factory parameter uses `ZodTypeAny`, so keep the concrete `config` type and avoid `any` |
+| Registry complete config                                  | `resolver.ts` hand-writes `RegistryModelConfig` / `RegistryModelConfigObject`; completeness relies on `validateComplete`, no standalone complete schema | share field definitions with complete / sparse / manual configs; do not claim a complete schema already exists                     |
+| Protocol `ZCodeProviderAccountAccess`                     | `shared/zcode-protocol/index.ts` already infers from schema; Resolver has a same-shape hand-written Registry account access structure                   | keep derived protocol types; obey package dependency direction when sharing shapes                                                 |
+| Account connection selection and settings                 | `shared/provider-family-connection-selection.ts` defines two schemas but hand-writes union and settings-map types                                       | derive from schema; no change to kind, team IDs or persisted shape                                                                 |
 
 ## 8. Status Checklist
 

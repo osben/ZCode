@@ -60,12 +60,12 @@ These are fault-isolation evidence, not regression cases in the repository; form
 
 ### 3.1 Lifecycle Interface
 
-| Object                              | Previous repeat-call result       | Confirmed result |
-| ----------------------------------- | --------------------------------- | ---------------- |
-| `ProviderRuntime.start()`           | the cached first Registry snapshot | `Promise<void>` |
-| `NodeProviderConfigRuntime.start()` | the cached first Config snapshot  | `Promise<void>`  |
-| `ProviderRegistryService.start()`   | the current completed Registry snapshot | `Promise<void>` |
-| `NodeProviderRegistryRuntime.start()` | forwarded underlying Registry snapshot | `Promise<void>` |
+| Object                                | Previous repeat-call result             | Confirmed result |
+| ------------------------------------- | --------------------------------------- | ---------------- |
+| `ProviderRuntime.start()`             | the cached first Registry snapshot      | `Promise<void>`  |
+| `NodeProviderConfigRuntime.start()`   | the cached first Config snapshot        | `Promise<void>`  |
+| `ProviderRegistryService.start()`     | the current completed Registry snapshot | `Promise<void>`  |
+| `NodeProviderRegistryRuntime.start()` | forwarded underlying Registry snapshot  | `Promise<void>`  |
 
 Services' `ProviderConfigRuntime.start()` is a forwarding wrapper of the Node Config Runtime and changes to
 `Promise<void>` as well. Start dedup, existing failure retry, first-load order, change subscription and complete resource
@@ -88,15 +88,15 @@ the single fact source with no second "latest Provider state" cache; `refresh()`
 
 ### 3.3 All Return-Value Consumers
 
-| Call site                                                                      | Previous use                                                  | Requirement                                                                                                   |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `packages/services/src/node.ts` off-peak `resolveAccountProvider()`            | repeatedly filtered plan Providers from the `start()` snapshot | wait for start then read the current Registry; keep the unique current connection, entitlement, model and authentication constraints |
-| same-file startup log                                                          | logs startup config version and Provider count                | read the Registry explicitly after start                                                                      |
-| `packages/provider-node/src/provider-registry-runtime.ts`                      | builds a default unavailable snapshot from Config when the Account Source is uninitialized | wait for Config start then read the needed config from `configService.read()`         |
-| `packages/services/src/model-provider/providerRuntime.ts`                      | cached and returned the Registry start result                 | cache the readiness Promise, no longer return a business snapshot                                             |
-| `apps/zcode-cli/packages/bootstrap/src/app/process-provider-registry-runtime.ts` | kept the Node Registry Runtime start result as an outer `snapshot` | read the startup snapshot explicitly for the needed one-time log, not as a continuous state read          |
-| `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`           | wrote the startup log from that `snapshot`                    | adapted together; runtime still uses the Registry service                                                     |
-| tests and wrapper layers                                                        | returned/asserted the start snapshot                          | assert through the read interface after start; sync return types                                              |
+| Call site                                                                        | Previous use                                                                               | Requirement                                                                                                                          |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `packages/services/src/node.ts` off-peak `resolveAccountProvider()`              | repeatedly filtered plan Providers from the `start()` snapshot                             | wait for start then read the current Registry; keep the unique current connection, entitlement, model and authentication constraints |
+| same-file startup log                                                            | logs startup config version and Provider count                                             | read the Registry explicitly after start                                                                                             |
+| `packages/provider-node/src/provider-registry-runtime.ts`                        | builds a default unavailable snapshot from Config when the Account Source is uninitialized | wait for Config start then read the needed config from `configService.read()`                                                        |
+| `packages/services/src/model-provider/providerRuntime.ts`                        | cached and returned the Registry start result                                              | cache the readiness Promise, no longer return a business snapshot                                                                    |
+| `apps/zcode-cli/packages/bootstrap/src/app/process-provider-registry-runtime.ts` | kept the Node Registry Runtime start result as an outer `snapshot`                         | read the startup snapshot explicitly for the needed one-time log, not as a continuous state read                                     |
+| `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts`             | wrote the startup log from that `snapshot`                                                 | adapted together; runtime still uses the Registry service                                                                            |
+| tests and wrapper layers                                                         | returned/asserted the start snapshot                                                       | assert through the read interface after start; sync return types                                                                     |
 
 Checked and found to use independent services or only await readiness (not mistaken as having the stale-snapshot bug):
 Provider settings, model selection, official MCP, Bot, Wiki, Git commit message generation, Agent startup preparation and
@@ -143,16 +143,16 @@ is kept, and creation is not restored by clearing the user's connection selectio
 4. Unified eligibility/quota coordination with stale success and failure protection.
 5. Targeted verification and architecture / typecheck / lint gates, then Air's actual Team Plan scenario, recorded and committed.
 
-| Scenario                                 | Must prove                                                                                                                       |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Start interface                          | four interfaces and wrappers return `Promise<void>`; concurrent first access does not duplicate resources; failure and dispose do not regress |
-| Account / Personal updated after start   | explicit reads return the updated state; no process restart needed                                                              |
-| no plan -> BigModel Team Plan            | the entry recovers automatically after the Registry update completes, without leaving and re-entering the page                  |
-| cold start with an existing Team Plan    | a slow first account resolution still converges to the correct eligibility after the update completes                           |
-| Team Plan switched away / logout         | old eligibility invalidated and not re-opened by an old success result                                                          |
-| rapid connection switching               | with deliberately inverted request completion order, old success and old failure never overwrite the new state                  |
-| manual refresh                           | re-resolves plan and credential; queries quota only when eligible                                                               |
-| several off-peak entries mounted at once | the check is deduplicated, later changes still trigger the needed recheck, and repeated requests do not interfere on the quota interface |
+| Scenario                                 | Must prove                                                                                                                                                                          |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start interface                          | four interfaces and wrappers return `Promise<void>`; concurrent first access does not duplicate resources; failure and dispose do not regress                                       |
+| Account / Personal updated after start   | explicit reads return the updated state; no process restart needed                                                                                                                  |
+| no plan -> BigModel Team Plan            | the entry recovers automatically after the Registry update completes, without leaving and re-entering the page                                                                      |
+| cold start with an existing Team Plan    | a slow first account resolution still converges to the correct eligibility after the update completes                                                                               |
+| Team Plan switched away / logout         | old eligibility invalidated and not re-opened by an old success result                                                                                                              |
+| rapid connection switching               | with deliberately inverted request completion order, old success and old failure never overwrite the new state                                                                      |
+| manual refresh                           | re-resolves plan and credential; queries quota only when eligible                                                                                                                   |
+| several off-peak entries mounted at once | the check is deduplicated, later changes still trigger the needed recheck, and repeated requests do not interfere on the quota interface                                            |
 | execution and other consumers            | off-peak eligibility, take-number and dispatch keep sharing the current connection's authentication; model selection, Provider settings, config distribution and Agent startup work |
 
 App interaction fixes need matching E2E, covering at least BigModel Team Plan and the existing Z.ai/personal-plan rules in

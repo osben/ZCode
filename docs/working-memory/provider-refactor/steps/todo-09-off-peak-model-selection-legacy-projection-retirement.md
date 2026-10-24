@@ -48,12 +48,12 @@ The result may be an existing `ModelSelectionView` with at most one `builtin:off
 
 ### 2.2 Four Categories of Facts Stay Separate
 
-| Fact                                                        | Authoritative source                                           | Behavior                                                |
-| ----------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------- |
-| Off-Peak entry exposure                                     | `client/configs.offPeak.enable_offpeak_task`                   | Kept; gates creation together with non-empty candidates |
-| Model members and Model Config                              | Complete Registry (Built-in / Account / Personal parsed)       | Source of candidates, Reasoning, default model, checks  |
-| Account support, Ticket, request authentication             | Account Access, Off-Peak availability/ticket API, Request Auth | Not moved to Model Config                               |
-| Task drafts, selection, scheduling status                   | Renderer draft, Off-Peak Task Service/Repo, Scheduler          | Product-owned; never written to Session Selection      |
+| Fact                                            | Authoritative source                                           | Behavior                                                |
+| ----------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------- |
+| Off-Peak entry exposure                         | `client/configs.offPeak.enable_offpeak_task`                   | Kept; gates creation together with non-empty candidates |
+| Model members and Model Config                  | Complete Registry (Built-in / Account / Personal parsed)       | Source of candidates, Reasoning, default model, checks  |
+| Account support, Ticket, request authentication | Account Access, Off-Peak availability/ticket API, Request Auth | Not moved to Model Config                               |
+| Task drafts, selection, scheduling status       | Renderer draft, Off-Peak Task Service/Repo, Scheduler          | Product-owned; never written to Session Selection       |
 
 Account Provider dynamic `allowedModelIds` do not participate in the off-peak model list; members are product-level
 members of the hidden Built-in Provider; Coding Plan Account decides only admission and request authentication.
@@ -118,12 +118,12 @@ Registry; only the first ordered candidate of the current scoped Registry may be
 
 ### 3.4 Expired Saved Selection
 
-| Scenario                                                      | Behavior                                                                          |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| History / terminal read-only task model exited Registry       | Show saved strings; do not add to candidates; do not modify the task              |
-| Queued / paused edit: saved model expired                     | Show unavailable state and block the original save; user picks a current model    |
-| Saved Reasoning level expired                                 | Show unavailable; pick a valid level or clear to current default before save      |
-| Registry updates during create                                | Re-validate at submission against the current Registry, not the initial snapshot  |
+| Scenario                                                | Behavior                                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| History / terminal read-only task model exited Registry | Show saved strings; do not add to candidates; do not modify the task             |
+| Queued / paused edit: saved model expired               | Show unavailable state and block the original save; user picks a current model   |
+| Saved Reasoning level expired                           | Show unavailable; pick a valid level or clear to current default before save     |
+| Registry updates during create                          | Re-validate at submission against the current Registry, not the initial snapshot |
 
 Silently replacing with the first item and overwriting the user's selection is prohibited.
 
@@ -165,11 +165,11 @@ Out of scope: Ticket state machine, Account Access, Request Auth, Telemetry, Que
 
 ### 6.1 UI Surfaces
 
-| Scenario                   | Entry                                       | Candidate/default source                         | Validation                                                 | Sink                                                      |
-| -------------------------- | ------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------- | --------------------------------------------------------- |
-| Create off-peak task       | Automations / New Task template, `OffPeakEditView` | scoped Registry View; first candidate default | Remote switch, Plan support, availability, current Registry | `OffPeakTaskService.createTask` -> Ticket + Off-Peak Repo |
-| Edit queued/paused task    | Automations `OffPeakEditView`               | Saved selection; Registry decides availability   | Status guards + current Registry                           | `updateTask` -> Off-Peak Repo                             |
-| View terminal/running task | Off-Peak cards/History                      | Saved model/thought strings                      | Read-only                                                  | none; Registry changes do not rewrite history             |
+| Scenario                   | Entry                                              | Candidate/default source                       | Validation                                                  | Sink                                                      |
+| -------------------------- | -------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------- |
+| Create off-peak task       | Automations / New Task template, `OffPeakEditView` | scoped Registry View; first candidate default  | Remote switch, Plan support, availability, current Registry | `OffPeakTaskService.createTask` -> Ticket + Off-Peak Repo |
+| Edit queued/paused task    | Automations `OffPeakEditView`                      | Saved selection; Registry decides availability | Status guards + current Registry                            | `updateTask` -> Off-Peak Repo                             |
+| View terminal/running task | Off-Peak cards/History                             | Saved model/thought strings                    | Read-only                                                   | none; Registry changes do not rewrite history             |
 
 Desktop local only; no new mobile/remote entries; Session Selection is never modified.
 
@@ -206,18 +206,18 @@ capability.off-peak-model-execution --revalidates-before-dispatch-with--> comple
 
 ### 7.1 Accepted Cases
 
-| Case ID | Setup                                                 | Action                                    | Assertions                                                                                     | Evidence layer               |
-| ------- | ----------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------- |
-| OPM-01  | Hidden Off-Peak Provider has two creatable models     | Open create page                          | Normal selection View excludes that Provider; Off-Peak scoped View contains exactly two models | Provider + Service + UI unit |
-| OPM-02  | Model has Reasoning Option Spec                       | Switch model and levels                   | UI reads only values/default; submissions use standard Selection semantics                     | Provider + UI unit           |
-| OPM-03  | Model without Reasoning Option Spec                   | Switch from a reasoning model to it       | Reasoning control hidden; old level not leaked on submission                                   | UI unit                      |
-| OPM-04  | Model or level expired at submission                  | Create task                               | Local stable error; no takeTicket call; no Repo write                                          | Service unit                 |
-| OPM-05  | Saved selection expired while queued/paused           | Edit and save                             | Unavailable shown, original save blocked; no silent replacement with first item                | UI + Service unit            |
-| OPM-06  | History model exited Registry                         | View history                              | Saved strings still shown; not added to candidates; records not rewritten                      | UI unit                      |
-| OPM-07  | Model/level exits Registry while queued               | Scheduler dispatch                        | Refused before network; task permanently failed; no transient retry                            | Host/Scheduler unit          |
-| OPM-08  | Task without explicit model and scoped View non-empty | Host resolves default                     | Only the current View's ordered first item; no inference from Connection/Catalog/fake Models   | Host unit                    |
-| OPM-09  | `ZCODE_OFFPEAK_MOCK=1`                                | Run Off-Peak E2E                          | Product services driven by Mock; candidates only from test ZCode Built-in Config               | Services + Desktop E2E       |
-| OPM-10  | Test attempts unknown models                          | Construct test Registry / submit          | No `ZCODE_OFFPEAK_MOCK_ALLOWED_MODELS` entry; clear failure on missing Config                  | Config + Service unit        |
+| Case ID | Setup                                                 | Action                              | Assertions                                                                                     | Evidence layer               |
+| ------- | ----------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------- |
+| OPM-01  | Hidden Off-Peak Provider has two creatable models     | Open create page                    | Normal selection View excludes that Provider; Off-Peak scoped View contains exactly two models | Provider + Service + UI unit |
+| OPM-02  | Model has Reasoning Option Spec                       | Switch model and levels             | UI reads only values/default; submissions use standard Selection semantics                     | Provider + UI unit           |
+| OPM-03  | Model without Reasoning Option Spec                   | Switch from a reasoning model to it | Reasoning control hidden; old level not leaked on submission                                   | UI unit                      |
+| OPM-04  | Model or level expired at submission                  | Create task                         | Local stable error; no takeTicket call; no Repo write                                          | Service unit                 |
+| OPM-05  | Saved selection expired while queued/paused           | Edit and save                       | Unavailable shown, original save blocked; no silent replacement with first item                | UI + Service unit            |
+| OPM-06  | History model exited Registry                         | View history                        | Saved strings still shown; not added to candidates; records not rewritten                      | UI unit                      |
+| OPM-07  | Model/level exits Registry while queued               | Scheduler dispatch                  | Refused before network; task permanently failed; no transient retry                            | Host/Scheduler unit          |
+| OPM-08  | Task without explicit model and scoped View non-empty | Host resolves default               | Only the current View's ordered first item; no inference from Connection/Catalog/fake Models   | Host unit                    |
+| OPM-09  | `ZCODE_OFFPEAK_MOCK=1`                                | Run Off-Peak E2E                    | Product services driven by Mock; candidates only from test ZCode Built-in Config               | Services + Desktop E2E       |
+| OPM-10  | Test attempts unknown models                          | Construct test Registry / submit    | No `ZCODE_OFFPEAK_MOCK_ALLOWED_MODELS` entry; clear failure on missing Config                  | Config + Service unit        |
 
 ### 7.2 Explicit Pruning
 

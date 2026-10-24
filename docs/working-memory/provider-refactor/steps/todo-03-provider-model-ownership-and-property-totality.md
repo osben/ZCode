@@ -122,15 +122,31 @@ boundary on the Access Schema existing at that time; Todo 07 strengthens `zhipu-
 
 ```ts
 type ProviderModelSettingsItem =
-  | { kind: "candidate"; modelId: ModelId; source: "builtin" | "personal";
-      effectiveConfig: CompleteModelConfigObject; personalConfig?: ModelConfigObject;
-      effectiveEnabled: boolean; effectiveVisibility: "visible" | "hidden";
-      providerEnabled: boolean; providerVisibility: "visible" | "hidden";
+  | {
+      kind: "candidate";
+      modelId: ModelId;
+      source: "builtin" | "personal";
+      effectiveConfig: CompleteModelConfigObject;
+      personalConfig?: ModelConfigObject;
+      effectiveEnabled: boolean;
+      effectiveVisibility: "visible" | "hidden";
+      providerEnabled: boolean;
+      providerVisibility: "visible" | "hidden";
       personalMembershipConflict?: { kind: "id-conflict"; personalExactConfig?: ModelConfigObject };
-      issues: readonly ProviderConfigIssue[]; executable: boolean; selectable: boolean }
-  | { kind: "membership-conflict"; modelId: ModelId; sources: readonly ("builtin" | "personal")[];
-      conflict: "duplicate-membership"; personalExactConfig?: ModelConfigObject;
-      issues: readonly ProviderConfigIssue[]; executable: false; selectable: false };
+      issues: readonly ProviderConfigIssue[];
+      executable: boolean;
+      selectable: boolean;
+    }
+  | {
+      kind: "membership-conflict";
+      modelId: ModelId;
+      sources: readonly ("builtin" | "personal")[];
+      conflict: "duplicate-membership";
+      personalExactConfig?: ModelConfigObject;
+      issues: readonly ProviderConfigIssue[];
+      executable: false;
+      selectable: false;
+    };
 ```
 
 Cross-set same-name conflicts use `personalMembershipConflict` on the Built-in candidate (still with real Effective

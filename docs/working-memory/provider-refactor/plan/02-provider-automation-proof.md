@@ -2,7 +2,7 @@
 
 > Status: automation complete; four key E2Es await manual review and a graphics/Docker environment. Last updated: 2026-08-25.
 >
-> Full history: `git show 3c76d29f:docs/working-memory/provider-refactor/plan/02-provider-automation-proof.md`
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/plan/02-provider-automation-proof.md`
 
 ## 1. Objective
 
@@ -56,14 +56,14 @@ Manual review on 2026-08-25 confirmed the proof boundaries:
 
 ### 6.1 Permanent Automated Evidence
 
-| Proof Layer                       | Automated Evidence                                                                        | Result                                                                                                        |
-| --------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Proof Layer                       | Automated Evidence                                                                        | Result                                                                                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | Real Built-in Config completeness | `packages/provider-node/test/zcode-builtin-integrity.test.ts`                             | Real JSON's Providers, model members, access material Overlays, complete Model Config, hidden idle-time models, and old-field zeroing all pass |
-| API Key vertical chain            | `apps/zcode-cli/packages/bootstrap/tests/zcode-builtin-model-runtime-integration.test.ts` | `builtin:zai` flows from Built-in + Personal Overlay through Resolver/Registry/ModelFactory natively into Adapter |
-| Account vertical chain            | Same as above                                                                             | Start Plan Account member constraints take effect; Personal Provider Overlay keeps last-override             |
-| Request Auth vertical chain       | Same as above                                                                             | Hidden idle-time Providers are precisely creatable via normal Registry; Request Auth Source binds only at execution |
-| Request Auth missing              | `apps/zcode-cli/packages/adapters/tests/model.test.ts`                                    | generate/stream both return `ModelRequestAuthMissing` before network calls                                    |
-| Model freeze                      | `apps/zcode-cli/packages/bootstrap/tests/provider-registry-model-runtime.test.ts`         | Registry updates affect only subsequently created Models                                                     |
+| API Key vertical chain            | `apps/zcode-cli/packages/bootstrap/tests/zcode-builtin-model-runtime-integration.test.ts` | `builtin:zai` flows from Built-in + Personal Overlay through Resolver/Registry/ModelFactory natively into Adapter                              |
+| Account vertical chain            | Same as above                                                                             | Start Plan Account member constraints take effect; Personal Provider Overlay keeps last-override                                               |
+| Request Auth vertical chain       | Same as above                                                                             | Hidden idle-time Providers are precisely creatable via normal Registry; Request Auth Source binds only at execution                            |
+| Request Auth missing              | `apps/zcode-cli/packages/adapters/tests/model.test.ts`                                    | generate/stream both return `ModelRequestAuthMissing` before network calls                                                                     |
+| Model freeze                      | `apps/zcode-cli/packages/bootstrap/tests/provider-registry-model-runtime.test.ts`         | Registry updates affect only subsequently created Models                                                                                       |
 
 The real Built-in integration tests capture only Adapter creation parameters, send no network requests, and add no execution Registry, capability DTO, Provider snapshot, or test-specific production API.
 

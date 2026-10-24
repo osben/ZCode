@@ -1,7 +1,7 @@
 # Todo 94–97 Execution And Review Records
 
 > Latest ownership (2026-09-09): 95C completed (`2c1addd3d8`); 96 explicit Subagents completed by Todo99; 97 Wiki one-shot migrations completed (`9cd1ae31dd`); 98 layout and keyboard fixes completed (`a5fb82ec4a`). All development items closed; remaining verification debt advances only in [Todo102](../steps/todo-102-verification-debt-closeout.md).
-> Full history: `git show 8d54b233:docs/working-memory/provider-refactor/research/todo94-97-execution-and-review.md`
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/research/todo94-97-execution-and-review.md`
 
 ## Scopes And Execution Constraints
 

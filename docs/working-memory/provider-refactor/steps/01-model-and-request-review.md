@@ -77,7 +77,7 @@ Core accepts `modelFactory` or `modelAdapter`, automatically entering compatible
 | P1    | Workflow Child not using formal Factory                                   | May mix updated connections or configs within the same Workflow Loop               |
 | P1    | Unknown Properties hardened to `false`                                    | May reject actually working custom image/PDF models                                |
 | P2    | Guide continues using current Loop Model                                  | Product semantics (since ruled); affects local interaction                         |
-| P2    | Dynamic header refresh reacquires full Provider                           | Inherited risk; affects immutability of special Plan Providers                      |
+| P2    | Dynamic header refresh reacquires full Provider                           | Inherited risk; affects immutability of special Plan Providers                     |
 | P2    | Compatible entry and old dependencies can still enter production assembly | Incomplete closure; increases subsequent migration risk                            |
 
 Confidence boundary: "no P0 found" rests on static production call scanning, construction-chain checks, full and key test records, and incremental staging review — not a proof that none exist. Targeted testing of Workflow and custom multimodal models was still needed.

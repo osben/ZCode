@@ -15,13 +15,13 @@ Source/Repository implementation.
 
 ## Configuration Sources
 
-| Source                              | Owner                    | Persisted | Main content                                                       |
-| ----------------------------------- | ------------------------ | --------- | ------------------------------------------------------------------ |
-| ZCode Built-in Provider Config      | ZCode product release    | Yes       | Account Provider definitions and Provider Templates                |
-| Account Built-in Provider Config    | Current account state    | No        | Account Access and dynamic model members of Built-in account Providers |
-| Personal Provider Config            | User                     | Yes       | Custom Providers, API Keys, final overrides of existing Providers   |
-| ZCode Built-in Model Config Rules   | ZCode product release    | Yes       | Model static facts, default Options, per-option raw-body map        |
-| Personal Model Config Rules         | User                     | Yes       | Sparse overrides for specific Provider/Model                       |
+| Source                            | Owner                 | Persisted | Main content                                                           |
+| --------------------------------- | --------------------- | --------- | ---------------------------------------------------------------------- |
+| ZCode Built-in Provider Config    | ZCode product release | Yes       | Account Provider definitions and Provider Templates                    |
+| Account Built-in Provider Config  | Current account state | No        | Account Access and dynamic model members of Built-in account Providers |
+| Personal Provider Config          | User                  | Yes       | Custom Providers, API Keys, final overrides of existing Providers      |
+| ZCode Built-in Model Config Rules | ZCode product release | Yes       | Model static facts, default Options, per-option raw-body map           |
+| Personal Model Config Rules       | User                  | Yes       | Sparse overrides for specific Provider/Model                           |
 
 Catalog, Preset, Provider Family, remote `builtinProviders/builtinModels`, and business hardcode cannot
 become additional Registry Sources. Still-valid system facts migrate into ZCode Built-in Config/Rules; user
@@ -526,13 +526,13 @@ narrower rules.
 
 Within each family, rules are written contiguously by override layer:
 
-| Order | Typical match                                                        | Main responsibility                                                                      |
-| ----- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 1     | family-scope `modelMatch`                                            | facts shared by same-family models and confirmed identical                               |
-| 2     | specific `modelMatch`                                                | the model's intrinsic Properties, input/output formats, context, Option Specs             |
-| 3     | `modelMatch + apiMatch`                                              | the model's Option Map, Replay, and request-field differences under public API Schemas   |
-| 4     | `providerMatch + modelMatch`                                         | differences of a service's actual deployment of the model                                |
-| 5     | `providerMatch + modelMatch + apiMatch`, plus `baseURLMatch` as needed | final differences still caused by API Schema or Endpoint under the same service |
+| Order | Typical match                                                          | Main responsibility                                                                    |
+| ----- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| 1     | family-scope `modelMatch`                                              | facts shared by same-family models and confirmed identical                             |
+| 2     | specific `modelMatch`                                                  | the model's intrinsic Properties, input/output formats, context, Option Specs          |
+| 3     | `modelMatch + apiMatch`                                                | the model's Option Map, Replay, and request-field differences under public API Schemas |
+| 4     | `providerMatch + modelMatch`                                           | differences of a service's actual deployment of the model                              |
+| 5     | `providerMatch + modelMatch + apiMatch`, plus `baseURLMatch` as needed | final differences still caused by API Schema or Endpoint under the same service        |
 
 A model's API specializations follow its common facts contiguously in the stable order
 `anthropic-messages`, `openai-chat-completions`, `openai-responses`. Nonexistent combinations write no empty

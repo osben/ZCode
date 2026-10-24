@@ -168,20 +168,20 @@ Old code with no provable production consumer is deleted directly, with no new f
 
 Each item needs unit or integration tests; cross-process, recovery and UI timing are covered by E2E.
 
-| Scenario                                       | Required result                                                                                       |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Loop is using A, Composer switches B           | Current Request and later Steps continue A until a new Submission or Guide arrives                    |
-| Submit B when idle                             | Submission, Session Selection, Active Model and Usage use B                                           |
-| B enqueued when busy, then Composer switches C | B still uses B when dequeued                                                                          |
-| Guide uses B                                   | Request in flight uses A, later Steps use B, Session Selection becomes B                              |
-| Edit / Retry                                   | Inherit the source Submission's Selection by default                                                  |
-| App restart or recovery                        | Draft, App Recent, Session Selection recover by their scopes; CLI/TUI do not consume App Recent      |
-| API Key or Config update                       | Existing Active Model unchanged; next Model creation uses the latest Registry                         |
-| Settings page test                             | Save first, wait for Registry, then call through the formal Model                                     |
-| Provider / Model drag                          | Effective order and Personal Overlay order match settings design; UI rolls back on failure           |
-| Provider / Model rename                        | Current selection migrates forward; completed history keeps the old identity                          |
-| Desktop / Mobile submission                    | Both ends transmit the same complete Submission; continuous/replayable boundaries unchanged           |
-| Remote Workspace                               | Uses the remote Environment Registry; no local Provider config or authentication transmitted          |
+| Scenario                                       | Required result                                                                                 |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Loop is using A, Composer switches B           | Current Request and later Steps continue A until a new Submission or Guide arrives              |
+| Submit B when idle                             | Submission, Session Selection, Active Model and Usage use B                                     |
+| B enqueued when busy, then Composer switches C | B still uses B when dequeued                                                                    |
+| Guide uses B                                   | Request in flight uses A, later Steps use B, Session Selection becomes B                        |
+| Edit / Retry                                   | Inherit the source Submission's Selection by default                                            |
+| App restart or recovery                        | Draft, App Recent, Session Selection recover by their scopes; CLI/TUI do not consume App Recent |
+| API Key or Config update                       | Existing Active Model unchanged; next Model creation uses the latest Registry                   |
+| Settings page test                             | Save first, wait for Registry, then call through the formal Model                               |
+| Provider / Model drag                          | Effective order and Personal Overlay order match settings design; UI rolls back on failure      |
+| Provider / Model rename                        | Current selection migrates forward; completed history keeps the old identity                    |
+| Desktop / Mobile submission                    | Both ends transmit the same complete Submission; continuous/replayable boundaries unchanged     |
+| Remote Workspace                               | Uses the remote Environment Registry; no local Provider config or authentication transmitted    |
 
 ## Deferred
 

@@ -2,7 +2,7 @@
 
 > Status: Completed; implementation and final branch verification done (last review 2026-08-21).
 >
-> Full history: git show f3a68ee69704cc33344a35fcd3afb1e13a1337a5:docs/working-memory/provider-refactor/steps/02-provider-config-and-registry-cleanup.md
+> Full history: git show 45f808f7:docs/working-memory/provider-refactor/steps/02-provider-config-and-registry-cleanup.md
 
 M2's last goal is closed: ordinary long-term Provider configuration, display, selection, and execution all come from a single fact chain.
 

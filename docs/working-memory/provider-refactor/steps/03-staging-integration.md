@@ -44,24 +44,24 @@ read/write format are implementation details.
 
 Provider configuration:
 
-| Name                           | Suggested code name     | Meaning                                                                |
-| ------------------------------ | ----------------------- | ---------------------------------------------------------------------- |
+| Name                           | Suggested code name     | Meaning                                                                             |
+| ------------------------------ | ----------------------- | ----------------------------------------------------------------------------------- |
 | ZCode Built-in Provider Config | `zcodeBuiltinProviders` | Provider static defaults and account Provider declarations shipped with the product |
-| Account Provider Config        | `accountProviders`      | Account-state supplements or constraints for account-related Built-in Providers |
-| Personal Provider Config       | `personalProviders`     | User-defined Providers and final override of existing Providers        |
-| Effective Provider Config      | `effectiveProviders`    | Final Provider collection after three-layer overlay                    |
+| Account Provider Config        | `accountProviders`      | Account-state supplements or constraints for account-related Built-in Providers     |
+| Personal Provider Config       | `personalProviders`     | User-defined Providers and final override of existing Providers                     |
+| Effective Provider Config      | `effectiveProviders`    | Final Provider collection after three-layer overlay                                 |
 
 The current code's `officialProviders` corresponds to `zcodeBuiltinProviders`; whether the mechanical rename happens
 in M3 is decided at implementation, but new design and tests use this vocabulary.
 
 Model configuration:
 
-| Name                              | Suggested code name      | Meaning                                                               |
-| --------------------------------- | ------------------------ | --------------------------------------------------------------------- |
+| Name                              | Suggested code name      | Meaning                                                                |
+| --------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
 | ZCode Built-in Model Config Rules | `zcodeBuiltinModelRules` | Model static facts and default behavior rules shipped with the product |
-| Personal Model Config Rules       | `personalModelRules`     | User's additional override rules for model facts and behaviors        |
-| Effective Model Config Rules      | `effectiveModelRules`    | Final rule sequence after concatenating both sets in order            |
-| Effective Model Config            | `effectiveModelConfig`   | Model configuration resolved for a final Provider / Model / API type  |
+| Personal Model Config Rules       | `personalModelRules`     | User's additional override rules for model facts and behaviors         |
+| Effective Model Config Rules      | `effectiveModelRules`    | Final rule sequence after concatenating both sets in order             |
+| Effective Model Config            | `effectiveModelConfig`   | Model configuration resolved for a final Provider / Model / API type   |
 
 Provider Config `models[]` answers "which models and in what display order"; Model Config Rules answer "how they are
 called and what capabilities and constraints they have" and never add or remove models.
@@ -124,12 +124,12 @@ account interface affects only connection state and model members.
 
 ## 7. Account Interfaces and Start Plan
 
-| Account type        | availability source            | Returns dynamic model ID      |
-| ------------------- | ------------------------------ | ----------------------------- |
-| Z.AI Start Plan     | `/billing/balance`             | Yes                           |
-| BigModel Start Plan | `/billing/balance`             | Yes                           |
-| Coding Plan         | `/subscription/list`           | No (availability only)        |
-| Team Plan           | customer / project / quota API | No (availability only)        |
+| Account type        | availability source            | Returns dynamic model ID |
+| ------------------- | ------------------------------ | ------------------------ |
+| Z.AI Start Plan     | `/billing/balance`             | Yes                      |
+| BigModel Start Plan | `/billing/balance`             | Yes                      |
+| Coding Plan         | `/subscription/list`           | No (availability only)   |
+| Team Plan           | customer / project / quota API | No (availability only)   |
 
 - Start Plan extracts `model:<id>` from the balance bucket's `capabilities`, deduplicates case-insensitively and forms
   the Account Provider `models[]`. The interface returns the models currently visible to the account; never hardcode
@@ -152,17 +152,17 @@ Provider + model structure) express the same authority in different protocol gen
 into the ZCode Built-in Provider Config and Built-in Model Config Rules, then delete the remote Provider sync and old
 protocol fallback.
 
-| Remote config                            | Current usage                                          | M3 target                                                                            |
-| ---------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `builtinProviders`                       | Provider ID, name, model members, Endpoint, API Schema | Migrate to ZCode Built-in Provider Config, then delete the remote entry              |
-| `providers`                              | Old Provider + Model mixed config                      | Delete the compatibility entry after migration                                       |
-| `builtinModels`                          | context, max output, modalities, reasoning, priority   | Migrate to ZCode Built-in Model Config Rules                                         |
-| `magic_name`                             | Match reasoning strategy by model name                 | Delete the remote matcher; write effective behavior as general Model Config Rules    |
-| `offPeak.allowed_models`                 | Idle task model whitelist                              | No longer model fact authority; static members enter the Built-in Provider Config    |
-| `modelContextBudget.strategy`            | Agent context budget gray release                      | Unrelated to model config; untouched                                                 |
-| Products, plans, discounts               | SKU, display, commercial config                        | Stays managed by the independent remote product                                      |
-| Security verification flags, forceUpdate | Risk control and release policies                      | Stays managed remotely                                                               |
-| computerUse, feature flags               | Product gray release                                   | Stays managed remotely                                                               |
+| Remote config                            | Current usage                                          | M3 target                                                                         |
+| ---------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `builtinProviders`                       | Provider ID, name, model members, Endpoint, API Schema | Migrate to ZCode Built-in Provider Config, then delete the remote entry           |
+| `providers`                              | Old Provider + Model mixed config                      | Delete the compatibility entry after migration                                    |
+| `builtinModels`                          | context, max output, modalities, reasoning, priority   | Migrate to ZCode Built-in Model Config Rules                                      |
+| `magic_name`                             | Match reasoning strategy by model name                 | Delete the remote matcher; write effective behavior as general Model Config Rules |
+| `offPeak.allowed_models`                 | Idle task model whitelist                              | No longer model fact authority; static members enter the Built-in Provider Config |
+| `modelContextBudget.strategy`            | Agent context budget gray release                      | Unrelated to model config; untouched                                              |
+| Products, plans, discounts               | SKU, display, commercial config                        | Stays managed by the independent remote product                                   |
+| Security verification flags, forceUpdate | Risk control and release policies                      | Stays managed remotely                                                            |
+| computerUse, feature flags               | Product gray release                                   | Stays managed remotely                                                            |
 
 The legacy `apiKey` field of the old remote Provider type needs no migration design (the real access method is in the
 existing access system); it is deleted with the old protocol.
@@ -229,17 +229,17 @@ task state machine is not rewritten and `modelContextBudget.strategy` is not han
 
 ## 12. Post-Integration Results
 
-| Area                           | M3 result                                                                                          |
-| ------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Provider overlay               | Fixed as `built-in -> account -> personal`                                                         |
-| Account Provider Service input | Reads only the ZCode Built-in Provider Config; not Personal                                        |
-| Model rules                    | Two concatenated arrays: ZCode Built-in + Personal, Personal last                                  |
-| Model rules resolution object  | Effective Provider's final `providerId / modelId / api.type`                                       |
-| `/client/configs`              | Provider / Model static facts, old protocol fallback and `magic_name` parsing deleted              |
-| reasoning                      | Specific model strategies in Built-in Rules; Adapter keeps protocol-level serialization only       |
-| OffPeak                        | Hidden Built-in Provider in the normal Registry; Request Auth injected per request                 |
+| Area                           | M3 result                                                                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Provider overlay               | Fixed as `built-in -> account -> personal`                                                           |
+| Account Provider Service input | Reads only the ZCode Built-in Provider Config; not Personal                                          |
+| Model rules                    | Two concatenated arrays: ZCode Built-in + Personal, Personal last                                    |
+| Model rules resolution object  | Effective Provider's final `providerId / modelId / api.type`                                         |
+| `/client/configs`              | Provider / Model static facts, old protocol fallback and `magic_name` parsing deleted                |
+| reasoning                      | Specific model strategies in Built-in Rules; Adapter keeps protocol-level serialization only         |
+| OffPeak                        | Hidden Built-in Provider in the normal Registry; Request Auth injected per request                   |
 | Video                          | Capability read only from Effective Model Config; media processing/persistence/conversion as staging |
-| Model settings                 | Text fixed, Image / Video editable, saved as Personal Model Config Rules                           |
+| Model settings                 | Text fixed, Image / Video editable, saved as Personal Model Config Rules                             |
 
 Older documents recording Account taking effect last, remote fact sync or specific-model hardcoding are historical
 only.
@@ -249,17 +249,17 @@ only.
 The change is `option-source + validation + persistence + commit-effect`; it does not directly change conversation
 protocol, queue or replay semantics.
 
-| Level          | Impact area                                                      | Reason                                                              |
-| -------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
-| must-inspect   | `packages/provider` resolver, Account Provider Service, Registry | Config override and final fact owner                                |
-| must-inspect   | `/client/configs` Provider / Model sync                          | Old remote fact source must exit                                    |
-| must-inspect   | CLI ModelFactory, reasoning policy, API adapters                 | Model Rules must produce the same final request                     |
-| must-inspect   | OffPeak execution-scoped model source                            | Boundary between static config and single-turn access materials     |
-| should-inspect | Provider Settings, model selection candidates                    | Both consume the Registry with different save semantics             |
-| should-inspect | Start/Coding/Team Plan availability                              | Only Start Plan returns dynamic model IDs                           |
-| conditional    | Video / modality settings                                        | New staging capability enters the Effective Model Config            |
-| invariant-only | desktop continuous / mobile replayable                           | Provider consolidation cannot change message recovery semantics     |
-| invariant-only | local / remote workspace                                         | Remote environment keeps its own execution config                   |
+| Level          | Impact area                                                      | Reason                                                          |
+| -------------- | ---------------------------------------------------------------- | --------------------------------------------------------------- |
+| must-inspect   | `packages/provider` resolver, Account Provider Service, Registry | Config override and final fact owner                            |
+| must-inspect   | `/client/configs` Provider / Model sync                          | Old remote fact source must exit                                |
+| must-inspect   | CLI ModelFactory, reasoning policy, API adapters                 | Model Rules must produce the same final request                 |
+| must-inspect   | OffPeak execution-scoped model source                            | Boundary between static config and single-turn access materials |
+| should-inspect | Provider Settings, model selection candidates                    | Both consume the Registry with different save semantics         |
+| should-inspect | Start/Coding/Team Plan availability                              | Only Start Plan returns dynamic model IDs                       |
+| conditional    | Video / modality settings                                        | New staging capability enters the Effective Model Config        |
+| invariant-only | desktop continuous / mobile replayable                           | Provider consolidation cannot change message recovery semantics |
+| invariant-only | local / remote workspace                                         | Remote environment keeps its own execution config               |
 
 Must maintain:
 

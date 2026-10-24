@@ -1,6 +1,6 @@
 # Provider Settings Local Branch Integration (2026-09-12)
 
-> Full history: `git show f85b156c:docs/working-memory/provider-refactor/research/provider-settings-merge-20260912.md`
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/research/provider-settings-merge-20260912.md`
 
 ## Scope and Rulings
 

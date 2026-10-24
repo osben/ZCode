@@ -63,14 +63,12 @@ N <= inheritedLimit  ->  max = inheritedLimit, default = N
 N >  inheritedLimit  ->  max = N,              default = N
 ```
 
-   Example: inherited `max=32000, default=16000`; input 8000 -> `max=32000, default=8000`; input 64000 ->
-   `max=64000, default=64000`; then 8000 again -> `max=32000, default=8000` (never use the already-expanded
-   Effective `max` as the base).
-3. Input is explicit Personal intent: even when `N` equals the inherited `default` it is saved as an explicit
-   Personal slot. Clearing the input deletes the slot and re-inherits; "restore all defaults" clears the model's
-   whole Personal Model Config Overlay at once.
-4. The full Model Config must be able to resolve `inheritedLimit`; if missing, show an explicit validation error and
-   never guess from modelId, Provider type or constants.
+Example: inherited `max=32000, default=16000`; input 8000 -> `max=32000, default=8000`; input 64000 ->
+`max=64000, default=64000`; then 8000 again -> `max=32000, default=8000` (never use the already-expanded
+Effective `max` as the base). 3. Input is explicit Personal intent: even when `N` equals the inherited `default` it is saved as an explicit
+Personal slot. Clearing the input deletes the slot and re-inherits; "restore all defaults" clears the model's
+whole Personal Model Config Overlay at once. 4. The full Model Config must be able to resolve `inheritedLimit`; if missing, show an explicit validation error and
+never guess from modelId, Provider type or constants.
 
 Acceptance: one entry only; less/equal/greater inputs generate the full `LimitOptionSpec` as above; expand then
 shrink restores inherited `max`; save, reopen and JSON round-trip do not drift; no JSON-over-number priority.

@@ -157,10 +157,10 @@ The current `supportsJsonSchemaOutput` name is a legacy awaiting migration; the 
 
 Every non-obvious fact is classified in publishing review materials (never written into runtime Config):
 
-| Category              | Meaning                                                                                        | Configurable scope                    |
-| --------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------- |
-| Official confirmation | Vendor's current model/API docs explicitly declared                                            | Corresponding Model, Schema, or Endpoint |
-| Product confirmation  | ZCode product/service, account interfaces, or internal official contracts explicitly declared  | Corresponding Built-in Provider product facts |
+| Category              | Meaning                                                                                           | Configurable scope                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Official confirmation | Vendor's current model/API docs explicitly declared                                               | Corresponding Model, Schema, or Endpoint                       |
+| Product confirmation  | ZCode product/service, account interfaces, or internal official contracts explicitly declared     | Corresponding Built-in Provider product facts                  |
 | Protocol inference    | Conservative general results for third-party compatible services, with no official Endpoint proof | Uncertain capabilities are `false`; Personal overrides allowed |
 
 ### 6.1 Models API is Publishing Evidence, Not a New Runtime Config Layer

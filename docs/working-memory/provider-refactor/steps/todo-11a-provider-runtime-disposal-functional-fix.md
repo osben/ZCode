@@ -22,10 +22,10 @@ only), Model Selection Config Repository (Node `fs.watch`), and the Node Provide
 Service, Provider Config watchers/repositories). Outer `dispose()` releases everything by ownership; inner
 `runtime.dispose()` releases only Registry and Provider Config resources.
 
-| Entry          | Disposal call (before)                           | Result                            |
-| -------------- | ------------------------------------------------ | --------------------------------- |
-| Prompt CLI     | outer `providerRegistryRuntime.dispose()`        | complete                          |
-| TUI            | outer `providerRegistryRuntime.dispose()`        | complete                          |
+| Entry          | Disposal call (before)                            | Result                                |
+| -------------- | ------------------------------------------------- | ------------------------------------- |
+| Prompt CLI     | outer `providerRegistryRuntime.dispose()`         | complete                              |
+| TUI            | outer `providerRegistryRuntime.dispose()`         | complete                              |
 | Protocol Agent | inner `providerRegistryRuntime.runtime.dispose()` | misses the Model Selection Repository |
 
 The normal Protocol Agent start provides a Model Selection Config file path; after the first `read()` the Repository
@@ -61,7 +61,7 @@ window of a Standalone Credential refresh racing shutdown is not handled unless 
   and inner dispose separately, proving Protocol calls only the outer owner.
 - A composition test proves that after full dispose the Model Selection Repository and Node Provider Registry Runtime both
   refuse reuse; the file watcher closes after a configured path was `read()`. Manual `repository.dispose() +
-  runtime.dispose()` combinations in existing tests were unified to owner dispose.
+runtime.dispose()` combinations in existing tests were unified to owner dispose.
 - Review also found the Standalone CLI importer still referencing the Effective->Personal projection deleted by Todo 35;
   it now follows Todo 35 with independent tests so real CLI legacy migration does not silently become an empty config.
 - Bootstrap targeted tests (27 cases), Bootstrap typecheck, root lint, target-file format check and `git diff --check` pass.

@@ -67,27 +67,27 @@ Baseline: 18 business tables plus the migration record table; after the 2026-09-
 too, keeping upstream's durable journal design without implementing dynamic workflow or running its internal-preview-DB
 drop mentioned in comments. Each row needs a conclusion of migrate / keep unchanged / pending ruling, with evidence.
 
-| Table               | Must check                                                                   |
-| ------------------- | ---------------------------------------------------------------------------- |
-| session             | metadata, summary, recovery structure; content and identity association kept |
-| session_entry       | all types including runtime/model_selection, not only the current selection  |
-| message             | user selection, assistant actual source, input intent, nested metadata       |
-| part                | all Part types, especially model switch, Subtask and tool-result association |
+| Table               | Must check                                                                        |
+| ------------------- | --------------------------------------------------------------------------------- |
+| session             | metadata, summary, recovery structure; content and identity association kept      |
+| session_entry       | all types including runtime/model_selection, not only the current selection       |
+| message             | user selection, assistant actual source, input intent, nested metadata            |
+| part                | all Part types, especially model switch, Subtask and tool-result association      |
 | session_input       | input payload, queued/Guide persisted input facts; missing model/mode not guessed |
-| session_target      | target, run association, recovery info                                       |
-| session_task_link   | parent/child relation and model fields                                       |
-| workflow_definition | definition and `meta_json`                                                   |
-| workflow_run        | `args_json`, `stats_json`, `failure_json` and associations                   |
-| workflow_activity   | `opts_json`, `result_json`, `error_json`, child-session association          |
-| workflow_event      | event type, `payload_json`, order                                            |
-| model_usage         | model source, level, raw usage / vendor metadata                             |
-| turn_usage          | usage and Turn association                                                   |
-| tool_usage          | tool usage and call association                                             |
-| local_setting       | namespace/key/value, obsolete records keep original values                   |
-| permission          | whether the old permission structure is affected; no unrelated deletion      |
-| input_history       | input and attachment structure                                               |
-| todo                | content, state, ordering                                                     |
-| schema_migration    | history ID/checksum/records unchanged; only append                           |
+| session_target      | target, run association, recovery info                                            |
+| session_task_link   | parent/child relation and model fields                                            |
+| workflow_definition | definition and `meta_json`                                                        |
+| workflow_run        | `args_json`, `stats_json`, `failure_json` and associations                        |
+| workflow_activity   | `opts_json`, `result_json`, `error_json`, child-session association               |
+| workflow_event      | event type, `payload_json`, order                                                 |
+| model_usage         | model source, level, raw usage / vendor metadata                                  |
+| turn_usage          | usage and Turn association                                                        |
+| tool_usage          | tool usage and call association                                                   |
+| local_setting       | namespace/key/value, obsolete records keep original values                        |
+| permission          | whether the old permission structure is affected; no unrelated deletion           |
+| input_history       | input and attachment structure                                                    |
+| todo                | content, state, ordering                                                          |
+| schema_migration    | history ID/checksum/records unchanged; only append                                |
 
 Known seeds: `codecs.ts` converts User/Assistant/Timeline/Subtask on read; `repositories/model-selection-migration.ts`
 migrates the selection on restore; `session-entries.ts` already has the new-member wrapper and old-field preservation.
@@ -98,16 +98,16 @@ migrates the selection on restore; `session-entries.ts` already has the new-memb
 Default `~/.zcode/v2/tasks-index.sqlite`, shared by TaskIndexRepo, AutomationRepo and OffPeakTaskRepo (one database, not
 three, so no per-Repo migration versions).
 
-| Table / scope                                       | Known state and audit requirement                                                        |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| tasks                                               | columns, `meta_json`, search content, workspace identity; conclusion needed even if unchanged |
-| task_groups, task_group_members                     | groups and membership; migration must not lose list entries                              |
-| task_group_view_node_orders, task_group_workspace_bootstraps | order and workspace association                                                 |
-| automations                                         | new `model_selection` vs old model/provider/thought_level; scattered import entries      |
-| automation_runs                                     | new `model_selection`; historical execution source not reinterpreted by current account  |
-| off_peak_tasks                                      | new `model_selection`; old model/level and Ticket association; repair path on read       |
-| new migration record table                          | the library's single ledger; name/implementation per final design                        |
-| other owned databases                               | search DB creation, drivers, paths and write entries; exclude unrelated ones with reasons |
+| Table / scope                                                | Known state and audit requirement                                                             |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| tasks                                                        | columns, `meta_json`, search content, workspace identity; conclusion needed even if unchanged |
+| task_groups, task_group_members                              | groups and membership; migration must not lose list entries                                   |
+| task_group_view_node_orders, task_group_workspace_bootstraps | order and workspace association                                                               |
+| automations                                                  | new `model_selection` vs old model/provider/thought_level; scattered import entries           |
+| automation_runs                                              | new `model_selection`; historical execution source not reinterpreted by current account       |
+| off_peak_tasks                                               | new `model_selection`; old model/level and Ticket association; repair path on read            |
+| new migration record table                                   | the library's single ledger; name/implementation per final design                             |
+| other owned databases                                        | search DB creation, drivers, paths and write entries; exclude unrelated ones with reasons     |
 
 Repos each had their own CREATE TABLE / `ensureColumn`; Automation imported old selections in its init chain; Off-Peak
 repaired old selections in list/get. These are consolidated without losing other needed create/add-column behavior.
@@ -216,13 +216,13 @@ old version used then upgrade again -> completed migrations do not re-run; missi
 Mode planning; change level persistence / recovery, not UI redesign. Migration is owned by the storage layer of the owning
 process; UI/Host projections are not a second content authority.
 
-| User entry / state                | Shared implementation and authoritative owner         | Draft / default and commit boundary                                         | Must keep                                          |
-| --------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------- |
-| Task list, search, groups         | TaskIndexRepo / `tasks-index.sqlite` list metadata    | browsing does not start all Agents, no user-draft change                    | workspaceIdentity and path not mixed               |
-| Open session, history, subtasks, goals | Agent SessionStore; UI consumes protocol projection | reading does not require an executable model; execution uses existing selection/binding | local/SSH/WSL/Docker databases migrate at the actual owner |
-| Automation list, edit, run records | AutomationRepo / `tasks-index.sqlite`                | edits write automation config, not Session drafts; missing config handled at existing execution entries | auto-run, schedule and enable state unchanged |
-| Off-peak list, edit, Ticket       | OffPeakTaskRepo with existing Service / `tasks-index.sqlite` | ordinary reads never swap account or Ticket                          | bound Ticket execution semantics kept              |
-| Phone opens the above             | same shared-host and owning SessionStore/Repo         | no phone-specific migration or runtime                                      | desktop-continuous and web-remote-replayable do not leak into each other |
+| User entry / state                     | Shared implementation and authoritative owner                | Draft / default and commit boundary                                                                     | Must keep                                                                |
+| -------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Task list, search, groups              | TaskIndexRepo / `tasks-index.sqlite` list metadata           | browsing does not start all Agents, no user-draft change                                                | workspaceIdentity and path not mixed                                     |
+| Open session, history, subtasks, goals | Agent SessionStore; UI consumes protocol projection          | reading does not require an executable model; execution uses existing selection/binding                 | local/SSH/WSL/Docker databases migrate at the actual owner               |
+| Automation list, edit, run records     | AutomationRepo / `tasks-index.sqlite`                        | edits write automation config, not Session drafts; missing config handled at existing execution entries | auto-run, schedule and enable state unchanged                            |
+| Off-peak list, edit, Ticket            | OffPeakTaskRepo with existing Service / `tasks-index.sqlite` | ordinary reads never swap account or Ticket                                                             | bound Ticket execution semantics kept                                    |
+| Phone opens the above                  | same shared-host and owning SessionStore/Repo                | no phone-specific migration or runtime                                                                  | desktop-continuous and web-remote-replayable do not leak into each other |
 
 Shared: migration guarantees and storage conversion. Different: each database's owner, table contract, Selection meaning
 and business commit/execution timing. Public API/Model validation, candidate generation and default/inherit sources are
@@ -247,15 +247,15 @@ codegraph was available.
 
 ### 7.1 Confirmed Boundaries
 
-| Ruling              | Final requirement                                                          | Rejected option                                   |
-| ------------------- | -------------------------------------------------------------------------- | ------------------------------------------------- |
-| D01 scope           | all relevant databases / all tables against the fixed `staging_backup`     | only four session tables or SQL diff only         |
-| D02 migration semantics | consolidate the mechanism, do not redesign ruled mappings              | auto-pick personal/Team/other Provider            |
-| D03 preservation    | old fields and values kept, new format stored separately                   | in-place rename, whole-object Decoder overwrite   |
-| D04 intermediate state | unshipped intermediate states unsupported; unrun migration may rebuild target new fields | forbid conversion whenever the new field exists |
-| D05 rollback round trip | content readable, config may be reselected, completed migrations do not re-run | auto re-migration system for post-rollback edits |
-| D06 dual-write      | avoid it; minimal necessary when content cannot open                       | forbid entirely / reverse-sync everything         |
-| D07 missing config  | migration may complete, browsing works, execution handled separately       | one missing model config blocks the library or drops a whole item |
+| Ruling                  | Final requirement                                                                        | Rejected option                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| D01 scope               | all relevant databases / all tables against the fixed `staging_backup`                   | only four session tables or SQL diff only                         |
+| D02 migration semantics | consolidate the mechanism, do not redesign ruled mappings                                | auto-pick personal/Team/other Provider                            |
+| D03 preservation        | old fields and values kept, new format stored separately                                 | in-place rename, whole-object Decoder overwrite                   |
+| D04 intermediate state  | unshipped intermediate states unsupported; unrun migration may rebuild target new fields | forbid conversion whenever the new field exists                   |
+| D05 rollback round trip | content readable, config may be reselected, completed migrations do not re-run           | auto re-migration system for post-rollback edits                  |
+| D06 dual-write          | avoid it; minimal necessary when content cannot open                                     | forbid entirely / reverse-sync everything                         |
+| D07 missing config      | migration may complete, browsing works, execution handled separately                     | one missing model config blocks the library or drops a whole item |
 
 Test dimensions: database/Repo init order; new / full old / partially initialized old databases; migration unrun / run /
 failed-retry; old record / new-version added / new-version modified; config complete / missing / undeterminable;
@@ -267,22 +267,22 @@ on current entitlement, so representative offline / empty-Provider scenarios pro
 Acceptance definitions; actual 2026-09-10 results are in ledger section D. DB109-01 to 13 have their key assertions done;
 DB109-14 is partially verified (phone / real remote joint on-device runs are not counted as passed). IDs are stable.
 
-| ID       | Setup -> Action                                                    | Core assertions                                                                                | Evidence layer                    |
-| -------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | --------------------------------- |
-| DB109-01 | seed all tables of every DB from the fixed old baseline -> upgrade | every table has a conclusion; new fields correct; old/unknown fields, body, attachment refs kept; unrelated rows unchanged | raw SQL/JSON + current Reader |
-| DB109-02 | fresh DB; DB with tables/columns but no ledger -> initialize       | converges to the correct structure and records; no content overwritten; real SQL errors not ignored | SQLite integration            |
-| DB109-03 | migrated DB, reselect/clear -> reopen repeatedly                   | no re-run, no old-selection resurrection, version not decided by the new field's presence     | ledger + Reader                   |
-| DB109-04 | unrun migration with an old source and an unshipped target value -> upgrade | target new field rebuilt from the old source by deterministic rules; old values untouched; no forcing without an old source | conversion unit tests + raw data |
-| DB109-05 | atomic migration with an injected mid-write error -> reopen/retry  | data and record roll back together; a successful retry runs once                               | SQLite fault injection            |
-| DB109-06 | several processes open at once, Repo init order varies             | applied once per database, no half-migrated state exposed, lock wait/errors within existing bounds | multi-connection/process integration |
-| DB109-07 | applied migration with a changed checksum -> open                  | explicit refusal, no silent re-run or ledger change                                            | executor tests                    |
-| DB109-08 | offline/logged-out/empty Provider, convertible and undeterminable selections -> upgrade/browse | deterministic conversion unchanged; missing config does not block content; no account network calls | storage + Service            |
-| DB109-09 | representative new-version migrated/added/modified records -> old-version real read and display | every task/message/session opens; model config may be lost; dual-write or not backed by concrete evidence | frozen Reader + content projection + focused E2E |
-| DB109-10 | upgrade, add/modify data on rolled-back old version -> upgrade again | completed migrations do not re-run; missing new config does not fail content; reselect and continue | two-version temp DB + UI/protocol |
-| DB109-11 | historical Timeline/Subtask/input/goal/Workflow/Usage -> migrate and restore/copy | relations/order/actual execution source kept; not reinterpreted by the current account        | raw DB + restore consumers        |
-| DB109-12 | update/copy/fork a new-version selection; import old backup -> read normally | old snapshots not erased; normal Reader never reads old fields as fallback; explicit import boundary does not spread | Writer/Reader + import integration |
-| DB109-13 | off-peak old record with Ticket, insufficient identity -> migrate/list/execution check | no rebind, no migration write in list/get; missing config per existing rulings; no real task started | Service/Repo fixture      |
-| DB109-14 | desktop local and remote same path different identity, phone attachment -> open history | identity isolation; phone reuses the owner; continuous/replayable semantics unchanged       | focused end to end                |
+| ID       | Setup -> Action                                                                                 | Core assertions                                                                                                             | Evidence layer                                   |
+| -------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| DB109-01 | seed all tables of every DB from the fixed old baseline -> upgrade                              | every table has a conclusion; new fields correct; old/unknown fields, body, attachment refs kept; unrelated rows unchanged  | raw SQL/JSON + current Reader                    |
+| DB109-02 | fresh DB; DB with tables/columns but no ledger -> initialize                                    | converges to the correct structure and records; no content overwritten; real SQL errors not ignored                         | SQLite integration                               |
+| DB109-03 | migrated DB, reselect/clear -> reopen repeatedly                                                | no re-run, no old-selection resurrection, version not decided by the new field's presence                                   | ledger + Reader                                  |
+| DB109-04 | unrun migration with an old source and an unshipped target value -> upgrade                     | target new field rebuilt from the old source by deterministic rules; old values untouched; no forcing without an old source | conversion unit tests + raw data                 |
+| DB109-05 | atomic migration with an injected mid-write error -> reopen/retry                               | data and record roll back together; a successful retry runs once                                                            | SQLite fault injection                           |
+| DB109-06 | several processes open at once, Repo init order varies                                          | applied once per database, no half-migrated state exposed, lock wait/errors within existing bounds                          | multi-connection/process integration             |
+| DB109-07 | applied migration with a changed checksum -> open                                               | explicit refusal, no silent re-run or ledger change                                                                         | executor tests                                   |
+| DB109-08 | offline/logged-out/empty Provider, convertible and undeterminable selections -> upgrade/browse  | deterministic conversion unchanged; missing config does not block content; no account network calls                         | storage + Service                                |
+| DB109-09 | representative new-version migrated/added/modified records -> old-version real read and display | every task/message/session opens; model config may be lost; dual-write or not backed by concrete evidence                   | frozen Reader + content projection + focused E2E |
+| DB109-10 | upgrade, add/modify data on rolled-back old version -> upgrade again                            | completed migrations do not re-run; missing new config does not fail content; reselect and continue                         | two-version temp DB + UI/protocol                |
+| DB109-11 | historical Timeline/Subtask/input/goal/Workflow/Usage -> migrate and restore/copy               | relations/order/actual execution source kept; not reinterpreted by the current account                                      | raw DB + restore consumers                       |
+| DB109-12 | update/copy/fork a new-version selection; import old backup -> read normally                    | old snapshots not erased; normal Reader never reads old fields as fallback; explicit import boundary does not spread        | Writer/Reader + import integration               |
+| DB109-13 | off-peak old record with Ticket, insufficient identity -> migrate/list/execution check          | no rebind, no migration write in list/get; missing config per existing rulings; no real task started                        | Service/Repo fixture                             |
+| DB109-14 | desktop local and remote same path different identity, phone attachment -> open history         | identity isolation; phone reuses the owner; continuous/replayable semantics unchanged                                       | focused end to end                               |
 
 Pruned: no requirement of model-config round-trip equality, no real model requests to verify the database, no
 cross-database atomic upgrade, no coverage of every unrelated old format. Legitimate product default/inherit behavior is

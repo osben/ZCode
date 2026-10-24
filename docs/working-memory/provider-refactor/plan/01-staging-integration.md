@@ -2,7 +2,7 @@
 
 > Status: Completed 2026-08-25. Input: Provider Refactor `4e8064f8d5`, `origin/staging` `8a7eca86aa`.
 >
-> Full history: `git show 3c76d29f:docs/working-memory/provider-refactor/plan/01-staging-integration.md`
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/plan/01-staging-integration.md`
 
 ## 1. Objective
 

@@ -86,15 +86,15 @@ and packaging paths), `apps/zcode-cli` (6: env vars, SEA assets, runtime unpacki
 
 State owners after the cutover:
 
-| State/Fact                       | Authoritative owner                  | Result                                         |
-| -------------------------------- | ------------------------------------ | ---------------------------------------------- |
-| ZCode Built-in published content | `config/provider/zcode-builtin.json` | Content unchanged; physical name changed       |
-| Node Source snapshot/revision    | `ZCodeBuiltinProviderConfigSource`   | Watch/reload behavior unchanged                |
-| Desktop Host startup parameters  | Shared strict schema                 | New fields only; no dual-read                  |
-| CLI explicit path                | `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` | Only the new variable is recognized            |
-| SEA built-in assets              | `zcode-provider/zcode-builtin.json`  | Only the new key is packaged/read              |
-| Provider Config Snapshot         | Provider Domain                      | Field renamed; parsed results unchanged        |
-| Settings Built-in markers        | Settings Facade View                 | `isZCodeBuiltin`; display unchanged            |
+| State/Fact                       | Authoritative owner                  | Result                                   |
+| -------------------------------- | ------------------------------------ | ---------------------------------------- |
+| ZCode Built-in published content | `config/provider/zcode-builtin.json` | Content unchanged; physical name changed |
+| Node Source snapshot/revision    | `ZCodeBuiltinProviderConfigSource`   | Watch/reload behavior unchanged          |
+| Desktop Host startup parameters  | Shared strict schema                 | New fields only; no dual-read            |
+| CLI explicit path                | `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE` | Only the new variable is recognized      |
+| SEA built-in assets              | `zcode-provider/zcode-builtin.json`  | Only the new key is packaged/read        |
+| Provider Config Snapshot         | Provider Domain                      | Field renamed; parsed results unchanged  |
+| Settings Built-in markers        | Settings Facade View                 | `isZCodeBuiltin`; display unchanged      |
 
 Personal Repository, Account Source, Registry Overlay and Active Model are unchanged. There are no user-visible UI
 changes (Provider settings, model selector, Off-Peak scoped View, Desktop/Web/mobile semantics all unchanged), so no new
@@ -115,16 +115,16 @@ UI E2E is required.
 
 ## 5. Stable Acceptance Cases
 
-| Case ID | Setup                                                 | Action                                 | Assertions                                                                            |
-| ------- | ----------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------- |
-| ZBN-01  | New published files exist                             | Node Source starts and watches updates | Correctly parsed; revision/watch behavior unchanged                                   |
-| ZBN-02  | Same Built-in content                                 | Materialize twice                      | Stable `zcode-builtin-<hash>.json`; content and atomic write semantics unchanged      |
-| ZBN-03  | Desktop dev/package                                   | Create Local Host                      | Config found and Registry built only through the new Host init fields                 |
-| ZBN-04  | CLI explicit new environment variable                 | Start Runtime                          | Reads new path and generates the same Provider/Model View                             |
-| ZBN-05  | SEA binary                                            | Start without explicit file path       | Unpacks and assembles Built-in Config only from the new asset key                     |
-| ZBN-06  | Only old environment variable or old path provided    | Start Runtime                          | Old entry points not read; fails with the formal missing-config error                 |
-| ZBN-07  | Provider Settings View                                | Read Built-in and Personal Providers   | `isZCodeBuiltin` correct; UI behavior and save results unchanged                      |
-| ZBN-08  | Same Built-in/Account/Personal input                  | Parse snapshots before/after switch    | Overlay order, Effective Config and Registry candidates equivalent                    |
+| Case ID | Setup                                              | Action                                 | Assertions                                                                       |
+| ------- | -------------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------- |
+| ZBN-01  | New published files exist                          | Node Source starts and watches updates | Correctly parsed; revision/watch behavior unchanged                              |
+| ZBN-02  | Same Built-in content                              | Materialize twice                      | Stable `zcode-builtin-<hash>.json`; content and atomic write semantics unchanged |
+| ZBN-03  | Desktop dev/package                                | Create Local Host                      | Config found and Registry built only through the new Host init fields            |
+| ZBN-04  | CLI explicit new environment variable              | Start Runtime                          | Reads new path and generates the same Provider/Model View                        |
+| ZBN-05  | SEA binary                                         | Start without explicit file path       | Unpacks and assembles Built-in Config only from the new asset key                |
+| ZBN-06  | Only old environment variable or old path provided | Start Runtime                          | Old entry points not read; fails with the formal missing-config error            |
+| ZBN-07  | Provider Settings View                             | Read Built-in and Personal Providers   | `isZCodeBuiltin` correct; UI behavior and save results unchanged                 |
+| ZBN-08  | Same Built-in/Account/Personal input               | Parse snapshots before/after switch    | Overlay order, Effective Config and Registry candidates equivalent               |
 
 ## 6. Completion Gates
 

@@ -60,7 +60,9 @@ type ProviderFamilyConnectionSelection =
   | { kind: "individual-coding-plan" }
   | { kind: "team-coding-plan"; productId: string; organizationId: string; projectId: string };
 interface AppSettings {
-  providerFamilyConnectionSelections?: Partial<Record<ProviderFamilyDomain, ProviderFamilyConnectionSelection>>;
+  providerFamilyConnectionSelections?: Partial<
+    Record<ProviderFamilyDomain, ProviderFamilyConnectionSelection>
+  >;
 }
 ```
 
@@ -94,10 +96,21 @@ Settings strings.
 
 ```ts
 type ZhipuAccountAccessConfig =
-  | { type: "zhipu-account"; accessId?: string | null; family: "zai" | "bigmodel";
-      planKind: "start-plan" | "individual-coding-plan" }
-  | { type: "zhipu-account"; accessId?: string | null; planKind: "team-coding-plan"; family: "zai" | "bigmodel";
-      productId?: string | null; organizationId?: string | null; projectId?: string | null };
+  | {
+      type: "zhipu-account";
+      accessId?: string | null;
+      family: "zai" | "bigmodel";
+      planKind: "start-plan" | "individual-coding-plan";
+    }
+  | {
+      type: "zhipu-account";
+      accessId?: string | null;
+      planKind: "team-coding-plan";
+      family: "zai" | "bigmodel";
+      productId?: string | null;
+      organizationId?: string | null;
+      projectId?: string | null;
+    };
 ```
 
 ZCode Built-in Provider Config declares fixed `family + planKind` first (Team Scope and every Plan's `accessId` may be
@@ -128,17 +141,17 @@ wrongly judging valid connections unavailable; the comparison is deleted without
 `modelProviderFamilySelectedKeys` / `selectedConnectionKey` appeared in at least 37 non-test files (18 UI, 11 Services,
 5 Shared, 3 Desktop).
 
-| Scope                      | Previous responsibility                              | Target                                           |
-| -------------------------- | ---------------------------------------------------- | ------------------------------------------------ |
-| AppSettings / Schema       | Persist mode and string key                          | Single structured selection                      |
-| Provider Settings          | Navigation, switch, restore, pending state           | Edit structured selection                        |
-| Account Resolver           | Parse Plan/Team key and generate accessId            | Look up connection by Access fields              |
-| Request Auth               | Identify Plan, account, Team Scope from accessId     | Consume complete Account Access                  |
-| Usage / Entitlement        | Query context from selected key                      | Consume Account Connection View                  |
-| Session / Task / Repo Wiki | Layer-by-layer passthrough of selected keys          | Delete passthrough; use Registry/Account Service |
-| Off-Peak                   | Parse Settings, compare two IDs                      | Consume current Account Access                   |
-| Official MCP               | Re-parse Plan and Team Scope                         | Consume current Account Access                   |
-| Desktop remote host        | Temporarily construct selected key map for Team Key  | Pass structured Account Access directly         |
+| Scope                      | Previous responsibility                             | Target                                           |
+| -------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| AppSettings / Schema       | Persist mode and string key                         | Single structured selection                      |
+| Provider Settings          | Navigation, switch, restore, pending state          | Edit structured selection                        |
+| Account Resolver           | Parse Plan/Team key and generate accessId           | Look up connection by Access fields              |
+| Request Auth               | Identify Plan, account, Team Scope from accessId    | Consume complete Account Access                  |
+| Usage / Entitlement        | Query context from selected key                     | Consume Account Connection View                  |
+| Session / Task / Repo Wiki | Layer-by-layer passthrough of selected keys         | Delete passthrough; use Registry/Account Service |
+| Off-Peak                   | Parse Settings, compare two IDs                     | Consume current Account Access                   |
+| Official MCP               | Re-parse Plan and Team Scope                        | Consume current Account Access                   |
+| Desktop remote host        | Temporarily construct selected key map for Team Key | Pass structured Account Access directly          |
 
 UI surface: switching API Key/plan connection happens in Provider Settings (local pending selection -> AppSettings,
 single submit of structured selection; Personal Provider Config unchanged); viewing the current connection uses the

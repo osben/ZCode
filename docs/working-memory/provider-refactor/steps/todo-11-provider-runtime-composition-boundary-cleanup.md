@@ -30,12 +30,12 @@ execution-process composition roots.
 
 ### 2.1 Four Runtime Shells
 
-| Object                           | Owns / assembles                                                                                         | Current use                                                   | Review fact                                                                                      |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `NodeProviderConfigRuntime`      | ZCode Built-in file Source, Personal Repository, `ProviderConfigService`, watcher/dispose                | used by the two layers above; `createNodeProviderConfigRuntime()` has no production caller | mostly a Node IO resource set; `start()` only calls `configService.read()`, no own running state |
-| `NodeProviderRegistryRuntime`    | the Config Runtime above, `ProviderRegistryService`, optional Account Source                              | production use by the Agent process root; factory has no production caller | wraps another Registry lifecycle and embeds a second Empty Account fallback                      |
-| Services `ProviderConfigRuntime` | Node Config Runtime, Personal default path, Legacy Personal importer                                     | Host production composition root                              | file comment calls it a "compat assembly layer"; once Legacy reading retires it may only resolve paths |
-| Services `ProviderRuntime`       | Config, Registry, Settings/Selection Facade, RPC service adapter, ready promise, Account Source dispose  | Host production composition root; generic factory mostly used by tests | Host behavior is a real need, but the name and public surface describe Host-specific assembly as generic |
+| Object                           | Owns / assembles                                                                                        | Current use                                                                                | Review fact                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `NodeProviderConfigRuntime`      | ZCode Built-in file Source, Personal Repository, `ProviderConfigService`, watcher/dispose               | used by the two layers above; `createNodeProviderConfigRuntime()` has no production caller | mostly a Node IO resource set; `start()` only calls `configService.read()`, no own running state         |
+| `NodeProviderRegistryRuntime`    | the Config Runtime above, `ProviderRegistryService`, optional Account Source                            | production use by the Agent process root; factory has no production caller                 | wraps another Registry lifecycle and embeds a second Empty Account fallback                              |
+| Services `ProviderConfigRuntime` | Node Config Runtime, Personal default path, Legacy Personal importer                                    | Host production composition root                                                           | file comment calls it a "compat assembly layer"; once Legacy reading retires it may only resolve paths   |
+| Services `ProviderRuntime`       | Config, Registry, Settings/Selection Facade, RPC service adapter, ready promise, Account Source dispose | Host production composition root; generic factory mostly used by tests                     | Host behavior is a real need, but the name and public surface describe Host-specific assembly as generic |
 
 Not all are wrong: Node file Source, Personal Repository, Registry, Facade, Account Source and watcher have real roles.
 The problem is that they are wrapped several times as "Runtime", repeating `start`, `dispose`, empty Source and ownership
@@ -115,18 +115,18 @@ whether it is a class, factory, public export, or still uses the word `Runtime` 
 
 Why they cannot be forced into one catch-all Runtime (not a final API design):
 
-| Dimension               | Host root                                         | Agent execution process root                             |
-| ----------------------- | ------------------------------------------------- | -------------------------------------------------------- |
-| Main consumers          | Provider Settings, Model Selection RPC            | ModelFactory, Core, Adapter                              |
-| Config capability       | read + Personal mutation                          | read only for execution                                  |
-| Account source          | Account Service driven by Settings/OAuth/Entitlement | Protocol snapshot or Standalone Credential Store      |
-| Startup order           | RPC may register first; first access shares a ready barrier | `await` Registry start before creating the App |
-| Model Selection         | candidate View and user validation                | reads the configured default for execution Model creation |
-| Settings capability     | yes                                               | no                                                       |
-| Credential subscription | managed by Host account services                  | standalone Prompt/TUI may have one; Protocol Worker has no local derivation |
-| Lifecycle               | with Local Host / Service Collection              | Prompt per command, TUI long process, Protocol Worker per process |
-| Output                  | Services/RPC registration objects                 | Registry, Selection repo, auth port as needed            |
-| Dispose principle       | Host outermost owner releases everything once     | process root outermost owner releases everything once    |
+| Dimension               | Host root                                                   | Agent execution process root                                                |
+| ----------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Main consumers          | Provider Settings, Model Selection RPC                      | ModelFactory, Core, Adapter                                                 |
+| Config capability       | read + Personal mutation                                    | read only for execution                                                     |
+| Account source          | Account Service driven by Settings/OAuth/Entitlement        | Protocol snapshot or Standalone Credential Store                            |
+| Startup order           | RPC may register first; first access shares a ready barrier | `await` Registry start before creating the App                              |
+| Model Selection         | candidate View and user validation                          | reads the configured default for execution Model creation                   |
+| Settings capability     | yes                                                         | no                                                                          |
+| Credential subscription | managed by Host account services                            | standalone Prompt/TUI may have one; Protocol Worker has no local derivation |
+| Lifecycle               | with Local Host / Service Collection                        | Prompt per command, TUI long process, Protocol Worker per process           |
+| Output                  | Services/RPC registration objects                           | Registry, Selection repo, auth port as needed                               |
+| Dispose principle       | Host outermost owner releases everything once               | process root outermost owner releases everything once                       |
 
 ## 6. Candidate Direction (Undecided)
 
@@ -178,32 +178,32 @@ The document cannot become "Pending execution" before these are confirmed one by
 
 ### 9.1 Impact
 
-| Level          | Relation                                | Reason                                                                   |
-| -------------- | --------------------------------------- | ------------------------------------------------------------------------ |
-| must-inspect   | `provider-node` Config/Registry runtime | direct objects of candidate deletion or narrowing                        |
-| must-inspect   | Services Host composition               | Account Source, Settings/Selection Facade, ready/dispose owner           |
-| must-inspect   | Bootstrap process runtime               | Registry, Selection repo, Credential subscription of Protocol/Prompt/TUI |
-| must-inspect   | Protocol shutdown                       | existing outer-dispose bypass bug candidate                              |
-| should-inspect | Provider Node/Services/Bootstrap tests  | tests depend heavily on wide Runtime factories                           |
-| invariant-only | Provider Domain Resolver/Registry semantics | Overlay, completeness and candidate rules unchanged                  |
-| invariant-only | UI and cross-end state                  | settings interaction, selection state, continuous/replayable, remote workspace unchanged |
+| Level          | Relation                                    | Reason                                                                                   |
+| -------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| must-inspect   | `provider-node` Config/Registry runtime     | direct objects of candidate deletion or narrowing                                        |
+| must-inspect   | Services Host composition                   | Account Source, Settings/Selection Facade, ready/dispose owner                           |
+| must-inspect   | Bootstrap process runtime                   | Registry, Selection repo, Credential subscription of Protocol/Prompt/TUI                 |
+| must-inspect   | Protocol shutdown                           | existing outer-dispose bypass bug candidate                                              |
+| should-inspect | Provider Node/Services/Bootstrap tests      | tests depend heavily on wide Runtime factories                                           |
+| invariant-only | Provider Domain Resolver/Registry semantics | Overlay, completeness and candidate rules unchanged                                      |
+| invariant-only | UI and cross-end state                      | settings interaction, selection state, continuous/replayable, remote workspace unchanged |
 
 No codegraph query tool was available; evidence is target source reading, exact `rg` call-site scans and export
 reference checks; rerun the dependency graph and affected-test discovery before implementing.
 
 ### 9.2 State Owners
 
-| State/resource                                | Current owner                                | Candidate target                          |
-| --------------------------------------------- | -------------------------------------------- | ----------------------------------------- |
-| Built-in Source / Personal Repository watcher | Node Config Runtime                          | Node Config resource owner                |
-| Personal Config mutation                      | ProviderConfigService                        | unchanged                                 |
-| Host Account Source                           | Host Services composition                    | unchanged, but explicitly handed to Host owner |
+| State/resource                                | Current owner                                | Candidate target                                  |
+| --------------------------------------------- | -------------------------------------------- | ------------------------------------------------- |
+| Built-in Source / Personal Repository watcher | Node Config Runtime                          | Node Config resource owner                        |
+| Personal Config mutation                      | ProviderConfigService                        | unchanged                                         |
+| Host Account Source                           | Host Services composition                    | unchanged, but explicitly handed to Host owner    |
 | Agent Account Source                          | Process runtime                              | unchanged, but explicitly handed to Process owner |
-| Host Registry ready promise                   | Services `ProviderRuntime`                   | stays with a Host-specific owner          |
-| Agent Registry startup                        | `NodeProviderRegistryRuntime` + process root | process root awaits explicitly            |
-| Model Selection Repository                    | process root outer result                    | stays with the process root               |
-| Credential subscription                       | process root outer result                    | stays with the process root               |
-| All resource release                          | multi-layer `dispose()`                      | one outer dispose per composition root    |
+| Host Registry ready promise                   | Services `ProviderRuntime`                   | stays with a Host-specific owner                  |
+| Agent Registry startup                        | `NodeProviderRegistryRuntime` + process root | process root awaits explicitly                    |
+| Model Selection Repository                    | process root outer result                    | stays with the process root                       |
+| Credential subscription                       | process root outer result                    | stays with the process root                       |
+| All resource release                          | multi-layer `dispose()`                      | one outer dispose per composition root            |
 
 ### 9.3 Invariants
 
@@ -222,16 +222,16 @@ reference checks; rerun the dependency graph and affected-test discovery before 
 
 Structure for the next discussion only; not a test commitment until the Todo is "Pending execution".
 
-| Case ID | Setup                                   | Action                 | Candidate assertion                                                        |
-| ------- | --------------------------------------- | ---------------------- | -------------------------------------------------------------------------- |
-| PRC-01  | Host needs both Settings and Selection  | concurrent first RPC calls | Registry starts once, ready result shared                              |
-| PRC-02  | Host Config and Account Source assembled | save Personal Config  | authoritative Effective Preview/Registry update; Account Source still uses the same Config Service |
-| PRC-03  | Protocol Worker received an Account snapshot | create App and run a model | Worker-local Registry started before the App, not dependent on the Host Registry object |
-| PRC-04  | Standalone TUI started                  | `/new`, resume, fork   | one process Registry/watchers shared, no repeated creation                 |
-| PRC-05  | Prompt/Protocol/TUI each exit           | call their outer dispose | Registry, Config watcher, Selection repo, Credential subscription all closed |
-| PRC-06  | any step fails at start                 | observe cleanup        | all created resources released; the original error is not masked by cleanup errors |
-| PRC-07  | Config or Account Source updates        | Host and Agent refresh each | both local Registries end on the same facts; no Registry snapshot passed |
-| PRC-08  | desktop/mobile/remote representative paths | settings, selection, execution | UI state, queue, replayable and workspace identity semantics unchanged |
+| Case ID | Setup                                        | Action                         | Candidate assertion                                                                                |
+| ------- | -------------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| PRC-01  | Host needs both Settings and Selection       | concurrent first RPC calls     | Registry starts once, ready result shared                                                          |
+| PRC-02  | Host Config and Account Source assembled     | save Personal Config           | authoritative Effective Preview/Registry update; Account Source still uses the same Config Service |
+| PRC-03  | Protocol Worker received an Account snapshot | create App and run a model     | Worker-local Registry started before the App, not dependent on the Host Registry object            |
+| PRC-04  | Standalone TUI started                       | `/new`, resume, fork           | one process Registry/watchers shared, no repeated creation                                         |
+| PRC-05  | Prompt/Protocol/TUI each exit                | call their outer dispose       | Registry, Config watcher, Selection repo, Credential subscription all closed                       |
+| PRC-06  | any step fails at start                      | observe cleanup                | all created resources released; the original error is not masked by cleanup errors                 |
+| PRC-07  | Config or Account Source updates             | Host and Agent refresh each    | both local Registries end on the same facts; no Registry snapshot passed                           |
+| PRC-08  | desktop/mobile/remote representative paths   | settings, selection, execution | UI state, queue, replayable and workspace identity semantics unchanged                             |
 
 ## 11. Non-Goals
 

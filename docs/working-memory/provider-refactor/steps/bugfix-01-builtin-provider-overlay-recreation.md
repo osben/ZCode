@@ -49,14 +49,14 @@ ZCode Built-in Provider Config
 
 ## 3. Acceptance Cases
 
-| Case    | Setup                                  | Action                    | Assertions                          |
-| ------- | -------------------------------------- | ------------------------- | ----------------------------------- |
-| BF01-01 | Built-in DeepSeek has no Overlay       | Add                       | Creates `{ enabled: true }` Overlay |
-| BF01-02 | Built-in DeepSeek added                | Delete, then add again    | Becomes candidate; re-add succeeds  |
-| BF01-03 | Built-in Overlay deleted               | Late normal save          | Save fails; Overlay not resurrected |
-| BF01-04 | Personal-only Provider deleted/missing | Normal save               | Save fails; must go through create  |
-| BF01-05 | Family Provider has no Overlay         | First API Key/account save | Sparse Overlay allowed             |
-| BF01-06 | Save in flight for same Provider       | Delete                    | Save completes, then delete; no Overlay |
+| Case    | Setup                                  | Action                     | Assertions                              |
+| ------- | -------------------------------------- | -------------------------- | --------------------------------------- |
+| BF01-01 | Built-in DeepSeek has no Overlay       | Add                        | Creates `{ enabled: true }` Overlay     |
+| BF01-02 | Built-in DeepSeek added                | Delete, then add again     | Becomes candidate; re-add succeeds      |
+| BF01-03 | Built-in Overlay deleted               | Late normal save           | Save fails; Overlay not resurrected     |
+| BF01-04 | Personal-only Provider deleted/missing | Normal save                | Save fails; must go through create      |
+| BF01-05 | Family Provider has no Overlay         | First API Key/account save | Sparse Overlay allowed                  |
+| BF01-06 | Save in flight for same Provider       | Delete                     | Save completes, then delete; no Overlay |
 
 No new E2E: the gap was in the pure Provider domain and Facade lifecycle; unit tests cover the Config/Facade
 boundary and the existing Provider Settings E2E covers page entry.

@@ -60,15 +60,15 @@ download / Release decode logic with network injected through dependencies (no t
 unification of all client/configs consumers). Whether to delete the old `zcodeBuiltin` decode export is decided after
 checking references; no dual-protocol priority or permanent compatibility branch by default.
 
-| Item                               | Final ruling                                                                                                                                         |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Timeout                            | the two phases (client/configs request and CDN download) share **20 seconds in total**, spanning response headers and body consumption of both requests; the existing 30 s lease is kept, so the download budget is below the lease |
-| Body limit                         | CDN body **10 MB**, implemented as decimal `10,000,000` bytes (replacing the earlier 5 MiB suggestion); accumulated while reading, not by Content-Length alone |
-| URL                                | HTTPS in production; usernames/passwords in the address are rejected                                                                                 |
-| Credentials                        | the CDN request carries no account Token or API Key and copies no auth header from the control-plane request                                         |
-| Missing field                      | keeps the current config (no online release this time, not a clear command)                                                                          |
-| Illegal field / HTTP failure / timeout / parse failure | keep a valid local candidate, record the reason, enter the existing download backoff                                                |
-| Exit                               | cancel the request and body read, stop further application                                                                                           |
+| Item                                                   | Final ruling                                                                                                                                                                                                                        |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Timeout                                                | the two phases (client/configs request and CDN download) share **20 seconds in total**, spanning response headers and body consumption of both requests; the existing 30 s lease is kept, so the download budget is below the lease |
+| Body limit                                             | CDN body **10 MB**, implemented as decimal `10,000,000` bytes (replacing the earlier 5 MiB suggestion); accumulated while reading, not by Content-Length alone                                                                      |
+| URL                                                    | HTTPS in production; usernames/passwords in the address are rejected                                                                                                                                                                |
+| Credentials                                            | the CDN request carries no account Token or API Key and copies no auth header from the control-plane request                                                                                                                        |
+| Missing field                                          | keeps the current config (no online release this time, not a clear command)                                                                                                                                                         |
+| Illegal field / HTTP failure / timeout / parse failure | keep a valid local candidate, record the reason, enter the existing download backoff                                                                                                                                                |
+| Exit                                                   | cancel the request and body read, stop further application                                                                                                                                                                          |
 
 Actual file size and the timeout/size boundary tests are added at implementation; the limits are not adjustable by the
 implementer. The ApiClient timeout implementation is not changed globally; the reproduced issue is fixed at the shared
@@ -88,13 +88,13 @@ App / Server Environment Host: download + scheduling -> Active file -> Managed W
 Standalone CLI long-running runtime: download + scheduling -> Active file -> read by this process's config system
 ```
 
-| Trigger         | Confirmed behavior                                                                                                    |
-| --------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Startup         | serve local config first, try a background refresh, obeying the shared TTL                                            |
-| While running   | **check once per minute whether due**; after a normal success the network request interval is one hour (not a download every minute) |
-| Download failure | existing nextEligibleAt and backoff: about 1, 2, 4 minutes increasing to a one-hour cap; only retried when due       |
-| Manual refresh  | bypasses the TTL, still obeys a valid lease                                                                           |
-| Exit            | stop periodic checks, cancel downloads, release resources, never block CLI exit                                       |
+| Trigger          | Confirmed behavior                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Startup          | serve local config first, try a background refresh, obeying the shared TTL                                                           |
+| While running    | **check once per minute whether due**; after a normal success the network request interval is one hour (not a download every minute) |
+| Download failure | existing nextEligibleAt and backoff: about 1, 2, 4 minutes increasing to a one-hour cap; only retried when due                       |
+| Manual refresh   | bypasses the TTL, still obeys a valid lease                                                                                          |
+| Exit             | stop periodic checks, cancel downloads, release resources, never block CLI exit                                                      |
 
 The per-minute check reads only the existing nextEligibleAt (no second download retry time). Several window Hosts may
 check separately, with the shared lease merging network requests (no claim of one Host per machine). Config takes effect
@@ -150,14 +150,14 @@ Created Models stay frozen and later new Models read the updated config.
 
 ## 3. Review Items
 
-| Item                                        | Conclusion and action                                                                        |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Old field means no download                 | measured; App/CLI share URL download                                                         |
-| Standalone file updated but Registry old    | reproduced at the lower layer + production subscription gap confirmed; fix version derivation and startup race |
-| App body timeout ineffective                | local HTTP measurement; fixed at this feature's download boundary, not all ApiClients        |
-| Only TTL, no automatic scheduling           | confirmed statically; add Environment lifecycle scheduling and real failure recovery         |
-| Active only guaranteed parseable            | existing design boundary; verify the final content before publishing, no new client business gate |
-| File lock / version / cache / notification  | existing targeted tests support them; keep the design and add two-phase URL download and consumer-chain integration verification |
+| Item                                       | Conclusion and action                                                                                                            |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Old field means no download                | measured; App/CLI share URL download                                                                                             |
+| Standalone file updated but Registry old   | reproduced at the lower layer + production subscription gap confirmed; fix version derivation and startup race                   |
+| App body timeout ineffective               | local HTTP measurement; fixed at this feature's download boundary, not all ApiClients                                            |
+| Only TTL, no automatic scheduling          | confirmed statically; add Environment lifecycle scheduling and real failure recovery                                             |
+| Active only guaranteed parseable           | existing design boundary; verify the final content before publishing, no new client business gate                                |
+| File lock / version / cache / notification | existing targeted tests support them; keep the design and add two-phase URL download and consumer-chain integration verification |
 
 Logs distinguish at least: missing / not yet due / being refreshed by another process / version unchanged / version older /
 updated / failing phase, via the existing logger; update records contain revision and source identity and never config
@@ -170,12 +170,12 @@ Planning mode; capability Built-in online config supply; layers option-source, v
 `fetchZCodeBuiltinRemoteRelease`, `fetchCliZCodeBuiltinRelease`, `ZCodeBuiltinRemoteSynchronizer`,
 `NodeProviderConfigRuntime`, `NodeProviderRegistryRuntime`, `ProviderRegistryService`, Standalone Account assembly.
 
-| Scenario / entry                                      | Shared source and commit                                                | Display / draft and authority                                  | Mode and isolation                                                  |
-| ----------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
-| Model settings refresh, template list, smart params   | useModelProviders -> ProviderSettingsService -> refreshSources -> Registry | Renderer drafts unchanged; Host Config/Registry is authority, download only writes Active | desktop and phone reuse the Host; unsaved drafts not cleared, Personal not written |
-| Chat, automation, Subagent, Wiki model selection      | each reads the public Selection / Registry projection                   | each entry keeps its own commit and save ownership             | new candidates may change; history and bound executions not rewritten |
-| CLI / TUI                                             | Standalone download owner -> file Source / Account -> Registry           | the CLI long-running runtime owns the config lifecycle         | no UI network download owner; no timer left by a short-lived initializer |
-| Phone remote control, remote workspace                | shared-host attachment / target Environment services                    | the phone consumes the target Host; a remote Host manages its own config | no extra Agent, no copied local Registry, no mixing of workspacePath and identity |
+| Scenario / entry                                    | Shared source and commit                                                   | Display / draft and authority                                                             | Mode and isolation                                                                 |
+| --------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Model settings refresh, template list, smart params | useModelProviders -> ProviderSettingsService -> refreshSources -> Registry | Renderer drafts unchanged; Host Config/Registry is authority, download only writes Active | desktop and phone reuse the Host; unsaved drafts not cleared, Personal not written |
+| Chat, automation, Subagent, Wiki model selection    | each reads the public Selection / Registry projection                      | each entry keeps its own commit and save ownership                                        | new candidates may change; history and bound executions not rewritten              |
+| CLI / TUI                                           | Standalone download owner -> file Source / Account -> Registry             | the CLI long-running runtime owns the config lifecycle                                    | no UI network download owner; no timer left by a short-lived initializer           |
+| Phone remote control, remote workspace              | shared-host attachment / target Environment services                       | the phone consumes the target Host; a remote Host manages its own config                  | no extra Agent, no copied local Registry, no mixing of workspacePath and identity  |
 
 Shared: App and CLI share Release, download and refresh algorithms (network injected by the assembly layer) while Account
 derivation sources differ; the cache is written only by the owning Environment Source; Personal Repository and business
@@ -200,19 +200,19 @@ revision; normal / slow body / over lease; single / multi process; Account same-
 cache. Pruned: no model x account-plan Cartesian product (one ordinary API model and one Account Provider prove
 config/Account alignment; real model specs belong to Todo113/116); no UI layout change.
 
-| ID       | Setup and action                                                                                             | Must assert / evidence layer                                                                                               |
-| -------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| BR117-01 | client/configs returns a real-shaped URL, CDN returns a valid new release                                    | App/CLI two-phase requests, version/platform params correct, URL not treated as JSON; download -> file -> Registry consistent |
-| BR117-02 | missing field, illegal URL, 404/500, bad JSON, old schema, bad regex/CEL                                     | missing vs failure distinguished; valid cache not overwritten, error diagnosable; other client/configs consumers unchanged |
-| BR117-03 | slow cumulative response across phases, fast headers then slow/never-ending body, missing or false-small Content-Length, body exactly 10,000,000 and one byte over | 20 s total over both requests, body-count limit 10 MB, over-limit/timeout cancels the body, in-flight released and retryable; same semantics App/CLI |
-| BR117-04 | concurrent refresh, valid lease, over-lease takeover, late old version, same version different content       | bounded dedup, no downgrade or torn write, an old owner does not overwrite a new control record; exit / Endpoint switch does not cross sources |
-| BR117-05 | new version download / unchanged; fake clock per minute, covering the one-hour success interval and 1/2/4-minute-to-one-hour failure backoff; dispose | checks happen without requests when not due; refresh when due; no second retry time, duplicate scheduling or background leak; no per-model download request |
-| BR117-06 | Standalone updates Built-in while running with credentials unchanged or no account; interleaved initialization; rebuild 20 then update to 21 / credential change | Account auto-rebuilds to the latest facts; stale results not published, ordinary API not stuck; no re-login, no new Key request, not just a revision edit |
-| BR117-07 | App/Standalone Account rebuild fails once while download is within TTL or unchanged; Worker both arrival orders | the same per-minute check retries Account only for the misaligned state without downloading; the old Registry kept, same version after recovery; receivedRevision does not pose as applied, guard stays |
-| BR117-08 | update with personal overrides / unsaved settings drafts / created executions                               | Personal file, history selection and drafts not written; new Models adopt inherited new values, old Models not replaced   |
-| BR117-09 | two processes watching a shared file; Windows/macOS/Linux atomic replace                                     | consumers actually read the new revision; offline restart still has a usable baseline, a corrupt Active falls back to bundled |
-| BR117-10 | desktop settings manual refresh, phone connected to the same Host, remote Environment                        | display / later execution come from each target Registry; real UI+Host / protocol evidence, no separate phone runtime      |
-| BR117-11 | integrity test on the final published file, then new URL download and comparison                             | the verified object equals the uploaded object; a decoder pass cannot publish business-missing parameters; rollback uses a higher revision |
+| ID       | Setup and action                                                                                                                                                   | Must assert / evidence layer                                                                                                                                                                            |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BR117-01 | client/configs returns a real-shaped URL, CDN returns a valid new release                                                                                          | App/CLI two-phase requests, version/platform params correct, URL not treated as JSON; download -> file -> Registry consistent                                                                           |
+| BR117-02 | missing field, illegal URL, 404/500, bad JSON, old schema, bad regex/CEL                                                                                           | missing vs failure distinguished; valid cache not overwritten, error diagnosable; other client/configs consumers unchanged                                                                              |
+| BR117-03 | slow cumulative response across phases, fast headers then slow/never-ending body, missing or false-small Content-Length, body exactly 10,000,000 and one byte over | 20 s total over both requests, body-count limit 10 MB, over-limit/timeout cancels the body, in-flight released and retryable; same semantics App/CLI                                                    |
+| BR117-04 | concurrent refresh, valid lease, over-lease takeover, late old version, same version different content                                                             | bounded dedup, no downgrade or torn write, an old owner does not overwrite a new control record; exit / Endpoint switch does not cross sources                                                          |
+| BR117-05 | new version download / unchanged; fake clock per minute, covering the one-hour success interval and 1/2/4-minute-to-one-hour failure backoff; dispose              | checks happen without requests when not due; refresh when due; no second retry time, duplicate scheduling or background leak; no per-model download request                                             |
+| BR117-06 | Standalone updates Built-in while running with credentials unchanged or no account; interleaved initialization; rebuild 20 then update to 21 / credential change   | Account auto-rebuilds to the latest facts; stale results not published, ordinary API not stuck; no re-login, no new Key request, not just a revision edit                                               |
+| BR117-07 | App/Standalone Account rebuild fails once while download is within TTL or unchanged; Worker both arrival orders                                                    | the same per-minute check retries Account only for the misaligned state without downloading; the old Registry kept, same version after recovery; receivedRevision does not pose as applied, guard stays |
+| BR117-08 | update with personal overrides / unsaved settings drafts / created executions                                                                                      | Personal file, history selection and drafts not written; new Models adopt inherited new values, old Models not replaced                                                                                 |
+| BR117-09 | two processes watching a shared file; Windows/macOS/Linux atomic replace                                                                                           | consumers actually read the new revision; offline restart still has a usable baseline, a corrupt Active falls back to bundled                                                                           |
+| BR117-10 | desktop settings manual refresh, phone connected to the same Host, remote Environment                                                                              | display / later execution come from each target Registry; real UI+Host / protocol evidence, no separate phone runtime                                                                                   |
+| BR117-11 | integrity test on the final published file, then new URL download and comparison                                                                                   | the verified object equals the uploaded object; a decoder pass cannot publish business-missing parameters; rollback uses a higher revision                                                              |
 
 E2E handoff: follow e2e-case-lifecycle into existing Provider settings / config test directories, using a controllable
 local HTTP server for client/configs and CDN, temporary Environment directories, a controllable clock and two real

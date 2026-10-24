@@ -21,12 +21,12 @@ Endpoint → Platform/Version/Normalized Source Path → Host Source revision
 Endpoint A/B same release number → different path scope → Config/Account/Registry correctly distinguished
 ```
 
-| Case  | Verification contract                                                                                                                                                             |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| B4-01 | Three-layer path isolation and Origin normalization retained; filename/distribution record paths match the final decision                                                          |
-| B4-02 | Fixed bundled file identical → no write; changed → atomic replace; concurrent readers always see a complete old-or-new file; write failure keeps the old file and cleans temp files |
+| Case  | Verification contract                                                                                                                                                                |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| B4-01 | Three-layer path isolation and Origin normalization retained; filename/distribution record paths match the final decision                                                            |
+| B4-02 | Fixed bundled file identical → no write; changed → atomic replace; concurrent readers always see a complete old-or-new file; write failure keeps the old file and cleans temp files  |
 | B4-03 | Two Endpoints, same release number, different models: Config and Registry cannot reuse old results; Account follows its identifier; a Worker reading the same file gets the same one |
-| B4-04 | CLI SEA and Server reuse the same materializer interface, no duplicated hash-file logic; fresh-directory startup, refresh control, and all five schemaVersion=1 variants supported |
+| B4-04 | CLI SEA and Server reuse the same materializer interface, no duplicated hash-file logic; fresh-directory startup, refresh control, and all five schemaVersion=1 variants supported   |
 
 The GLM integrity old-test correction follows §6.3.1: account tests use the Provider's actual Endpoint; do not substitute `/api/coding/paas/v4`, which is outside its declared scope. The model itself and site coverage are separate assertions. A plain API Key on the same Endpoint hitting media coverage is approved behavior, not a test-added capability.
 
@@ -41,15 +41,15 @@ Settings save/import → same source rule schema → Personal file locked atomic
                                       └─ name dedup / default selection / other configs retained
 ```
 
-| Case   | Contract to prove                                                                                                                                                                | Evidence                            |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| B2R-01 | Match three-layer strict isolation; illegal API/URL regex, old fields/types all rejected; original valid match scope retained                                                    | schema + Resolver targeted tests    |
-| B2R-02 | Complete Manual relaxes only `enabled`; per-leaf default/null allowed, illegal values/Maps rejected; sparse smart allowed; the same model in two groups rejected                 | schema + save/restart tests         |
-| B2R-03 | Provider/Template identity outside rules, duplicates at the same layer rejected; Template keys, Builtin personal members, Personal Account access cannot cross authority         | data-entry tests                    |
-| B2R-04 | Each collection's order round-trips; no layer guessing from fields; Manual inherits only `enabled`, not parameters; switching collections leaves no residue from the other       | codec + Resolver + ConfigService    |
-| B2R-05 | Template current-language/en-US/ID name fallback; case/whitespace dedup; concurrent creation inside the lock without name collision; later language changes keep existing names  | real repository updates + settings  |
-| B2R-06 | Four providerMatch converted to precise Endpoint; plain API Key can hit media; Off-Peak and Start searches not unexpectedly widened                                              | actual Builtin parse comparison     |
-| B2R-07 | Final empty array/file wrapper strict; Provider edits keep the default selection, clearing the default keeps other configs; old shipped imports output the final structure        | file/distribution/concurrency tests |
+| Case   | Contract to prove                                                                                                                                                               | Evidence                            |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| B2R-01 | Match three-layer strict isolation; illegal API/URL regex, old fields/types all rejected; original valid match scope retained                                                   | schema + Resolver targeted tests    |
+| B2R-02 | Complete Manual relaxes only `enabled`; per-leaf default/null allowed, illegal values/Maps rejected; sparse smart allowed; the same model in two groups rejected                | schema + save/restart tests         |
+| B2R-03 | Provider/Template identity outside rules, duplicates at the same layer rejected; Template keys, Builtin personal members, Personal Account access cannot cross authority        | data-entry tests                    |
+| B2R-04 | Each collection's order round-trips; no layer guessing from fields; Manual inherits only `enabled`, not parameters; switching collections leaves no residue from the other      | codec + Resolver + ConfigService    |
+| B2R-05 | Template current-language/en-US/ID name fallback; case/whitespace dedup; concurrent creation inside the lock without name collision; later language changes keep existing names | real repository updates + settings  |
+| B2R-06 | Four providerMatch converted to precise Endpoint; plain API Key can hit media; Off-Peak and Start searches not unexpectedly widened                                             | actual Builtin parse comparison     |
+| B2R-07 | Final empty array/file wrapper strict; Provider edits keep the default selection, clearing the default keeps other configs; old shipped imports output the final structure      | file/distribution/concurrency tests |
 
 Consumer supplements for this batch: the Settings form distinguishes display name from the current rename patch — saving only the API does not save an inherited name, renaming alone does not materialize connection fields or lose headers. Template creation passes locale; the service determines the current template name. Account sync keeps the original Provider dictionary protocol, not on-disk rule arrays. CLI startup and login share the Personal file; first import reads old Provider + default model once; the Protocol does not self-import old CLI config. Cases live under `providerRuleForm`, `providerRuleFileIntegration`, `personal-config-default-integration`; the original `process-provider-registry-runtime`, `account-config-delivery`, `auth-login` regressions carry the old lifecycle. Existing SC90/F98/W89 E2E still need a batch run after the final structure sync — pure function tests do not replace them.
 
@@ -69,22 +69,22 @@ Graph boundaries follow this file's existing Surface Matrix: no new UI owner, me
 
 ## Feature Summary
 
-| Field             | Content                                                                                                                                             |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Intent/Capability | Keep existing Provider and Selection product semantics; implement the final persistence schema                                                      |
-| Layers/Mode       | persistence, validation, draft-default, option-source; planning                                                                                       |
-| Main entry        | ProviderSettingsFacade / ProviderConfigResolver / createNodeModelSelectionFacade / OffPeakTaskRepo / RepoWikiStorage / SessionRepository             |
-| Not doing         | Multi-account simultaneous connection, CLI account assembly refactor, send-sync gate, Subagent Markdown reformatting, old budget features            |
+| Field             | Content                                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Intent/Capability | Keep existing Provider and Selection product semantics; implement the final persistence schema                                            |
+| Layers/Mode       | persistence, validation, draft-default, option-source; planning                                                                           |
+| Main entry        | ProviderSettingsFacade / ProviderConfigResolver / createNodeModelSelectionFacade / OffPeakTaskRepo / RepoWikiStorage / SessionRepository  |
+| Not doing         | Multi-account simultaneous connection, CLI account assembly refactor, send-sync gate, Subagent Markdown reformatting, old budget features |
 
 ## UI Surface Matrix
 
-| Scenario/Entry          | Shared implementation                | Draft/Default                 | Validation                      | Submission/authority point            | Mode and isolation                                                              |
-| ----------------------- | ------------------------------------ | ----------------------------- | ------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------- |
-| Provider settings       | SettingsFacade/ConfigService         | Form draft, recommended rules | Source schema/integrity         | PersonalRepository single update      | Local/remote injected services; cannot write Session                             |
-| Composer                | SelectionFacade                      | Draft/Recent/default          | Valid selection/final Factory   | Session selection after successful submit | Not persisted early; does not change frozen runtime                              |
-| Automation/Bot/Subagent | Shared selection data                | Own inheritance rules unchanged | Own existing submit boundaries | Task/bound Session/user MD           | Shared fields do not imply shared save timing                                    |
-| Wiki/draft              | RepoWikiStorage                      | Generation setting draft      | New selection authority         | Existing file-lock save               | No restore of the manual output limit                                            |
-| Off-Peak edit view      | OffPeakTaskService.updateTask → Repo | Form draft                    | queued/paused, complete selection | off_peak_tasks.model_selection       | Keeps only the old column; does not change Ticket, Session, or workspace         |
+| Scenario/Entry          | Shared implementation                | Draft/Default                   | Validation                        | Submission/authority point                | Mode and isolation                                                       |
+| ----------------------- | ------------------------------------ | ------------------------------- | --------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------ |
+| Provider settings       | SettingsFacade/ConfigService         | Form draft, recommended rules   | Source schema/integrity           | PersonalRepository single update          | Local/remote injected services; cannot write Session                     |
+| Composer                | SelectionFacade                      | Draft/Recent/default            | Valid selection/final Factory     | Session selection after successful submit | Not persisted early; does not change frozen runtime                      |
+| Automation/Bot/Subagent | Shared selection data                | Own inheritance rules unchanged | Own existing submit boundaries    | Task/bound Session/user MD                | Shared fields do not imply shared save timing                            |
+| Wiki/draft              | RepoWikiStorage                      | Generation setting draft        | New selection authority           | Existing file-lock save                   | No restore of the manual output limit                                    |
+| Off-Peak edit view      | OffPeakTaskService.updateTask → Repo | Form draft                      | queued/paused, complete selection | off_peak_tasks.model_selection            | Keeps only the old column; does not change Ticket, Session, or workspace |
 
 ## Shared and Divergent Behavior
 
@@ -92,15 +92,15 @@ Shared model identity, capability, and option schema; each feature independently
 
 ## Feature Relationships / State Owners and Commit Sinks
 
-| Priority       | Relation                                       | Owner/Sink                            | Evidence and reason                                                                                                       |
-| -------------- | ---------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| must-inspect   | Off-Peak edit → single repo save               | OffPeakTaskRepo / SQLite              | updateEditableFields currently actively clears the old column; the Service only normalizes submitted fields                 |
-| must-inspect   | Wiki save → file atomic update                 | RepoWikiStorage                       | The runtime object must not carry old values as a second authority; the save layer keeps original values                   |
-| must-inspect   | Session selection → entry.data                 | Agent SessionRepository               | Recovery/update/fork must consistently recognize the new packaging                                                         |
-| must-inspect   | Config source → Resolver → Registry            | Provider layer; Node layer handles IO | One-way schema dependency, complete config admission, same-source snapshot                                                 |
-| must-inspect   | Default selection/Provider update → same file  | PersonalRepository                    | No mutual overwrite; distribution failure rolls back only this round's result, not a concurrently replaced one             |
-| conditional    | New path → packaging/Host startup              | Each host injects the Node path       | Desktop/CLI/Server each need real artifact verification                                                                   |
-| invariant-only | Mobile/desktop message delivery               | Same Session owner                    | Does not change continuous/replayable and workspaceIdentity isolation                                                       |
+| Priority       | Relation                                      | Owner/Sink                            | Evidence and reason                                                                                            |
+| -------------- | --------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| must-inspect   | Off-Peak edit → single repo save              | OffPeakTaskRepo / SQLite              | updateEditableFields currently actively clears the old column; the Service only normalizes submitted fields    |
+| must-inspect   | Wiki save → file atomic update                | RepoWikiStorage                       | The runtime object must not carry old values as a second authority; the save layer keeps original values       |
+| must-inspect   | Session selection → entry.data                | Agent SessionRepository               | Recovery/update/fork must consistently recognize the new packaging                                             |
+| must-inspect   | Config source → Resolver → Registry           | Provider layer; Node layer handles IO | One-way schema dependency, complete config admission, same-source snapshot                                     |
+| must-inspect   | Default selection/Provider update → same file | PersonalRepository                    | No mutual overwrite; distribution failure rolls back only this round's result, not a concurrently replaced one |
+| conditional    | New path → packaging/Host startup             | Each host injects the Node path       | Desktop/CLI/Server each need real artifact verification                                                        |
+| invariant-only | Mobile/desktop message delivery               | Same Session owner                    | Does not change continuous/replayable and workspaceIdentity isolation                                          |
 
 ## Must-Preserve Invariants
 
@@ -133,24 +133,24 @@ Dimensions: with/without old columns, title/new-selection editing, queued/paused
 
 ## Candidate Combinations / Pruning Decisions / Accepted Cases
 
-| ID     | Status and action                                          | Assertion/evidence                                                                                             | Decision                             |
-| ------ | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| B1a-01 | Legacy dual-format record; title-only change               | Original old-column values unchanged; new selection/Ticket unchanged                                           | accepted, SQLite integration         |
-| B1a-02 | Same record: modify new selection and tier, then restart   | New reader uses the new selection; frozen staging column shape still reads old values                           | accepted, SQLite integration         |
-| B1a-03 | Create, then modify selection                              | Old column stays NULL; no fabricated old format                                                                | accepted, SQLite integration         |
-| B1a-04 | null selection/runtime editing                             | Follows existing rejection; no new clear semantics added                                                       | accepted, existing service/Repo tests |
-| B1a-P1 | Model request, quota, network, theme combinations          | Save-layer changes do not touch these states; existing evidence stands, old features not re-accepted            | pruned                               |
+| ID     | Status and action                                        | Assertion/evidence                                                                                   | Decision                              |
+| ------ | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| B1a-01 | Legacy dual-format record; title-only change             | Original old-column values unchanged; new selection/Ticket unchanged                                 | accepted, SQLite integration          |
+| B1a-02 | Same record: modify new selection and tier, then restart | New reader uses the new selection; frozen staging column shape still reads old values                | accepted, SQLite integration          |
+| B1a-03 | Create, then modify selection                            | Old column stays NULL; no fabricated old format                                                      | accepted, SQLite integration          |
+| B1a-04 | null selection/runtime editing                           | Follows existing rejection; no new clear semantics added                                             | accepted, existing service/Repo tests |
+| B1a-P1 | Model request, quota, network, theme combinations        | Save-layer changes do not touch these states; existing evidence stands, old features not re-accepted | pruned                                |
 
 ## Matrix Backfill / E2E Handoff Notes
 
 B1b supplement: Wiki already has Todo97's on-disk migration and the null empty marker; Todo104's original "convert in memory on each read" is outdated. Following the marker satisfies close-out no-respawn; no new universal schema decision needed. Migration, normal save, and deletion keep sharing the file lock; the official reader filters old fields.
 
-| ID     | Scenario                                                            | Assertion                                                                                                          | Decision                            |
-| ------ | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| B1b-01 | Wiki/draft first migration and later modification                   | Old model/tier/budget original values retained; body/charts/new selection updated; reader returns no old fields     | accepted, real temp files           |
-| B1b-02 | Dual-format document clear / illegal new selection after save+restart | Empty marker keeps authority; old selection does not respawn                                                        | accepted, real files                |
-| B1b-03 | New folder with old fields                                          | No fabricated old values written; no budget restored                                                                | accepted                            |
-| B1b-04 | Save-rename failure; migration/save/deletion concurrency            | Original text undamaged; in-lock re-read obeys latest facts                                                         | accepted, barrier/fault injection   |
+| ID     | Scenario                                                              | Assertion                                                                                                       | Decision                          |
+| ------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| B1b-01 | Wiki/draft first migration and later modification                     | Old model/tier/budget original values retained; body/charts/new selection updated; reader returns no old fields | accepted, real temp files         |
+| B1b-02 | Dual-format document clear / illegal new selection after save+restart | Empty marker keeps authority; old selection does not respawn                                                    | accepted, real files              |
+| B1b-03 | New folder with old fields                                            | No fabricated old values written; no budget restored                                                            | accepted                          |
+| B1b-04 | Save-rename failure; migration/save/deletion concurrency              | Original text undamaged; in-lock re-read obeys latest facts                                                     | accepted, barrier/fault injection |
 
 No new UI interaction or generation rules; B1b adds no E2E. Existing Service model-limit assertions ride the group regression. Private storage types involved do not leak to protocol or UI.
 
@@ -169,14 +169,14 @@ First old-data migration → transaction re-reads old candidate → same UPSERT
 
 The UPSERT replaces only the new members inside the database, avoiding application-layer read-modify-write windows, and retains every other member of the on-disk object. New records write only the new members. Migration reads only the published flat `providerId/modelId/thoughtLevel` (including custom Providers without thoughtLevel); the unshipped options format is not a compatibility contract. A present new member (including null or illegal values) blocks old-field/old-message rollback. The codec does not expose old snapshots to business code; unmigrated old records are not formal selections. Fork child records carry only their own current selection, never copied parent rollback fields.
 
-| ID     | Scenario                                                 | Assertion                                                                                                        | Decision                                           |
-| ------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
-| B1c-01 | Old account/custom entry, with or without thoughtLevel   | Original id/type/old fields/unknown members each preserved; new member correct; migration idempotent              | accepted, real SQLite                               |
-| B1c-02 | Post-migration normal save, clear, restart               | Only new members change; new null/bad values do not respawn old ones; session activity time untouched             | accepted                                            |
-| B1c-03 | Migration from old messages                              | New entry has only new members; old message bytes unchanged                                                       | accepted                                            |
-| B1c-04 | Runtime switch, cold recovery, fork bundle               | Existing ModelSelection port contract round-trips unchanged; child selections isolated from parent                | accepted, adapter/core/bootstrap joint regression   |
-| B1c-05 | Migration/subsequent write concurrency and write failure | Single transaction/single UPSERT; no old-read overwrite; failure leaves old data complete                         | accepted, transaction/fault injection               |
-| B1c-P1 | UI/network/theme/queue permutations                      | Changes no interaction, continuous/replayable, or input admission; existing runtime-layer regression represents   | pruned                                              |
+| ID     | Scenario                                                 | Assertion                                                                                                       | Decision                                          |
+| ------ | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| B1c-01 | Old account/custom entry, with or without thoughtLevel   | Original id/type/old fields/unknown members each preserved; new member correct; migration idempotent            | accepted, real SQLite                             |
+| B1c-02 | Post-migration normal save, clear, restart               | Only new members change; new null/bad values do not respawn old ones; session activity time untouched           | accepted                                          |
+| B1c-03 | Migration from old messages                              | New entry has only new members; old message bytes unchanged                                                     | accepted                                          |
+| B1c-04 | Runtime switch, cold recovery, fork bundle               | Existing ModelSelection port contract round-trips unchanged; child selections isolated from parent              | accepted, adapter/core/bootstrap joint regression |
+| B1c-05 | Migration/subsequent write concurrency and write failure | Single transaction/single UPSERT; no old-read overwrite; failure leaves old data complete                       | accepted, transaction/fault injection             |
+| B1c-P1 | UI/network/theme/queue permutations                      | Changes no interaction, continuous/replayable, or input admission; existing runtime-layer regression represents | pruned                                            |
 
 Architecture tool facts: `architecture:check --changed` reports no violations; `cli-adapters` is not yet an architecture-policy managed module (context command returns unknown module). Use the existing SessionStorePort and CLI AGENTS as the boundary basis; do not expand governance modules for this.
 
@@ -195,12 +195,12 @@ Behavior class overlay/freeze    codec parse → behavior class
 
 This step publishes no format change on its own; later B2 field renames/grouping edit the same schema and consumers directly, with no compatible interim format. The current complete config includes `enabled`; the Manual-mode `enabled` exception derives from the later manual-rule schema. Parse allows sparse but never illegal values; complete admission must reject missing nested leaves, non-positive/non-safe integers, blank/duplicate tiers, and invalid maps. Error classification distinguishes missing fields, illegal options, and other illegal configs, keeping existing paths; network-failure and other business strategies unchanged.
 
-| ID     | Settings/action                                               | Assertion                                                                                                   | Decision                         |
-| ------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| B2a-01 | Sparse parse and complete-instance admission pass the same illegal leaf | Both reject; cannot pass on type assertions alone                                                          | accepted, unit tests              |
-| B2a-02 | Complete data per-leaf deleted/null                           | Complete admission rejects; sparse overlay allows and applies with original clear semantics                  | accepted, schema/overlay          |
-| B2a-03 | Legal complete config, arrays, maps                           | class/toJSON/parse round-trip; freeze; Registry results unchanged                                            | accepted, existing rule regression |
-| B2a-04 | Module dependencies and derived types                         | Base schema imports no behavior classes; codec/classes/Registry keep no parallel field types                 | accepted, type check + review    |
+| ID     | Settings/action                                                         | Assertion                                                                                    | Decision                           |
+| ------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------- |
+| B2a-01 | Sparse parse and complete-instance admission pass the same illegal leaf | Both reject; cannot pass on type assertions alone                                            | accepted, unit tests               |
+| B2a-02 | Complete data per-leaf deleted/null                                     | Complete admission rejects; sparse overlay allows and applies with original clear semantics  | accepted, schema/overlay           |
+| B2a-03 | Legal complete config, arrays, maps                                     | class/toJSON/parse round-trip; freeze; Registry results unchanged                            | accepted, existing rule regression |
+| B2a-04 | Module dependencies and derived types                                   | Base schema imports no behavior classes; codec/classes/Registry keep no parallel field types | accepted, type check + review      |
 
 Provider context note: the current module is unmanaged with no independent contract; keep the existing config public entry, expand no governance modules. New schema files are Provider-internal; no IO in the domain layer.
 
@@ -218,12 +218,12 @@ A Personal endpoint may still temporarily hold text not yet correctly filled and
 
 Account services/sync, Provider status, and message timing unchanged; this basic batch renames no release fields.
 
-| ID     | Scenario                                                               | Assertion                                                                                                | Decision                          |
-| ------ | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| B2b-01 | Unknown API type/group outside type bounds; illegal management URL     | Complete check rejects; not just non-null-checked into the Registry                                       | accepted, red test first           |
-| B2b-02 | Two Access types complete/sparse/clear/switch                          | Only this branch's required fields required; optional stays default/null-able; false rights unchanged     | accepted                           |
-| B2b-03 | Personal invalid endpoint + same-file legal Provider                   | Bad item stays editable, blocks only its own Registry admission; valid items still execute                | accepted, keep existing regression |
-| B2b-04 | Source config permissions and serialization                            | Shared schema derived; authority-crossing fields rejected; class/JSON/freeze behavior unchanged           | accepted                           |
+| ID     | Scenario                                                           | Assertion                                                                                             | Decision                           |
+| ------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| B2b-01 | Unknown API type/group outside type bounds; illegal management URL | Complete check rejects; not just non-null-checked into the Registry                                   | accepted, red test first           |
+| B2b-02 | Two Access types complete/sparse/clear/switch                      | Only this branch's required fields required; optional stays default/null-able; false rights unchanged | accepted                           |
+| B2b-03 | Personal invalid endpoint + same-file legal Provider               | Bad item stays editable, blocks only its own Registry admission; valid items still execute            | accepted, keep existing regression |
+| B2b-04 | Source config permissions and serialization                        | Shared schema derived; authority-crossing fields rejected; class/JSON/freeze behavior unchanged       | accepted                           |
 
 ## B2c Delete OptionSpec Redundant `type`
 
@@ -239,12 +239,12 @@ Settings draft / Built-in / old-format import
               → same integrity validation → Registry → original map → original request fields
 ```
 
-| ID     | Scenario                                                       | Assertion                                                                                                    | Decision                                       |
-| ------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
-| B2c-01 | New complete OptionSpec has no `type`                          | parse/class/serialize/Registry usable; map request values unchanged                                          | accepted, red test + config/request regression |
-| B2c-02 | Old unshipped `type` still in Config                           | strict parse rejects; no silent stripping; shipped migration input contract unchanged                        | accepted                                        |
-| B2c-03 | SC90-01 adds manual config, edits back to smart config         | Both saved options have no type; original failed-draft/disabled-kept/recommended assertions unchanged        | accepted, existing pending E2E + assertion      |
-| B2c-P1 | Redo all client UI, theme, request-protocol permutations       | Changes no layout, events, or message timing; reuse shared forms and the existing request-layer matrix       | pruned                                          |
+| ID     | Scenario                                                 | Assertion                                                                                              | Decision                                       |
+| ------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| B2c-01 | New complete OptionSpec has no `type`                    | parse/class/serialize/Registry usable; map request values unchanged                                    | accepted, red test + config/request regression |
+| B2c-02 | Old unshipped `type` still in Config                     | strict parse rejects; no silent stripping; shipped migration input contract unchanged                  | accepted                                       |
+| B2c-03 | SC90-01 adds manual config, edits back to smart config   | Both saved options have no type; original failed-draft/disabled-kept/recommended assertions unchanged  | accepted, existing pending E2E + assertion     |
+| B2c-P1 | Redo all client UI, theme, request-protocol permutations | Changes no layout, events, or message timing; reuse shared forms and the existing request-layer matrix | pruned                                         |
 
 The current Model settings entry still submits sparse or complete personal configs via ProviderModelMetadata; no new UI state, subscriptions, or async requests. This batch does not take over default-selection persistence or change Session submit boundaries. Existing SC90/F98 case-local `none-provider` fixtures are reused as-is, not auto-promoted; Pro builds current code in an isolated directory for verification.
 
@@ -263,13 +263,13 @@ shared/model-config (pure schema + content validation; depends on the IO-free ex
 
 This direction avoids shared reverse-importing Provider implementations and package cycles; it changes no state owners, subscriptions, effective selection, sync frequency, or task dispatch/persistence timing. `ModelRequest.maxOutputTokens` is a real request option, not part of Selection migration.
 
-| ID     | Scenario                                                                            | Assertion                                                                                              | Decision                                  |
-| ------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| B2d-01 | Final ModelConfig complete/sparse input and per-leaf default/null                    | New structure complete admission; null keeps clearing; old names/top-level MFJS strictly rejected      | accepted, red test/node configs           |
-| B2d-02 | Explicit MFJS true/false override; manual/smart save                                 | Writes only to properties; boolean controls/personal override markers and re-open values unchanged     | accepted, form unit tests + SC90          |
-| B2d-03 | CLI media filtering/PDF/generation/stream and protocol model candidates              | Same capabilities read from new attributes; request maps and message content unchanged                 | accepted, contracts/adapters/core tests   |
-| B2d-04 | New Builtin on disk and content comparison                                           | Only field renames/moves plus revision change; map/limits/capability values each retained             | accepted, semantic JSON comparison        |
-| B2d-P1 | Redo UI, account connections, remote sync, shipped old-config compatibility          | Not this item's semantic changes; keep current boundaries; unshipped old Config not made compatible    | pruned                                    |
+| ID     | Scenario                                                                    | Assertion                                                                                           | Decision                                |
+| ------ | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| B2d-01 | Final ModelConfig complete/sparse input and per-leaf default/null           | New structure complete admission; null keeps clearing; old names/top-level MFJS strictly rejected   | accepted, red test/node configs         |
+| B2d-02 | Explicit MFJS true/false override; manual/smart save                        | Writes only to properties; boolean controls/personal override markers and re-open values unchanged  | accepted, form unit tests + SC90        |
+| B2d-03 | CLI media filtering/PDF/generation/stream and protocol model candidates     | Same capabilities read from new attributes; request maps and message content unchanged              | accepted, contracts/adapters/core tests |
+| B2d-04 | New Builtin on disk and content comparison                                  | Only field renames/moves plus revision change; map/limits/capability values each retained           | accepted, semantic JSON comparison      |
+| B2d-P1 | Redo UI, account connections, remote sync, shipped old-config compatibility | Not this item's semantic changes; keep current boundaries; unshipped old Config not made compatible | pruned                                  |
 
 Implementation splits into two verifiable steps: **B2d-contract** first moves the pure schema and eliminates CLI/protocol duplicate definitions with fields and values completely unchanged; **B2d-fields** then updates all consumers and Built-in. The first step does not declare final fields complete and does not bump the Built-in revision. Public sub-path tests verify the real protocol uses the same field-schema object, sparse/complete constraints, expression validation, and Provider round-trip; CLI types are constrained by bidirectional type-equality assertions. No new business state or UI interaction, no extra desktop cases; the fields step keeps updating and running SC90.
 

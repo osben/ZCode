@@ -8,7 +8,7 @@
 > [`02-provider-config-and-registry-cleanup.md`](./02-provider-config-and-registry-cleanup.md), and current design is in
 > [`../design/registry/registry.md`](../design/registry/registry.md).
 >
-> Full history: git show 4353b0eaacff170f5219feda4d7462e560ed450b:docs/working-memory/provider-refactor/steps/02-provider-config-and-registry-impact.md
+> Full history: git show 45f808f7:docs/working-memory/provider-refactor/steps/02-provider-config-and-registry-impact.md
 
 ## Feature Summary
 
@@ -33,12 +33,12 @@ This batch does not integrate with UI. The table below records the consumption b
 
 ## Shared And Divergent Behavior
 
-| Concern              | Shared across surfaces                             | Deliberately different                                                                       | Why it matters                                                                 |
-| -------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Option source        | ProviderConfigResolver and Registry View           | Settings page also needs invalid items and explicit Personal values                          | Registry must not retain grayed-out unavailable models for the settings page    |
-| Validation           | Schema, three-layer Overlay, and integrity check   | accessId authentication, quotas, and network errors are still handled by the execution chain | Registry does not handle account permission judgment                           |
-| Commit effect        | None                                               | Settings save, model selection, and Agent execution each retain their own owner              | Shared parsing must not unify different product semantics                      |
-| Persistence/recovery | Config type and normal Object serialization format | Physical file, remote service, cache, and watcher are determined by the Source Service       | Pure domain package does not own IO                                            |
+| Concern              | Shared across surfaces                             | Deliberately different                                                                       | Why it matters                                                               |
+| -------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Option source        | ProviderConfigResolver and Registry View           | Settings page also needs invalid items and explicit Personal values                          | Registry must not retain grayed-out unavailable models for the settings page |
+| Validation           | Schema, three-layer Overlay, and integrity check   | accessId authentication, quotas, and network errors are still handled by the execution chain | Registry does not handle account permission judgment                         |
+| Commit effect        | None                                               | Settings save, model selection, and Agent execution each retain their own owner              | Shared parsing must not unify different product semantics                    |
+| Persistence/recovery | Config type and normal Object serialization format | Physical file, remote service, cache, and watcher are determined by the Source Service       | Pure domain package does not own IO                                          |
 
 ## Feature Relationships
 
@@ -59,7 +59,7 @@ This batch does not integrate with UI. The table below records the consumption b
 | Account Provider Access         | Account Service       | Current account/entitlement Source | Account refresh chain    | Source's own cache                                 | M2 design; plan entitlement graph |
 | Effective Provider resolution   | Resolver return value | Reconstructible derived facts      | None                     | Not persisted                                      | M2 design                         |
 | Registry View / index           | In-process Registry   | Current Registry instance          | `replace()`              | Memory only                                        | M2 runtime design                 |
-| Surface draft / Selection       | Each product Surface  | Own state owner                    | Original command/service | Own persistence                                     | feature graph surface edges       |
+| Surface draft / Selection       | Each product Surface  | Own state owner                    | Original command/service | Own persistence                                    | feature graph surface edges       |
 
 ## Must-Preserve Invariants
 
@@ -74,12 +74,12 @@ This batch does not integrate with UI. The table below records the consumption b
 
 ## Boundary Decisions
 
-| Boundary              | Decision                                          | Includes                                             | Excludes / prunes                                               | Source      |
-| --------------------- | ------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------- | ----------- |
-| M2-A                  | Config + Resolver + Memory Registry               | schema, overlay, order, filter, issues, index, event | storage, watcher, account request, UI, ModelFactory              | user/design |
-| Registry availability | Only contains fully configured and enabled models | complete, enabled, three-layer Provider Config       | accessId authentication, network health, quota, transient token  | user/design |
-| View ownership        | Registry atomic replace immutable View            | New queries use new View                             | Modify old View / active Model                                   | user/design |
-| Serialization form    | JSON/RPC normal Object; parsed after ConfigOverlay Class + ordered Map | wire and runtime representation | re-parsing per consumer                                          | user clarification |
+| Boundary              | Decision                                                               | Includes                                             | Excludes / prunes                                               | Source             |
+| --------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------- | ------------------ |
+| M2-A                  | Config + Resolver + Memory Registry                                    | schema, overlay, order, filter, issues, index, event | storage, watcher, account request, UI, ModelFactory             | user/design        |
+| Registry availability | Only contains fully configured and enabled models                      | complete, enabled, three-layer Provider Config       | accessId authentication, network health, quota, transient token | user/design        |
+| View ownership        | Registry atomic replace immutable View                                 | New queries use new View                             | Modify old View / active Model                                  | user/design        |
+| Serialization form    | JSON/RPC normal Object; parsed after ConfigOverlay Class + ordered Map | wire and runtime representation                      | re-parsing per consumer                                         | user clarification |
 
 ## Accepted Cases
 

@@ -1,6 +1,6 @@
 # staging cc580ba72a Merge Record
 
-> Full history: `git show f85b156c:docs/working-memory/provider-refactor/research/staging-cc580-integration-20260910.md`
+> Full history: `git show 45f808f7:docs/working-memory/provider-refactor/research/staging-cc580-integration-20260910.md`
 
 ## Baseline and Scope
 

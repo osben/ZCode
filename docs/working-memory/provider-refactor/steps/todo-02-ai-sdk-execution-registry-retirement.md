@@ -63,7 +63,14 @@ Auth.
 Target entry (a function parameter only, not a queryable/persistable/synchronizable business type):
 
 ```ts
-adapter.createModel({ providerId, modelId, providerConfig, modelConfig, options, requestDependencies });
+adapter.createModel({
+  providerId,
+  modelId,
+  providerConfig,
+  modelConfig,
+  options,
+  requestDependencies,
+});
 ```
 
 `properties`, `optionSpecs`, `reasoningMapping` come from `modelConfig`; `api`, `access`, static headers from
