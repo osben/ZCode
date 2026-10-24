@@ -134,7 +134,7 @@ stop(expectedForegroundExecutionId?)
 3. A stop never resumes a queue the user had already paused: if the projected `autoDrain` is already `false`, the stop neither holds nor releases.
 4. The hold write yields. If the target turn ended or was replaced while the hold was being written, the stop cancels nothing, releases the hold it wrote, and returns the `guard.stopTargetChanged` noop. After a hold write, a stop without an expected id is pinned to the execution it observed before the hold, so it never aborts a turn that started during the hold write. A stop that wrote no hold keeps the earlier unpinned behavior (no await happened, so nothing could change).
 5. The compat path (no runtime foreground execution token, for example compact or older clients) holds the queue too. If the bootstrap controller was replaced during the hold write, the stop releases the hold and noops without calling the runtime stop or aborting any controller. If the controller was cleared (the turn ended on its own), the stop releases the hold and still pauses an active goal, as the compat stop always did. A runtime token registered meanwhile under the same controller belongs to the same turn and is stopped.
-6. After a stop that cancelled a turn, resuming is explicit (`setAutoDrain(true)`, the composer's resume action). A new Send while paused follows catalog B06 (confirm: clear the queue and send, or keep it paused and send).
+6. After a stop that cancelled a turn, resuming is explicit (`setAutoDrain(true)`, the composer's resume action). A new Send while paused follows catalog B06 (confirm: clear the queue and send, or keep it paused and send). Choosing clear also releases the hold (rule 15); choosing keep keeps it.
 7. A failed hold or release write is logged as a warning; the stop still proceeds. Only a hold this stop wrote successfully is ever released.
 8. Residual risk: release writes `autoDrain=true` unconditionally. If an internal writer (a failing queued compact, which writes its own FIFO hold) wrote `false` during the same hold write and the stop then cancels nothing, the release undoes that hold. Accepted (decided 2026-10-22): the window is one hold write long and needs a queued compact to fail inside it; the worst case is that the queue drains as it would after a natural turn end. Closing it fully needs a hold owner or compare-and-set at the authority.
 
@@ -179,6 +179,52 @@ abort 的执行在 hold 写入期间收口后 ...`). - Projection (characterizat
     for `manual` (`ConversationQueuePanel.tsx`: only `stopped` and `error` have their own copy), so the user sees the
     same generic banner as after a plain pause.
 
+15. Clear queue releases the hold (ISSUE-063, ZCO-52). The hold exists to keep the items that were queued at the
+    Stop from running on their own. `heldQueueDisposition: clearQueueAndSend` (catalog B06 for `sendText`, B07 for a
+    new `/goal`) discards those items, so the hold has nothing left to protect. After clearing the queue items and
+    their in-memory queued executions, `applyHeldQueueDisposition` (`commands/input-admission.ts`) writes
+    `autoDrain=true` through `app.setQueueAutoDrain(true)`, then calls `app.completeExternalQueueDrain()`, and only then
+    starts the new input. Before this rule the hold outlived its queue: the next item queued on an un-stopped turn
+    showed "The queue was paused because you stopped the current response" and stayed queued at turn end.
+    - Order matters. Clear before the release, so no drain window opens while the old items still exist.
+    - `setQueueAutoDrain(true)` flips core `queueExternalDrainActive` on (it expects the CLI to drain old projected
+      items). The queue is already empty, so the release ends that drain at once with `completeExternalQueueDrain()`;
+      otherwise the next turn would stop consuming Guide inputs inline. The release does not call the
+      `queue_auto_drain_resumed` ready hook: there is nothing to promote, and the hook reads the queue head from the
+      projection, which must not race the clear.
+    - A failed release write is logged as a warning and the send proceeds (the queue is already cleared).
+    - `keepQueueAndSend` writes nothing to `autoDrain`: the queue stays held until Continue.
+    - Not changed here (hypothesis, unverified): emptying a held queue another way (deleting or editing the last held
+      item, or Steering it) may leave the same empty hold. Tracked as a follow-up.
+
+## Hold flag owners and event order (ISSUE-063)
+
+```text
+                  Renderer (SessionPane)        Host (zcodeAgentService)   CLI v4 handlers + projection          Core runtime
+Stop (queue=[A])  stop ─────────────────────────> forward (stdio) ───────> holdFollowingQueue
+                                                                            setQueueAutoDrain(false) ──────────> queueAutoDrain=false
+                                                                            projection: autoDrain=false
+                                                                            TurnComplete(cancelled): pauseReason=stopped
+Send while held   B06 dialog: "Clear queue"
+                  sendText{clearQueueAndSend,
+                           expectedHeldQueueItemIds=[A]} ─> forward ─────> applyHeldQueueDisposition
+                                                                            clearQueueItems ───────────────────> queue=[]
+                                                                            clearQueuedTurnExecutions
+                                                                            setQueueAutoDrain(true) ───────────> queueAutoDrain=true
+                                                                            projection: autoDrain=true,          (externalDrain on)
+                                                                                        pauseReason removed
+                                                                            completeExternalQueueDrain ────────> externalDrain off
+                                                                            startPromptTurn(new input) ────────> T1 runs
+Queue during T1   sendText (busy) ──────────────> forward ─────────────────> enqueue B (routing=queue, no banner)
+T1 ends                                                                     bridge autoDrainV4QueueIfReady:
+                                                                            head B, autoDrain=true ─> sendQueuedNow(B) ─> T2 runs B
+```
+
+The renderer only keeps the draft and the optimistic overlay; the CLI owns the queue, the hold bit (projection
+`queue.autoDrain` plus the core drain gate, both written by the one `setQueueAutoDrain` call) and the drain. Desktop
+(`desktop-continuous`) and mobile/web (`web-remote-replayable`) see the same projected `autoDrain`/`pauseReason`
+after a reconnect, because both are projection facts.
+
 ## Acceptance scenarios
 
 Unit tests: `apps/zcode-cli/packages/bootstrap/tests/v4-native-commands.test.ts` (ISSUE-010 cases). E2E: `conversation-session-v4-stop-queue` B02–B04 and B02a (`docs/conversation-session-case-catalog.md`).
@@ -215,3 +261,6 @@ abort is a plain user Stop reason`). Runtime-idle is not reachable from the E2E 
 17. ISSUE-039 N2: the preserve marker on the cancel reason is non-enumerable (core unit `turn cancel reason intent`
     in `core/tests/turn-errors.test.ts`).
 18. E2E `STEER：`: the queue reaches [Q2] (Q1 promoted) with no paused banner, and the steered reply has no banner.
+19. ISSUE-063: held queue, `sendText` with `clearQueueAndSend`: the call order is clear queue, `setQueueAutoDrain(true)`,
+    `completeExternalQueueDrain`, then start the turn (CLI unit `ISSUE-063 ...` in `v4-native-commands.test.ts`). The
+    same holds for a new `/goal` with `clearQueueAndSend` (B07). `keepQueueAndSend` makes no `setQueueAutoDrain` call.
