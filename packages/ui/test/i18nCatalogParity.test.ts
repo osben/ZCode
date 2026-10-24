@@ -201,7 +201,9 @@ describe("i18n catalog parity", () => {
       ["uk-UA", ukUA],
     ] as const) {
       for (const key of keys) {
-        assert.ok(catalog[key] !== undefined, `${name}: ${key} is missing`);
+        const message = catalog[key];
+        assert.ok(message !== undefined, `${name}: ${key} is missing`);
+        assert.ok(message.trim() !== "" && message !== key, `${name}: ${key} is not localized`);
       }
     }
   });
