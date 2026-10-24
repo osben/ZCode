@@ -764,7 +764,8 @@ function synthesizeSubagentLifecycle(
       status,
     },
     turnId,
-    time?.end,
+    // A part persisted mid-run has a start but no end; never stop before the row started.
+    time?.end ?? time?.start,
   );
 }
 

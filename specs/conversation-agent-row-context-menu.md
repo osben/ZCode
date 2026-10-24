@@ -11,8 +11,13 @@ Status: approved 2026-10-24 (user decision). Owner: `packages/ui/src/v4/Conversa
 3. When the user has a text selection inside the row, the native menu is kept (Copy stays available).
 4. Left click is unchanged (opens the right-pane `subagent-session` tab). The token and duration numbers are unchanged (user decision: values are correct; no display change).
 
+5. Keyboard: Shift+F10 or the Context Menu key on a focused element inside an eligible row dispatches `contextmenu` and opens the same menu.
+6. The row is always wrapped in the menu trigger (ineligible rows pass `disabled`), so the row subtree never remounts when its child session id arrives mid-run.
+
 ## Acceptance
 
 1. Right-click a finished subagent row → menu with Trajectory and Copy session ID; Trajectory opens a `model-trajectory-v2:<childSessionId>` tab showing the child's calls.
 2. Copy session ID puts the child id on the clipboard.
 3. A remote workspace or mobile web row shows no custom menu; a row with a text selection shows the native menu.
+4. Shift+F10 or the Context Menu key with focus inside an eligible row opens the same menu.
+5. A running Agent row keeps its expansion state when its child session id arrives.

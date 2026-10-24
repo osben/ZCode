@@ -231,13 +231,14 @@ export function ConversationAgentToolCallRow({
       />
     </div>
   );
-  if (!menuEnabled || !childSessionId) return rowNode;
+  // Always wrapped: the child id arrives mid-run, and swapping element types would remount the row
+  // and drop its local state. Ineligible rows keep the native menu through `disabled`.
   return (
     <ContextMenu onOpenChange={setMenuOpen}>
-      <ContextMenuTrigger asChild disabled={selectionInRow}>
+      <ContextMenuTrigger asChild disabled={!menuEnabled || selectionInRow}>
         {rowNode}
       </ContextMenuTrigger>
-      {menuOpen ? (
+      {menuOpen && menuEnabled && childSessionId ? (
         <ContextMenuContent>
           <ContextMenuItem
             data-agent-row-menu-trajectory={childSessionId}

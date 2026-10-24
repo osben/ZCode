@@ -100,6 +100,23 @@ describe("Agent row context menu", () => {
     expect(screen.queryByText("taskList.viewModelTrajectoryV2")).toBeNull();
   });
 
+  it("keeps the row subtree mounted when the child session id arrives mid-run", () => {
+    const context = { workspacePath: "/w", sessionId: "parent" } as never;
+    const view = render(
+      createElement(ConversationAgentToolCallRow, { item: item(undefined), context }),
+    );
+    const before = screen.getByText("Agent row body");
+    view.rerender(createElement(ConversationAgentToolCallRow, { item: item("child-1"), context }));
+    expect(screen.getByText("Agent row body")).toBe(before);
+  });
+
+  it("opens the same menu for a keyboard contextmenu on a focused element inside the row", async () => {
+    renderRow();
+    // Shift+F10 / the Context Menu key dispatch contextmenu on the focused element.
+    fireEvent.contextMenu(screen.getByText("Agent row body"), { clientX: 0, clientY: 0 });
+    expect(await screen.findByText("taskList.viewModelTrajectoryV2")).toBeTruthy();
+  });
+
   it("keeps the native menu on phones", () => {
     viewport.mobile = true;
     renderRow();
