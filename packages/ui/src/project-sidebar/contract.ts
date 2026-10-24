@@ -85,6 +85,8 @@ export interface SidebarSubagentSessionTarget {
   parentSessionId: string;
   childSessionId: string;
   title: string;
+  /** Set by the sidebar navigation after it attached the remote parent workspace. */
+  remoteSessionId?: string;
 }
 /** 项目、时间线共用同一 Host 行集合；回调只负责现有导航，不维护组织状态。 */
 export interface ProjectSidebarProps {
@@ -100,7 +102,13 @@ export interface ProjectSidebarProps {
     targetRemoteSessionId?: string,
     expectedUnreadAt?: number,
     /** Child-session capability: a subagent opens read-only, a side chat writable (restricted commands). */
-    options?: { readOnly?: boolean; selectionSideChat?: boolean; parentTaskId?: string },
+    options?: {
+      readOnly?: boolean;
+      selectionSideChat?: boolean;
+      parentTaskId?: string;
+      /** Sidebar-internal: after the parent navigation (incl. remote attach), open this subagent. */
+      subagentTarget?: SidebarSubagentSessionTarget;
+    },
   ) => void;
   /**
    * Opens a subagent child in the right pane under its parent: the shell selects the parent, then

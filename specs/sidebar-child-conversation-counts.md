@@ -99,7 +99,10 @@ Owners and event order (side-pane state is render-scoped in `useAppPanels`; open
 
 ```text
 child row click
-  → ProjectSidebar onOpenSubagentSession(target)            (sidebar: intent only)
+  → ProjectSidebar navigation(parent, { subagentTarget })   (useProjectTaskNavigation: same stale
+                                                             checks and remote attach as a parent click)
+  → remote parent with a closed tab: attachRemoteProjectWorkspace → remoteSessionId
+  → props.onOpenSubagentSession(target + remoteSessionId)   (sidebar: intent only)
   → WorkspaceShellLayout: pendingSubagentOpen = target      (single owner of the pending intent)
                           handleSelectTaskInChat(parent)    (normal parent selection)
   → render: active workspace/task == parent
@@ -107,6 +110,7 @@ child row click
 ```
 
 - Idempotency: the tab id is `subagent-session:<workspaceKey>:<root>:<child>`; reopening activates the existing tab.
+- Remote parents: the sidebar never calls the shell's subagent open directly. It goes through the parent-task navigation, so a remote workspace whose tab is closed is attached (connection registry) before the shell selects the parent; a stale or superseded navigation drops the open.
 - Stale intent: the open is queued only after the parent selection was accepted (an unreachable workspace leaves nothing armed); any later `handleSelectTaskInChat` replaces or clears `pendingSubagentOpen`; it is consumed only when the active workspace key and task id equal the target parent. No timers.
 - Pruning: the parent pane keeps tabs whose child is in its transcript's `subagents.childSessionIds` (finished included); a child whose Agent row was removed by edit/retry is pruned — accepted.
 - Phones: unchanged (rows gated, §7).

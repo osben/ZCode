@@ -1411,11 +1411,13 @@ const WorkspaceShellLayoutContent = memo(function WorkspaceShellLayoutComponent(
   // useAppPanels open the subagent tab once the parent owns the side pane.
   const handleOpenSidebarSubagentSession = useCallback(
     (target: SidebarSubagentSessionTarget) => {
-      const remoteSessionId = workspaceTabs.find(
-        (tab) =>
-          tab.workspacePath === target.workspacePath &&
-          (!target.workspaceIdentity || tab.workspaceIdentity === target.workspaceIdentity),
-      )?.remoteSessionId;
+      const remoteSessionId =
+        target.remoteSessionId ??
+        workspaceTabs.find(
+          (tab) =>
+            tab.workspacePath === target.workspacePath &&
+            (!target.workspaceIdentity || tab.workspaceIdentity === target.workspaceIdentity),
+        )?.remoteSessionId;
       // A rejected selection (unreachable workspace) must not leave an armed open behind.
       const selected = handleSelectTaskInChat(
         target.workspacePath,

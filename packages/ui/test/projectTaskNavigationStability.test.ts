@@ -94,6 +94,52 @@ it("attaches a remote child session through its owning parent task", async () =>
   );
 });
 
+it("attaches a remote parent before handing a sidebar subagent open to the shell", async () => {
+  const select = vi.fn();
+  const openSubagent = vi.fn();
+  const parent = {
+    taskId: "remote-parent",
+    workspacePath: "/same",
+    workspaceIdentity: "remote:server:s:/same",
+    hostId: "remote:server:s",
+  };
+  const { result } = renderHook(() =>
+    useProjectTaskNavigation(
+      {
+        workspacePath: "/current",
+        onSelectTask: select,
+        onOpenSubagentSession: openSubagent,
+      } as unknown as ProjectSidebarProps,
+      { projects: [], tasks: [parent] } as never,
+      { readDirectory: async () => ({ hosts: [{ id: parent.hostId }] }) } as never,
+    ),
+  );
+  const subagentTarget = {
+    workspacePath: parent.workspacePath,
+    workspaceIdentity: parent.workspaceIdentity,
+    parentSessionId: parent.taskId,
+    childSessionId: "child",
+    title: "Explore",
+  };
+  attach.mockClear();
+  await act(async () => {
+    result.current(
+      parent.workspacePath,
+      parent.taskId,
+      parent.workspaceIdentity,
+      undefined,
+      undefined,
+      { subagentTarget },
+    );
+  });
+  expect(attach).toHaveBeenCalledWith(expect.objectContaining({ hostId: parent.hostId }));
+  expect(openSubagent).toHaveBeenCalledWith({
+    ...subagentTarget,
+    remoteSessionId: "remote-session",
+  });
+  expect(select).not.toHaveBeenCalled();
+});
+
 it.each(["task", "draft"])(
   "ignores a late directory response after another %s selection in the same workspace",
   async (kind) => {
