@@ -234,17 +234,6 @@ cd packages/services && node --import tsx --test test/botMessagesLocale.test.ts
 Additional: `pnpm knip` (must show no new unused exports; the D11 ones remain),
 `pnpm --dir apps/zcode-cli/packages/i18n typecheck`.
 
-## 8. Version skew
-
-| Combination                                                | Behavior                                                                  |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------- |
-| New desktop writes `uk-UA`, then rollback to a build without I0 | all settings wiped on the next write. This is why D6 exists        |
-| Rollback to a build with I0 but without I3                 | language → `zh-CN`/`system`, other settings preserved                     |
-| New desktop + web from the same host                       | assets come from the same process — versions match                        |
-| Remote workspace host of an older version                  | reads its own `setting.json`; `uk-UA` is not written there until the host updates |
-| External sites (share, coding plan, community, feedback)   | receive `toServiceLocale` → `en-US`                                       |
-| CLI before I8 with `LANG=uk_UA.UTF-8`                      | `en-US` (unchanged)                                                       |
-
 ## 7. Translation guide (uk-UA catalog)
 
 Source is `en-US.ts`; use `zh-CN.ts` to clarify meaning.
@@ -303,6 +292,17 @@ translation), run on every batch before merge.
    `i18nCatalogParity` checks over `uk-UA`: forbidden characters fail the test, length only reports.
 4. The review outcome goes into the PR description: strings checked, strings fixed (key, was → now),
    long-string list for visual QA.
+
+## 8. Version skew
+
+| Combination                                                | Behavior                                                                  |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------- |
+| New desktop writes `uk-UA`, then rollback to a build without I0 | all settings wiped on the next write. This is why D6 exists        |
+| Rollback to a build with I0 but without I3                 | language → `zh-CN`/`system`, other settings preserved                     |
+| New desktop + web from the same host                       | assets come from the same process — versions match                        |
+| Remote workspace host of an older version                  | reads its own `setting.json`; `uk-UA` is not written there until the host updates |
+| External sites (share, coding plan, community, feedback)   | receive `toServiceLocale` → `en-US`                                       |
+| CLI before I8 with `LANG=uk_UA.UTF-8`                      | `en-US` (unchanged)                                                       |
 
 ## 9. Acceptance scenarios
 
