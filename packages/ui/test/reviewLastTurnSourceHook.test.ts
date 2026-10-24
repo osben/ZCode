@@ -153,4 +153,42 @@ describe("useLastTurnGitDataset (ISSUE-056)", () => {
     await act(async () => resolveFirst(result("/repo/src/first.js")));
     expect(hook.current?.dataset.sections[0]?.changes[0]?.path).toBe("/repo/src/second.js");
   });
+
+  it("retries a stale-revision failure on the next revision instead of caching it", async () => {
+    harness.setSnapshot(snapshot(1, [header(1, 1)]));
+    harness.fileChanges.mockRejectedValueOnce(new Error("proto.staleRevision"));
+    harness.fileChanges.mockResolvedValueOnce(result("/repo/src/math.js"));
+
+    const { result: hook } = renderHook(() =>
+      useLastTurnGitDataset({ ...baseOptions, enabled: true }),
+    );
+    await waitFor(() => expect(harness.fileChanges).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(hook.current?.dataset.sections).toEqual([]);
+
+    // Same request key (same aggregate), newer authority revision: retry with that revision.
+    act(() => harness.setSnapshot(snapshot(2, [header(1, 1)])));
+    await waitFor(() => expect(hook.current?.dataset.sections).toHaveLength(1));
+    expect(harness.fileChanges).toHaveBeenCalledTimes(2);
+    expect(harness.fileChanges).toHaveBeenLastCalledWith(
+      expect.objectContaining({ baseRevision: 2 }),
+    );
+  });
+
+  it("retries any failure when the Last turn source is selected again", async () => {
+    harness.setSnapshot(snapshot(1, [header(1, 1)]));
+    harness.fileChanges.mockRejectedValueOnce(new Error("transport closed"));
+    harness.fileChanges.mockResolvedValueOnce(result("/repo/src/math.js"));
+
+    const { result: hook, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useLastTurnGitDataset({ ...baseOptions, enabled }),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(harness.fileChanges).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    rerender({ enabled: false });
+    rerender({ enabled: true });
+    await waitFor(() => expect(hook.current?.dataset.sections).toHaveLength(1));
+    expect(harness.fileChanges).toHaveBeenCalledTimes(2);
+  });
 });

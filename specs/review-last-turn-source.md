@@ -41,6 +41,9 @@ Review side pane (reader only)
 - Request key: `[workspaceKey, sessionId, logEpoch, rowId, entityId, header.state, header.fileChanges]`.
   A running turn refetches only when its aggregate summary changes, not on every revision.
   A response for an older key is dropped (stale-result rule).
+- Failures are never cached as loads. The gateway rejects a `baseRevision` that is not its current revision
+  (`proto.staleRevision`), so a stale failure retries once the projection reaches a newer revision; any other
+  failure retries the next time "Last turn" is selected.
 - Fetch only while the "Last turn" source is selected; otherwise the dataset stays empty and the count
   comes from the header aggregate.
 - New UI code lives in the managed module `packages/ui/src/review-last-turn` (`CONTRACT.md`).
@@ -48,6 +51,14 @@ Review side pane (reader only)
   (`web-remote-replayable`) gets them from snapshot + gap repair. Both go through the same pane provider
   and host query, keyed by `workspaceIdentity` / `remoteSessionId`.
 - If the provider is not ready (remote waiting, disconnected), the pane renders the plain GitPane.
+
+## Known limit
+
+The turn is searched only in the loaded snapshot tail (`snapshotTailWindowRows` = 60 rows, plus any history the
+chat already loaded). If the latest editing turn is older than that window, "Last turn" shows the empty state.
+Covering it needs either a bounded side read over `v4/conversation/rowsRange` exposed through the pane
+conversation context, or a host query for the latest changed turn. The store's `loadAllOlder` must not be used,
+since it rewrites the chat's shared row window. Pending a decision (PR #319 review).
 
 ## Acceptance
 

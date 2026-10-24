@@ -166,17 +166,33 @@ export function useLastTurnGitDataset(options: {
       : null;
   const [loaded, setLoaded] = useState<{
     key: string;
-    result: V4ConversationFileChangesResult | null;
+    result: V4ConversationFileChangesResult;
   } | null>(null);
+  // Failures are never cached as loads. The gateway rejects any baseRevision that is not its current
+  // revision (proto.staleRevision), and requestKey deliberately excludes revision, so a stale failure
+  // retries once the projection reaches a newer revision. Other failures retry on the next selection.
+  const [failure, setFailure] = useState<{ key: string; revision: number; stale: boolean } | null>(
+    null,
+  );
+  if (!enabled && failure) setFailure(null);
+  const retryReady =
+    failure !== null &&
+    failure.key === requestKey &&
+    failure.stale &&
+    snapshot !== null &&
+    snapshot.revision !== failure.revision;
 
   const loadedKeyRef = useRef<string | null>(null);
   loadedKeyRef.current = loaded?.key ?? null;
+  const failureRef = useRef(failure);
+  failureRef.current = failure;
 
   useEffect(() => {
     const current = snapshotRef.current;
     const header = headerRef.current;
     if (!enabled || !requestKey || !sessionId || !current || !header?.entityId) return;
     if (loadedKeyRef.current === requestKey) return;
+    if (failureRef.current?.key === requestKey && !retryReady) return;
     let disposed = false;
     void fileChanges({
       sessionId,
@@ -185,21 +201,27 @@ export function useLastTurnGitDataset(options: {
       baseLogEpoch: current.logEpoch,
     }).then(
       (result) => {
-        if (!disposed) setLoaded({ key: requestKey, result });
+        if (disposed) return;
+        setFailure(null);
+        setLoaded({ key: requestKey, result });
       },
       (error: unknown) => {
         if (disposed) return;
-        logger.warn("[useLastTurnGitDataset] failed to read last-turn file changes", {
-          error: error instanceof Error ? error.message : String(error),
-          rowId: header.rowId,
-        });
-        setLoaded({ key: requestKey, result: null });
+        const message = error instanceof Error ? error.message : String(error);
+        const stale = message.includes("proto.staleRevision");
+        if (!stale) {
+          logger.warn("[useLastTurnGitDataset] failed to read last-turn file changes", {
+            error: message,
+            rowId: header.rowId,
+          });
+        }
+        setFailure({ key: requestKey, revision: current.revision, stale });
       },
     );
     return () => {
       disposed = true;
     };
-  }, [enabled, fileChanges, requestKey, sessionId]);
+  }, [enabled, fileChanges, requestKey, retryReady, sessionId]);
 
   // Keyed on requestKey, not the header object: a running turn replaces its header on every
   // activeMs/token update, which must not re-render GitPane when nothing it shows changed.
