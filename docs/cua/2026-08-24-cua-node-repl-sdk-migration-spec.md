@@ -1,20 +1,18 @@
-# CUA：SDK + `node_repl` 迁移规格
+# CUA: SDK + `node_repl` Migration Spec
 
-## 状态
+## Status
 
-Completed
+Completed.
 
-## 目标
+## Target
 
-CUA 不再作为 30 个独立 MCP 工具注入模型。模型只调用统一的 `node_repl` MCP，
-在每次 JS Worker 中 bootstrap CUA SDK，再通过私有 bridge 执行现有 CUA contract。
+CUA is no longer injected into the model as 30 independent MCP tools. The model calls only the unified `node_repl` MCP, bootstraps the CUA SDK inside each JS Worker, and executes the existing CUA contract through a private bridge.
 
-## 模型与 SDK contract
+## Model and SDK contract
 
-模型可见的工具面固定为 node_repl 的三个工具：`js`、`js_add_node_module_dir`、
-`js_reset`。CUA 插件 manifest 不再声明 MCP server。
+The model-visible tool surface is fixed to node_repl's three tools: `js`, `js_add_node_module_dir`, `js_reset` (later reduced to `js` only; see `docs/cua-permission-broker/zcode-cua-permission-broker.md`). The CUA plugin manifest declares no MCP server.
 
-SDK 入口为：
+SDK entry:
 
 ```js
 const { join } = await import("node:path");
@@ -32,119 +30,50 @@ const app = await agent.computerUse.getApp("Notes");
 await app.getAXState();
 ```
 
-`agent.computerUse` 暴露的是**绑定对象 API**（`getApp` / `getState` / `listApps` /
-`requestAccess` / `stop`，加 Target 上的 `getAXState` / `click` / `setValue` / `elements` 等
-camelCase 方法）；原来那批 snake_case 工具收敛为逃逸口
-`agent.computerUse.computer.<tool>`，方法名由 SDK 的固定 union `COMPUTER_METHOD_NAMES` 冻结
-（现存 14 个，事实来源是 zcode-cua `src/tools/manifest.ts` 的 `TOOL_NAMES`；`open_application`
-等 16 个已在 producer 侧删除，启动/激活并入 `get_app_state` 的透明拉起）。参数 schema 与
-producer `.strict()` 的 zod 逐字一致，不再把内部 runtime 的 MCP envelope 暴露给
-Worker。私有 bridge 使用 `{ method, input, context }`，bridge 内部再适配当前 staging
-`ComputerUseRuntime.execute({ toolName, arguments, ... })`，因此 BrokerClient、Helper、
-frame freshness 和 action-state 语义仍由 staging runtime 统一实现。SDK 不能访问 broker
-socket、token 或 native module。
+- `agent.computerUse` exposes a bound-object API (`getApp` / `getState` / `listApps` / `requestAccess` / `stop`, plus camelCase methods on Target such as `getAXState` / `click` / `setValue` / `elements`). The former snake_case tools collapse into the escape hatch `agent.computerUse.computer.<tool>`, whose method names are frozen by the SDK's fixed union `COMPUTER_METHOD_NAMES` (14 today; the source of truth is `TOOL_NAMES` in zcode-cua `src/tools/manifest.ts`; 16 including `open_application` were removed on the producer side, and launch/activate folded into the transparent launch of `get_app_state`). Parameter schemas are verbatim identical to the producer's `.strict()` zod; the internal runtime's MCP envelope is no longer exposed to the Worker.
+- The private bridge uses `{ method, input, context }` and adapts internally to the current staging `ComputerUseRuntime.execute({ toolName, arguments, ... })`, so BrokerClient, Helper, frame freshness and action-state semantics remain implemented once by the staging runtime. The SDK cannot access the broker socket, token or native modules.
+- Every `mcp__node_repl__js` call creates a fresh Worker, so bootstrap is a precondition of one cell, not a session initialization: every cell using CUA must re-import and run `setupComputerUseRuntime({ globals: globalThis })` and then call `agent.computerUse.<method>()` in the same cell. Putting bootstrap in an earlier call and actions in a later call, or relying on a previous Worker's `agent`, `runtime` or import binding, is forbidden. The model-visible skill, on-demand docs and `js` tool description must use the same bootstrap template; a contract test locks this rule.
+- Browser Use and Computer Use can coexist in one Worker; both share `agent.documentation.get` and route their own doc names without overwriting each other's loader. What is shared is the `node_repl` channel, not the plugin runtime directory: CUA's `ZCODE_CUA_PLUGIN_ROOT` takes priority for native closures such as `sharp` and the CUA docs, while the Browser Use root serves only the browser bridge and host server. Screenshot, zoom and screenshot-bearing state reads do not depend on Browser Use's `node_modules`.
 
-每个 `mcp__node_repl__js` 调用都创建 fresh Worker，因此 bootstrap 是单次 cell 的前置契约，
-不是一次 session 初始化：每个使用 CUA 的 cell 必须先重新导入并执行
-`setupComputerUseRuntime({ globals: globalThis })`，再在同一个 cell 调用
-`agent.computerUse.<method>()`。禁止把 bootstrap 放在前一个调用、把动作放在后一个调用，
-也禁止依赖前一个 Worker 的 `agent`、`runtime` 或 import binding。模型可见的 skill、按需
-文档和 `js` tool description 必须使用同一条 bootstrap 模板；contract test 锁定这条规则。
+### Structured results and Worker output
 
-Browser Use 与 Computer Use 可以在同一个 Worker 共存；两者共享
-`agent.documentation.get`，分别路由自己的文档名，不互相覆盖文档 loader。
-共享的是 `node_repl` 通道，不是插件运行时目录：CUA 的 `ZCODE_CUA_PLUGIN_ROOT`
-优先提供 `sharp` 等 native closure 与 CUA 文档，Browser Use 的 root 只负责 browser
-bridge 和 host server。截图、缩放和带截图的状态读取不依赖 Browser Use 的 `node_modules`。
+- The CUA SDK does not expose the producer's legacy MCP `content` envelope to the Worker and creates no `content[0].text`, `text` or `message` mirrors with identical content. A single JSON-object text result (for example the window table of `list_windows`) is normalized into top-level SDK fields; ordinary successful actions return only stable receipt fields. Only non-JSON read results keep a single `text` field.
+- The Host structured-result sink carries only two kinds of information: (1) official CUA images and the adjacent `image_ref`, plus the `_meta` needed to issue them; (2) sideband that should not enter model text (app-display `_meta`, action-state, ...), in which case `content` must be empty.
+- Error results may keep the producer's error `content`. A successful plain-text action/metadata result must not pass through the structured sink again, or it would join the cell-end `nodeRepl.write(...)` into two output segments. `toMcpRunResult` keeps treating the structured image as the authoritative source, so a mistaken `console.log(JSON.stringify(result))` cannot break official CUA's `image`/`image_ref` adjacency.
+- Observation methods (`getAXState` / `getScreenshot` / `getAXStateAndScreenshot` / `getState` / `listApps`) display their results themselves, so the skill explicitly forbids passing their return values to `nodeRepl.write(...)` or `nodeRepl.emitImage(...)`: a second raster in one result violates the one-raster rule, the whole frame is removed, and no image is obtained. Pass `{ emit: false }` to get values without display. `getApp` only binds and does not display.
+- The broker-credential injection eligibility of the CUA bridge and the official CUA frame authority are two independent sets. `node_repl` can obtain the former to access the shared-host CUA runtime, but only a CUA MCP descriptor carrying real plugin authority can obtain the latter; generic node_repl/Browser Use results must not enter the exact-raster verification path because of it. For CUA SDK results inside the shared node_repl, the Host enables that protection dynamically only when the same result has the producer-issued `zcode.cua/official-frame-integrity-v1`, a legal adjacent `image_ref` and a raster; Browser Use results in the same server keep the ordinary media path.
 
-### 结构化结果与 Worker 输出
-
-CUA SDK 不向 Worker 暴露 producer 的 legacy MCP `content` envelope，也不创建内容相同的
-`content[0].text`、`text`、`message` 镜像。单个 JSON object 文本结果（例如
-`list_windows` 的窗口表）归一化为顶层 SDK 字段；普通成功动作只返回稳定 receipt
-字段。非 JSON 的读取结果才保留单一 `text` 字段。
-
-Host structured-result sink 只承载两类信息：
-
-1. official CUA image 与相邻的 `image_ref`，以及签发这些内容所需的 `_meta`；
-2. 不应进入模型正文的 app-display `_meta`、action-state 等 sideband，此时 `content` 必须为空。
-
-错误结果可以保留 producer 的错误 `content`。成功的纯文本 action/metadata 结果不得再次
-通过 structured sink 进入 tool result，否则它会与 cell 末尾的 `nodeRepl.write(...)`
-拼成两段输出。`toMcpRunResult` 继续把 structured image 视为权威来源，避免误写
-`console.log(JSON.stringify(result))` 时破坏 official CUA 的 `image`/`image_ref` 邻接关系。
-观察方法（`getAXState` / `getScreenshot` / `getAXStateAndScreenshot` / `getState` /
-`listApps`）**自己展示结果**，所以 skill 明确禁止再把它们的返回值传给 `nodeRepl.write(...)`
-或 `nodeRepl.emitImage(...)`：一个结果里出现第二张栅格会违反 one-raster 规则，整帧会被移除，
-最终一张图都拿不到。要拿值不展示就传 `{ emit: false }`。`getApp` 只绑定、不展示。
-
-CUA bridge 的 broker credential 注入资格与 official CUA frame authority 是两个独立集合。
-`node_repl` 可以拿到前者以访问 shared-host CUA runtime，但只有携带真实 plugin authority
-的 CUA MCP descriptor 才能拿到后者；通用 node_repl/Browser Use 结果不得因此进入 exact-raster
-校验路径。对于 shared node_repl 内的 CUA SDK 结果，Host 只在同一结果同时具备 producer
-签发的 `zcode.cua/official-frame-integrity-v1`、合法相邻 `image_ref` 和 raster 时动态启用
-该保护；同一 server 中的 Browser Use 结果继续走普通媒体路径。
-
-## 运行时边界
+## Runtime boundaries
 
 ```text
 node_repl MCP / shared host
-  └─ CuaRuntimePool（按 workspaceKey + sessionId + remoteSessionId 隔离）
+  └─ CuaRuntimePool (isolated by workspaceKey + sessionId + remoteSessionId)
        └─ AccessibilitySession + KillSwitch + InputHoldRegistry
             └─ BrokerClient → signed Computer Use Helper
 ```
 
-每次 `js` 调用的 Worker 都是短生命周期；CUA session、frame registry、action-state
-和 kill switch 由 shared host runtime 持有。`js_reset` 只重置 JS Worker，不销毁 CUA
-runtime。
+The Worker of each `js` call is short-lived; the CUA session, frame registry, action-state and kill switch are held by the shared host runtime. `js_reset` resets only the JS Worker and does not destroy the CUA runtime.
 
-所有 workspace identity 使用：
+All workspace identity uses `workspaceKey = workspaceIdentity?.trim() || workspacePath`. Remote `/remote` can only attach to an existing desktop shared host; it cannot create an independent Helper, independent Agent runtime or relay-side CUA state. Desktop stays `desktop-continuous`, mobile stays `web-remote-replayable`.
 
-```text
-workspaceKey = workspaceIdentity?.trim() || workspacePath
-```
+## Authorization and errors
 
-远程 `/remote` 只能 attachment 到已有 desktop shared host，不能创建独立 Helper、
-独立 Agent runtime 或 relay 侧 CUA 状态。桌面保持 `desktop-continuous`，手机保持
-`web-remote-replayable`。
+The outer `mcp__node_repl__js` does one high-risk approval; the inner layer reuses Helper/TCC, kill switch, frame freshness, possibly-sent and input-hold cleanup. `request_access` can still trigger the system permission flow, with no new per-action model-level approval.
 
-## 授权与错误
+Stale frame, Helper unavailable, permission denied, `possibly_sent` and lost attachment all fail closed and return structured results. A subagent request directly returns CUA unavailable.
 
-外层 `mcp__node_repl__js` 只做一次高风险审批；内层复用 Helper/TCC、kill switch、
-frame freshness、possibly-sent 和 input-hold cleanup。`request_access` 仍可触发
-系统权限流程，但不新增模型级逐动作审批。
+## Observation boundary after an action
 
-stale frame、Helper unavailable、权限拒绝、`possibly_sent`、attachment 丢失均必须
-fail closed，并以结构化结果返回。subagent 请求直接返回 CUA unavailable。
+- Action tools by default return only the action result and do not call `get_app_state` inside the action. After an element write the shared runtime still marks the old state as needing refresh and rejects reuse of the old `state_id` until refreshed, so turning off implicit observation does not loosen stale-state safety.
+- Every model-generated `node_repl` cell containing one or more UI actions must make exactly one explicit observation at the end (`app.getAXState()`), which displays the result itself; do not wrap it in `nodeRepl.write(state.text)` (see the output contract above). Action and observation sit in the same outer tool call to avoid a separate `mcp__node_repl__js`. One cell may batch closely related actions but observes once at the end.
+- Default action results carry no `state_sync_status`; only an explicit `return_state="compact"|"full"` attaches a post-state and its `state_sync_status`. The ordinary workflow keeps `return_state="none"` and lets the cell-end explicit `get_app_state` capture once, avoiding a `capture_app` inside each SDK action and a separate node_repl tool call after operating.
+- The Windows operation indicator and macOS PiP keep consuming the shared-host sideband events; for `mcp__node_repl__js` the sideband carries only the fixed `operationAction` resolved from the SDK call name, never JS source, arguments or credentials. Calling only Browser Use `agent.browsers.*` does not trigger the CUA indicator.
 
-## 动作后的观察边界
+> Superseded (2026-09-14): the `operationAction` convention depended on extracting action names from model source and broke entirely after `e2d7a9f2e9` reshaped the SDK surface, disabling the Windows indicator. The sideband now carries only the boolean fact `computerUse` (anchored on the bootstrap statement `setupComputerUseRuntime`). See `2026-09-14-windows-cua-indicator-repair-spec.md`. The conclusions "carries no source/arguments/credentials" and "Browser Use does not trigger the indicator" are unchanged.
 
-动作工具默认只返回动作结果，不在动作内部自动调用 `get_app_state`。元素发生写入后，
-shared runtime 仍会将旧状态标记为需要刷新，并在未完成刷新时拒绝复用旧 `state_id`；
-因此关闭隐式观察不会放宽 stale-state 安全校验。模型生成的每个含一个或多个 UI 动作的
-`node_repl` cell 必须在最后显式调用一次观察（`app.getAXState()`），由该方法自行展示结果 ——
-**不要**再包一层 `nodeRepl.write(state.text)`（见上一节的输出契约）；动作与观察位于同一个外层
-tool call，避免再发起一次独立 `mcp__node_repl__js`。同一 cell 可以批量执行紧密相关的动作，
-但末尾只观察一次。
+### 2026-08-25 log-driven hardening of the observation contract
 
-默认动作结果不携带 `state_sync_status`；显式要求 `return_state="compact"|"full"` 时，
-结果才会附带一次 post-state 及其 `state_sync_status`。普通 workflow 保持
-`return_state="none"`，由 cell 末尾的显式 `get_app_state` 统一捕获一次，避免每个 SDK 动作
-内部各自产生 `capture_app`，也避免操作后再发一个独立 node_repl tool call。
-
-Windows 操作指示器和 macOS PiP 继续消费 shared-host 的 sideband 事件；对于
-`mcp__node_repl__js`，sideband 只携带从 SDK 调用名解析出的固定 `operationAction`，不携带
-JS 源码、参数或凭据。仅调用 Browser Use 的 `agent.browsers.*` 不会触发 CUA 指示器。
-
-> **已被取代（2026-09-14）**：这里的 `operationAction` 约定依赖从模型源码里抽取动作名，
-> `e2d7a9f2e9` 重塑 SDK 面之后整体失配，Windows 指示器随之失效。现在 sideband 只携带
-> 布尔事实 `computerUse`（锚点是引导语句 `setupComputerUseRuntime`）。见
-> `2026-09-14-windows-cua-indicator-repair-spec.md`。"不携带源码/参数/凭据"与
-> "Browser Use 不触发指示器"两条结论不变。
-
-### 2026-08-25 日志驱动的观察契约加固
-
-`get_app_state` 的 `structuredContent` 是 Worker SDK 的唯一结构化事实来源，必须贯穿
+The `structuredContent` of `get_app_state` is the only structured fact source of the Worker SDK and must pass through:
 
 ```text
 Helper capture_app
@@ -154,36 +83,20 @@ Helper capture_app
   -> computer-use-client.mjs
 ```
 
-完整、`delta` 和 `no_change` 三种观察模式都必须返回同一套 AppState 字段（至少包括
-`state_id`、`elements`、`app`、`window`、`text`）；增量模式可以把 AX 树文本压缩为变化摘要，
-但不能省略结构化的可操作元素列表。因为每次 `js` 都是 fresh Worker，SDK 不能依赖上一次
-Worker 内存来补回缺失的 `state_id` 或元素。
+- The full, `delta` and `no_change` observation modes must all return the same AppState fields (at least `state_id`, `elements`, `app`, `window`, `text`). Incremental mode may compress AX tree text into a change summary but must not omit the structured actionable-element list. Because every `js` is a fresh Worker, the SDK cannot rely on the previous Worker's memory to restore a missing `state_id` or elements.
+- If the SDK receives a `get_app_state` response without a complete AppState, it must throw the stable `STRUCTURED_STATE_UNAVAILABLE` contract error (`ComputerUseError.code`) and stop further actions; the model must never get `undefined` and then guess or hard-code an old `state_id`. Observation results are emitted automatically by the SDK (`{ emit: false }` turns it off); the model no longer feeds AX text back by hand.
+- Observations that do not display their result must self-report: the bound observation of `getApp`, `getScreenshot` (no tree text) and `elements()` (structured array only) all pass `tree_shown_to_model: false`. Otherwise the producer's index-shift ledger records a tree the model never saw as seen, degrading verification to current-tree-versus-current-tree; these paths also clear the SDK-side `treeSeen` so the next `getAXState` forces a full tree and the model never gets a diff against an undisplayed tree.
+- The Worker view keeps only the SDK fields the model needs and removes legacy `content`, duplicate `message`, `_meta`, image base64 and internal frame authorization, so `console.log(JSON.stringify(result))` does not dump sensitive/large envelopes twice. The skill must make "explicit observation at the end of an action cell, writing out the AX text" the fixed template and forbid outputting action-result JSON as cell output.
 
-若 SDK 收到没有完整 AppState 的 `get_app_state` 响应，必须抛出稳定的
-`STRUCTURED_STATE_UNAVAILABLE` 契约错误（`ComputerUseError.code`）并停止后续动作，禁止让模型
-得到 `undefined` 后自行猜测或硬编码旧 `state_id`。观察结果由 SDK 自动 emit（`{ emit: false }`
-可关闭），模型不再手工回灌 AX 文本。
+## Migration and history
 
-不展示结果的观察必须自报：`getApp` 的绑定观察、`getScreenshot`（不给树文本）与 `elements()`
-（只回结构化数组）都要传 `tree_shown_to_model: false`，否则 producer 的索引位移台账会把模型
-没看过的树记成看过的，校验退化成当前树跟当前树自比；同时这几条路径要清掉 SDK 侧的 `treeSeen`，
-让下一次 `getAXState` 强制整树，避免模型收到相对未展示树的 diff。
+- Delete the independent CUA MCP server, old tool projection, aliases and new execution paths.
+- New calls use the generic node_repl renderer; screenshot/structured results keep the node_repl image path.
+- Historical transcripts keep read-only parsing of old `mcp__computer-use__*`; re-registering or executing them is forbidden.
 
-Worker 视图只保留模型需要的 SDK 字段，移除 legacy `content`、重复 `message`、`_meta`、
-图片 base64 和内部帧授权，避免 `console.log(JSON.stringify(result))` 时重复倾倒敏感/大体积
-envelope。skill 必须将“动作 cell 末尾显式观察并写出 AX 文本”作为固定模板，禁止把动作
-结果 JSON 作为 cell 输出。
+## Acceptance
 
-## 迁移与历史
-
-- 删除 CUA 独立 MCP server、旧工具投影、aliases 和新的执行路径。
-- 新调用统一使用通用 node_repl renderer；截图/结构化结果继续沿用 node_repl 图片路径。
-- 对历史 transcript 保留只读的旧 `mcp__computer-use__*` 解析，禁止重新注册或执行。
-
-## 验收
-
-1. 新会话工具列表不包含任何 `mcp__computer-use__*`，首轮只包含 node_repl 工具描述。
-2. 存活的 14 个 CUA contract 通过 SDK 调用保持原有 schema、状态校验和外部 oracle 覆盖；
-   已删除的工具名不得出现在任何模型可见文档里（contract test 钉死）。
-3. 同一 shared host 多次 Worker 调用不会创建独立 CUA MCP 进程，也不会线性增长 runtime 内存。
-4. Browser Use、桌面 continuous、手机 replayable、subagent 隔离和旧 transcript 回放均通过回归。
+1. A new session's tool list contains no `mcp__computer-use__*`; the first turn contains only the node_repl tool description.
+2. The 14 surviving CUA contracts keep their schema, state validation and external oracle coverage through SDK calls; removed tool names must not appear in any model-visible docs (pinned by a contract test).
+3. Repeated Worker calls in the same shared host create no independent CUA MCP process and do not grow runtime memory linearly.
+4. Browser Use, desktop continuous, mobile replayable, subagent isolation and old transcript replay all pass regression.

@@ -1,25 +1,16 @@
-# CUA 目标应用展示元数据 Spec
+# CUA Target App Display Metadata Spec
 
-## 目标
+## Target
 
-CUA 工具卡需要显示实际目标应用图标，但模型不需要、也不保证重复提交
-`bundle_id`。目标应用必须由 official CUA runtime 根据本次调用已经验证的
-`state_id`、`frame_id`、`app_ref` 或 Helper 响应解析，再通过宿主专用结果元数据投影给
-ZCode UI。
+The CUA tool card shows the actual target app icon, but the model does not need to (and is not guaranteed to) resubmit `bundle_id`. The official CUA runtime resolves the target app from the `state_id`, `frame_id`, `app_ref` or Helper response already verified for this call, then projects it to the ZCode UI through host-specific result metadata.
 
-该能力只改变展示投影，不改变 30 个 CUA 工具的名称、输入 schema、模型可见结果、
-权限、副作用、owner/stale 防护或 delivery-state 语义。
+Only the display projection changes: the names and input schemas of the 30 CUA tools, model-visible results, permissions, side effects, owner/stale protection and delivery-state semantics are unchanged.
 
-发布时 ZCode 的 catalog pin、official plugin wrapper、plugin manifest 和 official plugin
-definition 必须共同对齐到包含本能力的 `zcode-cua@0.5.8`。只更新依赖 SHA 而保留旧
-wrapper 版本会让开发态 bundle 可用、正式插件缓存路径却仍落在旧版本，版本一致性检查
-必须阻止这种半升级状态。
+At release the ZCode catalog pin, official plugin wrapper, plugin manifest and official plugin definition must all align to `zcode-cua@0.5.8`, which contains this capability. Updating only the dependency SHA while keeping the old wrapper version would leave the dev bundle working while the official plugin cache path still lands on the old version; the version consistency check must block such a half upgrade.
 
-`open_application(activate=false)` 对已运行应用使用 neutral shortcut 时，也必须通过
-Helper `application_info({pid})` 补全权威展示身份；不能因为动作未重新派发就回退到模型
-输入中的 bundle id。
+`open_application(activate=false)` on a running app using the neutral shortcut must also complete the authoritative display identity through the Helper `application_info({pid})`; it must not fall back to the bundle id in model input just because the action was not re-dispatched.
 
-## 权威解析与信任边界
+## Authoritative resolution and trust boundary
 
 ```text
 model input
@@ -39,17 +30,14 @@ official CUA authority gate in Core
 CuaToolResultDisplay.targetApp -> Desktop platform icon adapter
 ```
 
-- Renderer 和 Desktop main 禁止按 PID 反查应用。PID 属于执行 CUA 的 Helper/runtime，
-  在 remote/shared-host 场景下不能假设与 UI 进程属于同一主机或命名空间。
-- Core 只接受已经通过 official CUA authority 校验的 MCP 结果元数据。第三方同名 server
-  或 tool 不获得该展示能力。
-- 模型输入中的 `bundle_id` 只能作为 Helper 的待验证引用，不能直接成为展示身份。
-- 同一次调用首次取得的权威应用身份锁定展示上下文。后续 settle observation 只能补充
-  同一应用；身份冲突时不投影目标应用，UI 回退通用 CUA 图标。
+- The Renderer and Desktop main must not look up apps by PID. The PID belongs to the Helper/runtime that executes CUA and, in remote/shared-host scenarios, cannot be assumed to share a host or namespace with the UI process.
+- Core accepts only MCP result metadata that passed official CUA authority verification. A same-named third-party server or tool gets no display capability.
+- The `bundle_id` in model input is only a reference for the Helper to verify and never becomes the display identity directly.
+- The first authoritative app identity obtained in one call locks the display context. Later settle observations may only supplement the same app; on identity conflict no target app is projected and the UI falls back to the generic CUA icon.
 
-## Producer 元数据契约
+## Producer metadata contract
 
-`zcode-cua` 在统一 tool wrapper 完成后附加：
+After the unified tool wrapper completes, `zcode-cua` attaches:
 
 ```ts
 type CuaTargetAppDisplayMetaV1 = {
@@ -63,100 +51,69 @@ type CuaTargetAppDisplayMetaV1 = {
 };
 ```
 
-- `iconLocators` 按优先级排列，最多三个；身份冲突时可保留首个权威名称但必须清空
-  locator，使 UI 使用通用图标。
-- macOS 使用 Helper 捕获到的 bundle id。
-- Windows 普通应用使用 canonical exe 绝对路径。窗口存在有效 AUMID 时优先使用
-  AUMID；`ApplicationFrameHost.exe` 不得作为 AUMID 失败后的图标 locator。
-- Linux 本期不产生 locator。
-- 全局工具（access、list_apps 卡片、display、cursor、clipboard、wait、stop 和无
-  app owner 的全屏截图）不产生 target metadata。
-- app-scoped frame 经 `zoom` 生成子 frame 时，必须继承完整的应用身份（名称、PID、
-  bundle id、AUMID 和 icon locator），并在 `zoom` 本次结果及后续 coordinate 工具中
-  继续投影同一 target metadata；无 app owner 的全局 frame 及其子 frame 必须保持无目标。
-- `_meta` 不进入 provider-visible tool result；现有 frame-integrity metadata 必须保留。
+- `iconLocators` are in priority order, at most three. On identity conflict the first authoritative name may be kept but locators must be cleared so the UI uses the generic icon.
+- macOS uses the bundle id captured by the Helper.
+- Windows ordinary apps use the canonical absolute exe path. When the window has a valid AUMID, AUMID takes precedence; `ApplicationFrameHost.exe` must not be the icon locator after an AUMID failure.
+- Linux produces no locator in this version.
+- Global tools (access, list_apps cards, display, cursor, clipboard, wait, stop and full-screen screenshots with no app owner) produce no target metadata.
+- When an app-scoped frame generates a child frame via `zoom`, it inherits the full app identity (name, PID, bundle id, AUMID and icon locator) and keeps projecting the same target metadata in this `zoom` result and later coordinate tools; a global frame with no app owner and its child frames stay target-less.
+- `_meta` does not enter the provider-visible tool result; existing frame-integrity metadata is preserved.
 
-## Core、持久化与 UI
+## Core, persistence and UI
 
-- `CuaToolResultDisplayPayload` 保持 `schemaVersion: 1`，新增可选
-  `targetApp: { displayName?: string; iconLocators: ApplicationIconLocator[] }`。
-  旧记录无需迁移。
-- live `tool_call_result` 与 completed tool part metadata 使用同一份 bounded display，
-  resume/cold hydration 直接消费持久化字段，不解析模型可见文本。
-- Desktop continuous 与 Web Remote replayable 复用同一 V4 row；relay/main 不新增
-  task、queue、snapshot 或恢复状态。
-- CUA 卡片取图标顺序为 structured `display.targetApp`、旧 input、旧 JSON result、
-  通用 CUA 图标。不增加对普通 `app:` 文本行的解析。
-- `IPlatformService.getApplicationIcon` 接受结构化 locator request，同时保留 string
-  兼容入口。macOS 继续解析 bundle；Windows exe 使用 Electron `app.getFileIcon`，
-  AUMID 由 Desktop 通过 Windows Shell `AppsFolder` identity 读取。
-- Web、手机和 Linux 无原生 resolver 时返回 `null` 并显示通用图标。
+- `CuaToolResultDisplayPayload` keeps `schemaVersion: 1` and gains optional `targetApp: { displayName?: string; iconLocators: ApplicationIconLocator[] }`. Old records need no migration.
+- The live `tool_call_result` and completed tool part metadata use the same bounded display; resume/cold hydration consumes the persisted field directly and does not parse model-visible text.
+- Desktop continuous and Web Remote replayable reuse the same V4 row; relay/main add no task, queue, snapshot or recovery state.
+- The CUA card takes the icon in the order structured `display.targetApp`, old input, old JSON result, generic CUA icon. No parsing of ordinary `app:` text lines is added.
+- `IPlatformService.getApplicationIcon` accepts a structured locator request and keeps the string compatibility entry. macOS keeps resolving the bundle; Windows exe uses Electron `app.getFileIcon`; AUMID is read by Desktop through the Windows Shell `AppsFolder` identity.
+- Web, mobile and Linux without a native resolver return `null` and show the generic icon.
 
-## 失败与安全
+## Failure and safety
 
-- locator 需通过 runtime schema。Darwin bundle、Windows AUMID、Windows absolute exe
-  path 分别校验；Windows exe 只允许本机固定盘符绝对路径，UNC、设备路径、相对路径
-  及 legacy string 均不得进入 `app.getFileIcon`。非法、过长或非官方来源一律忽略。
-- 图标读取失败不改变 tool 成功状态，不向模型回灌错误；Desktop 只记录有界 warn，
-  同一 locator 使用缓存避免高频日志和重复 I/O。
-- 异步图标结果不得在组件卸载或 locator 已变化后回写。
+- Locators pass a runtime schema. Darwin bundle, Windows AUMID and Windows absolute exe path are validated separately; a Windows exe is allowed only as a local fixed-drive absolute path, and UNC, device paths, relative paths and legacy strings never reach `app.getFileIcon`. Invalid, over-long or non-official sources are ignored.
+- An icon read failure does not change the tool success state and feeds no error back to the model; Desktop logs only a bounded warn, and the same locator is cached to avoid high-frequency logging and repeated I/O.
+- An async icon result must not write back after the component unmounts or the locator changed.
 
-## 测试
+## Tests
 
-- Producer：PID-only、state_id、frame_id、return_state=none、冲突、并发隔离、全局工具、
-  app-scoped/global frame 的 zoom 身份继承、frame-integrity metadata 共存以及模型内容不变。
-- Core/contracts：official authority 投影、第三方拒绝、新旧 display schema、持久化/V4
-  round-trip。
-- UI/Desktop：structured metadata 优先级、legacy fallback、卸载安全、缓存、locator
-  校验、macOS bundle、Windows exe 和 AUMID adapter。
-- Windows 实机 smoke 覆盖普通 Win32 应用和 Calculator 商店应用；macOS smoke 覆盖
-  Calculator。无法在当前主机执行的 Windows native smoke 必须在提交说明中列出。
+- Producer: PID-only, state_id, frame_id, return_state=none, conflicts, concurrent isolation, global tools, zoom identity inheritance for app-scoped/global frames, coexistence with frame-integrity metadata, and unchanged model content.
+- Core/contracts: official authority projection, third-party rejection, old and new display schemas, persistence/V4 round trip.
+- UI/Desktop: structured metadata priority, legacy fallback, unmount safety, cache, locator validation, macOS bundle, Windows exe and AUMID adapter.
+- Windows real-device smoke covers an ordinary Win32 app and the Calculator store app; macOS smoke covers Calculator. Windows native smoke that cannot run on the current host must be listed in the submission notes.
 
-## 2026-09-17 修订：producer 换键 + node_repl 消费路径
+## 2026-09-17 revision: producer key change + node_repl consumption path
 
-本文上面描述的 `zcode.cua/target-app-display-v1` 已被 producer 在 2026-08-20
-（`zcode-cua@2796e8736 feat(cua): own application presentation metadata`）替换为
-`zcode.cua/app-associations-v1`：
+The `zcode.cua/target-app-display-v1` described above was replaced by the producer on 2026-08-20 (`zcode-cua@2796e8736 feat(cua): own application presentation metadata`) with `zcode.cua/app-associations-v1`:
 
 ```ts
 type CuaAppAssociationsV1 = {
   schemaVersion: 1;
-  /** 单一目标动作与观察（APP_ASSOCIATION_MODE_BY_TOOL 里声明 "primary" 的工具）。 */
+  /** Single-target action and observation (tools declared "primary" in APP_ASSOCIATION_MODE_BY_TOOL). */
   primary?: { appKey: string; displayName?: string; icon?: { mimeType: "image/png"; data: string } };
-  /** list_apps（声明 "items"）：按结果下标关联，携带最多 128 条。 */
-  items?: Array<{ resultIndex: number; application: /* 同 primary */ unknown }>;
+  /** list_apps (declared "items"): associated by result index, up to 128 entries. */
+  items?: Array<{ resultIndex: number; application: /* same as primary */ unknown }>;
 };
 ```
 
-- `appKey` 取代 `iconLocators`，形态为 `darwin:<bundleId>` / `windows-aumid:<aumid>` /
-  `windows-exe:<canonical path>` / `linux-exe:<path>`；locator 由消费侧按前缀派生。
-- producer 现在自己携带 Helper 抓到的 ≤32×32 PNG。**ZCode 不投影这个 `icon`**：会话协议
-  不承载 data URL 的约定不变，图标仍由 `IPlatformService.getApplicationIcon(locator)` 解析。
-- ZCode 侧从未实现过 `target-app-display-v1` 的消费；`CuaToolResultDisplay.targetApp`
-  与 `iconLocators` 自 2026-08-20 起就取不到值，工具卡图标一直靠 legacy
-  `readBundleId(input) ?? readCuaResultBundleId(result)` 兜底。该兜底只对历史会话保留。
+- `appKey` replaces `iconLocators`, in the forms `darwin:<bundleId>` / `windows-aumid:<aumid>` / `windows-exe:<canonical path>` / `linux-exe:<path>`; the consumer derives the locator by prefix.
+- The producer now carries the Helper-captured PNG of at most 32x32 itself. ZCode does not project this `icon`: the convention that the session protocol carries no data URL is unchanged, and the icon is still resolved through `IPlatformService.getApplicationIcon(locator)`.
+- ZCode never implemented consumption of `target-app-display-v1`; `CuaToolResultDisplay.targetApp` and `iconLocators` could not get values since 2026-08-20, and the tool card icon has relied on the legacy `readBundleId(input) ?? readCuaResultBundleId(result)` fallback, which is kept only for historical sessions.
 
-Computer Use 迁到 `node_repl` 之后，「official CUA authority gate in Core」这一跳不再成立
-（工具名恒为 `mcp__node_repl__js`，`readCuaToolName` 不匹配）。新链路把可信点前移到宿主：
+After Computer Use moved to `node_repl`, the hop "official CUA authority gate in Core" no longer holds (the tool name is always `mcp__node_repl__js` and `readCuaToolName` does not match). The new chain moves the trust point to the host:
 
 ```text
 producer _meta["zcode.cua/app-associations-v1"].primary
       |
-      v  broker 响应，沙箱不可见
-node-repl-host CUA bridge（唯一可信记录点）
+      v  broker response, invisible to the sandbox
+node-repl-host CUA bridge (the only trusted recording point)
       |
       v  NodeReplRunResult.cuaApp
-node_repl 结果 _meta["zcode/nodeReplCuaApp"]（宿主独占写入）
+node_repl result _meta["zcode/nodeReplCuaApp"] (written exclusively by the host)
       |
       v
 Core `node_repl_images.app` -> UI leading icon
 ```
 
-- 沙箱可写通道（`nodeRepl.setResponseMeta`、`nodeRepl.emitStructuredResult`）送达的
-  `zcode.cua/app-associations-v1` 一律丢弃：这两个 API 挂在模型可见 globals 上，否则模型
-  可以让工具卡声称自己操作了别的应用。处置方式与
-  `zcode/nodeReplBrowserScreenshotContentIndices` 一致。
-- `node_repl` 的 server 身份由宿主生成且最后合并（`resolveAppRuntimeConfig` 保留内建
-  identity），用户与第三方无法用同名配置劫持，因此 Core 侧按该 server 名消费宿主键是安全的。
-- 完整投影与展示合同见 [`cua-tool-app-identity-summary.md`](cua-tool-app-identity-summary.md)
-  的「node_repl 时代的身份来源」。
+- `zcode.cua/app-associations-v1` arriving through sandbox-writable channels (`nodeRepl.setResponseMeta`, `nodeRepl.emitStructuredResult`) is always dropped: these two APIs hang on model-visible globals, and otherwise the model could make the tool card claim it operated another app. The handling matches `zcode/nodeReplBrowserScreenshotContentIndices`.
+- The identity of the `node_repl` server is generated by the host and merged last (`resolveAppRuntimeConfig` keeps the built-in identity); users and third parties cannot hijack it with a same-named configuration, so Core consuming the host key by that server name is safe.
+- The full projection and display contract are in "node_repl-era identity source" of [`cua-tool-app-identity-summary.md`](cua-tool-app-identity-summary.md).
