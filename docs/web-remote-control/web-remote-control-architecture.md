@@ -147,6 +147,8 @@ create an MR; with `--skip-mr` it only builds and pushes the image.
 
 The external relay only handles the transport layer:
 
+> Current timing (Relay V2, `packages/shared/src/web-remote-relay/domain/heartbeatTiming.ts`): 5 s heartbeat with ±1 s jitter and a 15 s ACK watchdog, shared by desktop and web clients. The 10 s / 30 s figures below are the V1 values.
+
 1. The desktop connects to the external relay at the current endpoint as a `device`, passing `device_mid` via `X-Device-ID`.
 2. The mobile web connects to the same endpoint as a `terminal`; the browser passes the routing hint via the query `mid=<device_mid>`.
 3. The relay completes `device_register_init`, `auth_init`, `auth_challenge`, `auth_response`, `auth_ack`.

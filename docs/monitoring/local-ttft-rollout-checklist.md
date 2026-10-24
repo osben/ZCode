@@ -98,7 +98,7 @@ Thresholds before expanding the gray release; all must be verified on ARMS, docu
 - [ ] Series count: 10 Histograms + 2 Counters, 15 explicit buckets + `+Inf` + sum/count, theoretical limit about
       46,592 series per resource group. Also check the backend resource-label mapping and whether overflow series are
       produced.
-- [ ] Cardinality not capped: per-instrument limit 26 (as written here; the query contract says 256), provider/model
+- [ ] Cardinality not capped: per-instrument limit 256 (`localTtftExporter.ts`), provider/model
       at most 16 groups (`packages/desktop/src/main/localTtftExporter.ts:71`). Capped means lost discriminability and
       entry into `other`.
 - [ ] `zcode.local_ttft.dropped` is 0 online; non-zero means the queue or capacity boundary needs adjusting;

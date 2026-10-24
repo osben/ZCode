@@ -39,6 +39,9 @@ mobile browser /remote
 ```
 
 - The desktop connects to the relay as a `device`; the mobile web as a `terminal`.
+
+  > Current timing (Relay V2, `packages/shared/src/web-remote-relay/domain/heartbeatTiming.ts`): 5 s heartbeat with ±1 s jitter and a 15 s ACK watchdog, shared by desktop and web clients. The 10 s / 30 s figures here are the V1 values.
+
 - Both ends heartbeat with `pair_status_query` / `pair_status_ack` at about 10 s, jittered within 8-12 s; if
   the latest ACK is not updated for over 30 s, a local watchdog triggers reconnection.
 - All ZCode business messages are wrapped in the relay `data.payload`; the mobile UI restores

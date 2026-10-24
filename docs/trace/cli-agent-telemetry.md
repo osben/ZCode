@@ -314,7 +314,7 @@ Trace is queried in ARMS application monitoring / trace analysis, not in RUM das
 
 ```text
 serviceName : zcode-cli-agent
-and resources.zcode.telemetry.schema_version : 5
+and resources.zcode.telemetry.schema_version : 6
 ```
 
 ```text
@@ -374,7 +374,7 @@ Maintenance rules:
 | ------------------------------ | -------------------------------- | --------------------------------------------------------- |
 | CLI Telemetry producer version | `service.version`                | Injected at build from `apps/zcode-cli/package.json`      |
 | Desktop/product version        | `zcode.product.version`          | Product build metadata; no hardcoded version in docs/code |
-| Data contract version          | `zcode.telemetry.schema_version` | Contracts constant, currently 5                           |
+| Data contract version          | `zcode.telemetry.schema_version` | Contracts constant, currently 6                           |
 | Exact build identity           | `zcode.build.commit_id`          | Trusted CI/Git build metadata                             |
 
 Reports comparing release effects must keep Schema Version, CLI Version, Product Version and Build Commit
