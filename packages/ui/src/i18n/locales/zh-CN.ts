@@ -5396,6 +5396,17 @@ const zhCN: Record<string, string> = {
   "chat.statusPanel.todoWaitingFold": "待处理 {count} 项",
   "chat.statusPanel.terminals": "终端",
   "chat.statusPanel.agents": "智能体",
+  "chat.statusPanel.lastTurn": "上一轮",
+  "chat.statusPanel.lastTurnFiles.one": "{count} 个文件",
+  "chat.statusPanel.lastTurnFiles.other": "{count} 个文件",
+  "chat.statusPanel.lastTurnReverted": "已撤销",
+  "chat.statusPanel.lastTurnOpenReview": "在审查中打开",
+  "chat.statusPanel.lastTurnWriteCount": "写入 {count} 次",
+  "chat.statusPanel.context": "上下文",
+  "chat.statusPanel.contextUntilAutoCompact": "距自动压缩还剩 {tokens}",
+  "chat.statusPanel.contextCumulative.input": "输入 {tokens}",
+  "chat.statusPanel.contextCumulative.output": "输出 {tokens}",
+  "chat.statusPanel.contextCumulative.cacheRead": "缓存读取 {tokens}",
   // Workflows 分区：与 Terminals / Agents 并列的
   // 第三类实时活动。行内的状态词与步数复用 chat.toolCall.workflow.* 那一组，不另造词汇。
   "chat.statusPanel.workflows": "工作流",

@@ -52,6 +52,7 @@ import type {
   BackgroundWorkSummary,
   GoalState,
   PlanState,
+  SessionUsageState,
   ToolCallRow,
   WorkflowRunState,
 } from "@zcode/shared/zcode-protocol-v4";
@@ -111,6 +112,18 @@ import {
   ConversationStatusPanelPullRequests,
   PrimaryPullRequestTrailingIcon,
 } from "@/v4/ConversationStatusPanelPullRequests.js";
+import type { CodeViewerSource } from "@/lib/codeViewer.js";
+import {
+  buildContextSectionModel,
+  ContextSectionBody,
+  ContextSectionTrailing,
+  LastTurnSectionBody,
+  LastTurnSectionTrailing,
+  type ContextSectionModel,
+  type LastTurnFetchFileChanges,
+  type LastTurnSectionModel,
+  type LastTurnSectionScope,
+} from "@/status-panel-insights/index.js";
 
 export interface ConversationStatusPanelProps {
   workspacePath: string;
@@ -164,6 +177,14 @@ export interface ConversationStatusPanelProps {
   onOpenSubagentDirectory?: (request: OpenSubagentDirectorySideTabRequest) => void;
   onOpenWorkflowRun?: (target: ConversationStatusPanelWorkflowRunTarget) => void;
   onOpenWorkflowRunDirectory?: (request: OpenWorkflowRunDirectorySideTabRequest) => void;
+  /** This session's `snapshot.usage` (specs/status-panel-context-and-last-turn.md). */
+  usage?: SessionUsageState | null;
+  /** Latest turn with file changes, from `useLastTurnSectionModel` (stable until its facts change). */
+  lastTurn?: LastTurnSectionModel | null;
+  /** SessionPane's gated per-turn detail reader, the same value the chat rows receive. */
+  fetchFileChanges?: LastTurnFetchFileChanges;
+  onOpenCodeViewer?: (source: CodeViewerSource) => void;
+  workspaceRemoteSessionId?: string;
   className?: string;
 }
 
@@ -249,7 +270,9 @@ type StatusSectionKind =
   | "dream"
   | "terminal"
   | "workflow"
-  | "agent";
+  | "agent"
+  | "lastTurn"
+  | "context";
 
 const STATUS_SECTION_SCROLL_POLICY = {
   environment: null,
@@ -262,6 +285,8 @@ const STATUS_SECTION_SCROLL_POLICY = {
   // Workflow rows are fixed at 56px, and the list shows three and a half rows (196px); the partial row signals that more are below.
   workflow: "max-h-[12.25rem]",
   agent: "max-h-48",
+  lastTurn: "max-h-48",
+  context: "max-h-48",
 } as const satisfies Record<StatusSectionKind, string | null>;
 
 function StatusSectionHeader({
@@ -2055,6 +2080,65 @@ function StatusSummaryRow({
   );
 }
 
+function LastTurnStatusSection({
+  model,
+  scope,
+  fetchFileChanges,
+  onOpenCodeViewer,
+  onOpenGitReview,
+  separated,
+}: {
+  model: LastTurnSectionModel;
+  scope: LastTurnSectionScope;
+  fetchFileChanges?: LastTurnFetchFileChanges;
+  onOpenCodeViewer?: (source: CodeViewerSource) => void;
+  onOpenGitReview?: (sourceId?: GitChangeSourceId) => void;
+  separated: boolean;
+}) {
+  const { intl } = useZCodeIntl();
+  const handleOpenReview = useCallback(() => {
+    onOpenGitReview?.("last-turn");
+  }, [onOpenGitReview]);
+  return (
+    <StatusSection
+      section="lastTurn"
+      separated={separated}
+      defaultOpen={false}
+      title={intl.formatMessage({ id: "chat.statusPanel.lastTurn" })}
+      trailing={() => <LastTurnSectionTrailing model={model} />}
+    >
+      <LastTurnSectionBody
+        model={model}
+        scope={scope}
+        fetchFileChanges={fetchFileChanges}
+        onOpenCodeViewer={onOpenCodeViewer}
+        onOpenReview={onOpenGitReview ? handleOpenReview : undefined}
+      />
+    </StatusSection>
+  );
+}
+
+function ContextStatusSection({
+  model,
+  separated,
+}: {
+  model: ContextSectionModel;
+  separated: boolean;
+}) {
+  const { intl } = useZCodeIntl();
+  return (
+    <StatusSection
+      section="context"
+      separated={separated}
+      defaultOpen={false}
+      title={intl.formatMessage({ id: "chat.statusPanel.context" })}
+      trailing={() => <ContextSectionTrailing model={model} />}
+    >
+      <ContextSectionBody model={model} />
+    </StatusSection>
+  );
+}
+
 function ConversationStatusPanelImpl({
   workspacePath,
   workspaceIdentity,
@@ -2098,6 +2182,11 @@ function ConversationStatusPanelImpl({
   onOpenSubagentDirectory,
   onOpenWorkflowRun,
   onOpenWorkflowRunDirectory,
+  usage,
+  lastTurn,
+  fetchFileChanges,
+  onOpenCodeViewer,
+  workspaceRemoteSessionId,
   className,
 }: ConversationStatusPanelProps) {
   const isOfficeMode = useIsOfficeMode();
@@ -2163,6 +2252,25 @@ function ConversationStatusPanelImpl({
   // top-level section in both the visual and DOM hierarchies. Agent activity and its ended directory belong
   // together, so keep both under the Agent collapsible group.
   const canRenderAgents = model.runningSubagentWorks.length > 0 || canRenderEndedAgents;
+  // Context and Last turn never open the panel on their own: they are not part of the hasContent gate below.
+  const contextModel = useMemo(() => buildContextSectionModel(usage), [usage]);
+  const lastTurnSessionId = parentSessionId;
+  const lastTurnScope = useMemo<LastTurnSectionScope | null>(
+    () =>
+      lastTurnSessionId
+        ? {
+            sessionId: lastTurnSessionId,
+            workspacePath,
+            ...(workspaceIdentity ? { workspaceIdentity } : {}),
+            ...(workspaceRemoteSessionId ? { workspaceRemoteSessionId } : {}),
+          }
+        : null,
+    [lastTurnSessionId, workspaceIdentity, workspacePath, workspaceRemoteSessionId],
+  );
+  // Office mode hides file-level Git surfaces, the same as Git Tools.
+  const canRenderLastTurn = Boolean(!isOfficeMode && lastTurn && lastTurnScope);
+  const canRenderContext = Boolean(contextModel);
+  const canRenderGitGroup = canRenderGit || canRenderLastTurn;
   const handlePanelModeChange = useCallback(
     (value: string) => {
       if (value === "auto") {
@@ -2321,10 +2429,23 @@ function ConversationStatusPanelImpl({
                 useVerticalFloatingPanels={useVerticalFloatingPanels}
               />
             ) : null}
+            {canRenderLastTurn && lastTurn && lastTurnScope ? (
+              <LastTurnStatusSection
+                // Keyed by session so the renderer-local open state resets on session switch; the prefix keeps
+                // the sibling Context key distinct, since duplicate sibling keys drop the open state on re-render.
+                key={`last-turn:${lastTurnScope.sessionId}`}
+                model={lastTurn}
+                scope={lastTurnScope}
+                fetchFileChanges={fetchFileChanges}
+                onOpenCodeViewer={onOpenCodeViewer}
+                onOpenGitReview={onOpenGitReview}
+                separated={canRenderGit}
+              />
+            ) : null}
             {canRenderGoal ? (
               <GoalStatusSection
                 model={model}
-                separated={canRenderGit}
+                separated={canRenderGitGroup}
                 onPauseGoal={onPauseGoal}
                 onResumeGoal={onResumeGoal}
               />
@@ -2334,21 +2455,23 @@ function ConversationStatusPanelImpl({
                 model={model}
                 parentSessionId={parentSessionId}
                 onOpenPlanDetail={onOpenPlanDetail}
-                separated={canRenderGit || canRenderGoal}
+                separated={canRenderGitGroup || canRenderGoal}
               />
             ) : null}
             {canRenderPlan ? (
               <PlanStatusSection
                 model={model}
                 popoverSide={useVerticalFloatingPanels ? "bottom" : "left"}
-                separated={canRenderGit || canRenderGoal || canRenderSessionPlans}
+                separated={canRenderGitGroup || canRenderGoal || canRenderSessionPlans}
               />
             ) : null}
             {model.latestDreamWork ? (
               <DreamStatusSection
                 work={model.latestDreamWork}
                 onCancel={onCancelBackgroundWork}
-                separated={canRenderGit || canRenderGoal || canRenderSessionPlans || canRenderPlan}
+                separated={
+                  canRenderGitGroup || canRenderGoal || canRenderSessionPlans || canRenderPlan
+                }
               />
             ) : null}
             {canRenderTerminals ? (
@@ -2360,7 +2483,7 @@ function ConversationStatusPanelImpl({
                 open={terminalSectionOpen}
                 onOpenChange={onTerminalSectionOpenChange}
                 separated={
-                  canRenderGit ||
+                  canRenderGitGroup ||
                   canRenderGoal ||
                   canRenderSessionPlans ||
                   canRenderPlan ||
@@ -2377,7 +2500,7 @@ function ConversationStatusPanelImpl({
                 open={workflowSectionOpen}
                 onOpenChange={onWorkflowSectionOpenChange}
                 separated={
-                  canRenderGit ||
+                  canRenderGitGroup ||
                   canRenderGoal ||
                   canRenderSessionPlans ||
                   canRenderPlan ||
@@ -2399,7 +2522,7 @@ function ConversationStatusPanelImpl({
                 open={agentSectionOpen}
                 onOpenChange={onAgentSectionOpenChange}
                 separated={
-                  canRenderGit ||
+                  canRenderGitGroup ||
                   canRenderGoal ||
                   canRenderSessionPlans ||
                   canRenderPlan ||
@@ -2413,6 +2536,22 @@ function ConversationStatusPanelImpl({
                 onOpenSubagentDirectory={onOpenSubagentDirectory}
                 workspaceIdentity={workspaceIdentity}
                 workspacePath={workspacePath}
+              />
+            ) : null}
+            {canRenderContext && contextModel ? (
+              <ContextStatusSection
+                key={`context:${parentSessionId ?? ""}`}
+                model={contextModel}
+                separated={
+                  canRenderGitGroup ||
+                  canRenderGoal ||
+                  canRenderSessionPlans ||
+                  canRenderPlan ||
+                  canRenderDream ||
+                  canRenderTerminals ||
+                  canRenderWorkflows ||
+                  canRenderAgents
+                }
               />
             ) : null}
           </div>

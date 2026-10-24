@@ -246,6 +246,7 @@ import { ConversationQuotaBanner } from "@/v4/ConversationQuotaBanner.js";
 import { PendingCommandRecoveryBanner } from "@/v4/PendingCommandRecoveryBanner.js";
 import { WorkspaceHookPendingBanner } from "@/v4/WorkspaceHookPendingBanner.js";
 import { ConversationStatusPanel } from "@/v4/ConversationStatusPanel.js";
+import { useLastTurnSectionModel } from "@/status-panel-insights/index.js";
 import { SessionSubscriptionErrorPanel } from "@/v4/SessionSubscriptionErrorPanel.js";
 import { ConversationTimeline } from "@/v4/ConversationTimeline.js";
 import type { ConversationLatestTurnSummary } from "@/v4/conversationTimelineLiveTail.js";
@@ -5759,6 +5760,9 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
+  // Status panel Last turn (specs/status-panel-context-and-last-turn.md): read from the session-matched snapshot so a
+  // session switch never shows the previous session's turn; stable until the turn's facts change.
+  const statusPanelLastTurn = useLastTurnSectionModel(timelineSnapshot?.rows.window);
   const shareHandoverContext =
     snapshot?.sharedContextImport && "contextId" in snapshot.sharedContextImport
       ? snapshot.sharedContextImport
@@ -6951,6 +6955,11 @@ export function SessionPane({
                   ? handleOpenWorkflowRunDirectoryFromPanel
                   : undefined
               }
+              usage={timelineSnapshot?.usage ?? null}
+              lastTurn={statusPanelLastTurn}
+              fetchFileChanges={runtimeReady ? handleFetchFileChanges : undefined}
+              onOpenCodeViewer={onOpenCodeViewer}
+              workspaceRemoteSessionId={remoteSessionId ?? undefined}
             />
           ) : null}
 

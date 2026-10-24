@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "caseName": "conversation-session-status-panel-last-turn",
+  "spec": "./test/e2e/conversation-session/conversation-session-status-panel-last-turn.test.ts",
+  "fixtures": [
+    {
+      "id": "status-panel-last-turn-title",
+      "description": "Status panel Last turn case-local title response.",
+      "metadata": {
+        "kind": "common",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "The title does not affect the status panel; the marker only isolates the title request."
+      },
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["Generate a concise title", "E2E_STATUS_PANEL_LAST_TURN"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "status-panel-last-turn-title",
+          "inputTokens": 64,
+          "outputTokens": 8,
+          "text": "{\"title\":\"Status Panel Last Turn E2E\"}"
+        }
+      }
+    },
+    {
+      "id": "status-panel-last-turn-todo",
+      "description": "TodoWrite gives the session a Progress section, so the status panel mounts without depending on Git.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "The E2E workspace is not a Git repository; a todo is the deterministic content that mounts the panel."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "lastUserMessageIncludes": ["E2E_STATUS_PANEL_LAST_TURN"],
+        "bodyExcludes": ["Generate a concise title", "toolu_status_panel_last_turn_todo"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_status_panel_last_turn_todo",
+          "name": "TodoWrite",
+          "input": {
+            "todos": [
+              {
+                "content": "E2E_STATUS_PANEL_LAST_TURN_TODO",
+                "status": "in_progress",
+                "priority": "low"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "status-panel-last-turn-write",
+      "description": "Single Write creates a two-line file so the latest editing turn has +2 -0.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "A real provider does not reliably choose a single Write; fixed content makes +2/-0 exact."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": ["E2E_STATUS_PANEL_LAST_TURN", "toolu_status_panel_last_turn_todo"],
+        "bodyExcludes": ["Generate a concise title", "toolu_status_panel_last_turn_write"]
+      },
+      "response": {
+        "statusCode": 200,
+        "toolUse": {
+          "id": "toolu_status_panel_last_turn_write",
+          "messageId": "msg_status_panel_last_turn_write",
+          "name": "Write",
+          "input": {
+            "file_path": "status-panel-last-turn-e2e/notes.txt",
+            "content": "last-turn-line-1\nlast-turn-line-2\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "status-panel-last-turn-final",
+      "description": "Ends the turn after the Write succeeds so the panel reads a settled turn.",
+      "metadata": {
+        "kind": "main",
+        "timingPolicy": "fast-text",
+        "source": "synthetic",
+        "syntheticReason": "A fixed final marker keeps model text from affecting the panel assertions."
+      },
+      "maxMatches": 1,
+      "match": {
+        "method": "POST",
+        "pathIncludes": "/messages",
+        "bodyIncludes": [
+          "E2E_STATUS_PANEL_LAST_TURN",
+          "toolu_status_panel_last_turn_write",
+          "File created successfully at: status-panel-last-turn-e2e/notes.txt"
+        ],
+        "bodyExcludes": ["Generate a concise title"]
+      },
+      "response": {
+        "statusCode": 200,
+        "text": {
+          "id": "status-panel-last-turn-final",
+          "inputTokens": 96,
+          "outputTokens": 8,
+          "text": "E2E_STATUS_PANEL_LAST_TURN_OK"
+        }
+      }
+    }
+  ]
+}
