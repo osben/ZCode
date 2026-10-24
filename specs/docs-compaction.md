@@ -51,3 +51,16 @@ Each batch passes the series verifier (links, anchors, references from non-markd
 CJK outside allowed literals, byte delta), `pnpm fmt` on touched files, `pnpm lint` and
 `pnpm typecheck`. Reviewers spot-check that every acceptance scenario and owner/interface section in
 the old version still has a counterpart in the new one.
+
+## Upstream sync
+
+After this series, in-scope docs are fork-owned English and no longer track upstream text.
+
+- On a sync conflict in an in-scope doc, keep the fork's English version and port only the meaning
+  of upstream's change (new rules, changed behavior), in English and in the compact style above.
+- A doc this series deleted stays deleted. If upstream modifies it, resolve the modify/delete
+  conflict by keeping the deletion, unless the change adds a rule that applies to current code; then
+  add that rule to the owning live spec.
+- A new upstream doc lands as is and is translated and compacted in a follow-up, not in the sync PR.
+- Out-of-scope markdown (runtime-shipped prompts and skills, test-parsed catalogs, vendored docs)
+  keeps following upstream as before.
