@@ -69,7 +69,7 @@ variant because nothing is visible when the model doesn't think to search.
   budget, background prefetch with read-state sync.
 - Dream consolidation handler (`project-memory-dream.ts`): transcript-driven pruning of
   memory + index (target <200 lines / ~25KB), 50-turn cap, lock file. Not wired into the
-  product path ("当前产品链路不自动触发 Dream").
+  product path ("the current product path does not trigger Dream automatically").
 - Background Extraction: fires after successful main turns; this is where memories come from.
 
 Recall-only caveats found in code (these rule out a plain branch flip):

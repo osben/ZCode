@@ -1,30 +1,39 @@
 # Turn Steering
 
-## 当前实现与历史章节
+## Current implementation and historical sections
 
-本文的早期队列章节记录首版背景；当前 admission、持久队列、guide/queue 和跨端恢复事实以仓库根 `docs/web-remote-control-task-command-queue.md` 为准。下面的来源呈现合同覆盖早期“始终注入裸 user 文本”的描述，不改变队列和产品 turn。
+The early queue sections of this document record the first-version background. Current admission, the
+persistent queue, guide/queue and cross-client recovery facts are defined by the repository root
+`docs/web-remote-control-task-command-queue.md`. The source presentation contract below overrides the
+early description "always inject bare user text"; it does not change the queue or the product turn.
 
-## 文档定位
+## Scope
 
-本文定义 ZCode 在一次 turn 正在运行时继续接收用户输入的能力。该能力采用 turn steer 语义：输入先进入 active turn 的 pending queue，并且只在 provider 协议安全的下一次 model request 边界注入上下文。
+Defines how ZCode accepts further user input while a turn is running. It uses turn steer semantics:
+input first enters the pending queue of the active turn and is injected into the context only at the
+next model request boundary that is safe for the provider protocol.
 
-## 目标
+## Goals
 
-- 允许 TUI、GUI、ZCode app-server transport 或其他 server 外层在 agent 输出、执行工具或等待权限时继续提交用户输入。
-- 让 core/server 判断输入应开启新 turn、进入 active turn queue，还是被拒绝。
-- 用 session event 把 queued、drained、rejected 状态通知 UI，避免 UI 自己推断队列事实。
-- 保证模型可见消息序列不会把 user input 插在 assistant tool calls 和对应 tool results 中间。
-- 队列只保存在当前进程的 active turn 内存状态中；session resume 不恢复 queued-but-not-drained input。
+- Let the TUI, GUI, ZCode app-server transport or another outer server keep submitting user input while
+  the agent is producing output, executing tools or waiting for permission.
+- Let core/server decide whether input starts a new turn, enters the active turn queue, or is rejected.
+- Report queued, drained and rejected states to the UI through session events, so the UI does not infer
+  queue facts itself.
+- Guarantee the model-visible message sequence never places user input between assistant tool calls and
+  their tool results.
+- The queue lives only in the in-memory state of the active turn of the current process; session resume
+  does not restore queued-but-not-drained input.
 
-## 非目标
+## Non-goals
 
-- 第一版不实现 subagent mailbox、agent team message delivery 或 stopped subagent resume。
-- 第一版不支持 compact、rewind 等特殊 turn 被 steering。
-- 第一版不实现 UI 中 queued message 的复杂编辑、撤销或重排。
+- The first version has no subagent mailbox, agent team message delivery or stopped-subagent resume.
+- The first version does not support steering special turns such as compact and rewind.
+- The first version has no complex editing, withdrawal or reordering of queued messages in the UI.
 
-## 核心语义
+## Core semantics
 
-外层提交输入时可以使用统一入口：
+The outer layer submits input through one entry:
 
 ```ts
 type InputDelivery = "auto" | "start_turn" | "steer_active_turn";
@@ -36,20 +45,21 @@ interface SendInputRequest {
 }
 ```
 
-`delivery: "auto"` 的路由由 server/core 判断：
+Routing of `delivery: "auto"` is decided by server/core:
 
-| runtime 状态 | 行为 |
+| Runtime state | Behavior |
 | --- | --- |
-| 没有 active turn | 开启新 turn |
-| 有 active regular turn | 调用 `steerTurn`，输入进入 pending queue |
-| active turn 不可 steering | 返回结构化拒绝 |
-| `expectedTurnId` 与 active turn 不匹配 | 返回结构化拒绝 |
+| No active turn | Start a new turn |
+| Active regular turn | Call `steerTurn`; the input enters the pending queue |
+| Active turn is not steerable | Return a structured rejection |
+| `expectedTurnId` does not match the active turn | Return a structured rejection |
 
-UI 可以根据本地状态选择调用入口，但不能把 queued 当成本地事实。事实必须来自 `TurnSteerQueued` 事件或 `sendInput` 返回值。
+The UI may choose the call entry from local state but must not treat queued as a local fact. The fact
+must come from the `TurnSteerQueued` event or the `sendInput` return value.
 
 ## Runtime API
 
-Core 暴露明确能力：
+Core exposes an explicit capability:
 
 ```ts
 interface TurnSteerInput {
@@ -73,7 +83,7 @@ type TurnSteerResult =
     };
 ```
 
-拒绝原因是稳定 contract：
+Reject reasons are a stable contract:
 
 ```ts
 type TurnSteerRejectReason =
@@ -84,18 +94,18 @@ type TurnSteerRejectReason =
   | "input_too_large";
 ```
 
-## Session Events
+## Session events
 
-Core 必须发出以下事件：
+Core must emit these events:
 
-| event | 时机 | UI 语义 |
+| Event | When | UI semantics |
 | --- | --- | --- |
-| `turn_steer_queued` | 输入被接受并进入 active turn pending queue | 把用户消息标记为 queued |
-| `turn_steer_drained` | pending input 已注入 `MessageHistory`，下一次 model request 会看到 | 把 queued 标记移除或改为 sent |
-| `turn_steer_rejected` | 输入未被接受 | 恢复输入或显示拒绝原因 |
-| `turn_steer_discarded` | pending input 因 turn 失败、取消或恢复策略被丢弃 | 从队列投影移除并显示丢弃原因 |
+| `turn_steer_queued` | Input accepted into the active turn pending queue | Mark the user message queued |
+| `turn_steer_drained` | Pending input injected into `MessageHistory`; the next model request will see it | Remove the queued mark or change it to sent |
+| `turn_steer_rejected` | Input not accepted | Restore the input or show the rejection reason |
+| `turn_steer_discarded` | Pending input dropped because the turn failed, was cancelled or by recovery policy | Remove from the queue projection and show the discard reason |
 
-Payload：
+Payloads:
 
 ```ts
 interface TurnSteerQueuedPayload {
@@ -129,85 +139,114 @@ interface TurnSteerDiscardedPayload {
 }
 ```
 
-## Structured Logs
+## Structured logs
 
-除了 session event 作为事实来源，runtime 还必须写入只含安全摘要的 structured log，便于判断一次中途输入到底是被 steer 到当前 turn，还是退化成了新 turn：
+Besides the session events as fact source, the runtime must write structured logs containing only safe
+summaries, to tell whether a mid-turn input was steered into the current turn or degraded into a new turn:
 
-| event | level | 用途 |
+| Event | Level | Purpose |
 | --- | --- | --- |
-| `turn.steer.queued` | debug | 输入进入 active turn pending queue，包含 `pendingInputId`、`targetTurnId`、`queueLength`、`expectedTurnId`、`inputPreview` 和 `inputSize` |
-| `turn.steer.rejected` | debug | 输入未进入 pending queue，包含稳定 `reason`、`activeTurnId`、`expectedTurnId`、active turn steerable 状态和队列长度 |
-| `turn.steer.drained` | debug | pending input 已注入 `MessageHistory`，包含 `pendingInputIds`、`injectedMessageIds`、`inputPreviews`、`inputSizes` 和排队等待时间 |
-| `turn.steer.discarded` | debug | pending input 因取消、失败或 resume 被丢弃，包含 `pendingInputIds`、`targetTurnId` 和 `reason` |
-| `model.request.steering_context` | debug | 每次 active turn 的 model request 前记录 provider-visible messages 的安全摘要，包含 `messageCount`、尾部 role 序列、最近 user message 距离尾部的位置、drained input 是否已经出现在尾部 |
+| `turn.steer.queued` | debug | Input entered the active turn pending queue; contains `pendingInputId`, `targetTurnId`, `queueLength`, `expectedTurnId`, `inputPreview` and `inputSize` |
+| `turn.steer.rejected` | debug | Input did not enter the pending queue; contains the stable `reason`, `activeTurnId`, `expectedTurnId`, the steerable state of the active turn and the queue length |
+| `turn.steer.drained` | debug | Pending input injected into `MessageHistory`; contains `pendingInputIds`, `injectedMessageIds`, `inputPreviews`, `inputSizes` and the queue wait time |
+| `turn.steer.discarded` | debug | Pending input dropped by cancel, failure or resume; contains `pendingInputIds`, `targetTurnId` and `reason` |
+| `model.request.steering_context` | debug | Before each model request of an active turn, a safe summary of the provider-visible messages: `messageCount`, the tail role sequence, the position of the latest user message from the tail, and whether the drained input already appears at the tail |
 
-日志不得写完整 provider-visible messages、完整 user input 或完整 tool result。允许写入经过空白归一化和长度截断的 `inputPreview`，以及 role、content byte length、tool call count、tool name 等低敏诊断字段。排查“steer 后模型忘了原任务”时，应先按同一 `traceId` 查询：
+Logs must not contain complete provider-visible messages, complete user input or complete tool results.
+An `inputPreview` with whitespace normalized and length truncated is allowed, as are low-sensitivity
+diagnostic fields such as role, content byte length, tool call count and tool name. To investigate "the
+model forgot the original task after a steer", query by the same `traceId`:
 
-1. 是否出现 `turn.steer.queued` 和后续 `turn.steer.drained`。
-2. 如果出现 `turn.steer.rejected`，根据 `reason` 判断是否是 active turn 缺失、`expectedTurnId` 过期或 turn 不可 steer。
-3. 在 drain 后的 `model.request.steering_context` 中，确认 `drainedInputVisibleAtTail` 为 `true`，并检查尾部 role 序列是否符合 `assistant/tool/user` 或 `assistant/user`。
-4. 如果没有任何 `turn.steer.*` 日志而出现新的 `turn.started`，说明外层输入路由没有进入 steer path。
+1. Whether `turn.steer.queued` and a following `turn.steer.drained` appear.
+2. If `turn.steer.rejected` appears, use `reason` to tell whether the active turn is missing,
+   `expectedTurnId` is stale or the turn is not steerable.
+3. In the `model.request.steering_context` after the drain, confirm `drainedInputVisibleAtTail` is `true`
+   and the tail role sequence is `assistant/tool/user` or `assistant/user`.
+4. If no `turn.steer.*` log exists and a new `turn.started` appears, the outer input routing did not
+   enter the steer path.
 
-## Drain 边界
+## Drain boundary
 
-Drain 只允许发生在 tool calling loop 的安全边界：
+A drain is allowed only at safe boundaries of the tool calling loop:
 
-1. 初始 user input 已经进入 history 后，不能在第一次 model request 之前 drain pending input。
-2. 每次模型返回 tool calls 后，必须先把 assistant tool calls 加进 history。
-3. 必须执行并注入所有对应 tool results。
-4. 在下一次 model request 构造 messages 前 drain pending input。
-5. 如果模型已经给出 no-tool final response，但 pending input 已存在，则本 turn 不结束，先记录 assistant response，再 drain pending input，继续下一次 model request。
+1. Once the initial user input is in history, pending input must not be drained before the first model
+   request.
+2. After the model returns tool calls, first add the assistant tool calls to history.
+3. Execute and inject all corresponding tool results.
+4. Drain pending input before building the messages of the next model request.
+5. If the model gave a no-tool final response but pending input already exists, the turn does not end:
+   record the assistant response, drain the pending input, and continue with the next model request.
 
-这个顺序保证 provider 永远不会看到 dangling tool call，也不会看到 user message 插入 assistant tool call 与 tool result 之间。
+This order guarantees the provider never sees a dangling tool call nor a user message between an
+assistant tool call and its tool result.
 
-## Volatile Queue
+## Volatile queue
 
-- pending queue 是 active turn 的内存状态，不是 session resume 的恢复状态。
-- queued、drained、rejected、discarded event 可以进入 session event stream，用于 live UI、debug 和审计；但 event store 里的 queued event 不能在 resume 时重新变成 provider-visible user message。
-- `SessionProjection.pendingSteerInputs` 可以作为 live 投影或诊断投影存在，但 core resume 不能把它当作恢复输入来源。
-- drained input 必须作为 user message/part 持久化，并进入 `MessageHistory`；只有 drained 后模型已真实可见的输入才成为会话历史事实。
-- 如果 turn 被取消或失败，当前进程中尚未 drained 的 pending input 必须发 `turn_steer_discarded`，这样 live UI 不会留下幽灵队列。
-- 如果进程在 queued 后、drained 前退出或崩溃，pending input 丢弃。下一次 `resumeFromStore()` 只恢复已经持久化的 messages，不恢复 queued-but-not-drained input，也不补发 `turn_steer_drained`。
-- 如果 event store 里仍有 queued-but-not-drained 的旧投影，resume 必须补发 `turn_steer_discarded`，reason 为 `session_resumed`，只用于清理 live/diagnostic projection。
-- 切换 UI session 不会影响 server 进程内正在运行的 active turn；只要 server/session 仍在内存中，pending queue 继续由 core drain 或 discard。
+- The pending queue is in-memory state of the active turn, not recovery state of session resume.
+- The queued, drained, rejected and discarded events may enter the session event stream for live UI,
+  debug and audit, but a queued event in the event store must never become a provider-visible user
+  message again on resume.
+- `SessionProjection.pendingSteerInputs` may exist as a live or diagnostic projection, but core resume
+  must not use it as a source of recovery input.
+- Drained input must be persisted as a user message/part and enter `MessageHistory`; only input that the
+  model has really seen after draining becomes a session history fact.
+- If a turn is cancelled or fails, pending input in the current process not yet drained must emit
+  `turn_steer_discarded`, so the live UI leaves no phantom queue.
+- If the process exits or crashes after queued and before drained, the pending input is dropped. The next
+  `resumeFromStore()` restores only persisted messages, not queued-but-not-drained input, and does not
+  re-emit `turn_steer_drained`.
+- If the event store still holds an old projection of queued-but-not-drained input, resume must emit
+  `turn_steer_discarded` with reason `session_resumed`, only to clean the live/diagnostic projection.
+- Switching UI sessions does not affect an active turn running in the server process; as long as the
+  server/session is still in memory, core keeps draining or discarding the pending queue.
 
-## TUI/GUI 行为
+## TUI/GUI behavior
 
-推荐交互：
+Recommended interaction:
 
-1. 用户在 busy 时按 Enter。
-2. UI 调用 `sendInput({ delivery: "auto" })` 或 `steerTurn`。
-3. 返回 `queued` 或收到 `turn_steer_queued` 后显示 queued 状态。
-4. 收到 `turn_steer_drained` 后把状态改为 sent。
-5. 收到 `turn_steer_rejected` 后恢复输入或显示结构化拒绝原因。
+1. The user presses Enter while busy.
+2. The UI calls `sendInput({ delivery: "auto" })` or `steerTurn`.
+3. After `queued` is returned or `turn_steer_queued` is received, the UI shows the queued state.
+4. On `turn_steer_drained` the state changes to sent.
+5. On `turn_steer_rejected` the UI restores the input or shows the structured rejection reason.
 
-UI 只能做乐观展示，不能把本地 busy 状态当作队列事实来源。
+The UI may only display optimistically and must not treat local busy state as the source of queue facts.
 
-Busy TUI 可以在调用 `sendInput` 前先插入一个临时本地 user transcript row，
-用于保留用户输入在可见对话中的时间顺序。这个 row 在
-`turn_steer_queued` event、`sendInput` 返回 `queued`，或 `sendInput`
-返回 `started_turn` 后才成为已接受展示；如果返回 `rejected` 或调用失败，
-UI 必须移除临时 row 并恢复 draft。这样即使 `sendInput` 在 Promise resolve
-之前同步投递模型 streaming event，新 assistant 投影也只能出现在触发它的
-user row 之后。
+A busy TUI may insert a temporary local user transcript row before calling `sendInput`, to keep the
+user's input in time order in the visible conversation. This row becomes accepted display only after the
+`turn_steer_queued` event, a `queued` return from `sendInput`, or a `started_turn` return; on `rejected`
+or a failed call the UI must remove the temporary row and restore the draft. So even if `sendInput`
+synchronously delivers model streaming events before its Promise resolves, the new assistant projection
+can appear only after the user row that triggered it.
 
-## 测试要求
+## Test requirements
 
-- active tool loop 中 steering 后，第二次 model request 的 messages 顺序必须是 assistant tool calls、tool results、queued user input。
-- no-tool response 之后如果已有 pending input，turn 必须继续 follow-up model request，而不是立即 complete。
-- `expectedTurnId` mismatch 被拒绝并发 `turn_steer_rejected`。
-- empty input 被拒绝。
-- compact/rewind turn 被拒绝为 `turn_not_steerable`。
-- 模型创建失败轮只落库已接纳输入，不进入 model step，guide 无法被消费；同样拒绝为 `turn_not_steerable`，调用方改走队列。
-- queued/drained events 顺序稳定，payload 包含 pending input id 和 target turn id。
-- reducer 能从 queued/drained/discarded 重建 `pendingSteerInputs` 作为 live/diagnostic projection。
-- resume 不恢复 queued-but-not-drained input，也不能把历史 queued event 注入下一次 model request。
-- TUI busy `sendInput` 即使先收到 streaming event、后收到 `started_turn` 返回，也必须渲染为 user row 在前、assistant row 在后。
+- After steering in an active tool loop, the messages of the second model request are ordered assistant
+  tool calls, tool results, queued user input.
+- If pending input exists after a no-tool response, the turn must continue with a follow-up model request
+  instead of completing immediately.
+- An `expectedTurnId` mismatch is rejected and emits `turn_steer_rejected`.
+- Empty input is rejected.
+- A compact/rewind turn is rejected as `turn_not_steerable`.
+- A turn where model creation failed persists only the admitted input and never enters a model step, so
+  a guide cannot be consumed; it is likewise rejected as `turn_not_steerable` and the caller switches to
+  the queue.
+- queued/drained event order is stable, and the payload contains the pending input id and the target
+  turn id.
+- The reducer can rebuild `pendingSteerInputs` from queued/drained/discarded as a live/diagnostic
+  projection.
+- Resume does not restore queued-but-not-drained input and must not inject historical queued events into
+  the next model request.
+- For TUI busy `sendInput`, even if streaming events arrive first and the `started_turn` return later,
+  the render must be user row first, assistant row after.
 
+## Message sources and provider projection (2026-09-11)
 
-## 消息来源与 provider 投影（2026-09-11）
-
-CLI/runtime 是唯一队列与消费时机权威。只对齐现有 human guide / 运行中立即发送、主到子的 coordinator 消息、子到主的主动回信、后台任务通知；不新增 mailbox、channel、observer，不修改审批反馈、goal continuation、TODO 全量更新或强制续跑规则。用户带附件输入保留现有路径。
+The CLI/runtime is the single authority for the queue and consumption timing. Only the existing human
+guide / running send-now, the coordinator message from main to child, the proactive reply from child to
+main, and background task notifications are aligned. No mailbox, channel or observer is added, and the
+approval feedback, goal continuation, full TODO update and forced-continuation rules are unchanged. User
+input with attachments keeps the existing path.
 
 ```text
 Desktop continuous --+
@@ -224,43 +263,73 @@ Mobile replayable ---+                                      |
               legal MCS system       wrapped user fallback
 ```
 
-### 单一标记与兼容
+### Single marker and compatibility
 
-新增可选 `inputPresentation` 判别值，贯穿内部输入、Runtime metadata 与持久化 message metadata。值为 `user_steer`、`coordinator_steer`、`coordinator_input`、`subagent_reply_steer`、`subagent_reply`、`task_notification_steer`、`task_notification`。它同时固定来源和消费形态，不再增加 origin/version 对象。普通用户入口及 coordinator port 明确标记；其他两类由现有 command mode/source 在实际 drain 时决定中途/新轮。正文不决定身份。未知或缺失标记保留旧表达，旧历史不迁移；guide 降为 queue 时不得保留 user 的中途提示。
+A new optional `inputPresentation` discriminator runs through internal input, Runtime metadata and
+persisted message metadata. Values: `user_steer`, `coordinator_steer`, `coordinator_input`,
+`subagent_reply_steer`, `subagent_reply`, `task_notification_steer`, `task_notification`. It fixes both
+the source and the consumption form; no origin/version object is added. Ordinary user entries and the
+coordinator port mark explicitly; the other two kinds are decided by the existing command mode/source at
+actual drain time (mid-turn or new turn). The body does not decide identity. An unknown or missing marker
+keeps the old expression, old history is not migrated, and a guide degraded to a queue must not keep the
+user's mid-turn hint.
 
-Canonical history 只保存原始载荷。所有新标记消息 live/hydration/clone/fork/rewind 使用同一解析，compact 保留段保留标记。human 的真实用户身份不随 system 投影改变；coordinator、peer、task notification 不更新 latest-real-user。Memory 读取原始用户内容。
+Canonical history stores only the raw payload. All newly marked messages use one resolution in
+live/hydration/clone/fork/rewind, and compact preserved segments keep the marker. The real user identity
+of human input does not change with the system projection; coordinator, peer and task notification do
+not update latest-real-user. Memory reads the raw user content.
 
-compact 已选中的最近组必须连同组内的 coordinator、peer、task notification 和已持久化 Attachment 一起恢复，不得因 synthetic/model-only/source 再次过滤。保留区间按 assistant-started groups 选取，统计数量不得用于反推区间；详细合同见 [最近保留段的持久化与冷恢复](../rewind-compact.md#最近保留段的持久化与冷恢复)。
+The recent groups already selected by compact must be restored together with the coordinator, peer, task
+notification and persisted Attachments inside the group, and must not be filtered again because of
+synthetic/model-only/source. The preserved range is selected by assistant-started groups, and the counted
+number must not be used to infer the range; for the detailed contract see
+[Persistence and cold recovery of the recent preserved segment](../rewind-compact.md#persistence-and-cold-recovery-of-the-recent-preserved-segment).
 
-### 运行中立即发送的 human 提示（2026-09-12）
+### Human hint for running send-now (2026-09-12)
 
-用户在运行中选择立即发送，产品语义同样是 steer。虽然调度会取消旧 runtime turn 并启动新 turn，纯文本输入仍使用已有 `user_steer` 提示。是否发生抢占以 Core `stopActiveForegroundExecution` 的 `stopped` 回执为准，不读取 UI running 快照或 Bootstrap controller 推断。
+When the user chooses send-now while running, the product semantics is also steer. Although scheduling
+cancels the old runtime turn and starts a new turn, plain-text input still uses the existing
+`user_steer` hint. Whether preemption happened is decided by the `stopped` receipt of Core
+`stopActiveForegroundExecution`, not by the UI running snapshot or inference in the Bootstrap
+controller.
 
 ```text
 Desktop continuous / Mobile replayable
                   |
-     sendText(startNow) / 手动 sendQueuedNow
+     sendText(startNow) / manual sendQueuedNow
                   |
-     promotion lease -> Core stop -> 等待 idle
+     promotion lease -> Core stop -> wait for idle
                           |
-             stopped + 纯文本用户输入
+             stopped + plain-text user input
                           |
-              新 turn + user_steer
+              new turn + user_steer
                           |
-           原文及标记持久化 -> 共享 provider 投影
+           raw text and marker persisted -> shared provider projection
                           |
-             合法 MCS system / wrapped user
+             legal MCS system / wrapped user
 ```
 
-- 空闲立即发送、已经停止的执行、自动队列消费、goal / compact、edit / retry 不新增此标记。手动队列立即发送保留原 sourceCommandId、intent 及队列消费规则。
-- 提交内容含附件时沿用现有路径，包括随后可能被转为文本的文件附件；不根据恢复后的正文重新猜测来源。
-- 复用单一 `inputPresentation` 的透传、持久化、hydrate 与真实用户身份，不增加协议字段、客户端状态、独立 formatter 或新提示文案。原始 UI 气泡不显示 reminder。
-- MCS 仍受历史位置约束：完整工具结果之后可投影为 system；text-only assistant 之后或 MCS 关闭时使用 `<system-reminder>` user，不强制 system、不移动输入、不改变工具取消及结果配对规则。
-- 先用单测锁住实际抢占、空闲、带附件及自动消费边界，再实现；正式 running-send-now 用例校验实际 provider 请求中的完整 human 文案、包装、次数及原始 UI，覆盖 MCS 开关。
+- Idle send-now, an already stopped execution, automatic queue consumption, goal / compact and
+  edit / retry do not add this marker. Manual queue send-now keeps the original sourceCommandId, intent
+  and queue consumption rules.
+- Submissions containing attachments keep the existing path, including file attachments that may later
+  be converted to text; the source is not re-guessed from the restored body.
+- Reuse the passthrough, persistence, hydration and real user identity of the single `inputPresentation`;
+  no protocol field, client state, separate formatter or new hint text is added. The original UI bubble
+  shows no reminder.
+- MCS is still constrained by history position: after a complete tool result it may project to system;
+  after a text-only assistant, or with MCS off, a `<system-reminder>` user is used, without forcing
+  system, moving the input, or changing tool cancellation and result pairing rules.
+- First lock the actual preemption, idle, attachment and automatic consumption boundaries with unit tests,
+  then implement; the formal running-send-now case verifies the complete human text, wrapping, count and
+  raw UI in the actual provider request, covering the MCS switch.
 
-### 文案合同
+### Text contract
 
-下列模板是唯一文案基准，独立黄金样本位于 `packages/core/tests/fixtures/runtime-input-presentation.json`。模板只替换 `{body}` 等占位，不改写载荷正文；标点、空格、换行及其余文字逐字一致。
+The following templates are the single text baseline; the independent golden sample is
+`packages/core/tests/fixtures/runtime-input-presentation.json`. Templates replace only placeholders such
+as `{body}` and never rewrite the payload body; punctuation, spaces, line breaks and the other text are
+verbatim.
 
 **user_steer**
 
@@ -300,55 +369,100 @@ No human input has been received since the last genuine user message in this con
 {body}
 ```
 
-非中途 peer 的标题为 `Another ZCode session sent a message:`，省去最后一句 `After completing your current task, ...`，其余安全说明相同。coordinator 恢复终态子 Agent 时只发送原始输入，不套中途提示。coordinator 有 summary 时正文为 `summary.trim() + "\n\n" + message`，无 summary 时为 message，不保留新消息的旧控制前缀。peer 保留既有 subagent-message XML 及绑定 agent-id；主 Agent 通过 SendMessage.to 回复，子 Agent 仍只有 RespondToCoordinator。其工具提示兼容旧历史前缀。
+The non-mid-turn peer title is `Another ZCode session sent a message:` and omits the last sentence
+`After completing your current task, ...`; the other safety text is the same. When a coordinator resumes
+a terminal child Agent it sends only the raw input, without the mid-turn hint. With a coordinator summary
+the body is `summary.trim() + "\n\n" + message`, without it the message; the old control prefix of the
+new message is not kept. A peer keeps the existing subagent-message XML and bound agent-id; the main
+Agent replies via SendMessage.to, while a child Agent still has only RespondToCoordinator. Its tool hint
+is compatible with the old history prefix.
 
-后台任务保留已有 XML 与批处理：空闲整批一条消息/一轮执行/一个完整前缀；active-loop 每条通知一个前缀。不完整旧前缀只从新 producer 的固定文案中移除，不从任意正文推断或剥离。
+Background tasks keep the existing XML and batching: idle runs the whole batch as one message / one turn
+/ one full prefix; in an active loop each notification gets one prefix. An incomplete old prefix is
+removed only from the fixed text of the new producer and is never inferred or stripped from arbitrary
+body.
 
-### 投影与验收
+### Projection and acceptance
 
-- 中途消息派生 Runtime Attachment；MCS 开且合法时为不带外层标签的 system，否则为 user `<system-reminder>`。非中途 peer 为普通 user，使用对应模板。
-- 2026-09-12 新轮 task notification 包装：经用户确认，新轮通知使用外层 `<system-reminder>\n{完整前缀 + 原始通知正文}\n</system-reminder>`，不再使用裸正文。固定前缀文案仍使用上文模板。MCS 开关均保持 user；整批通知共用一次前缀和一次外层包装，执行轮数、输入身份和 UI 可见性不变。只在共享 provider 投影处理已有 `task_notification` 标记，canonical history 仍保存原文；未标记旧历史不追溯转换。
-- CR-01：所有 user reminder（含新轮 task notification、incoming message 和 MCS 位置降级）统一在包装边界中和正文中的 `</?system-reminder` 标签。使用既有 source sanitizer，只将标签起始 `<` 转为 `&lt;`，保留大小写、空格和其余正文；不得因嵌套标签抛错。固定模板不变，canonical history/UI 原文不变，合法 MCS system 与非中途 peer/coordinator 表达不做这项包装转义。重复投影及冷恢复不得二次编码。
-- 来源限定：当前 peer/task producer 已对 XML 字段转义，包装边界需保持这些实体不变；human/coordinator 可携带未编码标签。原始正文不等于绕过 producer 已有的 XML 序列化。
-- 消息不能越过后续输入，不拆工具批次；每条只表达一次，不创建空 user。普通请求、compact、verifier 复用共享投影，最终 wire 不含内部标记。
-- sourceEntries 保留 canonical 映射；媒体预算接受投影后为 system 的 human 索引。新标记已证明没有真实用户时显式传 -1，禁止再次按 provider role 猜身份；未标记旧历史保留缺省兼容。缓存按最终请求计算。
-- 新轮通知用量统计：`task_notification` 的完整 provider user 内容（含前缀、转义和 wrapper）计入 Messages 一次。复用当前请求的 `sourceEntries` 识别标记，不因 `<system-reminder>` 前缀跳过；ContextBuilder sections 已计数的静态上下文继续去重。来源映射仅透传到本地用量统计，不进入 provider payload、持久化或 App 协议。此修复不改变其他消息分类、provider 实际 usage 或 compact 预算；桌面 continuous 与手机 replayable 继续消费同一 ModelComplete 用量结果。
-- 黄金全文、MCS/降级、消息交错、batch、summary 有无、伪造前缀、媒体排除、live/cold/compact/fork/rewind/model switch/output continuation 均需回归。
-- 扩展正式 P06、BG25/O18/O19 及 background/batch E2E，同时更新 fixture/manifest。Desktop continuous 不接入 replayable 恢复消息；手机复用同一 CLI 权威。
-- 真实模型 A 未完成插入 B 的观察独立保存，不用 fixture 回复证明模型会恢复 A，也不因此扩写提示。
-- CR-01 回归：四类中途来源携带关闭标签、伪造授权文本和重新打开标签；非 MCS、text-only fallback、位置校验 fallback 均只能产生一对实际 reminder 标签。正式 BG25 双能力 tool/text 轨迹覆盖 coordinator、peer、task 及 human guide，并在 compact/冷恢复后重验。该测试证明文本分隔边界，不宣称能消除所有模型提示注入。
+- A mid-turn message derives a Runtime Attachment: with MCS on and legal it is a system without an outer
+  tag, otherwise a user `<system-reminder>`. A non-mid-turn peer is an ordinary user using the matching
+  template.
+- 2026-09-12 new-turn task notification wrapper: after user confirmation, a new-turn notification uses
+  the outer `<system-reminder>\n{full prefix + raw notification body}\n</system-reminder>` and no longer
+  the bare body. The fixed prefix text still uses the template above. It stays user with the MCS switch
+  either way; a batch of notifications shares one prefix and one outer wrapper, and the turn count, input
+  identity and UI visibility are unchanged. Only the shared provider projection handles the existing
+  `task_notification` marker; canonical history still stores the raw text; unmarked old history is not
+  converted retroactively.
+- CR-01: all user reminders (including new-turn task notification, incoming message and MCS position
+  downgrade) neutralize `</?system-reminder` tags in the body at the wrapper boundary. Use the existing
+  source sanitizer, converting only the tag-opening `<` to `&lt;` and keeping case, spaces and the rest of
+  the body; nested tags must not throw. The fixed templates are unchanged, canonical history/UI raw text
+  is unchanged, and legal MCS system and non-mid-turn peer/coordinator expressions skip this wrapper
+  escaping. Repeated projection and cold recovery must not double-encode.
+- Source limit: the current peer/task producers already escape XML fields, and the wrapper boundary must
+  keep those entities unchanged; human/coordinator may carry unencoded tags. The raw body does not bypass
+  the XML serialization the producer already does.
+- A message cannot cross later input and does not split a tool batch; each is expressed once and no empty
+  user is created. Ordinary requests, compact and verifier reuse the shared projection, and the final wire
+  carries no internal marker.
+- sourceEntries keep the canonical mapping; the media budget accepts human indexes projected to system.
+  A new marker that proves there is no real user passes -1 explicitly, and guessing identity again from
+  the provider role is forbidden; unmarked old history keeps the default compatibility. Cache is computed
+  on the final request.
+- New-turn notification usage accounting: the complete provider user content of `task_notification`
+  (prefix, escaping and wrapper) counts once in Messages. It reuses the `sourceEntries` of the current
+  request to recognize the marker and is not skipped because of the `<system-reminder>` prefix; static
+  context already counted by ContextBuilder sections keeps being deduplicated. The source mapping is
+  passed only to local usage accounting and does not enter the provider payload, persistence or the App
+  protocol. This fix does not change other message classification, real provider usage or the compact
+  budget; desktop continuous and mobile replayable keep consuming the same ModelComplete usage result.
+- Regression: golden full text, MCS/downgrade, message interleaving, batch, with/without summary, forged
+  prefix, media exclusion, live/cold/compact/fork/rewind/model switch/output continuation.
+- Extend formal P06, BG25/O18/O19 and background/batch E2E, and update fixture/manifest. Desktop
+  continuous does not hook into replayable recovery messages; mobile reuses the same CLI authority.
+- Observation of a real-model "A not finished, B inserted" is saved separately; a fixture reply is not
+  used to prove the model recovers A, and the hint is not expanded because of it.
+- CR-01 regression: the four mid-turn sources carrying a closing tag, forged authorization text and a
+  re-opening tag; non-MCS, text-only fallback and position-check fallback may produce only one actual
+  pair of reminder tags. The formal BG25 dual-capability tool/text trace covers coordinator, peer, task
+  and human guide, and is re-verified after compact/cold recovery. The test proves the text delimiting
+  boundary and does not claim to eliminate all model prompt injection.
 
+### Source hint E2E dual-capability trace contract
 
-### 来源提示 E2E 双能力轨迹合同
+2026-09-11: this round extends the existing formal cases P06, BG25 and BG36, executed separately by
+`supportsMidConversationSystem=true/false` of the actual endpoint; the model name alone does not stand
+for MCS. Fixed templates come from the independent golden sample; the real HTTP request body is verified
+for full text, role, wrapping, position, uniqueness, complete tool-result batches and metadata not
+leaking. Evidence is named by capability and stage and keeps the full messages of each request.
 
-2026-09-11：本轮扩充已有 P06、BG25 和 BG36 正式用例，按实际 endpoint 的
-`supportsMidConversationSystem=true/false` 分别执行，不能仅用模型名称代表 MCS。
-固定模板来自独立黄金样本；对真实 HTTP request body 验证全文、角色、包装、位置、唯一性、
-完整 tool-result 批次以及 metadata 不泄漏。证据按能力与阶段命名，保留每次请求的完整 messages。
-
-| 既有用例 | 扩展场景 | MCS 开启 | MCS 关闭 |
+| Existing case | Extended scenario | MCS on | MCS off |
 | --- | --- | --- | --- |
-| P06 | human 在 tool batch 后 / text-only 后，两条 steer 同轮有序 | system / user reminder | user reminder / user reminder |
-| P06 | 冷恢复后切换模型能力，重新发送普通用户消息 | 历史按新能力投影，原来的中途形态和原文保留 | 同左，无重复正文 |
-| BG25 | coordinator 有 summary，中途 child；peer 和 task 空闲唤醒 | coordinator system；peer 裸 user；task user reminder | coordinator user reminder；peer 裸 user；task user reminder |
-| BG25 | coordinator 无 summary，active peer 与 active task 先后消费 | tool batch 后 system；text-only 后 user reminder | 均为 user reminder |
-| BG25 | active peer 消费时 reactive compact，完成后冷恢复 | 保留原始 peer 与完整工具组；合法 system / text-only user 降级；task notification 无丢失或重复 | 保留完整 user reminder 与工具组，冷恢复一致 |
-| BG25 | 终态 child 经 SendMessage 恢复 | 新消息为原始 user 正文，不出现中途提示 | 同左 |
-| BG36 | 后台 notification 空闲批量消费 | user reminder，整批一个完整前缀和一对外层标签，两轮消费 | 同左 |
+| P06 | human after a tool batch / after text-only, two steers ordered within one turn | system / user reminder | user reminder / user reminder |
+| P06 | switch model capability after cold recovery, then send an ordinary user message | History is projected by the new capability; the original mid-turn form and raw text are kept | Same, with no duplicated body |
+| BG25 | coordinator with summary, mid-turn child; peer and task idle wake | coordinator system; peer bare user; task user reminder | coordinator user reminder; peer bare user; task user reminder |
+| BG25 | coordinator without summary, active peer and active task consumed in turn | system after the tool batch; user reminder after text-only | all user reminder |
+| BG25 | reactive compact while an active peer is consumed, then cold recovery | Keeps the raw peer and complete tool group; legal system / text-only user downgrade; task notification not lost or duplicated | Keeps the full user reminder and tool group; cold recovery consistent |
+| BG25 | terminal child resumed via SendMessage | The new message is the raw user body, with no mid-turn hint | Same |
+| BG36 | Background notification consumed in an idle batch | user reminder, one full prefix and one pair of outer tags for the batch, two turns consumed | Same |
 
 ```text
-主 Agent SendMessage -> child Bash 等待点 -> coordinator 中途请求
-主 Agent 工作等待点 <- child RespondToCoordinator -> child 继续工作等待点
-主 Agent 消费 peer   -> 再次工作等待点 <- child 完成 / task notification
-主 Agent 消费 task   -> idle -> SendMessage 恢复 child -> 原始 user 新轮输入
+main Agent SendMessage -> child Bash wait point -> coordinator mid-turn request
+main Agent work wait point <- child RespondToCoordinator -> child continues work wait point
+main Agent consumes peer   -> wait point again <- child completes / task notification
+main Agent consumes task   -> idle -> SendMessage resumes child -> raw user new-turn input
 ```
 
-这里扩展已接受来源合同，不增加任意 peer、mailbox 或手机独立 runtime。Desktop continuous
-仍经原有 V4/UI/Host/CLI 全链路；手机 replayable、旧历史/混合媒体、fork/rewind/compact 的
-细分隔离由既有 focused lifecycle tests 验证，不把桌面 replay 报告称为手机真机结果。
+This extends the accepted source contract and adds no arbitrary peer, mailbox or independent mobile
+runtime. Desktop continuous still goes through the original V4/UI/Host/CLI full chain; the finer
+isolation of mobile replayable, old history / mixed media and fork/rewind/compact is verified by the
+existing focused lifecycle tests, and a desktop replay report is not called a real mobile result.
 
-时序限定：peer/task 在 text-only `end_turn` 中到达并不自动延长主 turn；没有 guide 时，
-在下一次 available drain 消费，必须用非中途文案。text-only 的中途降级场景通过真实用户
-追加 guide 维持当前 turn，随后按消费顺序注入 human → peer/task，验证相邻来源不跨输入移动。
-SendMessage 工具的 summary schema 是必填且至少一字符；无 summary 内容的 E2E 使用空白
-字符串，验证 `trim()` 后走正文分支，不使用非法缺字段输入。
+Timing limit: a peer/task arriving during a text-only `end_turn` does not automatically extend the main
+turn; without a guide it is consumed at the next available drain and must use the non-mid-turn text. The
+text-only mid-turn downgrade scenario keeps the current turn alive by appending a real user guide, then
+injects human → peer/task in consumption order, verifying that adjacent sources do not move across
+input. The summary schema of the SendMessage tool is required with at least one character; the E2E
+without summary content uses a whitespace string to verify that `trim()` takes the body branch, and does
+not use invalid input with the field missing.

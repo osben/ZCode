@@ -1,9 +1,11 @@
-# Model Capability Resolution（历史设计，已退役）
+# Model Capability Resolution (historical design, retired)
 
-> 本文原先描述 `models.dev`、Model Catalog、配置 override 与按 modelId 默认策略共同推断模型能力的旧实现。
-> 该实现已由 Provider Refactor 退役，不能作为当前代码或新功能的实现依据。
+> This document used to describe the old implementation where `models.dev`, the Model Catalog,
+> config overrides and per-modelId default policy together inferred model capabilities.
+> Provider Refactor retired that implementation. Do not use it as a basis for current code or new
+> features.
 
-当前唯一事实链为：
+The only current fact chain is:
 
 ```text
 ZCode Built-in Model Config Rules
@@ -23,17 +25,18 @@ ModelFactory
 Active Model.properties / optionSpecs / options
 ```
 
-当前实现不得：
+The current implementation must not:
 
-- 从 `models.dev`、Model Catalog 或远端模型元数据补齐运行时能力；
-- 按具体 modelId 在生产代码中推断 context、reasoning、输入输出格式或请求参数；
-- 让 Runtime Config、Turn、Adapter Registry 或 UI capability map 保存第二份模型事实；
-- 让旧 `modelCatalog.overrides` 进入当前 Config、Registry 或 Runtime。
+- fill runtime capabilities from `models.dev`, the Model Catalog or remote model metadata;
+- infer context, reasoning, input/output formats or request parameters from a concrete modelId in
+  production code;
+- let Runtime Config, Turn, Adapter Registry or a UI capability map hold a second copy of model facts;
+- let the old `modelCatalog.overrides` into the current Config, Registry or Runtime.
 
-已发布旧 CLI Provider/Model JSON 只在一次性 importer 的私有解析边界读取，并立即转换为 Personal Provider
-Config 与 Personal Model Config Rules。
+Published legacy CLI Provider/Model JSON is read only at the private parsing boundary of the one-time
+importer and is converted immediately into Personal Provider Config and Personal Model Config Rules.
 
-当前规范见：
+Current specifications:
 
 - [`configuration.md`](../../../../../docs/working-memory/provider-refactor/design/registry/configuration.md)
 - [`registry.md`](../../../../../docs/working-memory/provider-refactor/design/registry/registry.md)

@@ -1,62 +1,70 @@
-# ZCode Memory 设计 v4
+# ZCode Memory Design v4
 
-## 1. 文档定位
+## 1. Scope of this document
 
-本文定义 ZCode CLI Memory 的目标行为，验收对象是 Anthropic Messages 请求（含
-`mid-conversation-system-2026-04-07` 分支）最终 provider request 中的 Memory 内容。
+Defines the target behavior of ZCode CLI Memory. The acceptance target is the Memory content in the final
+provider request of an Anthropic Messages request (including the `mid-conversation-system-2026-04-07`
+branch).
 
-Project Memory retrieval 有 `default-index` 与 `semantic-recall` 两种互斥行为，分支边界共三处：
-Main pointer、AutoMem index 过滤、Selector 启动。ZCode 保留两种互斥行为，并以 Core 内部唯一常量
-`PROJECT_MEMORY_SEMANTIC_RECALL_ENABLED=false` 选择当前默认分支；不暴露用户配置、runtime
-preference、协议字段或测试 setter。
+Project Memory retrieval has two mutually exclusive behaviors, `default-index` and `semantic-recall`,
+with three branch boundaries: Main pointer, AutoMem index filtering and Selector startup. ZCode keeps
+both and selects the current default branch with the single internal Core constant
+`PROJECT_MEMORY_SEMANTIC_RECALL_ENABLED=false`; no user config, runtime preference, protocol field or
+test setter is exposed.
 
-验收面是 adapter 发出的最终 provider request body，不是 Context builder、Runtime
-message history 或其他中间对象。
+The acceptance surface is the final provider request body emitted by the adapter, not the Context
+builder, Runtime message history or other intermediate objects.
 
-行为与验收事实的优先级固定为：本 spec → 语义 fixture → 生产 generator/adapter/E2E 证据。
-历史 plan、旧 capture、测试实现和中间 Context 对象都不能反向覆盖前两项；发现冲突时必须先修正低优先级证据，不能同时保留两套 active contract。
+Priority of behavior and acceptance facts is fixed: this spec → semantic fixtures → production
+generator/adapter/E2E evidence. Historical plans, old captures, test implementations and intermediate
+Context objects cannot override the first two; on conflict the lower-priority evidence is fixed first, and
+two active contracts are never kept at once.
 
-本次是对现有 MVP active path 的整体替换。以下旧机制退出 active path：
+This is a wholesale replacement of the existing MVP active path. These old mechanisms leave the active
+path:
 
 - `memory_summary.md`
 - `topics/`
-- 关键词相关性打分
-- “记住 / 忘记”正则
-- Runtime 直接生成 ad hoc note、rollout summary 和 topic
-- `memory.autoConsolidate`、`memory.summaryMaxBytes`、可覆盖的 `memory.rootDir`
+- keyword relevance scoring
+- the "remember / forget" regex
+- Runtime directly generating ad hoc notes, rollout summaries and topics
+- `memory.autoConsolidate`, `memory.summaryMaxBytes` and an overridable `memory.rootDir`
 
-旧文件不迁移、不删除、不双读。
+Old files are not migrated, deleted or dual-read.
 
-## 2. 目标与边界
+## 2. Goals and boundaries
 
-Memory 包含五个能力：
+Memory has five capabilities:
 
-1. Main Agent 的持久 Memory 文件协议与 provider-visible system section。
-2. 由内部全局常量互斥选择的 default index 或 Semantic Recall；当前选择 default index。
-3. 成功 Main turn 后的后台 Extraction。
-4. Dream consolidation handler 与 `memory_update`；当前产品链路不自动触发。
-5. custom agent 的 `user | project | local` 持久 Memory。
+1. The persistent Memory file protocol and the provider-visible system section of the Main Agent.
+2. Default index or Semantic Recall, mutually exclusive by an internal global constant; default index is
+   currently selected.
+3. Background Extraction after a successful Main turn.
+4. The Dream consolidation handler and `memory_update`; not triggered automatically in the current
+   product path.
+5. Persistent `user | project | local` Memory for custom agents.
 
-Project Memory 文件和后台运行态的权威仍属于 CLI storage / Runtime。Desktop Main、Host Process、
-Renderer、mobile remote relay 不复制或持久化 Memory 文件、Recall 状态、Extraction cursor 或
-Dream lock。Desktop/Host 持有 app-global 开关，并通过现有
-`session/requestRuntimePreferences` 在根 Runtime 创建边界下发一个布尔值；不在 Agent 协议中
-传递 Memory 正文或后台状态。
+The authority over Project Memory files and background runtime state stays with CLI storage / Runtime.
+Desktop Main, Host Process, Renderer and the mobile remote relay do not copy or persist Memory files,
+Recall state, the Extraction cursor or the Dream lock. Desktop/Host holds the app-global switch and passes
+one boolean at the root Runtime creation boundary through the existing
+`session/requestRuntimePreferences`; no Memory body or background state is passed in the Agent protocol.
 
-Desktop Settings 通过本地 Host 的现有 Memory service 按需读取当前本地 profile 下的 Project
-Memory 目录，向 Renderer 返回只读 catalog 或单文件快照。Web Remote / Mobile 不调用该
-catalog。Host 和 Renderer 只在一次查看期间临时持有这些数据，不成为新的事实来源，也不启动
-Agent Runtime、修改 Memory 文件或发起模型请求。
+Desktop Settings reads, on demand and through the existing Memory service of the local Host, the Project
+Memory directories under the current local profile and returns a read-only catalog or a single-file
+snapshot to the Renderer. Web Remote / Mobile do not call this catalog. Host and Renderer hold this data
+only temporarily during one viewing, do not become a new fact source, and neither start the Agent
+Runtime, modify Memory files nor issue model requests.
 
-Memory 与 compact 分工固定：compact 维持当前 session 连续性；Memory 保存跨 session
-可复用事实。Semantic Recall 分支启用时，compact 与 resume 只重置其 session-local 状态，
-不直接写入 Memory。
+Memory and compact have a fixed division: compact keeps the continuity of the current session; Memory
+stores facts reusable across sessions. When the Semantic Recall branch is enabled, compact and resume only
+reset its session-local state and do not write Memory directly.
 
-## 3. 配置、scope 与目录
+## 3. Config, scope and directories
 
-### 3.1 用户配置
+### 3.1 User config
 
-公开配置只保留：
+The public config keeps only:
 
 ```json
 {
@@ -69,82 +77,94 @@ Memory 与 compact 分工固定：compact 维持当前 session 连续性；Memor
 }
 ```
 
-- `features.memory=false`：完全关闭 Memory。
-- `memory.use=false`：不创建或读取 project Memory，不注入 Memory prompt，不运行 Recall、
-  Extraction 或 Dream。
+- `features.memory=false`: Memory is fully off.
+- `memory.use=false`: project Memory is not created or read, no Memory prompt is injected, and Recall,
+  Extraction and Dream do not run.
 
-`features.memory`、`use` 默认均为 `true`。Memory 只有启用和未启用，不提供
-read-only/writable capability，不提供旧配置 alias，也不提供自定义保存路径。
+`features.memory` and `use` both default to `true`. Memory is only enabled or not; there is no
+read-only/writable capability, no legacy config alias and no custom save path.
 
-`-p` / `--prompt` 与 `--target` 共用的 non-interactive `runPrompt` 在创建 Runtime 时固定注入内部
-`memory.extractionEnabled=false`。该字段不是用户配置、CLI flag、环境变量、runtime preference 或
-协议字段；缺省时按启用处理，因此 TUI、app-server、Desktop/Host 行为不变。`false` 只关闭成功
-Main turn 后的自动 Background Extraction；Main Memory prompt、`MEMORY.md`、Selector/Recall、Dream
-handler、custom-agent Memory 与 session persistence 均保持原行为，也不提供远端 rollout gate。
+The non-interactive `runPrompt` shared by `-p` / `--prompt` and `--target` injects an internal
+`memory.extractionEnabled=false` when creating the Runtime. This field is not a user config, CLI flag,
+environment variable, runtime preference or protocol field; when absent it is treated as enabled, so TUI,
+app-server and Desktop/Host behavior is unchanged. `false` only turns off the automatic Background
+Extraction after a successful Main turn; the Main Memory prompt, `MEMORY.md`, Selector/Recall, the Dream
+handler, custom-agent Memory and session persistence keep their behavior, and there is no remote rollout
+gate.
 
-Desktop/Web Settings 另提供 app-global `memoryEnabled` 开关，默认为 `false`。它是
-现有 CLI Memory 配置外层的 kill switch：
+Desktop/Web Settings additionally provides the app-global `memoryEnabled` switch, default `false`. It is
+a kill switch outside the existing CLI Memory config:
 
 ```text
-Settings 写入 memoryEnabled
+Settings writes memoryEnabled
           |
-          +-- 已存在 Runtime ----------------------------> 保持创建时的值
+          +-- existing Runtime ----------------------------> keeps the value from creation
           |
-          +-- 新建根 Session / 真正 cold resume
+          +-- new root Session / real cold resume
                          |
                          v
           session/requestRuntimePreferences
                          |
                          v
-              在 Runtime materialization 时冻结
+              frozen at Runtime materialization
                          |
           +--------------+----------------+
           |                               |
        false                           true
           |                               |
-  强制 Memory disabled       继续服从 features.memory/use
+  force Memory disabled       still obeys features.memory/use
 ```
 
-- 会话记录的 `memoryEnabled` 通过 V4 command ACK 与 live telemetry fact 的可选 boolean 字段透传。
-  App 用它填充 `send_btn`、`message_completion`、`agent_step` 的 `memory_enabled`（`"1"`/`"0"`）；
-  旧发送端缺字段时留空，不推断开关关闭。该值不代表实际记忆读写，后台 child 继承来源会话，
-  不改变开关优先级或 continuous/replayable 采集边界。
-- 开关只在根 Runtime materialization 时读取一次；Session 创建后切换不热更新、
-  不重建 Runtime。
-- 新安装或现有 `setting.json` 缺少 `memoryEnabled` 时默认关闭；已经持久化的显式
-  `true` / `false` 继续保留，不做一次性迁移。
-- 新建根 Session 和应用重启后的真正 cold resume 读取最新值。fork、
-  selection side chat 与 subagent 继承父 Runtime 已冻结的值，不再读 Settings。
-- 本地 workspace 由所在 Host 直接读取 SettingService；desktop-attached remote
-  复用 desktop shared Host 的同一 app-global 权威源。relay/main 不保存副本。
-- `memoryEnabled=false` 时，该 Runtime 不创建 project/custom Memory root，不注入
-  Main/custom Memory prompt，不运行 Recall、Extraction 或 Dream，也不产生任何
-  Memory 专用模型请求。
-- `memoryEnabled=true` 不覆盖 `features.memory=false` 或 `memory.use=false`。三者任一
-  关闭都使 Memory 失效。
-- 协议 result 字段为 `memoryEnabled: boolean`。旧 responder 未返回该新字段时
-  按当前产品默认值 `false` 解析；显式非布尔值仍视为无效响应。
-- Settings 提供独立的 Memory 模块。开关说明下常驻显示普通辅助文本语义的用量提示，不根据
-  开关状态隐藏。中文文案为：“用量提示：开启 Memory 后，系统可能会发起额外的模型请求来
-  提取和召回长期记忆，从而增加 Token 用量和使用成本。”视觉与其他设置说明一致，使用现有
-  `text-foreground-subtle` 语义色，不新增颜色 token 或提示组件。
-- 开关关闭时不读取 Project Memory catalog，只展示启用提示；开关打开后可立即查看已有本地
-  Memory，但这不改变当前 Session 已冻结的 Runtime 开关值。
+- The session's `memoryEnabled` is passed through as an optional boolean field of the V4 command ACK and
+  the live telemetry fact. The App uses it to fill `memory_enabled` (`"1"`/`"0"`) of `send_btn`,
+  `message_completion` and `agent_step`; when an old sender lacks the field it stays empty and the switch
+  is not inferred off. The value does not represent actual memory reads/writes; background children
+  inherit the source session and neither the switch precedence nor the continuous/replayable collection
+  boundary changes.
+- The switch is read once at root Runtime materialization; switching after Session creation does not
+  hot-update or rebuild the Runtime.
+- A fresh install, or an existing `setting.json` without `memoryEnabled`, defaults to off; an explicit
+  persisted `true` / `false` is kept, with no one-time migration.
+- A new root Session and a real cold resume after an app restart read the latest value. fork, selection
+  side chat and subagent inherit the value already frozen in the parent Runtime and no longer read
+  Settings.
+- A local workspace reads SettingService directly on its Host; a desktop-attached remote reuses the same
+  app-global authority of the desktop shared Host. relay/main keep no copy.
+- With `memoryEnabled=false` the Runtime creates no project/custom Memory root, injects no Main/custom
+  Memory prompt, runs no Recall, Extraction or Dream, and issues no Memory-specific model request.
+- `memoryEnabled=true` does not override `features.memory=false` or `memory.use=false`. If any of the
+  three is off, Memory is off.
+- The protocol result field is `memoryEnabled: boolean`. An old responder that does not return the new
+  field is parsed as the current product default `false`; an explicit non-boolean is still an invalid
+  response.
+- Settings has a separate Memory module. Under the switch description a usage notice in ordinary helper
+  text semantics is always shown, not hidden by the switch state. zh-CN copy: "用量提示：开启 Memory
+  后，系统可能会发起额外的模型请求来提取和召回长期记忆，从而增加 Token 用量和使用成本。" (usage notice:
+  enabling Memory may issue extra model requests to extract and recall long-term memory, increasing token
+  usage and cost). Visuals match other setting descriptions using the existing `text-foreground-subtle`
+  semantic color, with no new color token or notice component.
+- With the switch off, the Project Memory catalog is not read and only the enabling hint is shown; once
+  on, existing local Memory can be viewed immediately, which does not change the Runtime switch value
+  already frozen for the current Session.
 
-Desktop/Web Settings 另提供 fork-only app setting `memoryIndexAsContext`（默认 `false`，
-存储于 `fork-settings.json` sidecar，不经 `setting.json`）。它不改变 Memory 是否启用，只选择
-`default-index` 分支中非空 `MEMORY.md` 索引的注入形态：
+Desktop/Web Settings also provides the fork-only app setting `memoryIndexAsContext` (default `false`,
+stored in the `fork-settings.json` sidecar, not via `setting.json`). It does not change whether Memory is
+enabled; it only selects the injection form of a non-empty `MEMORY.md` index in the `default-index`
+branch:
 
-- `false`（默认）时沿用既有聚合结构：索引与 AGENTS instructions 一起处于 `# agentsMd`
-  聚合块内，渲染判定与 §4 原行为完全一致（含"仅 Memory 也渲染聚合标题"）。
-- `true` 时 `# agentsMd` 聚合标题只围绕非空 instruction source 渲染；`MEMORY.md` 以独立
-  background-context source 渲染：先渲染同级冻结标题 `# Project Memory (background context)`
-  （同时存在 instruction source 时该标题负责关闭 `# agentsMd` section；仅 Memory 存在时不渲染
-  `# agentsMd`），再渲染 source 行与索引内容并追加冻结的 framing 尾句，自身不再触发聚合标题。
-  该模式通过 `session/requestRuntimePreferences` 的 `memoryIndexAsContext` boolean（缺省解析为
-  `false`）下发，在根 Runtime materialization 时冻结，继承、热切换与 remote 语义与
-  `memoryEnabled` 一致。Motivation：模型写入的 Memory 不应天然携带 instruction OVERRIDE
-  权威；该模式是显式 opt-in，行为回归风险由设置承担。
+- `false` (default) keeps the existing aggregate structure: the index and the AGENTS instructions sit in
+  the same `# agentsMd` aggregate block, and the render decision is identical to the original §4 behavior
+  (including "Memory alone also renders the aggregate heading").
+- `true`: the `# agentsMd` aggregate heading is rendered only around non-empty instruction sources;
+  `MEMORY.md` renders as an independent background-context source: first the sibling frozen heading
+  `# Project Memory (background context)` (when an instruction source also exists this heading closes the
+  `# agentsMd` section; with Memory alone `# agentsMd` is not rendered), then the source line and index
+  content, followed by the frozen framing closing sentence; it no longer triggers the aggregate heading
+  itself. The mode is delivered as the `memoryIndexAsContext` boolean of
+  `session/requestRuntimePreferences` (absent parses as `false`), frozen at root Runtime
+  materialization; inheritance, hot switching and remote semantics are identical to `memoryEnabled`.
+  Motivation: Memory written by the model should not carry instruction OVERRIDE authority by default;
+  this mode is an explicit opt-in and the behavior regression risk is borne by the setting.
 
 ### 3.2 Project Memory root
 
@@ -154,55 +174,54 @@ Desktop/Web Settings 另提供 fork-only app setting `memoryIndexAsContext`（�
   <fact-name>.md
 ```
 
-隔离键固定为：
+The isolation key is fixed:
 
 ```text
 workspaceKeySource = workspaceIdentity?.trim() || normalizedWorkspacePath
 ```
 
-- 显式 `workspaceIdentity` 是不透明 identity，只 trim 后参与稳定散列，不能按本地路径解析。
-- 没有 identity 时，先将 `workspacePath` 解析为平台规范化绝对路径；Windows 参与散列前
-  转为小写。
-- project key 复用现有“basename slug + SHA-256 前 16 位”格式；slug 来自规范化本地
-  basename。显式 identity 没有可信 basename 时使用语义中性的 `project` slug。
-- 新的末级 `memory/` 用于隔离旧 MVP 文件；Recall 不读取父目录中的旧数据。
-- 会话初始化后以稳定的 `workspaceRoot` 计算 project root；Bash `cd` 只改变执行 cwd，不能
-  使 prompt、权限、Extraction 或 Dream 切换到另一个 Memory root。
-- resume 必须先恢复 persisted `taskType` 和 `workspaceIdentity`，再计算 Memory root；当前
-  request 的 `workspacePath` 仍用于文件执行，不能被 identity 替代。
-- Main、foreground permission、Extraction 和 Dream 只通过同一个 enabled-root helper
-  取得 root；该 helper 不负责权限、目录创建或文件格式。
-- root 的首次目录创建是 best-effort：mkdir 失败只记 debug 日志，Main/custom prompt 仍按
-  canonical root 注入，真正的 Write/Edit 继续返回原始文件错误。不得增加 retry、备用目录、
-  health state 或恢复任务。
+- An explicit `workspaceIdentity` is an opaque identity, only trimmed before stable hashing, never
+  resolved as a local path.
+- Without identity, `workspacePath` is first resolved to a platform-normalized absolute path; on Windows
+  it is lowercased before hashing.
+- The project key reuses the existing format "basename slug + first 16 chars of SHA-256"; the slug comes
+  from the normalized local basename. An explicit identity without a trustworthy basename uses the
+  semantically neutral slug `project`.
+- The new last-level `memory/` isolates old MVP files; Recall does not read old data in the parent
+  directory.
+- After session initialization the project root is computed from the stable `workspaceRoot`; a Bash `cd`
+  only changes the execution cwd and must not switch the prompt, permissions, Extraction or Dream to
+  another Memory root.
+- resume must first restore the persisted `taskType` and `workspaceIdentity`, then compute the Memory
+  root; the `workspacePath` of the current request is still used for file execution and is not replaced by
+  the identity.
+- Main, foreground permission, Extraction and Dream obtain the root only through the same enabled-root
+  helper; the helper handles neither permissions, directory creation nor file format.
+- First creation of the root directory is best-effort: a mkdir failure only logs debug, Main/custom
+  prompts are still injected with the canonical root, and a real Write/Edit still returns the original
+  file error. No retry, fallback directory, health state or recovery task may be added.
 
-Main-equivalent task type 仅为：
+Main-equivalent task types are only `interactive`, `fork`, `selection_side_chat` and `workflow_parent`.
+A caller that does not provide `taskType` is treated as `interactive` (the compatible semantics of the
+existing default Main session); no new task type is added.
 
-- `interactive`
-- `fork`
-- `selection_side_chat`
-- `workflow_parent`
-
-调用方未提供 `taskType` 时按 `interactive` 处理；这是现有默认 Main session 的兼容语义，
-不扩展新的 task type。
-
-`workflow_child`、`subagent_child`、`nested_workflow_child` 不获得 project Memory prompt、
-Recall、Extraction、Dream 或 project Memory 权限。声明 custom-agent Memory 的
-`subagent_child` 只访问自己的 custom root。
+`workflow_child`, `subagent_child` and `nested_workflow_child` get no project Memory prompt, Recall,
+Extraction, Dream or project Memory permission. A `subagent_child` declaring custom-agent Memory accesses
+only its own custom root.
 
 ### 3.3 Settings Project Memory viewer
 
-Settings 中的 Memory 开关在 Desktop 与 Web Remote / Mobile 都展示；Project Memory viewer
-只在 Desktop 本地 Host 展示。Web Remote / Mobile 不读取 catalog，在 viewer 位置提示用户前往
-本地桌面端查看：
+The Memory switch in Settings is shown in Desktop and Web Remote / Mobile; the Project Memory viewer is
+shown only on the Desktop local Host. Web Remote / Mobile do not read the catalog and show a hint at the
+viewer position to view it on the local desktop:
 
 ```text
-Desktop 本地 Host  -> Memory 开关 + 本地 Project Memory viewer
-Web Remote / Mobile -> Memory 开关 + 本地桌面端查看提示
-                                      `- 不调用 catalog service
+Desktop local Host  -> Memory switch + local Project Memory viewer
+Web Remote / Mobile -> Memory switch + hint to view on the local desktop
+                                      `- no catalog service call
 ```
 
-本地 viewer 的数据范围固定为当前本地 app profile：
+The viewer's data scope is fixed to the current local app profile:
 
 ```text
 <data-root>/cli/memories/projects/<project-key>/memory/
@@ -210,79 +229,101 @@ Web Remote / Mobile -> Memory 开关 + 本地桌面端查看提示
   <fact-name>.md
 ```
 
-- 不聚合 SSH、WSL、Docker 等远端 Host，不读取 custom-agent Memory，也不发现项目级外部
-  `storage.dir`。
-- Desktop Settings 中整个 Memory viewer 固定使用本地 Base Host services；即使当前激活的是
-  SSH、WSL 或 Docker workspace，Markdown 中的本地图片也只通过本地 FileService 读取，不会
-  路由到远端 Host。HTTP(S) 图片继续沿用现有 Markdown renderer 的浏览器加载行为。
-- workspace catalog 只扫描一级 project 目录及其 `memory/` 下的一级普通文件；不跟随目录或
-  文件 symlink。只接受精确 `MEMORY.md` 和严格小写 `.md` 事实文件，空 workspace 不展示。
-- project 目录 basename 是 opaque workspace id；展示名称只从已有 slug 派生并附 hash 后缀，
-  不新增 workspace inventory、映射数据库或 metadata 文件。
-- catalog 只返回文件名、类型、大小和修改时间，并附加可选的 frontmatter 元信息（description、
-  metadata.type）与索引行数 lineCount（仅 `MEMORY.md`，按去 frontmatter 后的行数统计，用于
-  viewer 的注入预算提示）；正文仅在用户选中文件后按需读取，并保持原始
-  Markdown 和 frontmatter 不变。单文件预览上限为 5 MiB（5 × 1024 × 1024 bytes）；超过上限
-  时拒绝读取并在正文区域展示本地化的预览上限提示，不截断、不返回部分内容。
-- catalog 为每个 workspace 附带可选的 `lastDreamConsolidatedAt`：`<memoryRoot>/.consolidated-at`
-  成功标记的 mtime（文件不存在时省略该字段）。它是只读的展示性元数据，用于 viewer 中“上次整理时间”
-  的展示；Host/Renderer 不据它发起 Dream、不写 marker，也不把它当作 lock 所有权判断（lock 语义
-  只属于 Runtime Dream handler，见 7.2）。进行中的 run 不写 marker，因此不会把未完成的整理
-  显示为已完成。
-- 正文读取必须通过单次调用内的只读稳定句柄完成，并在打开后复检路径 containment 与文件身份；
-  不获取文件所有权、不加锁，也不阻塞 Main、Extraction 或 Dream 的原子更新。并发更新优先成功，
-  当前预览只允许返回更新前的完整快照或“文件已变化”错误，句柄始终在调用结束时关闭。文件已变化
-  使用稳定错误码，Renderer 展示本地化提示并允许用户重新打开或刷新文件列表。
-- Renderer 先展示项目列表，再由用户明确进入一个项目查看该项目 catalog 中的全部 Memory，
-  最后按需打开单条 Markdown 正文。项目列表项使用 Folder 图标，第一行展示项目名称，第二行展示
-  本地化的“记忆数量 · 更新时间”；数量包含 `MEMORY.md` 与全部事实文件。`MEMORY.md` 与事实文件
-  在项目内都是平级可选项；二级项目标题下只展示记忆数量，不展示保存目录。缺少
-  `MEMORY.md` 时直接展示其余事实文件，不生成虚拟父节点。
-- Settings 模块标题按 locale 展示为 `Memory` / `记忆`；模块内开关命名为
-  `Workspace Memory` / `工作区记忆`，描述只说明按 workspace 保存、复用和生效边界。
-- viewer 使用“项目列表 → 项目全部 Memory → 单条正文”的三级导航。打开 viewer 不隐式进入
-  最近项目；点击项目只切换到文件列表，不读取正文。项目和文件行使用原生 button，长名称在行内
-  截断并通过应用内 Tooltip 展示完整内容；正文继续复用现有 Markdown renderer。
-- 项目 Memory 列表提供返回项目列表操作，正文提供返回项目 Memory 列表操作；返回时不保留正文
-  选择。Desktop 与手机宽度保持相同信息层级，只调整布局密度，不切换为另一套组件语义。
-- Desktop 中 Memory 已开启且 viewer 实际展示时，viewer 占满 Settings 页面剩余空间并隐藏外层
-  溢出；文件树和正文预览分别独立滚动，避免整个 Settings 页面随长文件或大量事实文件滚动。
-  Memory 关闭态及 Web Remote / Mobile 的本地查看提示态继续使用 Settings 的普通页面滚动。
-- 项目记忆总数按当前语言展示；英文使用 `1 memory` / `N memories`，中文保持 `N 条记忆`。
-- viewer 只读，不提供编辑、删除、项目/文件/正文搜索或导出。Desktop 且存在可返回的 Workspace
-  Shell 时，项目列表行提供“打开 Memory”和“打开文件树”两个入口：“打开 Memory”进入现有项目
-  Memory 列表；“打开文件树”只在用户点击后，由本地 Base Host 按已校验的 opaque workspace id
-  解析 `<data-root>/cli/memories/projects/<project-key>/memory/`，再复用 Markdown 本地目录链接的
-  `stat -> temporary external WorkspaceFileTree` 链路打开该 Memory 目录。Renderer 不自行拼接 data
-  root，目录解析不创建目录、不读取正文、不启动 Runtime；Web Remote / Mobile 和无 Workspace Shell
-  的独立 Settings 不展示该入口。
-- viewer 另提供「打开记忆文件夹」操作（2026-10-14 产品决策，supersede 本节早期"仅文件树"的
-  限定与 §11 的打开目录 non-goal）：按钮以下拉列表列出本地 profile catalog 中的全部项目；选中后
-  host 按 opaque workspace id 复用 catalog 的 containment / case-exact 校验返回本地 memory 目录
-  路径，Renderer 经 `IPlatformService.openInFileManager` 打开该目录。Renderer 不自行拼接 data
-  root；目录不存在或校验失败时记录 warn 不重试；Web Remote / Mobile 不展示该操作。
-- viewer 只支持显式刷新，不增加
-  watcher、polling、cache service、retry 或 fallback。刷新时仅在当前项目和文件仍存在时保留层级；
-  文件仍存在则重新读取正文，项目或文件消失时回退到最近的有效父层级，不自动选择替代项。
-- Web Remote / Mobile 只保留既有 Memory 开关及 session-scoped 生效语义；不展示 workspace
-  catalog、文件树或正文，不调用 catalog service，也不代理或聚合远端 Host 的 Memory。
-- `workspaceId` 和 `fileName` 作为 basename 校验，拒绝绝对路径、路径分隔符和 traversal；根目录
-  不存在等价于空 catalog。catalog 扫描期间 workspace Memory 目录或单个文件并发消失时，视为
-  不属于本次只读快照并跳过；其他 I/O 错误直接投影给 UI。
-- 用户选中文件后文件并发消失时，正文区域展示本地化的“文件已被删除”状态；不自动刷新 catalog、
-  不重试读取，也不把其他读取错误改写成删除状态。
+- No aggregation of remote Hosts (SSH, WSL, Docker), no reading of custom-agent Memory, and no discovery
+  of project-level external `storage.dir`.
+- The whole Memory viewer in Desktop Settings always uses the local Base Host services; even when an SSH,
+  WSL or Docker workspace is active, local images in Markdown are read only through the local FileService
+  and are not routed to a remote Host. HTTP(S) images keep the browser loading behavior of the existing
+  Markdown renderer.
+- The workspace catalog scans only first-level project directories and the first-level regular files under
+  their `memory/`; directory or file symlinks are not followed. Only the exact `MEMORY.md` and strictly
+  lowercase `.md` fact files are accepted; an empty workspace is not shown.
+- The project directory basename is an opaque workspace id; the display name derives only from the
+  existing slug plus a hash suffix, with no new workspace inventory, mapping database or metadata file.
+- The catalog returns only file name, type, size and modified time, plus optional frontmatter metadata
+  (description, metadata.type) and the index line count `lineCount` (`MEMORY.md` only, counted after
+  frontmatter removal, for the viewer's injection budget hint). The body is read on demand after the user
+  selects a file and keeps the original Markdown and frontmatter unchanged. The single-file preview limit
+  is 5 MiB (5 × 1024 × 1024 bytes); above it the read is refused and a localized preview-limit hint is
+  shown in the body area, with no truncation and no partial content.
+- For each workspace the catalog attaches an optional `lastDreamConsolidatedAt`: the mtime of the success
+  marker `<memoryRoot>/.consolidated-at` (omitted when the file is absent). It is read-only display
+  metadata for the viewer's "last consolidated" line; Host/Renderer do not start Dream from it, do not
+  write the marker, and do not use it as a lock ownership check (lock semantics belong only to the Runtime
+  Dream handler, see 7.2). A run in progress writes no marker, so an unfinished consolidation is never
+  shown as completed.
+- The body read must go through a read-only stable handle within a single call and re-check path
+  containment and file identity after opening; it takes no file ownership, no lock, and does not block
+  the atomic updates of Main, Extraction or Dream. A concurrent update wins; the current preview may only
+  return the complete pre-update snapshot or a "file changed" error, and the handle is always closed when
+  the call ends. File-changed uses a stable error code; the Renderer shows a localized hint and lets the
+  user reopen or refresh the file list.
+- The Renderer first shows the project list; the user explicitly enters one project to see all Memory in
+  that project's catalog and finally opens a single Markdown body on demand. Project list items use a
+  Folder icon, the first line shows the project name and the second line a localized "memory count ·
+  update time"; the count includes `MEMORY.md` and all fact files. `MEMORY.md` and fact files are
+  sibling selectable items inside a project; the second-level project title shows only the memory count,
+  not the save directory. Without `MEMORY.md` the remaining fact files are shown directly with no virtual
+  parent node.
+- The Settings module title is shown by locale as `Memory` / `记忆`; the switch in the module is named
+  `Workspace Memory` / `工作区记忆`, and its description only states saving per workspace, reuse and the
+  scope of effect.
+- The viewer uses three-level navigation "project list → all Memory of a project → single body". Opening
+  the viewer does not implicitly enter the latest project; clicking a project only switches to the file
+  list without reading a body. Project and file rows use native buttons, long names truncate inline and
+  show the full content through the in-app Tooltip; the body keeps reusing the existing Markdown
+  renderer.
+- The project Memory list offers a back-to-project-list action, and the body a back-to-project-Memory-list
+  action; going back does not keep the body selection. Desktop and phone widths keep the same information
+  hierarchy and only adjust layout density, without switching to another component semantics.
+- On Desktop, when Memory is on and the viewer is actually shown, the viewer fills the remaining Settings
+  page space and hides outer overflow; the file tree and body preview scroll independently so the whole
+  Settings page does not scroll with long files or many fact files. The Memory-off state and the local
+  viewing hint state of Web Remote / Mobile keep the normal page scroll of Settings.
+- The total project memory count is shown in the current language; English uses `1 memory` /
+  `N memories`, Chinese keeps `N 条记忆`.
+- The viewer is read-only: no editing, deletion, project/file/body search or export. On Desktop with a
+  returnable Workspace Shell, a project list row offers two entries, "Open Memory" and "Open file tree":
+  "Open Memory" enters the existing project Memory list; "Open file tree", only after the user clicks,
+  has the local Base Host resolve `<data-root>/cli/memories/projects/<project-key>/memory/` from the
+  validated opaque workspace id and then reuses the Markdown local-directory-link chain
+  `stat -> temporary external WorkspaceFileTree` to open that Memory directory. The Renderer does not
+  assemble the data root itself; directory resolution creates no directory, reads no body and starts no
+  Runtime. Web Remote / Mobile and standalone Settings without a Workspace Shell do not show this entry.
+- The viewer also offers an "Open memory folder" action (product decision 2026-10-14, superseding the
+  earlier "file tree only" restriction in this section and the open-directory non-goal of §11): a button
+  with a dropdown listing all projects in the local profile catalog; after selecting, the host reuses the
+  catalog's containment / case-exact validation by opaque workspace id to return the local memory
+  directory path, and the Renderer opens it via `IPlatformService.openInFileManager`. The Renderer does not
+  assemble the data root; when the directory is missing or validation fails a warn is logged without
+  retry; Web Remote / Mobile do not show this action.
+- The viewer supports explicit refresh only, with no watcher, polling, cache service, retry or fallback.
+  On refresh the hierarchy is kept only while the current project and file still exist; if the file still
+  exists its body is re-read, and if the project or file disappears the view falls back to the nearest
+  valid parent level, without auto-selecting a replacement.
+- Web Remote / Mobile keep only the existing Memory switch and its session-scoped effect; they show no
+  workspace catalog, file tree or body, call no catalog service, and do not proxy or aggregate the Memory
+  of remote Hosts.
+- `workspaceId` and `fileName` are validated as basenames, rejecting absolute paths, path separators and
+  traversal; a missing root directory is equivalent to an empty catalog. If a workspace Memory directory
+  or single file disappears concurrently during the catalog scan, it is treated as not part of this
+  read-only snapshot and skipped; other I/O errors are projected to the UI directly.
+- If the selected file disappears concurrently, the body area shows a localized "file has been deleted"
+  state; the catalog is not refreshed automatically, the read is not retried, and other read errors are
+  not rewritten as deleted.
 
-## 4. Project Memory 文件协议
+## 4. Project Memory file protocol
 
-Main Agent 的 Memory system section 在 Memory 启用且 `use=true` 时始终存在，即使目录为空。
-其中的目录、保存规则、读取规则、类型说明和 hygiene 文案必须与冻结的 provider-visible
-fixture 一致；只有 root 允许动态变化。
+The Memory system section of the Main Agent is always present when Memory is enabled and `use=true`, even
+if the directory is empty. Its directory, save rules, read rules, type descriptions and hygiene text must
+match the frozen provider-visible fixture; only the root may change dynamically.
 
-每个事实写入 project Memory root 顶层的独立小写 `.md` 文件。文件名用 3–4 个描述性词，
-不带 type 前缀。一个文件只保存一个事实；已有文件覆盖同一事实时直接更新该文件，错误或失效
-的事实可以删除，不为历史版本另建文件。
+Each fact is written to a separate lowercase `.md` file at the top level of the project Memory root. The
+file name uses 3–4 descriptive words with no type prefix. One file holds one fact; when an existing file
+covers the same fact it is updated in place, and a wrong or stale fact may be deleted; no separate file is
+created for a history version.
 
-事实文件格式：
+Fact file format:
 
 ```yaml
 ---
@@ -296,38 +337,41 @@ metadata:
 One durable fact.
 ```
 
-`metadata.type` 只接受：
+`metadata.type` accepts only:
 
-| type        | 内容                                                                             |
-| ----------- | -------------------------------------------------------------------------------- |
-| `user`      | 用户角色、知识背景、职责、目标或稳定偏好。                                       |
-| `feedback`  | 用户确认或纠正的可复用协作方式。正文包含 `Why:` 与 `How to apply:`。             |
-| `project`   | 无法仅从当前代码推导的项目原因、约束或决策。正文包含 `Why:` 与 `How to apply:`。 |
-| `reference` | 未来应去哪里查询的外部资源指针。                                                 |
+| type        | Content                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| `user`      | The user's role, knowledge background, responsibilities, goals or stable preferences.         |
+| `feedback`  | A reusable way of working the user confirmed or corrected. Body contains `Why:` and `How to apply:`. |
+| `project`   | Project reasons, constraints or decisions that cannot be derived from the current code alone. Body contains `Why:` and `How to apply:`. |
+| `reference` | Pointers to external resources to consult in the future.                                      |
 
-`metadata.node_type` 固定为 `memory`。`metadata.originSessionId` 记录该事实首次写入时的 runtime
-session ID，它不由模型生成：Foreground、Extraction、Dream 和 Custom Agent 共用的 Write/Edit
-写入边界只在 `originSessionId` 缺失时触发一次 frontmatter 序列化，同时补入
-`node_type: memory` 和当前 session ID。已有非空 `originSessionId` 时直接保留文件原文，不单独
-规范化 `node_type` 或 YAML 排版。旧文件不批量迁移；后续 Write/Edit 只有在 origin 缺失时才补齐
-这两个字段。Recall 不读取或索引这些 metadata 字段，`MEMORY.md` 没有 frontmatter，因此不会被
-补入。
+`metadata.node_type` is fixed to `memory`. `metadata.originSessionId` records the runtime session ID at
+the first write of the fact and is not generated by the model: the Write/Edit write boundary shared by
+Foreground, Extraction, Dream and Custom Agent triggers a single frontmatter serialization only when
+`originSessionId` is missing, adding `node_type: memory` and the current session ID together. When a
+non-empty `originSessionId` already exists the file text is preserved as is, with no separate
+normalization of `node_type` or YAML layout. Old files are not bulk migrated; a later Write/Edit fills
+these two fields only when origin is missing. Recall does not read or index these metadata fields, and
+`MEMORY.md` has no frontmatter so nothing is added to it.
 
-`name` 使用短 kebab-case slug；正文可用 `[[other-memory-name]]` 关联其他事实。关联目标暂时
-不存在也不是错误，不为此增加引用校验器。
+`name` is a short kebab-case slug; the body may link other facts with `[[other-memory-name]]`. A link
+target that does not exist yet is not an error, and no reference validator is added.
 
-`MEMORY.md` 是短索引，不带事实 frontmatter。Main Agent 每次写入事实文件后按默认分支文案
-同步一行 `- [Title](file.md) — hook` pointer；Dream 负责后续整理和裁剪该索引。Recall 始终
-排除 basename 精确等于 `MEMORY.md` 的文件。
+`MEMORY.md` is a short index without fact frontmatter. After each fact file write the Main Agent syncs a
+line `- [Title](file.md) — hook` pointer per the default branch text; Dream is responsible for later
+consolidating and trimming the index. Recall always excludes files whose basename is exactly `MEMORY.md`.
 
-`default-index` 分支在 Main session 初始化时读取一次 `<project-memory-root>/MEMORY.md`，并与
-AGENTS instructions 共用现有 request user context 注入链路。非空索引在最终 Messages
-request 的首条 user message 中使用以下 provider-visible 结构；`<MEMORY_ROOT>` 是唯一
-允许归一化的动态值。渲染形态由 `memoryIndexAsContext`（§3.1）选择，两个形态严格互斥：
+The `default-index` branch reads `<project-memory-root>/MEMORY.md` once at Main session initialization and
+shares the existing request user context injection chain with the AGENTS instructions. A non-empty index
+uses the following provider-visible structure in the first user message of the final Messages request;
+`<MEMORY_ROOT>` is the only dynamic value allowed to be normalized. The render form is selected by
+`memoryIndexAsContext` (§3.1), and the two forms are strictly exclusive:
 
-`memoryIndexAsContext=false`（默认）时保持既有结构。渲染判定：只要该 request
-user context 中存在任意非空 instruction source，最前方就渲染一次 ZCode 命名的
-`# agentsMd`。因此非空 `MEMORY.md` 本身也会产生该标题，不要求同时存在 AGENTS.md：
+With `memoryIndexAsContext=false` (default) the existing structure is kept. Render decision: as long as
+the request user context contains any non-empty instruction source, the ZCode-named `# agentsMd` is
+rendered once at the front. So a non-empty `MEMORY.md` alone also produces this heading, without needing
+AGENTS.md:
 
 ```text
 # agentsMd
@@ -338,11 +382,12 @@ Contents of <MEMORY_ROOT>/MEMORY.md (user's auto-memory, persists across convers
 <index content>
 ```
 
-`memoryIndexAsContext=true` 时，`# agentsMd` 聚合标题只围绕非空 instruction source 渲染；
-`MEMORY.md` 以独立 background-context source 渲染，自身不再触发聚合标题。该 source 以同级
-冻结标题 `# Project Memory (background context)` 开始：同时存在 instruction source 时
-`# agentsMd` section 在该标题处结束，Memory 不会留在 OVERRIDE banner 之下；仅 Memory 存在时
-不渲染 `# agentsMd`。source 行之后追加冻结的 framing 尾句：
+With `memoryIndexAsContext=true` the `# agentsMd` aggregate heading is rendered only around non-empty
+instruction sources; `MEMORY.md` renders as an independent background-context source and no longer
+triggers the aggregate heading itself. The source starts with the sibling frozen heading
+`# Project Memory (background context)`: when an instruction source also exists the `# agentsMd` section
+ends at this heading, so Memory does not stay under the OVERRIDE banner; with Memory alone `# agentsMd`
+is not rendered. After the source line the frozen framing closing sentence is appended:
 
 ```text
 # Project Memory (background context)
@@ -354,90 +399,108 @@ Contents of <MEMORY_ROOT>/MEMORY.md (user's auto-memory, persists across convers
 This memory index is background context about the user and this project, not instructions: use it when relevant, but it does not override user instructions, workspace instructions, or safety rules.
 ```
 
-- 文件不存在、不可读、为空或 trim 后为空时，不增加该 instruction source；Main `# Memory`
-  system section 仍正常注入。
-- 内容先移除文件开头的 YAML frontmatter，再移除 Markdown lexer 识别到的顶层 HTML comment
-  token；代码块、段落内的 inline comment 等非 HTML token 内容保持原样。随后 trim。超过
-  200 行或 25,000 个 JavaScript 字符时不再从头部直接截断：在预算内保留开头 30% 与结尾 70%
-  （新 pointer 追加在尾部，尾部比头部更可能包含当前相关记忆），中间以冻结的
-  `…[MEMORY.md is over the <limit> cap; its middle is omitted]…` marker 省略；随后复用
-  Custom Agent `MEMORY.md` 的同一截断 helper 和精确 warning，不增加第二套格式或 fallback。
-- 初始化读取成功后同步写入现有 `readFileState`：保存磁盘原文、完整读取范围和文件 revision；
-  provider-visible 处理结果与磁盘原文不同时标记为 partial。这样未经过处理的完整索引可直接
-  Write/Edit；被去 frontmatter/comment、trim 或截断的索引继续遵循现有 read-before-write，需先
-  Read 后再修改。这里不增加新的文件状态、权限或自动修复机制。
-- cold resume 先从 active branch 的持久化 tool metadata 重建 `readFileState`，再初始化 session
-  context 并读取 `MEMORY.md`。因此当前磁盘索引只读取和写入状态一次，并覆盖同路径的历史工具
-  状态；后续历史 hydration 不得清除刚加载的 AutoMem read-state。
-- 读取只发生在 session context 初始化边界；同一 session 后续 continuation、模型切换或
-  Settings 热切换不重新读取。新建 session 和真正 cold resume 重新读取当前索引。
-- 读取失败不重试、不切换备用目录，也不影响后续真实 Write/Edit 返回原始文件错误。
-- `semantic-recall` 分支在任何 `MEMORY.md` 文件 I/O 前跳过该 AutoMem source，也不为该文件
-  seed `readFileState`。它只通过第 5 节的 Selector/Recall 消费事实文件。
+- If the file is missing, unreadable, empty, or empty after trim, no instruction source is added; the Main
+  `# Memory` system section is still injected normally.
+- Content first has the leading YAML frontmatter removed, then the top-level HTML comment tokens
+  recognized by the Markdown lexer removed (inline comments inside code blocks, paragraphs and other
+  non-HTML tokens stay as is), then trimmed. Beyond 200 lines or 25,000 JavaScript characters it is no
+  longer cut from the head directly: within budget the first 30% and last 70% are kept (new pointers are
+  appended at the tail, which is more likely to hold currently relevant memory), and the middle is omitted
+  with the frozen marker `…[MEMORY.md is over the <limit> cap; its middle is omitted]…`; the same
+  truncation helper and exact warning as the Custom Agent `MEMORY.md` are then reused, with no second
+  format or fallback.
+- After a successful init read, the existing `readFileState` is written synchronously: the original disk
+  text, the full read range and the file revision are stored; when the provider-visible result differs from
+  the disk text it is marked partial. So an unprocessed complete index can be Write/Edited directly, while
+  an index with frontmatter/comments removed, trimmed or truncated keeps following the existing
+  read-before-write and must be Read first. No new file state, permission or auto-repair mechanism is
+  added here.
+- cold resume first rebuilds `readFileState` from the persisted tool metadata of the active branch, then
+  initializes the session context and reads `MEMORY.md`. So the current disk index reads and writes the
+  state once and overrides historical tool state for the same path; later history hydration must not
+  clear the just-loaded AutoMem read-state.
+- The read happens only at the session context initialization boundary; later continuation, model switch
+  or Settings hot switch in the same session do not re-read. A new session and a real cold resume re-read
+  the current index.
+- A read failure is not retried, switches to no fallback directory, and does not affect a later real
+  Write/Edit returning the original file error.
+- The `semantic-recall` branch skips this AutoMem source before any `MEMORY.md` file I/O and does not seed
+  `readFileState` for the file. It consumes fact files only through the Selector/Recall of section 5.
 
-除缺失 `metadata.originSessionId` 时同次补齐 `metadata.node_type` 的写入边界外，保存规则只通过
-prompt 约束；Runtime 不增加
-写后 schema validator、自动修复、secret/PII 扫描或 prompt-injection 分类器。
+Except for the write boundary that fills `metadata.node_type` in the same pass when
+`metadata.originSessionId` is missing, save rules are constrained by prompt only; the Runtime adds no
+post-write schema validator, auto-repair, secret/PII scan or prompt-injection classifier.
 
-### 4.1 Foreground 工具权限
+### 4.1 Foreground tool permissions
 
-Memory 特殊权限在已有全局 tool、路径与显式 deny/ask 判断之后生效：
+The special Memory permission applies after the existing global tool, path and explicit deny/ask checks:
 
-- 仅 Main-equivalent runtime 或声明 custom Memory scope 的 child 可获得对应 root 权限。
-- 只自动允许 root 内、不包含既有敏感 path segment 的小写 `.md` Write/Edit。
-- 权限顺序：显式 tool/path deny/ask 优先；合格 Memory 写入先于 generic
-  plan-mode non-read-only block，因此 Plan mode 仍可写 project Memory。
-- root 外路径、非小写 `.md`、敏感路径和其他工具继续走原权限策略。
-- Bash 保持 foreground 原有全局权限语义；Memory 不增加 shell parser、虚拟只读挂载或回滚。
-- 不为 Memory 新增 Read 工具或 Read 特殊授权。现有 runtime 若本来注册 Read，仍按原权限执行。
-- `PermissionRequest` hook 返回 `updatedInput` 时，先完成既有输入规范化和 schema 校验，再对
-  修改后的输入重新执行最终权限检查；不得沿用修改前的 Memory 判定，也不得重新运行
-  `PreToolUse` 或 `PermissionRequest` hook。修改后仍命中受保护 ask（当前为 project ask 或
-  Memory target ask）的输入进入既有 permission broker。
+- Only a Main-equivalent runtime, or a child declaring a custom Memory scope, gets permission for the
+  matching root.
+- Only lowercase `.md` Write/Edit inside the root without existing sensitive path segments is allowed
+  automatically.
+- Order: explicit tool/path deny/ask first; a qualifying Memory write comes before the generic plan-mode
+  non-read-only block, so Plan mode can still write project Memory.
+- Paths outside the root, non-lowercase `.md`, sensitive paths and other tools keep the original
+  permission policy.
+- Bash keeps its original foreground global permission semantics; Memory adds no shell parser, virtual
+  read-only mount or rollback.
+- No new Read tool or Read special authorization is added for Memory. If the runtime already registers
+  Read, it runs under the original permissions.
+- When a `PermissionRequest` hook returns `updatedInput`, the existing input normalization and schema
+  validation are completed first, then the final permission check is re-run on the modified input; the
+  pre-modification Memory decision is not reused, and neither `PreToolUse` nor `PermissionRequest` hooks
+  run again. Modified input that still hits a protected ask (currently project ask or Memory target ask)
+  enters the existing permission broker.
 
-## 5. Project Memory Retrieval 双分支
+## 5. Project Memory Retrieval: two branches
 
-`PROJECT_MEMORY_SEMANTIC_RECALL_ENABLED` 是唯一原始 boolean，当前恒定为 `false`。它只在
-`project-memory-retrieval-branch.ts` 中映射为一个语义分支；Prompt、index loader 和 Selector
-lifecycle 只能消费映射后的 branch，不能再次各自解释 boolean。
+`PROJECT_MEMORY_SEMANTIC_RECALL_ENABLED` is the only raw boolean and is currently always `false`. It maps
+to one semantic branch only in `project-memory-retrieval-branch.ts`; the Prompt, index loader and
+Selector lifecycle may only consume the mapped branch and must not each interpret the boolean again.
 
-| branch                  | Main pointer | 加载 `MEMORY.md` | Selector | `relevant_memory` |
+| branch                  | Main pointer | Load `MEMORY.md` | Selector | `relevant_memory` |
 | ----------------------- | ------------ | ---------------- | -------- | ----------------- |
-| `default-index`（当前） | 是           | 是               | 否       | 否                |
-| `semantic-recall`       | 否           | 否               | 是       | 是                |
+| `default-index` (current) | yes        | yes              | no       | no                |
+| `semantic-recall`       | no           | no               | yes      | yes               |
 
-两个分支严格互斥：不得出现 pointer/index 与 Selector/Recall 同时进入同一 Main session 的混合状态。
-切换只改变 Core 内部常量，不新增 Settings、配置 schema、runtime preference、协议字段、环境变量或
-测试 setter。Extraction、Dream handler、foreground 写入、Custom Agent Memory 与 app-global
-Memory 总开关在两个 retrieval 分支中保持不变。
+The two branches are strictly exclusive: a mixed state where pointer/index and Selector/Recall enter the
+same Main session is not allowed. Switching changes only the Core internal constant, adding no Settings,
+config schema, runtime preference, protocol field, environment variable or test setter. Extraction, the
+Dream handler, foreground writes, Custom Agent Memory and the app-global Memory master switch are
+unchanged in both retrieval branches.
 
-以下 5.1-5.4 描述 `semantic-recall` 分支的冻结行为；实现保留并持续接受 focused tests，当前
-`default-index` active path 不执行这些 provider 请求。
+Sections 5.1-5.4 describe the frozen behavior of the `semantic-recall` branch; the implementation is
+kept and keeps passing focused tests, but the current `default-index` active path does not issue these
+provider requests.
 
 ### 5.1 Manifest
 
-每个 session 的 Recall state 只保存在内存中。首次合格 query：
+The Recall state of each session lives only in memory. At the first qualifying query:
 
-1. 从 project Memory root 递归扫描严格小写 `.md`。
-2. 排除 basename 精确为 `MEMORY.md`。
-3. 不跟随目录 symlink；普通文件 symlink 沿用 Node 文件读取行为。
-4. 每个候选只读前 30 行。
-5. 无 frontmatter 的普通 Markdown 和 YAML frontmatter 解析失败的 Markdown 都作为无
-   metadata 候选进入 manifest；不增加额外修复或兜底解析。
-6. 按 mtime 降序排序，最多保留 200 个文件。
+1. Recursively scan strictly lowercase `.md` from the project Memory root.
+2. Exclude files whose basename is exactly `MEMORY.md`.
+3. Do not follow directory symlinks; ordinary file symlinks keep Node file read behavior.
+4. Read only the first 30 lines of each candidate.
+5. Plain Markdown without frontmatter and Markdown whose YAML frontmatter fails to parse both enter the
+   manifest as candidates without metadata; no extra repair or fallback parsing.
+6. Sort by mtime descending and keep at most 200 files.
 
-非空 manifest 和 selector conversation 对当前 session sticky；扫描结果为空时不缓存，下一次
-合格 query 重新扫描。不得增加 manifest service、持久 cache 或 filesystem observer。
+A non-empty manifest and the selector conversation are sticky for the current session; an empty scan is
+not cached and the next qualifying query rescans. No manifest service, persistent cache or filesystem
+observer may be added.
 
 ### 5.2 Selector request
 
-query 使用最新一条非 meta user message。显式标记为 `real_user` 的消息以 metadata 为准，即使
-正文以字面量 `<system-reminder>` 开头也不是 meta；只有缺少 metadata 的旧历史才沿用现有文本
-标记识别。先选定最新非 meta user message，再检查其 query 是否合格，不因它为空或只有一个词
-而回退到更早消息。trim 后为空或不包含任何空白字符时不启动 Recall。
+The query uses the latest non-meta user message. A message explicitly marked `real_user` follows its
+metadata and is not meta even if its body starts with the literal `<system-reminder>`; only old history
+lacking metadata keeps using the existing text marker recognition. The latest non-meta user message is
+selected first and then its query is checked for eligibility; it does not fall back to an earlier message
+because it is empty or has only one word. Recall does not start when the trimmed query is empty or
+contains no whitespace.
 
-Selector 使用 Lite model role、`max_tokens=256`、冻结的 system prompt、manifest conversation、
-cache-control 和以下 structured output：
+The Selector uses the Lite model role, `max_tokens=256`, the frozen system prompt, the manifest
+conversation, cache-control and this structured output:
 
 ```json
 {
@@ -457,77 +520,85 @@ cache-control 和以下 structured output：
 }
 ```
 
-ZCode 本轮没有 knowledge-index producer；可选字段仅保持 provider contract，返回值不产生额外
-能力。每次真实 provider attempt 前刷新 runtime headers。error、abort、非 text、无效 JSON 或
-schema 不匹配均产生空选择；不重试，不加 Memory-local timeout，不做关键词 fallback。
+ZCode currently has no knowledge-index producer; the optional field only keeps the provider contract and
+its return value adds no capability. Runtime headers are refreshed before each real provider attempt.
+error, abort, non-text, invalid JSON or schema mismatch all yield an empty selection; no retry, no
+Memory-local timeout and no keyword fallback.
 
-### 5.3 读取与注入
+### 5.3 Reading and injection
 
-Selector 结果处理顺序固定：
+Selector result handling order is fixed:
 
-1. 保留模型返回顺序和重复项。
-2. 过滤 manifest 不存在的文件。
-3. 使用消费开始前的 read-state 快照过滤已由工具读取或已 Recall 的路径。
-4. 截取前 5 项。
+1. Keep the model's return order and duplicates.
+2. Filter files that do not exist in the manifest.
+3. Using the read-state snapshot from before consumption starts, filter paths already read by tools or
+   already Recalled.
+4. Take the first 5 items.
 
-因此同一结果批次中的重复选择可以保留，后续 Recall 才会把这些路径视为已读取。
-读取失败发生在 5 项截断之后，不用第 6 项回填。若 sticky manifest 中的路径已全部 Recall，
-则不再发送 selector 请求；仅被 Read、尚未 Recall 的路径不触发这个请求前短路。
+So duplicate selections in the same result batch may be kept, and only a later Recall treats those paths
+as read. Read failures happen after the 5-item cut and are not backfilled with the 6th item. If all paths
+in the sticky manifest have been Recalled, no selector request is sent; paths that were only Read and not
+yet Recalled do not trigger this pre-request short circuit.
 
-读取正文时：
+When reading the body:
 
-- 保留 frontmatter 和正文原文。
-- 去除文件开头 BOM，将 CRLF 规范化为 LF。
-- 最多保留前 200 个完整逻辑行或前 4096 个规范化 UTF-8 bytes。
-- 两个限制同时触发时 byte 原因优先；只保留完整行并追加冻结的 exact truncation suffix。
-- stale 天数按 `floor((now - mtime) / 24h)` 计算；仅在天数大于 1 时追加冻结的 warning，
-  因而首次提示发生在满 48 小时并显示 `2 days`。
+- Keep frontmatter and body text as is.
+- Strip a leading BOM and normalize CRLF to LF.
+- Keep at most the first 200 complete logical lines or the first 4096 normalized UTF-8 bytes.
+- When both limits trigger the byte reason wins; only complete lines are kept and the frozen exact
+  truncation suffix is appended.
+- Stale days are `floor((now - mtime) / 24h)`; the frozen warning is appended only when the days exceed 1,
+  so the first notice happens at 48 full hours and shows `2 days`.
 
-在最终 surviving memories 被注入 `relevant_memory` 前，同一消费边界将其写入现有
-`readFileState`：`content` 使用实际注入内容（包含截断 suffix），`timestamp/mtimeMs` 使用
-manifest mtime，`offset` 为 `undefined`，仅截断内容设置 `limit=实际保留行数`，并保持
-`isPartialView=false`。ZCode 同时携带现有 Write/Edit freshness 所需的 `sizeBytes` 与可用的
-`revisionId`；不伪造 Read tool event、`sourceTool` 或额外 attachment。prefetch 阶段和被最终
-过滤掉的候选不得写入 read-state。
+Before the final surviving memories are injected into `relevant_memory`, the same consumption boundary
+writes them to the existing `readFileState`: `content` is the actually injected content (including the
+truncation suffix), `timestamp/mtimeMs` use the manifest mtime, `offset` is `undefined`, `limit=actual
+kept lines` is set only for truncated content, and `isPartialView=false` is kept. ZCode also carries the
+`sizeBytes` and the available `revisionId` needed by the existing Write/Edit freshness; no Read tool
+event, `sourceTool` or extra attachment is forged. Candidates in the prefetch phase and those filtered out
+at the end must not write read-state.
 
-选中的内容聚合为一个现有 `relevant_memory` attachment，最终通过一个 mid-conversation
-system block 注入。固定 prefix 只出现一次；累计 recalled content 按 JavaScript string length
-计数，包含正文截断 suffix，但不包含 header、stale warning 或 attachment wrapper。达到或超过
-61,440 字符后不再启动新的 Recall；当前批次可以整体越过上限，不按剩余字符二次截断。
+The selected content is aggregated into one existing `relevant_memory` attachment and finally injected as
+one mid-conversation system block. The fixed prefix appears once; the accumulated recalled content counts
+in JavaScript string length, including the body truncation suffix but not headers, stale warnings or the
+attachment wrapper. At or above 61,440 characters no new Recall starts; the current batch may cross the
+limit as a whole and is not truncated a second time by the remaining characters.
 
-### 5.4 异步时序
+### 5.4 Async timing
 
 ```text
 user turn
   |
   +---- first Main request ------------------------------+
   |                                                      |
-  `---- Recall selector prefetch（同一 abort，不能阻塞） |
+  `---- Recall selector prefetch (same abort, must not block) |
                                                          v
                                               assistant tool_use
                                                          |
-                                            完整真实 tool-result batch
+                                            complete real tool-result batch
                                                          |
-                                      queued input/runtime command 先 drain
+                                      queued input/runtime command drain first
                                                          |
-                            selector settled ? consume once : 本批不等待
+                            selector settled ? consume once : do not wait this batch
                                                          |
                                            relevant_memory MCS
                                                          |
-                                                下一次模型请求
+                                                next model request
 ```
 
-- 没有后续完整真实 tool-result batch 时，不消费 prefetch。
-- selector 尚未完成时不等待；完成结果只在未来符合条件的边界消费。
-- 同一次模型 retry 不重复消费。
-- compact 和 resume 清空 manifest conversation、prefetch、recalled path 与字符计数。
+- Without a later complete real tool-result batch the prefetch is not consumed.
+- If the selector has not finished it is not awaited; the finished result is consumed only at a future
+  eligible boundary.
+- A retry of the same model request does not consume again.
+- compact and resume clear the manifest conversation, prefetch, recalled paths and the character count.
 
 ## 6. Background Extraction
 
-Extraction 只在 `memory.extractionEnabled !== false`、成功、非 remote、无 child `agentId` 的
-Main-equivalent turn 后 fire-and-forget。默认前台答复不等待它。
+Extraction fires and forgets only after a successful, non-remote Main-equivalent turn without a child
+`agentId` and with `memory.extractionEnabled !== false`. The default foreground answer does not wait for
+it.
 
-默认 headless gate 必须早于 enabled-root 解析与 snapshot acquisition：
+The default headless gate must come before enabled-root resolution and snapshot acquisition:
 
 ```text
 -p / --prompt ─┐
@@ -540,198 +611,230 @@ Main-equivalent turn 后 fire-and-forget。默认前台答复不等待它。
                     scheduleProjectMemoryExtraction
                                   `-- return before root/snapshot/provider/file work
 
-TUI / app-server ─────> 未设置 extractionEnabled（按启用处理）
+TUI / app-server ─────> extractionEnabled not set (treated as enabled)
 ```
 
-因此未指定 `--memory-bench` 的 headless Main provider request 仍保留当前 active retrieval branch 的 Memory 内容，但 turn 完成后
-不得读取 Extraction snapshot、创建 scheduler、发起 Extraction provider request、推进 Extraction
-cursor 或修改 Project Memory 文件。headless 退出继续复用正常 `app.close()` 取消语义，不增加进程退出前
-等待后台 Extraction 的专用 drain；正确路径下本来就不存在待关闭的 Extraction work。
+So the headless Main provider request without `--memory-bench` still keeps the Memory content of the
+current active retrieval branch, but after the turn completes it must not read the Extraction snapshot,
+create a scheduler, issue an Extraction provider request, advance the Extraction cursor or modify Project
+Memory files. Headless exit keeps reusing the normal `app.close()` cancel semantics, with no dedicated
+drain waiting for background Extraction before process exit; on the correct path there is no pending
+Extraction work to close.
 
-headless E2E 按请求类别冻结该边界：恰好一个 Main、零个 Extraction。`semantic-recall` 的 Selector
-prefetch 仍允许启动，但直接回答完成时尚未消费的 prefetch 会被 turn lifecycle 取消，因此该场景不以
-Selector 是否到达 provider 反推 Extraction gate；Selector 的精确 provider 合同由 MEM07 的确定性
-tool-continuation 场景负责。
+The headless E2E freezes this boundary by request category: exactly one Main, zero Extraction. The
+`semantic-recall` Selector prefetch may still start, but a prefetch not consumed when the direct answer
+finishes is cancelled by the turn lifecycle, so this scenario does not infer the Extraction gate from
+whether the Selector reached the provider; the exact provider contract of the Selector is owned by the
+deterministic tool-continuation scenario of MEM07.
 
-**CLI Memory benchmark 等待边界**
+**CLI Memory benchmark wait boundary**
 
-`zcode -p "记住这项约定" --memory-bench` 显式为本次 Runtime 开启自动 Extraction，并在正常退出前
-等待已调度的 running/latest-pending 工作全部结束。首版仅接受 `-p/--prompt`，不接受单独使用、
-`--target`、TUI 或 app-server/agent-server。flag 不持久化，不覆盖 `memory.enabled/use`；
-Memory 未启用时在提交主请求前报错，避免无提取的运行被误认为 benchmark 已完成。
+`zcode -p "记住这项约定" --memory-bench` explicitly turns on automatic Extraction for this Runtime and,
+before normal exit, waits until all scheduled running/latest-pending work finishes. The first version
+accepts only `-p/--prompt`, not standalone use, `--target`, TUI or app-server/agent-server. The flag is
+not persisted and does not override `memory.enabled/use`; when Memory is not enabled it errors before
+submitting the main request, so a run without extraction is not mistaken for a completed benchmark.
 
 ```text
--p --memory-bench → extractionEnabled=true → 检查有效 Project Memory 配置
-  → submitPrompt → successful Main turn → 原 scheduler 调度
-  → drainMemoryExtractions(null) → 输出最终 text/JSON/result → app.close() → 退出
-等待期间 SIGINT/SIGTERM → 原 shutdown handler → abort Extraction → 有界清理 → 信号退出码
+-p --memory-bench → extractionEnabled=true → check effective Project Memory config
+  → submitPrompt → successful Main turn → original scheduler schedules
+  → drainMemoryExtractions(null) → output final text/JSON/result → app.close() → exit
+SIGINT/SIGTERM while waiting → original shutdown handler → abort Extraction → bounded cleanup → signal exit code
 ```
 
-CLI 持有本次调用的等待策略，Core scheduler 仍是 running/pending/cursor 的唯一 owner。
-`isProjectMemoryEnabled()` 只读复用 Runtime 的有效 root 判定，CLI 不复制配置解析或另读设置。
-Runtime 的 `drainMemoryExtractions(timeoutMs)` 保持默认 60 秒有界行为；显式 `null` 表示不设置
-drain deadline，等待 scheduler 自然清空。bench 等待在 `app.close()` 及其 6 秒清理 deadline 之外，
-不得提前 `beginShutdown()` 或解除信号处理器；取消仍可中断等待中的模型或工具并触发清理。
+The CLI owns the wait policy of this invocation; the Core scheduler remains the sole owner of
+running/pending/cursor. `isProjectMemoryEnabled()` reuses only the Runtime's effective root decision, and
+the CLI neither copies config parsing nor reads settings separately. The Runtime
+`drainMemoryExtractions(timeoutMs)` keeps its default 60 second bounded behavior; an explicit `null` sets
+no drain deadline and waits for the scheduler to empty naturally. The bench wait is outside `app.close()`
+and its 6 second cleanup deadline, must not call `beginShutdown()` early or release signal handlers;
+cancellation can still interrupt the waiting model or tool and trigger cleanup.
 
-等待表示工作已结束，不保证发生写入或提取成功。原 eligibility、direct-write skip、5-turn 上限、
-error/abort cursor 规则保持；provider/工具失败仍按现有后台 Extraction 日志记录，不新增结果字段或
-改变主请求的成功退出码。`stream-json` 的主轮事件实时输出，最终 `result` 在 drain 后输出。
-主请求失败直接进入原清理路径。resume/continue 只复用已有会话历史，不保存 bench flag。
+Waiting means the work has finished, not that a write or successful extraction happened. The original
+eligibility, direct-write skip, 5-turn cap and error/abort cursor rules are kept; provider/tool failures
+are still recorded by the existing background Extraction logs, with no new result field and no change to
+the success exit code of the main request. `stream-json` main-turn events are output live and the final
+`result` after the drain. A failed main request goes directly to the original cleanup path.
+resume/continue only reuse existing session history and do not save the bench flag.
 
-普通 `-p`、`--target`、TUI、Desktop/app-server 和手机远控均保持原行为；不修改共享 session close
-的先取消后 drain 顺序、workspace identity、desktop-continuous 或 web-remote-replayable 边界。
+Ordinary `-p`, `--target`, TUI, Desktop/app-server and mobile remote control keep their behavior; the
+cancel-then-drain order of shared session close, workspace identity, and the desktop-continuous and
+web-remote-replayable boundaries are unchanged.
 
-验证：CLI 参数/配置/输出/信号单测；Core 无 deadline drain、pending 和取消测试；真实 CLI 子进程
-配合受控 provider，证明主请求已完成且 Extraction 响应被阻塞时进程仍存活，释放响应并落盘后才退出。
-同时覆盖默认 headless 无 Extraction、Memory 关闭的前置失败与 session close 取消回归。
+Verification: CLI argument/config/output/signal unit tests; Core no-deadline drain, pending and cancel
+tests; a real CLI child process with a controlled provider proving the process stays alive when the main
+request has completed and the Extraction response is blocked, and exits only after the response is
+released and written to disk. Also covers default headless without Extraction, the Memory-off pre-request
+failure and the session close cancel regression.
 
-remote 判定由 bootstrap 通过语义化 runtime dependency 注入，并在调用时读取当前
-`workspaceIdentity`；core 不复制 remote identity 解析规则，resume 后也不沿用启动时快照。
+The remote decision is injected by bootstrap through a semantic runtime dependency and reads the current
+`workspaceIdentity` at call time; core does not copy remote identity parsing rules, and after resume does
+not keep the startup snapshot.
 
 ```text
 successful Main turn
   |
   v
-running 为空 ------------------------> 立即执行
-running 非空 ------------------------> 覆盖 latest pending
+running empty ------------------------> run immediately
+running not empty ------------------------> overwrite latest pending
                                           |
-                          current 完成 ----+
+                          current done ----+
                                           v
-                                   只运行最新 pending
+                                   run only the latest pending
 ```
 
-只有一个 running slot 和一个 latest-pending slot；不建立 FIFO、job table 或持久任务恢复。
-successful Main turn 的调度边界立即冻结同一逻辑快照：provider entries 用于后台模型请求，
-durable messages 用于 eligibility、message count 和 cursor。由于 ZCode provider entries 不携带
-durable UUID，调度时立即发起 messages 与当时 branch metadata 的读取，并用现有 active-branch
-selector 形成 durable 表示；再按 successful-turn boundary 截断。scheduler 只接收该已启动的
-snapshot promise，不保存未来才读取 SessionStore 的 factory。
+There is only one running slot and one latest-pending slot; no FIFO, job table or persistent task
+recovery. At the scheduling boundary of a successful Main turn the same logical snapshot is frozen
+immediately: provider entries are used for the background model request, and durable messages for
+eligibility, message count and cursor. Since ZCode provider entries carry no durable UUID, the read of
+messages and the branch metadata at that time is started immediately at scheduling, formed into a durable
+representation with the existing active-branch selector, and then truncated at the successful-turn
+boundary. The scheduler receives only this already started snapshot promise and does not keep a factory
+that reads SessionStore later.
 
-pending/running 真正消费时不得重新查询 SessionStore 或当前 revert。调度后发生 Rewind 不取消、
-不改写已经冻结的 Extraction；Rewind 后的新 successful turn 冻结自己的新 active snapshot。
-boundary 缺失属于 snapshot acquisition error：不请求模型、不推进 cursor、不重试。不得增加
-branch generation、Rewind cancellation 或持久 snapshot。
+Pending/running consumption must not re-query SessionStore or the current revert. A Rewind after
+scheduling neither cancels nor rewrites the already frozen Extraction; a new successful turn after Rewind
+freezes its own new active snapshot. A missing boundary is a snapshot acquisition error: no model
+request, no cursor advance, no retry. No branch generation, Rewind cancellation or persistent snapshot may
+be added.
 
-Extraction cursor 是内存中的 durable history message UUID：
+The Extraction cursor is the in-memory durable history message UUID:
 
-- 本段 history 出现 project Memory Write/Edit 时跳过模型并推进 cursor；不依赖 tool result
-  是否成功，也不要求目标文件以 `.md` 结尾。
-- 没有任一独立的、非 meta、至少 3 words 的 user text block 时跳过并推进 cursor；数组中的
-  text block 分别判断，不能先拼接。
-- cursor 丢失时 prose 检查回扫完整 history；direct-write 检查不把 cursor 前的历史重新算入。
-- success、no-op 和上述 skip 推进 cursor；error 或 abort 不推进。
+- If this history segment contains a project Memory Write/Edit, the model is skipped and the cursor
+  advances; it does not depend on whether the tool result succeeded nor require the target file to end in
+  `.md`.
+- If there is no independent, non-meta user text block of at least 3 words, skip and advance the cursor;
+  text blocks in an array are judged separately, not concatenated first.
+- When the cursor is lost, the prose check scans the whole history back; the direct-write check does not
+  count history before the cursor again.
+- success, no-op and the skips above advance the cursor; error or abort does not.
 
-Extraction request 继承完整 Main context 和当前真实 tool catalog，并追加冻结的 extraction
-prompt。独立 executor clone Main 当时的 read-file state，但不共享可变 Map。provider-visible
-tools 不因受限执行策略被裁剪。工具在执行前按以下窄策略判断：
+The Extraction request inherits the full Main context and the current real tool catalog and appends the
+frozen extraction prompt. A separate executor clones the Main read-file state at that time and does not
+share the mutable Map. Provider-visible tools are not trimmed by the restricted execution policy. Before
+execution tools are judged by this narrow policy:
 
-- 先在当前 provider tool catalog 中查找工具；未注册工具（包括空名称）使用原 call id 返回
-  `<tool_use_error>Error: No such tool available: <RAW_TOOL_NAME></tool_use_error>`，不进入
-  Memory 权限策略，也不执行工具。
-- 仅允许当前实际注册的 `Read`、`Grep`、`Glob`；不为 Memory 补注册缺失工具。
-- 允许 read-only Bash。
-- 允许 project Memory root 内、不包含既有敏感 path segment 的 `.md` Write/Edit。
-- 允许 project Memory root 内、非递归、无 glob/redirect/env 的 `rm` `.md`。
-- 拒绝 MCP、Agent、网络访问和 workspace mutation。
+- First look the tool up in the current provider tool catalog; an unregistered tool (including an empty
+  name) returns, with the original call id,
+  `<tool_use_error>Error: No such tool available: <RAW_TOOL_NAME></tool_use_error>`, does not enter the
+  Memory permission policy and is not executed.
+- Only the currently registered `Read`, `Grep`, `Glob` are allowed; missing tools are not registered for
+  Memory.
+- Read-only Bash is allowed.
+- `.md` Write/Edit inside the project Memory root without existing sensitive path segments is allowed.
+- Non-recursive `rm` of `.md` inside the project Memory root without glob/redirect/env is allowed.
+- MCP, Agent, network access and workspace mutation are denied.
 
-拒绝结果会作为 tool result 进入下一轮 Memory Agent provider request，因此文本也是冻结合同：
+Denial results enter the next Memory Agent provider request as tool results, so the text is also a frozen
+contract:
 
-- Bash 拒绝：`Only read-only shell commands and rm with all paths inside <MEMORY_ROOT> are permitted in this context (ls, find, grep, cat, stat, wc, head, tail, and similar)`。
-- 其他已注册工具拒绝：`only Read, Grep, Glob, read-only Bash, and Edit/Write within <MEMORY_ROOT> are allowed`。
+- Bash denial: `Only read-only shell commands and rm with all paths inside <MEMORY_ROOT> are permitted in this context (ls, find, grep, cat, stat, wc, head, tail, and similar)`.
+- Other registered tool denial: `only Read, Grep, Glob, read-only Bash, and Edit/Write within <MEMORY_ROOT> are allowed`.
 
-此策略不补注册 Read 或其他缺失工具。Extraction 最多执行 5 个 model turns；第 5 次响应中的
-tool calls 仍执行，但不再发起第 6 次模型请求。每次 provider attempt 前刷新 runtime headers。
-失败不重试。
+This policy does not register Read or other missing tools. Extraction runs at most 5 model turns; the tool
+calls in the 5th response are still executed but no 6th model request is issued. Runtime headers are
+refreshed before each provider attempt. Failures are not retried.
 
-prompt 的 no-op 响应逐字为 `Nothing to save.`。scheduler 不解析该文本来推导额外状态。
+The no-op response of the prompt is verbatim `Nothing to save.`. The scheduler does not parse this text
+to derive extra state.
 
-Extraction 指令文本可由 fork 的 system-prompt override key `memory-extraction`
-（`~/.zcode/system-prompt/memory-extraction.md`，见 `docs/system-prompt-overrides.md`）整体替换，
-占位符为 `{{messageCount}}` 与 `{{existingMemories}}`。默认模板位于 shared `system-prompt.ts`，
-替换占位符后与冻结 fixture `extraction-prompt.md` 逐字一致；无 override 时行为不变。override 只改变
-prompt 文本，不改变执行策略、拒绝文案、turn 上限或 cursor 语义。
+The Extraction instruction text can be replaced as a whole by the fork system-prompt override key
+`memory-extraction` (`~/.zcode/system-prompt/memory-extraction.md`, see
+`docs/system-prompt-overrides.md`), with placeholders `{{messageCount}}` and `{{existingMemories}}`. The
+default template lives in shared `system-prompt.ts` and, after placeholder substitution, is verbatim equal
+to the frozen fixture `extraction-prompt.md`; without an override behavior is unchanged. The override
+changes only the prompt text, not the execution policy, denial text, turn cap or cursor semantics.
 
-ZCode 关闭单个 session 后 app-server 仍继续承载其他 session，session close 不等于进程退出，
-不能只在进程即将退出时 drain Extraction。因此 session close 必须先终止该 runtime 的 Extraction 生命周期，再释放 session 资源：
+After ZCode closes a single session the app-server keeps hosting other sessions, so session close is not
+process exit and Extraction cannot be drained only when the process is about to exit. Session close must
+therefore first end that runtime's Extraction lifecycle, then release session resources:
 
 ```text
 session close
   |
   v
 beginShutdown
-  |- 拒绝后续 schedule
-  |- 丢弃 latest pending
-  `- abort 当前 running Extraction
+  |- reject later schedule
+  |- drop latest pending
+  `- abort the running Extraction
             |
             v
-bounded drain 等待取消收口
+bounded drain waits for cancellation to settle
             |
             v
-关闭 browser / execution / MCP / session store
+close browser / execution / MCP / session store
 ```
 
-- 同一 abort signal 贯穿 snapshot acquisition、manifest 扫描、Memory Agent loop、模型请求和
-  tool executor；不得在 close 后启动下一轮模型请求或执行新的 Memory tool。
-- abort 不推进 Extraction cursor；正常运行时的 one-running + latest-pending、成功/no-op/skip
-  cursor 语义不变。
-- drain 的 60 秒只保留为非协作 I/O 的关闭上界，不是 close 前允许后台模型继续运行的宽限期；
-  已在飞的 provider 请求可能已经产生用量，但其迟到结果必须丢弃，不能继续 tool 或后续模型轮次。
-- 不增加通用后台任务取消框架、持久恢复、retry 或新的协议/UI 状态。
+- The same abort signal runs through snapshot acquisition, manifest scan, the Memory Agent loop, the model
+  request and the tool executor; after close no next model request starts and no new Memory tool executes.
+- abort does not advance the Extraction cursor; the one-running + latest-pending and success/no-op/skip
+  cursor semantics of normal operation are unchanged.
+- The 60 second drain remains only the shutdown upper bound for non-cooperative I/O, not a grace period
+  for the background model to keep running after close; a provider request already in flight may have
+  produced usage, but its late result must be discarded and must not continue tools or later model turns.
+- No generic background task cancellation framework, persistent recovery, retry or new protocol/UI state
+  is added.
 
-## 7. Dream 与 `memory_update`
+## 7. Dream and `memory_update`
 
-### 7.1 触发
+### 7.1 Trigger
 
-- 当前产品链路不自动触发 Dream，成功 Main turn 只调度 Extraction。产品触发入口是手动
-  builtin 命令 `/dream`：与 `/compact` 同级的 runtime turn 命令（见 `runtime/methods/turn.ts`
-  的 dispatch），CLI TUI、Desktop composer 和 mobile 都以普通文本提交，由 Runtime 解析。
-  `/dream` 不接受参数；带参数的输入按 usage 错误回复，不发起 model 请求。
-- `/dream` 是「快速 launch turn + detached 后台任务」：命令 turn 只执行同步 gate、lock 获取、
-  后台任务登记与 ack，随即完成，不阻塞会话输入。launch turn 与 compact 命令 turn 同构：
-  `TurnStarted` 的 `inputVisibility: "model-only"`（命令文本不渲染为 user bubble），不可
-  steer。ack/skip 文本以一条 `ModelStreaming`（text_start/delta/end）+ `ModelComplete`
-  （非 main 的 `querySource: "dream"`）序列发出，投影为一个 assistant 文本行；非 main
-  querySource 保证该事件不覆盖 session context watermark。skip（memory 未启用 / remote /
-  lock 被占用 / 无新 transcript）仍在 launch turn 内同步判定，以同一 ack 文本可见。
-- Dream 的 Memory agent 循环在 turn 之外 detached 运行：不占用 active turn 槽位，运行期间
-  用户可继续正常对话。运行状态经 `BackgroundTaskStarted/Updated/Completed` 事件进入
-  backgroundWorks 面板（composer 徽标 + 状态面板，kind 为 `dream`，cancellable：stop 分支
-  abort 任务），进度以 description 更新并按内容变化节流。事件以 rootTraceContext、空
-  turnId 追加（与 dynamic workflow run progress 同一先例），不归属任何 turn，也不复用
-  ModelStreaming 通道——v4 的 streaming 行是 session 级单槽位，后台进度会破坏并发的前台
-  回答。
-- 完成时 enqueue 一条 task-notification（`backgroundSource: "dream"`，workId ≡ registry
-  taskId，title 为一行结果摘要；completed 与 failed 通知，用户主动 cancel 不通知）。通知
-  turn 走既有 background notification 管线：持久化 model-only synthetic notice，并以一次
-  简短 Main turn 呈现结果。它同时承担三件事：Dream 结果的 durable transcript 载体（应用
-  重载后可见）、CLI TUI 的完成表面，以及 backgroundWorks 面板 resultPending 条目的
-  delivery 通道。该 turn 即「下一次 Main turn」，自然消费 7.3 的 `memory_update`
-  reminder；shuttingDown 或 branch 回退时按既有 fencing 丢弃通知。
-- Memory agent 继承 launch turn admission 冻结的模型（与 compact 同一冻结语义），失败/取消
-  路径同样记录 launch turn 的 turn usage fact。Dream 的 model 请求逐条记录 `model_usage`
-  fact（`querySource: "dream"`，与 title sidecar 同一模式），并写入本 session 的 model-io
-  transcript（`skipTranscript` 仅对 Dream 关闭；Extraction 保持跳过，避免其请求反馈进后续
-  Extraction 的 corpus）。因此 Model Trajectory 面板与 App Usage 对 Dream 请求可见；launch
-  turn 自身的 usage summary 保持零值——真实用量记录在 model_usage 与 model-io 中，不在
-  turn 维度重复记账。
-- Runtime is the single owner of each manual Dream controller, completion promise, and ordered
-  lifecycle event queue. Admission checks shutdown both before and after acquiring the workspace
-  lock. Failed registration/Started writes restore the lock and settle/remove the registry entry.
-  Progress, cancellation requests, and completion use the same queue; event-write failures are
-  logged without skipping cleanup. Registry residency ends only after terminal-event settlement.
-- Shutdown refuses new launches, aborts live Dream runs, and drains their completion promises
-  before closing session resources, with the existing 60-second close deadline. Cancellation
-  before the success-marker commit restores the lock and does not stamp success; completed file
-  writes are not rolled back. The success-marker write is the commit boundary.
-- Every provider request reports start and settlement. Its usage fact is written immediately,
-  with actual request start/end, finish reason, tool count, and completed/error/cancelled status;
-  earlier successful requests survive later failure or cancellation. Unknown usage stays absent.
+- The current product path does not trigger Dream automatically; a successful Main turn only schedules
+  Extraction. The product trigger entry is the manual builtin command `/dream`: a runtime turn command on
+  the same level as `/compact` (see the dispatch in `runtime/methods/turn.ts`); the CLI TUI, Desktop
+  composer and mobile all submit it as ordinary text, parsed by the Runtime. `/dream` takes no arguments;
+  input with arguments gets a usage error reply and no model request.
+- `/dream` is a "fast launch turn + detached background task": the command turn only runs the synchronous
+  gates, lock acquisition, background task registration and the ack, then completes at once without
+  blocking session input. The launch turn is isomorphic to the compact command turn: `TurnStarted` has
+  `inputVisibility: "model-only"` (the command text is not rendered as a user bubble) and cannot be
+  steered. The ack/skip text is emitted as a `ModelStreaming` (text_start/delta/end) + `ModelComplete`
+  (non-main `querySource: "dream"`) sequence, projected as one assistant text line; the non-main
+  querySource guarantees the event does not overwrite the session context watermark. A skip (memory not
+  enabled / remote / lock held / no new transcript) is still decided synchronously inside the launch turn
+  and visible with the same ack text.
+- The Memory agent loop of Dream runs detached outside the turn: it takes no active turn slot and the user
+  can keep chatting normally while it runs. Run state enters the backgroundWorks panel (composer badge +
+  status panel, kind `dream`, cancellable: the stop branch aborts the task) through
+  `BackgroundTaskStarted/Updated/Completed` events; progress updates the description and is throttled by
+  content change. The events are appended with rootTraceContext and an empty turnId (the same precedent as
+  dynamic workflow run progress), belong to no turn and do not reuse the ModelStreaming channel, because
+  the v4 streaming row is a session-level single slot and background progress would corrupt a concurrent
+  foreground answer.
+- On completion one task-notification is enqueued (`backgroundSource: "dream"`, workId ≡ registry taskId,
+  title a one-line result summary; completed and failed notify, a user-initiated cancel does not). The
+  notification turn goes through the existing background notification pipeline: it persists a model-only
+  synthetic notice and presents the result in a short Main turn. It does three things at once: it is the
+  durable transcript carrier of the Dream result (visible after an app reload), the completion surface of
+  the CLI TUI, and the delivery channel of the resultPending entry of the backgroundWorks panel. This turn
+  is "the next Main turn" and naturally consumes the `memory_update` reminder of 7.3; with shuttingDown or
+  branch rollback the notification is dropped per the existing fencing.
+- The Memory agent inherits the model frozen at launch turn admission (the same freezing semantics as
+  compact), and the failure/cancel paths likewise record the turn usage fact of the launch turn. Each
+  Dream model request records a `model_usage` fact (`querySource: "dream"`, the same pattern as the title
+  sidecar) and is written to this session's model-io transcript (`skipTranscript` is turned off only for
+  Dream; Extraction stays skipped so its requests do not feed back into the corpus of later Extraction).
+  So the Model Trajectory panel and App Usage can see Dream requests; the usage summary of the launch turn
+  itself stays zero, the real usage being recorded in model_usage and model-io and not double-counted at
+  turn level.
+- Runtime is the single owner of each manual Dream controller, completion promise, and ordered lifecycle
+  event queue. Admission checks shutdown both before and after acquiring the workspace lock. Failed
+  registration/Started writes restore the lock and settle/remove the registry entry. Progress,
+  cancellation requests, and completion use the same queue; event-write failures are logged without
+  skipping cleanup. Registry residency ends only after terminal-event settlement.
+- Shutdown refuses new launches, aborts live Dream runs, and drains their completion promises before
+  closing session resources, with the existing 60-second close deadline. Cancellation before the
+  success-marker commit restores the lock and does not stamp success; completed file writes are not
+  rolled back. The success-marker write is the commit boundary.
+- Every provider request reports start and settlement. Its usage fact is written immediately, with actual
+  request start/end, finish reason, tool count, and completed/error/cancelled status; earlier successful
+  requests survive later failure or cancellation. Unknown usage stays absent.
 - The UI derives the latest Dream from ordered backgroundWorks, retaining its progress or terminal
-  summary until the next launch in that session (including snapshot/replay). Terminal Dream work
-  keeps a panel entry without increasing the running count and has no Stop action. Running Dream
-  disables workflow-only direct navigation. Completion enqueues one task-notification turn
-  (see above): the resultPending panel entry is delivered through it, and the durable transcript
-  row plus the CLI TUI surface come from that turn, not from extra replay events.
+  summary until the next launch in that session (including snapshot/replay). Terminal Dream work keeps a
+  panel entry without increasing the running count and has no Stop action. Running Dream disables
+  workflow-only direct navigation. Completion enqueues one task-notification turn (see above): the
+  resultPending panel entry is delivered through it, and the durable transcript row plus the CLI TUI
+  surface come from that turn, not from extra replay events.
 
 ```mermaid
 sequenceDiagram
@@ -752,71 +855,79 @@ sequenceDiagram
   Note over Runtime,Projection: Desktop continuous and mobile replay use the same events
 ```
 
-- 自动触发（scheduler）仍不接入：等待产品侧确定 project transcript 隔离形态后再接线，
-  接线前 handler 的 auto 入口保持未使用。
-- 手动模式 gate（soft mode）：绕过 24 小时最小间隔与 10 分钟 scan throttle；要求当前
-  project 至少有 1 个排除当前 session、实际 transcript 文件 mtime 晚于上次 consolidation
-  的 Main-equivalent session；lock 语义不变（见 7.2）。每个 skip 都以可见的 TurnComplete
-  文本回复原因（memory 未启用 / remote workspace / lock 被存活 PID 持有 / 无新 transcript
-  活动），不静默退出。
-- auto 模式 gate 语义保留原样：每 10 分钟最多扫描一次；距上次成功 Dream 至少 24 小时；
-  至少 5 个符合上述新鲜度条件的 Main-equivalent sessions。
-- gate 和 prompt 使用同一组实际 transcript session id，不使用 SessionStore `updated` 时间替代
-  transcript mtime。
+- The automatic trigger (scheduler) is still not wired: it waits for the product side to settle the
+  project transcript isolation form; until then the auto entry of the handler stays unused.
+- Manual mode gate (soft mode): bypasses the 24 hour minimum interval and the 10 minute scan throttle;
+  requires the current project to have at least 1 Main-equivalent session, excluding the current session,
+  whose actual transcript file mtime is later than the last consolidation; lock semantics are unchanged
+  (see 7.2). Every skip replies the reason with visible TurnComplete text (memory not enabled / remote
+  workspace / lock held by a live PID / no new transcript activity), never exits silently.
+- Auto mode gate semantics are kept: scan at most once per 10 minutes; at least 24 hours since the last
+  successful Dream; at least 5 Main-equivalent sessions satisfying the freshness condition above.
+- The gate and the prompt use the same set of actual transcript session ids, and the SessionStore
+  `updated` time does not replace the transcript mtime.
 
-project session 归属由 SessionStore 的 workspace identity 判断。model-io writer 与 Dream 使用
-同一个从 `storage.dir` 派生的 `modelIoDir`（development 为 `debug`，其他环境为 `rollout`）；
-Dream 只引用已选 durable sessions 对应的现有 transcript/model-io，不建设第二套 transcript DB，
-也不 fallback 扫描固定的 `~/.zcode/cli/debug|rollout`。Dream 自身的请求现在也会写入 model-io
-（见上），因此历史 Dream session 的 transcript 会进入后续 Dream 的候选 corpus；手动触发下这是
-可接受的有限噪声（排除仅覆盖发起 session），接入 auto 触发前必须重新评估该反馈面。当前
-`modelIoDir` 仍是 ZCode 产品级目录，因此在 project transcript 隔离方案确定前不得把 handler
-接回自动 turn 链路。
+Project session ownership is judged by the workspace identity of SessionStore. The model-io writer and
+Dream use the same `modelIoDir` derived from `storage.dir` (`debug` in development, `rollout` in other
+environments); Dream references only the existing transcript/model-io of the selected durable sessions,
+builds no second transcript DB, and does not fall back to scanning the fixed `~/.zcode/cli/debug|rollout`.
+Dream's own requests are now also written to model-io (see above), so the transcript of a historical
+Dream session enters the candidate corpus of later Dream; under manual triggering this is acceptable
+bounded noise (exclusion covers only the initiating session), and this feedback surface must be
+re-evaluated before wiring the auto trigger. The current `modelIoDir` is still a ZCode product-level
+directory, so the handler must not be wired back into the automatic turn chain until the project
+transcript isolation plan is settled.
 
-### 7.2 Lock 与运行
+### 7.2 Lock and run
 
 ```text
 Dream handler gate
   |
   v
 read <memoryRoot>/.consolidate-lock
-  +-- mtime < 1h 且（PID 未知或存活）-----------------> skip
-  `-- 可接管（mtime >= 1h，或 PID 已不存在）
+  +-- mtime < 1h and (PID unknown or alive) -----------------> skip
+  `-- can be taken over (mtime >= 1h, or the PID no longer exists)
         |
-        | 独占创建（O_CREAT|O_EXCL）写入 current PID
+        | exclusive create (O_CREAT|O_EXCL) write current PID
         v
 full Main context + real tools + exact Dream prompt
         |
-        | restricted execution policy，最多 50 turns
+        | restricted execution policy, at most 50 turns
         v
-success ------------------------------------> 保留新 lock mtime；写 <memoryRoot>/.consolidated-at
-error/abort ---------------------------> 仅当 lock 仍属本进程时恢复：首次 lock 删除；旧 lock 恢复空内容和原 mtime；不写 marker
+success ------------------------------------> keep the new lock mtime; write <memoryRoot>/.consolidated-at
+error/abort ---------------------------> restore only if the lock still belongs to this process: first-time lock is deleted; old lock restored to empty content and original mtime; no marker
 ```
 
-`.consolidated-at` 只在 Dream run 未抛错完成时写入（mtime 即完成时间）。lock 的 mtime 标记的是
-run 开始（进行中与崩溃的尝试都会接管/留下 lock），因此「上次成功整理」只能读 marker，不能读
-lock；Settings viewer 的 `lastDreamConsolidatedAt`（见 3.3）以 marker 为唯一来源。lock 的互斥来自
-独占创建（`O_CREAT|O_EXCL`），不来自写入后回读内容：同一进程的两个并发调用会写入相同 PID，回读
-无法区分它们。恢复只在 lock 仍属于本进程时执行，避免删除已被别的运行接管的 lock。run 在后台
-任务内执行：用户经 backgroundWorks 面板发起的 stop 等价于 abort，走同一条 lock 恢复路径，
-不写 marker；CLI 进程退出后残留的 lock 按既有 1h/PID 规则被下一次运行接管。
+`.consolidated-at` is written only when the Dream run completes without throwing (its mtime is the
+completion time). The lock mtime marks the run start (in-progress and crashed attempts both take over /
+leave the lock), so "last successful consolidation" can be read only from the marker, not the lock; the
+`lastDreamConsolidatedAt` of the Settings viewer (see 3.3) takes the marker as its only source. Lock
+mutual exclusion comes from exclusive creation (`O_CREAT|O_EXCL`), not from reading content back after
+the write: two concurrent calls in the same process write the same PID and a read-back cannot tell them
+apart. Restoration runs only when the lock still belongs to this process, to avoid deleting a lock already
+taken over by another run. The run executes inside the background task: a stop initiated by the user via
+the backgroundWorks panel is equivalent to abort and takes the same lock restoration path without writing
+the marker; a lock left after the CLI process exits is taken over by the next run per the existing 1h/PID
+rule.
 
-Dream 复用 Extraction 的执行策略，最大 50 个 model turns；第 50 次响应中的 tool calls 仍执行。
-prompt 固定执行 orient、signal、consolidate、prune/index 四个阶段，并要求最终 `MEMORY.md`
-低于 200 行、约 25KB。Runtime 不根据 prompt 再实现 duplicate detector、自动 rebuild、snapshot
-或文件 rollback。
+Dream reuses the execution policy of Extraction with at most 50 model turns; the tool calls in the 50th
+response are still executed. The prompt fixes four phases: orient, signal, consolidate and prune/index,
+and requires the final `MEMORY.md` to be under 200 lines and about 25KB. The Runtime does not implement,
+from the prompt, a duplicate detector, auto rebuild, snapshot or file rollback.
 
-Dream prompt 正文可由 override key `memory-dream` 替换（占位符 `{{memoryRoot}}`、
-`{{transcriptRoot}}`）；`## Additional context` 尾部（tool constraints 与 session 列表）始终由
-Runtime 追加，不可覆盖。默认模板替换后与 `dream-prompt.md` 逐字一致。
+The Dream prompt body can be replaced by the override key `memory-dream` (placeholders `{{memoryRoot}}`,
+`{{transcriptRoot}}`); the `## Additional context` tail (tool constraints and session list) is always
+appended by the Runtime and cannot be overridden. After substitution the default template is verbatim
+equal to `dream-prompt.md`.
 
-Dream 唯一允许的 mutation observer 只记录本次 Dream tool-use 中的 Memory Write/Edit 和窄
-`rm` 目标路径。记录发生在 tool-use 进入执行边界时，因此不以执行结果成功为条件；它不扩展到
-foreground、Extraction 或通用 shell 分析。
+The only mutation observer allowed for Dream records just the Memory Write/Edit and the narrow `rm` target
+paths in this Dream's tool-use. Recording happens when the tool-use enters the execution boundary, so it
+is not conditional on execution success; it does not extend to foreground, Extraction or generic shell
+analysis.
 
 ### 7.3 `memory_update`
 
-Dream 的 `filesTouched` 非空时追加一条 pending update：
+When the `filesTouched` of Dream is non-empty a pending update is appended:
 
 ```text
 Dream filesTouched
@@ -831,23 +942,24 @@ next Main attachment collection
   `-- emit exact provider-visible memory_update MCS
 ```
 
-只有 Dream 产生 `memory_update`。foreground 写入和 Extraction 不产生该 attachment。即使承载
-update 的下一次 provider 请求失败，也不重新注入。「下一次 Main turn」通常是 Dream 完成时的
-task-notification turn（见 7.1）；用户先于通知发送的普通输入同样是合法消费者，先到先消费。
+Only Dream produces `memory_update`. Foreground writes and Extraction do not produce this attachment. Even
+if the next provider request carrying the update fails, it is not injected again. "The next Main turn" is
+usually the task-notification turn at Dream completion (see 7.1); an ordinary user input sent before the
+notification is equally a legal consumer, first come first served.
 
 ## 8. Custom Agent Persistent Memory
 
-`AgentProfile.memory` 是严格枚举：
+`AgentProfile.memory` is a strict enum:
 
 ```ts
 type AgentMemoryScope = "user" | "project" | "local";
 ```
 
-YAML 解析后的值必须精确匹配，不 trim、不 coerce。非法值记录 profile diagnostic，并忽略
-Memory 字段；profile 的其他字段继续有效。
+The YAML-parsed value must match exactly, with no trim or coerce. An illegal value records a profile
+diagnostic and ignores the Memory field; the other profile fields stay valid.
 
-agent key 只用不带 Unicode flag 的 `/[^a-zA-Z0-9_-]/g` 将每个不匹配的 UTF-16 code unit
-替换为 `-`，不做额外 slug 规则；空结果为 `unknown`。scope 路径：
+The agent key replaces each non-matching UTF-16 code unit with `-` using only `/[^a-zA-Z0-9_-]/g` without
+the Unicode flag, with no extra slug rule; an empty result is `unknown`. Scope paths:
 
 | scope     | ZCode root                                           |
 | --------- | ---------------------------------------------------- |
@@ -855,26 +967,29 @@ agent key 只用不带 Unicode flag 的 `/[^a-zA-Z0-9_-]/g` 将每个不匹配�
 | `project` | `<workspace>/.zcode/agent-memory/<agent-key>/`       |
 | `local`   | `<workspace>/.zcode/agent-memory-local/<agent-key>/` |
 
-project/local root 在 child 实际启动时按该次 workspace 解析，不能固定为 app 启动 cwd。
-Main Agent Memory、Recall、Extraction 和 Dream 不共享这些目录。
+The project/local root is resolved against that run's workspace when the child actually starts, and cannot
+be fixed to the app startup cwd. Main Agent Memory, Recall, Extraction and Dream do not share these
+directories.
 
-Memory 生效时，child system block 注入冻结的 `# Persistent Agent Memory` prompt 和对应 scope
-suffix。读取该 root 的 `MEMORY.md`：
+When Memory takes effect, the child system block injects the frozen `# Persistent Agent Memory` prompt
+and the matching scope suffix. The `MEMORY.md` of that root is read:
 
-- 文件不存在或为空时使用冻结的 exact empty text。
-- 非空时超过 200 行或 25,000 个 JavaScript 字符按 §4 的同一 head/tail elision helper 在预算内
-  保留首尾并以冻结 marker 省略中段，使用冻结的 truncation warning。
+- A missing or empty file uses the frozen exact empty text.
+- A non-empty one over 200 lines or 25,000 JavaScript characters keeps head and tail within budget with
+  the same head/tail elision helper as §4, omitting the middle with the frozen marker, and uses the frozen
+  truncation warning.
 
-profile 显式声明 `tools` 时，在保持原顺序的基础上依次补入缺失的 Write、Edit，再应用
-profile 自身的 `disallowedTools`。不得补 Read，不应用 global disallowedTools。`tools` 未定义时
-不改写默认工具集合。
+When the profile explicitly declares `tools`, the missing Write and Edit are appended in order on top of
+the original order, then the profile's own `disallowedTools` is applied. Read is not added and global
+disallowedTools is not applied. When `tools` is undefined the default tool set is not rewritten.
 
-`features.memory=false` 或 `use=false` 时不创建 custom root、不注入 prompt、不补工具。
-不支持 private/team scope。
+With `features.memory=false` or `use=false` no custom root is created, no prompt is injected and no tools
+are added. private/team scope is not supported.
 
-## 9. Provider-visible 合同
+## 9. Provider-visible contract
 
-以下内容必须以语义命名 fixture 冻结，并在 Anthropic Messages 最终请求上逐字验收：
+The following must be frozen by semantically named fixtures and accepted verbatim on the final Anthropic
+Messages request:
 
 - `main-memory-default-index.md`
 - `main-memory-semantic-recall.md`
@@ -884,24 +999,27 @@ profile 自身的 `disallowedTools`。不得补 Read，不应用 global disallow
 - `extraction-prompt.md`
 - `dream-prompt.md`
 - `memory-update.md`
-- `custom-agent-memory.md` 与 `custom-agent-scope-guidance.json`
+- `custom-agent-memory.md` and `custom-agent-scope-guidance.json`
 
-fixture metadata 至少记录 provider route、模型、beta 和采样时间。
-测试只允许归一化 root、cwd、session id、PID、mtime 和当前时间等运行值；Memory 文案、role、
-message/block 顺序、cache-control、schema、max tokens 与 tool projection 不得模糊比较。
+Fixture metadata records at least provider route, model, beta and sampling time. Tests may normalize only
+runtime values such as root, cwd, session id, PID, mtime and current time; Memory text, role,
+message/block order, cache-control, schema, max tokens and tool projection must not be fuzzy-compared.
 
-语义 fixture 是 provider-visible 文本的唯一 golden。原始 trajectory 只作为来源证明，不在测试中
-再定义第二份预期文本；Core、adapter、CLI E2E 和 WDIO 必须消费同一 fixture，并且只分别证明
-generator、最终 wire、Runtime 组合和跨进程链路。
+The semantic fixtures are the only golden of provider-visible text. A raw trajectory is only proof of
+origin and does not define a second expected text in tests; Core, adapter, CLI E2E and WDIO must consume
+the same fixture and prove, respectively, only the generator, the final wire, the Runtime composition and
+the cross-process chain.
 
-验收证据分两层组合，不新增生产 capture 逻辑：Core runtime 测试冻结实现实际生成的
-`ModelTextRequest`；adapter 测试使用真实 `AiSdkModelAdapter` 与本地 Anthropic Messages
-endpoint 捕获最终 HTTP body。Main/selector 另保留一次真实网络 trace。任何一层的文本、role、
-顺序、cache-control、MCS beta、schema 或工具投影漂移都会使测试失败。
+Acceptance evidence is composed in two layers without new production capture logic: the Core runtime test
+freezes the `ModelTextRequest` the implementation actually generates; the adapter test uses the real
+`AiSdkModelAdapter` and a local Anthropic Messages endpoint to capture the final HTTP body. Main/selector
+additionally keep one real network trace. Any drift in text, role, order, cache-control, MCS beta, schema
+or tool projection in either layer fails the tests.
 
-Memory 域内部源码、类型、fixture helper 和测试名使用 ZCode 语义命名，不能以外部产品名或
-具体模型名命名。provider adapter 测试和 provider-visible 契约 fixture 可以使用真实的 provider
-与 model 值，但不得据此命名 Memory 内部类型、变量、函数或 helper。模型 port 的最小扩展为：
+Memory-domain internal source, types, fixture helpers and test names use ZCode semantic naming and must
+not be named after an external product name or a concrete model name. Provider adapter tests and
+provider-visible contract fixtures may use real provider and model values, but Memory internal types,
+variables, functions or helpers must not be named after them. The minimal extension of the model port:
 
 ```ts
 interface ModelTextRequest {
@@ -917,106 +1035,120 @@ interface CreateModelAdapterOptions {
 }
 ```
 
-`responseJsonSchema` 仅作用于非流式 `generateText`；adapter 将 provider object output 还原为既有
-text result。Anthropic transport 收到显式 schema 时使用 native `output_config.format`，避免 Lite
-模型 ID 未命中 SDK 静态能力表后退化为 JSON tool；selector 在现有 compatibility fetch 边界恢复
-SDK 合并掉的 manifest/query 两条 user message。前者只命中非流式显式 schema，后者只命中
-selector 的精确 schema 和文本边界；普通 generate 与 stream request 不变。不得修改
-`@zcode/protocol`。
+`responseJsonSchema` applies only to non-streaming `generateText`; the adapter restores the provider
+object output into the existing text result. When the Anthropic transport receives an explicit schema it
+uses native `output_config.format`, avoiding a degradation to a JSON tool after a Lite model ID misses the
+SDK static capability table; the selector restores, at the existing compatibility fetch boundary, the
+manifest/query user messages the SDK merged. The former hits only non-streaming explicit schemas and the
+latter only the exact selector schema and text boundary; ordinary generate and stream requests are
+unchanged. `@zcode/protocol` must not be modified.
 
-以下已知 dynamic system prompt 差异只登记，不在本功能中修改：
+These known dynamic system prompt differences are only registered, not changed by this feature:
 
-- 缺少 `Additional working directories: <WORKSPACE>`。
-- OS 行为 `darwin 24.3.0 arm64`，基线为 `Darwin 24.3.0`。
-- 当前模型描述行与基线模型描述行不同。
-- 缺少 `Assistant knowledge cutoff is January 2026.`。
+- The missing `Additional working directories: <WORKSPACE>`.
+- OS line `darwin 24.3.0 arm64` versus baseline `Darwin 24.3.0`.
+- The current model description line differs from the baseline one.
+- The missing `Assistant knowledge cutoff is January 2026.`.
 
-ZCode 当前没有的工具也属于明确的 tool-inventory 差异；不得为了让 golden 相同而新增 Read 或
-其他工具。除这些明确差异和动态值之外，Memory provider-visible 内容必须一致。
+Tools ZCode does not currently have are also an explicit tool-inventory difference; Read or other tools
+must not be added just to make the golden identical. Apart from these explicit differences and dynamic
+values, Memory provider-visible content must be identical.
 
-## 10. 验收
+## 10. Acceptance
 
-必须覆盖：
+Must cover:
 
-| 范围                   | 场景                                                                                                                                                                                                                                                                                                                   |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Config/root            | Settings 默认/持久化；新建/cold resume 重读；active/child 继承；enabled/use；local/remote identity；resume 重算；旧 root 不读取；mkdir failure                                                                                                                                                                         |
-| Retrieval branch       | `false -> default-index`、`true -> semantic-recall`；pointer/index 与 Selector/Recall 两组互斥；原始 boolean 只定义一次                                                                                                                                                                                                |
-| Main prompt/index      | 两种 Main prompt exact fixture；default 分支非空 `MEMORY.md` 的 exact request user-context source（`memoryIndexAsContext` 两种形态各一份 fixture）；gate-off 保持旧聚合渲染判定，gate-on 聚合标题只围绕 instruction source 且 Memory source 以 `# Project Memory (background context)` 同级标题渲染并携带冻结 framing 尾句；leading frontmatter/顶层 HTML comment 清理；缺失/空/不可读不注入；semantic 分支在读取前跳过；200 行/25,000 字符 head/tail elision；磁盘原文 read-state 与 partial 标记；同 session 冻结、新 session 重读；四种 Main task；三种 child 排除 |
-| Permission/file write  | root containment；小写 `.md`；敏感 segment；Write/Edit allow/deny；缺失 originSessionId 时同时补入 `node_type: memory`，已有非空 origin 的文件原样保留；Bash 不变                                                                                                                                                      |
-| Recall default branch  | 保留 pointer/index；Main turn 不扫描、不发 Selector、不注入 `relevant_memory`                                                                                                                                                                                                                                          |
-| Recall semantic branch | 无 pointer/index；branch-aware lifecycle 覆盖 prefetch、完整 tool batch 后 consume、recursive scan、selector schema、order/duplicate、正文限制、stale 与 61,440 gate；不增加 Runtime override                                                                                                                          |
-| Extraction             | success/error/abort；direct write；独立 3-word block；cursor；同边界 snapshot；Rewind 后不取消；running+latest；第 5 turn；header refresh；session close 拒绝新调度、丢弃 pending、abort running 并有界 drain                                                                                                           |
-| Headless Extraction    | `-p/--prompt` 与 `--target` 注入内部 `extractionEnabled=false`；Main prompt/index/Recall 保持；不读取 Extraction snapshot、不创建 scheduler、不发 Extraction 请求、不推进 cursor、不写 Memory 文件；TUI/app-server 默认行为不变                                                                                      |
-| Dream                  | `/dream` 手动命令：快速 launch turn（TurnStarted model-only、ack/skip 文本、soft gate 绕过 24h/10m、≥1 新 transcript、带参数 usage 错误、memory 未启用/remote/lock 占用/无新活动的可见 skip）；detached 后台任务（`BackgroundTaskStarted/Updated/Completed`、kind `dream`、cancellable、不阻塞输入）；完成 task-notification（`backgroundSource: "dream"`，completed/failed 通知、cancel 不通知、durable transcript + TUI 表面 + resultPending delivery、branch fencing 丢弃）；逐请求 `model_usage` fact（`querySource: "dream"`）与 model-io transcript（Dream 不再 skip，Extraction 仍跳过）；auto 入口仍未接线，auto gate（24h/5 transcripts/10m）保持原样；lock；第 50 turn；filesTouched；one-shot memory_update |
-| Custom agent           | exact enum；三 scope；agent key；empty/truncated index；Write/Edit augmentation；Read intentional diff；disallowedTools                                                                                                                                                                                                |
-| Settings viewer        | 默认关闭不发 catalog 请求；Desktop 本地 profile catalog；空目录过滤；稳定排序；symlink/traversal 拒绝；workspace 切换；虚拟 `MEMORY.md` 父节点；缺失 index；原始正文；5 MiB 单文件预览上限；英文事实数量单复数；显式刷新；查看不发模型请求、不写文件；catalog 附带可选 `lastDreamConsolidatedAt`（`.consolidated-at` mtime，缺失省略）仅供展示；Web Remote / Mobile 只展示本地查看提示且 catalog 零调用                                                                  |
-| 上下游                 | generateText structured output；stream 不变；Settings 只经 runtime-preference 布尔值进入 Agent；viewer 仅经 Desktop 本地 Host Memory service 读取本地磁盘；desktop continuous/mobile replayable 不传 Memory 正文；remote background 不启动                                                                                |
+| Scope | Scenarios |
+| ----- | --------- |
+| Config/root | Settings default/persistence; new/cold resume re-read; active/child inheritance; enabled/use; local/remote identity; resume recompute; old root not read; mkdir failure |
+| Retrieval branch | `false -> default-index`, `true -> semantic-recall`; pointer/index vs Selector/Recall mutual exclusion; the raw boolean is defined once |
+| Main prompt/index | Exact fixtures for both Main prompts; exact request user-context source for a non-empty `MEMORY.md` in the default branch (one fixture per form of `memoryIndexAsContext`); gate-off keeps the old aggregate render decision, gate-on aggregate heading only around instruction sources and the Memory source rendered with the sibling `# Project Memory (background context)` heading carrying the frozen framing closing sentence; leading frontmatter/top-level HTML comment cleanup; missing/empty/unreadable not injected; semantic branch skipped before reading; 200 lines/25,000 chars head/tail elision; disk-original read-state and partial marker; frozen within a session, re-read in a new session; four Main tasks; three child exclusions |
+| Permission/file write | root containment; lowercase `.md`; sensitive segments; Write/Edit allow/deny; `node_type: memory` added together when originSessionId is missing, files with an existing non-empty origin kept as is; Bash unchanged |
+| Recall default branch | Keeps pointer/index; Main turn does not scan, send a Selector or inject `relevant_memory` |
+| Recall semantic branch | No pointer/index; branch-aware lifecycle covering prefetch, consume after a complete tool batch, recursive scan, selector schema, order/duplicates, body limits, stale and the 61,440 gate; no Runtime override added |
+| Extraction | success/error/abort; direct write; independent 3-word block; cursor; same-boundary snapshot; no cancel after Rewind; running+latest; 5th turn; header refresh; session close rejects new schedule, drops pending, aborts running and bounded drain |
+| Headless Extraction | `-p/--prompt` and `--target` inject the internal `extractionEnabled=false`; Main prompt/index/Recall kept; no Extraction snapshot read, no scheduler, no Extraction request, no cursor advance, no Memory file write; TUI/app-server default behavior unchanged |
+| Dream | `/dream` manual command: fast launch turn (TurnStarted model-only, ack/skip text, soft gate bypassing 24h/10m, ≥1 new transcript, usage error with arguments, visible skip for memory not enabled/remote/lock held/no new activity); detached background task (`BackgroundTaskStarted/Updated/Completed`, kind `dream`, cancellable, does not block input); completion task-notification (`backgroundSource: "dream"`, completed/failed notify, cancel does not, durable transcript + TUI surface + resultPending delivery, branch fencing drop); per-request `model_usage` fact (`querySource: "dream"`) and model-io transcript (Dream no longer skipped, Extraction still skipped); auto entry still unwired, auto gate (24h/5 transcripts/10m) unchanged; lock; 50th turn; filesTouched; one-shot memory_update |
+| Custom agent | exact enum; three scopes; agent key; empty/truncated index; Write/Edit augmentation; Read intentional diff; disallowedTools |
+| Settings viewer | Off by default sends no catalog request; Desktop local profile catalog; empty directory filtering; stable ordering; symlink/traversal rejection; workspace switch; virtual `MEMORY.md` parent node; missing index; original body; 5 MiB single-file preview limit; English fact count singular/plural; explicit refresh; viewing sends no model request and writes no file; catalog carries optional `lastDreamConsolidatedAt` (`.consolidated-at` mtime, omitted when missing) for display only; Web Remote / Mobile show only the local viewing hint and zero catalog calls |
+| Up/downstream | generateText structured output; stream unchanged; Settings enters the Agent only via the runtime-preference boolean; the viewer reads local disk only via the Desktop local Host Memory service; desktop continuous/mobile replayable carry no Memory body; remote background does not start |
 
-每个实现 Phase 必须先更新本文或对应 fixture，再补失败测试、实现最小行为、运行聚焦测试并做
-scope review。最终必须执行 CLI workspace typecheck/lint、仓库级 `pnpm typecheck`、`pnpm lint`
-和 `git diff --check`。
+Each implementation Phase must first update this document or the matching fixture, then add failing
+tests, implement the minimal behavior, run focused tests and do a scope review. At the end it must run
+CLI workspace typecheck/lint, repository-level `pnpm typecheck`, `pnpm lint` and `git diff --check`.
 
-### 10.1 E2E 与 trajectory 验收边界
+### 10.1 E2E and trajectory acceptance boundary
 
-Memory 的端到端验收使用隔离的临时 workspace、临时 storage 和本地 scripted provider，必须从
-真实 `createZCodeApp` 入口运行并保存 provider request trajectory。E2E 不替代本节上表中的
-focused tests；它证明这些规则已经在真实 Runtime 链路中正确组合。
+End-to-end acceptance of Memory uses an isolated temporary workspace, temporary storage and a local
+scripted provider, must run from the real `createZCodeApp` entry and must save the provider request
+trajectory. E2E does not replace the focused tests of the table above; it proves that those rules compose
+correctly in the real Runtime chain.
 
-正式 E2E 必须覆盖：
+The formal E2E must cover:
 
-1. Main Memory prompt 出现在每个 Memory-enabled Main provider request，并保留默认分支的
-   `MEMORY.md` pointer 文案；session 初始化时非空 `MEMORY.md` 还会以冻结的 exact request
-   user-context source 进入首条 user message，并在该 session 后续 Main request 中保持。该非空
-   source 自身即使没有 AGENTS.md，在 `memoryIndexAsContext=false`（默认）时也会使聚合块渲染一次
-   `# agentsMd`；`true` 时该 source 以 `# Project Memory (background context)` 同级标题的独立
-   background-context 形态渲染并携带冻结 framing 尾句，不渲染聚合标题。
-2. Memory-enabled Main turn 不发 Selector provider request，也不注入 `relevant_memory`；索引消费
-   不依赖 Selector。
-3. 后续无 direct Memory write 的成功 Main turn 会 fire-and-forget Extraction；正常完成证据在测试中
-   显式 drain 后观察 trajectory 和实际 Memory 文件，不能再借 session close 等待它完成。
-4. Extraction 新写入的事实包含固定 `metadata.node_type: memory` 并保留原
-   `metadata.originSessionId`，同时按 Main prompt 更新
-   `MEMORY.md` pointer；后续新 session 直接从默认分支的 request user-context source 消费该 pointer，
-   且不为它发起 Selector 请求。同一个已初始化 session 不热重载索引。
-5. 声明 persistent Memory 的 custom agent 获得对应 prompt、Write/Edit 投影和独立 root；
-   child 写入同样补齐 `node_type: memory` 与 `originSessionId`。
-6. 在 Settings 关闭 Memory 后，当前 Session 保持原值；新建 Session 的 provider
-   request 不含 Main/custom Memory prompt，不发 selector/Extraction 请求，也不创建
-   project/custom Memory root。重新开启后再新建 Session 恢复 Memory，无需热更新已有
-   Runtime。
-7. 当 Extraction provider request 已开始但尚未返回时关闭 session：close 在短预算内完成，
-   running request 收到 abort，latest pending 被丢弃，迟到的 tool-use 响应不能写文件或触发
-   下一轮模型请求；close 后完成的 Main turn也不能再调度 Extraction。
-8. Settings 的 Memory 模块在 Desktop 开关关闭时不读取 catalog；开启后从隔离 profile 展示两个
-   本地 workspace、虚拟 `MEMORY.md` 父节点与原始 Markdown，手动刷新后反映新增文件，关闭后
-   文件仍保留。Web Remote / Mobile 只展示开关和本地桌面端查看提示，不调用 catalog。仅执行
-   查看动作时 provider request 数量必须保持不变。
-9. headless Runtime 在 Memory enabled 且已有非空 `MEMORY.md` 时，Main request 仍满足当前 active
-   retrieval branch 的 provider-visible 合同；显式 drain 后 trajectory 中没有 Extraction request，
-   Project Memory 文件保持不变。CLI unit test 分别证明 `-p/--prompt` 与 `--target` 都注入 gate，TUI
-   不注入；断言按 `main` / `extraction` 类别表达，不把允许异步启动或取消的 Selector 计入固定场景
-   总数。该 case 不复制 Desktop/手机窗口测试。
+1. The Main Memory prompt appears in every Memory-enabled Main provider request and keeps the
+   `MEMORY.md` pointer text of the default branch; at session initialization a non-empty `MEMORY.md` also
+   enters the first user message as the frozen exact request user-context source and stays in later Main
+   requests of the session. Even without AGENTS.md, with `memoryIndexAsContext=false` (default) this
+   non-empty source itself makes the aggregate block render `# agentsMd` once; with `true` the source
+   renders in the independent background-context form under the sibling heading
+   `# Project Memory (background context)` carrying the frozen framing closing sentence and no aggregate
+   heading.
+2. A Memory-enabled Main turn sends no Selector provider request and injects no `relevant_memory`; index
+   consumption does not depend on the Selector.
+3. A later successful Main turn without a direct Memory write fires and forgets Extraction; the normal
+   completion evidence is observed after an explicit drain in the test, looking at the trajectory and the
+   actual Memory files, and session close is no longer used to wait for completion.
+4. Facts newly written by Extraction contain the fixed `metadata.node_type: memory`, keep the original
+   `metadata.originSessionId`, and update the `MEMORY.md` pointer per the Main prompt; a later new session
+   consumes that pointer directly from the request user-context source of the default branch without
+   issuing a Selector request for it. The same initialized session does not hot-reload the index.
+5. A custom agent declaring persistent Memory gets the matching prompt, Write/Edit projection and an
+   independent root; child writes likewise get `node_type: memory` and `originSessionId` filled.
+6. After Memory is turned off in Settings the current Session keeps its original value; the provider
+   request of a new Session has no Main/custom Memory prompt, sends no selector/Extraction request, and
+   creates no project/custom Memory root. After turning it on again a new Session restores Memory, without
+   hot-updating the existing Runtime.
+7. Closing a session while the Extraction provider request has started but not returned: close completes
+   within a short budget, the running request receives abort, latest pending is dropped, and a late
+   tool-use response cannot write files or trigger the next model request; a Main turn completing after
+   close can no longer schedule Extraction.
+8. The Memory module of Settings does not read the catalog while the Desktop switch is off; once on it
+   shows two local workspaces from the isolated profile, the virtual `MEMORY.md` parent node and the
+   original Markdown, reflects new files after a manual refresh, and the files remain after turning off.
+   Web Remote / Mobile show only the switch and the local desktop viewing hint and call no catalog. The
+   provider request count must stay unchanged when only viewing.
+9. With Memory enabled and an existing non-empty `MEMORY.md`, the headless Runtime Main request still
+   satisfies the provider-visible contract of the current active retrieval branch; after an explicit drain
+   there is no Extraction request in the trajectory and the Project Memory files are unchanged. CLI unit
+   tests prove separately that `-p/--prompt` and `--target` both inject the gate and the TUI does not;
+   assertions are expressed by `main` / `extraction` category and do not count a Selector that may start
+   or cancel asynchronously into the fixed scenario total. This case does not copy the Desktop/phone
+   window tests.
 
-每次运行输出原始 provider capture、按 `main | extraction | custom_agent` 分类的
-trajectory、文件结果和断言摘要。断言使用稳定文本 marker 和真实请求字段，不以 sleep、请求
-序号或模型自然语言判断链路。
+Each run outputs the raw provider capture, the trajectory classified as `main | extraction |
+custom_agent`, file results and an assertion summary. Assertions use stable text markers and real request
+fields, not sleeps, request ordinals or model natural language to judge the chain.
 
-以下组合不扩展为新的黑盒 E2E：
+These combinations are not expanded into new black-box E2E:
 
 - `/dream` uses the ordinary composer command in a pending Desktop E2E case for progress, concurrent
-  foreground input, retained completion and cancellation. Focused runtime integration tests cover
-  gate、lock、50-turn、filesTouched、后台任务生命周期（Started/Updated/Completed、cancel、
-  lock 恢复）和 one-shot `memory_update`，由 adapter test 覆盖最终 provider body。不得为测试
-  新增 auto Dream 或内部协议入口。
-- 三种 custom-agent scope、task type、root/symlink/截断/并发/错误的完整等价类继续由 focused
-  tests 覆盖；E2E 只选择一条代表路径证明真实组合。
-- Anthropic Messages 的逐字段 wire contract 继续由本地 Messages endpoint adapter test 覆盖；
-  deterministic Runtime E2E 使用本地 provider，不依赖真实网络或线上模型可用性。
-- Desktop Settings 新增本地只读 Memory viewer，但不新增 Agent 协议字段；Web Remote / Mobile
-  只保留开关与本地查看提示，不扩展文件 viewer 或远端 Host 聚合。Desktop 仍保留一条 Electron WDIO 组合测试，从真实
-  composer 发消息，并用 provider capture、CLI Memory 文件和 timeline 终态联合证明既有跨进程
-  链路没有截断 Memory；viewer 另用无 provider request 的 Settings case 证明只读投影：
+  foreground input, retained completion and cancellation. Focused runtime integration tests cover the
+  gates, lock, 50 turns, filesTouched, the background task lifecycle (Started/Updated/Completed, cancel,
+  lock restore) and one-shot `memory_update`, and the adapter test covers the final provider body. No auto
+  Dream or internal protocol entry may be added for testing.
+- The full equivalence classes of the three custom-agent scopes, task type, root/symlink/truncation/
+  concurrency/error stay covered by focused tests; E2E only picks one representative path to prove the
+  real composition.
+- The field-by-field wire contract of Anthropic Messages stays covered by the local Messages endpoint
+  adapter test; the deterministic Runtime E2E uses a local provider and depends neither on the real
+  network nor on the online model availability.
+- Desktop Settings adds a local read-only Memory viewer but no Agent protocol field; Web Remote / Mobile
+  keep only the switch and the local viewing hint and do not extend a file viewer or remote Host
+  aggregation. Desktop still keeps one Electron WDIO composition test that sends a message from the real
+  composer and uses provider capture, CLI Memory files and the timeline terminal state to prove together
+  that the existing cross-process chain does not truncate Memory; the viewer additionally uses a Settings
+  case without provider requests to prove the read-only projection:
 
 ```text
 Electron composer
@@ -1027,29 +1159,31 @@ Renderer -> Host -> stdio -> CLI Runtime -> Main provider request
                               +----------> Extraction -> Memory file
 ```
 
-这条 WDIO 只验证跨进程组合，不把 Memory 正文或后台状态下沉到 Renderer/Host，也不重复
-focused tests 的全部边界排列。session close 取消属于 CLI Runtime 生命周期，并且没有可观察的
-Memory UI 状态；使用真实 `createZCodeApp`、阻塞的本地 provider 和实际 `app.close()` 的 headless
-E2E 覆盖，不再复制一条只能间接推断取消结果的 WDIO case。
+This WDIO verifies only the cross-process composition; it does not push Memory bodies or background state
+down to the Renderer/Host and does not repeat all boundary permutations of the focused tests. Session
+close cancellation belongs to the CLI Runtime lifecycle and has no observable Memory UI state; it is
+covered by a headless E2E using the real `createZCodeApp`, a blocking local provider and an actual
+`app.close()`, and no WDIO case that could only infer the cancel result indirectly is copied.
 
-## 11. 明确非目标
+## 11. Explicit non-goals
 
-本轮不实现：
+This round does not implement:
 
-- 自定义 `memory.rootDir`，以及旧 MVP 数据迁移、删除或双读。
-- `memory.write`、read-only Memory 或 capability status。
-- Read 工具补齐或 Read 特殊授权。
-- `/memory` 命令或 Agent Memory 正文/后台状态协议（`/dream` 已交付，见 7.1）。
-- 公开 `--no-memory` flag、完整关闭 Main Memory/Recall/custom-agent Memory，或远端重新开启
-  headless Extraction 的 rollout gate。
-- Settings viewer 中的编辑、删除、搜索、导出、远端 Host 聚合、custom-agent Memory
-  或外部 `storage.dir` 发现（打开目录已于 2026-10-14 按 §3.3 的「打开记忆文件夹」操作交付）。
-- 自动 Dream trigger、`memory.autoDream` 配置或临时替代入口。
-- `/memory list/show/status/doctor/open` 等替代命令。
-- 关键词 Recall fallback、selector timeout 或通用 retry。
-- foreground mutation observer、secret/PII scanner、prompt-injection classifier。
-- Repository、manifest cache service、jobs.sqlite 或持久 cursor。
-- transaction、snapshot、rollback、CAS、lease 或通用 budget framework。
-- private/team scope、同步、冲突合并、provenance 或 distillation。
-- 新 telemetry、SLO 或灰度体系。
-- 四项非 Memory dynamic system prompt 差异。
+- A custom `memory.rootDir`, and the migration, deletion or dual read of old MVP data.
+- `memory.write`, read-only Memory or capability status.
+- Read tool completion or Read special authorization.
+- A `/memory` command or an Agent Memory body/background state protocol (`/dream` is delivered, see 7.1).
+- A public `--no-memory` flag, fully disabling Main Memory/Recall/custom-agent Memory, or a remote
+  rollout gate to re-enable headless Extraction.
+- Editing, deletion, search, export, remote Host aggregation, custom-agent Memory or external
+  `storage.dir` discovery in the Settings viewer (opening the directory was delivered on 2026-10-14 as
+  the "Open memory folder" action of §3.3).
+- An automatic Dream trigger, a `memory.autoDream` config or a temporary replacement entry.
+- Replacement commands such as `/memory list/show/status/doctor/open`.
+- A keyword Recall fallback, selector timeout or generic retry.
+- A foreground mutation observer, secret/PII scanner, prompt-injection classifier.
+- A Repository, manifest cache service, jobs.sqlite or persistent cursor.
+- transaction, snapshot, rollback, CAS, lease or a generic budget framework.
+- private/team scope, sync, conflict merging, provenance or distillation.
+- New telemetry, SLO or gradual rollout system.
+- The four non-Memory dynamic system prompt differences.
