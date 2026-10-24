@@ -66,7 +66,7 @@ sequenceDiagram
   `pnpm typecheck` after the server build overwrites `packages/server/dist/entry-http.js` with the
   unbundled `tsc` output, so rebuild the server before assembling. The server HTTP bundle must keep
   `yauzl` external (an inlined `yauzl` crashes on load with `Dynamic require of "fs" is not
-  supported`); it is declared by `@zcode/server`, and both this distribution and `build:lite` copy
+supported`); it is declared by `@zcode/server`, and both this distribution and `build:lite` copy
   it.
 - Root `pnpm typecheck`, `pnpm lint` and `pnpm architecture:check --changed` passed; lint retains
   existing repository warnings.

@@ -68,12 +68,12 @@ Known limit: symlinks are checked lexically. A symlinked folder inside the works
 
 ## 3. State owners
 
-| State                              | Owner                                                                                   | Lifetime                                                                       |
-| ---------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| State                              | Owner                                                                                        | Lifetime                                                                       |
+| ---------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | Delivered set and budget           | Provider-visible history (`messageHistory.borrowReadOnlyRuntimeEntries()`), read via a probe | Exactly as long as the history entries                                         |
-| Schedule reservations and bytes    | `NestedInstructionTracker`, one per runtime (keys plus injected bytes of this schedule)  | Cleared by `settleToolResults` after the step's results are committed (see §4)  |
-| Stat miss cache                    | `NestedInstructionTracker`                                                              | 30 s TTL per candidate path, so an AGENTS.md created mid-session is found soon |
-| Workspace root and startup sources | Runtime (`workspaceRoot`, `contextSourceSnapshot`)                                       | Session                                                                        |
+| Schedule reservations and bytes    | `NestedInstructionTracker`, one per runtime (keys plus injected bytes of this schedule)      | Cleared by `settleToolResults` after the step's results are committed (see §4) |
+| Stat miss cache                    | `NestedInstructionTracker`                                                                   | 30 s TTL per candidate path, so an AGENTS.md created mid-session is found soon |
+| Workspace root and startup sources | Runtime (`workspaceRoot`, `contextSourceSnapshot`)                                           | Session                                                                        |
 
 No component keeps a second accepted "delivered" set. The tracker holds only transient reservations and a miss cache.
 

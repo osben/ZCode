@@ -28,7 +28,7 @@ which worktree the session runs in. The missing state (destructive color +
    Moot for the row marker after the no-color amendment: an un-colored marker has nothing to collide
    with. A distinct hue can be revisited if real rows show confusion.
 3. **Precedence — missing wins, never additive.** `worktreeIconClassName = cn("size-3.5 shrink-0
-   rotate-90", isWorktreeMissing && "text-destructive")` — healthy adds no color class at all. Both
+rotate-90", isWorktreeMissing && "text-destructive")` — healthy adds no color class at all. Both
    render chains render through this one shared const. Position: in the meta group next to the
    clock/off-peak icons — after them, before the time label — styled exactly like them (`size-3.5`,
    the row's muted meta color, hides on hover with the whole group).

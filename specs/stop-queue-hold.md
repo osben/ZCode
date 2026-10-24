@@ -291,17 +291,17 @@ E2E: `conversation-session-v4-stop-queue` B02–B04 and B02a (`docs/conversation
     controller with the preserve intent reason and writes no hold; a user Stop aborts with a plain
     reason and holds (CLI unit `ISSUE-039：runtime 尚无前台 token 时 steer ...` and `... 用户 Stop ...`;
     core unit `ISSUE-039 keeps queue auto-drain when a caller abort carries the steer preserve
-    intent` and `ISSUE-039 holds the queue when a caller abort is a plain user Stop reason`).
+intent` and `ISSUE-039 holds the queue when a caller abort is a plain user Stop reason`).
     Runtime-idle is not reachable from the E2E steer path (see rule 12).
 15. ISSUE-039 Steer immediately after the turn enters running (no streamed output yet): the queue
     still drains in order (E2E `STEER 刚进入 running：`).
 16. ISSUE-039 D1 (rule 14): a Stop that lands after a Steer aborted the target and before teardown
     keeps its hold, in the runtime-token branch and in the no-token branch (CLI unit
     `ISSUE-039 D1：...`). A stale expected id writes no hold to keep (CLI unit `ISSUE-039 D1：stale
-    expected id ...`). A Stop whose pinned target tears down during the hold write releases (CLI unit
+expected id ...`). A Stop whose pinned target tears down during the hold write releases (CLI unit
     `ISSUE-039 D1：steer 已 abort ...`). A Steer alone still drains (rule 10).
 17. ISSUE-039 N2: the preserve marker on the cancel reason is non-enumerable (core unit `turn cancel
-    reason intent` in `core/tests/turn-errors.test.ts`).
+reason intent` in `core/tests/turn-errors.test.ts`).
 18. E2E `STEER：`: the queue reaches [Q2] (Q1 promoted) with no paused banner, and the steered reply
     has no banner.
 19. ISSUE-063: held queue, `sendText` with `clearQueueAndSend`: the call order is clear queue,

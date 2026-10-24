@@ -18,11 +18,11 @@ pipeline; only failures and unresolved outcomes surface under the message.
 
 ## Three clocks (do not conflate them)
 
-| Clock             | User question                 | Target                                                                                                                                                                                                 |
-| ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **P1 — Perceive** | “Did my message go in?”       | **&lt; 1 frame after click** (same React commit): full text (+ attachments/context chips) appears as the **primary user turn** in the conversation column, not a secondary preview strip.                |
+| Clock             | User question                 | Target                                                                                                                                                                                                                                                                          |
+| ----------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **P1 — Perceive** | “Did my message go in?”       | **&lt; 1 frame after click** (same React commit): full text (+ attachments/context chips) appears as the **primary user turn** in the conversation column, not a secondary preview strip.                                                                                       |
 | **P2 — Navigate** | “Am I in this task/chat?”     | **Immediately after P1** (first async beat — see _P2 bind moment_ below): pane binds to a **stable session identity** (real `sessionId`), normal chat chrome (header, timeline, composer dock), sidebar may lag but **must not gate** opening the conversation (FSL bind rule). |
-| **P3 — Model**    | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. No progress label under the message; never block P1/P2 on LLM or runtime ready.                                |
+| **P3 — Model**    | “When does the agent answer?” | **Whenever preparation + admission complete**; TTFT and setup are **not** part of P1/P2. No progress label under the message; never block P1/P2 on LLM or runtime ready.                                                                                                        |
 
 **P2 bind moment (single write point).** The pane binds when the Host reservation
 identity — `{sessionId, commandId}` — is durably recorded: the plain path binds at
@@ -106,17 +106,17 @@ Carry forward from FSL and related specs without reinterpretation:
 Mounted UI tests and desktop E2E candidates are required for P1/P2; unit tests alone are
 insufficient.
 
-| ID    | Action                                | Must observe                                                                                                                                                                                                    |
-| ----- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ID    | Action                                | Must observe                                                                                                                                                                                                                                                                    |
+| ----- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | IUX01 | Plain text, first Send on draft       | Same frame: user turn visible + chat chrome without the centered draft (`sessionId` binds at the P2 moment, first async beat); typing the next draft is never blocked; a second Send follows ordinary session readiness (`runtimeReady`), never an active-first-submission lock |
 | IUX02 | Double-click Send; then a new draft   | A repeat of the same submission (no editor change since the claim) dispatches nothing: one session, one user turn, one admission attempt. A genuinely new draft typed after the bind dispatches through the ordinary send path once the frozen input is admitted                |
-| IUX03 | Type next message during worktree Git | First message frozen; second draft intact; no owner steal                                                                                                                                                       |
-| IUX04 | Navigate away before background ACK   | Focus unchanged; return shows same session + message; no duplicate send                                                                                                                                         |
-| IUX05 | Slow Host (held reservation)          | User still in chat with message, not blank draft screen; no progress label under the message                                                                                                                    |
-| IUX06 | Admission ACK before projection       | At most one user turn; brief “syncing” ok; no second bubble                                                                                                                                                     |
-| IUX07 | Preparation failure                   | Same session, message remains, Retry works; composer not globally locked                                                                                                                                        |
-| IUX08 | Sidebar slow                          | Conversation usable before sidebar row appears                                                                                                                                                                  |
-| IUX09 | Restart mid-preparation               | Recovery without auto-dispatch; explicit continue                                                                                                                                                               |
+| IUX03 | Type next message during worktree Git | First message frozen; second draft intact; no owner steal                                                                                                                                                                                                                       |
+| IUX04 | Navigate away before background ACK   | Focus unchanged; return shows same session + message; no duplicate send                                                                                                                                                                                                         |
+| IUX05 | Slow Host (held reservation)          | User still in chat with message, not blank draft screen; no progress label under the message                                                                                                                                                                                    |
+| IUX06 | Admission ACK before projection       | At most one user turn; brief “syncing” ok; no second bubble                                                                                                                                                                                                                     |
+| IUX07 | Preparation failure                   | Same session, message remains, Retry works; composer not globally locked                                                                                                                                                                                                        |
+| IUX08 | Sidebar slow                          | Conversation usable before sidebar row appears                                                                                                                                                                                                                                  |
+| IUX09 | Restart mid-preparation               | Recovery without auto-dispatch; explicit continue                                                                                                                                                                                                                               |
 
 ## Architecture direction (order matters; later steps assume earlier ones)
 
@@ -388,10 +388,10 @@ on every pass, so it still accepts a copy after an undecided query.
 Durable Host facts decide before the command query, because an `accepted` ACK does not
 survive a CLI restart and a query `unknown` therefore does not prove non-admission:
 
-| Facts (bound session's live snapshot, then `commands/query`)     | Becomes                                                     |
-| ---------------------------------------------------------------- | ----------------------------------------------------------- |
-| a real user row carries this command id                          | accepted (reported to the registry)                         |
-| a real user row via the fresh-session fallback (records only)    | record cleared by the reconcile predicate (already owned)   |
+| Facts (bound session's live snapshot, then `commands/query`)                     | Becomes                                                     |
+| -------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| a real user row carries this command id                                          | accepted (reported to the registry)                         |
+| a real user row via the fresh-session fallback (records only)                    | record cleared by the reconcile predicate (already owned)   |
 | record holds no command id, reserved, `submissionPreparation` absent             | record `sending`, not reported; a held copy stays unchanged |
 | record holds no command id otherwise                                             | unchanged (nothing names the input to query)                |
 | query `accepted` / `duplicate`                                                   | `sending` / accepted (reported)                             |

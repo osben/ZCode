@@ -67,21 +67,21 @@ Accessibility: real `<table>`-shaped grid with `role="row"` on virtualized rows;
 
 ### 4. Columns (v1)
 
-| #   | Column      | Source                                      | Rendering                                                                                                   | Default                                     | Sort   |
-| --- | ----------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------ |
-| 1   | Selection   | —                                           | Checkbox; header = select-all-in-view (indeterminate on partial)                                            | always                                      | —      |
-| 2   | Pinned      | `membership.pinned`                         | Pin icon button; filled amber when pinned; click = `setTaskPinned` toggle                                    | on                                          | —      |
-| 3   | Name        | `meta.title` (fallback `taskList.untitled`) | `text-ui-base`; inline rename (§7)                                                                          | on                                          | client |
-| 4   | Status      | `liveStatus`                                | Pill 20px: Running (success, pulsing dot) / Waiting (warning) / Idle (neutral) / Done (subtle) / Error (destructive) | on                                          | —      |
-| 5   | Type        | `cronAutomationId` / `offPeakTaskId`        | Icon+label, sidebar vocabulary: message-square Session / clock Cron / moon Off-peak                          | on                                          | —      |
-| 6   | Changes     | `meta.changeSummary`                        | Mono tabular `+added −removed` in success/destructive; `—` when both zero or summary absent                  | on                                          | —      |
+| #   | Column      | Source                                      | Rendering                                                                                                                   | Default                                     | Sort   |
+| --- | ----------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | ------ |
+| 1   | Selection   | —                                           | Checkbox; header = select-all-in-view (indeterminate on partial)                                                            | always                                      | —      |
+| 2   | Pinned      | `membership.pinned`                         | Pin icon button; filled amber when pinned; click = `setTaskPinned` toggle                                                   | on                                          | —      |
+| 3   | Name        | `meta.title` (fallback `taskList.untitled`) | `text-ui-base`; inline rename (§7)                                                                                          | on                                          | client |
+| 4   | Status      | `liveStatus`                                | Pill 20px: Running (success, pulsing dot) / Waiting (warning) / Idle (neutral) / Done (subtle) / Error (destructive)        | on                                          | —      |
+| 5   | Type        | `cronAutomationId` / `offPeakTaskId`        | Icon+label, sidebar vocabulary: message-square Session / clock Cron / moon Off-peak                                         | on                                          | —      |
+| 6   | Changes     | `meta.changeSummary`                        | Mono tabular `+added −removed` in success/destructive; `—` when both zero or summary absent                                 | on                                          | —      |
 | 7   | Branch      | `executionWorktree.branchName`              | Mono `text-ui-xs` + git-branch glyph; `—` when absent; `executionWorktreeMissing` → destructive "missing" text with tooltip | on                                          | —      |
-| 8   | Environment | `executionWorktree` presence                | `Worktree` bordered chip / `Local` plain text — **neutral colors** (violet stays reserved per the worktree-icon decision) | on                                          | —      |
-| 9   | Model       | `meta.model` display name                   | `text-ui-sm text-foreground-subtle`                                                                          | on                                          | —      |
-| 10  | Updated     | `meta.updatedAt`                            | Relative time (`formatTaskRelativeTime`)                                                                     | on                                          | server |
-| 11  | Created     | `meta.createdAt`                            | Short date                                                                                                   | on                                          | server |
-| 12  | Path        | `meta.workspacePath`                        | Mono `text-ui-xs` truncated, full path in tooltip                                                            | **off when workspace-scoped**, on otherwise | —      |
-| 13  | Row menu    | —                                           | `⋯` ghost button → context menu (§7)                                                                         | always                                      | —      |
+| 8   | Environment | `executionWorktree` presence                | `Worktree` bordered chip / `Local` plain text — **neutral colors** (violet stays reserved per the worktree-icon decision)   | on                                          | —      |
+| 9   | Model       | `meta.model` display name                   | `text-ui-sm text-foreground-subtle`                                                                                         | on                                          | —      |
+| 10  | Updated     | `meta.updatedAt`                            | Relative time (`formatTaskRelativeTime`)                                                                                    | on                                          | server |
+| 11  | Created     | `meta.createdAt`                            | Short date                                                                                                                  | on                                          | server |
+| 12  | Path        | `meta.workspacePath`                        | Mono `text-ui-xs` truncated, full path in tooltip                                                                           | **off when workspace-scoped**, on otherwise | —      |
+| 13  | Row menu    | —                                           | `⋯` ghost button → context menu (§7)                                                                                        | always                                      | —      |
 
 Column visibility persists per device (§5). Child-session counts and workflow-run lines are not columns in v1.
 
@@ -152,7 +152,7 @@ All user-facing strings under the `sessionManager.*` namespace in `en-US`, `zh-C
 
 - Read-only over existing RPC; all mutations are existing task-service ops — additive UI only, no wire/DB changes, no migrations.
 - Old CLI + new UI: all consumed fields already exist; remote/offline workspaces render action-disabled, not hidden.
-- Fork safety: single namespaced localStorage key; no `setting.json` keys; no fork_/upstream DB surface.
+- Fork safety: single namespaced localStorage key; no `setting.json` keys; no fork\_/upstream DB surface.
 
 ## Acceptance scenarios
 

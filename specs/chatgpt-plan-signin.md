@@ -222,7 +222,7 @@ control, analytics, or URLs. ChatGPT tokens are never sent to the Railway relay 
 ### Inference surface (request shaping)
 
 - Endpoint: ONLY `POST https://api.openai.com/v1/responses` with `Authorization: Bearer
-  <access_token>`. The token is never pointed at ChatGPT `backend-api` endpoints.
+<access_token>`. The token is never pointed at ChatGPT `backend-api` endpoints.
 - `store: false` and `stream: true` are REQUIRED on every request. Context goes in the `input` array
   (full stateless replay each turn); `previous_response_id` must be omitted over HTTP.
 - System prompt via `instructions` / developer messages ONLY — explicit
@@ -244,9 +244,9 @@ control, analytics, or URLs. ChatGPT tokens are never sent to the Railway relay 
 - Body compression: after strip/serialize, if the body exceeds ~1 MiB (1048576 bytes), compress with
   `node:zlib` `zstdCompressSync` (feature-detected; `gzipSync` fallback) and set
   `content-encoding: zstd` (or `gzip`). Implemented as a provider-agnostic transport util (threshold
-  + zstd/gzip + feature-detect), default-off for every other provider; other endpoints may adopt it
-  only after endpoint-by-endpoint verification. Compression applies ONLY to the request body
-  (responses are SSE).
+  - zstd/gzip + feature-detect), default-off for every other provider; other endpoints may adopt it
+    only after endpoint-by-endpoint verification. Compression applies ONLY to the request body
+    (responses are SSE).
 - Prompt-cache headers: stable `session-id` per session (children/subagents share the parent's id),
   plus `thread-id` and `x-client-request-id`. (Not to be confused with `ext_agent_host_id`, an
   authorize-time param only.)
@@ -290,7 +290,7 @@ diagnostic text; preserve HTTP status, body shape, code, and request id.
   the builtin JSON so it is trivially editable.
 - Phase 3: dynamic per-account catalog refresh (`GET /v1/models`), refresh on account switch; "pro"
   reasoning modes are not plan-eligible; no effort-update advertising (`supportsEffortUpdates:
-  false`); native `/responses/compact` is unavailable — summary-style compaction only.
+false`); native `/responses/compact` is unavailable — summary-style compaction only.
 
 ### Usage limits
 
@@ -307,8 +307,8 @@ diagnostic text; preserve HTTP status, body shape, code, and request id.
 - **Usage probe (codex-flavor grant, per account)** — the primary source. Plan usage windows are
   only exposed on ChatGPT's own backend: `GET https://chatgpt.com/backend-api/wham/usage` answers
   200 with `{plan_type, rate_limit: {allowed, limit_reached, primary_window: {used_percent,
-  limit_window_seconds, reset_at, reset_after_seconds}, secondary_window: {...}}, model_usage:
-  {...}}` — but ONLY for codex-flavor tokens (client `app_EMoamEEZ73f0CkXaXp7hrann`). SIWC access
+limit_window_seconds, reset_at, reset_after_seconds}, secondary_window: {...}}, model_usage:
+{...}}` — but ONLY for codex-flavor tokens (client `app_EMoamEEZ73f0CkXaXp7hrann`). SIWC access
   tokens get `401 rejected_by_access_enforcement / no_matching_rule` (verified live 2026-10-17).
   Rules:
   - **Inference isolation**: the codex-flavor grant is a SEPARATE OAuth grant used ONLY for the
@@ -326,7 +326,7 @@ diagnostic text; preserve HTTP status, body shape, code, and request id.
     login: without `prompt=login` a second grant can invalidate the previous account's
     refresh-token family ("session takeover"), so per-account grants MUST force a fresh login.
   - **Probe request headers**: `Authorization: Bearer <codex access token>`, the codex `user-agent:
-    codex_cli_rs` (the route sits behind Cloudflare — bare clients were challenged on adjacent
+codex_cli_rs` (the route sits behind Cloudflare — bare clients were challenged on adjacent
     backend paths during live probing), and `chatgpt-account-id: <stored account id>` when the codex
     id token carried `chatgpt_account_id` (account/workspace routing; personal Plus answers 200
     without it).
@@ -386,7 +386,7 @@ diagnostic text; preserve HTTP status, body shape, code, and request id.
   latest snapshot and the bound provider id in a per-bound-model mutable capture (same threading
   pattern as `RawRequestBodyCapture`); the runner attaches them to the turn-completion usage payload
   as `providerRateLimits` and `providerRateLimitProviderId` (shape: `{primary: {usedPercent,
-  windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notification from the durable
+windowMinutes?, resetsAt?}, secondary?}`). The CLI emits a typed host notification from the durable
   completion event, independent of legacy `session/event` delivery subscriptions, so V4-only
   conversations also record usage. The host attributes the snapshot only from the carried provider
   id, never by reading the session's current model after completion. The `workspace/generateText`
@@ -396,8 +396,8 @@ diagnostic text; preserve HTTP status, body shape, code, and request id.
   and usage recording share the same service instance, so Settings reads recorded usage and logout
   clears that account's cached snapshot.
 - **Display**: the Settings → ChatGPT Plan account row shows, when a snapshot exists, `5h window:
-  {percent}%` (+ ` · resets {time}` when `resetsAt` is present and parseable) and `Weekly:
-  {percent}%` for the secondary window. The model picker badge deliberately does NOT show usage: the
+{percent}%` (+ ` · resets {time}` when `resetsAt` is present and parseable) and `Weekly:
+{percent}%` for the secondary window. The model picker badge deliberately does NOT show usage: the
   in-memory host state has no change-notification channel to the renderer, so a picker badge would
   render stale percentages in a high-visibility surface. Revisit only with a usage-updated event.
 

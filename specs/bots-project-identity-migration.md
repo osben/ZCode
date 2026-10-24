@@ -138,9 +138,9 @@ Owner of the runtime and URL minting: desktop main. The bot only requests and fo
 - New: `BotsRepo.backupBeforeProjectIdentityMigration`, the `config.ts` backup file names, and
   `ensureBotStorageMigrated` now also running `ensureProjectIdentityMigrated`.
 - Wiring: `node.ts` passes `projectService`, `remoteProjectService`, `ownerHostId:
-  projectStorageHostId`. The desktop local-global collection that passed the Host's project channel
+projectStorageHostId`. The desktop local-global collection that passed the Host's project channel
   to bots was removed (see `specs/upstream-sync-final-ledger.md`, `local-global collection
-  removal`); `remoteWorkspaceServiceCollection.ts` no longer carries a bots project-channel
+removal`); `remoteWorkspaceServiceCollection.ts` no longer carries a bots project-channel
   fallback. Server remote Bot project binding is unchanged.
 - Tests: none of the four upstream test files and no assertion was edited; `botsService.fixtures.ts`
   gained a no-op `backupBeforeProjectIdentityMigration` on the in-memory repo (test infrastructure).

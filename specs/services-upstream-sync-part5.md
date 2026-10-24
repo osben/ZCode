@@ -4,13 +4,13 @@ Parent spec: `specs/services-upstream-sync-part4.md`. Base `aac47556` (v3.15.1),
 
 ## Summary
 
-| #   | Item                                                                   | Outcome in this part                                                                                             |
-| --- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| #   | Item                                                                   | Outcome in this part                                                                                                                                         |
+| --- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | Bots project binding (`bots/botsService.ts`, `BotsRepo.updateContext`) | Deferred. Blocked: upstream project storage queries tables the fork DB does not have, and no host instantiates a project service in services. See section 1. |
-| 2   | `session/taskIndexRepo.ts` project migrations                          | Deferred. Fork live migration list has no `projects`/`project_roots`. Porting them is a shared-DB decision, not a services change. See section 2. |
-| 3   | `prepareTasksIndexStorage` 3-argument form                             | Deferred. Still no live consumer (part 4, section 7 still holds). See section 3.                                  |
-| 4   | oauth business JWT expiry check                                        | Deferred. Analysis below; the restore path cannot host it. See section 4.                                         |
-| 5   | `zcodeAgentService.ts` hunk-by-hunk review                             | Not done in this part. Recorded as an open ledger row. See section 5.                                            |
+| 2   | `session/taskIndexRepo.ts` project migrations                          | Deferred. Fork live migration list has no `projects`/`project_roots`. Porting them is a shared-DB decision, not a services change. See section 2.            |
+| 3   | `prepareTasksIndexStorage` 3-argument form                             | Deferred. Still no live consumer (part 4, section 7 still holds). See section 3.                                                                             |
+| 4   | oauth business JWT expiry check                                        | Deferred. Analysis below; the restore path cannot host it. See section 4.                                                                                    |
+| 5   | `zcodeAgentService.ts` hunk-by-hunk review                             | Not done in this part. Recorded as an open ledger row. See section 5.                                                                                        |
 
 ## 1. Bots project binding
 

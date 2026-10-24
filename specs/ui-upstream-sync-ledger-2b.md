@@ -51,7 +51,7 @@ Each row names the reason. Rows marked "design owner" need a decision before cod
    `project-sidebar/grouped/group-drag-overlay.tsx` and `WorkspaceDragOverlay.tsx`: not ported;
    low-medium value; needs the store read in the overlay.
 3. Session-manager entry from the sidebar (`setPendingSettingsSectionIntent("sessions",
-   { sessionsScope })`): upstream sidebar navigation has no entry; owner decision on placement.
+{ sessionsScope })`): upstream sidebar navigation has no entry; owner decision on placement.
 4. Merged-session highlight (`specs/merged-session-highlight.md`): not verified in this PR.
 5. Turn-navigator pin highlight: depends on `ConversationTimeline onPinChange` (ledger-b7 S6); not
    verified.
@@ -71,7 +71,7 @@ Each row names the reason. Rows marked "design owner" need a decision before cod
     `WebRemoteControlTaskIndex`. Fork behavior changed, so port is needed; not in this PR.
 13. Off-peak grouped system group (`groupedOffPeakSystemGroup.test.ts`): resolved. The Section
     assertion is retargeted to `project-sidebar/TaskGroupedView.tsx` (`groupId ===
-    OFF_PEAK_DEFAULT_GROUP_ID`) and un-skipped.
+OFF_PEAK_DEFAULT_GROUP_ID`) and un-skipped.
 14. Idle-time editor toolbar layout (`offPeakFigmaLayout.test.ts`): resolved. The three
     removed-picker assertions now check the current project `Select` contract
     (`offpeak-project-select`, `SelectValue`, `data-project-id`) and the case is un-skipped.

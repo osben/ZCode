@@ -44,24 +44,24 @@ sequenceDiagram
 
 ## Acceptance cases
 
-| Case | Setup | Action | Expected result |
-| --- | --- | --- | --- |
-| VD-01 | Desktop microphone permission granted; multiple OS inputs exist | Open Voice dictation settings | System default and all named audio inputs are listed; copy explains virtual inputs can appear. |
-| VD-02 | Exact catalog model exists in Handy's documented default model directory | Open model settings | Model is ready, identified as Handy, selectable, and has no ZCode delete action. |
-| VD-03 | Handy candidate has wrong size or SHA-256 | Open model settings | Candidate is not treated as installed; Handy file is untouched. |
-| VD-04 | Same model exists in ZCode and Handy | Open model settings | ZCode-owned copy is used and remains removable by ZCode. |
-| VD-05 | Model download succeeds/fails | Download a model | Progress/cancel remains available; success is confirmed; failure is reported. |
-| VD-06 | Web settings | Open Settings | Voice dictation explains that local transcription is Desktop-only; no microphone or model controls imply Web support. |
-| VD-07 | Voice dictation shortcut is in use | Open Keyboard Shortcuts | It remains editable using the shared shortcut recorder and defaults to `CmdOrCtrl+Shift+d`. |
-| VD-08 | Start a model download | Click Download | The card shows a full-width progress bar above a row with status at the left, measured speed when available, and Cancel at the right; starting uses an indeterminate bar. Success or failure is announced. |
-| VD-09 | Delete a ZCode-owned model | Click Delete, then cancel or confirm | No file is removed before confirmation; confirming removes it and refreshes the model list. Handy-owned models have no delete action. |
-| VD-10 | Enumerated inputs include a `deviceId` of `default` | Open the input selector | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted. |
-| VD-11 | Set the app language to Ukrainian | Open Voice dictation settings and model actions | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text. |
-| VD-12 | One ready model is selected; another is downloaded, missing, or downloading | Click each model card | Ready model becomes selected; missing model starts downloading; in-progress model toggles use-when-ready (pending-use badge). The old selection stays active until the new model is ready; cancel/failure keeps the current selection. |
-| VD-13 | Open Desktop voice-dictation settings | Review the model list | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted. |
-| VD-14 | One ready model is selected; another is downloading | Click the downloading model card | Same as VD-12: keep the selected model; switch only after the download succeeds. |
-| VD-15 | Desktop voice dictation settings are open | Change idle unload delay | Persist a supported minute value and apply it to the Host timer; no remaining-time countdown is shown. |
-| VD-16 | Composer microphone starts recording | Review the toolbar cluster and the ghost preview | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions. |
+| Case  | Setup                                                                       | Action                                           | Expected result                                                                                                                                                                                                                        |
+| ----- | --------------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VD-01 | Desktop microphone permission granted; multiple OS inputs exist             | Open Voice dictation settings                    | System default and all named audio inputs are listed; copy explains virtual inputs can appear.                                                                                                                                         |
+| VD-02 | Exact catalog model exists in Handy's documented default model directory    | Open model settings                              | Model is ready, identified as Handy, selectable, and has no ZCode delete action.                                                                                                                                                       |
+| VD-03 | Handy candidate has wrong size or SHA-256                                   | Open model settings                              | Candidate is not treated as installed; Handy file is untouched.                                                                                                                                                                        |
+| VD-04 | Same model exists in ZCode and Handy                                        | Open model settings                              | ZCode-owned copy is used and remains removable by ZCode.                                                                                                                                                                               |
+| VD-05 | Model download succeeds/fails                                               | Download a model                                 | Progress/cancel remains available; success is confirmed; failure is reported.                                                                                                                                                          |
+| VD-06 | Web settings                                                                | Open Settings                                    | Voice dictation explains that local transcription is Desktop-only; no microphone or model controls imply Web support.                                                                                                                  |
+| VD-07 | Voice dictation shortcut is in use                                          | Open Keyboard Shortcuts                          | It remains editable using the shared shortcut recorder and defaults to `CmdOrCtrl+Shift+d`.                                                                                                                                            |
+| VD-08 | Start a model download                                                      | Click Download                                   | The card shows a full-width progress bar above a row with status at the left, measured speed when available, and Cancel at the right; starting uses an indeterminate bar. Success or failure is announced.                             |
+| VD-09 | Delete a ZCode-owned model                                                  | Click Delete, then cancel or confirm             | No file is removed before confirmation; confirming removes it and refreshes the model list. Handy-owned models have no delete action.                                                                                                  |
+| VD-10 | Enumerated inputs include a `deviceId` of `default`                         | Open the input selector                          | Only the System default choice and concrete input devices are shown; the synthetic entry is omitted.                                                                                                                                   |
+| VD-11 | Set the app language to Ukrainian                                           | Open Voice dictation settings and model actions  | All labels, descriptions, statuses, confirmations, and toasts use Ukrainian text.                                                                                                                                                      |
+| VD-12 | One ready model is selected; another is downloaded, missing, or downloading | Click each model card                            | Ready model becomes selected; missing model starts downloading; in-progress model toggles use-when-ready (pending-use badge). The old selection stays active until the new model is ready; cancel/failure keeps the current selection. |
+| VD-13 | Open Desktop voice-dictation settings                                       | Review the model list                            | Models appear as separate cards with description and metadata/actions; the selected model is clearly labeled and subtly highlighted.                                                                                                   |
+| VD-14 | One ready model is selected; another is downloading                         | Click the downloading model card                 | Same as VD-12: keep the selected model; switch only after the download succeeds.                                                                                                                                                       |
+| VD-15 | Desktop voice dictation settings are open                                   | Change idle unload delay                         | Persist a supported minute value and apply it to the Host timer; no remaining-time countdown is shown.                                                                                                                                 |
+| VD-16 | Composer microphone starts recording                                        | Review the toolbar cluster and the ghost preview | Listening status and microphone level are clear, transcript preview is optional, and the mic button stays anchored without shifting composer actions.                                                                                  |
 
 ## Handy discovery roots
 
@@ -176,27 +176,27 @@ sequenceDiagram
 
 ### Acceptance scenarios
 
-| Case | Action | Expected result |
-| --- | --- | --- |
-| VD-LIVE-01 | Start recording and speak | Composer level meter responds to microphone input; no raw waveform is stored or shown. |
-| VD-LIVE-02 | Use a runtime-verified streaming model | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text. |
-| VD-LIVE-03 | Stop a streaming recording | Stream finalizes; preview becomes one final insertion with no duplicate text. |
-| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released. |
-| VD-LIVE-05 | Use an unsupported or unverified model | Existing one-shot transcription behavior remains available; no streaming UI is advertised. |
-| VD-LIVE-06 | Edit the composer while a preview is visible | User edits are preserved; final dictation text is inserted once according to the existing append behavior. |
-| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs. |
-| VD-LIVE-08 | Start recording while composer toolbar is visible | Stop button stays in its original position; the meter and Cancel cluster appears immediately to its left and does not overlay toolbar actions. |
-| VD-CLU-01 | Hover or click the toolbar cluster while recording | Nothing overlays the toolbar: actions remain clickable and keep their positions; the cluster never covers the stop or send button. |
-| VD-CLU-02 | Click Cancel in the toolbar cluster while recording | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged. |
-| VD-CLU-03 | Mousedown on the cluster while the editor has focus | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards. |
-| VD-GHO-01 | Stream a runtime-verified model; preview updates | Committed and tentative text appear as grey ghost text at the caret, visually distinct; the layer is aria-hidden. |
-| VD-GHO-02 | Ghost visible; press Enter, click Send, or undo | The ghost is never submitted, never saved in the draft, and never added to undo history. |
-| VD-GHO-03 | Move the caret or edit real text while ghost is visible | Ghost follows the caret; user edits are preserved (VD-LIVE-06). |
-| VD-GHO-04 | Long preview wraps; narrow width; dark theme | First line starts at the caret, wrapped lines use the full editor width, nothing shifts layout, colors follow theme tokens on mobile and desktop. |
-| VD-GHO-05 | Stop with a streaming model | Ghost is cleared before post-processing; the final text is inserted once via the existing insertion path (VD-LIVE-03). |
-| VD-GHO-06 | Cancel, blur, failure, or unmount during ghost | Ghost disappears with the stream; the existing draft is intact (VD-LIVE-04). |
-| VD-GHO-07 | Model without streaming support | No ghost text; the toolbar meter and Cancel still show while recording (VD-LIVE-05). |
-| VD-GHO-08 | Empty composer, ghost has text | The composer placeholder is hidden while the ghost preview has any committed or tentative text, so the two never overlap; it returns when the ghost clears. |
+| Case       | Action                                                  | Expected result                                                                                                                                             |
+| ---------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| VD-LIVE-01 | Start recording and speak                               | Composer level meter responds to microphone input; no raw waveform is stored or shown.                                                                      |
+| VD-LIVE-02 | Use a runtime-verified streaming model                  | Preview updates during recording; committed and tentative text are visually distinct and cannot be submitted as draft text.                                 |
+| VD-LIVE-03 | Stop a streaming recording                              | Stream finalizes; preview becomes one final insertion with no duplicate text.                                                                               |
+| VD-LIVE-04 | Cancel, blur, unmount, or fail during streaming         | Capture stops, preview disappears, existing draft remains intact, and the model stream lease is released.                                                   |
+| VD-LIVE-05 | Use an unsupported or unverified model                  | Existing one-shot transcription behavior remains available; no streaming UI is advertised.                                                                  |
+| VD-LIVE-06 | Edit the composer while a preview is visible            | User edits are preserved; final dictation text is inserted once according to the existing append behavior.                                                  |
+| VD-LIVE-07 | Start a second transcription while one stream is active | The service serializes or rejects it explicitly; no concurrent model use or silent audio loss occurs.                                                       |
+| VD-LIVE-08 | Start recording while composer toolbar is visible       | Stop button stays in its original position; the meter and Cancel cluster appears immediately to its left and does not overlay toolbar actions.              |
+| VD-CLU-01  | Hover or click the toolbar cluster while recording      | Nothing overlays the toolbar: actions remain clickable and keep their positions; the cluster never covers the stop or send button.                          |
+| VD-CLU-02  | Click Cancel in the toolbar cluster while recording     | Cancel fires (same as VD-OUT-03); the editor keeps focus and the draft is unchanged.                                                                        |
+| VD-CLU-03  | Mousedown on the cluster while the editor has focus     | Editor focus and caret are kept (default prevented); the dictation shortcut still stops recording afterwards.                                               |
+| VD-GHO-01  | Stream a runtime-verified model; preview updates        | Committed and tentative text appear as grey ghost text at the caret, visually distinct; the layer is aria-hidden.                                           |
+| VD-GHO-02  | Ghost visible; press Enter, click Send, or undo         | The ghost is never submitted, never saved in the draft, and never added to undo history.                                                                    |
+| VD-GHO-03  | Move the caret or edit real text while ghost is visible | Ghost follows the caret; user edits are preserved (VD-LIVE-06).                                                                                             |
+| VD-GHO-04  | Long preview wraps; narrow width; dark theme            | First line starts at the caret, wrapped lines use the full editor width, nothing shifts layout, colors follow theme tokens on mobile and desktop.           |
+| VD-GHO-05  | Stop with a streaming model                             | Ghost is cleared before post-processing; the final text is inserted once via the existing insertion path (VD-LIVE-03).                                      |
+| VD-GHO-06  | Cancel, blur, failure, or unmount during ghost          | Ghost disappears with the stream; the existing draft is intact (VD-LIVE-04).                                                                                |
+| VD-GHO-07  | Model without streaming support                         | No ghost text; the toolbar meter and Cancel still show while recording (VD-LIVE-05).                                                                        |
+| VD-GHO-08  | Empty composer, ghost has text                          | The composer placeholder is hidden while the ghost preview has any committed or tentative text, so the two never overlap; it returns when the ghost clears. |
 
 ### E2E validation handoff
 
@@ -245,15 +245,15 @@ sequenceDiagram
 
 ### Acceptance scenarios
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
-| VD-MEM-01 | Several models are downloaded; one is selected and another is loaded | Each row identifies its own state: `Active` versus `Loaded`; no implication that selection loaded the model. |
-| VD-MEM-02 | Choose another ready model with `Use` | The selected marker moves immediately; the currently loaded model remains marked until the next transcription or its unload. |
-| VD-MEM-03 | Start transcription with the selected model | Its row shows `Loading` then `Transcribing`; no idle-unload countdown is shown while it is active. |
-| VD-MEM-04 | Finish transcription | The row shows `Loaded` with no countdown. |
-| VD-MEM-05 | Let the idle timer expire | The loaded marker disappears after unload completes. |
-| VD-MEM-06 | Remove the currently loaded model | It unloads before its file is removed; runtime status then reports no loaded model. |
-| VD-MEM-07 | Restart the app | No model is reported loaded until the next transcription loads one. |
+| Case      | Setup / action                                                       | Expected result                                                                                                              |
+| --------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| VD-MEM-01 | Several models are downloaded; one is selected and another is loaded | Each row identifies its own state: `Active` versus `Loaded`; no implication that selection loaded the model.                 |
+| VD-MEM-02 | Choose another ready model with `Use`                                | The selected marker moves immediately; the currently loaded model remains marked until the next transcription or its unload. |
+| VD-MEM-03 | Start transcription with the selected model                          | Its row shows `Loading` then `Transcribing`; no idle-unload countdown is shown while it is active.                           |
+| VD-MEM-04 | Finish transcription                                                 | The row shows `Loaded` with no countdown.                                                                                    |
+| VD-MEM-05 | Let the idle timer expire                                            | The loaded marker disappears after unload completes.                                                                         |
+| VD-MEM-06 | Remove the currently loaded model                                    | It unloads before its file is removed; runtime status then reports no loaded model.                                          |
+| VD-MEM-07 | Restart the app                                                      | No model is reported loaded until the next transcription loads one.                                                          |
 
 ## Languages, model discovery, and dictation output
 
@@ -302,22 +302,22 @@ sequenceDiagram
 
 ### Acceptance scenarios
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
-| VD-LNG-01 | Open the model list | Each card lists its supported languages as chips with `+N` overflow; the full list is reachable. |
-| VD-LNG-02 | Select Ukrainian only | Engine receives `uk`; the model list filters to models that support Ukrainian; the best covering model is recommended. |
-| VD-LNG-03 | Select Ukrainian and English | Engine receives automatic detection; models must cover both to match the language filter. |
-| VD-LNG-04 | Active model lacks a selected language | A warning names the missing language and offers the recommended model. |
-| VD-LNG-05 | Clear all languages | Behaves as automatic detection; no filter applied; no recommendation. |
-| VD-LNG-06 | Settings saved by an older build (`language` only) | `languages` is derived from `language`; saving writes both fields. |
-| VD-FLT-01 | Type in search / toggle Downloaded / Streaming | The list narrows; the selection and downloads are unaffected; an empty result offers Reset. |
-| VD-OUT-01 | Caret in the middle of a draft; dictate | Text is inserted at the caret with correct spacing; the rest of the draft is intact. |
-| VD-OUT-02 | Text selected in the draft; dictate | The selection is replaced by the transcript. |
-| VD-OUT-03 | Press Esc while recording, or click Cancel in the toolbar cluster | Capture stops, nothing is inserted or copied, the agent turn is not interrupted, no stop chime. |
-| VD-OUT-05 | Tap the shortcut for less than 250 ms | A "too short" notice appears; nothing is inserted. |
-| VD-OUT-06 | Start with no model selected | A notice with `Open settings` appears; the action opens Voice dictation settings. |
-| VD-OUT-07 | `copyToClipboard` on; dictate | Text is inserted and also copied; with it off the clipboard is untouched. |
-| VD-OUT-08 | Clipboard write is denied | Dictation still inserts; a warning is logged; no error toast. |
+| Case      | Setup / action                                                    | Expected result                                                                                                        |
+| --------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| VD-LNG-01 | Open the model list                                               | Each card lists its supported languages as chips with `+N` overflow; the full list is reachable.                       |
+| VD-LNG-02 | Select Ukrainian only                                             | Engine receives `uk`; the model list filters to models that support Ukrainian; the best covering model is recommended. |
+| VD-LNG-03 | Select Ukrainian and English                                      | Engine receives automatic detection; models must cover both to match the language filter.                              |
+| VD-LNG-04 | Active model lacks a selected language                            | A warning names the missing language and offers the recommended model.                                                 |
+| VD-LNG-05 | Clear all languages                                               | Behaves as automatic detection; no filter applied; no recommendation.                                                  |
+| VD-LNG-06 | Settings saved by an older build (`language` only)                | `languages` is derived from `language`; saving writes both fields.                                                     |
+| VD-FLT-01 | Type in search / toggle Downloaded / Streaming                    | The list narrows; the selection and downloads are unaffected; an empty result offers Reset.                            |
+| VD-OUT-01 | Caret in the middle of a draft; dictate                           | Text is inserted at the caret with correct spacing; the rest of the draft is intact.                                   |
+| VD-OUT-02 | Text selected in the draft; dictate                               | The selection is replaced by the transcript.                                                                           |
+| VD-OUT-03 | Press Esc while recording, or click Cancel in the toolbar cluster | Capture stops, nothing is inserted or copied, the agent turn is not interrupted, no stop chime.                        |
+| VD-OUT-05 | Tap the shortcut for less than 250 ms                             | A "too short" notice appears; nothing is inserted.                                                                     |
+| VD-OUT-06 | Start with no model selected                                      | A notice with `Open settings` appears; the action opens Voice dictation settings.                                      |
+| VD-OUT-07 | `copyToClipboard` on; dictate                                     | Text is inserted and also copied; with it off the clipboard is untouched.                                              |
+| VD-OUT-08 | Clipboard write is denied                                         | Dictation still inserts; a warning is logged; no error toast.                                                          |
 
 ### Catalog and streaming facts
 
@@ -330,13 +330,13 @@ Handy's catalog (`src-tauri/src/catalog/catalog.json`, 69 models) was compared w
 
 Streaming facts, confirmed by running the models with `transcribe-cpp` 0.3.1 on macOS arm64 (GGUF sha256 matched the catalog; synthetic 16 kHz en/uk/ru speech fed in 100-500 ms chunks):
 
-| Model | `supportsStreaming` | `accepts parakeet` | `accepts parakeet_buffered` | Streams | Bare language code |
-| --- | --- | --- | --- | --- | --- |
-| `parakeet-unified-en-0.6b` | true | false | true | yes | `en` ok |
-| `nemotron-speech-streaming-en-0.6b` | true | true | false | yes | `en` ok, `en-US` rejected |
-| `nemotron-3.5-asr-streaming-0.6b` | true | true | false | yes | `en`/`uk`/`ru` rejected (stream and one-shot); `en-US`/`uk-UA`/`ru-RU` and auto accepted |
-| `parakeet-tdt-0.6b-v3` | false | false | false | no | `en` ok (one-shot) |
-| `canary-180m-flash` | false | false | false | no | `en` ok (one-shot) |
+| Model                               | `supportsStreaming` | `accepts parakeet` | `accepts parakeet_buffered` | Streams | Bare language code                                                                       |
+| ----------------------------------- | ------------------- | ------------------ | --------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `parakeet-unified-en-0.6b`          | true                | false              | true                        | yes     | `en` ok                                                                                  |
+| `nemotron-speech-streaming-en-0.6b` | true                | true               | false                       | yes     | `en` ok, `en-US` rejected                                                                |
+| `nemotron-3.5-asr-streaming-0.6b`   | true                | true               | false                       | yes     | `en`/`uk`/`ru` rejected (stream and one-shot); `en-US`/`uk-UA`/`ru-RU` and auto accepted |
+| `parakeet-tdt-0.6b-v3`              | false               | false              | false                       | no      | `en` ok (one-shot)                                                                       |
+| `canary-180m-flash`                 | false               | false              | false                       | no      | `en` ok (one-shot)                                                                       |
 
 - Requesting the `parakeet` extension on `parakeet-unified-en-0.6b` raises `UnsupportedRequest`; its family is `parakeet_buffered`. Gating on `accepts({ kind: "parakeet" })` alone leaves it silently one-shot.
 - `nemotron-3.5-asr-streaming-0.6b` streams uk/ru/en live (partial committed/tentative text updates arrive during feeding); its auto-detect mode (`supportsLanguageDetect`) identified all three test languages. All 28 catalog codes were accepted as locales: `en-US es-ES fr-FR it-IT pt-BR nl-NL de-DE tr-TR ru-RU ar-AR hi-IN ja-JP ko-KR vi-VN uk-UA pl-PL sv-SE cs-CZ nb-NO da-DK bg-BG fi-FI hr-HR sk-SK zh-CN hu-HU ro-RO et-EE`. These form its `languageLocales`.
@@ -388,16 +388,16 @@ sequenceDiagram
 
 ### Acceptance scenarios
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
+| Case      | Setup / action                                       | Expected result                                                                                         |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | VD-WRM-01 | Warm-up on (default), model selected; focus composer | The Host loads the model; settings show it as `Loaded`; the first recording starts without a load wait. |
-| VD-WRM-02 | `warmUpOnFocus` is false | Focusing the composer never loads a model. |
-| VD-WRM-03 | Focus the composer repeatedly within 30 seconds | At most one warm-up request. |
-| VD-WRM-04 | Model already loaded; focus the composer | No reload; the idle-unload countdown restarts. |
-| VD-WRM-05 | A dictation stream is active | Warm-up does nothing and the stream is untouched. |
-| VD-WRM-06 | No model selected, or the model is not downloaded | No error toast; no warm-up failure is logged (the Host skips a model that is not ready). |
-| VD-WRM-07 | Older Host without `warmUp` | Dictation works as before; no toast; no repeated requests in the session. |
-| VD-WRM-08 | Web remote control | No warm-up. |
+| VD-WRM-02 | `warmUpOnFocus` is false                             | Focusing the composer never loads a model.                                                              |
+| VD-WRM-03 | Focus the composer repeatedly within 30 seconds      | At most one warm-up request.                                                                            |
+| VD-WRM-04 | Model already loaded; focus the composer             | No reload; the idle-unload countdown restarts.                                                          |
+| VD-WRM-05 | A dictation stream is active                         | Warm-up does nothing and the stream is untouched.                                                       |
+| VD-WRM-06 | No model selected, or the model is not downloaded    | No error toast; no warm-up failure is logged (the Host skips a model that is not ready).                |
+| VD-WRM-07 | Older Host without `warmUp`                          | Dictation works as before; no toast; no repeated requests in the session.                               |
+| VD-WRM-08 | Web remote control                                   | No warm-up.                                                                                             |
 
 ## Model status dot on the microphone button
 
@@ -416,17 +416,17 @@ sequenceDiagram
 
 ### Acceptance scenarios
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
-| VD-DOT-01 | Selected model starts loading (warm-up or first use) | A pulsing warning dot appears on the microphone button. |
-| VD-DOT-02 | The model finishes loading | The dot turns success-colored and stays. |
-| VD-DOT-03 | The idle-unload delay passes | The dot disappears within one idle poll interval (up to 10 s, VD-DOT-08). |
-| VD-DOT-04 | A different model is loaded than the selected one | No dot. |
-| VD-DOT-05 | Recording or transcribing | The dot is hidden; the existing recording/spinner state is shown. |
-| VD-DOT-06 | Reduced motion is requested | The loading dot does not pulse. |
-| VD-DOT-07 | Window hidden | The renderer stops polling until it is visible again, then polls immediately. |
-| VD-DOT-08 | Idle Host, no session open, user does nothing | The runtime snapshot is requested at most once per 10 s, not once per second. |
-| VD-DOT-09 | Warm-up request in flight, or the Host reports `loading` | The runtime snapshot is requested once per second until the load ends. |
+| Case      | Setup / action                                           | Expected result                                                               |
+| --------- | -------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| VD-DOT-01 | Selected model starts loading (warm-up or first use)     | A pulsing warning dot appears on the microphone button.                       |
+| VD-DOT-02 | The model finishes loading                               | The dot turns success-colored and stays.                                      |
+| VD-DOT-03 | The idle-unload delay passes                             | The dot disappears within one idle poll interval (up to 10 s, VD-DOT-08).     |
+| VD-DOT-04 | A different model is loaded than the selected one        | No dot.                                                                       |
+| VD-DOT-05 | Recording or transcribing                                | The dot is hidden; the existing recording/spinner state is shown.             |
+| VD-DOT-06 | Reduced motion is requested                              | The loading dot does not pulse.                                               |
+| VD-DOT-07 | Window hidden                                            | The renderer stops polling until it is visible again, then polls immediately. |
+| VD-DOT-08 | Idle Host, no session open, user does nothing            | The runtime snapshot is requested at most once per 10 s, not once per second. |
+| VD-DOT-09 | Warm-up request in flight, or the Host reports `loading` | The runtime snapshot is requested once per second until the load ends.        |
 
 ## Post-processing of dictated text
 
@@ -451,18 +451,18 @@ sequenceDiagram
 
 ### Acceptance scenarios
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
-| VD-PPR-01 | Post-processing on, system model available; dictate | The processed text is inserted; the clipboard (if enabled) holds the raw transcript. |
-| VD-PPR-02 | The prompt has `{{text}}` in the middle | The transcript is substituted at that position. |
-| VD-PPR-03 | The prompt has no `{{text}}` | The transcript is appended after the prompt. |
-| VD-PPR-04 | The model errors, times out, or returns empty | The raw transcript is inserted; the failure is logged, no error toast. |
-| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS) | The setting explains why and stays off; dictation inserts raw text. |
-| VD-PPR-06 | Esc while processing | Nothing is inserted or copied. |
-| VD-PPR-07 | Dictate in Ukrainian with the default prompt | The output stays Ukrainian (not translated). |
-| VD-PPR-08 | Reset the prompt | The default prompt is restored. |
+| Case      | Setup / action                                               | Expected result                                                                                             |
+| --------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| VD-PPR-01 | Post-processing on, system model available; dictate          | The processed text is inserted; the clipboard (if enabled) holds the raw transcript.                        |
+| VD-PPR-02 | The prompt has `{{text}}` in the middle                      | The transcript is substituted at that position.                                                             |
+| VD-PPR-03 | The prompt has no `{{text}}`                                 | The transcript is appended after the prompt.                                                                |
+| VD-PPR-04 | The model errors, times out, or returns empty                | The raw transcript is inserted; the failure is logged, no error toast.                                      |
+| VD-PPR-05 | System model unavailable (no Apple Intelligence, non-macOS)  | The setting explains why and stays off; dictation inserts raw text.                                         |
+| VD-PPR-06 | Esc while processing                                         | Nothing is inserted or copied.                                                                              |
+| VD-PPR-07 | Dictate in Ukrainian with the default prompt                 | The output stays Ukrainian (not translated).                                                                |
+| VD-PPR-08 | Reset the prompt                                             | The default prompt is restored.                                                                             |
 | VD-PPR-09 | Preference on, but the Host cannot rewrite at dictation time | No availability probe runs; the rewrite call fails and the raw transcript is inserted, with no error toast. |
-| VD-PPR-10 | Availability answer still loading on the settings screen | The switch is disabled and shows no reason text; no Off-then-On flicker from a guessed answer. |
+| VD-PPR-10 | Availability answer still loading on the settings screen     | The switch is disabled and shows no reason text; no Off-then-On flicker from a guessed answer.              |
 
 ## Settings information architecture
 
@@ -534,36 +534,36 @@ sequenceDiagram
 
 One term per concept across the Voice dictation settings and the composer. Labels in each language must follow the same mapping.
 
-| Concept | Term (en) | Meaning |
-| --- | --- | --- |
-| Selected transcription model | Active | The preference; badge on the model card. |
-| Resident model | Loaded in memory | The single model the Host holds; badge on the model card. |
-| Queued switch for a download | Use when ready | A download-card state: the current model stays Active until the new one is ready. Once set it reads "Cancel use when ready"; toggled by clicking the card, with no separate button. |
-| Rewrite step | Post-processing | Optional step after transcription. |
-| Engine for the rewrite | Provider | Read-only text for the single provider. Replaces the former "Model" label, which clashed with transcription models. |
-| Editable instruction | Prompt | The text with `{{text}}`. |
-| Rewrite in progress | Processing | Composer phase after transcription. |
+| Concept                      | Term (en)        | Meaning                                                                                                                                                                             |
+| ---------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selected transcription model | Active           | The preference; badge on the model card.                                                                                                                                            |
+| Resident model               | Loaded in memory | The single model the Host holds; badge on the model card.                                                                                                                           |
+| Queued switch for a download | Use when ready   | A download-card state: the current model stays Active until the new one is ready. Once set it reads "Cancel use when ready"; toggled by clicking the card, with no separate button. |
+| Rewrite step                 | Post-processing  | Optional step after transcription.                                                                                                                                                  |
+| Engine for the rewrite       | Provider         | Read-only text for the single provider. Replaces the former "Model" label, which clashed with transcription models.                                                                 |
+| Editable instruction         | Prompt           | The text with `{{text}}`.                                                                                                                                                           |
+| Rewrite in progress          | Processing       | Composer phase after transcription.                                                                                                                                                 |
 
 ### Acceptance scenarios
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
-| VD-SET-01 | Desktop Voice dictation settings open | Five cards in the order above, each with its heading. |
-| VD-SET-02 | Click "Open Keyboard Shortcuts" | The Shortcuts section opens; the shortcut stays editable there. |
-| VD-SET-03 | Run "Test microphone" | The result text is next to the button; it is cleared when the next test starts. |
-| VD-SET-04 | Change "Unload from memory after" on an older Host | Same as VD-COMPAT-01. |
-| VD-SET-05 | Language and filters | "Matches my languages" is directly under the language row; it does not change the selection. |
-| VD-SET-06 | Pending download uses wording | Only the terms in the Terminology table appear; no "Keep current model" or "Will use when ready". |
-| VD-PPR-11 | Edit the prompt | "Unsaved changes", Save and Cancel appear; nothing is written until Save. |
-| VD-PPR-12 | Press Esc with an unsaved change | A discard confirmation appears; confirming reverts the draft; cancelling keeps it. |
-| VD-PPR-13 | Draft over 4000 characters | Counter shows the count in warning color; Save is disabled; the text is not truncated. |
-| VD-PPR-14 | Draft without `{{text}}` | A warning says the prompt must contain `{{text}}`; Save is disabled. |
-| VD-PPR-15 | Save the default text unchanged | No custom prompt is stored; a later Reset is disabled. |
-| VD-PPR-16 | Reset with a custom prompt stored | After confirmation the stored key is removed and the editor shows the default. |
-| VD-PPR-17 | Try it with a sample | The output (or inline error) shows; no settings are written; Run is disabled while unavailable. |
-| VD-PPR-18 | Copy to clipboard off, post-processing on | The clipboard is never written by the rewrite path. |
-| VD-PPR-19 | Copy to clipboard on, post-processing on | The clipboard receives the raw transcript; the inserted text is the processed one. |
-| VD-COMPAT-01 | Older Host without `setIdleUnloadMinutes` | Save of the unload delay persists the value and shows no error toast. |
+| Case         | Setup / action                                     | Expected result                                                                                   |
+| ------------ | -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| VD-SET-01    | Desktop Voice dictation settings open              | Five cards in the order above, each with its heading.                                             |
+| VD-SET-02    | Click "Open Keyboard Shortcuts"                    | The Shortcuts section opens; the shortcut stays editable there.                                   |
+| VD-SET-03    | Run "Test microphone"                              | The result text is next to the button; it is cleared when the next test starts.                   |
+| VD-SET-04    | Change "Unload from memory after" on an older Host | Same as VD-COMPAT-01.                                                                             |
+| VD-SET-05    | Language and filters                               | "Matches my languages" is directly under the language row; it does not change the selection.      |
+| VD-SET-06    | Pending download uses wording                      | Only the terms in the Terminology table appear; no "Keep current model" or "Will use when ready". |
+| VD-PPR-11    | Edit the prompt                                    | "Unsaved changes", Save and Cancel appear; nothing is written until Save.                         |
+| VD-PPR-12    | Press Esc with an unsaved change                   | A discard confirmation appears; confirming reverts the draft; cancelling keeps it.                |
+| VD-PPR-13    | Draft over 4000 characters                         | Counter shows the count in warning color; Save is disabled; the text is not truncated.            |
+| VD-PPR-14    | Draft without `{{text}}`                           | A warning says the prompt must contain `{{text}}`; Save is disabled.                              |
+| VD-PPR-15    | Save the default text unchanged                    | No custom prompt is stored; a later Reset is disabled.                                            |
+| VD-PPR-16    | Reset with a custom prompt stored                  | After confirmation the stored key is removed and the editor shows the default.                    |
+| VD-PPR-17    | Try it with a sample                               | The output (or inline error) shows; no settings are written; Run is disabled while unavailable.   |
+| VD-PPR-18    | Copy to clipboard off, post-processing on          | The clipboard is never written by the rewrite path.                                               |
+| VD-PPR-19    | Copy to clipboard on, post-processing on           | The clipboard receives the raw transcript; the inserted text is the processed one.                |
+| VD-COMPAT-01 | Older Host without `setIdleUnloadMinutes`          | Save of the unload delay persists the value and shows no error toast.                             |
 
 ### E2E scenarios (written, not run)
 
@@ -618,15 +618,15 @@ sequenceDiagram
 
 ### Acceptance cases
 
-| Case | Setup / action | Expected result |
-| --- | --- | --- |
-| VD-SURF-01 | Desktop; open a side conversation from the selection side chat | The side conversation composer shows the microphone control next to the send/stop controls, same as the main composer. |
-| VD-SURF-02 | Desktop; focus the side conversation composer and press the shortcut | Recording starts in the side composer only; the main composer does not react. |
-| VD-SURF-03 | Recording in the main composer; focus the side composer and press the shortcut | The side composer does not start; a "already in use" notice appears; the main recording continues untouched. |
-| VD-SURF-04 | Recording in the side composer; stop | The final transcript is inserted once at the side composer caret; the main draft is unchanged. |
-| VD-SURF-05 | Recording in the side composer; press Escape or click Cancel | Capture stops, nothing is inserted; the session lease is released so the main composer can start. |
-| VD-SURF-06 | Side composer unmounts (side chat closed) during recording | Capture stops, Host stream is released, the lease is released. |
-| VD-SURF-07 | Main composer focused; press the shortcut | Only the main composer reacts (existing VD-GHO and VD-LIVE behavior is unchanged). |
+| Case       | Setup / action                                                                 | Expected result                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| VD-SURF-01 | Desktop; open a side conversation from the selection side chat                 | The side conversation composer shows the microphone control next to the send/stop controls, same as the main composer. |
+| VD-SURF-02 | Desktop; focus the side conversation composer and press the shortcut           | Recording starts in the side composer only; the main composer does not react.                                          |
+| VD-SURF-03 | Recording in the main composer; focus the side composer and press the shortcut | The side composer does not start; a "already in use" notice appears; the main recording continues untouched.           |
+| VD-SURF-04 | Recording in the side composer; stop                                           | The final transcript is inserted once at the side composer caret; the main draft is unchanged.                         |
+| VD-SURF-05 | Recording in the side composer; press Escape or click Cancel                   | Capture stops, nothing is inserted; the session lease is released so the main composer can start.                      |
+| VD-SURF-06 | Side composer unmounts (side chat closed) during recording                     | Capture stops, Host stream is released, the lease is released.                                                         |
+| VD-SURF-07 | Main composer focused; press the shortcut                                      | Only the main composer reacts (existing VD-GHO and VD-LIVE behavior is unchanged).                                     |
 
 ### Verification plan
 
