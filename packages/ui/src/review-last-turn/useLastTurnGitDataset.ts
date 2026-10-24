@@ -164,26 +164,36 @@ export function useLastTurnGitDataset(options: {
           header.fileChanges,
         ])
       : null;
+  // A new provider value (remote endpoint switch, reconnect to another transport) invalidates
+  // results read through the previous binding even when requestKey is unchanged.
+  const connection = useMemo(() => ({ layer, fileChanges }), [layer, fileChanges]);
   const [loaded, setLoaded] = useState<{
     key: string;
+    connection: typeof connection;
     result: V4ConversationFileChangesResult;
   } | null>(null);
+  const loadedResult =
+    loaded && loaded.key === requestKey && loaded.connection === connection ? loaded.result : null;
   // Failures are never cached as loads. The gateway rejects any baseRevision that is not its current
   // revision (proto.staleRevision), and requestKey deliberately excludes revision, so a stale failure
   // retries once the projection reaches a newer revision. Other failures retry on the next selection.
-  const [failure, setFailure] = useState<{ key: string; revision: number; stale: boolean } | null>(
-    null,
-  );
+  const [failure, setFailure] = useState<{
+    key: string;
+    connection: typeof connection;
+    revision: number;
+    stale: boolean;
+  } | null>(null);
   if (!enabled && failure) setFailure(null);
   const retryReady =
     failure !== null &&
     failure.key === requestKey &&
+    failure.connection === connection &&
     failure.stale &&
     snapshot !== null &&
     snapshot.revision !== failure.revision;
 
-  const loadedKeyRef = useRef<string | null>(null);
-  loadedKeyRef.current = loaded?.key ?? null;
+  const loadedRef = useRef(loadedResult);
+  loadedRef.current = loadedResult;
   const failureRef = useRef(failure);
   failureRef.current = failure;
 
@@ -191,8 +201,15 @@ export function useLastTurnGitDataset(options: {
     const current = snapshotRef.current;
     const header = headerRef.current;
     if (!enabled || !requestKey || !sessionId || !current || !header?.entityId) return;
-    if (loadedKeyRef.current === requestKey) return;
-    if (failureRef.current?.key === requestKey && !retryReady) return;
+    if (loadedRef.current) return;
+    const previousFailure = failureRef.current;
+    if (
+      previousFailure?.key === requestKey &&
+      previousFailure.connection === connection &&
+      !retryReady
+    ) {
+      return;
+    }
     let disposed = false;
     void fileChanges({
       sessionId,
@@ -203,7 +220,7 @@ export function useLastTurnGitDataset(options: {
       (result) => {
         if (disposed) return;
         setFailure(null);
-        setLoaded({ key: requestKey, result });
+        setLoaded({ key: requestKey, connection, result });
       },
       (error: unknown) => {
         if (disposed) return;
@@ -215,26 +232,25 @@ export function useLastTurnGitDataset(options: {
             rowId: header.rowId,
           });
         }
-        setFailure({ key: requestKey, revision: current.revision, stale });
+        setFailure({ key: requestKey, connection, revision: current.revision, stale });
       },
     );
     return () => {
       disposed = true;
     };
-  }, [enabled, fileChanges, requestKey, retryReady, sessionId]);
+  }, [connection, enabled, fileChanges, requestKey, retryReady, sessionId]);
 
   // Keyed on requestKey, not the header object: a running turn replaces its header on every
   // activeMs/token update, which must not re-render GitPane when nothing it shows changed.
   return useMemo(() => {
     const currentHeader = headerRef.current;
     if (!currentHeader || !requestKey) return null;
-    const result = loaded?.key === requestKey ? loaded.result : null;
-    const dataset = buildLastTurnGitDataset({ workspacePath, result });
+    const dataset = buildLastTurnGitDataset({ workspacePath, result: loadedResult });
     return {
       dataset,
-      count: result ? sumChanges(dataset) : (currentHeader.fileChanges?.files ?? 0),
+      count: loadedResult ? sumChanges(dataset) : (currentHeader.fileChanges?.files ?? 0),
     };
-  }, [loaded, requestKey, workspacePath]);
+  }, [loadedResult, requestKey, workspacePath]);
 }
 
 function sumChanges(dataset: GitPaneDataset): number {

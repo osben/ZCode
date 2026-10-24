@@ -191,4 +191,29 @@ describe("useLastTurnGitDataset (ISSUE-056)", () => {
     await waitFor(() => expect(hook.current?.dataset.sections).toHaveLength(1));
     expect(harness.fileChanges).toHaveBeenCalledTimes(2);
   });
+
+  it("reloads when the conversation connection changes under the same request key", async () => {
+    harness.setSnapshot(snapshot(1, [header(1, 1)]));
+    harness.fileChanges.mockResolvedValueOnce(result("/repo/old-endpoint.js"));
+    harness.fileChanges.mockResolvedValueOnce(result("/repo/new-endpoint.js"));
+    const { result: hook, rerender } = renderHook(() =>
+      useLastTurnGitDataset({ ...baseOptions, enabled: true }),
+    );
+    await waitFor(() =>
+      expect(hook.current?.dataset.sections[0]?.changes[0]?.path).toBe("/repo/old-endpoint.js"),
+    );
+
+    // A remote endpoint switch gives the pane a new provider value (new transport binding).
+    const previous = harness.context as Record<string, unknown>;
+    harness.context = {
+      ...previous,
+      fileChanges: (params: unknown) => harness.fileChanges(params),
+    };
+    rerender();
+    expect(hook.current?.dataset.sections).toEqual([]);
+    await waitFor(() =>
+      expect(hook.current?.dataset.sections[0]?.changes[0]?.path).toBe("/repo/new-endpoint.js"),
+    );
+    harness.context = previous;
+  });
 });

@@ -50,7 +50,12 @@ Review side pane (reader only)
 - Desktop (`desktop-continuous`) gets header updates from the live stream; mobile remote
   (`web-remote-replayable`) gets them from snapshot + gap repair. Both go through the same pane provider
   and host query, keyed by `workspaceIdentity` / `remoteSessionId`.
-- If the provider is not ready (remote waiting, disconnected), the pane renders the plain GitPane.
+- If the provider is not ready (remote waiting, disconnected), the pane renders the plain GitPane. The side pane
+  does not pass `sessionId` to the provider, so a disconnected session is not retained for it and the bridge
+  unmounts, clearing the source.
+- Ownership: the wrapper applies a reported dataset only when its owner (workspace key, remote session,
+  task session, Git review path) matches the current pane, so a task switch never shows the previous task's
+  files for a render. A new provider value (another transport binding) invalidates loaded results and failures.
 
 ## Known limit
 
