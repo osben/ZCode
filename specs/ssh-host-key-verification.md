@@ -125,6 +125,13 @@ Appended line: `host keytype base64` for port 22, `[host]:port keytype base64` o
 preceded by a newline if the file does not end with one. `~/.ssh` is created with mode 0700 and the file with 0600
 when missing (modes ignored on Windows). IO is async (`fs/promises`).
 
+Every window has its own Host process, so two windows can trust a key for the same host at once. The re-read, check and
+append run under a lock file next to `known_hosts` (`known_hosts.zcode-lock`, created with `open(..., "wx")`, which is
+atomic across processes on macOS, Linux and Windows). Waiters retry for up to 5 s, then fail with a "try again"
+error. A lock older than 10 s is treated as left by a crashed Host and removed. An in-process mutex was rejected
+because it does not cover the other windows' Hosts. OpenSSH itself does not take this lock, so an `ssh` run in a
+terminal at the same moment is not serialized; the next handshake still sees whatever ended up in the file.
+
 ## Interfaces
 
 - `packages/server/src/remote/sshAuth.ts` (the server package's remote directory is not an architecture-managed module,

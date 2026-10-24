@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -197,6 +197,77 @@ describe("known_hosts files", () => {
         ...describeHostKey(fakeKeyBlob()),
       }),
     ).rejects.toMatchObject({ code: "remote-host-key-changed" });
+  });
+});
+
+describe("known_hosts trust across Hosts", () => {
+  let dir: string;
+  let files: KnownHostsFiles;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "zcode-known-hosts-race-"));
+    files = { userFile: join(dir, ".ssh", "known_hosts"), globalFiles: [] };
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("two concurrent trusts of different same-type keys append only one", async () => {
+    const first = describeHostKey(fakeKeyBlob());
+    const second = describeHostKey(fakeKeyBlob());
+    const results = await Promise.allSettled([
+      appendTrustedHostKey(files, { host: "dev.example", port: 22, ...first }),
+      appendTrustedHostKey(files, { host: "dev.example", port: 22, ...second }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toEqual([
+      { status: "fulfilled", value: "appended" },
+    ]);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({
+      reason: { code: "remote-host-key-changed" },
+    });
+    expect((await readFile(files.userFile, "utf8")).split("\n").filter(Boolean)).toHaveLength(1);
+  });
+
+  it("two concurrent trusts of the same key write one line", async () => {
+    const key = describeHostKey(fakeKeyBlob());
+    const results = await Promise.all([
+      appendTrustedHostKey(files, { host: "dev.example", port: 22, ...key }),
+      appendTrustedHostKey(files, { host: "dev.example", port: 22, ...key }),
+    ]);
+    expect(results.sort()).toEqual(["already-trusted", "appended"]);
+    expect((await readFile(files.userFile, "utf8")).split("\n").filter(Boolean)).toHaveLength(1);
+  });
+
+  it("waits for another Host's lock file and then re-reads before appending", async () => {
+    // Another Host holds the lock and records a different key of the same type while we wait.
+    const lockPath = `${files.userFile}.zcode-lock`;
+    await mkdir(join(dir, ".ssh"), { recursive: true });
+    await writeFile(lockPath, "other-host");
+    const pending = appendTrustedHostKey(files, {
+      host: "dev.example",
+      port: 22,
+      ...describeHostKey(fakeKeyBlob()),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await writeFile(files.userFile, `${line("dev.example", fakeKeyBlob())}\n`);
+    await unlink(lockPath);
+    await expect(pending).rejects.toMatchObject({ code: "remote-host-key-changed" });
+  });
+
+  it("breaks a stale lock left by a crashed Host", async () => {
+    const lockPath = `${files.userFile}.zcode-lock`;
+    await mkdir(join(dir, ".ssh"), { recursive: true });
+    await writeFile(lockPath, "crashed-host");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lockPath, old, old);
+    await expect(
+      appendTrustedHostKey(files, {
+        host: "dev.example",
+        port: 22,
+        ...describeHostKey(fakeKeyBlob()),
+      }),
+    ).resolves.toBe("appended");
   });
 });
 

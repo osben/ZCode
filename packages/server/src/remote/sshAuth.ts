@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ConnectConfig, ServerHostKeyAlgorithm } from "ssh2";
@@ -367,27 +367,79 @@ export function hostKeyChangedError(): Error {
   });
 }
 
+const KNOWN_HOSTS_LOCK_RETRY_MS = 25;
+const KNOWN_HOSTS_LOCK_WAIT_MS = 5_000;
+// A lock older than this was left by a Host that crashed between create and unlink; the critical section is one
+// read plus one append, so a live holder never gets near it.
+const KNOWN_HOSTS_LOCK_STALE_MS = 10_000;
+
+async function isStaleLock(lockPath: string): Promise<boolean> {
+  try {
+    return Date.now() - (await stat(lockPath)).mtimeMs > KNOWN_HOSTS_LOCK_STALE_MS;
+  } catch {
+    // Released between our failed create and this stat; retry the create.
+    return false;
+  }
+}
+
 /**
- * Persists a key the user accepted. The file is re-read first, so a concurrent edit that already recorded the key is a
- * no-op and one that recorded a different key of the same type is refused.
+ * Serializes the check-and-append across every Host process (one per window). `open(..., "wx")` is an atomic
+ * create-if-absent on macOS, Linux and Windows; an in-process mutex would not cover the other windows' Hosts.
+ */
+async function withKnownHostsLock<T>(userFile: string, action: () => Promise<T>): Promise<T> {
+  const lockPath = `${userFile}.zcode-lock`;
+  const deadline = Date.now() + KNOWN_HOSTS_LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      const handle = await open(lockPath, "wx", 0o600);
+      try {
+        return await action();
+      } finally {
+        await handle.close();
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    if (await isStaleLock(lockPath)) {
+      await unlink(lockPath).catch(() => undefined);
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("known_hosts is locked by another ZCode window; try again");
+    }
+    await new Promise((resolve) => setTimeout(resolve, KNOWN_HOSTS_LOCK_RETRY_MS));
+  }
+}
+
+/**
+ * Persists a key the user accepted. Under the cross-Host lock the file is re-read first, so a concurrent trust that
+ * already recorded the key is a no-op and one that recorded a different key of the same type is refused.
  */
 export async function appendTrustedHostKey(
   files: KnownHostsFiles,
   request: HostKeyTrustRequest,
 ): Promise<"appended" | "already-trusted"> {
-  const lookup = lookupHostKey(await readAllKnownHosts(files), request.host, request.port, request);
-  if (lookup.kind === "match") return "already-trusted";
-  if (lookup.kind !== "unknown") throw hostKeyChangedError();
-  const name = request.port === 22 ? request.host : `[${request.host}]:${request.port}`;
   await mkdir(dirname(files.userFile), { recursive: true, mode: 0o700 });
-  const existing = await readOptional(files.userFile);
-  const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
-  await appendFile(
-    files.userFile,
-    `${separator}${name} ${request.keyType} ${request.publicKey}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  return "appended";
+  return await withKnownHostsLock(files.userFile, async () => {
+    const lookup = lookupHostKey(
+      await readAllKnownHosts(files),
+      request.host,
+      request.port,
+      request,
+    );
+    if (lookup.kind === "match") return "already-trusted";
+    if (lookup.kind !== "unknown") throw hostKeyChangedError();
+    const name = request.port === 22 ? request.host : `[${request.host}]:${request.port}`;
+    const existing = await readOptional(files.userFile);
+    const separator = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    await appendFile(
+      files.userFile,
+      `${separator}${name} ${request.keyType} ${request.publicKey}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    return "appended";
+  });
 }
 
 const DEFAULT_SERVER_HOST_KEY_ALGORITHMS: readonly ServerHostKeyAlgorithm[] = [
