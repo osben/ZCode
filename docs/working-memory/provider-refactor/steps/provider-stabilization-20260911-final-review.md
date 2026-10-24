@@ -1,90 +1,175 @@
-# Provider Stabilization: This Round Final Review and Delivery
+# Provider Stabilization: Final Review and Delivery for This Round
 
-Scope: Todo113 round two and Todo115-132 (19 items) from the baseline `1bc2e9bc42`. The code branch is `provider-stabilization-20260911`. The specifications and implementation records of each Todo are still the item-by-item basis; this page uniformly records the final batch results; the local pass does not equal the real multi-end full acceptance.
+Scope: Todo113 round two and Todo115-132 (19 items) from baseline `1bc2e9bc42`; code branch
+`provider-stabilization-20260911`. Each Todo's specification and implementation record is still the item-by-item
+basis; this page records the final batch results. A local pass does not equal full real multi-end acceptance.
 
-## Item-by-item Results
+Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/provider-stabilization-20260911-final-review.md`
 
-| Todo          | The requirements implemented and reviewed                                                                                                                          | Implementation/Verification Commit |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| 113 Round two | The verified new model directory, smart configuration, aggregated differences, and retired member cleanup; the real SDK request and the frozen capability transfer | `262c42e592`                       |
-| 115           | The Provider title bar, menu, and switch hit area; does not change the model row layout                                                                            | `8d16f98136`                       |
-| 116           | The single fetch Key URL; cleans up the team second entry in the config, types, Schema, transmission, and display                                                  | `3c22794269`                       |
-| 117           | Retains the account domain, the explicit plan selection; the account Provider cannot be disabled; the manual Key can still be enabled or disabled                  | `30bb5f7005`                       |
-| 118           | The first import retains the custom Provider outer layer enabled; does not re-migrate and overwrite the new config                                                 | `8481a34543`                       |
-| 119           | The connectivity test restores the green feedback and displays the Provider name                                                                                   | `875b5578ac`                       |
-| 120           | The official two URLs and the explicit Coding Plan Key share the complete signature chain; the paired and real request acceptance                                  | `ad3277af02`                       |
-| 121           | The append 0022 supplements the recoverable historical tier; covering the two upgrade paths of the executed and unexecuted 0020                                    | `7b2bd3968d`                       |
-| 122           | The Subagent failure reason and the model identity projection; does not falsely claim to solve the un-reproduced startup root cause                                | `e1a28f23eb`                       |
-| 123           | The history capacity queries the Registry by the saved model identity; unknown is null, and retains the history usage                                              | `6d4c3cc571`                       |
-| 124           | The disabled Provider connectivity test prompt is changed to non-executable, avoiding the false report of the non-existent                                         | `875b5578ac`                       |
-| 125           | The 9 help descriptions and the dual-size interaction                                                                                                              | `1c1da97537`                       |
-| 126           | The Coding Plan GLM-5.3 hidden visual badge only affects the display; the Flash PDF, the plan API Turbo default                                                    | `1bf21bee22`                       |
-| 127           | The online Built-in download, the strict validation, the lifecycle update, the expired request failure, and the atomic release fact                                | `036c3dd3c8`                       |
-| 128           | The Provider startup contract and the idle qualification are consistent, merging the concurrent startup, and discarding the old account query result               | `b2e2b31ea3`                       |
-| 129           | The telemetry boundary restores the old ID, the Team classification and the home page idle gate; does not change the report or the actual model identity           | `ba119dde2f`                       |
-| 130           | The manual field editing contract; retains the non-editing fields and the formal save boundary                                                                     | `dcb231de22`                       |
-| 131           | The smart configuration placement, the atomic recovery, the old request failure                                                                                    | `1c1da97537`                       |
-| 132           | The name explicit confirmation save, the option bottom color, and the interaction feedback                                                                         | `8d16f98136`                       |
+## Item Results
 
-The final browser batch-exposure test fixture's global subscription overwrite each other; the scene initialization is isolated and re-run, all pass: `0ac735ee98`. This is not the product account state regression.
+| Todo          | Requirement implemented and reviewed                                                                                         | Commit         |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 113 round two | Verified new model directory, smart configuration, aggregated differences, retired-member cleanup; real SDK request and frozen capability transfer | `262c42e592` |
+| 115           | Provider title bar, menu and switch hit area; model row layout unchanged                                                     | `8d16f98136`   |
+| 116           | Single fetch-Key URL; cleaned up the team second entry in config, types, Schema, transmission and display                    | `3c22794269`   |
+| 117           | Keep account domain and explicit plan selection; account Provider cannot be disabled; manual Key can still be enabled/disabled | `30bb5f7005` |
+| 118           | First import keeps custom Provider outer-layer enabled; no re-migration overwriting new config                               | `8481a34543`   |
+| 119           | Connectivity test restores green feedback and shows the Provider name                                                        | `875b5578ac`   |
+| 120           | Two official URLs and explicit Coding Plan Key share the complete signature chain; paired and real request acceptance        | `ad3277af02`   |
+| 121           | Appended 0022 supplements recoverable historical tier; covers upgrade paths with 0020 executed and not executed              | `7b2bd3968d`   |
+| 122           | Subagent failure reason and model identity projection; does not claim the un-reproduced startup root cause                   | `e1a28f23eb`   |
+| 123           | History capacity queries the Registry by saved model identity; unknown is null; keeps history usage                          | `6d4c3cc571`   |
+| 124           | Disabled Provider connectivity test prompt changed to non-executable, avoiding a false "non-existent" report                 | `875b5578ac`   |
+| 125           | 9 help descriptions and dual-size interaction                                                                                | `1c1da97537`   |
+| 126           | Coding Plan GLM-5.3 hidden visual badge (display only), Flash PDF, plan API Turbo default                                    | `1bf21bee22`   |
+| 127           | Online Built-in download, strict validation, lifecycle update, expired-request failure, atomic release fact                  | `036c3dd3c8`   |
+| 128           | Provider startup contract and idle qualification consistent; merge concurrent startup; discard old account query results     | `b2e2b31ea3`   |
+| 129           | Telemetry boundary restores old ID, Team classification and home-page idle gate; report and actual model identity unchanged  | `ba119dde2f`   |
+| 130           | Manual field editing contract; keeps non-edited fields and the formal save boundary                                          | `dcb231de22`   |
+| 131           | Smart configuration placement, atomic recovery, old-request failure                                                          | `1c1da97537`   |
+| 132           | Name explicit confirmation save, option background color, interaction feedback                                               | `8d16f98136`   |
 
-The push gate's expanded correlation regression again covers 968 files: 964 pass, 4 files 16 fail (10,267 tests pass). After the item-by-item check, the handling is as follows; the first gate cannot be written as passed:
+The final browser batch exposed a test-fixture issue (global subscriptions overwriting each other); scene
+initialization was isolated and rerun, all pass (`0ac735ee98`); not an account-state product regression.
 
-- The 11 model editor failures are traced to this round's help button embedded label, falsely occupying the input label association. The failure assertion is retained first, and then the input is bound with the unique id/htmlFor, and the help button is placed outside the label; the group title does not impersonate the single-field label. The re-test 40/40; the dual-size real browser supplements the "the title click focuses the input, and none of the nine help items is embedded in the label" assertion.
-- The 2 renamed old tests supplement the explicit confirmation mark; the idle home page test is changed to verify the shared freshness notification, rather than the component skipping the initialization notification by itself. The real Store's concurrent deduplication and the old request failure are still verified by this round's special tests; the product is not changed to accommodate the old assertion.
-- The 2 resource monitor failures are the baseline existing Linux CPU caliber fixture: the original product/test and the baseline are exactly the same, simulating the four cores but directly using the entire machine value as the Electron single-core value. Only the fixture's original input conversion is fixed, without modifying the monitor implementation or the metric caliber.
+The push gate's expanded correlation regression covered 968 files: 964 passed, 4 files / 16 tests failed (10,267
+passed). Handling (the first gate is not written as passed):
 
-The same fix moves the restore button JSX into the original Actions file, keeping the main popup within the 400-line gate; the behavior and callback remain unchanged. The tag expectation of the old structure test is synchronized afterwards. Finally, the **complete push gate passes**: the root lint, the architecture, 53 directly modified test files, and 118 files in the correlation regression all pass, using this round's real baseline `1bc2e9bc42`, without skipping the hook. The log is `/tmp/provider-stabilization-final-push3.log`.
+- 11 model-editor failures: the help button embedded in a label falsely took the input label association. Failing
+  assertion kept; the input is now bound by unique id/`htmlFor`, the help button sits outside the label, and the group
+  title does not impersonate a single-field label. Rerun 40/40; the dual-size browser adds "title click focuses the
+  input, and none of the nine help items is embedded in the label".
+- 2 renamed old tests received the explicit-confirmation mark; the idle home-page test now verifies the shared
+  freshness notification instead of the component skipping initialization notification itself. The real Store
+  concurrent dedup and old-request failure remain verified by this round's special tests; the product was not changed
+  to fit old assertions.
+- 2 resource monitor failures are a baseline Linux CPU caliber fixture issue (simulating four cores but using the whole
+  machine value as the Electron single-core value); only the fixture input conversion was fixed, not the monitor or
+  metric caliber.
 
-The code result `7c62534821` has been pushed and verified against the remote `origin/provider-stabilization-20260911`; the two previously failed gates do not produce the remote release. The label correction subsequently passes the typecheck and the lint/architecture; the help/recovery dual-size real browser 4/4 passes (`/tmp/provider-final-help-browser3.log`). No MR was created; no other branch was pushed; no online config was released.
+The restore button JSX moved into the original Actions file to keep the main popup within the 400-line gate (behavior
+and callback unchanged; old structure test tag expectation synchronized). The **complete push gate then passed**: root
+lint, architecture, 53 directly modified test files and 118 correlation-regression files, against baseline
+`1bc2e9bc42`, no hook skipped (`/tmp/provider-stabilization-final-push3.log`). Code result `7c62534821` was pushed and
+verified against remote `origin/provider-stabilization-20260911` (the two earlier failed gates produced no remote
+release). The label correction passed typecheck and lint/architecture; the help/recovery dual-size real browser 4/4
+passed (`/tmp/provider-final-help-browser3.log`). No MR created, no other branch pushed, no online config released.
 
 ## Batch Verification
 
-| Check                                      | Result and Evidence                                                                                                                                                                         |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Root directory related unit tests 68 files | **1028/1028**, `/tmp/provider-final-root-tests2.log`                                                                                                                                        |
-| The Agent SDK / Signature / Model 6 files  | **173/173**, including 58 new round two real SDK wire tests; `/tmp/provider113-sdk-final.log`                                                                                               |
-| The migration / Bootstrap / Core 7 files   | **241/241**, `/tmp/provider-final-cli-tests.log`                                                                                                                                            |
-| Independent entry contract                 | **4/4**, `/tmp/provider-final-entry-tests.log`                                                                                                                                              |
-| The real React browser interaction         | **20/20**, desktop width English dark, mobile width Chinese light; `/tmp/provider-final-browser2.log`, the screenshot `/tmp/zcode-provider-settings-batch`                                  |
-| The typecheck                              | The root, the Adapter, and the Bootstrap all pass; `/tmp/provider-final-{types,adapter-types,bootstrap-types}.log`                                                                          |
-| The root lint / architecture               | The lint **0 errors / 42 warnings**; the architecture **0 violations**; `/tmp/provider-final-lint3.log`, `/tmp/provider-final-architecture2.log`                                            |
-| The CLI Adapter full lint                  | **Not passed**, 26 max-lines; compared with the opening log, the error file and the rule set are consistent, and the original long file is not expanded. `/tmp/provider-final-cli-lint.log` |
-| The fresh Desktop / Agent build            | Passes; the subsequent Electron startup SIGTRAP; it cannot be recorded as the E2E pass. `/tmp/provider-final-electron.log`                                                                  |
-| The final release file integrity           | The revision **22** files 14 tests pass; the SHA256 is `f94d2fe55eebbfda79c667c6ea90c71eb28d40bf2d020013c20288ab2a70f623`; `/tmp/provider-final-release.log`                                |
+| Check                                    | Result and evidence                                                                                                                                  |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Root related unit tests, 68 files        | **1028/1028** (`/tmp/provider-final-root-tests2.log`)                                                                                                |
+| Agent SDK / Signature / Model, 6 files   | **173/173**, including 58 new round-two real SDK wire tests (`/tmp/provider113-sdk-final.log`)                                                       |
+| Migration / Bootstrap / Core, 7 files    | **241/241** (`/tmp/provider-final-cli-tests.log`)                                                                                                    |
+| Independent entry contract               | **4/4** (`/tmp/provider-final-entry-tests.log`)                                                                                                      |
+| Real React browser interaction           | **20/20**, desktop width English dark and mobile width Chinese light (`/tmp/provider-final-browser2.log`, screenshots `/tmp/zcode-provider-settings-batch`) |
+| Typecheck                                | Root, Adapter and Bootstrap pass (`/tmp/provider-final-{types,adapter-types,bootstrap-types}.log`)                                                   |
+| Root lint / architecture                 | Lint **0 errors / 42 warnings**; architecture **0 violations** (`/tmp/provider-final-lint3.log`, `/tmp/provider-final-architecture2.log`)           |
+| CLI Adapter full lint                    | **Not passed**, 26 max-lines; error files and rule set match the opening log; the original long files were not expanded (`/tmp/provider-final-cli-lint.log`) |
+| Fresh Desktop / Agent build              | Passes; the later Electron startup SIGTRAP cannot be recorded as E2E pass (`/tmp/provider-final-electron.log`)                                       |
+| Final release file integrity             | Revision **22**, 14 tests pass; SHA256 `f94d2fe55eebbfda79c667c6ea90c71eb28d40bf2d020013c20288ab2a70f623` (`/tmp/provider-final-release.log`)       |
 
-The previously batched Core 410 pass / 5 failures is reproduced at the baseline: the old cold recovery fixture, the remote Cron disable list, and the account Provider serialization expectation. The failure is retained; this round is not full green, nor is it expanded to unrelated fixes.
+A previous batched Core run (410 passed / 5 failed) reproduces at the baseline: old cold-recovery fixture, remote Cron
+disable list, account Provider serialization expectation. The failures are kept; this round is not full green, nor
+expanded to unrelated fixes.
 
-The Todo120 has already gone through the ordinary Key / explicit Coding Plan Key entry to each of the two official services; all 4 handshakes succeed, with the signature, the model returns 200, and the text. The original Key is only in the ignored local environment file; it does not enter the code, the document, or the Air. The other paid endpoints of the new model are only captured by the real SDK local fetch, and cannot be called the real service acceptance.
+Todo120 went through the ordinary Key / explicit Coding Plan Key entry to each of the two official services: all 4
+handshakes succeed with signature, model returns 200 and text. The original Key is only in the ignored local
+environment file (not in code, documents or the Air). Other paid endpoints of the new model were captured only by the
+real SDK local fetch and cannot be called real-service acceptance.
 
 ## Pro Supplementary Acceptance (2026-09-12)
 
-The previous "the Pro ordinary SSH command fails" cannot be attributed to the network or the Pro unavailability: the `macbook-pro` uses the tunnel-only key / forced command; the existing `macbook-pro-admin` is the management connection, confirmed normal. The private dependency re-download is still subject to the keychain permission limitation, but the existing dependency can be copied to the isolated directory, and rebuild from the current commit, without operating the daily configuration or transmitting credentials.
+The earlier "Pro ordinary SSH command fails" cannot be attributed to network or Pro unavailability: `macbook-pro` uses a
+tunnel-only key / forced command; the existing `macbook-pro-admin` is the management connection and works. Private
+dependency re-download is still limited by keychain permission, but existing dependencies can be copied into an
+isolated directory and rebuilt from the current commit without operating daily configuration or transmitting
+credentials.
 
-- The isolated directory is `/Users/dev/provider-stabilization-pro.euQzIZ`, and the source code is `git archive fc757c0ec9`. Only the old test directory's node_modules is reused; the App, the Host, and the Agent are all rebuilt; the test configuration / Session is independent and does not use the old installation package to pretend this round's result.
-- The Electron cold recovery **1 file, 1 scene passes**, actually including CW01-CW06: 1M/64K, the Compact cold water level, the missing tier identity still queries the capacity, the unknown model history can be opened without the pseudo denominator. `/tmp/provider-20260912-pro-cold-resume.log`.
-- The Electron settings **3 files, 4 items pass**: the real file round-trip of the smart configuration and recovery, the cancel/failure draft, the Map editing, the model repair and the delete prompt, the connectivity test success/failure, and the original selection retention. `/tmp/provider-20260912-pro-settings.log`.
-- The Pro Chrome dual-size interaction **20/20**: uses the real shared React component and the isolated fixture. The default Playwright lacks the browser, and changes to the installed Chrome and succeeds; the first startup failure is not counted as the product failure. `/tmp/provider-20260912-pro-browser2.log`. The Chinese light help, the title bar / single-link screenshots are manually viewed, and the Chinese character and the narrow-screen display are normal; the local evidence is `/tmp/provider-20260912-pro-artifacts/`.
-- The Electron account CTP-12 **passes**: the full application uses the isolated plan service fixture, the long team name width layout, the plan switching persistence, the re-entry/restart retention of the selection; it is not just the rendering component. `/tmp/provider-20260912-pro-account.log`.
-- The same batch `provider-readiness-agent-startup` **fails**: after reaching the empty configuration draft, the test requires clicking send, but the actual button is disabled. The test file and the `ConversationComposer.canSend`'s `submissionReady` gate are the same as this round's baseline `1bc2e9bc42`; the subsequent tests also depend on the revoked account menu `preset:` API Key entry. This is the old test and the current interaction contract inconsistency; do not open the send or restore the old menu to accommodate the test; this round does not rewrite the existing case, and its second half cannot be recorded as verified. The lifecycle's this round targeted unit test result is still valid, and the missing real-machine evidence cannot be replaced by it.
-- The above browser scenario does not equal the mobile shared-host / SSH joint real-machine, nor does it prove the logged-in console or the real paid Team service success.
-- The Todo116 native link is supplemented later: the new K116-N01 **passes**, the two templates Access, with/without Key through the real settings button, the platform interface, and the unmocked Electron shell opens the system browser, and the unique canary GET confirms the precise URL; the config file bytes remain unchanged. `/tmp/provider-20260912-pro-native-key2.log`; the first test misses filling in the templateId, and passes after the test is corrected according to the "only the template provides the entry" decision rule, without product modification. The new pending case and the no-model request manifest are retained together; the official console login is not claimed as passed.
-- The native case final review supplements the exclusion of the Electron internal navigation; `/tmp/provider-20260912-pro-native-key3.log` passes again, the network records 0 model requests. The root/E2E types, the lint, the architecture, and the coverage audit pass; the fixture checker does not support the settings directory, and is explicitly recorded without expanding the framework. The remaining SSH formal case requires the test host/username/password, which are not configured on the current machine and the Pro session; both ends lack the docker command; do not borrow the daily account or the un-isolated directory to pretend the test environment.
-- The Todo127 is supplemented later: the Pro real HTTP slow body / two real consumer processes / the Registry config consumption 3 items pass, `/tmp/provider-20260912-pro-builtin-runtime.log`. Additionally, the new BR117-N02 complete Electron **passes**: the settings refresh drives the formal control surface -> HTTPS CDN -> Active -> Registry, the capacity 500K -> 700K; the 2 real model requests use the same model; the `top_p` changes from 0.17 to 0.37; the Personal file bytes and the recent selection cache remain unchanged. The final log is `/tmp/provider-20260912-pro-builtin-refresh3.log`, the local wire is `/tmp/provider-20260912-refresh-asserted-wire.json`, and the control surface/CDN records are `/tmp/provider-20260912-refresh-network.json`. The model response comes from the case's local synthetic server, not the official model response, the running Model, or the mobile / SSH.
-- The new case review: reuses the existing network proxy, the CA, the planted isolated config and the formal button after exiting; does not directly write the Active; does not replace the downloader or the Registry. The Root/E2E types, the root lint (0 errors / 42 pre-existing warnings), the architecture, and the coverage audit pass; the log is `/tmp/provider-20260912-refresh-{root-types,e2e-types,lint,architecture,audit}.log`. The case and the 2 request manifests remain pending, without crossing the human promotion or the unsupported settings fixture checker.
-- The full-page `settings-ui-polish` is supplemented again: the first run discovers this round's un-updated delete menu, the group label, the final DeepSeek 2 members' assertion, and the original avatar menu not closed contaminating the subsequent real scroll. Only the test and the wrap-up are fixed, without modifying the product, without deleting the scroll check. Finally, `/tmp/provider-20260912-pro-settings-polish4.log` passes: 8 items are actually executed; 1 item for Windows returns early on macOS (the WDIO counts as passing but this record does not count the verified); 1 item for SSH skips the missing environment; the individual run create/scroll also passes. The create, delete the real Personal, the model reorder, the edit/cancel/save, the Map original text, the 2 visual entries, and the 390px Chinese/English dark/light layout are covered; the screenshots `/tmp/provider-20260912-pro-editor-{dark,light}-390.png` are checked. The Root/E2E types, the lint, the architecture, and the coverage audit pass; no new formal test is created or the pending is unauthorized promoted.
+- Isolated directory `/Users/dev/provider-stabilization-pro.euQzIZ`, source `git archive fc757c0ec9`; only the old test
+  directory's `node_modules` reused; App, Host and Agent rebuilt; test configuration / Session independent.
+- Electron cold recovery **1 file, 1 scene passed**, covering CW01-CW06: 1M/64K, Compact cold watermark, missing tier
+  identity still queries capacity, unknown-model history opens without a pseudo denominator
+  (`/tmp/provider-20260912-pro-cold-resume.log`).
+- Electron settings **3 files, 4 items passed**: real file round-trip of smart configuration and recovery, cancel/failure
+  draft, Map editing, model repair and delete prompt, connectivity test success/failure, original selection retention
+  (`/tmp/provider-20260912-pro-settings.log`).
+- Pro Chrome dual-size interaction **20/20** with the real shared React component and an isolated fixture (default
+  Playwright lacks the browser; installed Chrome used; the first startup failure is not a product failure);
+  Chinese light help, title bar / single-link screenshots checked manually
+  (`/tmp/provider-20260912-pro-browser2.log`, `/tmp/provider-20260912-pro-artifacts/`).
+- Electron account CTP-12 **passed**: full application with an isolated plan service fixture, long team-name width
+  layout, plan switching persistence, selection kept across re-entry/restart (`/tmp/provider-20260912-pro-account.log`).
+- Same batch `provider-readiness-agent-startup` **failed**: after reaching the empty configuration draft the test
+  requires clicking send but the button is disabled. The test file and the `ConversationComposer.canSend`
+  `submissionReady` gate equal baseline `1bc2e9bc42`; later steps also depend on the revoked account-menu `preset:` API
+  Key entry. This is an old test inconsistent with the current interaction contract; do not enable send or restore the
+  old menu to fit the test; the existing case was not rewritten and its second half is not recorded as verified. The
+  lifecycle's targeted unit tests remain valid but cannot replace the missing real-machine evidence.
+- Browser scenarios do not equal mobile shared-host / SSH joint real-machine and do not prove the logged-in console or a
+  real paid Team service.
+- Todo116 native link: new K116-N01 **passed** (two templates, with/without Key through the real settings button, the
+  platform interface and the unmocked Electron shell opening the system browser; a unique canary GET confirms the
+  precise URL; config file bytes unchanged; `/tmp/provider-20260912-pro-native-key2.log`; the first run omitted
+  templateId and passed after test correction per the "only the template provides the entry" rule, no product change).
+  Final review added exclusion of Electron internal navigation (`/tmp/provider-20260912-pro-native-key3.log` passes
+  again, 0 model requests on the network). Root/E2E types, lint, architecture and coverage audit pass; the fixture
+  checker does not support the settings directory (recorded, framework not expanded). The remaining SSH formal case needs
+  test host/username/password not configured on this machine and the Pro session; both ends lack `docker`; no daily
+  account or un-isolated directory is borrowed. Official console login is not claimed.
+- Todo127: Pro real HTTP slow body / two real consumer processes / Registry config consumption 3 items passed
+  (`/tmp/provider-20260912-pro-builtin-runtime.log`). New complete-Electron BR117-N02 **passed**: settings refresh drives
+  the formal control surface -> HTTPS CDN -> Active -> Registry, capacity 500K -> 700K; 2 real model requests use the
+  same model; `top_p` changes 0.17 -> 0.37; Personal file bytes and recent selection cache unchanged
+  (`/tmp/provider-20260912-pro-builtin-refresh3.log`, wire `/tmp/provider-20260912-refresh-asserted-wire.json`,
+  control surface/CDN records `/tmp/provider-20260912-refresh-network.json`). The model response is from the case's local
+  synthetic server (not the official model, not the running Model, not mobile/SSH). The case reuses the existing network
+  proxy, CA, planted isolated config and the formal button after exit; it does not write Active directly nor replace the
+  downloader or Registry. Root/E2E types, root lint (0 errors / 42 pre-existing warnings), architecture and coverage
+  audit pass (`/tmp/provider-20260912-refresh-{root-types,e2e-types,lint,architecture,audit}.log`). The case and the 2
+  request manifests stay pending (no unauthorized promotion, no unsupported settings fixture checker).
+- Full-page `settings-ui-polish` rerun: the first run exposed this round's un-updated delete menu, group label, final
+  DeepSeek 2-member assertion, and an unclosed avatar menu contaminating the later real scroll; only tests and
+  wrap-up were fixed (no product change, no scroll check removed). Final
+  `/tmp/provider-20260912-pro-settings-polish4.log`: 8 items executed; 1 Windows item returns early on macOS (WDIO counts it
+  as pass but this record does not count it verified); 1 SSH item skipped for missing environment; individual
+  create/scroll also passes. Covers create, delete real Personal, model reorder, edit/cancel/save, Map original text, 2
+  visual entries and 390px Chinese/English dark/light layout (screenshots
+  `/tmp/provider-20260912-pro-editor-{dark,light}-390.png`). Root/E2E types, lint, architecture and coverage audit pass;
+  no new formal test created and no unauthorized pending promotion.
 
 ## Final Intersection Review (Contract)
 
-- **Migration and Recovery**: The 0020 checksum is not touched; the 0022 only supplements the recoverable same-model, not yet overwritten by the subsequent modification, the backfill record. The old fields, the message body, the time, and the existing options are not overwritten. The history display query metadata does not require creating the execution Model; the formal execution validation cannot be relaxed because of this.
-- **Config and Account**: The account disable cancellation is implemented through the joint parsing and write boundary; the manual Provider switch only acts on itself. The config save no longer clears the account domain; the startup, the online update, and the idle query have the version boundary for the old result; no business pre-send strong sync or second fact source is added.
-- **Request and Identity**: The signature reuses the existing formal chain; the old ID of the telemetry is projected only at the output boundary; it does not penetrate the selection, the execution, or the storage. The new Schema capability is frozen at the Model binding time; there is no Runtime vendor name judgment; the model being executed does not change due to the config update.
-- **UI and Multi-end**: The settings and the model selection display share the rule; the visual badge exception is only at the display layer specified by the product. The edit draft, the save, and the recovery each have independent boundaries. The desktop continuous, the mobile replayable/shared-host, or the workspace identity protocol are not modified. The dual-size browser pass does not replace the mobile remote control real-machine verification.
+- **Migration and recovery.** The 0020 checksum is untouched; 0022 only backfills same-model records that are
+  recoverable and not yet overwritten by later edits. Old fields, message body, time and existing options are not
+  overwritten. History display query metadata does not require creating the execution Model, and formal execution
+  validation is not relaxed.
+- **Config and account.** Account disable cancellation goes through the joint parsing and write boundary; a manual
+  Provider switch affects only itself. Config save no longer clears the account domain; startup, online update and idle
+  query have a version boundary for old results; no business pre-send strong sync or second fact source added.
+- **Request and identity.** Signing reuses the existing formal chain; the old telemetry ID is projected only at the
+  output boundary (never into selection, execution or storage). New Schema capability is frozen at Model binding time;
+  no Runtime vendor-name judgment; a running model does not change on config update.
+- **UI and multi-end.** Settings and model selection display share the rule; the visual-badge exception is only at the
+  display layer the product specified. Edit draft, save and recovery have independent boundaries. Desktop continuous,
+  mobile replayable/shared-host and workspace identity protocols are not modified. Dual-size browser passes do not
+  replace mobile remote-control real-machine verification.
 
 ## Retained Items and Delivery Boundary
 
-1. **The real desktop / multi-end acceptance**: The Linux Electron startup limitation is retained, but the Pro has supplemented the cold recovery, the real file interaction of the settings, the real Chinese characters, and the native URL opening; these items are no longer called untested. The Air independent environment still has the private dependency permission limitation. The real paid Team status and the mobile / SSH joint chain have no this-round real-machine evidence, and the browser fixture pass cannot be used instead.
-2. **The online config is not automatically published**: The actual CDN is still revision 19, with the deleted fields, which strictly parses as rejected. The repository and the acceptance products are already revision 22; a release process with permissions is required to publish the final file, and the local HTTP / dual-process success cannot be called the online update.
-3. **The unconfirmed model supply**: The Omni Beijing Messages, the Bailian Kimin high-speed version corresponding protocol / attachment, and the MiMo UltraSpeed commercial open, etc., are still retained according to the Todo113 research record; the ID or capability is not guessed; it does not block the other verified models.
+1. **Real desktop / multi-end acceptance.** Linux Electron startup limitation remains, but the Pro supplied cold
+   recovery, real file interaction of settings, real Chinese characters and native URL opening. The Air independent
+   environment still has the private dependency permission limitation. Real paid Team status and the mobile / SSH joint
+   chain have no real-machine evidence this round; browser fixture passes cannot substitute.
+2. **Online config not auto-published.** The actual CDN is still revision 19 with deleted fields, which strict parsing
+   rejects. The repository and acceptance products are revision 22; a release process with permission must publish the
+   final file (local HTTP / dual-process success is not an online update).
+3. **Unconfirmed model supply.** Omni Beijing Messages, Bailian Kimin high-speed version protocol/attachment, MiMo
+   UltraSpeed commercial availability, etc., stay as in the Todo113 research record; IDs and capabilities are not
+   guessed; verified models are not blocked.
 
-The independently executable work has been handled; the current branch is pushed per user authorization; no config is released, no MR is created. The 19 items are not claimed to be fully verified by the real-machine, and these limitations are not secretly transferred to the Todo102 to close this Goal.
+Independent work was handled; the current branch was pushed per user authorization; no config released, no MR created.
+The 19 items are not claimed fully real-machine verified, and these limitations are not moved into Todo102 to close
+this Goal.

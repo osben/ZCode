@@ -1,17 +1,22 @@
-# Subsequent Task: The Host tasks-index Initialization Observability
+# Subsequent Task: Host tasks-index Initialization Observability
 
-> Latest scope: Merged into [Todo 145: Unified Database Preparation Before Entering ZCode](./todo-145-global-database-startup-loading.md); no longer delayed separately. The following is the scope record of the previous round; the Repo construction and the actual open/migration timing must be re-checked according to the new TODO.
+> Latest scope: merged into [Todo 145: Unified Database Preparation Before Entering ZCode](./todo-145-global-database-startup-loading.md); it is no longer delayed separately. The items below record the earlier round's scope; the Repo construction and the actual open/migration timing must be re-checked against the new TODO.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/host-tasks-index-startup-followup.md`
 
-Status: Pending separate design; not part of the Todo 144 this session library hotfix.
+Status: pending separate design; not part of the Todo 144 session-library hotfix (decided 2026-09-14: finish the session
+library scope first).
 
-The 2026-09-14 user discussion on the change scale confirms to complete the session library scope first.
-The Host's partial Repo synchronously opens or migrates the tasks-index.sqlite before the service release; at this time, the session library status service is not yet available.
-The status provider, the database execution thread, the admission order of the dependency service, the startup of the background scheduler/bot, and the failure retry boundary must be designed first, and then implemented.
+Problem: the Host's partial Repo synchronously opens or migrates `tasks-index.sqlite` before the service is released,
+when the session library status service is not yet available. The status provider, database execution thread,
+dependency-service admission order, background scheduler/bot startup and failure retry boundary must be designed before
+implementation.
 
-- [ ] Review the initialization and migration timing of the AutomationRepo, OffPeakTaskRepo, and TaskIndexRepo.
-- [ ] Decide the migration Worker or the delayed service initialization plan; the Main maintains the scheduling/passthrough responsibility.
-- [ ] The SQLite keeps the unique migration coordinator of the same physical library, avoiding the additional Host migration lock.
-- [ ] The observability stage is available before the service release; the business depending on the Repo can only be opened after the transaction is committed.
-- [ ] Verify the multi-window, remote Host, mobile shared-host, crash/reconnection, and failure recovery.
+- [ ] Review the initialization and migration timing of AutomationRepo, OffPeakTaskRepo and TaskIndexRepo.
+- [ ] Decide a migration Worker or delayed service initialization (Main keeps scheduling/passthrough duties).
+- [ ] SQLite keeps a single migration coordinator for the same physical library (no extra Host migration lock).
+- [ ] Observability is available before service release; business depending on the Repo opens only after the
+      transaction commits.
+- [ ] Verify multi-window, remote Host, mobile shared-host, crash/reconnection and failure recovery.
 
-The session library and the task index are different files; the lock and the completion status of each cannot be mixed.
+The session library and the task index are different files; their locks and completion states must not be mixed.

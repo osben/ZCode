@@ -6,399 +6,230 @@
 >
 > Source review: [`../provider-implementation-architecture-conformance-review.md`](../provider-implementation-architecture-conformance-review.md)
 >
-> Target design: [`../design/registry/configuration.md`](../design/registry/configuration.md)、
-> [`../design/registry/runtime.md`](../design/registry/runtime.md)、
+> Target design: [`../design/registry/configuration.md`](../design/registry/configuration.md),
+> [`../design/registry/runtime.md`](../design/registry/runtime.md),
 > [`../design/registry/model-creation.md`](../design/registry/model-creation.md)
 >
 > Prerequisite: [`todo-03-provider-model-ownership-and-property-totality.md`](./todo-03-provider-model-ownership-and-property-totality.md)
-> must first establish unique Registry complete type boundary; this task strengthens structured `zhipu-account` access and integrity in-place.
+> establishes the unique Registry complete type boundary; this task strengthens structured `zhipu-account` access and
+> integrity in place.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-07-account-connection-selection-and-access-context-cutover.md`
 
 ## 0. Actual Deliverables
 
-- Settings now only save `providerFamilyConnectionSelections`; old mode/selected-key dual state exits formal production chain;
-- Start, Individual, Team declared by Built-in Provider themselves with fixed `family + planKind`; Account Resolver produces complete Account Overlay by structured
-  selection, without maintaining runtime Provider ID to plan mapping table;
-- Enabled Account Provider's complete Access fixed into Registry/Active Model; request authentication only consumes that structure,
-  `accessId` remains opaque to consumers;
-- Off-Peak and Official MCP now consume complete Account Access, no longer parsing connection keys or comparing scoped/unscoped IDs;
-- Account accessId, credential caching, account switch invalidation, and Team scope handled by the same Credential/Auth chain;
-- Old Settings fields and old string keys only exist in tests/one-time migration inputs; do not enter current AppSettings, Protocol, Registry, or
-  Request Auth.
+- Settings save only `providerFamilyConnectionSelections`; the old mode/selected-key dual state is out of the formal
+  production chain.
+- Start, Individual and Team are declared by Built-in Providers themselves with fixed `family + planKind`; the Account
+  Resolver produces the complete Account Overlay from structured selection with no runtime Provider-ID-to-plan table.
+- An enabled Account Provider's complete Access is fixed into the Registry/Active Model; request authentication consumes
+  only that structure; `accessId` stays opaque to consumers.
+- Off-Peak and Official MCP consume complete Account Access (no connection-key parsing, no scoped/unscoped ID
+  comparison).
+- Account `accessId`, credential caching, account switch invalidation and Team scope are handled by the same
+  Credential/Auth chain.
+- Old Settings fields and old string keys exist only in tests / one-time migration inputs and never enter current
+  AppSettings, Protocol, Registry or Request Auth.
 
-## 1. Task Objective
+## 1. Objective
 
-Converge Provider Family user connection selection, Account Connection facts, Account Built-in Provider Config, and request-period
-authentication into a single structured chain. Delete `selectedConnectionKey` and implicit protocols formed by `accessId` string parsing.
-
-```text
-Current
-
-AppSettings
-├─ modelProviderFamilyModes[family]
-└─ modelProviderFamilySelectedKeys[family]
-          |
-          | preset:/coding-plan:/team-plan: strings
-          +--------------------+----------------------+------------------+
-          |                    |                      |                  |
-          v                    v                      v                  v
-Account Resolver       Settings / Usage       Off-Peak / MCP       Task / Session
-          |                    |                      |                  |
-          `-------- 各自 parse / match / rebase / startsWith -----------'
-                               |
-                               v
-                  scoped accessId re-encodes account identity
-
-Target
-
-AppSettings.providerFamilyConnectionSelections
-          |
-          | structured user selection intent
-          v
-Account Connection Resolver
-├─ current account (internal fact)
-├─ entitlement / availability
-└─ selected structured connection
-          |
-          v
-Account Connection Result
-├─ status
-├─ resolved access { family, planKind, Team scope?, opaque accessId }
-└─ models?
-          |
-          v
-Account Built-in Provider Config
-          |
-          +--> Registry / Model fixed Account Access
-          +--> Request Auth
-          +--> Off-Peak
-          `--> Official MCP
-```
-
-This task is not renaming `selectedConnectionKey`, nor concentrating the current string parser into another helper. Target is for
-Settings to only save structured selection intent, for Account Connection Resolver to be the sole interpreter, and for execution consumers to directly read
-Account Access already resolved in Provider Config.
-
-Todo 03 does not prematurely implement this task's structured account Access, nor create temporary Account Access DTO. Todo 03's
-`RegistryProviderConfig` first narrows based on Access Schema existing at that time; this task modifies `ZhipuAccountAccessConfig`
-while synchronously expanding the same `CompleteProviderAccessConfig`, `requireComplete`, and complete serialization contract.
+Converge Provider Family user connection selection, Account Connection facts, Account Built-in Provider Config and
+request-period authentication into one structured chain; delete `selectedConnectionKey` and the implicit protocols
+formed by parsing `accessId` strings. Before: AppSettings `modelProviderFamilyModes[family]` +
+`modelProviderFamilySelectedKeys[family]` (`preset:/coding-plan:/team-plan:` strings) were each parsed / matched /
+rebased / `startsWith`-ed by Account Resolver, Settings / Usage, Off-Peak / MCP and Task / Session, and scoped
+`accessId` re-encoded account identity. Target: `AppSettings.providerFamilyConnectionSelections` (structured intent) ->
+Account Connection Resolver (current account as internal fact, entitlement / availability, selected structured
+connection) -> Account Connection Result (status, resolved access `{ family, planKind, Team scope?, opaque accessId }`,
+models?) -> Account Built-in Provider Config -> Registry / Model fixed Account Access, Request Auth, Off-Peak, Official
+MCP. This is not renaming `selectedConnectionKey` nor moving the string parser into a helper: Settings save structured
+intent only, the Resolver is the sole interpreter, and execution consumers read the Account Access already resolved in
+Provider Config. Todo 03's `RegistryProviderConfig` first narrows on the then-existing Access Schema; this task changes
+`ZhipuAccountAccessConfig` and synchronously expands `CompleteProviderAccessConfig`, `requireComplete` and the complete
+serialization contract.
 
 ## 2. Confirmed Decisions
 
-### 2.1 User Selection Uses Structured Single Field
-
-Delete two pieces of must-atomically-maintained Settings state:
-
-- `modelProviderFamilyModes`;
-- `modelProviderFamilySelectedKeys`.
-
-Replace with:
+**2.1 Structured single field for user selection.** `modelProviderFamilyModes` and `modelProviderFamilySelectedKeys` are
+replaced by
 
 ```ts
 type ProviderFamilyConnectionSelection =
   | { kind: "api-key"; providerId: string }
   | { kind: "start-plan" }
   | { kind: "individual-coding-plan" }
-  | {
-      kind: "team-coding-plan";
-      productId: string;
-      organizationId: string;
-      projectId: string;
-    };
-
+  | { kind: "team-coding-plan"; productId: string; organizationId: string; projectId: string };
 interface AppSettings {
-  providerFamilyConnectionSelections?: Partial<
-    Record<ProviderFamilyDomain, ProviderFamilyConnectionSelection>
-  >;
+  providerFamilyConnectionSelections?: Partial<Record<ProviderFamilyDomain, ProviderFamilyConnectionSelection>>;
 }
 ```
 
-`kind` already contains API Key/OAuth and specific plan forms; no need to maintain independent mode. `providerFamilyDomain` continues expressing currently activated
-Provider Family; do not delete or merge in this task.
+`kind` already contains API Key/OAuth and plan form (no separate mode). `providerFamilyDomain` keeps expressing the
+currently activated Provider Family (not deleted or merged here). Account Plan selection stores no Built-in Provider ID
+and does not infer plan from it: Family, `kind` and Team Scope are structured inputs for the Resolver; API Key selection
+keeps the user's actually selected Provider ID; the current logged-in account participates in resolution inside the
+Account Connection Service and never enters Settings or Provider Config.
 
-Account Plan selection does not save Built-in Provider ID, nor infer plan from Built-in Provider ID. Outer Family, `kind`,
-and Team Scope are structured inputs for Account Connection Resolver to look up connections; API Key selection retains user's actually selected
-Provider ID. Current logged-in account participated in resolution by Account Connection Service internally; does not enter Settings or Provider Config.
+**2.2 Start, Individual and Team are independent Built-in Providers** (each with fixed `access.family` and
+`access.planKind`; none morphs between Individual and Team). Normal Settings flow selects one mutually exclusive account
+connection within a Family; the Account Built-in Overlay supplements Access for Providers matching `family + planKind`
+and sets them enabled, while other account Providers are set disabled; the Resolver scans Built-in-declared Access with
+no Start/Individual/Team Provider ID mapping table. Individual and Team may declare the same model ID (Registry identity
+stays `providerId + modelId`; only one Provider is enabled normally, so Selection shows only models under the current
+connection; users may enable several via Personal Config by normal Config semantics with no source permission checks).
+Built-in identities: `builtin:zai-start-plan`, `builtin:zai-individual-coding-plan`, `builtin:zai-team-coding-plan`,
+`builtin:bigmodel-start-plan`, `builtin:bigmodel-individual-coding-plan`, `builtin:bigmodel-team-coding-plan`. Old
+`builtin:*-coding-plan` exists only in the one-time Settings/Personal/Selection importer: it maps to the new Provider
+when Individual vs Team is clear from the same structured selection; unidentifiable manual configurations produce clear
+diagnostics, are not copied to both Providers, and no runtime alias is kept (importer and old ID constants are deleted
+after the mandatory upgrade window).
 
-### 2.2 Start, Individual, and Team Are Independent Built-in Providers
+**2.3 Account Connection is the connection-fact authority.** The Resolver reads current Family, structured selection,
+logged-in account identity, entitlement, Credential Port and Plan API, and outputs per-Provider results:
+`{ providerId, status: "available", access: CompleteZhipuAccountAccessConfig, models? }` or
+`{ providerId, status: "unavailable" }`. Renderer, Usage, Off-Peak, Official MCP, Task and Session no longer interpret
+Settings strings.
 
-Same Family's Start Plan, Individual Coding Plan, and Team Coding Plan respectively defined as independent ZCode Built-in
-Providers. Each Provider's `access.family` and `access.planKind` fixed; no Coding Plan Provider
-can morph between Individual and Team at runtime.
-
-Normal Settings flow selects only one connection among mutually exclusive accounts within same Family; Account Built-in Overlay only supplements Access for Providers matching
-`family + planKind` and sets them enabled; other account Providers set disabled. Resolver scans Built-in Provider declared Access itself, without maintaining Start/Individual/Team Built-in Provider ID mapping table.
-
-Individual and Team can declare the same model ID; Registry identity is still `providerId + modelId`. Normal selection flow only
-one Provider enabled, so Selection only shows models under current connection. Users manually enable multiple Providers through Personal Config following normal Config
-semantics; no source permission checks added.
-
-Target Built-in identities use explicit names, not retaining "one Coding Plan Provider simultaneously representing two Plans" formal semantics:
-
-```text
-builtin:zai-start-plan
-builtin:zai-individual-coding-plan
-builtin:zai-team-coding-plan
-
-builtin:bigmodel-start-plan
-builtin:bigmodel-individual-coding-plan
-builtin:bigmodel-team-coding-plan
-```
-
-Old `builtin:*-coding-plan` only exists in one-time Settings/Personal/Selection importer. Migrator can map to corresponding new Provider when able to clearly distinguish Individual or Team from same structured selection; unidentifiable manual configurations produce clear diagnostics; do not
-copy to both Providers; do not retain runtime aliases long-term. Delete importer and old ID constants after mandatory upgrade window ends.
-
-### 2.3 Account Connection Is Connection Fact Authority
-
-Account Connection Resolver reads current Family, structured selection, logged-in account identity, entitlement, Credential Port, and Plan
-API, outputting per-Provider differentiated results:
-
-```ts
-type AccountProviderConnectionResult =
-  | {
-      providerId: string;
-      status: "available";
-      access: CompleteZhipuAccountAccessConfig;
-      models?: readonly string[];
-    }
-  | {
-      providerId: string;
-      status: "unavailable";
-    };
-```
-
-Renderer, Usage, Off-Peak, Official MCP, Task, and Session no longer interpret Settings strings themselves.
-
-### 2.4 Provider Config Fixed Structured Account Access
-
-`zhipu-account` Access target structure:
+**2.4 Provider Config fixes structured Account Access:**
 
 ```ts
 type ZhipuAccountAccessConfig =
-  | {
-      type: "zhipu-account";
-      accessId?: string | null;
-      family: "zai" | "bigmodel";
-      planKind: "start-plan" | "individual-coding-plan";
-    }
-  | {
-      type: "zhipu-account";
-      accessId?: string | null;
-      planKind: "team-coding-plan";
-      family: "zai" | "bigmodel";
-      productId?: string | null;
-      organizationId?: string | null;
-      projectId?: string | null;
-    };
+  | { type: "zhipu-account"; accessId?: string | null; family: "zai" | "bigmodel";
+      planKind: "start-plan" | "individual-coding-plan" }
+  | { type: "zhipu-account"; accessId?: string | null; planKind: "team-coding-plan"; family: "zai" | "bigmodel";
+      productId?: string | null; organizationId?: string | null; projectId?: string | null };
 ```
 
-ZCode Built-in Provider Config first declares fixed `family + planKind`; Team's specific Scope and all Plans'
-`accessId` can be null. Account Connection Resolver uses these fields with Settings selection, current account, and entitlement to look up connections;
-Account Built-in Provider Config entirely replaced with complete Access for same Plan. Registry requires enabled Account
-Provider's `accessId` non-null; Team also requires complete Scope.
+ZCode Built-in Provider Config declares fixed `family + planKind` first (Team Scope and every Plan's `accessId` may be
+null); the Resolver combines them with Settings selection, current account and entitlement; the Account Built-in
+Provider Config replaces the same Plan's Access with the complete one. The Registry requires an enabled Account
+Provider's `accessId` non-null (Team also complete Scope). The Account Built-in Provider Config is an immutable snapshot
+of execution-required Account Access; `accessId` is a stable non-sensitive connection identity that consumers must treat
+as opaque (no recognizing Plan, Family, Team Scope or account identity from it). Current account identity is generated,
+looked up and invalidated only inside the Account Connection Service; an account switch invalidates old `accessId`
+credential acquisition; `accountIdentity` is not copied into Provider Config. The existing accessId byte format and
+Credential Store key may stay (avoiding unnecessary credential migration); keeping the format does not permit continued
+parsing, and after the compatibility window only truly needed old-format migration code remains in the Account
+Source/Importer at one retirement point.
 
-Account Built-in Provider Config is an immutable snapshot of execution-required Account Access. `accessId` is stable, non-sensitive
-connection identity, but consumers must treat it as opaque value; cannot recognize Plan, Family, Team Scope, or account identity from it.
-Current account identity only generated, looked up, and invalidated by Account Connection Service internally; account switch invalidates old
-`accessId` credential acquisition; do not copy `accountIdentity` into Provider Config.
+**2.5 UI editability is not Schema permission.** The settings page may hide Account Access or show Built-in fields
+read-only, yet the Config Schema does not forbid users from writing them manually (Personal keeps using the general
+overall Overlay). Schema and Registry check only structure, discriminant and Effective Config completeness, not whether
+`accessId` or account fields originated from the Account Built-in Source; structurally complete but business-invalid
+connections fail at Request Auth or server-side authentication; no Source permission system.
 
-This task can temporarily maintain existing accessId byte format and Credential Store key, avoiding unnecessary credential migration; "maintain existing
-format" does not constitute permission to continue parsing that format. After compatible window ends, only old format
-migration code truly needed within Account Source/Importer can be retained to unified retirement point.
+**2.6 Off-Peak and Official MCP belong to this task.** Both re-read Settings and parsed `selectedConnectionKey`; both
+migrate to Account Connection / Effective Account Access (not left to M4). Off-Peak had an explicit bug candidate:
+production `accessId` carries account scope while `selectedConnectionKey` does not, and the code compared them directly,
+wrongly judging valid connections unavailable; the comparison is deleted without a "de-scope-then-compare" helper.
 
-### 2.5 UI Editability Not Schema Permission
+## 3. Impact Scope
 
-Settings page may not display Account Access, or may set Built-in fields read-only, but Config Schema therefore does not prohibit users from manually
-writing these fields. Personal continues using general overall Overlay:
+`modelProviderFamilySelectedKeys` / `selectedConnectionKey` appeared in at least 37 non-test files (18 UI, 11 Services,
+5 Shared, 3 Desktop).
 
-```text
-UI does not provide Account Access editing
-        !=
-Personal Schema prohibits expressing Account Access
-```
-
-Schema and Registry only check structure, discriminant, and Effective Config completeness; do not check whether `accessId` or account
-Access fields originated from Account Built-in Source. When users manually write structurally complete but business-invalid connections, fail at
-Request Auth or server-side authentication; do not add Source permission system.
-
-### 2.6 Off-Peak and Official MCP Belong to This Task
-
-Off-Peak and Official MCP currently both re-read Settings and parse `selectedConnectionKey`. This task migrates both to
-Account Connection / Effective Account Access; does not leave to M4 or other tasks.
-
-Off-Peak currently has an explicit bug candidate: production Account Provider's `accessId` carries account scope, while
-`selectedConnectionKey` does not; the code directly comparing both incorrectly judges valid connections as unavailable. Target implementation deletes this comparison; does not add "de-scope-then-compare" compatibility
-helper.
-
-## 3. Current Facts and Impact Scope
-
-Current precise text scan shows `modelProviderFamilySelectedKeys` or `selectedConnectionKey` appears in at least 37 non-test
-files: 18 UI, 11 Services, 5 Shared, 3 Desktop.
-
-| Scope                      | Current Responsibilities                             | Target                                           |
+| Scope                      | Previous responsibility                              | Target                                           |
 | -------------------------- | ---------------------------------------------------- | ------------------------------------------------ |
 | AppSettings / Schema       | Persist mode and string key                          | Single structured selection                      |
-| Provider Settings          | Navigation, switch, restore, and pending state       | Edit structured selection                        |
+| Provider Settings          | Navigation, switch, restore, pending state           | Edit structured selection                        |
 | Account Resolver           | Parse Plan/Team key and generate accessId            | Look up connection by Access fields              |
-| Request Auth               | Identify Plan, account, and Team Scope from accessId | Consume complete Account Access                  |
-| Usage / Entitlement        | Generate query context from selected key             | Consume Account Connection View                  |
+| Request Auth               | Identify Plan, account, Team Scope from accessId     | Consume complete Account Access                  |
+| Usage / Entitlement        | Query context from selected key                      | Consume Account Connection View                  |
 | Session / Task / Repo Wiki | Layer-by-layer passthrough of selected keys          | Delete passthrough; use Registry/Account Service |
 | Off-Peak                   | Parse Settings, compare two IDs                      | Consume current Account Access                   |
 | Official MCP               | Re-parse Plan and Team Scope                         | Consume current Account Access                   |
-| Desktop remote host        | Temporarily construct selected key map for Team Key  | Pass structured Account Access directly          |
+| Desktop remote host        | Temporarily construct selected key map for Team Key  | Pass structured Account Access directly         |
 
-### 3.1 UI Surface Matrix
+UI surface: switching API Key/plan connection happens in Provider Settings (local pending selection -> AppSettings,
+single submit of structured selection; Personal Provider Config unchanged); viewing the current connection uses the
+Account Connection View (no accessId/key parsing; dynamic quotas stay out of the Registry); the Composer model control
+shows candidates from the Registry only and never switches connections; the Off-Peak entry's Host consumes Account
+Access (credentials never to the Renderer); OAuth login restore writes structured selection (Settings mount does not
+reorder valid selections). Automation, Subagent and Repo Wiki only share Registry model candidates and own no Account
+Connection selection (the selected-key passthrough there was bridge code to delete).
 
-| User Scenario                    | UI Entry                  | Draft/Display Owner     | Submit Sink           | This Task Changes                  | Isolation Boundary                               |
-| -------------------------------- | ------------------------- | ----------------------- | --------------------- | ---------------------------------- | ------------------------------------------------ |
-| Switch API Key/Plan connection   | Provider Settings         | Local pending selection | AppSettings           | Single submit structured selection | Do not change Personal Provider Config           |
-| View current connection and plan | Provider Settings / Usage | Account Connection View | None or Usage request | Do not parse accessId/key          | Dynamic quotas do not enter Registry             |
-| Select model                     | Composer model control    | Composer Draft          | Session/Task command  | Candidates only from Registry      | Do not switch connections in model selector      |
-| Create off-peak task             | Off-Peak entry            | Off-Peak support view   | Off-Peak service      | Host consumes Account Access       | Do not send credentials to Renderer              |
-| OAuth login restore              | Root callback             | AppSettings             | Setting Service       | Write structured selection         | Settings mount does not reorder valid selections |
+State owners: user connection selection intent = AppSettings structured selection (`setting.json`; consumers: Account
+Resolver, Settings UI); current account identity and entitlement = OAuth/Account/Plan services (their existing caches);
+currently available Account Connection = Account Provider Service (last-known-good Account Source; Registry, Account
+Views); Provider execution Account Access = Effective Provider Config / Model (Registry revision / Active Model; Request
+Auth); API Key/JWT/Team Secret = Credential / Request Auth service (existing Credential Store; single request attempt);
+Off-Peak Ticket/Auth = Off-Peak execution context (current dispatch memory; idle Model request-auth).
 
-Automation, Subagent, and Repo Wiki only share Registry model candidates; do not own Account Connection selection. Current code passthrough selected keys
-to these paths is bridge code awaiting deletion, not representing product semantics.
+Impact brief: change layers `persistence`, `option-source`, `validation`, `commit-effect`; primary seeds
+`AccountProviderConnectionResolver`, `AppSettings`, `resolveOffPeakCredentials`, `resolveOfficialMcpCredentials`; out of
+scope: plan product logic, remote Provisioning, Credential center refactoring, Queue/Recovery, Model selection lifecycle.
+Must-inspect: AppSettings -> Provider Settings -> Account Resolver; Account Resolver -> Account Built-in Config ->
+Registry; Active Model -> Request Auth (an old Model cannot follow a new account); Account Access -> Off-Peak / Official
+MCP. should-inspect: Usage / Entitlement / Sidebar. conditional: Local/Remote Host Account Source (the remote Environment
+uses its own). invariant-only: desktop continuous / mobile replayable. No callable codegraph existed; semantic graphs
+plus precise `rg` call-site review were used, with symbol-level evidence from `dep:refs` and TypeScript.
 
-### 3.2 State Owner and Commit Sink
+## 4. Implementation Order
 
-| State/Fact                                 | Authoritative Owner               | Persistence/Cache                | Consumers                     |
-| ------------------------------------------ | --------------------------------- | -------------------------------- | ----------------------------- |
-| User's current connection selection intent | AppSettings structured selection  | `setting.json`                   | Account Resolver, Settings UI |
-| Current account identity and entitlement   | OAuth/Account/Plan services       | Their respective existing caches | Account Resolver              |
-| Currently available Account Connection     | Account Provider Service          | last-known-good Account Source   | Registry, Account Views       |
-| Provider execution Account Access          | Effective Provider Config / Model | Registry revision / Active Model | Request Auth                  |
-| API Key/JWT/Team Secret                    | Credential / Request Auth service | Existing Credential Store        | Single request attempt        |
-| Off-Peak Ticket/Auth                       | Off-Peak execution context        | Current dispatch memory          | idle Model request-auth       |
+- **A Tests freeze and structured selection:** failing tests for API Key, Start, Individual, Team project selection and
+  restart recovery; define structured selection and strict Schema in Shared; AppSettings gets the single
+  `providerFamilyConnectionSelections`; Provider Settings pending state, save, OAuth callback restore and default
+  initialization submit a complete selection once; keep `providerFamilyDomain` independent.
+- **B Account Connection and Provider Access:** separate Start/Individual/Team Built-in Providers per Family (delete the
+  shared Individual/Team Provider), fixed `access.family + access.planKind`, Team Effective Access carrying complete
+  Scope; the Resolver looks up connections by structured Access and selection (no ID mapping table);
+  `AccountProviderConnectionResult.available` returns complete `ZhipuAccountAccessConfig`; the Service internally
+  generates and invalidates opaque accessId from the current account (no `accountIdentity` projection into Config); the
+  Account Built-in Config projects complete Access, optional `builtinModelIds` and `enabled=true` for the selected
+  Provider (other Account Providers in the same exclusive range `enabled=false`); the Resolver publishes the whole result
+  atomically on success and on external dependency failure the Service keeps the entire previous Snapshot (no partial
+  LKG; per-Provider `unknown + previousProviders` half-recovery branches deleted; no new Family/Provider fault isolation
+  protocol); `validateComplete` / `requireComplete` check structure, not field origin or real entitlement;
+  ModelFactory/Model store complete Account Access as-is.
+- **C Request Auth and consumers:** Request Auth selects the authentication flow by `family + planKind` and obtains
+  dynamic material by opaque accessId; Team Key/Header uses the explicit Scope from Access; delete Family/Plan to
+  Built-in Provider ID hardcoding in Request Auth and the Resolver; Usage, Entitlement, Reset, Sidebar and Provider
+  Settings use the Account Connection View; the Host no longer decides whether official-version safety check is needed by
+  a `start-plan:` prefix (Request Auth uses existing typed interaction/error boundaries); the Credential Store keeps its
+  current key built from the complete accessId (migrate only if tests prove necessary).
+- **D Delete cross-layer selection passthrough:** selected-key parameters removed from ZCodeTask, ZCodeSession, Agent,
+  workspace prepare, Repo Wiki and thought catalog; Runtime obtains execution Access only from Provider/Model in the
+  Registry; the Renderer modifies selection only in Provider Settings (never stuffed into ModelSelection or Session
+  state); a Remote Workspace keeps producing Account Built-in Config from the target Environment's Account Source.
+- **E Off-Peak and Official MCP:** Off-Peak obtains current valid Individual/Team Account Access (Start/API Key continue
+  to be refused by product rules); direct comparison of scoped accessId and unscoped selected key deleted;
+  `OffPeakCredentialSnapshot` and `OffPeakCodingPlanSupport` drop `selectedConnectionKey`; Official MCP uses the same
+  Account Access to judge Individual/Team scope; before/after credential parsing consistency checks continue but compare
+  Account Source revision/structured connections rather than concatenating two-generation credentials; the Renderer
+  receives no JWT, API Key, Team Secret or other dynamic credentials.
+- **F Migration and mechanical deletion:** the Repository executes a one-time mode/key -> structured selection migration
+  when reading old AppSettings (only identifiable `preset:`, `coding-plan:` and complete `team-plan:`; damaged values
+  not guessed); old general `builtin:*-coding-plan` Provider IDs migrate to the Individual or Team ID from the same
+  structured selection across Settings, Personal Provider key and still-recovering persisted ModelSelection (ambiguous
+  manual configurations report diagnostics, never copied to both); no dual-write of old fields and no long-term dual-read
+  in business code; migration functions, old schema fields and parser/matcher tests are deleted after the mandatory
+  upgrade window; connection-key create/parse/matches/rebase helpers and call-site-less legacy accessId parsers deleted.
 
-## 4. Impact Brief
+## 5. Tests
 
-| Field            | Conclusion                                                                                                                          |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Developer intent | Delete account connection string protocol and cross-layer passthrough; unify selection, Provider Access, and request authentication |
-| Capability       | Provider Registry, Plan Entitlements, Provider Settings, Off-Peak, Official MCP                                                     |
-| Change layer     | `persistence`, `option-source`, `validation`, `commit-effect`                                                                       |
-| Operating mode   | implementation-handoff                                                                                                              |
-| Primary seeds    | `AccountProviderConnectionResolver`, `AppSettings`, `resolveOffPeakCredentials`, `resolveOfficialMcpCredentials`                    |
-| Out of scope     | Plan product logic redo, remote Provisioning, Credential center refactoring, Queue/Recovery, Model selection lifecycle              |
-
-| Level          | Relationship                                            | Reason                                                                         |
-| -------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| must-inspect   | AppSettings -> Provider Settings -> Account Resolver    | selection's persistence/commit main chain                                      |
-| must-inspect   | Account Resolver -> Account Built-in Config -> Registry | Structured connection fact's unique projection chain                           |
-| must-inspect   | Active Model -> Request Auth                            | Old Model cannot follow new account on switch                                  |
-| must-inspect   | Account Access -> Off-Peak / Official MCP               | Currently re-parses strings; off-peak has ID comparison gap                    |
-| should-inspect | Usage / Entitlement / Sidebar                           | Currently rebuilds product context from selected key/accessId                  |
-| conditional    | Local/Remote Host Account Source                        | Remote Environment must use its own Account Source                             |
-| invariant-only | desktop continuous / mobile replayable                  | This task does not change task/session/stream recovery semantics               |
-| evidence-only  | Existing connection-key helper tests                    | Only proves old protocol behavior, not that old abstraction should be retained |
-
-Feature graph already records Account Connection source authority, Provider execution snapshots, and UI/Schema decoupling invariants. Current environment has no callable
-codegraph tool; this impact scope uses semantic graphs and precise `rg` call site reviews; evidence at symbol level must be supplemented by `dep:refs`, TypeScript
-before implementation.
-
-## 5. Implementation Scope and Order
-
-### Step A: Tests Freeze and Structured Selection
-
-- Write failing tests first for API Key, Start, Individual, Team project selection and restart recovery;
-- Define structured selection and strict Schema in Shared;
-- AppSettings changed to single `providerFamilyConnectionSelections`;
-- Provider Settings pending state, save, OAuth callback restore, and default initialization submit complete selection once;
-- `providerFamilyDomain` kept independent.
-
-### Step B: Account Connection and Provider Access
-
-- Define Start, Individual, Team Built-in Providers separately for each Family; delete Individual/Team shared Provider;
-- Each Provider fixedly declares `access.family + access.planKind`; Team Effective Access additionally carries complete Scope;
-- Account Resolver looks up connections by structured Access and selection; no Built-in Provider ID mapping table;
-- `AccountProviderConnectionResult.available` returns complete `ZhipuAccountAccessConfig`;
-- Account Connection Service internally generates and invalidates opaque accessId using current account; does not project accountIdentity into Config;
-- Account Built-in Config projects complete Access, optional builtinModelIds, and enabled=true for selected Provider; other Account Providers in same mutually exclusive range projected with enabled=false;
-- Account Resolver atomically publishes entire result on success; on external dependency failure, Service retains entire previous version Snapshot, no partial LKG;
-- Delete per-Provider `unknown + previousProviders` half-recovery branches; do not add new Family/Provider fault isolation protocol;
-- `validateComplete` / `requireComplete` validates structural completeness, not field origin or real entitlement;
-- ModelFactory/Model fixedly stores complete Account Access as-is.
-
-### Step C: Request Auth and Consumer Closure
-
-- Request Auth selects authentication flow by `family + planKind`; obtains corresponding dynamic material by opaque accessId;
-- Team Key/Header uses explicit Scope from Access, does not parse accessId;
-- Delete Family/Plan to Built-in Provider ID hardcoded mapping from Request Auth and Account Resolver;
-- Usage, Entitlement, Reset, Sidebar, and Provider Settings use Account Connection View;
-- Host no longer determines whether official version safety check needed by `start-plan:` prefix; Request Auth expresses through existing typed interaction/error boundaries;
-- Maintain Credential Store current construction key using complete accessId; migrate only if tests prove necessary.
-
-### Step D: Delete Cross-Layer Selection Passthrough
-
-- Delete selected keys parameters from ZCodeTask, ZCodeSession, Agent, workspace prepare, Repo Wiki, thought catalog;
-- Runtime only obtains execution Access from Provider/Model in Registry;
-- Renderer only modifies selection in Provider Settings; does not stuff into ModelSelection or Session state;
-- Remote Workspace continues to produce Account Built-in Config from target Environment's Account Source.
-
-### Step E: Off-Peak and Official MCP
-
-- Off-Peak obtains current valid Individual/Team Account Access; Start/API Key continue refusing by product rules;
-- Delete direct comparison of scoped accessId and unscoped selected key;
-- `OffPeakCredentialSnapshot`, `OffPeakCodingPlanSupport` delete `selectedConnectionKey`;
-- Official MCP uses same Account Access to judge Individual/Team scope;
-- Credential parsing before/after consistency checks continue, but compare Account Source revision/structured connections, not concatenate two-generation credentials;
-- Renderer does not receive JWT, API Key, Team Secret, or other dynamic credentials.
-
-### Step F: Migration and Mechanical Deletion
-
-- Repository executes one-time mode/key -> structured selection migration when reading old AppSettings;
-- Only migrate identifiable `preset:`, `coding-plan:`, and complete `team-plan:`; damaged values not guessed;
-- Migrate old general `builtin:*-coding-plan` Provider ID to Individual or Team ID based on same structured selection;
-- Migrate Settings, Personal Provider key, and still-recovering persisted ModelSelection; ambiguous manual configurations report diagnostics; do not copy to both new Providers;
-- No dual-write old fields; no long-term dual-read in formal business code;
-- Delete migration functions, old schema fields, and parser/matcher tests after mandatory upgrade compatibility window ends;
-- Delete connection-key create/parse/matches/rebase helpers and call-site-less legacy accessId parser.
-
-## 6. Tests First
-
-### 6.1 Settings and Migration
-
-1. API Key, Start, Individual, Team selection strict round-trip;
-2. Atomic migration of mode and selected key into single structured value;
-3. Team migration preserves product/organization/project;
-4. Damaged old keys do not guess Plan or Team Scope;
-5. OAuth callback only updates target Family; other Family selections unchanged;
-6. Settings mount does not override still-valid saved selections;
-7. User switches connections once; no mode/key partial update state.
-8. Old general Coding Plan Provider ID migrated to Individual or Team based on explicit selection; ambiguous inputs not guessed or dual-written.
-
-### 6.2 Account Provider and Registry
-
-1. Start, Individual, Team each correspond to independent Built-in Provider; Plan type does not morph at runtime;
-2. Team additionally produces complete product/organization/project;
-3. Resolver can look up accessId by structured family/planKind/Team Scope without Built-in Provider ID mapping table;
-4. Normal Individual selection enables only Individual Provider; Team selection enables only Team Provider;
-5. Token/Runtime Key refresh does not change Account Access; account or Team project switch produces new Access;
-6. Account refresh success atomically publishes entire result; any external dependency failure keeps entire previous version Snapshot unchanged;
-7. Personal can completely override access; no source qualification checks;
-8. Manually written fake access structures pass Config completeness when structurally complete; Request Auth or server-side failure;
-9. Enabled Account Provider missing accessId, or Team missing Scope, cannot enter Registry.
-
-### 6.3 Request Auth, Off-Peak, and MCP
-
-1. Start, Individual, Team Request Auth does not parse accessId strings;
-2. Old accessId cannot obtain new account credentials after account switch and fails before network;
-3. Team Header/Key uses explicit Scope from Access;
-4. Off-Peak's scoped Account Access parsed normally, no longer triggering erroneous `connection_unavailable`;
-5. Entire retry when connection switching occurs during credential parsing; no mixing of two-generation credentials;
-6. Official MCP Individual/Team scope consistent with Account Access;
-7. Start/API Key's existing product gates for Off-Peak/MCP unchanged;
-8. Renderer-visible support/outcome does not contain Secrets.
-
-### 6.4 Multi-Platform and Regression
-
-1. Desktop, Web, mobile settings pages use same Setting Service for same selection;
-2. Local/Remote Environment generates Account Built-in Config themselves;
-3. Composer, Automation, Subagent, Repo Wiki candidates still from Registry; each Draft/commit sink unchanged;
-4. Desktop continuous, mobile replayable, Queue, snapshot, workspace identity: no protocol semantic changes;
-5. Already-created Active Model retains old Access after global account/connection switches; cannot silently follow.
-
-Stable Case IDs:
+- **Settings and migration:** API Key, Start, Individual, Team selection strict round-trip; atomic migration of mode and
+  selected key into one structured value; Team migration preserves product/organization/project; damaged old keys do
+  not guess Plan or Team Scope; OAuth callback updates only the target Family; Settings mount does not override
+  still-valid saved selections; one connection switch means no mode/key partial update; old general Coding Plan Provider
+  ID migrates to Individual or Team by explicit selection (ambiguous input neither guessed nor dual-written).
+- **Account Provider and Registry:** Start, Individual, Team each correspond to an independent Built-in Provider (plan
+  type never morphs); Team carries complete product/organization/project; the Resolver finds accessId by structured
+  family/planKind/Team Scope with no Provider ID mapping table; normal Individual selection enables only the Individual
+  Provider and Team only the Team Provider; Token/Runtime Key refresh does not change Account Access while account or
+  Team project switch produces new Access; refresh success publishes atomically and any external dependency failure keeps
+  the whole previous Snapshot; Personal can completely override access (no source qualification checks); manually written
+  structurally complete fake access passes Config completeness and fails at Request Auth or server-side; an enabled
+  Account Provider missing accessId, or Team missing Scope, cannot enter the Registry.
+- **Request Auth, Off-Peak, MCP:** Start, Individual, Team Request Auth does not parse accessId strings; an old accessId
+  cannot obtain new account credentials after account switch and fails before the network; Team Header/Key uses the
+  explicit Scope; Off-Peak's scoped Account Access parses normally (no erroneous `connection_unavailable`); connection
+  switching during credential parsing retries the whole parse without mixing generations; Official MCP Individual/Team
+  scope matches Account Access; Start/API Key product gates for Off-Peak/MCP unchanged; Renderer-visible support/outcome
+  holds no Secrets.
+- **Multi-platform and regression:** Desktop, Web and mobile settings pages use the same Setting Service; Local/Remote
+  Environment generate their own Account Built-in Config; Composer, Automation, Subagent and Repo Wiki candidates still
+  come from the Registry with each Draft/commit sink unchanged; desktop continuous, mobile replayable, Queue, snapshot and
+  workspace identity unchanged; an already-created Active Model keeps old Access after global account/connection switches.
 
 | Case ID | Setup                                          | Action                                         | Assertions                                                                            |
 | ------- | ---------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -411,66 +242,37 @@ Stable Case IDs:
 | AC-07   | Remote Environment                             | Sync/refresh Providers                         | Use remote Account Source; do not read local selection for execution                  |
 | AC-08   | Both Individual and Team Providers exist       | Switch structured connection selection         | Only matching Provider enabled; model candidates only appear under current connection |
 
-## 7. Non-Goals
+## 6. Non-Goals
 
-- Redo plan SKU, purchase, discounts, quotas, or server-side authorization product logic;
-- Put dynamic API Key, JWT, Team Secret, one-time security verification Header, or Ticket into Provider Config;
-- Establish unified Credential Center;
-- Change ModelSelection, Session Selection, App Recent, or Active Model lifecycle;
-- Change remote Provisioning, remote settings, or login product capabilities;
-- Change Queue, continuous/replayable, snapshot, or workspace identity;
-- Change existing accessId byte format or Credential Store key due to this task;
-- Add Source permission or "prohibit writing account accessId" special validation for user manual configurations;
-- Put Badge, Label, plan display copy into Account Access.
+Plan SKU, purchase, discounts, quotas or server-side authorization product logic; dynamic API Key, JWT, Team Secret,
+one-time security verification Header or Ticket in Provider Config; a unified Credential Center; ModelSelection, Session
+Selection, App Recent or Active Model lifecycle; remote Provisioning, remote settings or login product capabilities;
+Queue, continuous/replayable, snapshot or workspace identity; changing the existing accessId byte format or Credential
+Store key; Source permission or "prohibit writing account accessId" validation for manual configurations; Badge, Label
+or plan display copy in Account Access.
 
-## 8. Completion Conditions
+## 7. Completion Conditions
 
-Mechanical zero:
+Mechanical zero: `AppSettings.modelProviderFamilyModes`; `AppSettings.modelProviderFamilySelectedKeys`;
+`selectedConnectionKey` in production domain/protocols; Family selected-key passthrough from Task/Session/Repo
+Wiki/workspace prepare; business code creating/parsing/matching Team/Coding/Preset connection keys; UI/Host/Off-Peak/MCP
+reverse-decoding Plan/Family/Team/account identity from accessId; Account Resolver / Request Auth Built-in Provider ID
+plan mapping; old general `builtin:*-coding-plan` Provider IDs in formal Config/Registry;
+`provider.accessId !== selection.selectedConnectionKey`; OffPeak support/snapshot `selectedConnectionKey`; an enabled
+`zhipu-account` missing complete family/planKind/accessId/Team Scope: all 0. (A generic Select component's internal
+React option `key` is out of scope; prohibited is using string keys as a cross-Settings/Services/Protocol/Runtime
+account connection protocol.)
 
-```text
-AppSettings.modelProviderFamilyModes                                   = 0
-AppSettings.modelProviderFamilySelectedKeys                            = 0
-selectedConnectionKey in production domain/protocols                   = 0
-Family selected keys passthrough from Task/Session/Repo Wiki/workspace prepare = 0
-Business code create/parse/matches Team/Coding/Preset connection key   = 0
-UI/Host/Off-Peak/MCP reverse-decoding Plan/Family/Team/account identity from accessId = 0
-Account Resolver / Request Auth's Built-in Provider ID plan mapping  = 0
-Old general builtin:*-coding-plan Provider ID in formal Config/Registry = 0
-provider.accessId !== selection.selectedConnectionKey                = 0
-OffPeak support/snapshot selectedConnectionKey                       = 0
-enabled zhipu-account missing complete family/planKind/accessId/Team Scope = 0
-```
+Behavior: user connection selection has one structured persisted state; the Account Connection Resolver is the sole
+interpreter from selection intent to account connection facts; the Account Built-in Provider Config is the unique static
+snapshot of execution-required Account Access; Start, Individual and Team are fixed-type independent Built-in Providers
+with only the current selection enabled in the normal flow; Request Auth, Off-Peak and Official MCP consume the same
+structured Account Access; every consumer treats accessId as opaque; UI editability does not change Personal Schema
+expressibility; account/connection switches never silently move already-created Models to another credential set; no
+new-old dual-write, dual-read or long-term compatibility DTOs.
 
-Generic Select component's internal React option identity `key` not in zero scope; prohibited is using string keys as cross-
-Settings, Services, Protocol, Runtime account connection protocol.
-
-Behavioral acceptance:
-
-- User connection selection has only one structured persisted state;
-- Account Connection Resolver is the sole interpreter of selection intent to account connection facts;
-- Account Built-in Provider Config is the unique static snapshot of execution-required Account Access;
-- Start, Individual, Team are fixed-type independent Built-in Providers; normal flow enables only current selection;
-- Request Auth, Off-Peak, and Official MCP consume same structured Account Access;
-- accessId treated as opaque identity by all consumers;
-- UI editability does not change Personal Schema expressibility;
-- Account/connection switches do not let already-created Models silently switch to another set of credentials;
-- No new-old dual-write, dual-read, or long-term compatibility DTOs.
-
-## 9. Verification and Commit
-
-At minimum, execute:
-
-```bash
-pnpm test:unit:affected
-pnpm typecheck
-pnpm lint
-pnpm fmt:check
-pnpm knip
-```
-
-Verify mechanical zero items with `pnpm dep:refs`, TypeScript, and `rg`. Execute Provider Settings, OAuth reconnection, Team
-project switching, and Off-Peak entry related Desktop E2E for UI changes; check mobile Web responsive behavior. If remote environments cannot be fully verified,
-commit notes must list the impact scope of Local/Remote Account Source and pending evidence.
-
-Update this Todo's status and actual deliverables upon completion; record the sole importer boundary still in mandatory upgrade window; commit with independent Conventional
-Commit.
+Verification: `pnpm test:unit:affected`, `pnpm typecheck`, `pnpm lint`, `pnpm fmt:check`, `pnpm knip`; mechanical zero
+via `pnpm dep:refs`, TypeScript and `rg`; Desktop E2E for Provider Settings, OAuth reconnection, Team project switching
+and Off-Peak entry plus mobile Web responsive check for UI changes; if remote environments cannot be fully verified, the
+commit notes list the Local/Remote Account Source impact scope and pending evidence. Record the sole importer boundary
+still inside the mandatory upgrade window; independent Conventional Commit.

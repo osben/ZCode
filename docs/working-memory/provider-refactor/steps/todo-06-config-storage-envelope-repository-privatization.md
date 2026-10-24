@@ -8,335 +8,139 @@
 >
 > Target design: [`../design/registry/configuration.md`](../design/registry/configuration.md)
 >
-> Suggested prerequisites: [`todo-03-provider-model-ownership-and-property-totality.md`](./todo-03-provider-model-ownership-and-property-totality.md)、
+> Suggested prerequisites: [`todo-03-provider-model-ownership-and-property-totality.md`](./todo-03-provider-model-ownership-and-property-totality.md),
 > [`todo-05-model-ref-retirement.md`](./todo-05-model-ref-retirement.md)
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/todo-06-config-storage-envelope-repository-privatization.md`
 
-## 1. Task Objective
+## 1. Objective
 
-Delete `ProviderConfigDocument` and `ModelSelectionConfigDocument` from Provider Domain's public API. Move
-`schemaVersion`, JSON envelope, parsing, serialization, and migration into Node Repository's private storage implementation.
-
-This Todo does not delete versioned files, nor reduce persistence reliability. Config files still need strict Schema, version migration, backup, atomic
-write, file lock, revision, and watcher; the only change is that domain layer and callers no longer perceive these physical storage concepts.
-
-```text
-Current
-
-Settings / Config Service / Projection / Legacy Importer
-                          |
-                          v
-         ProviderConfigDocument / ModelSelectionConfigDocument
-          |- schemaVersion
-          |- Domain Config
-          |- toJSON()
-          `- parse / migrate
-                          |
-                          v
-                        Node Repository
-
-Target
-
-Settings / Config Service / Projection / Legacy Importer
-                          |
-                          v
- ProviderConfigLayerUpdate / ModelSelection | undefined
-                          |
-                          v
-                        Node Repository
-          |- private Stored*Vn schema
-          |- parse / serialize / migrate
-          |- backup / atomic write / file lock
-          `- revision / watcher
-```
+Delete `ProviderConfigDocument` and `ModelSelectionConfigDocument` from the Provider Domain's public API. Move
+`schemaVersion`, JSON envelope, parsing, serialization and migration into the Node Repository's private storage
+implementation. Versioned files and persistence reliability are not reduced: strict Schema, version migration, backup,
+atomic write, file lock, revision and watcher stay; only the domain layer and callers stop perceiving the physical
+storage concepts. Before: Settings / Config Service / Projection / Legacy Importer used the Documents (`schemaVersion`,
+Domain Config, `toJSON()`, parse / migrate) on top of the Node Repository. Target: they use
+`ProviderConfigLayerUpdate` / `ModelSelection | undefined`; the Repository owns private `Stored*Vn` schema, parse /
+serialize / migrate, backup / atomic write / file lock and revision / watcher.
 
 ## 2. Core Decisions
 
-### 2.1 `Document` Is Not a Domain Concept
-
-Provider Domain only recognizes:
-
-- `ProviderConfigMap`;
-- `ModelConfigRules`;
-- `ProviderConfigLayerSnapshot`;
-- `ProviderConfigLayerUpdate`;
-- `ModelSelection`;
-- Config Overlay, integrity validation, Registry, and initial model selection parsing.
-
-`schemaVersion`, file top-level object, JSON field layout, and migration only describe "how to save," not constituting new Config Layer,
-Effective Config, or runtime state. Therefore `@zcode/provider` must no longer export objects with `Document` semantics.
-
-### 2.2 Do Not Replace `Document` with a New Intermediate Layer
-
-Do not add public `ConfigEnvelope`, `ConfigPayload`, `ConfigState`, `SerializedConfig`, or same-shape DTO. Existing domain values are sufficient:
-
-```ts
-interface ProviderConfigLayerSnapshot {
-  readonly revision: string;
-  readonly providers: ProviderConfigMap;
-  readonly models: ModelConfigRules;
-}
-
-interface ProviderConfigLayerUpdate {
-  readonly providers: ProviderConfigMap;
-  readonly models: ModelConfigRules;
-}
-```
-
-Provider Repository continues using Snapshot/Update as boundary. Model Selection Repository's business read/write values directly use
-`ModelSelection | undefined`; do not establish a new public object solely to retain `.configuredDefault` wrapper layer.
-
-### 2.3 Storage Structures Can Have Names, But Must Be Private
-
-`provider-node` internals can declare structures by version:
-
-```ts
-interface StoredProviderConfigV1 {
-  readonly schemaVersion: 1;
-  readonly providers: unknown;
-  readonly models: unknown;
-}
-
-interface StoredModelSelectionConfigV1 {
-  readonly schemaVersion: 1;
-  readonly configuredDefault?: unknown;
-}
-```
-
-Accurate field types constrained by private Zod Schema and serialization functions. Names can use `Stored*Vn` or `*FileVn`, but cannot be exported from
-`@zcode/provider-node`'s public barrel, nor become Service, UI, Runtime, or Protocol contracts.
-
-### 2.4 Storage Reliability Fully Retained
-
-Repository privatization does not equal directly `JSON.parse()` and trusting types. The following capabilities all retained:
-
-- Strict runtime Schema validation;
-- Current `schemaVersion` and future adjacent version migration;
-- High-version rejection and diagnosable errors;
-- Personal file migration backup before migration;
-- Private permission atomic writes and file locks;
-- Revision based on normalized content;
-- Watcher deduplication and change notification;
-- Official Source and Personal Repository's consistent understanding of the same formal file Schema.
-
-These behaviors guaranteed by Repository/codec tests; cannot be weakened by deleting public class.
+1. **`Document` is not a domain concept.** The Provider Domain recognizes only `ProviderConfigMap`,
+   `ModelConfigRules`, `ProviderConfigLayerSnapshot`, `ProviderConfigLayerUpdate`, `ModelSelection`, Config Overlay,
+   integrity validation, Registry and initial model selection parsing. `schemaVersion`, the file top-level object, JSON
+   layout and migration describe only how to save; `@zcode/provider` exports no `Document`-semantics objects.
+2. **No new intermediate layer** (`ConfigEnvelope`, `ConfigPayload`, `ConfigState`, `SerializedConfig`, same-shape
+   DTO). Existing values suffice: `ProviderConfigLayerSnapshot { revision, providers, models }` and
+   `ProviderConfigLayerUpdate { providers, models }`. The Model Selection Repository reads/writes
+   `ModelSelection | undefined` directly (no new public object only to keep a `.configuredDefault` wrapper).
+3. **Storage structures may have names but are private.** `provider-node` may declare `StoredProviderConfigV1`
+   (`schemaVersion: 1`, `providers`, `models`) and `StoredModelSelectionConfigV1` (`schemaVersion: 1`,
+   `configuredDefault?`), constrained by private Zod Schemas and serializers; names `Stored*Vn` / `*FileVn`; never
+   exported from the `@zcode/provider-node` public barrel and never Service, UI, Runtime or Protocol contracts.
+4. **Storage reliability fully retained:** strict runtime Schema validation; current `schemaVersion` and future adjacent
+   version migration; high-version rejection with diagnosable errors; Personal file migration backup before migration;
+   private-permission atomic writes and file locks; revision from normalized content; watcher deduplication and change
+   notification; Official Source and Personal Repository share the same formal file Schema. Guaranteed by
+   Repository/codec tests, not weakened by deleting the public class.
 
 ## 3. Provider Config Target Boundary
 
-### 3.1 Domain and Repository
+`@zcode/provider` keeps `ProviderConfigMap`, `ModelConfigRules`, `ProviderConfigLayerSnapshot`,
+`ProviderConfigLayerUpdate`, `ProviderConfigService`, Overlay / Resolver / Registry. `@zcode/provider-node` holds
+`NodeOfficialProviderConfigSource`, `NodePersonalProviderConfigRepository` and a private
+`provider-config-file-codec` (`StoredProviderConfigVn`, parse / serialize, migrate). The Official Source parses files
+and returns `ProviderConfigLayerSnapshot`; the Personal Repository receives `ProviderConfigLayerUpdate` and builds/writes
+versioned files internally; Revision stays produced by the Repository from normalized persisted content; the Domain
+neither decides file format nor calls `toJSON()` for a storage envelope.
 
-```text
-@zcode/provider
-|- ProviderConfigMap
-|- ModelConfigRules
-|- ProviderConfigLayerSnapshot
-|- ProviderConfigLayerUpdate
-|- ProviderConfigService
-`- Overlay / Resolver / Registry
-             |
-             | read/update
-             v
-@zcode/provider-node
-|- NodeOfficialProviderConfigSource
-|- NodePersonalProviderConfigRepository
-`- private provider-config-file-codec
-   |- StoredProviderConfigVn
-   |- parse / serialize
-   `- migrate
-```
-
-- Official Source parses files and returns `ProviderConfigLayerSnapshot`;
-- Personal Repository receives `ProviderConfigLayerUpdate`, internally constructs and writes versioned files;
-- Revision continues produced by Repository based on normalized persisted content;
-- Domain does not decide file format, nor calls `toJSON()` to generate storage envelope.
-
-### 3.2 Personal Projection
-
-`projectEffectiveProvidersToPersonalConfig()` currently returns `ProviderConfigDocument`. Target is to return
-`ProviderConfigLayerUpdate`, expressing only the projected Personal Provider Map and Model Rules.
-
-This Todo only corrects the return boundary; does not re-approve Effective -> Personal as Settings normal save path. Formal Settings continues
-submitting sparse Personal Overlay formed by user's actual modifications; this projection function only serves still-compatible-window explicit old config import, to be retired together with
-Legacy importer subsequently.
-
-### 3.3 Migration Types
-
-`ProviderConfigDocumentMigration = (input: unknown) => unknown` no longer exported from Domain. Formal version migration is
-storage Schema implementation, managed by `provider-node` private codec.
-
-If Bootstrap needs to inject versionless Legacy importers during transition, it returns `ProviderConfigLayerUpdate | null`;
-Repository validates domain values, wraps current version file envelope, and writes. Legacy importers do not produce `schemaVersion`, nor know
-formal file serialization classes.
+- **Personal projection:** `projectEffectiveProvidersToPersonalConfig()` returned `ProviderConfigDocument`; it now returns
+  `ProviderConfigLayerUpdate` (projected Personal Provider Map and Model Rules only). This only corrects the return
+  boundary: Effective -> Personal is not re-approved as the normal Settings save path (Settings keeps submitting a
+  sparse Personal Overlay); the function serves only the explicit old-config import compatibility window and retires
+  with the Legacy importer.
+- **Migration types:** `ProviderConfigDocumentMigration = (input: unknown) => unknown` is no longer exported from the
+  Domain; formal version migration is storage Schema implementation in the `provider-node` private codec. A versionless
+  Legacy importer injected by Bootstrap returns `ProviderConfigLayerUpdate | null`; the Repository validates domain
+  values, wraps the current-version file envelope and writes; importers produce no `schemaVersion` and know no formal
+  file serialization classes.
 
 ## 4. Model Selection Target Boundary
 
-Current `model-selection-config.ts` mixes file storage and domain parsing; must separate:
+`model-selection-config.ts` mixed file storage and domain parsing and is separated: `@zcode/provider` keeps
+`ModelSelection`, `InitialModelSelectionResolution`, `resolveInitialModelSelection()`; `@zcode/provider-node` has
+`NodeModelSelectionConfigRepository` and a private `model-selection-config-file-codec` (`StoredModelSelectionConfigVn`,
+strict schema, parse / serialize / migrate). Repository public behavior:
+`read(): Promise<ModelSelection | undefined>`; `saveConfiguredDefault(selection: ModelSelection | undefined): Promise<void>`
+(may return a frozen `ModelSelection | undefined` if callers need post-save values, never a storage Document; final
+signatures per what caller tests prove). `resolveInitialModelSelection()` keeps taking `configuredDefault?: ModelSelection`
+and a Registry View, unrelated to file version, file missing and migration; it stays in the Domain.
 
-```text
-@zcode/provider
-|- ModelSelection
-|- InitialModelSelectionResolution
-`- resolveInitialModelSelection()
+## 5. Legacy vs Formal Migration
 
-@zcode/provider-node
-|- NodeModelSelectionConfigRepository
-`- private model-selection-config-file-codec
-   |- StoredModelSelectionConfigVn
-   |- strict schema
-   `- parse / serialize / migrate
-```
+Versionless old config -> Legacy Importer (transitional publication facility) -> current Domain value -> Repository
+writes the current-version file. Formal `schemaVersion N` file -> Repository private N -> N+1 migration -> current-version
+file. The Legacy importer converts only facts old configs explicitly express (no model capability guessing); after the
+mandatory upgrade window ends, the Legacy importer, old parser, compatibility constants and tests are deleted entirely;
+adjacent version migrations of published formal formats are retained long-term; never-published intermediate Schemas get
+no compatibility history; neither migration spreads back to Core, Registry, Settings or Runtime.
 
-Repository public behavior tightened to:
+## 6. Impact Scope
 
-```ts
-read(): Promise<ModelSelection | undefined>;
-saveConfiguredDefault(selection: ModelSelection | undefined): Promise<void>;
-```
+`packages/provider/src/config/document.ts` (public Document, parser, migration -> delete public storage envelope);
+`packages/provider/src/model-selection-config.ts` (keep only selection domain logic);
+`packages/provider/src/personal-config-projection.ts` (return Layer Update);
+`packages/provider-node/src/personal-provider-config-repository.ts` and `official-provider-config-source.ts` (use
+the private codec, shared); `packages/provider-node/src/model-selection-config-repository.ts` (read/write Selection
+directly); `packages/provider-node/src/provider-config-runtime.ts` (importer returns Layer Update); CLI/Services Legacy
+importer (produce domain values only); Provider/Provider Node tests (split by domain and storage responsibilities).
+Verify the complete scope with `rg`, TypeScript references and package exports.
 
-If callers truly need post-save values, `saveConfiguredDefault()` can return frozen `ModelSelection | undefined`, but cannot
-return storage Document. Final signatures determined by what caller tests prove minimally needed.
+## 7. Tests
 
-`resolveInitialModelSelection()` continues receiving `configuredDefault?: ModelSelection` and Registry View; unrelated to file version,
-file missing, and migration; must stay in Domain.
-
-## 5. Legacy and Formal Migration Boundaries
-
-Two types of migration must be distinguished:
-
-```text
-Versionless old config
-    |
-    v
-Legacy Importer (transitional publication facility)
-    |
-    v
-Current Domain Value
-    |
-    v
-Repository writes current version file
-
-Formal schemaVersion N file
-    |
-    v
-Repository private N -> N+1 migration
-    |
-    v
-Current version file
-```
-
-- Legacy importer only converts facts explicitly expressed by old configs, does not guess model capabilities;
-- After mandatory upgrade window ends, Legacy importer, old parser, compatibility constants, and tests deleted entirely;
-- Published formal file format adjacent version migrations retained long-term;
-- Intermediate Schemas never published do not establish compatible history;
-- Neither Legacy nor formal migrations spread back to Core, Registry, Settings, or Runtime.
-
-## 6. Current Impact Scope
-
-At least check the following consumers before implementation:
-
-| Scope                                                               | Current Leak                                | Target                                       |
-| ------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------- |
-| `packages/provider/src/config/document.ts`                          | Public Provider Document, parser, migration | Delete public storage envelope               |
-| `packages/provider/src/model-selection-config.ts`                   | Storage and selection parsing mixed         | Retain only selection domain logic           |
-| `packages/provider/src/personal-config-projection.ts`               | Returns Document                            | Return Layer Update                          |
-| `packages/provider-node/src/personal-provider-config-repository.ts` | Imports public Document                     | Use private codec                            |
-| `packages/provider-node/src/official-provider-config-source.ts`     | Imports public migration                    | Use same private codec                       |
-| `packages/provider-node/src/model-selection-config-repository.ts`   | read/save returns Document                  | Directly read/write Selection                |
-| `packages/provider-node/src/provider-config-runtime.ts`             | Importer type leaks Document                | Importer returns Layer Update                |
-| CLI/Services Legacy importer                                        | Constructs Document                         | Only produce domain values                   |
-| Provider/Provider Node tests                                        | Uses public Document as test subject        | Split by domain and storage responsibilities |
-
-Verify complete scope with `rg`, TypeScript references, and package exports during implementation; cannot mechanically migrate based on above file list alone.
-
-## 7. Tests First
-
-### 7.1 Domain
-
-1. Personal projection returns `ProviderConfigLayerUpdate`; providers/models semantics unchanged;
-2. `resolveInitialModelSelection()` behavior for configured default, unavailable default, and Registry fallback unchanged;
-3. Domain tests and exports no longer reference `schemaVersion`, Document, parse/migrate, or file JSON;
-4. Config Overlay, integrity validation, and Registry publish behavior unchanged.
-
-### 7.2 Provider Repository
-
-1. Current version Provider files parsed strictly and yield same Layer Snapshot;
-2. Layer Update round-trip yields correct providers/models and revision;
-3. Missing version, future version, missing migration, and illegal fields rejected by existing rules;
-4. Adjacent version migration executed sequentially and cannot skip levels;
-5. Personal Legacy import成功后 (after success) backs up original file and writes current format atomically;
-6. Importer failure, Schema failure, backup failure do not modify original file;
-7. Official and Personal use the same formal storage Schema;
-8. Watcher deduplicates same revision; real changes notified normally.
-
-### 7.3 Model Selection Repository
-
-1. `undefined` and complete `ModelSelection` correctly round-trip;
-2. Selection options maintain strict validation and freeze semantics;
-3. Unsupported versions and illegal fields rejected;
-4. File missing, Legacy import, save, and restart recovery behavior unchanged;
-5. Callers no longer access `.configuredDefault` Document, consuming Selection directly from Repository return.
-
-### 7.4 Mechanical Zero
-
-- `@zcode/provider` no longer exports `ProviderConfigDocument*`;
-- `@zcode/provider` no longer exports `ModelSelectionConfigDocument*`;
-- `packages/provider` production code has no `schemaVersion` and Config file migration;
-- Service, Bootstrap, UI, Runtime do not pass `Document`, `Envelope`, or same-shape storage DTO;
-- JSON/version/migration tests fully belong to `provider-node`;
-- No new public `Stored*`, `Serialized*`, `ConfigState` substitute types.
+- **Domain:** Personal projection returns `ProviderConfigLayerUpdate` with unchanged providers/models semantics;
+  `resolveInitialModelSelection()` behavior for configured default, unavailable default and Registry fallback unchanged;
+  Domain tests and exports reference no `schemaVersion`, Document, parse/migrate or file JSON; Overlay, integrity
+  validation and Registry publish unchanged.
+- **Provider Repository:** current-version files parse strictly to the same Layer Snapshot; Layer Update round-trip gives
+  correct providers/models and revision; missing version, future version, missing migration and illegal fields rejected
+  by existing rules; adjacent migration runs sequentially and cannot skip levels; Personal Legacy import success backs
+  up the original and writes the current format atomically; importer failure, Schema failure and backup failure leave
+  the original file untouched; Official and Personal use the same formal storage Schema; watcher deduplicates the same
+  revision and notifies real changes.
+- **Model Selection Repository:** `undefined` and complete `ModelSelection` round-trip; options keep strict validation
+  and freeze semantics; unsupported versions and illegal fields rejected; file missing, Legacy import, save and restart
+  recovery unchanged; callers consume Selection directly (no `.configuredDefault` Document).
+- **Mechanical zero:** `@zcode/provider` exports no `ProviderConfigDocument*` / `ModelSelectionConfigDocument*`;
+  `packages/provider` production code has no `schemaVersion` and Config file migration; Service, Bootstrap, UI, Runtime
+  do not pass `Document`, `Envelope` or same-shape storage DTO; JSON/version/migration tests live in `provider-node`; no
+  new public `Stored*`, `Serialized*`, `ConfigState` substitutes.
 
 ## 8. Implementation Order
 
-### Step A: Freeze Current Storage Behavior
+A. Freeze current storage behavior (add Provider Config and Model Selection file behavior tests to `provider-node`:
+JSON, version errors, migration, backup, revision, watcher, atomic write; confirm Todo 03's field structure and Todo 05's
+`ModelSelection` are stable). B. Establish the Repository private codec (storage Schema, version constants,
+parse/serialize/migrate, errors moved; Official Source and Personal Repository share the Provider Config codec; codec and
+Stored types not exported from the barrel). C. Tighten Repository and importer API (Snapshot/Update boundary; projection
+and Legacy importer return Layer Update; Model Selection Repository returns Selection; Bootstrap, CLI and Services stop
+reading/constructing Documents). D. Delete Domain Document (both Document classes, storage parser/migration and exports
+from `@zcode/provider`; keep `resolveInitialModelSelection()` and domain types; move/reorganize tests, deleting those
+proving only the public Document class). E. Verify and commit (Provider, Provider Node, Services, Bootstrap, CLI unit
+tests; Legacy import and restart recovery regression; `pnpm typecheck`, `pnpm lint`, `pnpm fmt:check`; `rg` audit of
+the mechanical zero items; independent Conventional Commit).
 
-- First add Provider Config and Model Selection file behavior tests to `provider-node`;
-- Fix existing JSON, version errors, migration, backup, revision, watcher, and atomic write behavior;
-- Confirm TODO 03's Provider/Model field structure and TODO 05's `ModelSelection` stabilized, avoiding repeated storage Schema modifications.
+## 9. Non-Goals, Invariants and Completion
 
-### Step B: Establish Repository Private Codec
+Not done here: changing the Built-in -> Account Built-in -> Personal Overlay order; `builtinModelIds` / `modelIds`,
+conflicts or `enabled` semantics; Model Config Rule merging, integrity validation or Active Model; authentication,
+Access Type, Provider API assembly or final authorization; Settings UI, model selector, queue, Session or remote sync;
+premature deletion of the Legacy importer still in the compatibility window; any general Persistence / Document /
+Serialization Framework. Must retain: the same persisted input produces the same domain Config; the same domain update
+produces compatible formal files; runtime, Settings and Registry never see the file Envelope nor need to know whether
+configuration comes from JSON or another Repository implementation.
 
-- Establish private Provider Config and Model Selection codec in `provider-node`;
-- Move storage Schema, version constants, parse/serialize/migrate, and errors;
-- Official Source and Personal Repository share Provider Config codec;
-- Do not export codec and Stored types from package barrel.
-
-### Step C: Tighten Repository and Importer API
-
-- Personal Provider Repository maintains Snapshot/Update boundary;
-- Personal projection and Legacy importer changed to return Layer Update;
-- Model Selection Repository changed to directly return Selection;
-- Bootstrap, CLI, and Services callers stop reading or constructing Document.
-
-### Step D: Delete Domain Document
-
-- Delete both Document classes, storage parser/migration, and corresponding exports from `@zcode/provider`;
-- Leave `resolveInitialModelSelection()` and related domain types in Provider Domain;
-- Move and reorganize tests; delete tests only proving public Document class existence.
-
-### Step E: Verification and Commit
-
-- Run Provider, Provider Node, Services, Bootstrap, and CLI related unit tests;
-- Run Legacy import and restart recovery representative regression;
-- Run `pnpm typecheck`, `pnpm lint`, `pnpm fmt:check`;
-- Audit mechanical zero items with `rg`;
-- Independent Conventional Commit.
-
-## 9. Non-Goals and Invariants
-
-This Todo does not:
-
-- Modify Built-in -> Account Built-in -> Personal Overlay order;
-- Modify `builtinModelIds` / `modelIds`, conflicts, or `enabled` semantics;
-- Modify Model Config Rule merging, integrity validation, or Active Model;
-- Modify authentication, Access Type, Provider API assembly, or final authorization;
-- Refactor Settings UI, model selector, queue, Session, or remote sync;
-- Prematurely delete Legacy importer still in product compatible window;
-- Opportunistically establish general Persistence, Document, or Serialization Framework.
-
-Must retain: same persisted input produces same domain Config; same domain update produces compatible formal files; runtime, Settings, and Registry
-cannot see file Envelope, nor need to know whether configuration comes from JSON, other file formats, or future different Repository implementations.
-
-## 10. Completion Definition
-
-Provider Domain's public vocabulary remains only config layers, config rules, selections, and parsing results. All versioned JSON envelopes, file migration, and
-persistence lifecycle encapsulated within Node Repository; callers only pass accurate domain values. Formal config files and compatible behavior remain stable;
-replacing storage implementation no longer requires modifying Provider Domain, Settings, Registry, or Runtime.
+Completion: the Provider Domain's public vocabulary is only config layers, config rules, selections and parsing results;
+all versioned JSON envelopes, file migration and persistence lifecycle live in the Node Repository; callers pass precise
+domain values; formal config files and compatibility behavior stay stable; replacing storage implementation no longer
+requires modifying Provider Domain, Settings, Registry or Runtime.

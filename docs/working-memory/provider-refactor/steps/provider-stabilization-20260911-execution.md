@@ -1,61 +1,94 @@
-# Provider Stabilization: This Round 19 Items Execution Ledger
+# Provider Stabilization: Execution Ledger for This Round's 19 Items
 
-> 2026-09-11 User authorized to enter Goal execution, item-by-item review, and final push of the current branch. The baseline is `1bc2e9bc42`, the branch is `provider-stabilization-20260911`; the working tree is an independent worktree.
+> 2026-09-11. The user authorized Goal execution, item-by-item review and a final push of the current branch. Baseline `1bc2e9bc42`, branch `provider-stabilization-20260911`, independent worktree.
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/provider-stabilization-20260911-execution.md`
 
-## Goal, Scope, and Execution Convention
+## Goal, Scope and Conventions
 
-Execute all 19 items (Todo113 round two and Todo115-132), using the latest decision of each Todo as the specification. Do not restore the revoked behavior just by the old comment. The original text "only persisted / not authorized for implementation" is preserved as history; this round uniformly authorizes execution; Todo120 still focuses on the signature-equivalent acceptance, and if modification is found, give the evidence first, without using this to redo the signature system.
+Execute all 19 items (Todo113 round two and Todo115-132), using each Todo's latest decision as the specification (do not
+restore revoked behavior from old comments). The original "only persisted / not authorized for implementation" wording
+is kept as history; this round authorizes execution. Todo120 still focuses on signature-equivalent acceptance: if a
+modification is found, give evidence first and do not redo the signature system.
 
-- Spec and failure tests first, then implementation. Check all requirements, upstream/downstream, Provider/Selection abstractions, and data boundaries for each item; record the evidence before proceeding; the shared code intersection can be implemented and reviewed in the same group, and the shared build, typecheck, lint, and E2E are executed in batches.
-- Record the single-point environment/test pre-issues and convert them to other independent items. Do not re-run large regressions without added proof value; distinguish the merge/this round regression, the existing product issues, and the outdated tests; do not expand the fix of unrelated issues.
-- The new product decision, the significantly expanded architecture, the real user data, or the new permission request only suspend the relevant matters; the rest continues. The unresolved key requirements must not be written as completed; the Todo102 that was previously unverified cannot be used to bypass this round's acceptance.
-- The built-in accounts cannot be disabled; the manual Key instances created by the template can be enabled or disabled; the qualification is still judged by the public facts. The telemetry side recovers the old caliber to the greatest extent; the reports/actual identity remain unchanged.
-- The old fields and content are retained; the rollback or re-upgrade can discard the model selection, but the content is readable and cannot cause anomalies due to missing new fields. The first migration does not overwrite the already-migrated personal intent; the 0020 checksum does not change.
-- One config fact source, one formal execution chain; the bound Model freezes; do not write drafts/history; do not secretly replace the model. The desktop continuous, mobile replayable/shared-host, and the workspace identity isolation are maintained.
-- The final overall intersection review, the critical regression, and the commit are pushed to the current branch; do not automatically publish the online config; do not automatically create the MR; do not push other workers' branches.
+1. Spec and failing tests first, then implementation. Check requirements, upstream/downstream, Provider/Selection
+   abstractions and data boundaries per item and record evidence before proceeding; items with shared code may be
+   implemented and reviewed in one group, with shared build/typecheck/lint/E2E run in batches.
+2. Record single-point environment/test pre-existing issues and move them to independent items; do not rerun large
+   regressions without added proof value; distinguish merge/this-round regressions, existing product issues and
+   outdated tests; do not fix unrelated issues.
+3. A new product decision, significantly expanded architecture, real user data or a new permission request suspends only
+   the related matter. Unresolved key requirements are never written as completed; previously unverified Todo102 cannot
+   bypass this round's acceptance.
+4. Built-in accounts cannot be disabled; manual-Key instances created from a template can be enabled or disabled;
+   qualification is still judged by public facts. Telemetry restores the old caliber as far as possible; reports and
+   actual identity are unchanged.
+5. Old fields and content are retained; rollback or re-upgrade may discard model selection but content stays readable
+   and must not break on missing new fields. First migration never overwrites already-migrated personal intent; the 0020
+   checksum is unchanged.
+6. One config fact source, one formal execution chain; a bound Model is frozen; drafts/history are not written; no
+   secret model replacement. Desktop continuous, mobile replayable/shared-host and workspace identity isolation stay.
+7. The final intersection review, key regressions and commit are pushed to the current branch; no automatic online
+   config release, no automatic MR, no push of other workers' branches.
 
-## Batches and Status
+## Items and Outcome
 
-**The final summary (covering the "pending batch acceptance" during the implementation in the table below): All 19 items have been implemented or the original implementation has been verified and reviewed item by item; the batch-local testing, build, and intersection review are completed. The 2026-09-12 Pro supplements the real Electron cold recovery, the settings save/recovery, and the Chinese display verification; the remaining acceptance of the mobile/SSH, etc. is still truthfully retained, and the full-end acceptance cannot be announced.** The delivery details, commit correspondence, and limitations are documented at the [Final Review](./provider-stabilization-20260911-final-review.md). The table below retains the partial evidence of each item, without rewriting the environment-impacted as product-passed.
+All 19 items were implemented, or the original implementation was verified and reviewed item by item; batch-local
+tests, build and intersection review are done. The 2026-09-12 Pro supplement added real Electron cold recovery,
+settings save/recovery and Chinese display verification; remaining mobile/SSH acceptance stays unclaimed, so full-end
+acceptance is not announced. Delivery details, commits and limitations: [Final Review](./provider-stabilization-20260911-final-review.md).
 
-| Todo | Topic                                                                    | Implementation / Verification / Review                                                                                                                                                                                 |
-| ---- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 118  | The first migration manual Provider enable/disable                       | The implementation, the test, and the joint review with 117 pass; the batch final acceptance is pending                                                                                                                |
-| 121  | Supplement the Session reasoning tier                                    | The implementation, the formal migration/Reader test, the partial review pass; the batch final acceptance is pending                                                                                                   |
-| 117  | The account domain, the plan selection, the disable account cancellation | The implementation, 503 tests batch unit test, 4 browser cases, and the review pass; the real multi-end chain is untested                                                                                              |
-| 115  | Provider title bar and hit area                                          | The implementation, 109 tests batch unit test, 6 browser cases, and the partial review pass; the batch final acceptance is pending                                                                                     |
-| 132  | The name confirmation save and the option bottom color                   | The implementation, the batch unit test/browser and the screenshot review pass; the batch final acceptance is pending                                                                                                  |
-| 119  | The connectivity test green and the name                                 | The implementation, the unit test/browser and the partial review pass; the batch final acceptance is pending                                                                                                           |
-| 124  | The disabled test entry and the prompt                                   | The implementation, the unit test/browser and the partial review pass; the batch final acceptance is pending                                                                                                           |
-| 116  | The single Key URL complete acceptance                                   | The full-chain review, 49 unit tests, the batch browser and the Pro native open pass; the real mobile login console is untested                                                                                        |
-| 130  | The manual field contract                                                | The implementation, 498 tests batch unit test, the real Repository round-trip, 2 browser cases, and the partial review pass; the batch final acceptance is pending                                                     |
-| 131  | The smart placement and the recovery                                     | The implementation, the atomic recovery/old request failure browser, the unit test, and the partial review pass; the Electron file interaction batch acceptance is pending                                             |
-| 125  | The question mark description                                            | The 9-item final implementation, the dual-size help interaction/geometric, and the partial review pass; the Linux Chinese character acceptance limitation is retained                                                  |
-| 126  | The GLM vision badge, the Flash PDF, the Turbo default                   | The implementation, 96 unit tests, 2 dual-entry browser cases, and the partial review pass; not yet published online                                                                                                   |
-| 113  | The round two directory and the smart configuration                      | The research, the verified directory/rules/SDK implementation, and the partial review pass; the batch final acceptance is in progress, the unconfirmed supply limitation is retained                                   |
-| 128  | The lifecycle and idle qualification                                     | The implementation, 80 targeted tests/1 real Hook browser case, and the partial review pass; the Air real-team acceptance is pending the batch completion                                                              |
-| 127  | The Built-in online release chain                                        | The download/Account/lifecycle, the Pro settings refresh -> new request full chain, the macOS HTTP/dual-process, and the final revision22 integrity pass; the mobile/SSH and the online release limitation is retained |
-| 129  | The Team classification and the old telemetry ID                         | The implementation, 229 tests batch unit test/the real home page component browser case, and the partial review pass; the real-end batch acceptance is pending                                                         |
-| 122  | The Subagent error details                                               | The implementation, 84 Core tests, 2 detail/copy browser cases, and the partial review pass; does not include the unlocated startup root cause                                                                         |
-| 123  | The history capacity query                                               | The implementation and the review pass; 12 new tests, the batch gate, the Pro Electron CW01-CW06 pass; 5 baseline failures are recorded separately                                                                     |
-| 120  | The official URL signature-equivalent acceptance                         | 32 paired/147 tests batch testing and the review pass; the two official each have two entries' real with the Sig/200/text; the Air remote independent package limitation is retained                                   |
+| Todo | Topic                                                                | Implementation / verification / review                                                                         |
+| ---- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 118  | First-migration manual Provider enable/disable                       | Implementation, test and joint review with 117 passed                                                          |
+| 121  | Supplement Session reasoning tier                                    | Implementation, formal migration/Reader test passed                                                            |
+| 117  | Account domain, plan selection, disabled-account cancellation        | Implementation, 503 batch unit tests, 4 browser cases, review passed; real multi-end chain untested            |
+| 115  | Provider title bar and hit area                                      | 109 batch unit tests, 6 browser cases passed                                                                   |
+| 132  | Name confirmation save and option background color                   | Batch unit test/browser and screenshot review passed                                                           |
+| 119  | Connectivity test green feedback and name                            | Unit test/browser passed                                                                                       |
+| 124  | Disabled test entry and prompt                                       | Unit test/browser passed                                                                                       |
+| 116  | Single Key URL full acceptance                                       | Full-chain review, 49 unit tests, batch browser and Pro native open passed; real mobile login console untested |
+| 130  | Manual field contract                                                | 498 batch unit tests, real Repository round-trip, 2 browser cases passed                                       |
+| 131  | Smart placement and recovery                                         | Atomic recovery/old-request-failure browser, unit test passed; Electron file interaction later supplemented on Pro |
+| 125  | Question-mark description                                            | 9-item final implementation, dual-size help interaction/geometry passed; Linux Chinese-character limitation kept |
+| 126  | GLM vision badge, Flash PDF, Turbo default                           | 96 unit tests, 2 dual-entry browser cases passed; not yet published online                                     |
+| 113  | Round two directory and smart configuration                          | Research, verified directory/rules/SDK implementation passed; unconfirmed supply limitation kept               |
+| 128  | Lifecycle and idle qualification                                     | 80 targeted tests, 1 real Hook browser case passed; Air real-team acceptance pending                           |
+| 127  | Built-in online release chain                                        | Download/Account/lifecycle, Pro settings refresh -> new request full chain, macOS HTTP/dual-process, final revision22 integrity passed; mobile/SSH and online release limitation kept |
+| 129  | Team classification and old telemetry ID                             | 229 batch unit tests, real home-page component browser case passed                                            |
+| 122  | Subagent error details                                               | 84 Core tests, 2 detail/copy browser cases passed; the unlocated startup root cause is excluded                |
+| 123  | History capacity query                                               | 12 new tests, batch gate, Pro Electron CW01-CW06 passed; 5 baseline failures recorded separately               |
+| 120  | Official URL signature-equivalent acceptance                         | 32 paired / 147 batch tests passed; both official services each have two entries' real Sig/200/text; Air remote independent package limitation kept |
 
-## Verification and Limitations
+## Verification Notes
 
-The opening freshness passes; there is no upstream tracking branch (the final push sets the upstream). The initial architecture check has 0 violations. The Services is the unmanaged module, and the generated direct dependency contract; the first item retains the existing migration entry, without adding the cross-layer dependency.
+- Opening freshness passed; no upstream tracking branch (the final push sets it). Initial architecture check: 0
+  violations. Services is an unmanaged module with a generated direct-dependency contract; the first item keeps the
+  existing migration entry and adds no cross-layer dependency.
+- Credentials are never written to documents, printed or committed; real user files are not modified; other working
+  trees unchanged.
 
-There is no product modification at the start; each subsequent group appends the failure test, the post-fix result, the review conclusion, and the commit below. The credentials do not write to the document, do not print, and do not submit; the real user files are not modified. The other working tree remains unchanged.
+### Todo118: first migration
 
-## Todo118: The First Migration (Implementation Batch)
+Expanded real old file -> import -> Repository -> Resolver -> save-reopen cases; outer false/true, the zcode.enabled
+conflict, extension false and default are verified separately (before the fix, explicit enable/disable was lost in
+the new rule: 3 distinguishing failures; also corrected a test that accessed the non-existent
+`ResolvedProvider.executable` since execution qualification should check the model and the actual Registry member).
+The implementation copies only the explicit `enabled` to the outer layer of the Provider rule in the custom branch (the
+default is not materialized); old built-in API migrates only the Key, account identity skips, and model/Key/order/
+context are unchanged; the runtime Resolver and normal reading are not modified. 3 migration files / 20 tests pass
+including a real temp-directory round-trip; old `config.json` stays byte-identical, post-upgrade enable/disable edits
+persist and are not imported again. Account disable cancellation is jointly accepted with Todo117; type/lint and
+negative qualification examples were consolidated in the batch gate.
 
-- First expand the real old file -> import -> Repository -> Resolver -> the case that the save reopens; the outer false/true and the zcode.enabled conflict, the extension false, and the default are verified respectively. Before fixing, the explicit enable/disable is all lost in the new rule (3 distinguishing failures); additionally correct the test that accesses the non-existent ResolvedProvider.executable; the execution qualification should check the model and the actual Registry member.
-- The implementation only copies the explicit enabled to the outer layer of the Provider rule in the custom branch; the default does not materialize; the old built-in API only migrates the Key, the account identity skips, and the model/Key/order/context remain unchanged. The runtime Resolver or the normal reading is not modified.
-- The 3 migration files with 20 tests pass; it includes the real temporary directory round-trip; the old config.json is byte-invariant, and the active reversal of the enable/disable after the upgrade is maintained and does not import again. It is not just the mock import output.
-- The partial review: the configuration position, the false retention, the default default, the built-in identity priority, and the new file authority are satisfied. The account disable cancellation is jointly accepted by Todo117, so this item does not mark the full completion in advance; the type/lint and the supplementary qualification negative examples are consolidated in the batch gate.
+### Todo121: append migration and first gates
 
-## Todo121: The Append Migration and the First Group of Gates
-
-- The 0022 has been appended; the 19 failure cases are red first, then run with the old full-library migration and the GLM migration; 29 tests pass. The 0020/0021 is not modified, nor is the database table/column structure.
-- The formal runner and the Reader prove the two upgrade paths, the conservative skip, the original content/time maintenance, the failure rollback, and the no re-run. The partial review passes; see the Todo121 implementation section.
-- The root typecheck passes; the root lint 0 errors / 41 warnings; the Adapter typecheck passes; the architecture 0 violations. The full Adapter lint **does not pass**: there are multiple max-lines errors (including the migrations.ts that has exceeded the limit since before; only the registration item is appended this round); the new 0022 file passes the individual lint. The unrelated long files are not expanded; the final gate must distinguish the existing errors from the new issues. The logs are at `/tmp/provider-stabilization-20260911-{typecheck,lint,adapters-typecheck,adapters-lint}.log`. The previous incorrect use of the non-existent architecture module name cli-adapters has been corrected to the actual zcode-cli, without modifying the strategy or the baseline.
-- Continue executing Todo117; the batch gate is not the declaration of the 19 items completion.
+Migration 0022 was appended (19 failing cases red first, then green with the old full-library migration and the GLM
+migration; 29 tests pass); 0020/0021 and table/column structure are untouched. The formal runner and Reader prove the
+two upgrade paths, conservative skip, original content/time retention, failure rollback and no re-run. Root typecheck
+passed; root lint 0 errors / 41 warnings; Adapter typecheck passed; architecture 0 violations. Full Adapter lint did
+**not** pass (multiple max-lines errors including `migrations.ts`, which already exceeded the limit before; only the
+registration item was appended; the new 0022 file passes individual lint); unrelated long files were not expanded and
+the final gate must distinguish existing errors from new ones. Logs:
+`/tmp/provider-stabilization-20260911-{typecheck,lint,adapters-typecheck,adapters-lint}.log`. An earlier wrong
+architecture module name `cli-adapters` was corrected to the actual `zcode-cli` (no policy or baseline change).

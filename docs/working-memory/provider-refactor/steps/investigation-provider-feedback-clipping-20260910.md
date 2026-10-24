@@ -1,37 +1,49 @@
 # Provider Banner Clipping: Pro Runtime Investigation
 
-> 2026-09-10. Status: The original image is not reproduced, and the root cause is not confirmed; it must not be marked as fixed. This round only diagnoses, without modifying the product code.
+> 2026-09-10. Status: the original screenshot was not reproduced and the root cause is not confirmed; it must not be marked fixed. This round only diagnosed and changed no product code.
+>
+> User decision afterwards: ignore this item for now. Keep the record; do not continue implementation or use it as a completion prerequisite for other items. The round's to-do summary is at [Todo107](./todo-107-provider-settings-feedback-enablement-and-template-links.md).
+>
+> Full history: `git show 37b98ff8:docs/working-memory/provider-refactor/steps/investigation-provider-feedback-clipping-20260910.md`
 
-> The subsequent user decision: ignore this item first. Keep the investigation record; do not continue implementation or use it as a completion prerequisite for other items in this round; the to-do summary of this round is at [Todo107](./todo-107-provider-settings-feedback-enablement-and-template-links.md).
+## Phenomenon
 
-## The Original Phenomenon
+On the Air, the lower half of the connectivity-test success banner is missing; the model row is still visible; another
+model's testing-in-progress banner sits below it (original attachment: clipboard screenshot
+`d51e6f7f-bf4e-4753-bdbd-87056848d5b3.png`).
 
-The lower half of the Air connectivity test success banner is missing; the model row is still visible; and there is another model's testing-in-progress banner below. The original attachment: the clipboard screenshot `d51e6f7f-bf4e-4753-bdbd-87056848d5b3.png`.
+## Investigation
 
-## The Actual Investigation
-
-- The Pro does not run the ZCode; it starts the Electron from the existing development build and connects to the CDP. It is discovered that its build is relatively old, and cannot be used as the Air same-version verification.
-- The renderer resources are extracted only from the Air's current installation package, and this actual frontend is loaded in the Pro's temporary directory. The source code or the original build is not replaced. The Host is still the Pro's original build; the account/config DTO is inconsistent, and is therefore only used for the frontend layout diagnosis, and does not represent the full application same-version acceptance.
-- Both Electron instances are 41.0.3; both macOS are 26.6.2; the Air is M4, and the Pro is M5. The Pro GPU compositing and Metal are both enabled.
-- The temporary success/pending is injected through the original `ProviderDetailFeedbackBoundary`'s Context, without calling the model interface or saving the Provider config; another model row's temporary isTesting state is also set to reproduce the original image's spinning animation. The temporary list position adjustment makes the model row located below the banner.
-- Check 2/3 prompts, remove the middle prompt, change the window size, scroll, and the model row transform. Record the ancestor overflow, z-index, boundary, and the composite layer.
-- The 2-prompt test height is 44 CSS px each, the spacing is 8 px, and the overall is 96 px; it is located within the detail panel boundary, and the banner viewport's z-index is 20. The reason for the composite layer includes the BackdropFilter, but this is not the evidence that it causes the failure.
-- The continuous 12 rounds of prompts/scroll changes receive 68 screencast frames; 12 sampling frames are saved, and 0/3/6/9/11 are manually spot-checked; the original image's lower half disappearing is not seen. Each round of the DOM banner bottom hit check does not find that it is covered by the model row.
-- The system screencapture still returns `could not create image from display` after the user wakes up the Pro; the screen recording permission or the security setting is not modified. The CDP screenshot/recording is available, but they cannot be used to replace the unobtained system screen evidence.
+- The Pro does not run ZCode; Electron was started from an older existing development build over CDP, so it is not a
+  same-version check against the Air. The renderer resources were extracted from the Air's installed package and
+  loaded in a Pro temporary directory (source and original build untouched); the Host stayed the Pro's original build
+  (account/config DTO mismatch), so this is frontend layout diagnosis only, not same-version full-app acceptance.
+- Both Electron 41.0.3, both macOS 26.6.2; Air M4, Pro M5; Pro GPU compositing and Metal enabled.
+- Temporary success/pending states were injected through the original `ProviderDetailFeedbackBoundary` Context (no model
+  call, no Provider save); another model row's `isTesting` was set to reproduce the spinner; the list position was
+  adjusted so the model row sits below the banner. Checks: 2/3 prompts, removing the middle prompt, window resize,
+  scroll, model-row transform; recorded ancestor overflow, z-index, boundary and compositing layers.
+- Two prompts: 44 CSS px each, 8 px spacing, 96 px total, inside the detail panel boundary; banner viewport z-index 20.
+  The compositing layer reason includes BackdropFilter, but that is no evidence it causes the fault.
+- 12 consecutive rounds of prompt/scroll changes gave 68 screencast frames; 12 sampled frames saved, frames
+  0/3/6/9/11 manually checked: the clipped lower half was not seen; per-round DOM hit checks found the banner bottom
+  never covered by the model row.
+- System `screencapture` still returned `could not create image from display` after the Pro was woken (screen
+  recording permission/security settings were not modified); CDP screenshots/recording work but do not replace the
+  missing system screen evidence.
 
 ## Conclusion and Next Steps
 
-Under the reproduction conditions of this round, no ordinary CSS layer or the parent container overflow is found to clip the banner in half. This conclusion does not deny the user's screenshot, nor can it completely exclude the layout problem under other timing/device conditions.
+Under this round's conditions no ordinary CSS layer or parent overflow clips the banner. This does not deny the user's
+screenshot nor exclude a layout problem under other timing/device conditions. "backdrop-filter and GPU compositing
+rendering anomaly" is only a candidate with no before/after evidence; claiming it as root cause, or adding z-index /
+removing the blur as a verified fix, is prohibited.
 
-"The backdrop-filter and GPU compositing rendering anomaly" is still only a candidate; there is no evidence comparing the before and after of the failure; claiming the root cause based on this, or directly adding the z-index / deleting the blur as the verified fix, is prohibited.
+Next: when truly reproduced on the Air, connect CDP and record banner rect, compositing layers and a screenshot at the
+same time, then do a single-variable in-memory style comparison (e.g. remove the blur, disable the related animation).
+The Air has no debugging port; confirm with the user before restarting it; do not interrupt its task without
+authorization. When a fix is implemented a formal reproducible case must be left.
 
-The next step should connect the CDP when it is truly reproduced on the Air, record the banner rect, the composite layer, and the screen shot at the same time, and then do the single-variable comparison (such as removing the blur or disabling the relevant animation) that changes in-memory styles only. The Air currently has no debugging port; confirmation with the user before restart is required; the task cannot be interrupted without authorization.
-
-## Temporary Evidence
-
-- The local `/tmp/pro-banner-stress-evidence.json`: the geometry and hit result of each round.
-- The local `/tmp/pro-banner-frame-0.png` to `11.png`: the sampling frames.
-- The local `/tmp/pro-banner-row-spinner.png`: the model row and the banner spinning simultaneously scenario.
-- The local `/tmp/zcode-banner-stress.cjs`, `/tmp/zcode-pro-banner-cdp.cjs`: the diagnostic script, not the formal test or the production code.
-
-The above is the temporary diagnostic file, not the permanent regression evidence; when the fix is implemented, the formal reproducible case must still be left.
+Temporary evidence (local, not permanent regression evidence): `/tmp/pro-banner-stress-evidence.json` (per-round
+geometry and hit results), `/tmp/pro-banner-frame-0.png` to `11.png`, `/tmp/pro-banner-row-spinner.png`,
+diagnostic scripts `/tmp/zcode-banner-stress.cjs`, `/tmp/zcode-pro-banner-cdp.cjs`.
