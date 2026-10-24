@@ -112,7 +112,7 @@ Pre-release Schema special ruling per [Todo104](./steps/todo-104-pre-release-sch
 
 M2/M3 unified ordinary Provider config, display, selection, and execution to use Built-in → Account → Personal three-layer Config, Built-in + Personal Model Rules, and a process-level Registry. Completion per [`steps/02-provider-config-and-registry-cleanup.md`](./steps/02-provider-config-and-registry-cleanup.md) and [`steps/03-provider-architecture-cutover-implementation-log.md`](./steps/03-provider-architecture-cutover-implementation-log.md).
 
-Core architecture and completed Todos form the current release wrap-up baseline; Todo 32 completed Team/Individual settings page and Effective Provider boundary. Unfinished, deferred, and draft items for Todos 11, 11A, 15, 19, 22 etc. are unified at [`design-v2/design.md`](./design-v2/design.md#11-unfinished-not-changing-design); do not infer current status from old phase numbers.
+Core architecture and completed Todos form the current release wrap-up baseline; Todo 32 completed Team/Individual settings page and Effective Provider boundary. Unfinished, deferred, and draft items for Todos 11, 11A, 15, 19, 22 etc. are unified at [`design-v2/design.md`](./design-v2/design.md#11-unfinished-work-not-changing-design); do not infer current status from old phase numbers.
 
 This release wrap-up does not expand to Remote Provisioning, model selection lifecycle, ordinary Queue, `modelContextBudget.strategy`, or account product refactoring.
 

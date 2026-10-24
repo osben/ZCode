@@ -17,7 +17,7 @@
 > 2026-09-11 later ruling (implemented, full acceptance pending): an ordinary `api-key` that exactly matches the two
 > official Coding Plan Anthropic URLs is also admitted to request-safety validation. This supersedes the old limit below
 > that an ordinary Key never enters validation regardless of address; persisted Access is unchanged and no migration of old
-> instances is added. Current boundary: [request protocol §5.2](../design/registry/request-compatibility-and-access-protocols.md#52-官方版本请求安全校验). The
+> instances is added. Current boundary: [request protocol §5.2](../design/registry/request-compatibility-and-access-protocols.md#52-official-version-request-security-verification). The
 > full equivalence verification and review requested by the user are owned by Todo120 and are not complete, so this
 > supplement is not claimed as fully accepted.
 >

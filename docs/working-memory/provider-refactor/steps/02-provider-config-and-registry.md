@@ -60,7 +60,7 @@ own instance per process.
 3. Account Source directly produces the third sparse `ProviderConfigMap`, overlaid with the same type. An Account
    Provider's `accessId` and current `models` are kind-specific Config fields; the Registry does not verify account
    entitlements; request auth is ultimately decided by the Account Service (background:
-   [`02-provider-config-and-registry-human-in-the-loop.md`](./02-provider-config-and-registry-human-in-the-loop.md#1-account-access-reuse-provider-config-overlay)).
+   [`02-provider-config-and-registry-human-in-the-loop.md`](./02-provider-config-and-registry-human-in-the-loop.md#1-account-access-reuses-provider-config-overlay)).
 4. The Registry forms ProviderConfig and ModelConfig in two rounds; providers and models keep order externally;
    internal indexes serve query, Selection validation and Model creation.
 5. Settings and model selection pages use their own Facades; the Renderer does not copy parsing logic.
