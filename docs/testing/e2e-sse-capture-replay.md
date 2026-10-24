@@ -1,10 +1,10 @@
 # E2E SSE Capture And Replay
 
-目标：桌面 E2E 的外部模型接口必须能先录制、再在完全隔离环境中按流式语义回放。普通 JSON 响应可以继续按完整 body 回放；`text/event-stream` 必须保留 SSE event 的顺序和相对时间。
+Goal: external model APIs in desktop E2E must be recordable first and replayable in a fully isolated environment with streaming semantics. Ordinary JSON responses may keep replaying as full bodies; `text/event-stream` must keep SSE event order and relative timing.
 
-## Artifact 协议
+## Artifact protocol
 
-网络抓包记录继续写入 `E2ENetworkCaptureArtifact.records`。当响应是 SSE 时，单条 record 额外包含：
+Network capture records keep going into `E2ENetworkCaptureArtifact.records`. For an SSE response a record additionally contains:
 
 ```json
 {
@@ -19,16 +19,16 @@
 }
 ```
 
-- `sequence`：同一响应内的 SSE event 顺序。
-- `offsetMs`：从第一段 SSE 响应数据到该 event 完整可用时的相对时间。
-- `byteLength`：该 event UTF-8 字节数。
-- `text`：完整 SSE event 文本，包含末尾空行分隔符。
+- `sequence`: SSE event order within one response.
+- `offsetMs`: time from the first SSE response data to the moment this event is completely available.
+- `byteLength`: UTF-8 byte count of the event.
+- `text`: full SSE event text including the trailing blank-line separator.
 
-抓包层按 SSE event 分隔符解析，而不是按 TCP chunk 记录。原因是 chunk 边界不稳定，产品语义真正关心的是 `message_start`、`content_block_delta`、`message_stop` 等 event 的出现顺序和节奏。
+The capture layer parses by SSE event separator, not by TCP chunk: chunk boundaries are unstable, and product semantics care about the order and rhythm of events such as `message_start`, `content_block_delta`, `message_stop`.
 
-## Fixture 协议
+## Fixture protocol
 
-回放 fixture 的 `response` 支持两种形态：
+The `response` of a replay fixture supports two shapes:
 
 ```json
 {
@@ -44,12 +44,12 @@
 }
 ```
 
-- 有 `events` 时，replay server 按 `offsetMs` 分段写入响应，不设置 `content-length`。
-- 没有 `events` 时，保持旧行为，一次性写入 `body`。
-- `body` 可以保留作为人工查看和旧工具兼容字段，但自动化应优先使用 `events`。
-- `closeMode` 只对 `events` 流式回放有意义。默认 `end` 表示正常 EOF；`destroy` 表示写完已声明 events 后销毁 socket，用来构造 SSE 中途异常断开。`destroy` 产出的 network artifact 会把该 record 标为 `status="error"`，并写入 `replay.closeMode="destroy"`。
+- With `events`, the replay server writes the response in segments by `offsetMs` and sets no `content-length`.
+- Without `events`, the old behavior is kept: `body` is written at once.
+- `body` may stay for manual inspection and old-tool compatibility, but automation should prefer `events`.
+- `closeMode` matters only for `events` streaming replay. Default `end` means normal EOF; `destroy` destroys the socket after writing the declared events, to build an abnormal SSE mid-stream disconnect. The network artifact of a `destroy` run marks that record `status="error"` and writes `replay.closeMode="destroy"`.
 
-fixture 顶层还支持可选的 `maxMatches`：
+The fixture top level also supports an optional `maxMatches`:
 
 ```json
 {
@@ -61,9 +61,9 @@ fixture 顶层还支持可选的 `maxMatches`：
 }
 ```
 
-`maxMatches` 只影响本地 replay server 的匹配顺序，用来表达“同一类请求前 N 次返回 A，之后继续匹配后续 fixture 返回 B”的测试序列。例如自动 compact retry 会让前两次 summary 请求返回空文本，第三次返回成功 summary。它不是产品协议字段，也不会进入线上请求。
+`maxMatches` only affects the local replay server's matching order, to express "the first N requests of a kind return A, then later fixtures return B". For example auto-compact retry makes the first two summary requests return empty text and the third a successful summary. It is not a product protocol field and never goes into online requests.
 
-replay server 还会把命中的 fixture 写进抓包 artifact：
+The replay server also writes the matched fixture into the capture artifact:
 
 ```json
 {
@@ -74,16 +74,16 @@ replay server 还会把命中的 fixture 写进抓包 artifact：
 }
 ```
 
-这用于排查 fixture 匹配顺序和故障注入类型，不是线上 capture 字段。
+It is for debugging fixture match order and fault-injection type, not an online capture field.
 
-## 运行模式
+## Run modes
 
-- `replay`：默认模式，所有 DeepSeek 请求打到本地 replay server，使用 fixture 响应。适合 Docker 完全隔离运行。
-- `capture`：显式设置 `E2E_PROVIDER_HTTP_MODE=capture` 后启用 MITM proxy，真实访问上游并输出带 `responseEvents` 的 artifact。录制产物经过 review 后再转成 fixture。
+- `replay`: default; all DeepSeek requests hit the local replay server and use fixture responses. Suited to fully isolated Docker runs.
+- `capture`: enabled by explicitly setting `E2E_PROVIDER_HTTP_MODE=capture`; a MITM proxy really accesses upstream and outputs an artifact with `responseEvents`. Recorded output is reviewed before being turned into fixtures.
 
-## Docker 回放
+## Docker replay
 
-容器入口是 `pnpm test:e2e:container`，由 `scripts/test-desktop-e2e-container.sh` 调度。默认网络模式是 `E2E_NETWORK_MODE=replay-isolated`：
+The container entry is `pnpm test:e2e:container`, driven by `scripts/test-desktop-e2e-container.sh`. The default network mode is `E2E_NETWORK_MODE=replay-isolated`:
 
 ```bash
 E2E_NETWORK_MODE=replay-isolated \
@@ -91,17 +91,17 @@ E2E_SPEC=./test/e2e/conversation-session/manual-review/pending/conversation-sess
 pnpm test:e2e:container
 ```
 
-`replay-isolated` 会给测试容器加 `--network none`，并强制 `E2E_PROVIDER_HTTP_MODE=replay`。此时 WDIO、Electron、app、agent、DeepSeek replay server 都在同一个容器内运行，外部模型接口不会出网。
+`replay-isolated` adds `--network none` to the test container and forces `E2E_PROVIDER_HTTP_MODE=replay`. WDIO, Electron, app, agent and the DeepSeek replay server then all run in one container and the external model API never leaves the network.
 
-DeepSeek capture/replay JSON 会挂载到本次报告目录的 `network-capture/` 下，默认文件是 `network-capture/upstream-provider.json`。这份 JSON 记录了 app 对 DeepSeek 的请求、响应以及 SSE `responseEvents` 时间线，可作为 fixture review 和后续回放依据。
+The DeepSeek capture/replay JSON is mounted under `network-capture/` of the run's report directory; the default file is `network-capture/upstream-provider.json`. It records the app's requests to DeepSeek, responses and the SSE `responseEvents` timeline, and serves as fixture review and later replay basis.
 
-可选模式：
+Modes:
 
-- `E2E_NETWORK_MODE=replay-isolated`：默认，断网回放，只允许容器内 loopback。
-- `E2E_NETWORK_MODE=bridge`：使用 Docker 默认网络，但 DeepSeek 默认仍为 replay。
-- `E2E_NETWORK_MODE=capture`：受控出网录制，脚本会强制 `E2E_PROVIDER_HTTP_MODE=capture`，并要求提供真实 `E2E_PROVIDER_API_KEY`。
+- `E2E_NETWORK_MODE=replay-isolated`: default, offline replay, container loopback only.
+- `E2E_NETWORK_MODE=bridge`: Docker default network, but DeepSeek is still replay by default.
+- `E2E_NETWORK_MODE=capture`: controlled outbound recording; the script forces `E2E_PROVIDER_HTTP_MODE=capture` and requires a real `E2E_PROVIDER_API_KEY`.
 
-录制命令示例：
+Recording example:
 
 ```bash
 E2E_NETWORK_MODE=capture \
@@ -110,4 +110,4 @@ E2E_SPEC=./test/e2e/conversation-session/manual-review/pending/conversation-sess
 pnpm test:e2e:container
 ```
 
-`capture` 产物会输出到 `network-capture/upstream-provider.json`，review 后再转成 fixture；CI 和日常回归应使用 `replay-isolated`。
+`capture` output goes to `network-capture/upstream-provider.json` and is reviewed before becoming a fixture; CI and daily regression should use `replay-isolated`.

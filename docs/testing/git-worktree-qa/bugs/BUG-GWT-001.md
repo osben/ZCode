@@ -1,62 +1,59 @@
-# BUG-GWT-001: Открытие папки с пробелами + unicode через второй экземпляр (`--open-workspace`) детерминированно роняет ПЕРВИЧНОЕ приложение (Electron process singleton)
+# BUG-GWT-001: Opening a folder with spaces + unicode through a second instance (`--open-workspace`) deterministically kills the PRIMARY app (Electron process singleton)
 
 - Status: FIXED (retest 2026-10-18, merge b67cc63f; UI-confirmed; marker removed / covered by upstream test)
 
-- Severity: S2 (крах всего приложения по единственному программному пути открытия проекта; обход — нативный диалог выбора папки или ASCII-путь — не проверялся; сопутствующий дефект — зависший второй инстанс блокирует перезапуск)
-- Кейсы: A6 (FAIL 2/2; статус/diff/ветки для R7 не проверены — проект не открылся ни разу)
-- Окружение: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (ветка `qa/git-worktree-20261017`), изолированный QA-инстанс (production build, sandbox HOME), Electron 41.0.3 (`packages/desktop/package.json:111`)
+- Severity: S2 (the whole app crashes on the only programmatic project-open path; workarounds — native folder dialog or an ASCII path — not verified; a related defect: a hung second instance blocks restart)
+- Cases: A6 (FAIL 2/2; status/diff/branches for R7 not verified — the project never opened)
+- Environment: macOS 27.2 (darwin, arm64), commit `bd6a05b3` (branch `qa/git-worktree-20261017`), isolated QA instance (production build, sandbox HOME), Electron 41.0.3 (`packages/desktop/package.json:111`)
 
-## Воспроизведение с нуля
+## Repro from scratch
 
-1. Фикстура R7: `"$QA_ROOT/bin/make-fixtures.sh R7"` → `$QA_ROOT/repos/проект с пробелами ü` (ветки `main`/`feature/a`/`release`).
-2. Запустить QA-приложение (М 2.7): `"$QA_ROOT/bin/qa-run.sh" "$ELECTRON_BIN" . --remote-debugging-port=9339`, дождаться порта.
-3. Открыть проект вторым экземпляром (М 3.6):
-   `cd "$REPO/packages/desktop" && "$QA_ROOT/bin/qa-run.sh" "$ELECTRON_BIN" . --open-workspace="$QA_ROOT/repos/проект с пробелами ü"`
-4. Результат: первичное приложение погибает в ту же секунду (CDP 9339 перестаёт отвечать, окно закрывается); в `$QA_ROOT/logs/electron.log`:
-   `[ERROR:chrome/browser/process_singleton_posix.cc:779] additional_data_size exceeds payload length`.
-5. Повтор после перезапуска приложения — тот же крах за ≤2 с (2/2). Зависший второй инстанс («ZCode QA») держит singleton userData; новые запуски молча выходят, пока его не убить.
+1. Fixture R7: `"$QA_ROOT/bin/make-fixtures.sh R7"` -> `$QA_ROOT/repos/проект с пробелами ü` (branches `main`/`feature/a`/`release`).
+2. Start the QA app (M 2.7): `"$QA_ROOT/bin/qa-run.sh" "$ELECTRON_BIN" . --remote-debugging-port=9339`, wait for the port.
+3. Open the project with a second instance (M 3.6): `cd "$REPO/packages/desktop" && "$QA_ROOT/bin/qa-run.sh" "$ELECTRON_BIN" . --open-workspace="$QA_ROOT/repos/проект с пробелами ü"`
+4. Result: the primary app dies the same second (CDP 9339 stops answering, window closes); `$QA_ROOT/logs/electron.log` has `[ERROR:chrome/browser/process_singleton_posix.cc:779] additional_data_size exceeds payload length`.
+5. Repeating after an app restart gives the same crash within 2 s (2/2). The hung second instance ("ZCode QA") holds the singleton userData; new launches exit silently until it is killed.
 
-## Ожидание
+## Expectation
 
-- Кейс A6: «статус, diff, ветки работают для проекта с пробелами/unicode в пути» (`$QA_ROOT/cases/A6.md`; спека: `docs/git/branch-switching-service-design.md` — git-сервис по `workspacePath`, без ограничений на символы пути).
-- М 3.6 QA-PROMPT: второй экземпляр с `--open-workspace=<абсолютный путь>` — штатный способ открыть папку; путь с пробелами/unicode — валидный путь macOS.
-- Electron API (`app.requestSingleInstanceLock(additionalData)` / `second-instance`): `additionalData` — произвольный сериализуемый JS-объект; строковые значения с любыми Unicode-символами и пробелами легальны и обязаны доходить до первичного инстанса без разрушительных побочных эффектов.
+- Case A6: "status, diff, branches work for a project with spaces/unicode in the path" (`$QA_ROOT/cases/A6.md`; spec: `docs/git/branch-switching-service-design.md` — the git service works on `workspacePath` with no path-character restrictions).
+- M 3.6 of QA-PROMPT: a second instance with `--open-workspace=<absolute path>` is the standard way to open a folder; a path with spaces/unicode is a valid macOS path.
+- Electron API (`app.requestSingleInstanceLock(additionalData)` / `second-instance`): `additionalData` is an arbitrary serializable JS object; string values with any Unicode characters and spaces are legal and must reach the primary instance without destructive side effects.
 
-## Факт
+## Fact
 
-- Обе попытки: первичное приложение (pid 55507, затем 77796) погибает сразу после запуска второго экземпляра; в `electron.log` дважды `process_singleton_posix.cc:779 additional_data_size exceeds payload length` (строки 27101, 28538).
-- Второй инстанс (pid 77918) остаётся жив, держит singleton userData и блокирует перезапуск: новый инстанс (78022) молча выходит. После kill дерева приложение поднялось (pid 90773), сессия восстановилась.
-- Git-состояние R7 не изменилось (проект так и не открылся). Статус/diff/ветки в UI для R7 не проверены — единственный программный путь открытия роняет приложение.
-- Что НЕ воспроизводит крах (байтовая симуляция механизма, см. «Причина»): путь только с пробелами без не-Latin-1 символов; путь только с unicode без пробелов.
+- Both attempts: the primary app (pid 55507, then 77796) dies right after the second instance starts; `electron.log` shows `process_singleton_posix.cc:779 additional_data_size exceeds payload length` twice (lines 27101, 28538).
+- The second instance (pid 77918) stays alive, holds the singleton userData and blocks restart: a new instance (78022) exits silently. After killing the tree the app came up (pid 90773) and the session was restored.
+- R7 Git state unchanged (the project never opened). Status/diff/branches in the UI for R7 not verified.
+- What does NOT reproduce the crash (byte-level simulation of the mechanism): a path with spaces only and no non-Latin-1 characters; a path with unicode only and no spaces.
 
-## Доказательства
+## Evidence
 
-- Протокол кейса: `$QA_ROOT/cases/A6.md` (хронология, pid-ы, 2/2).
-- Краш-строки: `$QA_ROOT/logs/electron.log:27101` (pid 55507) и `:28538` (pid 77796).
-- Скриншот восстановления после краха: `$QA_ROOT/evidence/A6-3-app-restarted.png`.
-- Вывод байтовой симуляции механизма — в разделе «Причина».
+- Case protocol: `$QA_ROOT/cases/A6.md` (timeline, pids, 2/2).
+- Crash lines: `$QA_ROOT/logs/electron.log:27101` (pid 55507) and `:28538` (pid 77796).
+- Recovery screenshot: `$QA_ROOT/evidence/A6-3-app-restarted.png`.
 
-## Причина
+## Cause
 
-- Подтверждено (наш слой корректен; дефект целиком внутри Electron 41 / пропатченного Chromium `process_singleton_posix.cc`):
-  - Наш код формирует данные вторичного инстанса правильно: `packages/desktop/src/main/index.ts:2183` — `app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv))`; `packages/desktop/src/main/desktopDeepLinkUrl.ts:251-258` кладёт путь в `additionalData.openWorkspacePath` (объект `{ openWorkspacePath: "<путь>" }`). Это документированное использование API.
-  - Electron сериализует `additionalData` V8 ValueSerializer'ом (`blink::CloneableMessage`, `shell/browser/api/electron_api_app.cc`, `RequestSingleInstanceLock`) и отправляет по singleton-сокету сообщением `...\0<additional-data-size>\0<сырые байты>`.
-  - Первичный инстанс токенизирует всё сообщение upstream-кодом Chromium: `chrome/browser/process_singleton_posix.cc`, `SocketReader::OnSocketCanReadWithoutBlocking` → `base::SplitString(str, std::string(1, '\0'), base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)` — каждый токен обрезается по пробельным байтам с обоих концов. Затем патч Electron 41 (`patches/chromium/feat_add_data_parameter_to_processsingleton.patch`) склеивает токены обратно через `\0` и сверяет: `if (additional_data_size > remaining_args.size()) LOG(ERROR) << "additional_data_size exceeds payload length"` — это и есть строка 779.
-  - Механизм порчи (проверен эмпирически, Node `v8.serialize` = тот же ValueSerializer + симуляция `TRIM_WHITESPACE`-токенизации и склейки): путь R7 содержит кириллицу (символы > U+00FF) → V8 сериализует строку как two-byte UTF-16LE, где каждый ASCII-символ это `XX 00`, а каждый пробел — `20 00`: байт `0x20` оказывается вплотную к разделителю `\0` и УСЕКАЕТСЯ обрезкой пробелов. Для точного пути R7: объявленный размер 166 байт, после round-trip парсера — 163 (потеряны ровно 3 пробела) → срабатывает проверка на 779 → уведомление отброшено, ACK первичный не отправляет → вторичный инстанс по семантике POSIX singleton считает первичный зависшим, убивает его и забирает singleton (наблюдаемое: первичный мёртв ≤2 с; зависший вторичный держит userData; новые инстансы молча выходят).
-  - Изоляция «пробелы vs unicode» (та же симуляция): путь только ASCII+пробелы — blob one-byte, NUL-байтов нет, потерь нет (краха НЕТ); путь только unicode без пробелов — NUL-байты есть, но ни один не соседствует с пробельным байтом, потерь нет (краха НЕТ); триггер — именно комбинация: хотя бы один символ > U+00FF (переводит строку в two-byte сериализацию) И хотя бы один ASCII-пробел. Симуляция: `R7 exact: declared=166 received=163 -> CORRUPT`; `ASCII only with spaces: 60/60 intact`; `Unicode, no spaces: 78/78 intact`; `/Users/osben/про ü: 62/61 CORRUPT`.
-  - Это известный баг Electron, исправленный апстримом: electron/electron#52020 (симптомы 1-в-1, вплоть до строки 779), фикс electron/electron#52025 (`TRIM_WHITESPACE` → `KEEP_WHITESPACE`), смержен 2026-07-27, бэкпортирован в 42/43/44-x-y и НЕ бэкпортирован в 41-x-y (проверено: в патче ветки `41-x-y` замена `KEEP_WHITESPACE` отсутствует, 0 вхождений; в `main` — есть, строки 252-253 патча).
-- Гипотеза (не проверено на уровне приложения — QA-приложение в этой сессии остановлено):
-  - Точное поведение вторичного инстанса в бинарнике 41.0.3 (получает ли он лок после убийства первичного или висит на полпути) — вывод сделан по наблюдаемым эффектам (первичный убит, вторичный держит singleton) и совпадению с описанием #52020, а не трассировкой самого вторичного инстанса.
-  - Обходные пути (нативный диалог / переименование в ASCII) не проверялись.
+Confirmed (our layer is correct; the defect is entirely inside Electron 41 / the patched Chromium `process_singleton_posix.cc`):
 
-## Предлагаемое исправление
+- Our code builds the second-instance data correctly: `packages/desktop/src/main/index.ts:2183` calls `app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv))`; `packages/desktop/src/main/desktopDeepLinkUrl.ts:251-258` puts the path into `additionalData.openWorkspacePath` (object `{ openWorkspacePath: "<path>" }`). This is documented API use.
+- Electron serializes `additionalData` with the V8 ValueSerializer (`blink::CloneableMessage`, `shell/browser/api/electron_api_app.cc`, `RequestSingleInstanceLock`) and sends it over the singleton socket as `...\0<additional-data-size>\0<raw bytes>`.
+- The primary tokenizes the whole message with upstream Chromium code: `chrome/browser/process_singleton_posix.cc`, `SocketReader::OnSocketCanReadWithoutBlocking` -> `base::SplitString(str, std::string(1, '\0'), base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)` — every token is trimmed of whitespace bytes at both ends. The Electron 41 patch (`patches/chromium/feat_add_data_parameter_to_processsingleton.patch`) then joins tokens back with `\0` and checks `if (additional_data_size > remaining_args.size()) LOG(ERROR) << "additional_data_size exceeds payload length"` — line 779.
+- Corruption mechanism (verified empirically with Node `v8.serialize`, the same ValueSerializer, plus a simulation of `TRIM_WHITESPACE` tokenization and re-join): the R7 path contains Cyrillic (characters > U+00FF), so V8 serializes the string as two-byte UTF-16LE where each ASCII char is `XX 00` and each space is `20 00`; the `0x20` byte sits next to the `\0` separator and is TRIMMED. For the exact R7 path the declared size is 166 bytes and after the parser round-trip 163 (exactly 3 spaces lost) -> the check at line 779 fires -> the notification is dropped and the primary sends no ACK -> by POSIX singleton semantics the second instance treats the primary as hung, kills it and takes the singleton (observed: primary dead within 2 s; hung second holds userData; new instances exit silently).
+- Isolating spaces vs unicode (same simulation): ASCII+spaces only — one-byte blob, no NULs, no loss (NO crash); unicode without spaces — NULs present but none adjacent to a whitespace byte, no loss (NO crash). The trigger is the combination: at least one character > U+00FF (forces two-byte serialization) AND at least one ASCII space. Results: `R7 exact: declared=166 received=163 -> CORRUPT`; `ASCII only with spaces: 60/60 intact`; `Unicode, no spaces: 78/78 intact`; `/Users/osben/про ü: 62/61 CORRUPT`.
+- This is a known Electron bug fixed upstream: electron/electron#52020 (symptoms identical down to line 779), fix electron/electron#52025 (`TRIM_WHITESPACE` -> `KEEP_WHITESPACE`), merged 2026-07-27, backported to 42/43/44-x-y and NOT backported to 41-x-y (verified: the `41-x-y` branch patch has 0 occurrences of `KEEP_WHITESPACE`; `main` has it, patch lines 252-253).
 
-- Основное: обновить Electron с 41.0.3 до ≥42.x, содержащего electron#52025 (проверить по release notes, что фикс вошёл в конкретный минор).
-- Альтернатива app-side, если обновление заблокировано: в `createDeepLinkSingleInstanceData` (`packages/desktop/src/main/desktopDeepLinkUrl.ts`) кодировать путь (например, `encodeURIComponent`/base64), а в `extractOpenWorkspacePathFromSingleInstanceData` — декодировать; тогда V8-blob остаётся one-byte и без пробельных байтов у `\0`-границ, баг не триггерится. Решение протестировать на round-trip `extractOpenWorkspacePathFromArgs([`--open-workspace=${encoded}`])` (юнит-слой, `packages/desktop/test/desktopDeepLinkUrl*.test.ts` по образцу).
-- Сопутствующее: устойчивость к «вторичный инстанс убил первичный и держит singleton» — после апгрейда уходит; самостоятельно не чинить (поведение Chromium).
+Hypothesis (not verified at app level — the QA app was stopped in this session): the exact behavior of the second instance in the 41.0.3 binary (whether it obtains the lock after killing the primary or hangs midway) was inferred from observed effects and the match with #52020, not from tracing the second instance. Workarounds (native dialog / renaming to ASCII) were not tested.
 
-## Тест
+## Proposed fix
 
-- Путь: `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-open-workspace-unicode-singleton.test.ts` (метка `BUG-GWT-001` в комментарии; оставлен в `pending` по `.agents/skills/e2e-case-lifecycle/SKILL.md`).
-- Слой: E2E (WDIO, запуск второго экземпляра приложения из спеки). Причина выбора: причина целиком внутри пропатченного Chromium/Electron `process_singleton` — на нашем коде юнит-слой не воспроизводим (наши функции `createDeepLinkSingleInstanceData`/`extractOpenWorkspacePathFromSingleInstanceData` ведут себя корректно; дефект проявляется только при реальном межпроцессном handshake Electron).
-- Статус: **not run (E2E pending)** — WDIO в QA-сессии не запускался (QA-приложение остановлено, М 7.2 для этого маршрута требует только файл спеки). Красный прогон приложения уровня кейса зафиксирован самим кейсом A6 (FAIL 2/2).
+- Main: upgrade Electron from 41.0.3 to >=42.x containing electron#52025 (check release notes that the fix landed in the specific minor).
+- App-side alternative if the upgrade is blocked: in `createDeepLinkSingleInstanceData` (`packages/desktop/src/main/desktopDeepLinkUrl.ts`) encode the path (for example `encodeURIComponent`/base64) and decode it in `extractOpenWorkspacePathFromSingleInstanceData`; the V8 blob then stays one-byte with no whitespace bytes at `\0` boundaries and the bug does not trigger. Test by round-trip `extractOpenWorkspacePathFromArgs([`--open-workspace=${encoded}`])` (unit layer, modeled on `packages/desktop/test/desktopDeepLinkUrl*.test.ts`).
+- Related: robustness against "the second instance killed the primary and holds the singleton" goes away after the upgrade; do not fix it separately (Chromium behavior).
+
+## Test
+
+- Path: `packages/desktop/test/e2e/conversation-session/manual-review/pending/conversation-session-open-workspace-unicode-singleton.test.ts` (tag `BUG-GWT-001` in a comment; kept in `pending` per `.agents/skills/e2e-case-lifecycle/SKILL.md`).
+- Layer: E2E (WDIO, launching a second app instance from the spec). The cause is entirely inside the patched Chromium/Electron `process_singleton`, so it is not reproducible at unit level on our code (our `createDeepLinkSingleInstanceData`/`extractOpenWorkspacePathFromSingleInstanceData` behave correctly; the defect appears only in the real Electron inter-process handshake).
+- Status: **not run (E2E pending)** — WDIO did not run in the QA session. The red app-level run is recorded by case A6 itself (FAIL 2/2).

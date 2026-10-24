@@ -1,109 +1,50 @@
 # ACTUAL ISSUES — Git/Worktree QA (verified live 2026-10-18, build b60bdde3)
 
-Единственный источник актуальных проблем для следующего цикла исправлений.
+The single source of actual issues for the next fix cycle.
 
-> **Статус после волны 3 (2026-10-18, ветка claude/git-worktree-qa-bugs-0c60cd):**
-> OPEN-1 — FIXED (живьём на production-сборке ветки, RT4-C5, 2 прогона); OPEN-2 — not reproduced
-> (5/5 New-task Send доставлены после фикса, оговорки ниже); MINOR-1 — FIXED вместе с OPEN-1; MINOR-2 — FIXED (причина Git в
-> `{reason}`, подсказка про репозиторий без коммитов); MINOR-3 — deferred (подсистема восстановления
-> сессии / выбора проекта, не worktree); MINOR-4 — FIXED (решение владельца: предупреждать; спека
-> `specs/git-commit-detached-head-warning.md`, проверено живьём);
-> MINOR-5 — not reproduced (0 send-RPC во время ввода, включая `inserttext` с ожиданием 14 с). Детали — в пунктах ниже.
-> До волны 3: 12 из 13 багов закрыты и подтверждены живьём (001–004, 006–013); волной 3
-> закрыт и 005 — итого 13 из 13. Проверка волн 1–2 — marker-тесты + UI-ретесты RT3 (QA_ROOT/cases/RT3-\*.md).
-> Ниже — ТОЛЬКО то, что воспроизводится сейчас.
+> **Status after wave 3 (2026-10-18, branch claude/git-worktree-qa-bugs-0c60cd):**
+> OPEN-1 FIXED (live on the branch's production build, RT4-C5, 2 runs); OPEN-2 not reproduced
+> (5/5 New-task Send delivered after the fix, caveats below); MINOR-1 FIXED together with OPEN-1;
+> MINOR-2 FIXED (Git reason in `{reason}`, hint about a repository without commits); MINOR-3
+> deferred (session-recovery / project-picker subsystem, not worktree); MINOR-4 FIXED (owner
+> decision: warn; spec `specs/git-commit-detached-head-warning.md`, verified live); MINOR-5 not
+> reproduced (0 send-RPC during typing, including `inserttext` with a 14 s wait).
+> Before wave 3, 12 of 13 bugs were closed and confirmed live (001-004, 006-013); wave 3 closed
+> 005, so 13 of 13. Waves 1-2 were verified by marker tests plus RT3 UI retests (QA_ROOT/cases/RT3-\*.md).
+> Below is ONLY what reproduces now.
 
 ---
 
-## OPEN-1 (BUG-GWT-005, S3): после Retry очередь не дрейнит в ход — допуск сообщения не происходит
+## OPEN-1 (BUG-GWT-005, S3): after Retry the queue does not drain into a turn — message admission does not happen
 
-**Состояние (волна 3): FIXED.** Локализация «рантайм CommandInbox» опровергнута: после Retry
-рендерер не отправлял ни `createSession`, ни `sendText` (RPC на Retry+0 мс — это
-`updateWorktreePreparation{preparing}`). Настоящая причина (CDP-трасса): reconcile-эффект
-`ConversationWorktreeSetupSteps` с устаревшим Host-сидом `{failed, A}` откатывал запись Retry
-`creating(B)` → `failed(A)`, queued-send эффект отцеплял продолжение. Фикс — `supersededAttemptIds`
-(restore игнорирует сид заменённой попытки). Живьём: Retry → createWorktree +146 мс →
-createSession +206 мс → prepareTurn +556 мс → sendText +572 мс, файл создан в worktree, карточка
-recovery снята. Подробно — `bugs/BUG-GWT-005.md` §Wave 3.
+**State (wave 3): FIXED.** The localization "runtime CommandInbox" was refuted: after Retry the renderer sent neither `createSession` nor `sendText` (the RPC at Retry+0 ms is `updateWorktreePreparation{preparing}`). Real cause (CDP trace): the reconcile effect of `ConversationWorktreeSetupSteps`, holding a stale Host seed `{failed, A}`, rolled the Retry record `creating(B)` back to `failed(A)`, and the queued-send effect detached the continuation. Fix: `supersededAttemptIds` (restore ignores the seed of a replaced attempt). Live: Retry -> createWorktree +146 ms -> createSession +206 ms -> prepareTurn +556 ms -> sendText +572 ms, file created in the worktree, recovery card removed. Details in `bugs/BUG-GWT-005.md` §Wave 3.
 
-**Исходное описание (до волны 3):**
-Fix 2f76fd5e сделал: Retry → сообщение ставится в очередь (`sendConversationCommandV4` +0 мс),
-prepared-сессия открывается сама, worktree создаётся (+99 мс), continuation живёт
-в store-level registry и переживает promotion. **Но за 120 с — 0 turn-активирующих RPC**
-(`prepareTurn`/turn-start/activate), `taskBus.leases = 0` во всех снапшотах, файл не создаётся,
-recovery-карточка и «Queued message» висят. Ручной Restore → Send → Confirm работает:
-`prepareTurn` +456 мс, файл ≤10 с, та же сессия. 4-я живая улика (C5, RT-C5, RT2, RT3-C5).
+**Original description (before wave 3):** Fix 2f76fd5e made Retry queue the message (`sendConversationCommandV4` +0 ms), the prepared session opens by itself, the worktree is created (+99 ms), and the continuation lives in a store-level registry and survives promotion. But within 120 s there were 0 turn-activating RPCs (`prepareTurn`/turn-start/activate), `taskBus.leases = 0` in all snapshots, no file was created, and the recovery card and "Queued message" stayed. Manual Restore -> Send -> Confirm worked: `prepareTurn` +456 ms, file within 10 s, same session. Fourth live evidence (C5, RT-C5, RT2, RT3-C5).
 
-- Спека: `specs/composer-worktree-setup-steps.md` §Contract retry-admission
-  («ready-запись, которая ничего не допускает — нарушение контракта») + stuck-ready routing
-  (обновлена волной-2).
-- Локализация (сужена): рантайм **CommandInbox не берёт queued-сообщение в lease после
-  готовности worktree**; рендерер-часть исправлена и покрыта регрессией
-  (`packages/ui/test/composerWorktreePipeline.test.ts` + upstream
-  `v4ConversationComposerWorktreeLateAck.test.ts`).
-- Воспроизведение с нуля: R1 basic → `chmod 555 $QA_ROOT/repos/basic-worktrees` →
-  worktree-on + отправить «Create file x.txt with text X» → failed → `chmod 755` → Retry →
-  наблюдать 120 с (нет prepareTurn) → Restore → Send работает.
-- Evidence: `QA_ROOT/cases/RT3-C5.md` (хронология RPC), скриншоты RT3-C5-0..3;
-  git-мусора нет (rollback волны-1 работает).
-- Направление фикса: рантайм — после перехода prepared-сессии в ready (worktree создан)
-  CommandInbox должен взять замороженное queued-сообщение в lease и запустить ход
-  ( тот же путь, что у ручного Send: `sendConversationCommandV4` → `prepareTurn`).
+- Spec: `specs/composer-worktree-setup-steps.md` §Contract retry-admission ("a ready record that admits nothing violates the contract") plus stuck-ready routing (updated in wave 2).
+- Narrowed localization at that time: the runtime **CommandInbox does not lease the queued message after the worktree is ready**; the renderer part was fixed and covered by regression (`packages/ui/test/composerWorktreePipeline.test.ts` plus upstream `v4ConversationComposerWorktreeLateAck.test.ts`).
+- Repro from scratch: R1 basic -> `chmod 555 $QA_ROOT/repos/basic-worktrees` -> worktree on + send "Create file x.txt with text X" -> failed -> `chmod 755` -> Retry -> watch 120 s (no prepareTurn) -> Restore -> Send works.
+- Evidence: `QA_ROOT/cases/RT3-C5.md` (RPC timeline), screenshots RT3-C5-0..3; no git garbage (wave-1 rollback works).
+- Fix direction at that time: runtime — once the prepared session turns ready (worktree created), CommandInbox must lease the frozen queued message and start the turn (the same path as manual Send: `sendConversationCommandV4` -> `prepareTurn`).
 
-## OPEN-2 (наблюдение, класс 005-семейства, S4): редкая тихая потеря Send из «New task»
+## OPEN-2 (observation, 005 family, S4): rare silent loss of Send from "New task"
 
-1× за раунд: Send из New task empty-композера принят UI, редактор очищен, но
-0 `sendConversationCommandV4` в логах, сессия не создана; после reload та же отправка
-доходила. RT-C5-эпоха: воспроизводился 2/2 при живом stuck-ready пайплайне; на сборке
-b60bdde3 — 1× без стойкой связи (вероятная связь с keep-warm dispose в тот же момент).
-Сопровождается «черновиком-призраком» (отправленный текст возрождался в композере).
-Проверить при фиксе OPEN-1 (возможно, тот же lease-путь).
+Once per round: Send from the New task empty composer was accepted by the UI and the editor cleared, but there was 0 `sendConversationCommandV4` in the logs and no session; after reload the same send arrived. In the RT-C5 epoch it reproduced 2/2 with a live stuck-ready pipeline; on build b60bdde3 once without a stable link (probably keep-warm dispose at the same moment). Accompanied by a "ghost draft" (the sent text revived in the composer). To check when fixing OPEN-1 (possibly the same lease path).
 
-**Волна 3: not reproduced.** На production-сборке с фиксом OPEN-1: 5 раз session-view → New task →
-Send (3× `keyboard type`, 2× `keyboard inserttext`) — каждый раз send-RPC ушёл, сессия создана,
-редактор пуст, черновика-призрака нет (`$QA_ROOT/evidence/RT4-OPEN2-newtask-3x.png`,
-`RT4-final-refactor-newtask.png`). Оговорки: worktree-intent оставался включённым (каждая отправка
-создавала worktree-сессию; вариант с выключенным intent автоматизацией не получен), и
-stuck-ready пайплайна (исходного предусловия) не было — после фикса OPEN-1 он не возникает.
-Если потеря повторится — локализовать как dispose-гонку рендерера.
+**Wave 3: not reproduced.** On the production build with the OPEN-1 fix: 5 times session-view -> New task -> Send (3x `keyboard type`, 2x `keyboard inserttext`) — each time the send RPC went out, the session was created, the editor was empty, no ghost draft (`$QA_ROOT/evidence/RT4-OPEN2-newtask-3x.png`, `RT4-final-refactor-newtask.png`). Caveats: the worktree intent stayed on (every send created a worktree session; the variant with the intent off was not obtained by automation), and the stuck-ready pipeline (the original precondition) did not occur — after the OPEN-1 fix it no longer arises. If the loss recurs, localize it as a renderer dispose race.
 
-## MINOR (наблюдения, S4, без блокировки)
+## MINOR (observations, S4, non-blocking)
 
-1. **[FIXED, волна 3 — следствие OPEN-1]** **Recovery-карточка не исчезает после успешного Retry** (RT3-C5/RT3-B нюансы) —
-   остаётся до ручного Restore, хотя сессия открыта и очередь стоит.
-2. **[FIXED, волна 3]** Неклассифицированный отказ Git показывает строку Git
-   («Could not create the worktree: could not create leading directories of '…': Permission denied»,
-   живьём RT4-C5), `target-branch-not-found` подсказывает про репозиторий без коммитов
-   (`worktreeCreation.ts`, тест `worktreeCreationFailureReason.test.ts`). Исходно:
-   **{reason} в ошибках подготовки worktree — генерик** («Could not create the worktree»
-   без permission/EACCES; «Base branch "main" was not found» без упоминания пустого репо)
-   — волна-1 закрыла сырые ключи, полировка причины не сделана.
-3. **[DEFERRED]** — подсистема восстановления сессии и выбора проекта (не worktree), нужна отдельная
-   локализация; «basic» отсутствовал в пикере и на b60bdde3 при живом прогоне волны 3.
-   **New task сбрасывает выбор проекта** (path-dependent: из session-view → «Select project»,
-   чипа нет; из empty-state — выживает) + «basic» отсутствует в списке выбора воркспейса
-   New task (только 6 недавних) — RT3-C7obs.
-4. **[FIXED, волна 3]** Владелец решил предупреждать. Commit / Commit and push на detached HEAD
-   спрашивают подтверждение («Commit on a detached HEAD?» → «Commit anyway»); Cancel ничего не
-   меняет и оставляет диалог с сообщением. Спека `specs/git-commit-detached-head-warning.md`, тест
-   `gitActionMenuDetachedCommitWarning.test.ts`; живьём на фикстуре `detached`
-   (`$QA_ROOT/evidence/RT4-MINOR4-detached-warning.png`). Исходно: **Detached-коммит уходит вне веток без предупреждения** (H5-производный UX-вопрос;
-   push при этом корректно отказывает с видимым тостом).
-5. **[NOT REPRODUCED, волна 3]** 0 `sendConversationCommandV4` в окне ввода во всех прогонах:
-   3× `keyboard type` и 2× `keyboard inserttext` (исходный метод, окно ожидания 14 с до Enter).
-   Тайминг-аномалия: `sendConversationCommandV4` однажды пришёл в лог за ~14 с ДО клика
-   Send (в момент inserttext) — дубля не было; понаблюдать при работе с OPEN-1.
+1. **[FIXED, wave 3 — consequence of OPEN-1]** **The recovery card does not disappear after a successful Retry** (RT3-C5/RT3-B nuances) — it stayed until manual Restore although the session was open and the queue stood.
+2. **[FIXED, wave 3]** An unclassified Git refusal shows the Git line ("Could not create the worktree: could not create leading directories of '…': Permission denied", live RT4-C5), and `target-branch-not-found` hints about a repository without commits (`worktreeCreation.ts`, test `worktreeCreationFailureReason.test.ts`). Originally: **`{reason}` in worktree preparation errors was generic** ("Could not create the worktree" without permission/EACCES; "Base branch "main" was not found" without mention of an empty repo) — wave 1 closed raw keys, reason polish was not done.
+3. **[DEFERRED]** Session-recovery and project-picker subsystem (not worktree); needs separate localization; "basic" was also missing from the picker on b60bdde3 in the live wave-3 run. **New task resets the project selection** (path-dependent: from session-view -> "Select project", no chip; from the empty state it survives) + "basic" is missing from the New task workspace picker (only 6 recent) — RT3-C7obs.
+4. **[FIXED, wave 3]** The owner decided to warn. Commit / Commit and push on a detached HEAD ask for confirmation ("Commit on a detached HEAD?" -> "Commit anyway"); Cancel changes nothing and leaves the dialog with the message. Spec `specs/git-commit-detached-head-warning.md`, test `gitActionMenuDetachedCommitWarning.test.ts`; live on the `detached` fixture (`$QA_ROOT/evidence/RT4-MINOR4-detached-warning.png`). Originally: **a detached commit went out of branches without a warning** (H5-derived UX question; push correctly refuses with a visible toast).
+5. **[NOT REPRODUCED, wave 3]** 0 `sendConversationCommandV4` in the typing window in all runs: 3x `keyboard type` and 2x `keyboard inserttext` (original method, 14 s wait before Enter). Timing anomaly: `sendConversationCommandV4` once appeared in the log about 14 s BEFORE the Send click (at the moment of inserttext) — no duplicate; keep observing during OPEN-1 work.
 
-## Закрыто этой волной (для справки, повторно подтверждено живьём на b60bdde3)
+## Closed in this wave (for reference, reconfirmed live on b60bdde3)
 
-010 (маркер/классификация Worktree переживают рестарт с закрытым воркспейсом — RT3-F7),
-011 (бейдж Conflicted — RT3-A8), 012 + «1 files» (formatPlural en/zh/uk, guard-диалог и
-dirty-cue — RT3-B6/RT3-1files), 006 (видимый тост «Committed, but push failed: …» 2/2 —
-RT3-H5), 013 (чип назначения ~100 мс после программного открытия — RT3-A2/A4).
-Волна-1 (b67cc63f): 001, 002, 003, 004, 007, 008, 009.
+010 (Worktree marker/classification survive restart with a closed workspace — RT3-F7), 011 (Conflicted badge — RT3-A8), 012 + "1 files" (formatPlural en/zh/uk, guard dialog and dirty-cue — RT3-B6/RT3-1files), 006 (visible toast "Committed, but push failed: …" 2/2 — RT3-H5), 013 (destination chip about 100 ms after programmatic open — RT3-A2/A4). Wave 1 (b67cc63f): 001, 002, 003, 004, 007, 008, 009.
 
-## Проверки на этой сборке
+## Checks on this build
 
-typecheck PASS, lint PASS, architecture:check --changed PASS, oxfmt (наши файлы) clean,
-все ранее-маркерные тест-файлы rc=0 (маркеры сняты волной-2), G1 start/end PASS,
-0 [error] за раунд, изоляция не нарушена, порт 9339 свободен.
+typecheck PASS, lint PASS, architecture:check --changed PASS, oxfmt (our files) clean, all formerly-marker test files rc=0 (markers removed in wave 2), G1 start/end PASS, 0 [error] per round, isolation not violated, port 9339 free.

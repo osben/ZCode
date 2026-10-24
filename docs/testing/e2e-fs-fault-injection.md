@@ -1,42 +1,42 @@
 # E2E FS Fault Injection
 
-目标：为会话区外部环境故障提供稳定、可复现的文件系统错误注入能力，让 `ENOSPC`、`EACCES`、损坏快照、日志写入失败等 case 可以在本地、CI、Docker 中以同一协议复现，而不是依赖真实磁盘写满或手工改权限。
+Goal: a stable, reproducible filesystem error-injection capability for external-environment faults in the conversation area, so cases such as `ENOSPC`, `EACCES`, corrupted snapshots and log write failures reproduce under one protocol locally, in CI and in Docker, instead of relying on a really full disk or hand-edited permissions.
 
-关联 case：
+Related cases:
 
-- `D01`：session history 写入 `ENOSPC`
-- `D02`：workspace 文件写入 `ENOSPC`
-- `D03`：provider/settings 保存 `EACCES`
-- `D04`：启动恢复 session snapshot 损坏
-- `D05`：日志/artifact 写入失败
+- `D01`: session history write `ENOSPC`
+- `D02`: workspace file write `ENOSPC`
+- `D03`: provider/settings save `EACCES`
+- `D04`: corrupted session snapshot on startup recovery
+- `D05`: log/artifact write failure
 
-## 注入边界
+## Injection boundary
 
-文件系统故障只能在测试运行态启用。默认只接受 `ZCODE_ENV=test` 下的注入配置；若未来需要在特殊调试包里启用，必须显式设置 `ZCODE_E2E_FS_FAULTS_ALLOW=1`，避免用户生产环境因为环境变量残留被注入错误。
+Filesystem faults may be enabled only in test runtime. By default only injection config under `ZCODE_ENV=test` is accepted; enabling it in a special debug package requires an explicit `ZCODE_E2E_FS_FAULTS_ALLOW=1`, so a leftover environment variable cannot inject errors into a user's production environment.
 
-第一阶段先提供独立 helper，并先接入 `atomicWriteText` 这类配置原子写入口。后续接入顺序：
+A standalone helper exists, first wired into the `atomicWriteText` config atomic-write entry. Wired injection points:
 
-1. provider `config.json` 原子写入：已接入，可覆盖 `D03` 的核心保存路径。
-2. settings `setting.json` 直接写入：已接入，可补齐 `D03` 的 app settings 保存路径。
-3. provider display order 直接写入：已接入，可覆盖 provider 偏好保存失败。
-4. SQLite session DB open：已接入，可覆盖启动/恢复时数据库打不开，服务于 `D04`。
-5. SQLite session history write：已接入 `sqliteRun`，可覆盖 `saveMessage` / `savePart` / `createSession` 等写入失败，服务于 `D01` 和 compact marker 写入。
-6. workspace tool 文件写入：接入 `NodeFileSystemAdapter.writeTextFile` 的 `createParents`、非原子直接写入和删除边界，服务于 `D02`；默认 `atomic: true` 的 temp 写入、chmod、sync、rename 和 fallback 不接入 fault injector。
-7. tool artifact sink：接入 `NodeToolArtifactStore` 的目录创建和文本/二进制 artifact 写入，服务于 `D05` 的 artifact 分支。
-8. CLI log sink：接入 `NodeLoggerFactory` 的日志目录创建和 JSONL append，覆盖 `D05` 的 CLI 日志写入分支。
-9. desktop main log sink：接入 main 进程普通日志和 web remote control 专用日志的 append，覆盖 `D05` 的桌面主进程日志写入分支。启动期日志目录创建失败仍保持现有行为，后续若要改为完全吞错，需要单独确认产品预期。
+1. provider `config.json` atomic write: covers the core save path of `D03`.
+2. settings `setting.json` direct write: covers the app settings save path of `D03`.
+3. provider display order direct write: covers provider preference save failure.
+4. SQLite session DB open: covers database-cannot-open at startup/recovery, for `D04`.
+5. SQLite session history write: wired in `sqliteRun`; covers write failures of `saveMessage` / `savePart` / `createSession` and the compact marker write, for `D01`.
+6. workspace tool file write: `NodeFileSystemAdapter.writeTextFile` `createParents`, non-atomic direct write and the delete boundary, for `D02`. The default `atomic: true` path (temp write, chmod, sync, rename, fallback) is not wired to the fault injector.
+7. tool artifact sink: `NodeToolArtifactStore` directory creation and text/binary artifact write, for the artifact branch of `D05`.
+8. CLI log sink: `NodeLoggerFactory` log directory creation and JSONL append, for the CLI log branch of `D05`.
+9. desktop main log sink: append of main-process normal logs and web remote control dedicated logs, for the desktop main log branch of `D05`. A startup log-directory creation failure keeps the existing behavior; swallowing it completely needs a separate product confirmation.
 
-### Workspace atomic write 说明
+### Workspace atomic write note
 
-`NodeFileSystemAdapter.writeTextFile` 的默认 `atomic: true` 路径：写入 temp 文件、复制原文件权限、sync、rename；若该 atomic 路径失败，会清理 temp 文件，并 fallback 到 `O_TRUNC` 非原子写入目标文件。这个 fallback 在 `ENOSPC` / `EIO` 等异常磁盘错误下可能截断已有目标文件；当前 file tools 权限回归暂接受这一行为。
+The default `atomic: true` path of `NodeFileSystemAdapter.writeTextFile`: write a temp file, copy the original file's permissions, sync, rename. If the atomic path fails, the temp file is cleaned up and it falls back to a non-atomic `O_TRUNC` write of the target. Under abnormal disk errors such as `ENOSPC` / `EIO` the fallback may truncate an existing target; the current file tools permission regression accepts this behavior.
 
-为避免 test-only `ZCODE_E2E_FS_FAULTS` 污染这条 prod 逻辑，workspace 默认 atomic temp 写入 / rename 不插入 fault hook。`D02` 若需要稳定模拟 workspace 写失败，应使用 `atomic: false` 的直接写入、父目录创建、删除或其他已接入的存储边界；是否为默认 atomic 路径重新引入专用测试 seam，需要先单独确认产品语义。
+So that test-only `ZCODE_E2E_FS_FAULTS` does not pollute this production logic, the workspace default atomic temp write / rename has no fault hook. `D02` should simulate workspace write failure through `atomic: false` direct writes, parent directory creation, deletion or another wired storage boundary. Whether to reintroduce a dedicated test seam for the default atomic path needs a separate product-semantics confirmation first.
 
-## 配置格式
+## Config format
 
-环境变量：`ZCODE_E2E_FS_FAULTS`
+Environment variable: `ZCODE_E2E_FS_FAULTS`
 
-值为 JSON 数组，每条 rule 描述一个故障等价类：
+The value is a JSON array; each rule describes one fault equivalence class:
 
 ```json
 [
@@ -51,29 +51,27 @@
 ]
 ```
 
-字段含义：
-
-| 字段 | 含义 |
+| Field | Meaning |
 | --- | --- |
-| `id` | 稳定 case id 或 fixture id，必须非空 |
-| `code` | Node 风格错误码，如 `ENOSPC`、`EACCES`、`EPERM` |
-| `operations` | 匹配的 fs / storage 操作；支持 `mkdir`、`writeFile`、`appendFile`、`rename`、`rm`、`sqliteOpen`、`sqliteRun`、`any` |
-| `pathIncludes` | 路径包含匹配；路径会统一把 `\` 规范成 `/` |
-| `pathEndsWith` | 路径后缀匹配 |
-| `pathRegex` | 正则匹配规范化后的路径 |
-| `maxMatches` | 最大命中次数；默认 `1`；`0` 表示无限命中 |
-| `message` | 注入错误的可读说明 |
+| `id` | Stable case id or fixture id; must be non-empty |
+| `code` | Node-style error code, such as `ENOSPC`, `EACCES`, `EPERM` |
+| `operations` | Matching fs / storage operations: `mkdir`, `writeFile`, `appendFile`, `rename`, `rm`, `sqliteOpen`, `sqliteRun`, `any` |
+| `pathIncludes` | Path contains match; paths normalize `\` to `/` |
+| `pathEndsWith` | Path suffix match |
+| `pathRegex` | Regex match on the normalized path |
+| `maxMatches` | Maximum number of hits; default `1`; `0` means unlimited |
+| `message` | Readable description of the injected error |
 
-匹配规则：
+Matching rules:
 
-- `operations` 缺省等价于 `["any"]`。
-- `pathIncludes` / `pathEndsWith` / `pathRegex` 都缺省时，匹配所有路径。
-- 多个 path 条件同时存在时必须全部满足。
-- `maxMatches` 默认只触发一次，避免一个 fault case 无意中污染后续无关写入。
+- `operations` omitted equals `["any"]`.
+- If `pathIncludes` / `pathEndsWith` / `pathRegex` are all omitted, all paths match.
+- Several path conditions must all hold.
+- `maxMatches` triggers once by default so one fault case does not contaminate later unrelated writes.
 
-## 错误对象
+## Error object
 
-注入器抛出的错误必须保留 Node `ErrnoException` 形状：
+The injected error must keep the Node `ErrnoException` shape:
 
 ```ts
 {
@@ -84,20 +82,20 @@
 }
 ```
 
-这样产品层可以按真实错误码处理，E2E artifact 又能定位命中的 rule。
+The product layer can then handle real error codes while the E2E artifact can locate the matched rule.
 
-## 验收证据
+## Acceptance evidence
 
-每条存储 fault E2E 至少要保留这些证据：
+Every storage-fault E2E keeps at least:
 
-| 层 | 证据 |
+| Layer | Evidence |
 | --- | --- |
-| UI | 用户可见错误、按钮状态、queue/runtime 是否符合产品预期 |
-| Runtime | `activeInputId`、queue、session status、compact marker |
-| Files | 目标文件是否缺失、部分写入、损坏或恢复成功 |
-| Log | 同一 `sessionId` / `inputId` 的错误码和恢复日志 |
-| Fault artifact | 命中的 `id`、`operation`、`path`、`code`、命中次数 |
+| UI | User-visible error, button state, whether queue/runtime match product expectation |
+| Runtime | `activeInputId`, queue, session status, compact marker |
+| Files | Whether the target file is missing, partially written, corrupted or recovered |
+| Log | Error code and recovery log for the same `sessionId` / `inputId` |
+| Fault artifact | Matched `id`, `operation`, `path`, `code`, hit count |
 
-## 当前状态
+## Current state
 
-第一阶段已固化注入协议、helper 单测，并把 provider/config 使用的 `atomicWriteText`、`setting.json` 直接写入、provider display order 写入、SQLite session DB open、SQLite session history write、workspace tool 的父目录创建 / 非原子直接写入 / 删除、tool artifact write、CLI JSONL log write、desktop main log append 接入注入点；`D01-D05` 仍保持 `decision-needed`，不能因为具备注入能力就算产品 case 已覆盖。只有当某个业务写入点接入 helper，并且对应 case 有明确 setup/action/assert 后，才能在覆盖矩阵里标成 `covered`。
+The injection protocol and helper unit tests are fixed, and the injection points listed above are wired. `D01-D05` stay `decision-needed`: having an injection capability does not mean the product case is covered. Only when a business write point is wired to the helper and the case has explicit setup/action/assert can the coverage matrix mark it `covered`.
