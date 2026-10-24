@@ -2,9 +2,10 @@
  * Side-chat rows under a parent task row (spec: sidebar-child-conversation-counts.md §4, §7, §9): the
  * group nesting rail (ml-4 border-l pl-2) with one row per side chat — message-circle glyph,
  * truncated title, relative time — plus the "+N more" overflow row. Shared by the grouped row and
- * TaskListItem (projects / timeline / pinned views). Subagents are not listed (§9). Clicking a side
- * chat opens it through the owner's select path, which binds the parent's workspace; each row owns a
- * context menu so right-click never reaches the parent row's menu.
+ * TaskListItem (projects / timeline / pinned views). Subagents are not listed (§9). Owners render the
+ * list as a sibling of the parent row's hover/press/context-menu target (§9.5), so each row hovers on
+ * its own. Clicking a side chat opens it through the owner's select path, which binds the parent's
+ * workspace; each row owns a context menu.
  */
 import { MessageCircle } from "lucide-react";
 import { useCallback, useState, type MouseEvent } from "react";

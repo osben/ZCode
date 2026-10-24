@@ -199,6 +199,8 @@ User decision 2026-10-24: the sidebar shows side chats only. Subagents are no lo
 
 **9.4 Side-chat context menu.** A child row owns its own context menu; right-click never reaches the parent row's menu (grouped `ContextMenuTrigger` and flat `<li onContextMenu>`). Items: **Open** (same as click: main pane, writable with restricted commands) and **Copy session ID** (the side chat's id, through the existing copy helper and `appHeader.copySessionId` label). The menu content mounts only while open. The parent's hover card may still show over child rows (accepted).
 
+**9.5 Separate hover.** The side-chat list renders as a sibling of the parent row's hover/press/context-menu/hover-card/drag target, not inside it (supersedes the §4/§7 "inside the parent row's column" placement for side chats): grouped view — after the row's `ContextMenu` inside the same measured virtual item, with the row's left padding; projects/timeline/pinned — a separate `<li>` after the row, offset to the title column (row padding + leading slot + gap). Hovering the parent fills only the parent row; hovering a side chat fills only that side chat, and the parent shows no hover actions. The gap `<li>` stops `contextmenu` so the list-level task menu cannot open for a stale task. Workflow run lines stay inside the row.
+
 Acceptance (§9):
 
 1. A parent with 3 side chats and 10 subagents shows the message-circle marker `3` and no bot segment; expanding lists the 3 side chats and no subagent rows; no `+N more`.
@@ -206,3 +208,4 @@ Acceptance (§9):
 3. Old CLI sending subagent rows and counters → the same rendering as 1–2 (consumer filter).
 4. Right-click on a side-chat row opens the side-chat menu, not the parent's; **Open** opens the side chat; **Copy session ID** copies the side chat id.
 5. Running subagents produce no spinner, row or Stop in the sidebar.
+6. Hovering a side-chat row highlights only that row (no parent fill, no parent hover actions); hovering the parent highlights only the parent row, not its side-chat list.

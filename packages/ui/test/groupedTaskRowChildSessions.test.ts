@@ -122,6 +122,19 @@ describe("grouped child-session navigation", () => {
     expect(screen.queryByText("taskList.archive")).toBeNull();
   });
 
+  it("renders the side-chat list outside the parent row's hover target (§9.5)", () => {
+    const view = renderRow();
+    const row = view.container.querySelector<HTMLElement>("[data-grouped-task-key]")!;
+    const archive = () => view.container.querySelector('[data-testid^="task-archive"]');
+    fireEvent.click(view.container.querySelector('[data-child-sessions-marker="true"]')!);
+    const list = view.container.querySelector<HTMLElement>("[data-child-sessions-list]")!;
+    expect(row.contains(list)).toBe(false);
+    fireEvent.mouseEnter(list);
+    expect(archive()).toBeNull();
+    fireEvent.mouseEnter(row);
+    expect(archive()).not.toBeNull();
+  });
+
   it("right-click on the parent row itself still opens the parent menu (control)", async () => {
     renderRow();
     fireEvent.contextMenu(screen.getByText("Parent"));
