@@ -1,205 +1,140 @@
-# CLI Agent Telemetry 设计与开发规范
+# CLI Agent Telemetry Design and Development Spec
 
-> 状态：当前实现规范。
->
-> Telemetry Schema Version：6。
->
-> 适用范围：`apps/zcode-cli` 内部的 Agent、模型、工具、命令和上下文压缩链路。
+> Status: current implementation spec. Telemetry Schema Version: 6.
+> Scope: the Agent, model, tool, command and context-compaction paths inside `apps/zcode-cli`.
 
-本文定义 CLI Agent Trace 的数据模型、链路拓扑、设计约束、接入方式、隐私边界和基本查询。
-完整字段、底层运行时和 OpenTelemetry 概念分别由专题参考展开。本文与专题参考及 TypeScript
-Contracts 共同构成 Telemetry Schema：方法签名和类型约束以 Contracts 为准，字段语义和系统
-约束以文档为准。
+Defines the data model, topology, design constraints, integration, privacy boundary and basic queries of
+CLI Agent Trace. Full fields, the low-level runtime and OpenTelemetry concepts live in the reference
+documents. Together with TypeScript Contracts they form the Telemetry Schema: method signatures and type
+constraints are authoritative in Contracts; field semantics and system constraints in the documents.
 
-## 1. OpenTelemetry 数据模型
-
-ZCode 使用以下 OpenTelemetry 数据模型描述 Agent 执行：
+## 1. OpenTelemetry data model
 
 ```text
-Resource：Telemetry 生产者（CLI 版本、产品版本、构建、运行面、安装实例）
-    |
-    `-- Trace：一次完整的执行链
-          |
-          `-- Span：一段有开始、结束、耗时和结果的工作
-                |
-                +-- Attribute：这段工作的事实
-                +-- Event：工作进行到某个瞬间发生的里程碑
-                `-- Child Span：内部另一段具有独立生命周期的工作
+Resource: the Telemetry producer (CLI version, product version, build, runtime surface, install instance)
+  `-- Trace: one complete execution chain
+        `-- Span: a piece of work with start, end, duration and result
+              +-- Attribute: facts about the work
+              +-- Event: a milestone at an instant during the work
+              `-- Child Span: inner work with its own lifecycle
 
-Metric：从同一批低基数事实生成的跨请求统计，不依赖某条 Trace 是否被保留
+Metric: cross-request statistics from the same low-cardinality facts; independent of Trace retention
 ```
 
-主 Agent Turn 的标准拓扑是：
+Standard topology of a main Agent Turn:
 
 ```text
 agent_turn
-|
 +-- agent_step
 |   +-- model_call
 |   |   `-- model_attempt [1..n]
 |   `-- tool_execution
-|       +-- command_execution      仅真正启动 OS 进程时存在
-|       `-- model_call             工具内部使用模型时存在
-|
+|       +-- command_execution      only when an OS process is really started
+|       `-- model_call             when the tool uses a model internally
 `-- context_compaction
     `-- model_call
         `-- model_attempt [1..n]
 ```
 
-各 Span 的语义如下：
+- `model_call`: one logical model request, covering the overall result after Retry/Fallback.
+- `model_attempt`: one physical request actually sent to the Provider.
+- `tool_execution`: one execution of a registered tool.
+- `command_execution`: the command process a Tool really starts (not a "derived type" of Tool).
+- `agent_step`: one step of the Agent Loop, not one model HTTP request.
 
-- `model_call` 是一次逻辑模型请求，覆盖 Retry/Fallback 后的整体结果；
-- `model_attempt` 是一次真实发给 Provider 的物理请求；
-- `tool_execution` 是注册工具的一次执行；
-- `command_execution` 是 Tool 内真正启动的命令进程，不是 Tool 的“派生类型”；
-- `agent_step` 是 Agent Loop 的一步，不等于一次模型 HTTP 请求。
+Statistic targets: logical-call success rate -> `model_call`; Provider success rate, 429/500, Endpoint,
+TTFT -> `model_attempt`; tool success rate -> `tool_execution`; Shell/Git exit code ->
+`command_execution`. Definitions of Resource, Context, SpanContext, Parent, Link, Event, Baggage and
+Metric and ZCode's usage constraints: [OpenTelemetry concepts](./reference/otel-concepts.md).
 
-逻辑调用成功率以 `model_call` 为统计对象；Provider 成功率、429/500、Endpoint 和 TTFT 以
-`model_attempt` 为统计对象；工具成功率以 `tool_execution` 为统计对象；Shell/Git 退出码以
-`command_execution` 为统计对象。
+## 2. Observability facilities and boundaries
 
-Resource、Context、SpanContext、Parent、Link、Event、Baggage 和 Metric 的定义及其在 ZCode
-中的使用约束，详见
-[OpenTelemetry 概念与 ZCode 取舍](./reference/otel-concepts.md)。
+| Facility         | Purpose                                                   | Not for                 |
+| ---------------- | --------------------------------------------------------- | ----------------------- |
+| CLI OTel Trace   | Single Agent/Model/Tool/Command chain and fault drill-down | Page experience, funnels |
+| CLI OTel Metric  | Traffic, success rate, latency percentiles, Token, Telemetry health | Single-request bodies |
+| CLI SQLite Usage | Local Model/Turn/Tool detail, settings-page Usage, local reconciliation | ARMS remote chain |
+| App RUM          | Renderer pages, resources, API, frontend exceptions, interaction experience | CLI Agent internal tree |
+| `/event/report`  | Product behavior, purchase, feedback, business funnels    | Agent performance Trace |
+| Local logs       | Lifecycle, manual diagnosis, user-exportable troubleshooting | Automatically carrying Trace Payload |
 
-## 2. 观测设施边界
+Trace is not written to local logs and not reported through RUM. Even if the data ends in the same
+Alibaba Cloud account or Workspace, the data models and query entries stay independent.
 
-| 设施             | 用途                                              | 边界                   |
-| ---------------- | ------------------------------------------------- | ---------------------- |
-| CLI OTel Trace   | 单次 Agent/Model/Tool/Command 链路与故障下钻      | 页面体验、业务漏斗     |
-| CLI OTel Metric  | 流量、成功率、延迟分位数、Token、Telemetry 健康   | 单次请求正文           |
-| CLI SQLite Usage | 本地 Model/Turn/Tool 明细、设置页 Usage、本地对账 | ARMS 远端链路          |
-| App RUM          | Renderer 页面、资源、API、前端异常和交互体验      | CLI Agent 内部执行树   |
-| `/event/report`  | 产品行为、购买、反馈、业务漏斗                    | Agent 性能 Trace       |
-| 本地日志         | 生命周期、人工诊断、用户可导出的排障信息          | 自动承载 Trace Payload |
+## 3. Design principles
 
-Trace 不写入本地日志，也不通过 RUM 上报。即使这些数据最终进入同一个阿里云账号或 Workspace，
-其数据模型和查询入口仍相互独立。
+1. **OTel expresses structure, ZCode defines business semantics.** Parent, Link, Context, Span, Event,
+   Status, Resource use native OTel; Turn, Step, Attempt, Reasoning, Cache, Tool Outcome use full
+   `zcode.*` fields. `zcode.*` is the only authoritative internal query field; `gen_ai.*`, `http.*`,
+   `server.*`, `process.*` are compatibility aliases projected from the same fact and never drive
+   business APIs or internal reports.
+2. **Record at the fact source.** Record the HTTP status when the Provider returns Headers, mark First
+   Content when the first valid content arrives, record Exit Code when the process ends. Telemetry must
+   not require business code to build aggregate result objects or re-infer facts away from the source.
+   The raw Provider Error Message keeps its meaning after credential/path sanitizing (not folded into a
+   few templates); error classification is only an extra low-cardinality dimension.
+3. **One independent lifecycle, one Span.** Work needing its own duration, result, error, children or
+   diagnostic entry is a Span; an instantaneous milestone is an Event; a single fact an Attribute;
+   cross-request aggregates a Metric; background work triggered by a foreground operation a Link. Short
+   phases that only help failure location (`parse`, `prepare`) are `failure_stage`, not Spans, unless
+   they need an independent SLO or inner subtree. Tool request-permission instant = Event; final
+   permission decision = Attribute (Event may accompany).
+4. **One owner of each raw fact.** Attempt Token belongs only to `model_attempt`, Exit Code only to
+   `command_execution`, Provider error body only to the Span nearest the source that first claims the
+   error. Parent nodes record their own outcome and failure stage and never copy a Child's Token, error
+   body or aggregate summary. A few IDs (Turn ID, Logical Call ID) are projected to key nodes for ARMS
+   queryability: controlled query projection, not fake parent/child via Attributes
+   ([rules](./reference/schema-reference.md#3-query-projection)).
+5. **Unknown is not False.** Unobserved facts are omitted or written `unknown`, never inferred as
+   `disabled`, Cache Miss, not streamed, or `exit_code=0` (a plain Read Tool has no process exit code).
+6. **Telemetry is isolated from business execution.** Initialization, Context activation, Setter,
+   Metric, export and shutdown failures never change the business return value, exception or execution
+   count. Disabled mode returns a No-op Writer so callers need no switch checks.
+7. **Content is forbidden by default.** Prompt, model input/output, Reasoning body, Tool input/output,
+   file content, full command, HTTP Header, Body and URL Query never enter Trace. Data of unconfirmed
+   privacy level must not be collected before review.
 
-## 3. 设计原则
+## 4. Parent, Link and independent operations
 
-### 3.1 OTel 表达结构，ZCode 定义业务语义
-
-Parent、Link、Context、Span、Event、Status、Resource 使用 OTel 原生能力；Turn、Step、
-Attempt、Reasoning、Cache、Tool Outcome 等业务语义使用完整的 `zcode.*` 字段。
-
-`zcode.*` 是内部查询的唯一权威字段。`gen_ai.*`、`http.*`、`server.*`、`process.*` 是从同一
-事实投影出的兼容别名，用于外部工具理解，不能反过来决定业务 API 或内部报表。
-
-### 3.2 在事实来源处记录
-
-Provider 返回 Header 时记录 HTTP 状态；首段有效内容到达时标记 First Content；进程结束时记录
-Exit Code。Telemetry 不应要求业务层额外构造聚合结果对象，也不应在远离事实来源的位置重新
-推断或分类。
-
-```ts
-attempt.setHttpStatusCode(response.status);
-
-for await (const event of stream) {
-  attempt.markFirstProviderEvent();
-  if (containsContent(event)) attempt.markFirstContent();
-}
-
-command.setExitCode(result.exitCode);
-```
-
-原始 Provider Error Message 经过凭据和路径脱敏后保留原意，不先折叠成少数错误模板。错误
-分类仅作为额外的低基数维度，不替代原始信息。
-
-### 3.3 一个独立生命周期才创建一个 Span
-
-需要独立耗时、结果、错误、子节点或诊断入口的工作创建 Span；瞬时里程碑使用 Event；单个
-事实使用 Attribute；跨请求聚合使用 Metric。
-
-| 需求                               | 使用                                  |
-| ---------------------------------- | ------------------------------------- |
-| 一次 Tool 从开始到结束的耗时和结果 | Span                                  |
-| Tool 请求权限的时刻                | Event                                 |
-| 最终权限决定                       | Attribute；若要看时间点可同时有 Event |
-| Provider Origin、Model、Exit Code  | Attribute                             |
-| P95、全量成功率、Token 总量        | Metric                                |
-| 后台任务由哪个前台操作触发         | Link                                  |
-
-不应为 `parse`、`prepare` 这类只有失败定位价值的短阶段创建 Span；它们通常表示为
-`failure_stage`。仅当该阶段需要独立 SLO 或内部子树时，才将其建模为 Child Span。
-
-### 3.4 原始事实只有一个归属
-
-Attempt Token 只属于 `model_attempt`，Exit Code 只属于 `command_execution`，Provider 错误正文
-只记录在最接近来源、首次认领错误的 Span。父节点记录自己的 outcome 和 failure stage，不复制
-Child 的 Token、错误正文或聚合摘要。
-
-少量 ID 会为了 ARMS 查询能力投影到关键节点，例如 Turn ID、Logical Call ID。它们是受控查询
-投影，不是用 Attribute 伪造父子关系。完整规则见
-[Schema 字典](./reference/schema-reference.md#3-query-projection执行关联投影)。
-
-### 3.5 Unknown 不等于 False
-
-未观察到的事实应省略或明确写 `unknown`，不能推断为 `disabled`、Cache Miss、请求未流式、
-`exit_code=0`。例如普通 Read Tool 没有进程退出码，因此不记录 Exit Code。
-
-### 3.6 Telemetry 与业务执行隔离
-
-Telemetry 初始化、Context 激活、Setter、Metric、导出和关闭失败，都不能改变业务返回值、异常
-或执行次数。Disabled 模式返回 No-op Writer，业务调用方无需分别判断开关状态。
-
-### 3.7 内容数据默认禁止上报
-
-Prompt、模型输入输出、Reasoning 正文、Tool 输入输出、文件内容、完整命令、HTTP Header、Body
-和 URL Query 禁止进入 Trace。无法确认隐私等级的数据在完成评审前不得采集。
-
-## 4. Parent、Link 和独立操作
-
-Parent/Child 表示同一条 Trace 中的执行所有权；Link 表示另一条独立 Trace 与触发者之间的因果
-关系。
+Parent/Child = execution ownership within one Trace; Link = causal relation between an independent Trace
+and its trigger.
 
 ```text
-工作是否属于当前调用者拥有的一段同步/await 生命周期？
-    |
-    +-- 是：Child Span，共享 traceId，parentSpanId 指向调用者
-    |
-    `-- 否：新 Root Span，使用 Link 指向触发者
+Is the work a sync/await lifecycle owned by the current caller?
+  yes -> Child Span: shared traceId, parentSpanId = caller
+  no  -> new Root Span with a Link to the trigger
 ```
 
-当前约定：
-
-- 普通主 Turn 是 Root；
-- 前台 Subagent 被父 Tool await，Child Turn 直接挂在父 Tool 下；
-- 后台 Subagent 和 Workflow Child 独立调度，创建新 Root 并 Link 到触发者；
-- 标题生成、Goal 校验、Project Memory 等非 Turn 工作使用 `detached_operation`；前台执行可作为
-  Child，队列/后台/恢复执行使用 Root + Link；
-- Parent 可以先于 Child 结束，结束先后本身不是改用 Link 的理由；所有权和调度边界才是。
+1. A normal main Turn is a Root.
+2. A foreground Subagent is awaited by the parent Tool: the Child Turn hangs directly under the parent
+   Tool.
+3. Background Subagents and Workflow Children are scheduled independently: new Root + Link to the trigger.
+4. Non-Turn work (title generation, Goal verification, Project Memory) uses `detached_operation`:
+   foreground may be a Child; queued/background/recovery execution uses Root + Link.
+5. A Parent may end before its Child; end order alone is no reason to use Link. Ownership and the
+   scheduling boundary are.
 
 ```text
-同步 Subagent：
-agent_turn -> agent_step -> tool_execution -> agent_turn(child)
-
-后台 Subagent：
-Trace A: tool_execution ---- Link ----> Trace B: agent_turn(root)
-
-独立后台工作：
-Trace A: triggering span -- Link ----> Trace B: detached_operation(root)
+Sync Subagent:  agent_turn -> agent_step -> tool_execution -> agent_turn(child)
+Background:     Trace A: tool_execution --Link--> Trace B: agent_turn(root)
+Detached work:  Trace A: triggering span --Link--> Trace B: detached_operation(root)
 ```
 
-延迟任务必须在调度时调用 `captureCausation()`，不得在执行阶段读取当时的 Active Context 来
-推断触发关系。
-`AgentTelemetryCausation` 保存 OTel SpanContext 和少量查询投影 ID；它不是一份业务 Context。
+Deferred tasks must call `captureCausation()` at scheduling time and must not read the then-Active Context
+at execution time to infer the trigger. `AgentTelemetryCausation` holds an OTel SpanContext plus a few
+query-projection IDs and is not a business Context. Field naming, Lifecycle inheritance, Query
+Projection and per-Span fields: [Schema dictionary](./reference/schema-reference.md).
 
-字段命名、Lifecycle 继承、Query Projection 和各 Span 的完整字段，详见
-[Span、Attribute、Event 与 Metric 字典](./reference/schema-reference.md)。
+## 5. Integration
 
-## 5. 接入方式
+### 5.1 Typed Writer
 
-### 5.1 使用 Typed Writer
-
-业务代码依赖 `@zcode/contracts/telemetry` 中的窄接口。Writer 的每个 Setter 对应一个明确事实，
-内部负责 Attribute Key、校验、脱敏、Event、Metric 和外部兼容别名。
+Business code depends on the narrow interfaces in `@zcode/contracts/telemetry`. Each Writer Setter maps to
+one explicit fact; the Writer owns Attribute Key, validation, sanitizing, Event, Metric and external
+compatibility alias.
 
 ```ts
-const step = runtimeTelemetry.step({
-  stepId: assistantMessageId,
-  stepIndex,
-});
+const step = runtimeTelemetry.step({ stepId: assistantMessageId, stepIndex });
 
 return step.run(async () => {
   try {
@@ -217,24 +152,21 @@ return step.run(async () => {
 });
 ```
 
-`run()` 将当前 Span 写入 OTel Context，使内部创建的 Span 自动成为 Child，并统一处理未捕获
-异常和遗漏终态。正常业务分支仍应显式调用语义准确的 `finish*()`。
+`run()` puts the current Span into the OTel Context so Spans created inside automatically become Children,
+and handles uncaught exceptions and missed terminals. Normal business branches still call the
+semantically exact `finish*()`.
 
-### 5.2 终态处理与异常隔离
+### 5.2 Terminal handling and exception isolation
 
-`try/catch` 记录业务已知终态，例如用户取消、权限拒绝和解析失败；`run()` 处理未捕获异常及
-`missing_terminal`。已知业务分支提供准确语义，`run()` 提供异常隔离和终态完整性。
+`try/catch` records known business terminals (user cancel, permission denial, parse failure); `run()`
+handles uncaught exceptions and `missing_terminal`. Writers use an exactly-once Terminal Latch: only the
+first `finishCompleted/Failed/Cancelled/...` takes effect, later calls are ignored; the Latch closes
+before calling the OTel SDK and Metric so observation-layer exceptions cannot cause duplicate terminals.
 
-Writer 使用 exactly-once Terminal Latch。仅首个 `finishCompleted/Failed/Cancelled/...` 调用生效，
-后续终态调用被忽略；Latch 在调用 OTel SDK 和 Metric 前关闭，以避免观测层异常导致重复终态。
-
-### 5.3 Tool 和 Command
+### 5.3 Tool and Command
 
 ```ts
-const tool = telemetry.startTool({
-  registeredToolName: toolCall.name,
-  toolCallId: toolCall.id,
-});
+const tool = telemetry.startTool({ registeredToolName: toolCall.name, toolCallId: toolCall.id });
 
 return tool.run(async () => {
   tool.markPermissionRequested();
@@ -254,7 +186,7 @@ return tool.run(async () => {
 });
 ```
 
-只有 Tool 真正启动 OS 命令时才创建 Child：
+A Command Child is created only when the Tool really starts an OS command:
 
 ```ts
 const command = tool.startCommand({
@@ -274,241 +206,176 @@ return command.run(async () => {
 });
 ```
 
-`safeName` 是受控命令族，不是完整命令。参数、路径、脚本和环境变量禁止上报。
+`safeName` is a controlled command family, not a full command; args, paths, scripts and environment
+variables are never reported.
 
-### 5.4 Model Call 和 Attempt
+### 5.4 Model Call and Attempt
 
-业务调用点只声明模型调用的业务用途；Provider Adapter 和状态记录器补齐真实请求事实。调用方
-不应手填 UID、Session、Provider Origin、实际 Model、Token、Cache、HTTP 错误或 TTFT。
+Call sites declare only the business purpose of a model call; the Provider Adapter and status recorder
+fill in real request facts. Callers must not hand-fill UID, Session, Provider Origin, actual Model,
+Token, Cache, HTTP error or TTFT.
 
 ```text
 model_call(operation=agent_step, logical_call_id=L1)
-|
 +-- model_attempt(request_id=R1, attempt_number=1) -> failed 429
 `-- model_attempt(request_id=R2, attempt_number=2) -> completed
 ```
 
-`ModelApiTelemetryStatusSink` 监听统一 Model Status Event，依次调用：
+`ModelApiTelemetryStatusSink` listens to the unified Model Status Event and calls in turn
+`call.startAttempt(...)`, `attempt.setHttpStatusCode(429)`, `attempt.setProviderErrorCode("rate_limit")`,
+`attempt.setProviderErrorMessage(providerMessage)`, `attempt.markFirstProviderEvent()`,
+`attempt.markFirstContent()`, `attempt.setInputTokens(inputTokens)`,
+`attempt.setCacheReadTokens(cacheReadTokens)`, `attempt.finishCompleted()`, `call.finishCompleted()`.
+Provider, Endpoint, Model, Reasoning and Usage are written from the real request/response of the API
+wrapper layer. Fields: [Model Span dictionary](./reference/schema-reference.md#11-model_call).
 
-```ts
-call.startAttempt(...);
-attempt.setHttpStatusCode(429);
-attempt.setProviderErrorCode("rate_limit");
-attempt.setProviderErrorMessage(providerMessage);
-attempt.markFirstProviderEvent();
-attempt.markFirstContent();
-attempt.setInputTokens(inputTokens);
-attempt.setCacheReadTokens(cacheReadTokens);
-attempt.finishCompleted();
-call.finishCompleted();
-```
+### 5.5 Independent operations and all LLM entries
 
-Provider、Endpoint、Model、Reasoning 和 Usage 都从 API 封装层的真实请求/响应写入。完整字段见
-[Model Span 字典](./reference/schema-reference.md#11-model_call)。
+Out-of-Turn model work must first create a `detached_operation` so the inner `model_call` becomes its
+Child. `operation` is a controlled enum, currently: `goal_completion_verification`,
+`goal_title_generation`, `project_memory_extract`, `project_memory_dream`, `project_memory_recall`,
+`read_session_context_extract`, `read_session_context_synthesize`, `session_title_generation`,
+`tool_internal_model_call`, `web_fetch_processing`, `web_search`, `workspace_git_commit_message`,
+`workspace_generate_text`. `agent_step` and `context_compaction` are carried by their own Spans and are
+not wrapped in `detached_operation`. A new LLM entry must first pick an existing operation; add an enum
+value only when both execution semantics and statistic dimensions differ. Definitions and call entries:
+[Operation catalog](./reference/schema-reference.md#101-operation-catalog).
 
-### 5.5 独立操作和所有 LLM 入口
+## 6. Extension process
 
-Turn 外的模型工作必须先创建 `detached_operation`，再让内部 `model_call` 自动成为 Child。
-`operation` 使用受控枚举，目前包括：
+### 6.1 New Span
 
-```text
-goal_completion_verification
-goal_title_generation
-project_memory_extract
-project_memory_dream
-project_memory_recall
-read_session_context_extract
-read_session_context_synthesize
-session_title_generation
-tool_internal_model_call
-web_fetch_processing
-web_search
-workspace_git_commit_message
-workspace_generate_text
-```
+Needs independent duration/result/error/subtree? No -> Attribute or Event. Yes -> can an existing Span
+express it? Yes -> add the necessary Setter to the existing Writer; No -> add a stable Span Name + Typed
+Writer. A new Span must also: (1) define start and end boundaries; (2) define Parent or Root + Link; (3)
+add a dedicated Start type and Writer in Contracts; (4) write canonical `zcode.<span_name>.*` Keys
+explicitly in Runtime; (5) define outcomes, failure stages, events and privacy; (6) update the
+[Schema dictionary](./reference/schema-reference.md); (7) add topology, terminal, exception-isolation,
+privacy and Metric tests.
 
-`agent_step` 和 `context_compaction` 分别由其专属 Span 承载，不使用
-`detached_operation` 包裹。新增 LLM 入口时，必须先选择现有 operation；仅当执行语义和统计
-维度均不相同时新增枚举。所有 Operation 的定义与调用入口详见
-[Schema 字典中的 Operation 枚举](./reference/schema-reference.md#14-operation-枚举)。
+### 6.2 New field
 
-## 6. 观测扩展流程
+State: does it belong to Resource, execution projection, Lifecycle or one Span? Where is the raw fact
+first determined? Type, unit, allowed values, missing semantics? Does it contain identity, content, path,
+URL, credentials or free text? Will it be a Metric Label (is cardinality bounded)? Is a GenAI/OTel
+compatibility alias needed and is the conversion lossless? Then add a semantically clear Setter to the
+concrete Writer. Business interfaces must not expose `setAttribute(key, value)` nor introduce a runtime
+Schema Registry or second mapping layer.
 
-### 6.1 新增 Span
+### 6.3 New Event
 
-```text
-需要独立耗时/结果/错误/子树吗？
-    |
-    +-- 否：Attribute 或 Event
-    |
-    `-- 是：现有 Span 能准确表达吗？
-              |
-              +-- 是：给现有 Writer 增加必要 Setter
-              `-- 否：新增稳定 Span Name + Typed Writer
-```
+An Event is an instantaneous milestone with diagnostic value, exposed through a concrete method such as
+`markFirstContent()`; define dedup and count cap; never one Event per Streaming Chunk.
 
-新增 Span 时必须同时完成：
+### 6.4 New Metric
 
-1. 定义开始和结束边界；
-2. 定义 Parent 或 Root + Link；
-3. 在 Contracts 中增加专属 Start 类型和 Writer；
-4. 在 Runtime 中显式写 Canonical `zcode.<span_name>.*` Key；
-5. 定义 outcomes、failure stages、events 和隐私；
-6. 更新 [Schema 字典](./reference/schema-reference.md)；
-7. 添加拓扑、终态、异常隔离、隐私和 Metric 测试。
+Define denominator, Instrument, Unit, Bucket and Label. Only low-cardinality Labels; Session ID, Request
+ID, Endpoint, error message, installation ID and user ID must never be Labels. Metric is not derived from
+ARMS Trace query results; the Writer records it directly when the fact is determined.
 
-### 6.2 新增字段
+## 7. Privacy and performance constraints
 
-新增字段必须明确以下内容：
+### 7.1 Allowed data
 
-- 它属于 Resource、执行投影、Lifecycle，还是某个 Span？
-- 原始事实在哪里首次确定？
-- 类型、单位、允许值、缺失语义是什么？
-- 是否包含身份、内容、路径、URL、凭据或自由文本？
-- 会不会被用于 Metric Label；若会，基数是否有界？
-- 是否需要 GenAI/OTel 兼容别名，转换是否无损？
+Stable enums, counts, durations, Tokens, HTTP status; controlled Registry Tool Name and command-family
+Safe Name; Provider/Model runtime facts; sanitized Provider Origin and Route; sanitized, truncated error
+type, code and message; product-generated installation pseudonym ID, controlled user subject ID and
+execution correlation IDs. The installation ID is a persistent random pseudonym (not a hardware ID, not
+risk-free anonymous data). The user ID is currently recorded as the controlled subject ID verbatim with no
+extra Hash; both are for Trace queries only and never Metric Labels.
 
-随后在具体 Writer 增加语义明确的 Setter。业务接口不得暴露 `setAttribute(key, value)`，也不应
-引入运行时 Schema Registry 或二次映射层。
-
-### 6.3 新增 Event
-
-Event 应当是一个有诊断价值的瞬时里程碑，并通过具体方法暴露，例如
-`markFirstContent()`。需要明确去重和次数上限；禁止每个 Streaming Chunk 都写 Event。
-
-### 6.4 新增 Metric
-
-Metric 必须定义分母、Instrument、Unit、Bucket 和 Label。只允许低基数 Label；Session ID、
-Request ID、Endpoint、错误消息、安装 ID 和用户 ID 禁止成为 Label。Metric 不从 ARMS Trace
-查询结果反推，而由 Writer 在事实确定时直接记录。
-
-## 7. 隐私与性能约束
-
-### 7.1 允许记录的数据
-
-- 稳定枚举、计数、时长、Token、HTTP 状态；
-- 受控 Registry Tool Name 和命令族 Safe Name；
-- Provider/Model 的运行事实；
-- 清洗后的 Provider Origin 与 Route；
-- 脱敏、截断后的错误类型、错误码和错误信息；
-- 产品生成的安装假名 ID、受控用户主体 ID 和执行关联 ID。
-
-安装 ID 是持久化随机假名，不是硬件 ID，也不是“匿名无风险数据”。用户 ID 当前按受控主体 ID
-原值记录，没有额外 Hash；这两者都只能用于 Trace 查询，不能进入 Metric Label。
-
-### 7.2 禁止记录的数据
+### 7.2 Forbidden data
 
 ```text
-Prompt / Message / Reasoning 正文
-Tool 输入输出 / 文件内容 / Patch
-完整 Command / 参数 / cwd / 环境变量
+Prompt / Message / Reasoning body
+Tool input/output / file content / Patch
+Full Command / args / cwd / environment variables
 HTTP Header / Body / Cookie / Authorization
-URL Query / Fragment / 用户名 / 密码
-OTLP License Key 或其他 Secret
+URL Query / Fragment / username / password
+OTLP License Key or other Secret
 ```
 
-Endpoint 清洗移除用户名、密码、Query 和 Fragment，并对邮箱、UUID、长数字、长哈希和疑似 Token
-Path Segment 替换占位符；结果按 `(providerKind, baseURL)` 使用有界缓存。错误消息先做有界截断，
-再清除凭据、邮箱、常见本地路径和 URL 敏感部分。
+Endpoint sanitizing removes username, password, Query and Fragment and replaces email, UUID, long numbers,
+long hashes and token-like Path segments with placeholders; the result is cached boundedly by
+`(providerKind, baseURL)`. Error messages are bounded-truncated first, then credentials, emails, common
+local paths and sensitive URL parts are removed.
 
-### 7.3 热路径约束
+### 7.3 Hot path
 
-Setter 只能执行常数级、小对象操作；禁止同步文件/网络 I/O、遍历 Prompt、序列化大型 JSON 或
-逐 Chunk 上报。Span 经 BatchSpanProcessor 异步、批量、Gzip 导出。达到每进程 5000 个活跃
-Writer 上限时，旁路新 Span 并记录 Telemetry Health，不阻塞 Agent。
+Setters do constant-time work on small objects only: no synchronous file/network I/O, no Prompt traversal,
+no large JSON serialization, no per-Chunk reporting. Spans export asynchronously, batched, Gzip via
+BatchSpanProcessor. At 5000 active Writers per process new Spans are bypassed and Telemetry Health is
+recorded without blocking the Agent. Sanitizing algorithms, export budget, capacity caps and degradation:
+[Runtime reference](./reference/runtime-and-operations.md#7-performance-capacity-and-reliability).
 
-Endpoint、错误信息和身份字段的脱敏算法，以及导出预算、容量上限和降级行为，详见
-[Runtime 参考](./reference/runtime-and-operations.md#7-性能容量与可靠性)。
+## 8. ARMS queries
 
-## 8. ARMS 查询
-
-Trace 在 ARMS 应用监控/调用链分析中查询，不是在 RUM 体验看板中查询。基本过滤条件：
+Trace is queried in ARMS application monitoring / trace analysis, not in RUM dashboards. Base filter:
 
 ```text
 serviceName : zcode-cli-agent
 and resources.zcode.telemetry.schema_version : 5
 ```
 
-常用查询：
-
 ```text
-# 所有 Turn
+# All Turns
 spanName : agent_turn
 
-# 失败的物理模型请求
+# Failed physical model requests
 spanName : model_attempt
 and attributes.zcode.model_attempt.outcome : failed
 
-# 某个 Turn 的关键节点
+# Key nodes of one Turn
 attributes.zcode.execution.turn_id : <turn-id>
 
-# 某个安装实例的模型请求
+# Model requests of one installation
 spanName : model_attempt
 and resources.zcode.device.installation_id : <installation-id>
 
-# 某个逻辑调用的全部 Retry Attempt
+# All Retry Attempts of one logical call
 attributes.zcode.execution.logical_call_id : <logical-call-id>
 ```
 
-错误查询使用：
+Error queries: HTTP 429/500 `attributes.zcode.model_attempt.http_status_code`; Provider raw error code
+`...provider_error_code`; sanitized Provider raw error message `...provider_error_message`; the Error that
+terminated the Attempt (usually a Transport/SDK exception) `...error_message`; request address
+`provider_origin` and `provider_route` (not the raw URL). Accurate success rate, QPS, Token and P95/P99
+prefer OTLP Metrics; Trace locates concrete samples. Saved Query, Dashboard and formulas:
+[ARMS reference](./reference/runtime-and-operations.md#9-arms-queries-dashboards-and-metric-definitions).
 
-- HTTP 429/500：`attributes.zcode.model_attempt.http_status_code`；
-- Provider 原始错误码：`attributes.zcode.model_attempt.provider_error_code`；
-- Provider 原始错误信息（已脱敏）：
-  `attributes.zcode.model_attempt.provider_error_message`；
-- 终止 Attempt 的 Error（通常是 Transport/SDK 异常）：
-  `attributes.zcode.model_attempt.error_message`；
-- 请求地址：`provider_origin` 与 `provider_route`，不使用原始 URL。
+## 9. Responsibilities of docs, code and tests
 
-准确成功率、QPS、Token 和 P95/P99 优先使用 OTLP Metric；Trace 用于定位具体执行样本。完整
-Saved Query、Dashboard 和统计公式详见
-[ARMS 参考](./reference/runtime-and-operations.md#9-arms-查询大盘与统计口径)。
+Core spec = data model + principles + integration + system boundary; reference = OTel concepts + full
+field dictionary + Runtime/ops detail; TypeScript Contracts/Writers = compilable signatures, enums and
+Attribute writes; Tests = executable proof of topology, fields, terminals, sanitizing, compatibility
+projection and export.
 
-## 9. 文档、代码与测试的职责
+Code locations under `apps/zcode-cli/packages/`: Contracts `contracts/src/telemetry/`; Writer Runtime
+`telemetry/src/agent-trace-runtime.ts`; Context and terminal base `telemetry/src/agent-trace-support.ts`;
+Model Status to Writer `telemetry/src/model-api-recorder.ts`; Compatibility Adapter
+`telemetry/src/compatibility-adapters.ts`; Metric `telemetry/src/agent-metrics.ts`; OTLP Owner/Exporter
+`telemetry/src/otlp-exporter.ts`; business Facade `core/src/telemetry/runtime-telemetry.ts`.
 
-```text
-核心规范
-    数据模型 + 设计原则 + 接入方式 + 系统边界
+Maintenance rules:
 
-专题参考
-    OTel 概念 + 完整字段字典 + Runtime/运维细节
+1. Any change to Span, Attribute, Event, Metric, enum, privacy or statistic definition updates the field
+   dictionary in the same change; field semantics must not live only in code.
+2. A change to overall principles, integration interface or boundary also updates this document;
+   field-level detail updates only the matching reference.
+3. Migration processes and review records move to `archive/` when done and never sit beside the current
+   spec.
+4. Breaking a field, type, unit, terminal or topology upgrades the Telemetry Schema Version; product and
+   CLI versions evolve independently.
+5. Run related tests, `pnpm typecheck` and `pnpm lint` before submitting.
 
-TypeScript Contracts / Writers
-    可编译的方法签名、枚举和 Attribute 写入
+## 10. Version axes
 
-Tests
-    拓扑、字段、终态、脱敏、兼容投影和导出的可执行证明
-```
+| Meaning                      | Field                            | Current source                                    |
+| ---------------------------- | -------------------------------- | ------------------------------------------------- |
+| CLI Telemetry producer version | `service.version`              | Injected at build from `apps/zcode-cli/package.json` |
+| Desktop/product version      | `zcode.product.version`          | Product build metadata; no hardcoded version in docs/code |
+| Data contract version        | `zcode.telemetry.schema_version` | Contracts constant, currently 5                   |
+| Exact build identity         | `zcode.build.commit_id`          | Trusted CI/Git build metadata                     |
 
-主要代码位置：
-
-- Contracts：`apps/zcode-cli/packages/contracts/src/telemetry/`；
-- Writer Runtime：`apps/zcode-cli/packages/telemetry/src/agent-trace-runtime.ts`；
-- Context 与终态基类：`apps/zcode-cli/packages/telemetry/src/agent-trace-support.ts`；
-- Model Status 到 Writer：`apps/zcode-cli/packages/telemetry/src/model-api-recorder.ts`；
-- Compatibility Adapter：`apps/zcode-cli/packages/telemetry/src/compatibility-adapters.ts`；
-- Metric：`apps/zcode-cli/packages/telemetry/src/agent-metrics.ts`；
-- OTLP Owner/Exporter：`apps/zcode-cli/packages/telemetry/src/otlp-exporter.ts`；
-- 业务 Facade：`apps/zcode-cli/packages/core/src/telemetry/runtime-telemetry.ts`。
-
-维护规则：
-
-1. 新增或修改 Span、Attribute、Event、Metric、枚举、隐私和统计口径，必须同步更新字段字典；
-   字段语义不能仅依赖代码表达。
-2. 改变整体原则、接入接口或边界时，同时更新本文；字段级细节只更新相应专题参考。
-3. 迁移过程和评审记录完成后移入 `archive/`，不得与当前规范并列。
-4. 破坏字段、类型、单位、终态或拓扑时升级 Telemetry Schema Version；产品版本和 CLI 版本独立
-   演进。
-5. 提交前运行相关测试、`pnpm typecheck` 和 `pnpm lint`。
-
-## 10. 版本轴
-
-| 含义                     | 字段                             | 当前来源                               |
-| ------------------------ | -------------------------------- | -------------------------------------- |
-| CLI Telemetry 生产者版本 | `service.version`                | `apps/zcode-cli/package.json` 构建注入 |
-| Desktop/产品版本         | `zcode.product.version`          | 产品构建元数据；文档和代码不硬编码版本 |
-| 数据契约版本             | `zcode.telemetry.schema_version` | Contracts 常量，当前为 5               |
-| 精确构建身份             | `zcode.build.commit_id`          | 可信 CI/Git 构建元数据                 |
-
-报表比较发布效果时应同时保留 Schema Version、CLI Version、Product Version 和 Build Commit，
-不能把它们当作同一个版本字段。
+Reports comparing release effects must keep Schema Version, CLI Version, Product Version and Build Commit
+together and never treat them as one version field.

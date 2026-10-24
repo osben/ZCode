@@ -1,12 +1,12 @@
 # Upstream issue draft: @modelcontextprotocol SDK — probe classifier treats a malformed HTTP 200 error body as a hard network failure instead of legacy evidence
 
-> 状态：草稿（尚未提交给 modelcontextprotocol/typescript-sdk）。
-> 日期：2026-08-25。
-> 影响包：`@modelcontextprotocol/client` 2.0.0。
-> 关联：`docs/mcp-dual-era-version-negotiation.md`（ZCode 侧不改协商语义，只做
-> `protocol_negotiation_failed` 失败引导 + `protocolVersion: "legacy"` 兼容开关）。
+> Status: draft (not yet submitted to modelcontextprotocol/typescript-sdk).
+> Date: 2026-08-25.
+> Affected package: `@modelcontextprotocol/client` 2.0.0.
+> Related: `docs/mcp-dual-era-version-negotiation.md` (ZCode does not change negotiation semantics; it
+> only adds `protocol_negotiation_failed` failure guidance and a `protocolVersion: "legacy"` switch).
 
-以下为英文 issue 正文草稿。
+The issue body draft follows.
 
 ---
 
