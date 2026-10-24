@@ -163,67 +163,24 @@ interactive desktop executes them. CU-45 remains `not-run` until the Linux X11 /
 AT-SPI workstation lane executes it. Definition validation or source inspection
 cannot be reported as live platform success.
 
-## 2026-08-21 macOS validation record
+## macOS validation record (2026-08-21)
 
-Executed against the local producer/consumer worktrees and the stable-identity
-Dev Helper:
+Run against the local producer/consumer worktrees and the stable-identity Dev Helper:
 
-- producer unit/integration: 2942 passed, 49 skipped;
-- producer Python contracts: 46 passed;
-- ZGE evaluator contracts: 508 passed;
-- ZGE definition catalog: 31/31 passed;
-- macOS direct core: C01/C05/C06/C07/C08/C09/C10/C13/C16/C17 = 10/10;
-- remaining macOS direct cases: C02/C03/C04/C12/C14/C15/C18/M12/M13 all
-  passed after fixing evaluator drift and fresh-process error classification;
-- common native apps: M01..M11 product cases passed; M09 cold-start initial
-  environment failure passed on isolated rerun;
-- consumer 0820 unit lane: 12304 passed, 11 skipped; the only two failures are
-  pre-existing `v4ConversationDraftSuggestedPrompts` style assertions outside
-  the CUA diff;
-- consumer typecheck, desktop E2E typecheck, and lint: 0 errors;
-- real `glm-x-preview-f` 12px lane: M1..M5 all hit once using image-first
-  screenshot/Zoom and `{type:"coordinate",x,y}` only;
-- real `glm-x-preview-f` canvas lane: a 15×15 Safari canvas received seven
-  coordinate clicks through `window_event` with no AX/DOM target. Tengen,
-  bottom-right, top-edge midpoint, two half-pitch probes, a +4 raster-pixel
-  probe, and an explicit `strategy="event"` point all snapped to the intended
-  intersection. The page oracle reported, in order, `(336,320)`, `(600,601)`,
-  `(321,40)`, `(221,200)`, `(420,400)`, `(167,487)`, and `(480,121)` CSS pixels;
-- the same canvas trace proved the provider cannot reliably relay the adjacent
-  opaque frame token: the model request contained `frame-77ee3492`, while the
-  model emitted a different remembered value. The internal-binding path hit the
-  correct point; explicit wrong/stale ids were rejected with
-  `action_sent=false`, so the fail-closed boundary remained intact;
-- 0820 consumer live replay delivered the screenshot to `glm-x-preview-f` as
-  `[image, image_ref, hint]` with the 151,676-byte JPEG first. An initial
-  live-owner change failed with `action_sent=false`; the raster-only recovery
-  path recaptured and clicked `{x:132,y:214}` via `window_event`, and the page
-  oracle reported CSS `(198,200)` at intersection `(5,5)`;
-- Composer lifecycle: ready state, persisted hide/restart/restore, narrow 640×800
-  dark/light presentation, busy disable, and automatic post-task recovery passed.
+- Producer unit/integration 2942 passed, 49 skipped; Python contracts 46 passed; ZGE evaluator contracts 508 passed; ZGE definition catalog 31/31.
+- macOS direct core C01/C05/C06/C07/C08/C09/C10/C13/C16/C17 10/10; C02/C03/C04/C12/C14/C15/C18/M12/M13 passed after fixing evaluator drift and fresh-process error classification. Common native apps M01..M11 passed (M09 cold-start initial environment failure passed on isolated rerun).
+- Consumer 0820 unit lane 12304 passed, 11 skipped; the only two failures are pre-existing `v4ConversationDraftSuggestedPrompts` style assertions outside the CUA diff. Consumer typecheck, desktop E2E typecheck and lint: 0 errors.
+- Real `glm-x-preview-f` 12px lane: M1..M5 all hit once using image-first screenshot/Zoom and `{type:"coordinate",x,y}` only.
+- Real `glm-x-preview-f` canvas lane: a 15x15 Safari canvas received seven coordinate clicks through `window_event` with no AX/DOM target (Tengen, bottom-right, top-edge midpoint, two half-pitch probes, a +4 raster-pixel probe, an explicit `strategy="event"` point); all snapped to the intended intersection, confirmed by the page oracle.
+- The same trace showed the provider cannot reliably relay the adjacent opaque frame token (request contained `frame-77ee3492`, the model emitted a different remembered value). The internal-binding path hit the correct point; explicit wrong/stale ids were rejected with `action_sent=false`, so fail-closed held.
+- Consumer live replay delivered the screenshot as `[image, image_ref, hint]` with the 151,676-byte JPEG first. An initial live-owner change failed with `action_sent=false`; the raster-only recovery recaptured and clicked `{x:132,y:214}` via `window_event`; the page oracle reported CSS `(198,200)` at intersection `(5,5)`.
+- Composer lifecycle passed: ready state, persisted hide/restart/restore, narrow 640x800 dark/light presentation, busy disable, automatic post-task recovery.
 
-Retained evidence:
+Not executed on this machine: CU-14 true dual-display hardware switching, CU-41/CU-42/the Windows half of CU-43, and CU-45 Linux AT-SPI. Their platform lanes remain mandatory and must not be inferred from the macOS pass.
 
-- producer ZGE reports under `evals/zcode-gui-eval/artifacts/`, notably
-  `cua-internal-frame-direct-core-final.json`,
-  `cua-internal-frame-c18-final3.json`, and
-  `cua-internal-frame-m12-final.json`;
-- consumer dogfood report under
-  `dogfood-output/cua-comprehensive-20260821/report.md`;
-- model I/O trace at
-  `~/.zcode/cli/debug/model-io-sess_3a199ff0-35cf-4f1f-969b-d3b0a8b9d633.jsonl`.
-- canvas model traces at
-  `~/.zcode/cli/debug/model-io-sess_39975407-4287-4fc0-bbda-1ad2c2ef1fd4.jsonl`
-  and
-  `~/.zcode/cli/debug/model-io-sess_c2d24f67-4b69-4411-9c7a-46feaa3c49c8.jsonl`.
-- 0820 image-first/recovery trace at
-  `~/.zcode/cli/debug/model-io-sess_47b6badf-9faa-43c2-a252-1ad6e3c21612.jsonl`.
+## Lazy startup validation record (2026-09-21)
 
-Not executed on this machine: CU-14 true dual-display hardware switching,
-CU-41/CU-42/the Windows half of CU-43, and CU-45 Linux AT-SPI. Their platform
-lanes remain mandatory and must not be inferred from the macOS pass.
+- darwin on-machine MC-1/2/3: pending manual run (`dev:desktop` checklist in delivery notes).
+- MC-4..7/9: pending Windows real-machine run.
 
-## 2026-09-21 lazy startup validation record
-
-- darwin on-machine MC-1/2/3: pending manual run (dev:desktop checklist in delivery notes)
-- MC-4..7/9: pending Windows real-machine
+Full history: `git show 6c0f4203:docs/testing/cua-e2e-case-catalog.md`

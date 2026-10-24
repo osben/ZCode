@@ -1,94 +1,86 @@
 # Desktop Coding Plan Upgrade Availability E2E
 
-日期：2026-07-03
+Date: 2026-07-03
 
-## 覆盖目标
+## Coverage goal
 
-模拟 BigModel 账号已登录但没有个人 Coding Plan 权益时，用户从设置页或 sidebar 头像菜单的升级入口进入
-`Upgrade Coding Plan` 购买页。个人套餐数据来自本地 E2E fixture server，
-不访问真实 BigModel / ZCode 后端。
+Simulate a BigModel account that is signed in but has no personal Coding Plan entitlement, where the user enters the `Upgrade Coding Plan` purchase page from the settings page or the sidebar avatar menu upgrade entry. Personal plan data comes from the local E2E fixture server; the real BigModel / ZCode backend is never contacted.
 
-账号夹具提供可解析的个人项目和项目凭据；订阅列表为空，权益接口明确返回无套餐。
-不能以空项目列表模拟无权益，否则账号状态会变成查询失败，而不是已登录、未开通。
+The account fixture provides a resolvable personal project and project credentials; the subscription list is empty and the entitlement API explicitly returns no plan. An empty project list must not be used to simulate "no entitlement": that turns the account state into a query failure instead of signed-in-but-not-subscribed.
 
-混合 suite 可复用构建前确定的 mock origin，但每个 worker 必须显式重置场景与营销开关。
-仅 `marketing-touch-*` worker 启用营销 fixture；购买用例返回空投放，不能继承前一用例的
-Popup、Banner 或挂起领取。重新启用营销时使用新的 fixture 状态。
+A mixed suite may reuse the mock origin fixed before the build, but every worker must explicitly reset the scenario and the marketing switch. Only `marketing-touch-*` workers enable the marketing fixture; purchase cases return an empty placement and must not inherit a previous case's Popup, Banner or pending claim. Re-enabling marketing uses fresh fixture state.
 
 ```text
-worker spec -> reset(scenario, marketingTouch) -> 同一 mock origin
-  购买用例：空投放                营销用例：全新投放状态
+worker spec -> reset(scenario, marketingTouch) -> same mock origin
+  purchase cases: empty placement      marketing cases: fresh placement state
 ```
 
-## Case: BigModel 个人套餐全部售罄
+## Case: BigModel personal plans all sold out
 
-| 字段 | 内容 |
+| Field | Content |
 | --- | --- |
 | Spec | `packages/desktop/test/e2e/coding-plan-upgrade-personal-sold-out.test.ts` |
-| 数据源 | `BigModel Coding Plan E2E mock server` |
-| 状态 | verified |
+| Data source | `BigModel Coding Plan E2E mock server` |
+| Status | verified |
 
 ### Setup
 
-1. E2E 隔离 HOME 只写入 BigModel OAuth 凭据，表示账号已登录，不夹带其他账号族。
-2. 写入 BigModel Coding Plan provider，保持未开通套餐状态。
-3. 将 `ZCODE_TEST_BASE_URL` 和 `BIGMODEL_TEST_API_BASE_URL` 指向本地 mock server。
-4. `client/configs` 返回 BigModel 个人 Lite / Pro / Max 静态套餐。
-5. `pay/batch-preview` 返回同一批个人套餐，且每个 SKU `soldOut=true`。
+1. The isolated E2E HOME contains only BigModel OAuth credentials (signed in; no other account family).
+2. A BigModel Coding Plan provider is written, with no subscription.
+3. `ZCODE_TEST_BASE_URL` and `BIGMODEL_TEST_API_BASE_URL` point to the local mock server.
+4. `client/configs` returns the static BigModel personal Lite / Pro / Max plans.
+5. `pay/batch-preview` returns the same personal plans, every SKU with `soldOut=true`.
 
 ### Action
 
-1. 打开默认 workspace。
-2. 打开设置的模型供应商分区，按共享 Provider ID 进入 BigModel 品牌入口。
-3. 等待订阅入口可点击，确认购买 webview 尚未打开，再点击订阅入口。
+1. Open the default workspace.
+2. Open the settings model-provider section and enter the BigModel brand entry by the shared Provider ID.
+3. Wait until the subscription entry is clickable, confirm the purchase webview is not open yet, then click the subscription entry.
 
-品牌入口已不提供旧 API Key 连接模式，不再用已删除的模式切换制造同步等待。
-订阅按钮在同步期间的加载和禁用状态由 `packages/ui/test/modelProviderCodingPlan.test.ts`
-的对应单测保留；此 E2E 只验证当前订阅入口到售罄页的交互。
+The brand entry no longer offers the old API Key connection mode, so the removed mode switch is not used to create a sync wait. The subscription button's loading and disabled state during sync is kept by the corresponding unit test in `packages/ui/test/modelProviderCodingPlan.test.ts`; this E2E verifies only the current subscription-entry-to-sold-out-page interaction.
 
 ### Assert
 
-- 当前订阅入口打开可见的 Coding Plan webview，并带有产品的窗口控制。
-- 本地购买页 fixture 显示“已售罄”或“Sold out”。
-- 真实外部购买站的 SKU 按钮禁用与周期选择不属于该本地 HTML fixture 的验证范围。
+- The subscription entry opens a visible Coding Plan webview with the product's window controls.
+- The local purchase page fixture shows "已售罄" or "Sold out".
+- SKU button disabling and cycle selection of the real external purchase site are outside this local HTML fixture.
 
-## Case: BigModel 个人套餐接口系统繁忙
+## Case: BigModel personal plan API system busy
 
-| 字段 | 内容 |
+| Field | Content |
 | --- | --- |
 | Spec | `packages/desktop/test/e2e/coding-plan-upgrade-personal-system-busy.test.ts` |
-| 数据源 | `BigModel Coding Plan E2E mock server` |
-| 状态 | verified |
+| Data source | `BigModel Coding Plan E2E mock server` |
+| Status | verified |
 
 ### Setup
 
-1. E2E 隔离 HOME 写入 BigModel OAuth 凭据，表示账号已登录。
-2. 写入 BigModel Coding Plan provider，保持未开通套餐状态。
-3. `client/configs` 返回静态个人套餐，确保购买页有可展示卡片。
-4. `pay/batch-preview` 返回业务失败并被 service 归一为 `coding_plan_system_busy`。
+1. The isolated E2E HOME contains BigModel OAuth credentials (signed in).
+2. A BigModel Coding Plan provider is written, with no subscription.
+3. `client/configs` returns static personal plans so the purchase page has cards to show.
+4. `pay/batch-preview` returns a business failure that the service normalizes to `coding_plan_system_busy`.
 
 ### Action
 
-1. 打开默认 workspace。
-2. 点击 sidebar footer 的账号头像菜单。
-3. 点击 `Upgrade Coding Plan` 入口打开购买页。
+1. Open the default workspace.
+2. Click the account avatar menu in the sidebar footer.
+3. Click the `Upgrade Coding Plan` entry to open the purchase page.
 
 ### Assert
 
-- 页面仍显示静态个人套餐卡，而不是空白或无限 loading。
-- Lite / Pro / Max 个人套餐按钮使用按钮专属文案：中文“订阅繁忙”，英文“System busy”。
-- 这些按钮处于 disabled 状态，不能进入周期选择页。
+- The page still shows the static personal plan cards, not a blank page or endless loading.
+- The Lite / Pro / Max personal plan buttons use the button-specific copy: "订阅繁忙" (zh), "System busy" (en).
+- The buttons are disabled and cannot enter the cycle selection page.
 
-## 非覆盖项
+## Non-coverage
 
-- 不覆盖真实支付、二维码、Stripe / PayPal 或团队套餐下单。
-- 不覆盖手机 `/remote` replayable 链路；该 case 只验证桌面本地 sidebar 升级入口与购买页 UI。
-- 不验证真实线上库存或真实 BigModel 账号权益，避免固定回归受线上状态影响。
+- Real payment, QR codes, Stripe / PayPal or team plan ordering.
+- The mobile `/remote` replayable path; this case verifies only the desktop local sidebar upgrade entry and purchase page UI.
+- Real online inventory or real BigModel account entitlement, so the fixed regression is not affected by online state.
 
-## 验证命令
+## Verification commands
 
-升级页的本地 mock origin 写入 renderer 构建产物。新建 run 时需正常构建，不能复用
-上一次 run 的 `ZCODE_E2E_SKIP_BUILD=1` 产物，否则 webview 会访问已关闭的旧端口。
+The local mock origin of the upgrade page is written into the renderer build output. A new run must build normally and must not reuse artifacts of an earlier run built with `ZCODE_E2E_SKIP_BUILD=1`; otherwise the webview visits the closed old port.
 
 - `pnpm --filter @zcode/desktop typecheck:e2e`
 - `pnpm typecheck`

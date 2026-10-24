@@ -1,125 +1,117 @@
 # Desktop E2E Reporting
 
-桌面端 E2E 默认会把测试报告写到 `packages/desktop/.e2e-artifacts/<run-id>/`。这个目录只用于测试产物，已加入 `.gitignore`。
+Desktop E2E writes test reports to `packages/desktop/.e2e-artifacts/<run-id>/` by default. The directory holds test artifacts only and is in `.gitignore`.
 
-## 运行
+## Run
 
-本机运行：
+Local:
 
 ```bash
 ZCODE_E2E_SPEC=./test/e2e/e2ecase-regression.test.ts pnpm --filter @zcode/desktop test:e2e
 ```
 
-容器运行：
+Container:
 
 ```bash
 pnpm run test:e2e:container
 ```
 
-可用环境变量：
+Environment variables:
 
-- `ZCODE_E2E_RUN_ID`：固定本次报告目录名
-- `ZCODE_E2E_ARTIFACT_DIR`：指定报告输出目录
-- `ZCODE_E2E_REPORT_VIEWER_BASE_URL`：生成 `files.viewerUrl` 时使用的 Vite viewer 地址，默认 `http://127.0.0.1:4173/`
-- `ZCODE_E2E_PERF_SAMPLE_INTERVAL_MS`：Electron 进程采样间隔，默认 3000ms
-- `PERF_SAMPLE_INTERVAL_SECONDS`：容器 `docker stats` 采样间隔，默认 3s
-- `ZCODE_E2E_COVERAGE=1`：启用 renderer / main / host / CLI 四运行域源码覆盖率
+- `ZCODE_E2E_RUN_ID`: fixes the report directory name
+- `ZCODE_E2E_ARTIFACT_DIR`: sets the report output directory
+- `ZCODE_E2E_REPORT_VIEWER_BASE_URL`: Vite viewer address used to build `files.viewerUrl`, default `http://127.0.0.1:4173/`
+- `ZCODE_E2E_PERF_SAMPLE_INTERVAL_MS`: Electron process sampling interval, default 3000ms
+- `PERF_SAMPLE_INTERVAL_SECONDS`: container `docker stats` sampling interval, default 3s
+- `ZCODE_E2E_COVERAGE=1`: enables source coverage for the four runtime domains renderer / main / host / CLI
 
-Electron 进程采样通过 WDIO 的 Electron session 调用 `app.getAppMetrics()`，因此采样窗口从 session ready 后开始；容器采样由外层 Docker 脚本启动，能覆盖镜像运行和测试启动阶段。需要让两条曲线使用同一采样节奏时，可同时设置 `ZCODE_E2E_PERF_SAMPLE_INTERVAL_MS=1000` 和 `PERF_SAMPLE_INTERVAL_SECONDS=1`。极短 case 可能只产生开始/结束点，长时间 regression 才会形成连续趋势。
+Electron process sampling calls `app.getAppMetrics()` through the WDIO Electron session, so the window starts after the session is ready; container sampling is started by the outer Docker script and covers image run and test startup. To align both curves set `ZCODE_E2E_PERF_SAMPLE_INTERVAL_MS=1000` and `PERF_SAMPLE_INTERVAL_SECONDS=1`. Very short cases may produce only start/end points; long regressions produce continuous trends.
 
-## 产物
+## Artifacts
 
-- `manifest.json`：运行环境、spec、采样间隔
-- `test-results.ndjson`：逐 case 的标题、状态、耗时和错误摘要
-- `summary.json`：机器可读报告摘要
-- `summary.md`：人工可读报告摘要
-- `workers.ndjson`：完成 worker 级环境登记的 cid/spec；若数量少于 `before-session`，说明前置事务在登记前失败
-- `lifecycle-events.ndjson`：prepare/worker/session/hook/complete 的耗时；失败事件必须同时记录 `status=failed` 与错误摘要
-- `perf/process-samples-*.ndjson`：通过 Electron `app.getAppMetrics()` 采集 main / renderer / GPU / utility 进程 CPU 和内存
-- `perf/container-samples.ndjson`：容器模式下通过 `docker stats` 采集 CPU、内存、网络 IO、块 IO 和 PID 数
-- `coverage/ui-renderer-istanbul-raw.json`：`ZCODE_E2E_COVERAGE=1` 时从 renderer `globalThis.__coverage__` 采集的 Istanbul 原始覆盖率数据
-- `coverage/ui-renderer-summary.json` / `coverage/ui-renderer-summary.md`：renderer UI 源码级覆盖率摘要
-- `coverage/ui-renderer-html/index.html`：Istanbul HTML 覆盖率报告，可查看总覆盖率、逐文件覆盖率和逐行命中状态
-- `coverage/lcov.info`：LCOV 覆盖率报告，供 CI 或其它 coverage 工具消费
-- `coverage/coverage-final.json` / `coverage/coverage-summary.json`：Istanbul JSON 覆盖率数据
-- `coverage/summary.json`：四运行域 totals、raw 数量、源码文件数和完整性
-- `coverage/{main,host,cli}/`：各 Node/Electron 运行域的 JSON、LCOV 与 HTML 报告
-- `coverage/heatmap/index.html`：renderer / main / host / CLI 四层函数执行热度图
-- `coverage/heatmap/data.json`：热度图使用的逐文件函数命中数据，供后续趋势或 case 维度分析复用
+- `manifest.json`: environment, spec, sampling interval
+- `test-results.ndjson`: per-case title, status, duration and error summary
+- `summary.json`: machine-readable report summary
+- `summary.md`: human-readable report summary
+- `workers.ndjson`: cid/spec of workers that completed environment registration; fewer entries than `before-session` means the pre-registration transaction failed
+- `lifecycle-events.ndjson`: prepare/worker/session/hook/complete durations; a failed event must record both `status=failed` and an error summary
+- `perf/process-samples-*.ndjson`: main / renderer / GPU / utility process CPU and memory from Electron `app.getAppMetrics()`
+- `perf/container-samples.ndjson`: in container mode, CPU, memory, network IO, block IO and PID count from `docker stats`
+- `coverage/ui-renderer-istanbul-raw.json`: raw Istanbul data read from renderer `globalThis.__coverage__` when `ZCODE_E2E_COVERAGE=1`
+- `coverage/ui-renderer-summary.json` / `coverage/ui-renderer-summary.md`: renderer UI source coverage summary
+- `coverage/ui-renderer-html/index.html`: Istanbul HTML report (totals, per-file coverage, per-line hits)
+- `coverage/lcov.info`: LCOV report for CI or other coverage tools
+- `coverage/coverage-final.json` / `coverage/coverage-summary.json`: Istanbul JSON coverage data
+- `coverage/summary.json`: four-domain totals, raw count, source file count and completeness
+- `coverage/{main,host,cli}/`: JSON, LCOV and HTML reports per Node/Electron domain
+- `coverage/heatmap/index.html`: four-layer function execution heatmap (renderer / main / host / CLI)
+- `coverage/heatmap/data.json`: per-file function hit data used by the heatmap, reusable for trend or per-case analysis
 
-## HTML 报告
+## HTML report
 
-HTML 报告的边界是“读 `summary.json` 渲染视图”，不直接读取 WDIO runtime 或业务代码。报告 viewer 是 `packages/e2e-report` 里的 Vite 应用，图表使用 Chart.js；桌面 E2E runner 只负责传入汇总后的 summary payload。
+The HTML report boundary is "read `summary.json` and render a view"; it never reads the WDIO runtime or business code. The viewer is the Vite app in `packages/e2e-report` using Chart.js; the desktop E2E runner only passes in the aggregated summary payload.
 
-启动 viewer：
+Start the viewer:
 
 ```bash
 pnpm dev:e2e-report
 ```
 
-E2E 结束后，`summary.md` 和 `summary.json` 的 `files.viewerUrl` 会给出带 `summary` 参数的访问地址，例如：
+After E2E finishes, `files.viewerUrl` in `summary.md` and `summary.json` gives an address with a `summary` parameter, for example:
 
 ```text
 http://127.0.0.1:4173/?summary=%2F%40fs%2FUsers%2Fdev%2Fworkspace%2Fz-code%2Fpackages%2Fdesktop%2F.e2e-artifacts%2F...%2Fsummary.json
 ```
 
-页面包含：
+The page shows:
 
-- run 状态、耗时、测试通过率和关键资源指标
-- CPU 趋势图：容器 CPU 和 Electron 各 process type CPU 维度叠加展示
-- Memory 趋势图：容器内存和 Electron 各 process type memory 维度叠加展示
-- case 明细、spec、环境和 artifact 路径
-- `ZCODE_E2E_COVERAGE=1` 时展示 renderer UI coverage 的总览、逐文件摘要和 Istanbul HTML / LCOV / JSON 入口
+- run status, duration, pass rate and key resource metrics
+- CPU trend: container CPU and Electron per-process-type CPU overlaid
+- Memory trend: container memory and Electron per-process-type memory overlaid
+- case details, spec, environment and artifact paths
+- with `ZCODE_E2E_COVERAGE=1`: the renderer UI coverage overview, per-file summary and Istanbul HTML / LCOV / JSON entries
 
-## 边界
+## Boundary
 
-当前已落地的是报告骨架、case 结果、容器级资源采样、Electron 进程级 CPU / 内存采样，以及可选的四运行域 coverage 采样。它们都只挂在 E2E harness 和 coverage 专用构建里，不改变正常桌面版本的业务启动链路。
+Implemented: the report skeleton, case results, container-level resource sampling, Electron process-level CPU/memory sampling and optional four-domain coverage sampling. All of it hangs on the E2E harness and the coverage-only build; it does not change the normal desktop startup path.
 
-`summary.json` 和全局进程/HOME 清理仍由 WDIO `onComplete` 权威收口。最后一个 worker
-结束时 runner 必须持有一个有引用的短期 finalization guard，直到 `onComplete` 开始；这样
-Node 不能在 promise continuation 执行前静默退出 0。正常 `onComplete` 会解除 guard 并写入
-summary；guard 超时只作为基础设施失败兜底，必须先从现有 NDJSON 写出失败 summary，再以
-非零退出，不能把缺 summary 的空跑当作成功。
+`summary.json` and global process/HOME cleanup are finalized authoritatively by WDIO `onComplete`. When the last worker ends, the runner must hold a referenced short-lived finalization guard until `onComplete` starts, so Node cannot silently exit 0 before the promise continuation runs. A normal `onComplete` releases the guard and writes the summary; a guard timeout is only an infrastructure-failure fallback: it must first write a failure summary from the existing NDJSON and then exit non-zero. An empty run without a summary must not count as success.
 
-renderer UI coverage 默认关闭，只在显式设置 `ZCODE_E2E_COVERAGE=1` 时启用：
+Renderer UI coverage is off by default and enabled only with `ZCODE_E2E_COVERAGE=1`:
 
 ```bash
 ZCODE_E2E_COVERAGE=1 pnpm --filter @zcode/desktop test:e2e -- --spec ./test/e2e/conversation-session/manual-review/pending/conversation-session-running-actions.test.ts
 ```
 
-需要把正式、`manual-review` 一次跑完并生成四域报告时，使用仓库入口：
+To run formal and `manual-review` cases in one go and produce the four-domain report, use the repo entry:
 
 ```bash
 pnpm test:e2e:all:coverage
 ```
 
-入口会同时设置 `ZCODE_E2E_COVERAGE=1` 和 `ZCODE_E2E_MANUAL_REVIEW=1`。每个 worker
-再按自身 spec 隔离 provider：正式 case 与已有 case-local fixture 的 pending case 使用 replay；
-缺 fixture 的 pending case 和 `upstream-provider.test.ts` 使用 capture。单 worker 不允许混用两种模式。
-独立真实 provider smoke 仅在同时配置了 `E2E_PROVIDER_BASE_URL` 与真实 `E2E_PROVIDER_API_KEY`（非 replay 占位值）时纳入；
-否则入口会精确排除该外部 smoke 并打印原因，避免把缺 key 的 401 误报成产品回归。SSH 环境齐全时包含 SSH case；环境不齐时仅排除 SSH case，并在其余范围内继续全量执行。
+The entry sets both `ZCODE_E2E_COVERAGE=1` and `ZCODE_E2E_MANUAL_REVIEW=1`. Each worker isolates its provider by its own spec: formal cases and pending cases that have a case-local fixture use replay; pending cases without a fixture and `upstream-provider.test.ts` use capture. One worker never mixes the two modes. The standalone real-provider smoke is included only when both `E2E_PROVIDER_BASE_URL` and a real `E2E_PROVIDER_API_KEY` (not the replay placeholder) are configured; otherwise the entry excludes that external smoke precisely and prints the reason, so a missing-key 401 is not reported as a product regression. When the SSH environment is complete, SSH cases are included; otherwise only the SSH cases are excluded and the rest run in full.
 
-renderer coverage 在 `ZCODE_E2E_COVERAGE=1` 时由 Vite 在构建阶段插入 Istanbul instrumentation。E2E 结束时，reporter 通过 WebdriverIO `browser.getPuppeteer()` 连接真实 renderer target，从页面里的 `globalThis.__coverage__` 读取 counter，再生成 Istanbul 标准报告。
+With `ZCODE_E2E_COVERAGE=1`, Vite inserts Istanbul instrumentation at build time. At the end of E2E the reporter connects to the real renderer target through WebdriverIO `browser.getPuppeteer()`, reads the counters from `globalThis.__coverage__` and generates standard Istanbul reports.
 
-coverage 插桩必须发生在源码级 `pre` transform 阶段，直接对原始 `.ts` / `.tsx` AST 生成 Istanbul counter。不要改回 post-transform 的通用 Vite Istanbul 插件；那类插件依赖 Vite/React/esbuild 合并 sourcemap 反推源码位置，已验证会把生成后的 JS 覆盖点映射到 `import`、`interface` 等非运行时代码行，导致逐行 HTML 和总覆盖率口径都被污染。
+Instrumentation must happen in the source-level `pre` transform stage, generating Istanbul counters directly from the original `.ts` / `.tsx` AST. Do not switch back to a post-transform generic Vite Istanbul plugin: such plugins rely on merged Vite/React/esbuild sourcemaps to recover source positions, and were verified to map generated-JS coverage points onto non-runtime lines such as `import` and `interface`, which pollutes both per-line HTML and total coverage.
 
-当前纳入 UI coverage 的源码范围是：
+UI coverage source scope:
 
 - `packages/ui/src`
 - `packages/desktop/src/renderer`
 
-E2E summary 和 e2e-report viewer 只展示覆盖率总览、逐文件摘要和 artifact 入口；逐行命中/未命中的专业视图以 `coverage/ui-renderer-html/index.html` 为准。这个分层可以避免 E2E 运行报告重复实现完整 coverage UI，也让 CI 后续可以直接上传 LCOV 或 Istanbul HTML。
+The E2E summary and the e2e-report viewer show only the coverage overview, per-file summary and artifact entries; the professional per-line hit/miss view is `coverage/ui-renderer-html/index.html`. This layering avoids duplicating a full coverage UI in the run report and lets CI upload LCOV or Istanbul HTML directly.
 
-## 跨进程源码覆盖率合同
+## Cross-process source coverage contract
 
-`ZCODE_E2E_COVERAGE=1` 必须采集同一次 Desktop E2E run 中的四个运行域，且分别出具报告：
+`ZCODE_E2E_COVERAGE=1` must collect four runtime domains in the same Desktop E2E run and report each separately:
 
-- `renderer`：`packages/ui/src` 与 `packages/desktop/src/renderer` 的 Istanbul 源码覆盖率。
-- `main`：Electron main 及其打包进 main graph 的一方源码覆盖率。
-- `host`：Electron utility host 及其打包进 host graph 的一方源码覆盖率。
-- `cli`：桌面启动的 zcode-cli `app-server` 及其打包进 CLI graph 的一方源码覆盖率。
+- `renderer`: Istanbul source coverage of `packages/ui/src` and `packages/desktop/src/renderer`.
+- `main`: first-party source coverage of Electron main and what is bundled into the main graph.
+- `host`: first-party source coverage of the Electron utility host and what is bundled into the host graph.
+- `cli`: first-party source coverage of the zcode-cli `app-server` started by desktop and what is bundled into the CLI graph.
 
-覆盖率数据链路如下：
+Data flow:
 
 ```text
 WDIO worker/session
@@ -131,46 +123,46 @@ WDIO worker/session
                                                       v
                                     source map remap + repo-relative normalize
                                                       |
-                       renderer / main / host / cli 独立 Istanbul 标准报告
+                       independent standard Istanbul reports for renderer / main / host / cli
 ```
 
-采集与汇总必须满足以下规则：
+Collection and aggregation rules:
 
-1. worker、session 和 PID 只能写独立 raw 文件；禁止覆盖同一 run 中其它 worker 的数据。
-2. suite 汇总只能在所有 worker 退出后执行。renderer 使用 Istanbul coverage map union；Node/Electron 域使用 V8 raw union 后再由 c8 映射回源码。每个 worker 退出后可把 Node raw 就地裁剪为目标运行域，并按 canonical bundle URL 只保留一份 source map；同一运行域存在多个 lazy chunk 时，每个不同 bundle 仍必须各保留一份 map，不能以“该域已有 map”为由删除后续 chunk 的唯一映射。
-3. coverage 专用构建必须保留 external source map 且不得压缩 main、host、preload 和 CLI bundle；这些 map 只存在于 E2E build/cache/artifact，不进入发布包。
-4. Electron main 的 E2E 退出路径最终会强杀进程，因此必须在强杀前显式调用 `node:v8.takeCoverage()`；host 在资源释放完成、`process.exit` 前显式 flush。CLI coverage 模式先通过 stdin EOF 请求 app-server 正常退出，并使用比发布包更长的等待窗口；超时后的 SIGTERM / `process.exit` 路径也必须主动 flush，并在显式退出前留出 V8 后台写盘窗口。CLI coverage preload 在一方 bundle 执行前写 readiness marker：有 marker 却没有 raw 才属于采集缺失；无 marker 的早退进程尚未执行一方入口代码，按 pre-entry zero 单独计数，不把它误报为 incomplete。
-5. 报告只统计 source map 可归属到仓库一方代码的条目，排除 `node_modules`、测试、fixture、声明文件和第三方/生成产物。main / host 映射到 TypeScript 源码；CLI 内部 workspace package 当前未发布二级 sourcemap，因此这些 package 以 CLI bundle map 能提供的 `dist/*.js` 作为最细粒度源码，CLI 自身及 shared package 仍映射到原始源码。后续补齐内部 package sourcemap 后应直接收敛到 TypeScript，不改变 raw 采集合同。
-6. 四层百分比必须独立展示，不能把不同运行域直接相加成一个总百分比。共享源码允许分别出现在多个运行域中。
-7. 任一已执行运行域没有产生 raw 数据时，本次 coverage 状态必须是 `incomplete`，不得用剩余数据冒充完整覆盖率。
+1. A worker, session and PID write only their own raw file; never overwrite another worker's data in the same run.
+2. Suite aggregation runs only after all workers exit. The renderer uses an Istanbul coverage map union; Node/Electron domains use a V8 raw union, then c8 maps back to source. After each worker exits, Node raw may be trimmed in place to the target runtime domain and keep one source map per canonical bundle URL; when one domain has several lazy chunks, each distinct bundle still keeps its own map. Never delete a later chunk's only map because "the domain already has a map".
+3. The coverage build must keep external source maps and must not minify the main, host, preload and CLI bundles; these maps exist only in the E2E build/cache/artifact and never enter the release package.
+4. The E2E exit path of Electron main finally force-kills the process, so `node:v8.takeCoverage()` must be called explicitly before the kill; host flushes explicitly after resource release and before `process.exit`. In coverage mode the CLI app-server is first asked to exit normally via stdin EOF, with a longer wait window than the release package; the SIGTERM / `process.exit` path after timeout must also flush actively and leave a window for the V8 background write before the explicit exit. The CLI coverage preload writes a readiness marker before the first-party bundle runs: a marker without raw is a collection gap; a process that exits early without a marker has not run first-party entry code and is counted separately as pre-entry zero, not reported as incomplete.
+5. Reports count only entries whose source map attributes to first-party repo code, excluding `node_modules`, tests, fixtures, declaration files and third-party/generated artifacts. main / host map to TypeScript sources; CLI-internal workspace packages currently ship no secondary sourcemap, so those packages use the `dist/*.js` the CLI bundle map provides as the finest source, while the CLI itself and shared packages still map to original sources. Once internal package sourcemaps exist, converge to TypeScript without changing the raw collection contract.
+6. The four percentages are shown independently; different domains are never added into one total. Shared source may appear in several domains.
+7. If any executed domain produced no raw data, the coverage status must be `incomplete`; the remaining data must not pose as complete coverage.
 
-每个运行域输出以下标准产物：
+Each domain outputs the standard artifacts:
 
 - `coverage/<domain>/coverage-final.json`
 - `coverage/<domain>/coverage-summary.json`
 - `coverage/<domain>/lcov.info`
 - `coverage/<domain>/index.html`
 
-## 函数执行热度图合同
+## Function execution heatmap contract
 
-覆盖率百分比回答“有没有执行”，函数热度图回答“执行集中在哪里”。热度图只消费四层已经生成的 `coverage-final.json`，不得重新启动应用，也不得改变 E2E case 的运行语义。
+Coverage percentage answers "was it executed"; the function heatmap answers "where is execution concentrated". The heatmap consumes only the four already-generated `coverage-final.json`; it must not restart the app or change E2E case semantics.
 
 ```text
 renderer coverage-final.json ----\
-main coverage-final.json ---------+--> 逐文件函数命中聚合 --> 全量平铺 --> coverage/heatmap/
+main coverage-final.json ---------+--> per-file function-hit aggregation --> full flat tiling --> coverage/heatmap/
 host coverage-final.json ---------+
 cli coverage-final.json ----------/
 ```
 
-热度图必须满足以下口径：
+Rules:
 
-1. 同一运行域的全部源码文件叶子节点必须在一个画布内一次性铺开，一个 tile 只能代表一个文件。目录只作为文件路径的一部分存在，禁止聚合成 tile，也禁止要求用户逐层点击目录才能比较热点。
-2. 所有文件 tile 必须等宽等高，面积不编码任何指标；只有亮度表示文件内函数命中热度，越亮代表执行越频繁。所有文件 tile 使用运行域内同一个标尺，不能按局部目录重新归一化。
-3. 默认颜色指标是文件内函数总命中次数，先使用 `log1p` 对数刻度处理数量级，再对归一化结果做对比增强，避免少数百万级热点把其余文件压缩成同一种暗色，也避免所有非零文件看起来同样亮。报告同时允许切换到“每函数平均命中”，用于削弱大文件天然累加更多次数的规模效应。
-4. 未命中的文件使用独立的零命中颜色，不能和低频但已命中的代码混淆。颜色之外必须显示准确次数、函数覆盖数量和覆盖率，不能只依赖视觉亮度表达结论。
-5. renderer / main / host / CLI 必须独立切换、独立归一化颜色，禁止跨运行域把调用次数合并。共享源码可以分别出现在多个运行域。
-6. tile 的 hover、键盘 focus 或点击只更新选中详情，不改变画布层级。详情至少包含路径、函数总命中次数、函数覆盖数以及最热函数及其源码行。
-7. 热度表示本次整套 E2E 的累计运行强度，不等价于功能覆盖广度。高热度可能只来自单个 case 的循环；低热度也可能已经验证关键状态。后续按 case 拆分时，应并列展示命中该函数的 case 数和每 case 的 P50/P95/最大调用次数。
-8. 报告必须是自包含静态文件，不依赖远端 CDN 或运行中的 viewer 服务，以便直接从本机或 CI artifact 打开。
+1. All source-file leaf nodes of a runtime domain are laid out at once in one canvas; one tile represents exactly one file. Directories exist only as part of file paths; they must not be aggregated into tiles, and users must not need to click through directories to compare hotspots.
+2. All file tiles have equal width and height; area encodes no metric. Only brightness encodes the in-file function hit heat; brighter means more frequent execution. All tiles use one scale per runtime domain, not re-normalized per local directory.
+3. The default color metric is the file's total function hit count, processed with a `log1p` log scale for orders of magnitude, then contrast-enhanced on the normalized result, so a few million-hit hotspots do not compress the rest into one dark color and all non-zero files do not look equally bright. The report may also switch to "average hits per function" to weaken the size effect where large files naturally accumulate more hits.
+4. Files with no hits use a separate zero-hit color, not confusable with low-frequency but hit code. Besides color, the exact count, covered-function count and coverage must be shown; conclusions must not rely on visual brightness alone.
+5. renderer / main / host / CLI switch independently and normalize color independently; call counts are never merged across domains. Shared source may appear in several domains.
+6. Tile hover, keyboard focus or click only updates the selected detail and does not change canvas hierarchy. The detail includes at least the path, total function hits, covered function count, and the hottest function with its source line.
+7. Heat is the cumulative run intensity of the whole E2E suite, not functional coverage breadth. High heat may come from one case's loop; low heat may still verify key states. When later split per case, also show the number of cases hitting a function and per-case P50/P95/max call counts.
+8. The report must be a self-contained static file with no remote CDN or running viewer service, so it opens directly from a local machine or CI artifact.
 
-suite 级 `coverage/summary.json` 记录四层 totals、raw 文件数量、源码文件数量和采集完整性。CLI 还会用 runtime log 中已退出的 Agent PID 反查 readiness/raw PID；任一已进入一方入口的 CLI 进程缺 raw 时会记录 `missingRawProcessCount` 并把该域标记为 incomplete，入口前早退则记录 `preEntryProcessCount`。首阶段只把覆盖率作为诊断与趋势指标，不设置通过率门槛；功能状态组合是否被验证仍以 case catalog、coverage matrix 以及 case 的 setup/action/assertion 为准。
+The suite-level `coverage/summary.json` records the four-layer totals, raw file count, source file count and collection completeness. For the CLI, the exited Agent PIDs in the runtime log are used to look up readiness/raw PIDs; any CLI process that entered the first-party entry but has no raw records `missingRawProcessCount` and marks the domain incomplete, while early exit before the entry records `preEntryProcessCount`. In this first phase coverage is a diagnostic and trend metric with no pass-rate gate; whether functional state combinations are verified is still decided by the case catalog, the coverage matrix and each case's setup/action/assertion.
