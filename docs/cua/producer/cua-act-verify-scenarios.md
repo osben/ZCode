@@ -1,28 +1,26 @@
-# CUA ACT-VERIFY scenarios — coverage & design
+# CUA ACT-VERIFY scenarios: coverage and design
 
-This is the coverage doc for the **act-verify** e2e suite
-(`scripts/cua_act_verify.py`). It is the act-verify counterpart to the existing
-**observe-only** `scripts/e2e_opus.py`: the model PERFORMS a task and we VERIFY a
-deterministic post-condition — "the model clicked" is not success; the verifiable
-side effect is.
+Coverage doc for the **act-verify** e2e suite (`scripts/cua_act_verify.py`), the act counterpart to the
+**observe-only** `scripts/e2e_opus.py`: the model PERFORMS a task and a deterministic post-condition is
+VERIFIED. "The model clicked" is not success; the verifiable side effect is.
 
-## The act-verify contract (vs. observe-only)
+## The act-verify contract (vs observe-only)
 
 | | observe-only (`e2e_opus.py`) | **act-verify (`cua_act_verify.py`)** |
 |---|---|---|
-| model calls | `get_app_state`, then reports | `get_app_state` → **act** (`left_click`/`type`/`set_value`/...) → `get_app_state` |
-| what counts as success | the model produced a description | **an independent verifier** confirms the post-state |
+| model calls | `get_app_state`, then reports | `get_app_state` -> **act** (`left_click`/`type`/`set_value`/...) -> `get_app_state` |
+| success | the model produced a description | **an independent verifier** confirms the post-state |
 | pass signal | exit 0 if any tool fired | PASS only if `model_acted AND verify_passed` |
 
-Every scenario has three independent phases the harness runs for you:
+Every scenario has three independent phases run by the harness:
 
-1. **setup** — deterministic prep (open the app, clear the document, create a
-   fixture) so the model starts from a known state;
-2. **act** — drive the real model (GLM-5V-Turbo) via `scripts/e2e_opus.py` with a
-   task prompt that tells it to act through the a11y-first MCP tools;
-3. **verify** — read the post-state with a method that does NOT trust the model's
-   claim: AppleScript reads TextEdit/Finder/Notes/Terminal directly, `pbpaste`
-   reads the clipboard, the Calculator display is read via System Events.
+1. **setup:** deterministic prep (open the app, clear the document, create a fixture) so the model starts
+   from a known state.
+2. **act:** drive the real model (GLM-5V-Turbo) via `scripts/e2e_opus.py` with a task prompt that tells it to
+   act through the a11y-first MCP tools.
+3. **verify:** read the post-state with a method that does NOT trust the model's claim: AppleScript reads
+   TextEdit/Finder/Notes/Terminal directly, `pbpaste` reads the clipboard, the Calculator display is read
+   via System Events.
 
 ## How to run (local, real model, billed)
 
@@ -50,77 +48,63 @@ python3 scripts/cua_act_verify.py --ts-server --only AV01,AV03,AV08,AV22,AV28
 python3 scripts/cua_act_verify.py --ts-server --preflight-only
 ```
 
-Artifacts land in `artifacts/act-verify/` (gitignored): one `result.json` +
-`e2e_opus.stdout` + `ledger/{manifest.json,frames.jsonl}` per scenario, a combined
-`summary.json`, and a `preflight.json`. The human report is written to
-`/tmp/act-verify-e2e-report.md` (override with `--report`).
+Artifacts land in `artifacts/act-verify/` (gitignored): per scenario one `result.json` + `e2e_opus.stdout`
++ `ledger/{manifest.json,frames.jsonl}`, plus a combined `summary.json` and a `preflight.json`. The human
+report is written to `/tmp/act-verify-e2e-report.md` (override with `--report`).
 
-The per-tool-call **recording ledger** (!179) is enabled per scenario by pointing
-`ZCODE_CUA_LEDGER_DIR` at the scenario's `ledger/` dir; it captures every tool's
-redacted input + result/exception + duration + the exact backend method that crossed
-the OS boundary.
+The per-tool-call **recording ledger** (!179) is enabled per scenario by pointing `ZCODE_CUA_LEDGER_DIR` at
+the scenario's `ledger/` dir; it captures every tool's redacted input + result/exception + duration + the
+exact backend method that crossed the OS boundary.
 
 ## Environment preflight (fail-fast)
 
-The harness refuses to burn billed model calls into a wall. It blocks (exit 0,
-`status=BLOCKED`, zero API calls) when any of these hold:
+The harness refuses to burn billed model calls into a wall. It blocks (exit 0, `status=BLOCKED`, zero API
+calls) when any of these hold:
 
-- **screen locked** — `CGSSessionScreenIsLocked == true`. Behind the loginwindow
-  shield AX returns `-25211` and AppleEvents time out (`-1712`); no app is
-  actuable. (This is the same blocker documented in the MEMORY note
-  `zcode-cua-m09-unlocked-console-verify`: locked-screen live runs are
-  `infra_fail`, not real failures.)
-- **Accessibility not trusted** — `AXIsProcessTrusted() == false` for the python
-  executable running the server. `get_app_state` fail-closes with
-  `permission_blocked`. (Note: `request_access` can report `accessibility:true`
-  from a non-authoritative heuristic; `AXIsProcessTrusted()` is the source of
-  truth and is what the preflight uses.)
-- **pyobjc macos deps missing** — `No module named 'ApplicationServices'`. Fix
-  with `python3 -m pip install pyobjc-framework-Quartz pyobjc-framework-ApplicationServices`
-  (the `uv sync --extra macos` form is stale — no `pyproject.toml` / `uv` workflow on current `main`).
+- **screen locked:** `CGSSessionScreenIsLocked == true`. Behind the loginwindow shield AX returns `-25211`
+  and AppleEvents time out (`-1712`); no app is actuable. Locked-screen live runs are `infra_fail`, not
+  real failures (MEMORY note `zcode-cua-m09-unlocked-console-verify`).
+- **Accessibility not trusted:** `AXIsProcessTrusted() == false` for the python executable running the
+  server; `get_app_state` fail-closes with `permission_blocked`. `request_access` can report
+  `accessibility:true` from a non-authoritative heuristic; `AXIsProcessTrusted()` is the source of truth
+  and what the preflight uses.
+- **pyobjc macos deps missing:** `No module named 'ApplicationServices'`. Fix with
+  `python3 -m pip install pyobjc-framework-Quartz pyobjc-framework-ApplicationServices` (the
+  `uv sync --extra macos` form is stale; there is no `pyproject.toml` / `uv` workflow on current `main`).
 
-The preflight also emits non-blocking **WARNING**s (printed as `WARNING:` and
-recorded under `evidence.warnings` in `preflight.json`). These degrade specific
-scenarios but never block the suite, so they are surfaced loudly instead of
-silently corrupting a run:
+The preflight also emits non-blocking **WARNING**s (printed as `WARNING:` and recorded under
+`evidence.warnings` in `preflight.json`). They degrade specific scenarios but never block the suite:
 
-- **Screen Recording not granted** (`CGPreflightScreenCaptureAccess() == false`, a
-  non-prompting probe; also recorded as `evidence.screen_recording_granted`).
-  AX-only scenarios (Calculator/TextEdit read via the AX tree) still pass, but the
-  per-app raster returned by `get_app_state` with `include_screenshot` captures the
-  desktop wallpaper instead of the target window, so any raster-dependent scenario
-  degrades to a blank frame. Grant Screen
-  Recording to the same executable to clear it.
+- **Screen Recording not granted** (`CGPreflightScreenCaptureAccess() == false`, a non-prompting probe;
+  recorded as `evidence.screen_recording_granted`). AX-only scenarios (Calculator/TextEdit) still pass, but
+  the per-app raster from `get_app_state` with `include_screenshot` captures the wallpaper instead of the
+  target window, so raster-dependent scenarios degrade to a blank frame. Grant Screen Recording to the same
+  executable to clear it.
 - **Active keyboard input source is a CJK IME / non-Latin layout** (recorded as
-  `evidence.keyboard_input_source`). The ACTIVE input source is read via Text Input
-  Source Services (`TISCopyCurrentKeyboardInputSource`, `ctypes` — no extra
-  dependency), which reports the live input METHOD/MODE, so it catches a CJK input
-  method (e.g. Pinyin, `com.apple.inputmethod.SCIM.ITABC`) layered over a Latin (ABC)
-  layout — a case the HIToolbox *layout* default alone (the fallback when TIS is
-  unavailable) cannot see. A CJK input method intercepts the harness's blind
-  `type`/keystroke for composition, so typed text lands garbage and `type` scenarios
-  false-FAIL. Switch to a Latin layout (ABC / U.S.) before an acceptance run. The
-  harness only **detects and warns** — it never mutates the user's system input source.
-- **Sticky iCloud TextEdit "Untitled N" backlog** (recorded as
-  `evidence.icloud_textedit_backlog`, a count of `Untitled*.rtf` in
-  `~/Library/Mobile Documents/com~apple~TextEdit/Documents/`). TextEdit **restores**
-  these on launch (they survive quit/pkill, and the per-scenario hermetic reset only
-  reaps the suite's OWN docs), so they shadow the front document and inflate TextEdit
-  FAILs. Clear them before an acceptance run — they are USER iCloud data, so the
-  harness **never deletes** them; it only reports the count.
+  `evidence.keyboard_input_source`). The ACTIVE source is read via Text Input Source Services
+  (`TISCopyCurrentKeyboardInputSource`, `ctypes`, no extra dependency), which reports the live input
+  METHOD/MODE and so catches a CJK input method (for example Pinyin, `com.apple.inputmethod.SCIM.ITABC`)
+  layered over a Latin (ABC) layout, which the HIToolbox *layout* default (the fallback when TIS is
+  unavailable) cannot see. A CJK input method intercepts the harness's blind `type`/keystroke for
+  composition, so typed text lands as garbage and `type` scenarios false-FAIL. Switch to a Latin layout
+  (ABC / U.S.) before an acceptance run. The harness only **detects and warns**; it never mutates the
+  user's input source.
+- **Sticky iCloud TextEdit "Untitled N" backlog** (recorded as `evidence.icloud_textedit_backlog`, a count
+  of `Untitled*.rtf` in `~/Library/Mobile Documents/com~apple~TextEdit/Documents/`). TextEdit **restores**
+  these on launch (they survive quit/pkill, and the per-scenario hermetic reset reaps only the suite's OWN
+  docs), so they shadow the front document and inflate TextEdit FAILs. Clear them before an acceptance run.
+  They are USER iCloud data, so the harness **never deletes** them; it only reports the count.
 
-Bypass for a forced live run despite the preflight: `--force` (you own the
-consequence).
+`--force` bypasses the preflight for a forced live run (you own the consequence).
 
 ## Scenario matrix (80)
 
-The suite spans **10 categories** of common computer-use tasks across **13 apps**
-(Calculator, TextEdit, Finder, Notes, Terminal, Stickies, Safari, System Settings,
-Activity Monitor, Preview, Dictionary, Font Book, and the Character Viewer). Every
-scenario is **reversible** (fixtures live under `/tmp` and are removed; settings
-toggles capture+restore their original — see the [Finder defaults recovery](#av78av79-finder-defaults-tri-state-recovery)
-note for how an originally-ABSENT key is restored). PASS requires both
-`model_acted` AND an independent `verify_passed`.
+The suite spans **10 categories** of common computer-use tasks across **13 apps** (Calculator, TextEdit,
+Finder, Notes, Terminal, Stickies, Safari, System Settings, Activity Monitor, Preview, Dictionary, Font
+Book, Character Viewer). Every scenario is **reversible** (fixtures live under `/tmp` and are removed;
+settings toggles capture+restore their original; see the
+[Finder defaults recovery](#av78av79-finder-defaults-tri-state-recovery) note for how an originally-ABSENT
+key is restored). PASS requires both `model_acted` AND an independent `verify_passed`.
 
 ### AV01-AV17 (original suite)
 
@@ -234,195 +218,148 @@ the verb that backend announces — it never hardcodes a macOS-private `AX*` nam
 
 ### AV78/AV79 Finder defaults tri-state recovery
 
-AV78/AV79 toggle a Finder user default (`com.apple.finder ShowPathbar` /
-`ShowStatusBar`) and must restore the user's EXACT original config afterward.
-`read_defaults_bool` collapses "key absent", "read failed", and explicit `False`
-into one `False` — fine for a probe, but lossy for capture/restore: a key that
-was ABSENT would be restored as `-bool false`, leaving a synthetic key behind.
-AV78/AV79 therefore use the tri-state reader `read_defaults_state(domain, key)
--> (exists, value)`:
+AV78/AV79 toggle a Finder user default (`com.apple.finder ShowPathbar` / `ShowStatusBar`) and must restore
+the user's EXACT original config afterward. `read_defaults_bool` collapses "key absent", "read failed" and
+explicit `False` into one `False`, fine for a probe but lossy for capture/restore (an ABSENT key would be
+restored as `-bool false`, leaving a synthetic key behind). AV78/AV79 therefore use the tri-state reader
+`read_defaults_state(domain, key) -> (exists, value)`:
 
-- key present + `1` → `(True, True)` → cleanup `defaults write ... -bool true`
-- key present + `0` → `(True, False)` → cleanup `defaults write ... -bool false`
-- key absent (`defaults read` reports "does not exist") → `(False, False)` →
-  cleanup `defaults delete com.apple.finder <key>` (preserves the "unset" state)
-- any OTHER read failure (timeout / bad domain / unparseable value) →
-  `RuntimeError` → **setup fails** (`setup-error`), so the scenario does NOT run
-  with a cleanup it cannot trust
+- key present + `1` -> `(True, True)` -> cleanup `defaults write ... -bool true`
+- key present + `0` -> `(True, False)` -> cleanup `defaults write ... -bool false`
+- key absent (`defaults read` reports "does not exist") -> `(False, False)` -> cleanup
+  `defaults delete com.apple.finder <key>` (preserves the "unset" state)
+- any OTHER read failure (timeout / bad domain / unparseable value) -> `RuntimeError` -> **setup fails**
+  (`setup-error`), so the scenario does not run with a cleanup it cannot trust
 
-Cleanup also guards the uncaptured case: if setup failed before it captured
-(`_CAPTURED[s.sid]` has no `exists` entry), cleanup leaves defaults untouched —
-the scenario never toggled them, so there is nothing to restore. Verified by
-unit tests for all three original states plus the read-failure and
-uncaptured paths (`tests/test_cua_act_verify.py`).
+Cleanup also guards the uncaptured case: if setup failed before capturing (`_CAPTURED[s.sid]` has no
+`exists` entry), cleanup leaves defaults untouched, since the scenario never toggled them. Unit tests cover
+all three original states plus the read-failure and uncaptured paths (`tests/test_cua_act_verify.py`).
 
-### Lifecycle: unified try/finally (setup → drive → verify → cleanup)
+### Lifecycle: unified try/finally (setup -> drive -> verify -> cleanup)
 
-`run_one` wraps setup + drive + verify in ONE `try/finally` so **best-effort
-cleanup always runs once setup has been attempted** — even when setup returns a
-`setup-error`, the model drive times out, or `verify_scenario` raises. A thrown
-exception is recorded on the record (`status=ERROR`/`SETUP_ERROR`, `error=...`)
-so one bad scenario never aborts the whole suite, but it is **never masked**: a
-cleanup exception is captured into `cleanup_status` separately and never
-overwrites the original `error`. `result.json` is written exactly once, in the
-`finally`, for every path. This is the guarantee that makes the AV78/79
-Finder-defaults capture/restore (and every other stateful setup) safe across
-partial-failure paths.
+`run_one` wraps setup + drive + verify in ONE `try/finally` so **best-effort cleanup always runs once setup
+has been attempted**, even when setup returns a `setup-error`, the model drive times out, or
+`verify_scenario` raises. A thrown exception is recorded on the record (`status=ERROR`/`SETUP_ERROR`,
+`error=...`) so one bad scenario never aborts the suite, and it is **never masked**: a cleanup exception is
+captured into `cleanup_status` separately and never overwrites the original `error`. `result.json` is
+written exactly once, in the `finally`, for every path. This guarantee makes the AV78/79 Finder-defaults
+capture/restore (and every other stateful setup) safe across partial-failure paths.
 
 ### Real-macOS verification requirement
 
-These 80 scenarios are **live macOS GUI tests**, not hermetic unit tests. They
-are only meaningful when run on real macOS hardware (or a macOS VM with a
-visible desktop) with:
+These 80 scenarios are **live macOS GUI tests**, not hermetic unit tests. They are meaningful only on real
+macOS hardware (or a macOS VM with a visible desktop) with:
 
-- the **console unlocked** (behind the loginwindow shield AX returns `-25211`
-  and AppleEvents time out — see the preflight section);
-- **Accessibility** granted to the python/uv executable running the server
-  (`AXIsProcessTrusted() == true`);
-- **Input Monitoring** granted to the same executable (for the raw-key fallback
-  paths the model uses when an app's AX tree is momentarily empty);
-- the active **keyboard input source set to a Latin layout** (ABC / U.S.) — a CJK
-  IME (e.g. Pinyin) corrupts the harness's blind typing (preflight warns);
-- the **iCloud TextEdit "Untitled N" backlog cleared** — TextEdit restores those
-  autosaved docs on launch and they shadow the front document (preflight reports
-  the count; the harness never deletes them);
+- the **console unlocked** (see the preflight section);
+- **Accessibility** granted to the python/uv executable running the server (`AXIsProcessTrusted() == true`);
+- **Input Monitoring** granted to the same executable (raw-key fallback paths used when an app's AX tree is
+  momentarily empty);
+- the active **keyboard input source set to a Latin layout** (ABC / U.S.);
+- the **iCloud TextEdit "Untitled N" backlog cleared**;
 - the **GLM-5V-Turbo** credentials in `~/.zcode/v2/config.json` (billed calls).
 
-Per-scenario **window isolation** (TextEdit/Finder): before each scenario the
-harness runs a hermetic reset that reaps ONLY the documents/windows the suite
-itself created this run (tracked by a stamped owned-registry). TextEdit document
-identity is read from the **System Events AX tree** (window `AXTitle` +
-`AXDocument`), never the app-dictionary `path of d` (which raises on coercion for
-a fresh unsaved doc on macOS 26 Tahoe and would fail-close every TextEdit scenario
-to `SETUP_ERROR`). The reset's `saving no` close re-verifies each document's full
-identity and closes it in the SAME AppleScript pass (no snapshot→close race),
-gated on an unambiguous, exact, cleanly-read identity match — it prefers leaving a
-harness Untitled doc open over any risk of discarding a user document.
+Per-scenario **window isolation** (TextEdit/Finder): before each scenario the harness runs a hermetic reset
+that reaps ONLY the documents/windows the suite itself created this run (tracked by a stamped
+owned-registry). TextEdit document identity is read from the **System Events AX tree** (window `AXTitle` +
+`AXDocument`), never the app-dictionary `path of d` (which raises on coercion for a fresh unsaved doc on
+macOS 26 Tahoe and would fail-close every TextEdit scenario to `SETUP_ERROR`). The reset's `saving no` close
+re-verifies each document's full identity and closes it in the SAME AppleScript pass (no snapshot->close
+race), gated on an unambiguous, exact, cleanly-read identity match; it prefers leaving a harness Untitled doc
+open over any risk of discarding a user document.
 
-They are skipped/blocked (not failed) when those don't hold. The unit tests in
-`tests/test_cua_act_verify.py` + `tests/test_act_verify_teardown.py` pin the
-scenario definitions, the verify routing, the AX-token guard, the tri-state
-restore, and the try/finally contract **hermetically** (no GUI, no network) —
-those run in CI on every push. The live matrix is the human/billed acceptance
-gate and is run manually (`python3 scripts/cua_act_verify.py --ts-server`)
-on an unlocked console.
+Scenarios are skipped/blocked (not failed) when those conditions don't hold. The unit tests in
+`tests/test_cua_act_verify.py` + `tests/test_act_verify_teardown.py` pin the scenario definitions, verify
+routing, AX-token guard, tri-state restore and try/finally contract **hermetically** (no GUI, no network)
+and run in CI on every push. The live matrix is the human/billed acceptance gate, run manually
+(`python3 scripts/cua_act_verify.py --ts-server`) on an unlocked console.
 
 ### Coverage of the 10-category taxonomy
 
-- **1. Text editing** (type/select/format/search/replace): AV03, AV04, AV11, AV15,
-  AV18 (italic), AV19 (underline), AV20 (select-all+clear), AV21 (multi-line),
-  AV22 (find-replace), AV45 (select-replace) — bold/italic/underline via RTF
-  control words `\b`/`\i`/`\ul`; find-replace + select-replace are distinct patterns.
-- **2. File management** (create/open/rename/delete/navigate): AV05, AV12, AV13,
-  AV23 (rename), AV24 (navigate nested), AV25 (move to Trash), AV26 (duplicate),
-  AV27 (new folder) — all verified by the filesystem, all fixtures under `/tmp`.
-- **3. Web browser** (navigate/search/tab/bookmark): AV28 (type URL), AV29 (new
-  tab), AV30 (click link) — Safari, verified via `URL of front document` +
-  `count tabs`; local `file://` fixture pages so runs are offline-deterministic.
-- **4. System settings** (toggle/configure/check): AV14 (volume slider), AV16
-  (Dock magnification), AV31 (Dock auto-hide), AV32 (filename extensions) — each
-  captures the original `defaults` value in setup and restores it in cleanup
+- **1. Text editing:** AV03, AV04, AV11, AV15, AV18 (italic), AV19 (underline), AV20 (select-all+clear),
+  AV21 (multi-line), AV22 (find-replace), AV45 (select-replace); bold/italic/underline via RTF control words
+  `\b`/`\i`/`\ul`.
+- **2. File management:** AV05, AV12, AV13, AV23 (rename), AV24 (navigate nested), AV25 (move to Trash),
+  AV26 (duplicate), AV27 (new folder); all verified by the filesystem, fixtures under `/tmp`.
+- **3. Web browser:** AV28 (type URL), AV29 (new tab), AV30 (click link); Safari, verified via
+  `URL of front document` + `count tabs`; local `file://` fixture pages keep runs offline-deterministic.
+- **4. System settings:** AV14 (volume slider), AV16 (Dock magnification), AV31 (Dock auto-hide), AV32
+  (filename extensions); each captures the original `defaults` value in setup and restores it in cleanup
   (`killall Dock`/`killall Finder` applies the restore live).
-- **5. Clipboard** (copy/paste/cut/cross-app): AV08 (copy), AV17 (cross-app
-  paste), AV33 (cut — verifies source emptied AND clipboard has it), AV34
-  (partial-select copy — `pbpaste` must equal exactly `BETA`).
-- **6. Multi-step workflows** (chain): AV15, AV17, AV35 (edit+save existing
-  file), AV36 (terminal redirect to file), AV37 (notes create+body), AV45.
-- **7. Drag & drop**: AV13 (Finder file→folder), AV14 (volume slider), AV38
-  (window edge resize — `left_click_drag` corner→coordinate, bounds verified).
-- **8. Search & navigation**: AV05, AV12, AV24, AV39 (List view), AV40 (Column
-  view), AV43 (context menu / Get Info), AV47/AV48 (new window via Cmd+N).
-- **9. Calculator/math**: AV01, AV02, AV10, AV41 (memory m+/mr), AV42 (decimal),
-  AV50 (chain addition), AV51-AV53 (subtract/multiply element Invoke),
-  AV66-AV68 (add/multiply/divide element Invoke) — twelve distinct compute
-  patterns, the AV51+ set biased to element-target Invoke.
-- **10. Dialogs & notifications**: AV43 (right-click context menu), AV44 (Don't
-  Save dialog discard), AV49 (Notes removal confirmation alert).
+- **5. Clipboard:** AV08 (copy), AV17 (cross-app paste), AV33 (cut: source emptied AND clipboard has it),
+  AV34 (partial-select copy: `pbpaste` must equal exactly `BETA`).
+- **6. Multi-step workflows:** AV15, AV17, AV35 (edit+save existing file), AV36 (terminal redirect to file),
+  AV37 (notes create+body), AV45.
+- **7. Drag & drop:** AV13 (Finder file->folder), AV14 (volume slider), AV38 (window edge resize,
+  `left_click_drag` corner->coordinate, bounds verified).
+- **8. Search & navigation:** AV05, AV12, AV24, AV39 (List view), AV40 (Column view), AV43 (context menu /
+  Get Info), AV47/AV48 (new window via Cmd+N).
+- **9. Calculator/math:** AV01, AV02, AV10, AV41 (memory m+/mr), AV42 (decimal), AV50 (chain addition),
+  AV51-AV53 (subtract/multiply element Invoke), AV66-AV68 (add/multiply/divide element Invoke); twelve
+  distinct compute patterns, the AV51+ set biased to element-target Invoke.
+- **10. Dialogs & notifications:** AV43 (right-click context menu), AV44 (Don't Save dialog discard), AV49
+  (Notes removal confirmation alert).
 
-The AV51-AV80 expansion additionally stresses the **a11y-first element-target
-contract**: `set_value` on a single known text area (AV54-AV56, AV69-AV71, AV80
-TextEdit — committal; AV57, AV72 Notes body — **deliberately non-committal**;
-AV58, AV73 Notes title — **KNOWN_LIMITATION / xfail** (no separate title element),
-see [Notes body-write reconciliation](#notes-body-write-reconciliation)), `perform_action`/`left_click` element
-selection (AV61, AV74, AV75 Finder), `perform_action` checkbox activation
-(AV59-AV60 System Settings), app-launch + element-click (AV62 Preview, AV63/AV77
-Dictionary, AV64 Font Book, AV65 Character Viewer), Safari address-bar
-navigation (AV76), and Finder View-menu defaults toggles (AV78-AV79).
+AV51-AV80 additionally stress the **a11y-first element-target contract**: `set_value` on a single known text
+area (AV54-AV56, AV69-AV71, AV80 TextEdit: committal; AV57, AV72 Notes body: **deliberately
+non-committal**; AV58, AV73 Notes title: **KNOWN_LIMITATION / xfail**, no separate title element; see
+[Notes body-write reconciliation](#notes-body-write-reconciliation)), `perform_action`/`left_click` element
+selection (AV61, AV74, AV75 Finder), `perform_action` checkbox activation (AV59-AV60 System Settings),
+app-launch + element-click (AV62 Preview, AV63/AV77 Dictionary, AV64 Font Book, AV65 Character Viewer),
+Safari address-bar navigation (AV76) and Finder View-menu defaults toggles (AV78-AV79).
 
 ### Notes body-write reconciliation
 
-Covers **AV37** (`type` body — committal), **AV57 / AV72** (`set_value` body —
-non-committal counter-case), **AV58 / AV73** (title — KNOWN_LIMITATION / xfail, no
-separate title element), and the cross-app **AV17** paste.
+Covers **AV37** (`type` body, committal), **AV57 / AV72** (`set_value` body, non-committal counter-case),
+**AV58 / AV73** (title, KNOWN_LIMITATION / xfail) and the cross-app **AV17** paste.
 
-**Confirmed reality.** The Notes note body is a rich-text / web-backed text view. A
-direct accessibility value write — `set_value`, or the default `type` on an element
-target (both take the a11y-first value-set path) — is *accepted and echoed back by
-accessibility* but is **NOT committed to the note document model**. The independent
-verify reads the note through the Notes AppleScript dictionary (the model layer), so it
-correctly sees no marker. This is Notes-specific: the same `set_value` on TextEdit's
-`NSTextView` (AV54-AV56, AV69-AV71, AV80) **does** commit and persist. Confirmed on the
-80-scenario macOS run (AV37 default `type`, AV57 / AV72 `set_value` all read
-`marker=False`) and by a live backend probe (`element_set_value` updates only the AX
-shadow; `element_focus` + real keystrokes append at the caret and go through the app's
-normal text-insertion path). The tool now surfaces this via
-`keyboard_hints._non_committal_rich_text_warning`: `type`/`set_value` append a WARNING
-on this path steering the model to real key input.
+**Confirmed reality.** The Notes note body is a rich-text / web-backed text view. A direct accessibility
+value write (`set_value`, or the default `type` on an element target; both take the a11y-first value-set
+path) is *accepted and echoed back by accessibility* but is **NOT committed to the note document model**.
+The independent verify reads the note through the Notes AppleScript dictionary (the model layer) and
+correctly sees no marker. This is Notes-specific: the same `set_value` on TextEdit's `NSTextView`
+(AV54-AV56, AV69-AV71, AV80) **does** commit and persist. Confirmed on the 80-scenario macOS run (AV37
+default `type`, AV57 / AV72 `set_value` all read `marker=False`) and by a live backend probe
+(`element_set_value` updates only the AX shadow; `element_focus` + real keystrokes append at the caret and go
+through the app's normal text-insertion path). The tool surfaces this via
+`keyboard_hints._non_committal_rich_text_warning`: `type`/`set_value` append a WARNING on this path steering
+the model to real key input.
 
-**Reconciled expectation (so this stops reading as a product regression):**
+**Reconciled expectation:**
 
-- **AV37 — committal path only.** Success (note body persists `AV37_BODY_MARKER`)
-  requires **real key input**: bring Notes frontmost and `type` with `strategy=event`
-  (or app-scoped keystrokes) into the focused body. A default element value-set is
-  expected to NOT persist and must not be scored as the success path. This keeps AV37 a
-  meaningful "enter text into Notes that actually sticks" test, aligned with the shipped
-  hint.
-- **AV57 / AV72 — known non-committal (`set_value`).** `set_value` on the Notes body is
-  the deliberate **non-committal counter-case** to the TextEdit `set_value` scenarios:
-  the tool correctly ACKs (`Value set`) and now WARNS, and the note model is expected to
-  NOT receive the write. Treat a non-persist here as **expected behavior, not a
-  `backend_fail`** — the committal alternative is AV37-style real key input.
-- **AV58 / AV73 — KNOWN_LIMITATION / xfail (no title field), classified STATICALLY.**
-  Notes exposes no separate title element; the "title" is the first line of the single
-  body text area, so a "set the title field" act has **no settable target at all**. This
-  is a **structural fact about the app's a11y tree, not a per-run observation**, so these
-  sids are classified `KNOWN_LIMITATION` at the **top of `run_one`, BEFORE any setup /
-  env-probe / model drive** — **no paid model call is made**, and there is structurally no
-  model-drive result that a `429` / timeout / credential error could be masked into (the
-  drive path is never entered). They are excluded from the valid PASS-rate denominator and
-  are deliberately **not** routed through the body-write `score_notes_noncommittal_setvalue`
-  (whose warning check is meaningless for a title). A documented app-AX limitation, neither
-  a PASS nor a product `backend_fail`, and it can never become a false PASS.
-- **AV17** (cross-app paste into a new note) shares the same committal requirement:
-  paste (a real key event) into the *focused* body persists; a value-set would not.
+- **AV37, committal path only.** Success (note body persists `AV37_BODY_MARKER`) requires **real key
+  input**: bring Notes frontmost and `type` with `strategy=event` (or app-scoped keystrokes) into the focused
+  body. A default element value-set is expected NOT to persist and must not be scored as the success path.
+- **AV57 / AV72, known non-committal (`set_value`).** `set_value` on the Notes body is the deliberate
+  **non-committal counter-case** to the TextEdit `set_value` scenarios: the tool ACKs (`Value set`) and
+  WARNS, and the note model is expected NOT to receive the write. A non-persist here is **expected
+  behavior, not a `backend_fail`**; the committal alternative is AV37-style real key input.
+- **AV58 / AV73, KNOWN_LIMITATION / xfail (no title field), classified STATICALLY.** Notes exposes no
+  separate title element; the "title" is the first line of the single body text area, so "set the title
+  field" has **no settable target at all**. This is a structural fact about the app's a11y tree, not a
+  per-run observation, so these sids are classified `KNOWN_LIMITATION` at the **top of `run_one`, BEFORE any
+  setup / env-probe / model drive**: **no paid model call is made**, and no `429` / timeout / credential
+  error can be masked into it. They are excluded from the valid PASS-rate denominator and deliberately
+  **not** routed through the body-write `score_notes_noncommittal_setvalue` (whose warning check is
+  meaningless for a title). Neither a PASS nor a product `backend_fail`, and it can never become a false
+  PASS.
+- **AV17** (cross-app paste into a new note) shares the committal requirement: paste (a real key event)
+  into the *focused* body persists; a value-set would not.
 
-**Harness scoring (reconciled — `scripts/cua_act_verify.py`).** The harness now agrees
-with this spec:
+**Harness scoring (`scripts/cua_act_verify.py`):**
 
-- **AV57 / AV72 (body `set_value`)** are scored from the model transcript by
-  `score_notes_noncommittal_setvalue` (dispatched in `run_one`, which has the transcript),
-  NOT by a persistence read: PASS = the tool exercised the value-set AND surfaced the
-  non-committal warning (`may NOT commit it to the document`); a missing marker is EXPECTED
-  and is not a `FAIL_VERIFY`. `verify_scenario` has NO persistence branch for these sids
-  (removed), so it can never re-introduce the contradiction. The set is pinned by
-  `NOTES_NONCOMMITTAL_SET_VALUE = {"AV57", "AV72"}`.
-- **AV58 / AV73 (title) are a separate KNOWN_LIMITATION / xfail bucket, classified
-  STATICALLY** — `KNOWN_LIMITATION_SIDS = {"AV58", "AV73"}`. Notes exposes **no separate
-  title element** (the title is just the first line of the single body text area), so a
-  "set the title field" act has no settable target at all — a structural fact, not a
-  per-run observation. `run_one` short-circuits these sids to `status = "KNOWN_LIMITATION"`
-  (`verify_passed = False`, fixed evidence string) at its **very top, before setup /
-  env-probe / `drive_model`**, so **no paid model call is made** and no infra/drive outcome
-  can be swallowed into a known-limitation. They are **NOT** routed through
-  `score_notes_noncommittal_setvalue` (that body-write warning check is meaningless for a
-  title field) and **NOT** through a persistence read.
-  KNOWN_LIMITATION is excluded from the valid PASS-rate denominator (like
-  `env_offspace` / `BLOCKED_INFRA`): it is neither a PASS nor a product `backend_fail`,
-  and it can never become a false PASS.
-- **AV37** task steers to the committal **real key input** path (`type` with app_ref
-  keystrokes into the focused new note, or `type` `strategy=event` on the body element);
-  its verify still requires persistence (`AV37_MARKER` in the note body) because real key
-  input DOES commit. Unit coverage: `tests/test_cua_act_verify.py`
+- **AV57 / AV72** are scored from the model transcript by `score_notes_noncommittal_setvalue` (dispatched in
+  `run_one`, which has the transcript), NOT by a persistence read: PASS = the tool exercised the value-set
+  AND surfaced the non-committal warning (`may NOT commit it to the document`); a missing marker is EXPECTED
+  and is not a `FAIL_VERIFY`. `verify_scenario` has no persistence branch for these sids. The set is pinned
+  by `NOTES_NONCOMMITTAL_SET_VALUE = {"AV57", "AV72"}`.
+- **AV58 / AV73** are a separate bucket pinned by `KNOWN_LIMITATION_SIDS = {"AV58", "AV73"}`. `run_one`
+  short-circuits them to `status = "KNOWN_LIMITATION"` (`verify_passed = False`, fixed evidence string)
+  before setup / env-probe / `drive_model`. They are not routed through
+  `score_notes_noncommittal_setvalue` nor a persistence read. KNOWN_LIMITATION is excluded from the valid
+  PASS-rate denominator (like `env_offspace` / `BLOCKED_INFRA`).
+- **AV37** steers to the committal **real key input** path (`type` with app_ref keystrokes into the focused
+  new note, or `type` `strategy=event` on the body element); its verify still requires persistence
+  (`AV37_MARKER` in the note body). Unit coverage in `tests/test_cua_act_verify.py`
   (`test_score_notes_noncommittal_*`, `test_run_one_scores_av57_pass_from_transcript`,
   `test_run_one_scores_av58_av73_known_limitation_without_any_model_call`,
   `test_known_limitation_sids_not_in_noncommittal_set`,
@@ -430,60 +367,45 @@ with this spec:
 
 ### AV13-AV17 design notes (drag + multi-step)
 
-These five expand the suite from click/type/set_value into the two paths the
-prior matrix did not cover: the **`left_click_drag`** gesture (the P0
-mouse-orphan fix !171 — a raw pointer gesture that must hit the foreground app
-with verify→use TOCTOU closure on both endpoints) and **multi-step CUA** where a
-single scenario chains several act tools.
+These five cover the **`left_click_drag`** gesture (the P0 mouse-orphan fix !171: a raw pointer gesture that
+must hit the foreground app with verify->use TOCTOU closure on both endpoints) and **multi-step CUA**
+chaining several act tools in one scenario.
 
-- **AV13 (Finder drag)** — the canonical drag test: a file `moveme.txt` is dragged
-  onto a folder `DestFolder`. The verify is a **pure filesystem check**
-  (`DestFolder/moveme.txt` exists AND the source is gone) — independent of Finder's
-  AX tree and of the model's claim. Reversible: the whole fixture lives under
-  `/tmp/av13-drag/` and is `rmtree`d in cleanup.
-- **AV14 (volume slider drag)** — exercises a slider drag in System Settings. The
-  independent verify is `get output volume of (get volume settings)`, a channel the
-  model cannot bluff. Setup baselines the volume to 10 so a mid drag is an
-  unambiguous change (target window 30..70); cleanup restores the captured original.
-- **AV15 (type + bold)** — a multi-step `type` → Cmd+A → Cmd+B chain. The verify
-  saves `document 1` to `/tmp/av15-bold.rtf` and inspects the **RTF source** for the
-  literal `\b` bold control word — a deterministic, model-independent signal that
-  bold was actually applied. Setup forces a rich-text document (toggles plain→rich
-  via Shift+Cmd+T only when needed) so Cmd+B can take effect.
-- **AV16 (Dock magnification toggle)** — a System Settings navigation + switch
-  toggle. The verify reads `defaults com.apple.dock magnification` and confirms it
-  **flipped** from the value captured in setup. This is the reversible toggle
-  pattern: setup records the original, cleanup writes it back via
-  `defaults write` + `killall Dock`. (The earlier "intentionally not included"
-  stance is superseded for this toggle specifically because the capture→restore
-  makes it reversible; a destructive/irreversible toggle is still out of scope.)
-- **AV17 (cross-app clipboard)** — copy from TextEdit, `open_application` Notes,
-  new note, paste. The verify joins Notes titles + bodies and looks for the marker
-  (`read_notes_titles` + `read_notes_bodies`, both via AppleScript). Cleanup deletes
-  the note (same pattern as AV06).
+- **AV13 (Finder drag):** file `moveme.txt` is dragged onto folder `DestFolder`. Verify is a **pure
+  filesystem check** (`DestFolder/moveme.txt` exists AND the source is gone), independent of Finder's AX tree
+  and the model's claim. The fixture lives under `/tmp/av13-drag/` and is `rmtree`d in cleanup.
+- **AV14 (volume slider drag):** slider drag in System Settings. Verify is
+  `get output volume of (get volume settings)`, a channel the model cannot bluff. Setup baselines the volume
+  to 10 so a mid drag is unambiguous (target window 30..70); cleanup restores the captured original.
+- **AV15 (type + bold):** `type` -> Cmd+A -> Cmd+B. Verify saves `document 1` to `/tmp/av15-bold.rtf` and
+  inspects the **RTF source** for the literal `\b` control word. Setup forces a rich-text document (toggles
+  plain->rich via Shift+Cmd+T only when needed) so Cmd+B can take effect.
+- **AV16 (Dock magnification toggle):** System Settings navigation + switch toggle. Verify reads
+  `defaults com.apple.dock magnification` and confirms it **flipped** from the setup-captured value.
+  Reversible toggle pattern: setup records the original, cleanup writes it back via `defaults write` +
+  `killall Dock`. A destructive/irreversible toggle is still out of scope.
+- **AV17 (cross-app clipboard):** copy from TextEdit, `open_application` Notes, new note, paste. Verify joins
+  Notes titles + bodies and looks for the marker (`read_notes_titles` + `read_notes_bodies`, both via
+  AppleScript). Cleanup deletes the note (same pattern as AV06).
 
-`left_click_drag` was added to `ACT_TOOLS` so the drag scenarios' tool-call
-trajectories register as "model acted" (otherwise a pure drag run would be
-misclassified as `FAIL_NO_ACT`).
+`left_click_drag` is in `ACT_TOOLS` so the drag scenarios' tool-call trajectories register as "model acted"
+(otherwise a pure drag run would be misclassified as `FAIL_NO_ACT`).
 
 ## Why the verify is deterministic
 
-Each verifier reads the post-state through a channel the model cannot influence by
-claiming success:
+Each verifier reads the post-state through a channel the model cannot influence by claiming success:
 
-- **AppleScript** reads the app's own data model (`text of document 1`,
-  `selection`, `name of every note`, terminal `contents`). The model never sees
-  these calls; they run from the harness.
+- **AppleScript** reads the app's own data model (`text of document 1`, `selection`, `name of every note`,
+  terminal `contents`) from the harness; the model never sees these calls.
 - **`pbpaste`** reads the pasteboard directly.
-- **Calculator display** has no AppleScript dictionary, so it is read via System
-  Events UI elements (the same AX the model would read, but from the harness).
-- A `wait_for` poll (≤8s) absorbs the small async delay between the model's last
-  action and the app committing the state.
+- **Calculator display** has no AppleScript dictionary, so it is read via System Events UI elements (the
+  same AX the model would read, but from the harness).
+- A `wait_for` poll (<=8s) absorbs the small async delay between the model's last action and the app
+  committing the state.
 
-`PASS` requires BOTH `model_acted` (the model actually fired an act tool — parsed
-from the `[tool→]` lines in `e2e_opus`'s redacted stdout) AND `verify_passed`. This
-rules out the two failure modes that an observe-only loop can't detect: the model
-claiming success without acting, and the model acting on the wrong target.
+`PASS` requires BOTH `model_acted` (the model fired an act tool, parsed from the `[tool->]` lines in
+`e2e_opus`'s redacted stdout) AND `verify_passed`. This rules out the two failure modes an observe-only loop
+cannot detect: claiming success without acting, and acting on the wrong target.
 
 ## Recorded artifacts (per scenario)
 
@@ -501,7 +423,7 @@ artifacts/act-verify/
                               # + the backend method that crossed the OS boundary
 ```
 
-The ledger `frames.jsonl` is the operation-path substrate: `kind=tool_call` (Hook A,
-every tool), `kind=mutation` (Hook B via ActionExecutor, every actuation), and
-`kind=backend_call` (the exact OS method). All three share one monotonic `seq`, so a
-consumer can replay the full causal trajectory of a PASS or a FAIL_VERIFY.
+The ledger `frames.jsonl` is the operation-path substrate: `kind=tool_call` (Hook A, every tool),
+`kind=mutation` (Hook B via ActionExecutor, every actuation) and `kind=backend_call` (the exact OS method).
+All three share one monotonic `seq`, so a consumer can replay the full causal trajectory of a PASS or a
+FAIL_VERIFY.

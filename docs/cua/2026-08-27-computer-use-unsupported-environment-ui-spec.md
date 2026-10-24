@@ -1,42 +1,60 @@
-# Computer Use 不支持环境的设置与插件列表提示
+# Computer Use: settings and plugin-list notice for unsupported environments
 
-## 背景
+## Background
 
-Computer Use 依赖桌面端本机 Helper 访问当前机器的屏幕与输入设备。SSH、WSL、Docker、远端 Server 以及 Linux 桌面当前没有可用的 CUA Helper。过去设置页用 `return null` 隐藏了整块内容，导致远端设置页白屏；插件页只读取目标环境的运行时插件目录，远端目录没有 CUA 时用户也看不到能力入口。
+Computer Use depends on the local desktop Helper to reach the current machine's screen and input
+devices. SSH, WSL, Docker, remote Server and Linux desktop targets have no CUA Helper. The settings
+page must not hide the whole section with `return null` (that left a blank remote settings page). The
+plugin page reads only the target environment's runtime plugin directory, so a remote directory
+without CUA shows no capability entry.
 
-## 目标
+## Goals
 
-- 在远端 workspace 或 Linux 桌面打开设置时，显示 Computer Use 设置入口与明确的“不支持当前环境”说明，不再出现空白页。
-- 在同样的目标环境打开插件列表时，展示 CUA 的只读占位项和不可用原因。
-- 不向 SSH、WSL、Docker、Server 或 Linux 目标发送 CUA 启用、禁用、安装、卸载、更新请求。
-- 保持 macOS/Windows 本地现有开关、macOS 权限流程和手机 Web 远控行为不变。
+- In a remote workspace or on a Linux desktop, settings shows the Computer Use entry with an explicit
+  "environment not supported" explanation, never a blank page.
+- In the same environments, the plugin list shows a read-only CUA placeholder row with the reason.
+- No CUA enable, disable, install, uninstall or update request is sent to SSH, WSL, Docker, Server or
+  Linux targets.
+- Local macOS/Windows toggles, the macOS permission flow and mobile Web remote behavior are unchanged.
 
-## 能力边界
+## Capability boundary
 
 ```text
-目标环境                         Computer Use
-本地 macOS                       支持：开关 + macOS 权限
-本地 Windows                     支持：开关
-本地 Linux                       不支持：提示，不提供操作控件
-远端 SSH / WSL / Docker / Server 不支持：提示，不提供操作控件
-手机 Web 远控                    沿用 Web 能力灰度，不启动本机 CUA Helper
+Target environment                 Computer Use
+Local macOS                        supported: toggle + macOS permissions
+Local Windows                      supported: toggle
+Local Linux                        unsupported: notice, no action controls
+Remote SSH / WSL / Docker / Server unsupported: notice, no action controls
+Mobile Web remote                  follows the Web capability gray release; no local CUA Helper is started
 ```
 
-## UI 行为
+## UI behavior
 
-1. 设置页仍由灰度开关控制是否展示 Computer Use 导航项。灰度开启时，Linux 桌面也展示该入口。
-2. 不支持环境的设置页显示一个信息卡，说明 Computer Use 暂不支持 SSH、Linux 等当前环境；隐藏插件总开关、输入框入口开关和权限操作。
-3. 插件列表在用户 scope 中增加“电脑控制”只读行，显示“当前环境不可用”徽标和原因；该行不计入已安装/内置数量，不打开详情，也不显示启停、更新、卸载操作。
-4. 插件搜索按“电脑控制”“Computer Use”“zcode-cua”“cua”匹配该提示行。
+1. The gray-release switch still decides whether the Computer Use navigation item is shown. When it is
+   on, Linux desktop also shows the entry.
+2. In an unsupported environment the settings page shows one info card stating that Computer Use does
+   not yet support the current environment (SSH, Linux, etc.). The plugin master toggle, the composer
+   entry toggle and the permission actions are hidden.
+3. The plugin list adds a read-only "电脑控制" (Computer Control) row in the user scope with a
+   "当前环境不可用" (unavailable in this environment) badge and the reason. The row is not counted in
+   installed/built-in totals, opens no details, and has no enable/disable, update or uninstall
+   actions.
+4. Plugin search matches that row by "电脑控制", "Computer Use", "zcode-cua" and "cua".
 
-## 数据与实现约束
+## Data and implementation constraints
 
-- 使用统一的 UI 能力判定函数区分本地 macOS、Windows、Linux 与远端目标，远端身份继续通过 `workspaceIdentity` / `remoteTarget` 判定。
-- CUA 占位项是 UI 投影，不伪造远端插件运行时数据，也不修改插件协议或远端 Host 能力。
-- 该变更只调整设置与插件列表展示，不改变桌面 `continuous` 或手机 `replayable` 实时链路。
+- One shared UI capability function distinguishes local macOS, Windows, Linux and remote targets.
+  Remote identity is still decided through `workspaceIdentity` / `remoteTarget`.
+- The CUA placeholder is a UI projection. It does not fabricate remote plugin runtime data and does
+  not change the plugin protocol or remote Host capabilities.
+- Only settings and plugin-list presentation change. The desktop `continuous` and mobile `replayable`
+  live links are untouched.
 
-## 验收
+## Acceptance
 
-- 远端 SSH、WSL、Docker、Server 和本地 Linux 的设置页不白屏，能看到不支持说明。
-- 上述环境插件列表能搜索并看到“电脑控制”只读行，点击/切换不会触发插件管理写操作。
-- macOS/Windows 本地现有单测保持通过；新增能力矩阵、Linux 入口和不支持提示测试。
+- Settings for remote SSH, WSL, Docker, Server and local Linux does not render blank and shows the
+  unsupported explanation.
+- In those environments the plugin list can be searched for the "电脑控制" read-only row; clicking or
+  toggling triggers no plugin-management write.
+- Existing macOS/Windows local unit tests still pass; tests cover the capability matrix, the Linux
+  entry and the unsupported notice.
