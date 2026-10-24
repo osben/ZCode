@@ -1,55 +1,55 @@
-# CLI 工具可见性 Denylist Implementation Plan
+# CLI Tool Visibility Denylist Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 本文同时作为 `--disallowedTools` 的初始设计 spec；实现前若语义变化，先更新本文再改代码。
+This document is also the initial design spec of `--disallowedTools`; if semantics change before implementation, update this document first, then the code.
 
-**Goal:** 为 `zcode` CLI 增加 `--disallowedTools` / `--disallowed-tools <tools...>`，让用户在单次运行中把指定工具规则从 runtime tool pool 中移除，而不是只改变审批权限。
+**Goal:** add `--disallowedTools` / `--disallowed-tools <tools...>` to the `zcode` CLI so the user can remove given tool rules from the runtime tool pool for one run, rather than only changing approval permission.
 
-**Architecture:** 新增 runtime-scoped `toolDisallowlist`，由 CLI 解析后透传到 `AgentRuntimeConfig`。built-in、MCP、embedded search、subagent child runtime 都在注册或派生工具集时消费同一份 denylist，保证被禁工具不会进入 provider-visible `tools[]`，也不会留在本地可执行 registry 中。
+**Architecture:** a new runtime-scoped `toolDisallowlist` is parsed by the CLI and passed through to `AgentRuntimeConfig`. Built-in, MCP, embedded search and subagent child runtimes all consume the same denylist when registering or deriving tool sets, so a denied tool neither enters the provider-visible `tools[]` nor stays in the local executable registry.
 
-**Tech Stack:** TypeScript, Node `parseArgs`, Vitest, zcode-cli core runtime, built-in tool registry, MCP registry, subagent runtime。
+**Tech Stack:** TypeScript, Node `parseArgs`, Vitest, zcode-cli core runtime, built-in tool registry, MCP registry, subagent runtime.
 
 ## Global Constraints
 
-- 先写 spec，再实现；本文是本功能的初始 spec。
-- `--disallowedTools` 的语义是工具暴露移除，不复用 `permission.disallowedTools`。
-- `--disallowed-tools` 与 `--disallowedTools` 共用一个 help 条目，说明从本次 prompt/TUI 的可用工具集中移除整个工具；示例使用 `"Bash Edit"` 或 `Bash,Edit`，避免暗示支持按命令内容匹配。
-- `<tools...>` 是 variadic，支持逗号或括号外普通空格分隔。兼容接收 `Bash(git *)` 等规则字符串，但过滤只使用括号前的工具名：该输入会移除整个 `Bash`，不会只限制 `git *`。
-- denylist 只作用于本次 CLI runtime，不写入持久化配置。
-- agent schema 语义是：显式 `tools` 替换默认工具集；`disallowedTools` 只从默认工具集移除，且 `tools` 存在时忽略 `disallowedTools`。ZCode CLI 主会话本阶段没有公开 `--tools` flag；内部 `toolAllowlist` 与 CLI `toolDisallowlist` 同时存在时按 deny wins 处理，避免把被 CLI deny 的默认工具重新暴露。
-- 需要同时覆盖 headless prompt 与 TUI prompt 创建链路。
-- 需要覆盖 built-in tools、MCP tools、embedded search branch、subagent child runtime。
-- 不修改 desktop/app-server/mobile remote 协议；本阶段只做 zcode-cli runtime 范围。
-- 修改完成后至少执行目标测试；合入前执行 `pnpm typecheck` 与 `pnpm lint`。
+- Spec first, then implementation; this document is the initial spec of the feature.
+- The semantics of `--disallowedTools` is tool exposure removal; it does not reuse `permission.disallowedTools`.
+- `--disallowed-tools` and `--disallowedTools` share one help entry, explaining that the whole tool is removed from the tool set available to this prompt/TUI; examples use `"Bash Edit"` or `Bash,Edit`, so it does not imply matching by command content.
+- `<tools...>` is variadic, supporting comma or out-of-parentheses ordinary space separation. Rule strings such as `Bash(git *)` are accepted for compatibility, but filtering uses only the tool name before the parenthesis: that input removes the whole `Bash`, not only `git *`.
+- The denylist affects only this CLI runtime and is not written to persisted config.
+- The agent schema semantics: an explicit `tools` replaces the default tool set; `disallowedTools` only removes from the default tool set, and is ignored when `tools` exists. The ZCode CLI main session has no public `--tools` flag at this stage; when the internal `toolAllowlist` and the CLI `toolDisallowlist` both exist, deny wins, so a default tool denied by the CLI is not re-exposed.
+- It must cover both the headless prompt and the TUI prompt creation chains.
+- It must cover built-in tools, MCP tools, the embedded search branch and the subagent child runtime.
+- Do not change the desktop/app-server/mobile remote protocol; this stage covers only the zcode-cli runtime.
+- After changes, run at least the target tests; before merge run `pnpm typecheck` and `pnpm lint`.
 
 ---
 
-## 术语与边界
+## Terms and boundaries
 
-- **permission denylist**：已有 `permission.disallowedTools`，表示审批/执行权限规则。它不等价于工具是否出现在模型请求里。
-- **visibility denylist**：本功能新增 `toolDisallowlist`，表示工具从 runtime 可见与可执行集合中移除。
-- **provider-visible tools**：最终发给模型请求的 `tools[]`。
-- **registry tools**：runtime 内部已注册、可执行的工具集合。
-- **parent denylist**：由 top-level CLI flag 得到的 `toolDisallowlist`。
-- **subagent profile denylist**：已有 subagent profile/frontmatter 的 `disallowedTools`，只表达子 agent 自己再减去哪些工具。
+- **permission denylist**: the existing `permission.disallowedTools`, an approval/execution permission rule. It is not equivalent to whether a tool appears in the model request.
+- **visibility denylist**: the new `toolDisallowlist` of this feature, meaning the tool is removed from the runtime visible and executable set.
+- **provider-visible tools**: the final `tools[]` sent in the model request.
+- **registry tools**: the set of tools registered and executable inside the runtime.
+- **parent denylist**: the `toolDisallowlist` obtained from the top-level CLI flag.
+- **subagent profile denylist**: the existing `disallowedTools` of a subagent profile/frontmatter, expressing only which tools the child agent subtracts further.
 
-## 用户可见语义
+## User-visible semantics
 
-### CLI help 契约
+### CLI help contract
 
-- 中英文 help 统一使用 `-p, --prompt <text>`，提示词作为一个字符串参数传入。
-- 不展示解析器未实现的 `--print`、`--settings`、`--permission-mode`、`--max-turns`、`--allowed-tools`、`--allow-main-worktree-yolo`；它们继续按未知参数报错，不新增兼容解析。
-- denylist 只在一个条目中列出两个别名，说明仅作用于本次 prompt/TUI，不修改持久化配置，也不是按命令内容匹配的权限规则。
-- 本次整理只修正文案及文档，不改变参数解析、工具注册、权限、协议或会话生命周期。
+- Chinese and English help uniformly use `-p, --prompt <text>`; the prompt is passed as one string argument.
+- The parser-unimplemented `--print`, `--settings`, `--permission-mode`, `--max-turns`, `--allowed-tools`, `--allow-main-worktree-yolo` are not shown; they keep erroring as unknown arguments and no compatibility parsing is added.
+- The denylist lists both aliases in a single entry, stating it applies only to this prompt/TUI, does not modify persisted config, and is not a permission rule matched by command content.
+- This cleanup only fixes text and documents; it does not change argument parsing, tool registration, permission, protocol or session lifecycle.
 
-### Flag 语义基线
+### Flag semantics baseline
 
-- CLI help 暴露 `--disallowedTools, --disallowed-tools <tools...>`，描述为逗号或空格分隔的 tool names to deny。
-- SDK/子进程转发路径会把 `disallowedTools` 数组序列化为 `--disallowedTools` 加逗号拼接值。
-- command/skill frontmatter 里同时有 `disallowed-tools` 与规范化别名 `disallowedTools`；语义是当前文件 active 时从模型工具面移除。
-- agent schema 里 `disallowedTools` 的语义是从默认工具集移除；如果显式设置 `tools`，则忽略 `disallowedTools`。
-- ZCode 本阶段把 `-p` 作为 `--prompt` 的短别名，表达 headless prompt 入口。
+- CLI help exposes `--disallowedTools, --disallowed-tools <tools...>`, described as comma- or space-separated tool names to deny.
+- The SDK/child-process forwarding path serializes a `disallowedTools` array as `--disallowedTools` plus a comma-joined value.
+- Command/skill frontmatter has both `disallowed-tools` and the normalized alias `disallowedTools`; the semantics is removal from the model tool surface while the current file is active.
+- In the agent schema, `disallowedTools` means removal from the default tool set; if `tools` is explicitly set, `disallowedTools` is ignored.
+- At this stage ZCode makes `-p` a short alias of `--prompt`, expressing the headless prompt entry.
 
-### 支持的 flag
+### Supported flags
 
 ```bash
 zcode --disallowedTools Bash,Edit -p "分析一下"
@@ -59,185 +59,137 @@ zcode -p "分析一下" --disallowedTools Bash Edit
 zcode -p "分析一下" --disallowed-tools "Bash Edit"
 ```
 
-### variadic 边界
+### variadic boundary
 
 ```bash
-# 这会被解析成 disallowedTools = ["Bash", "Edit"]，prompt = "分析一下"，
-# 因为 <tools...> 会吞掉后续裸 positional，直到遇到下一个 option；-p 是 option 边界。
+# This parses as disallowedTools = ["Bash", "Edit"], prompt = "分析一下",
+# because <tools...> swallows following bare positionals until the next option; -p is an option boundary.
 zcode --disallowedTools Bash Edit -p "分析一下"
 
-# 如果后面没有 option 边界，裸 positional 会继续被当成 disallowedTools。
+# If there is no option boundary after it, bare positionals keep being taken as disallowedTools.
 zcode --disallowedTools Bash Edit SomeBareToken
 
-# 这会被解析成 disallowedTools = ["Bash(git *)", "Edit"]，
-# 因为 quoted token 内部仍按括号外普通空格拆分，括号内的 `git *` 保持在同一条规则里。
-# 注册工具时只取括号前的名称，因此会移除整个 Bash 和 Edit，不做 git 命令匹配。
+# This parses as disallowedTools = ["Bash(git *)", "Edit"],
+# because inside a quoted token the split is still by out-of-parentheses ordinary spaces, and `git *` inside the parentheses stays in one rule.
+# Registration takes only the name before the parenthesis, so the whole Bash and Edit are removed, with no git command matching.
 zcode -p "分析一下" --disallowedTools "Bash(git *) Edit"
 ```
 
-### 名称归一化
+### Name normalization
 
-- 输入按每个 argv token 内的逗号或普通空格分割，括号内的逗号/空格不分割，去掉空项。
-- 支持完整工具规则字符串，例如 `Bash(git *)`、`Read(~/.zshrc)`、`mcp__github__get_issue`。
-- 工具名匹配取规则字符串的 tool name 前缀：`Bash(git *)` 的 tool name 是 `Bash`；无括号时整个字符串是 tool name。
-- `web_search` 归一化为 `WebSearch`，对齐现有 allowlist helper。
-- 其余 tool name 保持 case-sensitive。
-- `Bash(git *)` 这类带参数的规则在本功能中会移除整个 `Bash` tool，而不是只移除某个 Bash command 子规则；这是因为 provider-visible `tools[]` 只能按 tool schema 出现或消失，不能只隐藏 Bash 的某个命令模式。
+- Input is split by comma or ordinary space inside each argv token; commas/spaces inside parentheses do not split; empty items are dropped.
+- Full tool rule strings are supported, such as `Bash(git *)`, `Read(~/.zshrc)`, `mcp__github__get_issue`.
+- Tool name matching takes the tool name prefix of the rule string: the tool name of `Bash(git *)` is `Bash`; without parentheses the whole string is the tool name.
+- `web_search` is normalized to `WebSearch`, aligned with the existing allowlist helper.
+- Other tool names stay case-sensitive.
+- A rule with arguments such as `Bash(git *)` removes the whole `Bash` tool in this feature, not only a Bash command sub-rule, because provider-visible `tools[]` can only appear or disappear by tool schema and cannot hide one command pattern of Bash.
 
-## 影响面文件
+## Affected files
 
-### 需要创建或修改的设计文档
+### Design documents to create or modify
 
 - Modify: `apps/zcode-cli/docs/design/v2/tool/18-cli-tool-visibility-denylist.md`
 - Optional Modify: `apps/zcode-cli/docs/design/v2/tool/README.md`
 - Optional Modify: `apps/zcode-cli/docs/design/v2/tool/00-tool-change-chain.md`
 
-### CLI 入口
+### CLI entry
 
-- Modify: `apps/zcode-cli/packages/cli/src/run.ts`
-- Modify: `apps/zcode-cli/packages/cli/src/prompt-command.ts`
-- Modify: `apps/zcode-cli/packages/cli/src/tui-command.ts`
-- Modify: `apps/zcode-cli/packages/cli/src/tui-prompt-handler.ts`
-- Modify: `apps/zcode-cli/packages/i18n/src/locales/en-US.ts`
-- Modify: `apps/zcode-cli/packages/i18n/src/locales/zh-CN.ts`
+- `apps/zcode-cli/packages/cli/src/run.ts`
+- `apps/zcode-cli/packages/cli/src/prompt-command.ts`
+- `apps/zcode-cli/packages/cli/src/tui-command.ts`
+- `apps/zcode-cli/packages/cli/src/tui-prompt-handler.ts`
+- `apps/zcode-cli/packages/i18n/src/locales/en-US.ts`
+- `apps/zcode-cli/packages/i18n/src/locales/zh-CN.ts`
 
-### Runtime 配置与工具注册
+### Runtime config and tool registration
 
-- Modify: `apps/zcode-cli/packages/core/src/runtime/types.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/helpers/tool-allowlist.ts`
+- `apps/zcode-cli/packages/core/src/runtime/types.ts`
+- `apps/zcode-cli/packages/core/src/runtime/helpers/tool-allowlist.ts`
 - Create: `apps/zcode-cli/packages/core/src/tool/tool-visibility.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/methods/embedded-search-branch.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`
-- Modify: `apps/zcode-cli/packages/core/src/tool/handlers/index.ts`
-- Modify: `apps/zcode-cli/packages/core/src/mcp/index.ts`
+- `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`
+- `apps/zcode-cli/packages/core/src/runtime/methods/embedded-search-branch.ts`
+- `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`
+- `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`
+- `apps/zcode-cli/packages/core/src/tool/handlers/index.ts`
+- `apps/zcode-cli/packages/core/src/mcp/index.ts`
 
-### 测试
+### Tests
 
-- Modify: `apps/zcode-cli/packages/cli/tests/cli.unit.test.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/mcp-tool-bridge.test.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
+- `apps/zcode-cli/packages/cli/tests/cli.unit.test.ts`
+- `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`
+- `apps/zcode-cli/packages/core/tests/mcp-tool-bridge.test.ts`
+- `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
 
-实现时优先追加到已有测试文件，不为单个小断言拆出新测试文件。
-
----
-
-## Phase 0: 实现前确认
-
-**目标:** 确认当前工作树、测试命令和目标文件仍与本文一致。
-
-**Checklist**
-
-- [ ] 运行 `git status --short --branch`，确认没有未理解的用户改动。
-- [ ] 运行 `rg "toolAllowlist|disallowedTools|allowedTools" apps/zcode-cli/packages -n`，确认相关入口没有再次大幅迁移。
-- [ ] 运行 `rg "parseGlobalArgs|runPrompt|createTuiSubmitPrompt" apps/zcode-cli/packages/cli -n`，确认 CLI 入口位置。
-- [ ] 运行 `rg "RegisterBuiltInToolsOptions|RegisterMcpToolsOptions|resolveSubagentToolAllowlist" apps/zcode-cli/packages/core -n`，确认工具注册与 subagent 派生位置。
-- [ ] 如果发现文件位置变化，先更新本文“影响面文件”再继续。
-
-**验收**
-
-- [ ] 本文列出的入口文件和当前代码一致。
-- [ ] 没有代码实现改动发生在 Phase 0。
+Prefer appending to existing test files over splitting out a new file for one small assertion.
 
 ---
 
-## Phase 1: CLI 解析与 runtime config 透传
+## Phase 0: Pre-implementation confirmation
 
-**目标:** CLI 能接受 `--disallowedTools` / `--disallowed-tools`，并把归一化后的工具名数组传入 runtime config。
+**Goal:** confirm that the current work tree, test commands and target files still match this document.
 
-**Files**
+- Run `git status --short --branch` and confirm no user changes are left unexplained.
+- Run `rg "toolAllowlist|disallowedTools|allowedTools" apps/zcode-cli/packages -n` to confirm the related entries have not been migrated heavily again.
+- Run `rg "parseGlobalArgs|runPrompt|createTuiSubmitPrompt" apps/zcode-cli/packages/cli -n` to confirm CLI entry locations.
+- Run `rg "RegisterBuiltInToolsOptions|RegisterMcpToolsOptions|resolveSubagentToolAllowlist" apps/zcode-cli/packages/core -n` to confirm tool registration and subagent derivation locations.
+- If file locations changed, update "Affected files" first and continue.
 
-- Modify: `apps/zcode-cli/packages/cli/src/run.ts`
-- Modify: `apps/zcode-cli/packages/cli/src/prompt-command.ts`
-- Modify: `apps/zcode-cli/packages/cli/src/tui-command.ts`
-- Modify: `apps/zcode-cli/packages/cli/src/tui-prompt-handler.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/types.ts`
-- Modify: `apps/zcode-cli/packages/cli/tests/cli.unit.test.ts`
+**Acceptance:** the entry files listed here match the current code; no code implementation change happens in Phase 0.
+
+---
+
+## Phase 1: CLI parsing and runtime config pass-through
+
+**Goal:** the CLI accepts `--disallowedTools` / `--disallowed-tools` and passes the normalized tool-name array into the runtime config.
 
 **Interfaces**
 
 - Produces:
   - `AgentRuntimeConfig.toolDisallowlist?: readonly string[]`
   - CLI normalized denylist: `readonly string[] | undefined`
-- Consumes later:
+- Consumed later:
   - Phase 2 registry filters consume `toolDisallowlist`
   - Phase 4 subagent inheritance consumes `toolDisallowlist`
 
-**Checklist**
+**Rules**
 
-- [ ] 在 `AgentRuntimeConfig` 增加 `toolDisallowlist?: readonly string[]`。
-- [ ] 在 `parseGlobalArgs` 的 `prompt` option 增加 `short: "p"`，让文档示例里的 headless prompt 入口可运行。
-- [ ] 在 `parseGlobalArgs` 之前增加 `extractDisallowedToolsArgs` 预处理：
-  - [ ] 支持 `--disallowedTools`
-  - [ ] 支持 `--disallowed-tools`
-  - [ ] 支持 `--disallowedTools=value`
-  - [ ] 支持同一 flag 重复出现
-  - [ ] 消费后续 argv token，直到遇到下一个 option token
-- [ ] 不把 `--disallowedTools` 直接交给 `node:util.parseArgs`；当前 Node `parseArgs` 不能表达所需的 `<tools...>` variadic 行为。
-- [ ] 增加 CLI 层归一化 helper，行为为：
-  - [ ] 接受预处理收集到的 `readonly string[]`
-  - [ ] 按逗号或括号外普通空格分割；括号内的逗号/空格保持在当前规则里
-  - [ ] 去掉空项
-  - [ ] `web_search` 转为 `WebSearch`
-  - [ ] 去重且保持首次出现顺序
-  - [ ] 空数组返回 `undefined`
-- [ ] `runPrompt` 签名增加 `toolDisallowlist?: readonly string[]`。
-- [ ] headless `createZCodeApp` 的 `runtimeConfig` 增加 `toolDisallowlist`。
-- [ ] `runTuiCommand` 签名增加 `toolDisallowlist?: readonly string[]`。
-- [ ] `createTuiSubmitPrompt` 签名增加 `toolDisallowlist?: readonly string[]`。
-- [ ] TUI `createZCodeApp` 的 `runtimeConfig` 增加 `toolDisallowlist`。
-- [ ] 不把 `toolDisallowlist` 写入 `resolveAppConfigOptions` 或任何持久化 config override。
+- Add `toolDisallowlist?: readonly string[]` to `AgentRuntimeConfig`.
+- Add `short: "p"` to the `prompt` option of `parseGlobalArgs`, so the headless prompt entry in the document examples runs.
+- Before `parseGlobalArgs`, add an `extractDisallowedToolsArgs` preprocessing step: supports `--disallowedTools`, `--disallowed-tools`, `--disallowedTools=value`, the same flag repeated, and consumes following argv tokens until the next option token.
+- Do not hand `--disallowedTools` directly to `node:util.parseArgs`; current Node `parseArgs` cannot express the required `<tools...>` variadic behavior.
+- Add a CLI-layer normalization helper that: accepts the `readonly string[]` collected by preprocessing; splits by comma or out-of-parentheses ordinary space, keeping commas/spaces inside parentheses in the current rule; drops empty items; converts `web_search` to `WebSearch`; dedupes keeping first-occurrence order; returns `undefined` for an empty array.
+- `runPrompt`, `runTuiCommand` and `createTuiSubmitPrompt` signatures gain `toolDisallowlist?: readonly string[]`; the `runtimeConfig` of headless and TUI `createZCodeApp` gains `toolDisallowlist`.
+- `toolDisallowlist` is not written into `resolveAppConfigOptions` or any persisted config override.
 
-**测试 Checklist**
+**Tests**
 
-- [ ] CLI 单测覆盖 `--disallowedTools Bash,Edit`。
-- [ ] CLI 单测覆盖 `--disallowed-tools Bash,Edit`。
-- [ ] CLI 单测覆盖重复传参 `--disallowedTools Bash --disallowedTools Edit`。
-- [ ] CLI 单测覆盖 `--disallowedTools Bash Edit --prompt "hello"` 的 variadic option-boundary 行为。
-- [ ] CLI 单测覆盖 `-p "hello" --disallowedTools Bash`。
-- [ ] CLI 单测覆盖 `--disallowedTools "Bash(git *) Edit"`。
-- [ ] CLI 单测覆盖 `--disallowedTools web_search` 传入 runtime 后是 `WebSearch`。
-- [ ] CLI 单测覆盖空值不会生成空数组。
-- [ ] CLI 单测保持 unknown option strict reject 行为。
-- [ ] TUI prompt handler 单测覆盖 runtimeConfig 带 `toolDisallowlist`。
+- CLI unit tests cover: `--disallowedTools Bash,Edit`; `--disallowed-tools Bash,Edit`; repeated `--disallowedTools Bash --disallowedTools Edit`; the variadic option-boundary behavior of `--disallowedTools Bash Edit --prompt "hello"`; `-p "hello" --disallowedTools Bash`; `--disallowedTools "Bash(git *) Edit"`; `--disallowedTools web_search` becoming `WebSearch` after reaching the runtime; empty values not generating an empty array; unknown options still strictly rejected.
+- A TUI prompt handler unit test covers runtimeConfig carrying `toolDisallowlist`.
 
-**建议测试命令**
+Suggested test command:
 
 ```bash
 pnpm --filter @zcode/cli exec node --disable-warning=DEP0205 --import tsx --test tests/cli.unit.test.ts
 ```
 
-如果该 filter 名称不匹配，先运行：
+If the filter name does not match, first run:
 
 ```bash
 pnpm -r list --depth -1 | rg "@zcode/cli|zcode-cli"
 ```
 
-**验收**
+**Acceptance**
 
-- [ ] `zcode --disallowedTools Bash,Edit -p "..."` 不再因 unknown option 失败。
-- [ ] `zcode -p "..." --disallowedTools Bash` 可运行。
-- [ ] headless 与 TUI 都能把 denylist 传进 `AgentRuntimeConfig`。
-- [ ] 尚未要求 denied tool 真正被移除；这是 Phase 2 的验收。
+- `zcode --disallowedTools Bash,Edit -p "..."` no longer fails as an unknown option.
+- `zcode -p "..." --disallowedTools Bash` runs.
+- Headless and TUI both pass the denylist into `AgentRuntimeConfig`.
+- A denied tool is not yet required to be actually removed; that is the Phase 2 acceptance.
 
 ---
 
-## Phase 2: built-in 与 MCP 注册层移除工具
+## Phase 2: Remove tools in built-in and MCP registration
 
-**目标:** 被 `toolDisallowlist` 命中的 built-in/MCP tool 不进入 runtime registry。
-
-**Files**
-
-- Modify: `apps/zcode-cli/packages/core/src/runtime/helpers/tool-allowlist.ts`
-- Create: `apps/zcode-cli/packages/core/src/tool/tool-visibility.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/agent-runtime.ts`
-- Modify: `apps/zcode-cli/packages/core/src/tool/handlers/index.ts`
-- Modify: `apps/zcode-cli/packages/core/src/runtime/methods/mcp.ts`
-- Modify: `apps/zcode-cli/packages/core/src/mcp/index.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/mcp-tool-bridge.test.ts`
+**Goal:** a built-in/MCP tool hit by `toolDisallowlist` does not enter the runtime registry.
 
 **Interfaces**
 
@@ -249,218 +201,121 @@ pnpm -r list --depth -1 | rg "@zcode/cli|zcode-cli"
   - `filterDisallowedToolNames(toolNames: readonly string[], disallowedTools?: readonly string[]): readonly string[]`
   - `RegisterBuiltInToolsOptions.disallowedTools?: readonly string[]`
   - `RegisterMcpToolsOptions.disallowedTools?: readonly string[]`
-- Consumes:
-  - `AgentRuntimeConfig.toolAllowlist`
-  - `AgentRuntimeConfig.toolDisallowlist`
+- Consumes: `AgentRuntimeConfig.toolAllowlist`, `AgentRuntimeConfig.toolDisallowlist`
 
-**Checklist**
+**Rules**
 
-- [ ] 新增 `tool/tool-visibility.ts`，把 tool rule name 提取、alias 归一化和 denylist 过滤收敛到一个 helper。
-- [ ] 迁移 `web_search -> WebSearch` 归一化到共享 helper，保留现有 `resolveBuiltInToolAllowlist` 行为兼容。
-- [ ] `registerBuiltInTools` options 增加 `disallowedTools`。
-- [ ] built-in 注册循环判断顺序为：
-  - [ ] 如果 `allowedTools` 存在且当前工具不在其中，跳过
-  - [ ] 如果当前工具在 `disallowedTools` 中，跳过
-  - [ ] 否则注册
-- [ ] `AgentRuntime` 构造时把 `this.config.toolDisallowlist` 传给 `registerBuiltInTools`。
-- [ ] `RegisterMcpToolsOptions` 增加 `disallowedTools`。
-- [ ] MCP 注册循环按 exact tool name 执行 deny 过滤。
-- [ ] `runtime/methods/mcp.ts` 把 `this.config.toolDisallowlist` 传给 MCP 注册。
-- [ ] 不在 provider adapter 层额外做主逻辑过滤；过滤主责任放在 registry 注册层。
-- [ ] 可选增加 defensive filter：`filterRuntimeVisibleTools` 可再次过滤 denied tool，但不能作为唯一防线。
+- Add `tool/tool-visibility.ts`, converging tool rule name extraction, alias normalization and denylist filtering into one helper.
+- Migrate the `web_search -> WebSearch` normalization to the shared helper, keeping the existing `resolveBuiltInToolAllowlist` behavior compatible.
+- `registerBuiltInTools` options gain `disallowedTools`. The built-in registration loop decides in order: skip if `allowedTools` exists and the tool is not in it; skip if the tool is in `disallowedTools`; otherwise register.
+- `AgentRuntime` passes `this.config.toolDisallowlist` to `registerBuiltInTools` on construction.
+- `RegisterMcpToolsOptions` gains `disallowedTools`; the MCP registration loop denies by exact tool name; `runtime/methods/mcp.ts` passes `this.config.toolDisallowlist` to MCP registration.
+- The provider adapter layer does no main filtering; filtering is primarily the responsibility of the registry registration layer.
+- Optionally a defensive filter: `filterRuntimeVisibleTools` may filter denied tools again but must not be the only line of defense.
 
-**测试 Checklist**
+**Tests**
 
-- [ ] core 单测覆盖 `toolDisallowlist: ["Bash"]` 后 registry 没有 `Bash`。
-- [ ] core 单测覆盖 `toolDisallowlist: ["Bash(git *)"]` 后 registry 没有 `Bash`。
-- [ ] core 单测覆盖 provider-visible `tools[]` 没有 `Bash`。
-- [ ] core 单测覆盖 `toolAllowlist: ["Read", "Bash"]` 且 `toolDisallowlist: ["Bash"]` 时只剩 `Read`。
-- [ ] core 单测覆盖 `toolDisallowlist: ["web_search"]` 后 provider-visible 不包含 `WebSearch`。
-- [ ] MCP 单测覆盖 exact MCP tool name 被 deny 后不注册。
-- [ ] MCP 单测覆盖 `mcp__server__tool(*)` 按 tool name 前缀移除同名 MCP tool。
-- [ ] MCP 单测覆盖 deny 不影响其他同 server tools。
+- core: with `toolDisallowlist: ["Bash"]` the registry has no `Bash`; with `["Bash(git *)"]` the registry has no `Bash`; the provider-visible `tools[]` has no `Bash`; with `toolAllowlist: ["Read", "Bash"]` and `toolDisallowlist: ["Bash"]` only `Read` remains; with `toolDisallowlist: ["web_search"]` provider-visible has no `WebSearch`.
+- MCP: an exact MCP tool name is not registered after deny; `mcp__server__tool(*)` removes the same-named MCP tool by name prefix; deny does not affect other tools of the same server.
 
-**建议测试命令**
+Suggested test command:
 
 ```bash
 pnpm --filter @zcode/core exec vitest run tests/main-tool-pool.test.ts tests/mcp-tool-bridge.test.ts
 ```
 
-**验收**
-
-- [ ] denied built-in tool 不出现在 registry。
-- [ ] denied built-in tool 不出现在 provider-visible `tools[]`。
-- [ ] denied MCP tool 不出现在 registry。
-- [ ] deny wins 规则有测试证明。
+**Acceptance**: a denied built-in tool is neither in the registry nor in provider-visible `tools[]`; a denied MCP tool is not in the registry; the deny-wins rule is proven by tests.
 
 ---
 
-## Phase 3: embedded search branch 语义对齐
+## Phase 3: Embedded search branch semantics alignment
 
-**目标:** `Bash` 被 deny 时，embedded search branch 不再误判 Bash 可用。
-
-**Files**
-
-- Modify: `apps/zcode-cli/packages/core/src/runtime/methods/embedded-search-branch.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/main-tool-pool.test.ts`
+**Goal:** when `Bash` is denied, the embedded search branch no longer wrongly assumes Bash is available.
 
 **Interfaces**
 
-- Consumes:
-  - `AgentRuntimeConfig.toolAllowlist`
-  - `AgentRuntimeConfig.toolDisallowlist`
-  - Phase 2 的 visibility helper
-- Produces:
-  - `resolveRuntimeEmbeddedSearchEnabled` 正确考虑 denylist
+- Consumes: `AgentRuntimeConfig.toolAllowlist`, `AgentRuntimeConfig.toolDisallowlist`, the Phase 2 visibility helper.
+- Produces: `resolveRuntimeEmbeddedSearchEnabled` correctly considers the denylist.
 
-**Checklist**
+**Rules**
 
-- [ ] 更新 `resolveRuntimeEmbeddedSearchEnabled` 的 `bashAvailable` 判断。
-- [ ] 判断语义为：
-  - [ ] allowlist 不存在或包含 `Bash`
-  - [ ] 且 denylist 不包含 `Bash`
-- [ ] 保持现有 `toolset === "explore"` 行为。
-- [ ] `refreshBranchAwareBuiltInTools` 注册 direct search fallback 工具时继续传入 allowlist 与 denylist。
-- [ ] 明确记录：如果用户只 deny `Bash`，embedded search 关闭后 direct fallback 是否会让 `Glob/Grep` 出现，必须由测试固定当前产品语义。
+- Update the `bashAvailable` judgment of `resolveRuntimeEmbeddedSearchEnabled`: the allowlist is absent or contains `Bash`, and the denylist does not contain `Bash`.
+- Keep the existing `toolset === "explore"` behavior.
+- `refreshBranchAwareBuiltInTools` keeps passing the allowlist and denylist when registering direct search fallback tools.
+- The product semantics must be fixed by tests: if the user denies only `Bash`, whether `Glob/Grep` appear in the direct fallback after embedded search is turned off.
 
-**推荐产品语义**
+**Recommended product semantics (first version)**
 
-第一版建议语义如下：
+- `--disallowedTools Bash` means Bash is unavailable.
+- Because embedded search depends on Bash, embedded search is no longer enabled.
+- If the direct fallback branch registers `Glob/Grep`, they remain available unless the user also passes `--disallowedTools Glob,Grep`.
+- If the product expects "deny Bash also forbids all search fallbacks", `Glob/Grep` must also be written into the spec as derived denies before implementing.
 
-- `--disallowedTools Bash` 表示 Bash 不可用。
-- 因为 embedded search 依赖 Bash，不再启用 embedded search。
-- 如果 direct fallback 分支会注册 `Glob/Grep`，它们仍可用，除非用户同时传 `--disallowedTools Glob,Grep`。
-- 如果产品期望“deny Bash 也要禁止所有搜索 fallback”，需要把 `Glob/Grep` 也作为派生 deny 写入 spec，再实现。
+**Tests**: `toolDisallowlist: ["Bash"]` makes `resolveRuntimeEmbeddedSearchEnabled` false; `toolAllowlist: ["Bash"]` with `toolDisallowlist: ["Bash"]` makes deny win; the provider-visible result of `Glob/Grep` under the direct fallback is fixed by tests per the recommended semantics.
 
-**测试 Checklist**
+Suggested test command: `pnpm --filter @zcode/core exec vitest run tests/main-tool-pool.test.ts`
 
-- [ ] 覆盖 `toolDisallowlist: ["Bash"]` 时 `resolveRuntimeEmbeddedSearchEnabled` 为 false。
-- [ ] 覆盖 `toolAllowlist: ["Bash"]` 且 `toolDisallowlist: ["Bash"]` 时 deny wins。
-- [ ] 覆盖 direct fallback 下 `Glob/Grep` 的 provider-visible 结果，按本文推荐语义固定测试。
-
-**建议测试命令**
-
-```bash
-pnpm --filter @zcode/core exec vitest run tests/main-tool-pool.test.ts
-```
-
-**验收**
-
-- [ ] `Bash` 被 deny 时，runtime 不会认为 Bash-backed embedded search 可用。
-- [ ] search branch 行为有测试固定，不依赖人工猜测。
+**Acceptance**: when `Bash` is denied, the runtime does not consider Bash-backed embedded search available; the search branch behavior is fixed by tests and does not depend on manual guessing.
 
 ---
 
-## Phase 4: subagent 继承 parent denylist
+## Phase 4: Subagent inherits the parent denylist
 
-**目标:** parent CLI denylist 对 subagent child runtime 仍然生效，避免 profile 显式 tools 绕过。
-
-**Files**
-
-- Modify: `apps/zcode-cli/packages/core/src/runtime/methods/subagent.ts`
-- Modify: `apps/zcode-cli/packages/core/tests/subagent-explore.test.ts`
+**Goal:** the parent CLI denylist still applies to the subagent child runtime, so explicit profile tools cannot bypass it.
 
 **Interfaces**
 
-- Consumes:
-  - `this.config.toolDisallowlist`
-  - `request.allowedTools`
-  - `request.disallowedTools`
-  - subagent profile `disallowedTools`
-- Produces:
-  - child runtime config 中的 `toolDisallowlist`
-  - child runtime `toolAllowlist` 已经减去 parent denylist 与 profile/request denylist
+- Consumes: `this.config.toolDisallowlist`, `request.allowedTools`, `request.disallowedTools`, subagent profile `disallowedTools`.
+- Produces: `toolDisallowlist` in the child runtime config; the child runtime `toolAllowlist` already has the parent denylist and profile/request denylist subtracted.
 
-**Checklist**
+**Rules**
 
-- [ ] 创建 child runtime config 时传入 `toolDisallowlist: this.config.toolDisallowlist`。
-- [ ] `resolveSubagentToolAllowlist` 合并 deny 来源：
-  - [ ] parent `this.config.toolDisallowlist`
-  - [ ] request/profile 层的 `disallowedTools`
-- [ ] `allowedTools: ["*"]` 展开时，从 `this.getTools()` 得到的 parent-visible tools 再扣掉合并 denylist。
-- [ ] 显式 `allowedTools: ["Bash"]` 时，如果 parent denylist 包含 `Bash`，结果不能包含 `Bash`。
-- [ ] 保持已有 subagent dispatch tool 自过滤逻辑，例如不把 Task/Agent 调度工具错误暴露给 child。
-- [ ] 保持 Skill 特例：只有 skills 存在且 `Skill` 没有被任一 denylist 命中时才加入。
-- [ ] subagent MCP required-server 检查使用已经扣掉 parent/profile denylist 的 effective allowed tools，避免被 parent deny 的 MCP tool 仍触发缺失 server 报错。
+- When creating the child runtime config pass `toolDisallowlist: this.config.toolDisallowlist`.
+- `resolveSubagentToolAllowlist` merges deny sources: parent `this.config.toolDisallowlist` and the request/profile-level `disallowedTools`.
+- When `allowedTools: ["*"]` expands, the merged denylist is subtracted from the parent-visible tools obtained from `this.getTools()`.
+- With explicit `allowedTools: ["Bash"]`, if the parent denylist contains `Bash`, the result must not contain `Bash`.
+- Keep the existing self-filtering of subagent dispatch tools, for example not wrongly exposing the Task/Agent dispatch tool to the child.
+- Keep the Skill special case: `Skill` is added only when skills exist and `Skill` is not hit by any denylist.
+- The subagent MCP required-server check uses the effective allowed tools with the parent/profile denylist already subtracted, so an MCP tool denied by the parent does not still trigger a missing-server error.
 
-**测试 Checklist**
+**Tests**: parent `toolDisallowlist: ["Bash"]` with subagent `allowedTools: ["*"]` leaves the child without `Bash`; parent denying `Bash` with explicit subagent `allowedTools: ["Bash", "Read"]` leaves the child with only `Read`; profile/request `disallowedTools` merge with the parent denylist; `Skill` denied by the parent is not auto-added back because skills exist; when the parent denies an MCP tool in the profile, that MCP server is no longer required to be connected.
 
-- [ ] 覆盖 parent `toolDisallowlist: ["Bash"]`，subagent `allowedTools: ["*"]` 时 child 不包含 `Bash`。
-- [ ] 覆盖 parent `toolDisallowlist: ["Bash"]`，subagent 显式 `allowedTools: ["Bash", "Read"]` 时 child 只包含 `Read`。
-- [ ] 覆盖 profile/request `disallowedTools` 与 parent denylist 合并生效。
-- [ ] 覆盖 `Skill` 被 parent deny 时不会因 skills 存在被自动加回。
-- [ ] 覆盖 parent deny 掉 profile 里的 MCP tool 时，不再要求该 MCP server 已连接。
+Suggested test command: `pnpm --filter @zcode/core exec vitest run tests/subagent-explore.test.ts`
 
-**建议测试命令**
-
-```bash
-pnpm --filter @zcode/core exec vitest run tests/subagent-explore.test.ts
-```
-
-**验收**
-
-- [ ] top-level `--disallowedTools Bash` 对主 agent 和 child agent 都生效。
-- [ ] 子 agent profile 无法把 parent 已 deny 的工具重新加回来。
+**Acceptance**: top-level `--disallowedTools Bash` applies to both the main agent and the child agent; a subagent profile cannot add back a tool the parent has denied.
 
 ---
 
-## Phase 5: CLI help、文档和用户说明
+## Phase 5: CLI help, docs and user notes
 
-**目标:** 用户能从 help 和文档理解该 flag 的精确语义，避免和 permission denylist 混淆。
+**Goal:** users understand the exact semantics of the flag from help and docs and do not confuse it with the permission denylist.
 
-**Files**
+**Rules**
 
-- Modify: `apps/zcode-cli/packages/i18n/src/locales/en-US.ts`
-- Modify: `apps/zcode-cli/packages/i18n/src/locales/zh-CN.ts`
-- Modify: `apps/zcode-cli/docs/design/v2/tool/18-cli-tool-visibility-denylist.md`
-- Optional Modify: `apps/zcode-cli/docs/design/v2/tool/README.md`
+- Chinese and English help each list `--disallowed-tools, --disallowedTools <tools...>` in one entry (`en-US.ts`, `zh-CN.ts`).
+- Help uses tool-name examples such as `"Bash Edit"`, stating comma or space separation is supported.
+- Help/spec state clearly that this removes the whole tool from the tool set available to this prompt/TUI and is not a permission rule matched by command content.
+- Doc examples include comma-separated and repeated flag forms.
+- The doc states that a `Bash(...)` rule removes the whole `Bash` tool and does no Bash sub-command-level provider-visible trimming.
+- The doc states this is runtime scoped and not persisted.
+- If the README has a tool spec index, add a link to `18-cli-tool-visibility-denylist.md`.
 
-**Checklist**
+**Tests**: a CLI help snapshot or text unit test covers the new flag; manually run `zcode --help` and confirm the text does not wrap badly in Chinese/English environments.
 
-- [ ] 中英文 help 各用一个条目列出 `--disallowed-tools, --disallowedTools <tools...>`。
-- [ ] 中英文 help 使用 `"Bash Edit"` 等工具名示例，说明支持逗号或空格分隔。
-- [ ] 中英文 help/spec 明确这是从本次 prompt/TUI 可用工具集中移除整个工具，不是按命令内容匹配的权限规则。
-- [ ] 文档示例包含 comma-separated 和 repeated flag。
-- [ ] 文档明确 `Bash(...)` 规则会移除整个 `Bash` tool，不做 Bash 子命令级 provider-visible 裁剪。
-- [ ] 文档明确这是 runtime scoped，不持久化。
-- [ ] 如果 README 有 tool spec 索引，补充 `18-cli-tool-visibility-denylist.md` 链接。
-
-**测试 Checklist**
-
-- [ ] CLI help 快照或文本单测覆盖新 flag。
-- [ ] 手动运行 `zcode --help`，确认中文/英文环境下文案不换行错乱。
-
-**建议测试命令**
-
-```bash
-pnpm --filter @zcode/cli exec node --disable-warning=DEP0205 --import tsx --test tests/cli.unit.test.ts
-```
-
-**验收**
-
-- [ ] 用户能从 help 看出该 flag 是工具可见性控制。
-- [ ] 文档中没有把本功能描述成 permission 规则。
+**Acceptance**: users can tell from help that the flag controls tool visibility; the docs do not describe this feature as a permission rule.
 
 ---
 
-## Phase 6: 端到端验证与回归
+## Phase 6: End-to-end verification and regression
 
-**目标:** 证明最终 provider request 里不含 denied tools，并且 runtime 不可执行 denied tools。
+**Goal:** prove the final provider request contains no denied tools, and the runtime cannot execute denied tools.
 
-**Checklist**
+- Run the CLI unit tests, core tool pool tests, WebSearch tests, MCP registration tests and subagent tests.
+- Run `pnpm typecheck` and `pnpm lint`.
+- Use debug/model-io or a test double to confirm that after `--disallowedTools Bash` the provider request `tools[]` has no `Bash`, and after `--disallowedTools web_search` the provider request has no `WebSearch`.
+- Use a subagent test to confirm the child runtime has no parent-denied tool.
 
-- [ ] 运行 CLI 单测。
-- [ ] 运行 core tool pool 单测。
-- [ ] 运行 WebSearch 单测。
-- [ ] 运行 MCP 注册相关单测。
-- [ ] 运行 subagent 相关单测。
-- [ ] 运行 `pnpm typecheck`。
-- [ ] 运行 `pnpm lint`。
-- [ ] 用 debug/model-io 或测试替身确认 `--disallowedTools Bash` 后 provider request `tools[]` 不含 `Bash`。
-- [ ] 用 debug/model-io 或测试替身确认 `--disallowedTools web_search` 后 provider request 不含 `WebSearch`。
-- [ ] 用 subagent 测试确认 child runtime 不含 parent denied tool。
-
-**建议验证命令**
+Suggested verification commands:
 
 ```bash
 pnpm --filter @zcode/cli exec node --disable-warning=DEP0205 --import tsx --test tests/cli.unit.test.ts
@@ -469,75 +324,53 @@ pnpm typecheck
 pnpm lint
 ```
 
-如果 package filter 名称和当前 workspace 不匹配，先用下面命令确认：
+If the package filter names do not match the current workspace, confirm with:
 
 ```bash
 pnpm -r list --depth -1 | rg "zcode-cli|core"
 ```
 
-**验收**
-
-- [ ] 单测全部通过。
-- [ ] `pnpm typecheck` 通过。
-- [ ] `pnpm lint` 通过。
-- [ ] provider-visible request 里没有 denied tools。
-- [ ] runtime registry 里没有 denied tools。
+**Acceptance**: unit tests all pass; `pnpm typecheck` and `pnpm lint` pass; no denied tools in the provider-visible request; no denied tools in the runtime registry.
 
 ---
 
-## Phase 7: 代码审查重点
+## Phase 7: Code review focus
 
-**Checklist**
-
-- [ ] 没有把 `permission.disallowedTools` 当作本功能来源。
-- [ ] 没有把 `toolDisallowlist` 写入持久化 config。
-- [ ] deny wins 覆盖 built-in、MCP、subagent。
-- [ ] `web_search` alias 与现有 `toolAllowlist` 兼容。
-- [ ] embedded search 的 Bash 可用性判断包含 denylist。
-- [ ] 子 agent 显式 tools 不能绕过 parent denylist。
-- [ ] provider adapter 没有承担主过滤职责。
-- [ ] CLI strict parser 仍然拒绝未知参数。
-- [ ] 文档/help 没有承诺 wildcard 或 permission matcher。
-- [ ] 没有引入 desktop/app-server/mobile remote 协议变更。
+- `permission.disallowedTools` is not used as the source of this feature.
+- `toolDisallowlist` is not written into persisted config.
+- Deny wins covers built-in, MCP and subagent.
+- The `web_search` alias is compatible with the existing `toolAllowlist`.
+- The embedded search Bash availability judgment includes the denylist.
+- A subagent's explicit tools cannot bypass the parent denylist.
+- The provider adapter does not carry the main filtering duty.
+- The CLI strict parser still rejects unknown arguments.
+- Docs/help do not promise wildcards or a permission matcher.
+- No desktop/app-server/mobile remote protocol change is introduced.
 
 ---
 
-## 分阶段提交建议
+## Rollback plan
 
-如果实现时需要拆 commit，建议按以下顺序：
-
-```bash
-git commit -m "docs: specify cli tool visibility denylist"
-git commit -m "feat(cli): parse disallowed tools flag"
-git commit -m "feat(runtime): filter disallowed tools from registries"
-git commit -m "feat(runtime): inherit tool denylist in subagents"
-git commit -m "test(cli): cover disallowed tools flag"
-```
-
-实际提交前以最终 diff 为准；不要为了匹配上面的拆分而制造无意义 commit。
-
-## Rollback Plan
-
-- 如果 CLI parser 出现兼容问题，先回滚 Phase 1 的 flag 暴露，保留文档中的 pending 状态。
-- 如果 registry 过滤导致 embedded search 或 MCP 回归，优先回滚 Phase 2/3 的 runtime 使用点，保留 helper 和测试失败样例用于继续定位。
-- 如果 subagent 继承导致已有 profile 行为争议，保留 parent registry deny，不允许主 agent 暴露 denied tool；subagent 继承语义回到本文重新评审后再落。
+- If the CLI parser has compatibility problems, first roll back the Phase 1 flag exposure, keeping the pending status in the document.
+- If registry filtering causes embedded search or MCP regressions, first roll back the Phase 2/3 runtime use points, keeping the helper and failing test samples to continue locating.
+- If subagent inheritance causes a dispute about existing profile behavior, keep the parent registry deny and do not let the main agent expose a denied tool; the subagent inheritance semantics return to this document for re-review before landing.
 
 ## Open Questions
 
-- 是否需要支持 wildcard，例如 `mcp__github__*`？当前只定义了 `Bash(git *)` 这类规则字符串；如果要把 wildcard 扩展到 tool name 本身，需要定义 matcher 优先级、转义规则和 permission matcher 差异。
-- `--disallowedTools Bash` 是否应该连带禁用 `Glob/Grep` direct search fallback？本文默认不连带，用户可显式 deny `Glob,Grep`。
-- 是否需要为 desktop/app-server/mobile remote 暴露同名配置？本文第一版不做。
+- Should wildcards such as `mcp__github__*` be supported? Only rule strings like `Bash(git *)` are defined today; extending wildcards to the tool name itself requires defining matcher priority, escaping rules and the difference from the permission matcher.
+- Should `--disallowedTools Bash` also disable the `Glob/Grep` direct search fallback? This document does not chain it by default; the user may explicitly deny `Glob,Grep`.
+- Should the same-name configuration be exposed to desktop/app-server/mobile remote? Not in this document's first version.
 
 ## Done Definition
 
-- [ ] `zcode --disallowedTools Bash,Edit -p "..."` 可运行。
-- [ ] `zcode -p "..." --disallowedTools Bash` 可运行。
-- [ ] `zcode --disallowed-tools Bash,Edit -p "..."` 可运行。
-- [ ] denied built-in tool 不在 registry。
-- [ ] denied MCP tool 不在 registry。
-- [ ] denied tool 不在 provider-visible `tools[]`。
-- [ ] subagent child runtime 不能重新获得 parent denied tool。
-- [ ] `permission.disallowedTools` 语义未被改变。
-- [ ] 中文/英文 help 已更新。
-- [ ] 本文已按最终语义更新。
-- [ ] 目标单测、`pnpm typecheck`、`pnpm lint` 均通过。
+- `zcode --disallowedTools Bash,Edit -p "..."` runs.
+- `zcode -p "..." --disallowedTools Bash` runs.
+- `zcode --disallowed-tools Bash,Edit -p "..."` runs.
+- A denied built-in tool is not in the registry.
+- A denied MCP tool is not in the registry.
+- A denied tool is not in provider-visible `tools[]`.
+- The subagent child runtime cannot regain a parent-denied tool.
+- The `permission.disallowedTools` semantics are unchanged.
+- Chinese/English help are updated.
+- This document is updated to the final semantics.
+- Target unit tests, `pnpm typecheck` and `pnpm lint` all pass.
