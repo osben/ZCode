@@ -70,6 +70,8 @@ shared hook; later home page evolution (search, status filter, device login stat
 
 ## Page model
 
+<a id="首页"></a>
+
 ### Home page
 
 Browses the workspaces and tasks currently open in the desktop window.
