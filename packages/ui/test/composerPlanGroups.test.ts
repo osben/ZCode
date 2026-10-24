@@ -113,6 +113,35 @@ describe("Composer concrete team provider rows", () => {
     expect(result[0]?.labelBadge).toBe(personalLabel);
     expect(result[1]?.labelBadge).toBe("Team One");
   });
+  // ISSUE-058: provider rows only browse, so an inactive plan must list models to pick from.
+  it("lists the inactive plan's enabled settings models so a model pick can switch to it", () => {
+    const settings = {
+      providers: [
+        {
+          providerId: IDS.bigmodelIndividualCodingPlan,
+          enabled: true,
+          effectiveConfig: {
+            access: {
+              type: "zhipu-account",
+              accountType: "bigmodel",
+              mode: "individual-coding-plan",
+              entitled: true,
+            },
+            api: { type: "anthropic-messages" },
+          },
+          accountState: { availability: "available", entitled: true },
+          models: [
+            { modelId: "GLM-5.3", enabled: true, effectiveConfig: {} },
+            { modelId: "GLM-old", enabled: false, effectiveConfig: {} },
+          ],
+        },
+      ],
+    } as unknown as ProviderSettingsView;
+    const [inactive] = buildComposerPlanGroups([team, api], [product], settings);
+    expect(inactive?.connection?.selection).toEqual({ kind: "individual-coding-plan" });
+    expect(inactive?.items.map((item) => item.name)).toEqual(["GLM-5.3"]);
+    expect(inactive?.connection?.items).toEqual(inactive?.items);
+  });
   it("每个完整已购团队直接成行，保留品牌与真实标签，API 不归并", () => {
     const groups = buildComposerPlanGroups([personal, team, api], [product]);
     expect(groups.map((g) => [g.label, g.labelBadge])).toEqual([
