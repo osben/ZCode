@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
 import { usePullRequestStatusStore } from "@/store/pullRequestStatusStore.js";
 import { usePullRequestStatusPolling } from "@/hooks/usePullRequestStatusPolling.js";
-import { usePullRequestTurnEndInvalidation } from "@/hooks/usePullRequestTurnEndInvalidation.js";
+import {
+  usePullRequestRefreshSignals,
+  usePullRequestTurnEndInvalidation,
+} from "@/hooks/usePullRequestTurnEndInvalidation.js";
 import {
   createPullRequestStatusProber,
-  forceTaskIdsForRequestedKeys,
   type PullRequestStatusTarget,
 } from "@/lib/pullRequestStatusProbeRunner.js";
 
@@ -39,8 +41,6 @@ export function usePullRequestStatuses(
   const markWorkspaceTasksStale = usePullRequestStatusStore(
     (state) => state.markWorkspaceTasksStale,
   );
-  const refreshVersion = usePullRequestStatusStore((state) => state.refreshVersion);
-  const forceRefresh = usePullRequestStatusStore((state) => state.forceRefresh);
 
   const prober = useMemo(
     () =>
@@ -59,36 +59,10 @@ export function usePullRequestStatuses(
     void prober.probe(targets);
   }, active);
 
-  // A git mutation (commit/push) may have opened or updated a PR, so its refresh signal bypasses
-  // the service TTL for every worktree task in view. A plain targets change keeps the TTL.
-  const handledRefreshVersionRef = useRef(refreshVersion);
-  useEffect(() => {
-    if (!active) {
-      // Left unhandled so the mutation is re-probed on the next activation.
-      return;
-    }
-    const gitMutated = handledRefreshVersionRef.current !== refreshVersion;
-    handledRefreshVersionRef.current = refreshVersion;
-    void prober.probe(targets, gitMutated ? { force: true } : undefined);
-  }, [prober, targets, active, refreshVersion]);
-
+  // Refresh signals run before the turn-end diff, as before the shared hook: when both probe the
+  // same workspace in one commit, the later (forced) turn-end write wins.
+  usePullRequestRefreshSignals(prober, targets, active);
   usePullRequestTurnEndInvalidation(prober, targets, active);
-
-  // Explicit refresh: only the requested tasks bypass the service TTL, once per request. The
-  // version is the signal; a targets change re-runs this effect but must not replay the request.
-  // Task ids come from the targets, not from parsing the composite task key.
-  const handledForceVersionRef = useRef(forceRefresh.version);
-  useEffect(() => {
-    if (!active || forceRefresh.version === handledForceVersionRef.current) {
-      return;
-    }
-    handledForceVersionRef.current = forceRefresh.version;
-    const forceTaskIdsByWorkspace = forceTaskIdsForRequestedKeys(targets, forceRefresh.taskKeys);
-    if (forceTaskIdsByWorkspace.size === 0) {
-      return;
-    }
-    void prober.probe(targets, { forceTaskIdsByWorkspace });
-  }, [prober, targets, active, forceRefresh]);
 
   // Drop store entries for workspaces that left the sidebar. PullRequestStatusProbes keeps every
   // open resolved workspace in targets (even with no visible worktree tasks), so this fires only
