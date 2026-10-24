@@ -43,7 +43,6 @@ import { useConfirmDialogStore } from "@/store/confirmDialogStore.js";
 import {
   composeQuickPromptRow,
   defaultQuickPromptScope,
-  isQuickPromptBodyPresent,
   isQuickPromptFirstRun,
   quickPromptScopeBlocks,
   resolveQuickPromptChipAction,
@@ -52,7 +51,7 @@ import {
   QuickPromptEditorDialog,
   type QuickPromptEditorTarget,
 } from "@/quick-prompts/QuickPromptEditorDialog.js";
-import { QuickPromptSavePopover } from "@/quick-prompts/QuickPromptSavePopover.js";
+import { QuickPromptColorDot } from "@/quick-prompts/QuickPromptColorDot.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/index.js";
 
 const LONG_PRESS_MS = 500;
@@ -83,14 +82,9 @@ export function QuickPromptBar({
   workspaceIdentity,
 }: QuickPromptBarProps) {
   const { intl } = useZCodeIntl();
-  // Only editor text can become a quick prompt (attachments and contexts cannot), so "Save draft" needs text in the
-  // editor body. Read at render: the composer re-renders on every text change, which re-renders this bar.
-  const draftHasText =
-    draftHasContent && isQuickPromptBodyPresent(inputApiRef.current?.getMarkdown() ?? "");
   const isMobile = useIsMobileTextInputViewport();
   const directory = useOptionalProjectDirectory();
   const [editorTarget, setEditorTarget] = useState<QuickPromptEditorTarget | null>(null);
-  const [savePopoverOpen, setSavePopoverOpen] = useState(false);
   const [sheetPrompt, setSheetPrompt] = useState<QuickPrompt | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [scrollFades, setScrollFades] = useState<QuickPromptScrollFades>({
@@ -128,7 +122,10 @@ export function QuickPromptBar({
         input.insertSerializedBody(prompt.body.nodes);
       } catch (cause) {
         // The body and the name never reach the log; the id identifies the broken row.
-        logger.warn("[quick-prompts] insert failed", { promptId: prompt.promptId, cause });
+        logger.warn("[quick-prompts] insert failed", {
+          promptId: prompt.promptId,
+          cause,
+        });
         setActionError(intl.formatMessage({ id: "quickPrompts.errors.insert" }));
         return;
       }
@@ -242,8 +239,8 @@ export function QuickPromptBar({
         data-prompt-id={prompt.promptId}
         className={
           isMobile
-            ? "min-h-9 max-w-[12rem] shrink-0 truncate rounded-full px-3"
-            : "h-7 max-w-[12rem] shrink-0 truncate rounded-full px-2.5"
+            ? "min-h-9 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-3"
+            : "h-7 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-2.5"
         }
         onMouseDown={(event) => {
           // Keeps the editor selection: the caret must not move when a chip is clicked.
@@ -266,6 +263,7 @@ export function QuickPromptBar({
           insertPrompt(prompt, modifierPressed);
         }}
       >
+        <QuickPromptColorDot color={prompt.color} />
         <span className="truncate">{prompt.name}</span>
       </Button>
     );
@@ -358,54 +356,25 @@ export function QuickPromptBar({
         {chips.map((prompt) => chipButton(prompt))}
         {isMobile ? null : (
           <span className="flex shrink-0 items-center gap-2">
-            {draftHasText ? (
-              <QuickPromptSavePopover
-                open={savePopoverOpen}
-                onOpenChange={setSavePopoverOpen}
-                service={service}
-                project={project}
-                snapshot={snapshot}
-                inputApiRef={inputApiRef}
-                refresh={refresh}
-                onMoreOptions={(target) => {
-                  setSavePopoverOpen(false);
-                  setEditorTarget(target);
-                }}
-              >
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  data-testid="quick-prompt-save-draft"
-                  className="h-7 shrink-0 rounded-full px-2.5"
-                  onMouseDown={(event) => event.preventDefault()}
-                >
-                  {intl.formatMessage({ id: "quickPrompts.saveDraft" })}
-                </Button>
-              </QuickPromptSavePopover>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="quick-prompt-add"
-                aria-label={intl.formatMessage({ id: "quickPrompts.add" })}
-                title={
-                  createBlocked
-                    ? intl.formatMessage({ id: "quickPrompts.limit.reached" })
-                    : undefined
-                }
-                disabled={createBlocked}
-                className={
-                  firstRun ? "h-7 shrink-0 rounded-full px-2.5" : "size-7 shrink-0 rounded-full p-0"
-                }
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setEditorTarget({ mode: "create", scope: defaultScope })}
-              >
-                <PlusIcon aria-hidden className="size-3.5" />
-                {firstRun ? intl.formatMessage({ id: "quickPrompts.add" }) : null}
-              </Button>
-            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="quick-prompt-add"
+              aria-label={intl.formatMessage({ id: "quickPrompts.add" })}
+              title={
+                createBlocked ? intl.formatMessage({ id: "quickPrompts.limit.reached" }) : undefined
+              }
+              disabled={createBlocked}
+              className={
+                firstRun ? "h-7 shrink-0 rounded-full px-2.5" : "size-7 shrink-0 rounded-full p-0"
+              }
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setEditorTarget({ mode: "create", scope: defaultScope })}
+            >
+              <PlusIcon aria-hidden className="size-3.5" />
+              {firstRun ? intl.formatMessage({ id: "quickPrompts.add" }) : null}
+            </Button>
             {firstRun ? (
               <span
                 className="min-w-0 truncate text-ui-caption text-foreground-subtle"

@@ -368,7 +368,7 @@ async function runModelBackedTurnStepImpl(
       !state.turnAbortSignal.aborted &&
       admissionRetryDelayMs !== undefined
     ) {
-      // On the second and later rounds, Start Plan may be rejected by the admission concurrency limit before the first token.
+      // After the session's first model request, Start Plan may be rejected by the admission concurrency limit before the first token.
       // There is then no text or tool anchor, so the old stream recovery will not start; close the empty assistant and retry briefly.
       const recoveryAttempt = beginStartPlanBusyAdmissionRetryAttempt(state);
       this.logger?.warn("Main turn retrying after Start Plan admission busy", {

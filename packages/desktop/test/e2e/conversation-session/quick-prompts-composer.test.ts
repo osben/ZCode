@@ -1,6 +1,7 @@
 // Composer quick prompts (specs/composer-quick-prompts.md): acceptance scenarios 1, 2, 4, 5 and 7, and the
 // insert-only half of scenario 3. None of them submits a prompt, so this case makes no provider request
 // (providerRequestPolicy "none"; afterEach asserts the capture is empty).
+// Scenario 14 (color label) is the editor round trip: pick a hue, see the dot, clear it.
 // The send half of scenario 3 (empty draft + Cmd-click submits) needs a recorded provider fixture and lives in
 // manual-review/pending/quick-prompts-composer-send.test.ts. Scenario 10 (mobile remote) is not covered here.
 import { readFile, writeFile } from "node:fs/promises";
@@ -13,13 +14,14 @@ import {
   setInputValueByTestIdDom,
 } from "../helpers/desktop-app.js";
 import {
+  chipColor,
   chipLabels,
   clickChip,
-  composerMentionCount,
   composerText,
-  isSaveScopeDisabled,
+  createQuickPrompt,
+  isEditorScopeDisabled,
   openChipContextMenu,
-  saveDraftAsQuickPrompt,
+  openQuickPromptCreateEditor,
 } from "../helpers/quick-prompts.js";
 import {
   clickV4SlashOption,
@@ -35,7 +37,7 @@ const MENTION_QUERY = "quick-prompt-mention-target";
 
 describe("composer quick prompts", () => {
   before(async () => {
-    // Opens the fixture project draft (ZCodeProject) so that a Save draft from this session is project-scoped.
+    // Opens the fixture project draft (ZCodeProject) so that a quick prompt created from this session is project-scoped.
     await prepareV4ConversationE2E();
   });
   afterEach(async () => {
@@ -47,11 +49,7 @@ describe("composer quick prompts", () => {
 
   it("scenario 1: first run shows no chips, and a saved project quick prompt appears in the row", async () => {
     expect(await chipLabels()).toEqual([]);
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, PROJECT_PROMPT_NAME, {
-      stabilizeLexicalCaretAtEnd: true,
-      timeout: 15000,
-    });
-    await saveDraftAsQuickPrompt(PROJECT_PROMPT_NAME);
+    await createQuickPrompt(PROJECT_PROMPT_NAME, PROJECT_PROMPT_NAME);
     await browser.waitUntil(async () => (await chipLabels()).includes(PROJECT_PROMPT_NAME), {
       timeout: 10000,
     });
@@ -104,31 +102,30 @@ describe("composer quick prompts", () => {
     expect(text).toContain(PROJECT_PROMPT_NAME);
   });
 
-  it("scenario 5: a draft with an @file mention disables Global and saves as a project quick prompt", async () => {
-    // The mention is picked from the real "@" panel, so the saved content holds a file mention chip.
+  it("scenario 5: an @file mention in the editor disables Global and saves as a project quick prompt", async () => {
+    // A typed draft keeps the "+" chip (rule 14: no Save draft shortcut).
+    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "typed draft", {
+      stabilizeLexicalCaretAtEnd: true,
+      timeout: 15000,
+    });
+    await openQuickPromptCreateEditor();
+    // The mention is picked from the editor's real "@" panel, so the saved content holds a file mention chip.
     await writeFile(join(DEFAULT_WORKSPACE, MENTION_FILE_NAME), "# quick prompt mention target\n");
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "", { timeout: 15000 });
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, `@${MENTION_QUERY}`, {
+    await setInputValueByTestIdDom("quick-prompt-editor-body", `@${MENTION_QUERY}`, {
       stabilizeLexicalCaretAtEnd: true,
       timeout: 15000,
     });
     const fileOptionId = await waitForV4MentionOptionPrefix("file:");
     expect(await clickV4SlashOption(fileOptionId)).toBe(true);
-    await browser.waitUntil(async () => (await composerMentionCount()) >= 1, {
+    await browser.waitUntil(async () => isEditorScopeDisabled("global"), {
       timeout: 10000,
-      timeoutMsg: "picking the @file entry did not insert a mention chip",
+      timeoutMsg: "Global stayed enabled for a body with an @file mention",
     });
-
-    await clickTestIdByDom("quick-prompt-save-draft");
-    await browser.waitUntil(async () => isSaveScopeDisabled("global"), {
-      timeout: 10000,
-      timeoutMsg: "Global stayed enabled for a draft with an @file mention",
-    });
-    expect(await isSaveScopeDisabled("project")).toBe(false);
-    await setInputValueByTestIdDom("quick-prompt-save-name", MENTION_PROMPT_NAME, {
+    expect(await isEditorScopeDisabled("project")).toBe(false);
+    await setInputValueByTestIdDom("quick-prompt-editor-name", MENTION_PROMPT_NAME, {
       timeout: 10000,
     });
-    await clickTestIdByDom("quick-prompt-save-submit");
+    await clickTestIdByDom("quick-prompt-editor-save");
     await browser.waitUntil(async () => (await chipLabels()).includes(MENTION_PROMPT_NAME), {
       timeout: 10000,
     });
@@ -136,11 +133,7 @@ describe("composer quick prompts", () => {
 
   it("scenario 7: editing a global quick prompt from a session shows the global banner", async () => {
     // The chip from scenario 1 is project-scoped, so this scenario saves its own global prompt.
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, GLOBAL_PROMPT_NAME, {
-      stabilizeLexicalCaretAtEnd: true,
-      timeout: 15000,
-    });
-    await saveDraftAsQuickPrompt(GLOBAL_PROMPT_NAME, "global");
+    await createQuickPrompt(GLOBAL_PROMPT_NAME, GLOBAL_PROMPT_NAME, "global");
     await browser.waitUntil(async () => (await chipLabels()).includes(GLOBAL_PROMPT_NAME), {
       timeout: 10000,
     });
@@ -163,6 +156,27 @@ describe("composer quick prompts", () => {
         ),
       { timeout: 10000, timeoutMsg: "Escape did not close the quick prompt editor" },
     );
+  });
+
+  it("scenario 14: picking a color in the editor shows a dot on the chip", async () => {
+    expect(await chipColor(GLOBAL_PROMPT_NAME)).toBeNull();
+    await openChipContextMenu(GLOBAL_PROMPT_NAME);
+    await clickTestIdByDom("quick-prompt-menu-edit");
+    await clickTestIdByDom("quick-prompt-editor-color-green");
+    await clickTestIdByDom("quick-prompt-editor-save");
+    await browser.waitUntil(async () => (await chipColor(GLOBAL_PROMPT_NAME)) === "green", {
+      timeout: 10000,
+      timeoutMsg: "the chip did not show the green color dot after saving",
+    });
+
+    await openChipContextMenu(GLOBAL_PROMPT_NAME);
+    await clickTestIdByDom("quick-prompt-menu-edit");
+    await clickTestIdByDom("quick-prompt-editor-color-none");
+    await clickTestIdByDom("quick-prompt-editor-save");
+    await browser.waitUntil(async () => (await chipColor(GLOBAL_PROMPT_NAME)) === null, {
+      timeout: 10000,
+      timeoutMsg: "the chip kept its color dot after choosing no color",
+    });
   });
 });
 

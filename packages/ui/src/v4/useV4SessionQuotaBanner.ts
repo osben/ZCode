@@ -62,15 +62,18 @@ export function useV4SessionQuotaBanner(params: {
   const isStartPlanProvider = Boolean(
     activeProviderId && isStartPlanModelProviderId(activeProviderId),
   );
+  // The attributed provider code is the structured business fact; `code` can be a wrapper or,
+  // after cold hydration, the adapter error class name, which hid 3009 behind a generic banner.
+  const businessCode = params.error?.attribution?.providerErrorCode?.trim() || params.error?.code;
   const quotaExhaustedCode = resolveStartPlanQuotaExhaustedBusinessCode(
-    params.error?.code,
+    businessCode,
     params.error?.message,
   );
   const concurrentLimitCode = resolveStartPlanConcurrentLimitBusinessCode(
-    params.error?.code,
+    businessCode,
     params.error?.message,
   );
-  const providerLimitedCode = resolveGlmQuotaBannerBusinessCode(params.error?.code);
+  const providerLimitedCode = resolveGlmQuotaBannerBusinessCode(businessCode);
   const serverQuotaExhausted = quotaExhaustedCode === "1005" && isStartPlanProvider;
   const serverConcurrentLimited = Boolean(concurrentLimitCode) && isStartPlanProvider;
   const serverProviderLimited = Boolean(

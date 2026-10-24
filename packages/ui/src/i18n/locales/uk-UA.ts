@@ -5147,6 +5147,7 @@ const ukUA: Record<string, string> = {
     "Надішліть або очистіть поточну чернетку, перш ніж редагувати повідомлення в черзі.",
   "chat.queue.editRestoreFailed":
     "Не вдалося повернути повідомлення з черги в поле введення. Спробуйте ще раз.",
+  "chat.queue.sendNowFailed": "Не вдалося надіслати повідомлення з черги зараз. Спробуйте ще раз.",
   "chat.queue.remove": "Вилучити повідомлення з черги",
   "chat.queue.turnSteer.steering": "Скерування розмови",
   "chat.queue.paused.stopped": "Чергу призупинено, оскільки ви зупинили поточну відповідь",
@@ -9351,7 +9352,6 @@ const ukUA: Record<string, string> = {
   "quickPrompts.add": "Додати швидку підказку",
   "quickPrompts.add.hint":
     "Збережіть підказку, яку часто використовуєте, і вставляйте її одним кліком.",
-  "quickPrompts.saveDraft": "Зберегти чернетку",
   "quickPrompts.hint.tooltip":
     "Клацання — вставити · {modifier} + клацання — надіслати · Правий клік — редагувати",
   "quickPrompts.scope.project": "Проєкт",
@@ -9361,12 +9361,19 @@ const ukUA: Record<string, string> = {
   "quickPrompts.scope.noProject": "Підказки проєкту потребують проєкту. У цієї сесії його немає.",
   "quickPrompts.limit.reached":
     "Список заповнено (50 швидких підказок). Видаліть одну, щоб додати іншу.",
-  "quickPrompts.save.moreOptions": "Більше параметрів…",
-  "quickPrompts.save.submit": "Зберегти",
   "quickPrompts.editor.title.create": "Нова швидка підказка",
   "quickPrompts.editor.title.edit": "Редагувати швидку підказку",
   "quickPrompts.editor.name": "Назва",
   "quickPrompts.editor.scope": "Область",
+  "quickPrompts.editor.color": "Колір",
+  "quickPrompts.color.none": "Без кольору",
+  "quickPrompts.color.red": "Червоний",
+  "quickPrompts.color.orange": "Помаранчевий",
+  "quickPrompts.color.yellow": "Жовтий",
+  "quickPrompts.color.green": "Зелений",
+  "quickPrompts.color.blue": "Синій",
+  "quickPrompts.color.violet": "Фіолетовий",
+  "quickPrompts.color.pink": "Рожевий",
   "quickPrompts.editor.body": "Текст підказки",
   "quickPrompts.editor.body.placeholder":
     "Напишіть підказку. Введіть / для команд, $ для Skills, @ для файлів.",

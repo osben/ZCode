@@ -121,7 +121,7 @@ Response shape (summary; the module contract is authoritative):
 
 ### Inspector (block D)
 
-26. Tabs by row kind: request rows show Summary, Payload (parameters, system blocks, tool catalog, breakpoints, full input) and Timing; tool rows show Summary, Payload (arguments), Result, Schema (the definition from that call's catalog) and Timing (scheduled, execution start and end, duration, approval status); assistant rows show Summary, Result (text, reasoning, tool calls) and Timing (TTFT, decoding, usage); user rows show Summary and Payload.
+26. Tabs by row kind: request rows show Summary, Payload (parameters, system blocks, tool catalog, breakpoints, full input) and Timing; tool rows show Summary, Payload (arguments), Result, Schema (the definition from that call's catalog) and Timing (scheduled, execution start and end, duration, approval status); assistant rows show Summary, Result (text, reasoning, tool calls) and Timing (TTFT, decoding, usage); user rows show Summary and Payload. A request whose input is a delta can switch its Payload between new and full input; a message expanded before the switch stays expanded after it, and no other message opens in its place.
 27. Unknown values render as "—", never as zero.
 
 ### View state

@@ -47,6 +47,7 @@ function storedPrompt(overrides: Partial<QuickPrompt> = {}): QuickPrompt {
     project,
     name: "Review",
     body: { markdown: "review the diff", nodes },
+    color: null,
     pinned: true,
     position: 0,
     createdAt: 1,

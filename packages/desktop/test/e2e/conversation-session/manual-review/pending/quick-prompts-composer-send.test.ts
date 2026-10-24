@@ -4,7 +4,7 @@
 // quick-prompts-composer.test.ts makes no provider request). Run it by path; it is excluded from the default run.
 import { TID_V4_COMPOSER_INPUT } from "@zcode/shared/test-ids";
 import { clearAppData, setInputValueByTestIdDom } from "../../../helpers/desktop-app.js";
-import { clickChip, composerText, saveDraftAsQuickPrompt } from "../../../helpers/quick-prompts.js";
+import { clickChip, composerText, createQuickPrompt } from "../../../helpers/quick-prompts.js";
 import { prepareV4ConversationE2E } from "../../../helpers/v4-conversation.js";
 
 const PROMPT_NAME = "review the diff";
@@ -18,11 +18,7 @@ describe("composer quick prompts send (pending admission)", () => {
   });
 
   it("scenario 3 send: Cmd-click with an empty draft inserts the prompt and submits it", async () => {
-    await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, PROMPT_NAME, {
-      stabilizeLexicalCaretAtEnd: true,
-      timeout: 15000,
-    });
-    await saveDraftAsQuickPrompt(PROMPT_NAME);
+    await createQuickPrompt(PROMPT_NAME, PROMPT_NAME);
     await setInputValueByTestIdDom(TID_V4_COMPOSER_INPUT, "", { timeout: 15000 });
     await clickChip(PROMPT_NAME, { send: true });
     // Submit clears the composer; the transcript check is left to the admitted case's provider fixture.

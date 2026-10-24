@@ -6,6 +6,8 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ensureQuickPromptSchema,
+  FORK_QUICK_PROMPT_COLOR_MIGRATION_ID,
+  FORK_QUICK_PROMPT_COLOR_SCHEMA,
   FORK_QUICK_PROMPTS_MIGRATION_ID,
   FORK_QUICK_PROMPTS_SCHEMA,
 } from "../src/quick-prompts/migration.js";
@@ -17,6 +19,8 @@ import {
 // Spec: specs/composer-quick-prompts.md (Storage). Migration 9003_fork_quick_prompts shares the
 // tasks-index ledger with upstream; the upstream checksum pin test must not list it.
 
+const FORK_QUICK_PROMPT_COLOR_CHECKSUM =
+  "c799f9167352884f4bd36cd14b227cbe6131d5b3a78c269e5e88bc3e5af82068";
 const FORK_QUICK_PROMPTS_CHECKSUM =
   "ad278f8a8b0916baf9875a0a92702478ba77d3dd34a6d9516cf8d22410eddb02";
 
@@ -157,5 +161,44 @@ describe("fork quick prompts schema migration", () => {
     const retry = connect();
     ensureQuickPromptSchema(retry);
     expect(ledger(retry).map((row) => row.id)).toContain(FORK_QUICK_PROMPTS_MIGRATION_ID);
+  });
+
+  it("adds the color column through a separate 9004 row and leaves the 9003 row untouched", () => {
+    const db = connect();
+    ensureQuickPromptSchema(db);
+    const columns = db
+      .prepare("PRAGMA table_info(fork_quick_prompts)")
+      .all()
+      .map((row) => String(row.name));
+    expect(columns).toContain("color");
+    const ids = ledger(db).map((row) => row.id);
+    expect(ids).toContain("9003_fork_quick_prompts");
+    expect(ids).toContain(FORK_QUICK_PROMPT_COLOR_MIGRATION_ID);
+    expect(FORK_QUICK_PROMPT_COLOR_MIGRATION_ID).toBe("9004_fork_quick_prompt_color");
+    expect(createHash("sha256").update(FORK_QUICK_PROMPT_COLOR_SCHEMA).digest("hex")).toBe(
+      FORK_QUICK_PROMPT_COLOR_CHECKSUM,
+    );
+  });
+
+  it("upgrades a file that only has the 9003 row: legacy rows survive with a NULL color", () => {
+    const old = connect();
+    old.exec(`CREATE TABLE IF NOT EXISTS tasks_schema_migration (
+      id TEXT PRIMARY KEY, checksum TEXT NOT NULL, time_applied INTEGER NOT NULL)`);
+    old.exec(FORK_QUICK_PROMPTS_SCHEMA);
+    old
+      .prepare("INSERT INTO tasks_schema_migration VALUES (?,?,?)")
+      .run(FORK_QUICK_PROMPTS_MIGRATION_ID, FORK_QUICK_PROMPTS_CHECKSUM, 1);
+    old
+      .prepare(
+        "INSERT INTO fork_quick_prompts VALUES ('p1','global',NULL,NULL,'N','m','[]',1,0,1,1)",
+      )
+      .run();
+
+    ensureQuickPromptSchema(old);
+
+    expect(old.prepare("SELECT color FROM fork_quick_prompts WHERE prompt_id='p1'").get()).toEqual({
+      color: null,
+    });
+    expect(ledger(old).map((row) => row.id)).toContain(FORK_QUICK_PROMPT_COLOR_MIGRATION_ID);
   });
 });

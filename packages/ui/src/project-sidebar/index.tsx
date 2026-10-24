@@ -156,6 +156,7 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
     });
   };
   const projects = preferences.sort(selectSortedProjects(tree));
+  const pinnedProjects = projects.filter((project) => project.pinned);
   const expandableProjects = projects.filter(
     (project) => availability.get(projectKey(project))?.online !== false,
   );
@@ -262,11 +263,17 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
                             onSelect={onSelectTask}
                             refresh={refresh}
                           />
-                          <SortableProjects
-                            projects={projects.filter((project) => project.pinned)}
-                            renderProject={renderProject}
-                            onReorder={reorder}
-                          />
+                          {/* Cause: SortableProjects renders no DOM node, so without this wrapper each
+                              pinned project became a child of the gap-3 list and got section spacing. */}
+                          {pinnedProjects.length > 0 ? (
+                            <div>
+                              <SortableProjects
+                                projects={pinnedProjects}
+                                renderProject={renderProject}
+                                onReorder={reorder}
+                              />
+                            </div>
+                          ) : null}
                           <ProjectSections
                             tree={tree}
                             projects={projects}
