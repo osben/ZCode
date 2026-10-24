@@ -1,143 +1,169 @@
-# ZCode Protocol（当前事实）
+# ZCode Protocol (current facts)
 
-ZCode Protocol 是 App、Host Process 与 `zcode-cli` 之间唯一的 Agent 协议。当前聊天主链路使用 V4 conversation topic、权威 projection 与 command inbox；`packages/shared/src/zcode-protocol/index.ts` 中仍保留的旧 session schema 只服务尚未删除的兼容调用，不是新增功能入口。
+ZCode Protocol is the only Agent protocol among the App, Host Process and `zcode-cli`. The current chat
+main path uses V4 conversation topics, the authoritative projection and the command inbox; the old
+session schema still in `packages/shared/src/zcode-protocol/index.ts` serves only compatibility calls
+not yet deleted and is not an entry for new features.
 
-## 核心约束
+## Core constraints
 
-- 协议实体统一叫 `session`；产品层历史 `taskId` 在聊天主链路中等同于 `sessionId`。
-- CLI 是 conversation 的事实源。消息行、运行阶段、队列、交互请求、模型配置、usage、goal 与控制能力都来自 `ConversationSnapshot`。
-- UI 只拥有草稿、滚动、焦点、面板展开等纯本地展示状态，不能在 renderer 中维护第二份权威消息或队列。
-- 桌面使用 `desktop-continuous`，手机远控使用 `web-remote-replayable`。两种 profile 共享同一 CLI 投影，但恢复语义不能互相扩散。
-- 手机 `/remote` 只 attach 已有 Host/CLI，不创建独立 Agent runtime。
+- Protocol entities are uniformly called `session`; the product-layer historical `taskId` equals `sessionId` in the chat main path.
+- The CLI is the source of truth of a conversation. Message rows, run phase, queue, interaction requests, model config, usage, goal and control capabilities all come from `ConversationSnapshot`.
+- The UI owns only purely local display state (draft, scroll, focus, panel expansion) and must not keep a second authoritative message or queue in the renderer.
+- Desktop uses `desktop-continuous`, mobile remote control uses `web-remote-replayable`. Both share the same CLI projection, but their recovery semantics must not spill into each other.
+- Mobile `/remote` only attaches an existing Host/CLI and creates no independent Agent runtime.
 
-## 传输拓扑
+## Transport topology
 
 ```text
 Renderer
-  │ MessagePort RPC
-  ▼
+  | MessagePort RPC
+  v
 Host Process
-  │ stdio NDJSON
-  ▼
+  | stdio NDJSON
+  v
 zcode-cli app-server
-  ├─ command inbox
-  ├─ ProductProjection reducer
-  └─ conversation topic publisher
+  |- command inbox
+  |- ProductProjection reducer
+  '- conversation topic publisher
 ```
 
-stdio NDJSON 只按 LF 字节 `0x0a` 分帧；写帧格式固定为 `JSON.stringify(message) + "\n"`。reader 可兼容帧尾 CRLF，但不得 trim 或改写帧内字符串。
+stdio NDJSON frames only on the LF byte `0x0a`; the write format is fixed as
+`JSON.stringify(message) + "\n"`. The reader may tolerate a trailing CRLF but must not trim or rewrite
+strings inside a frame.
 
-## V4 读路径
+## V4 read path
 
-客户端订阅 `conversation/<sessionId>` topic。subscribe ACK 本身不内嵌 snapshot；服务端随后按该
-subscription 的水位、logEpoch 和 delivery profile 投递 initial/recovery snapshot 或连续 delta：
+The client subscribes to the `conversation/<sessionId>` topic. The subscribe ACK itself embeds no
+snapshot; the server then delivers an initial/recovery snapshot or continuous deltas by that
+subscription's watermark, logEpoch and delivery profile:
 
 ```text
 subscribe(topic, baseSeq, baseLogEpoch)
-  ├─ base 可续接 ──> delta(fromSeq, toSeq]
-  └─ base 失效   ──> snapshot + 后续 delta
+  |- base continuable --> delta(fromSeq, toSeq]
+  '- base invalid     --> snapshot + subsequent deltas
 ```
 
-`ConversationSnapshot` 是完整可恢复视图，包含：
+`ConversationSnapshot` is the complete recoverable view, containing:
 
-- session 元信息与 phase；
-- `rows.window` 消息/工具/marker 行；
-- `queue` 与 `inputRouting`；
-- pending interactions；
-- model、mode、thought、follow-up 配置；
-- usage、goal、background work 与 control availability。
+- session metadata and phase;
+- `rows.window` message/tool/marker rows;
+- `queue` and `inputRouting`;
+- pending interactions;
+- model, mode, thought and follow-up config;
+- usage, goal, background work and control availability.
 
-客户端只允许按 seq 连续应用 delta。重复或迟到帧静默丢弃，出现 gap 时重新订阅并以 snapshot 收敛。桌面 continuous 不拼接手机 replayable 的运行态恢复消息。
+Clients may apply deltas only contiguously by seq. Duplicate or late frames are dropped silently; on a
+gap, resubscribe and converge by snapshot. Desktop continuous does not splice the mobile replayable
+run-state recovery messages.
 
-## V4 写路径
+## V4 write path
 
-所有用户意图通过 `v4/command` 发送。信封包含稳定 `commandId`、`clientId`、`sessionId`、
-可选 `baseRevision` / `baseLogEpoch`、命令类型和 payload。CAS 命令要求 `baseRevision`，
-row-targeting 命令还要求 `baseLogEpoch`；重试必须复用原 `commandId`。CLI 用 command inbox 做幂等、
-epoch、CAS 和 product guard 裁决。
+All user intents are sent through `v4/command`. The envelope contains a stable `commandId`,
+`clientId`, `sessionId`, optional `baseRevision` / `baseLogEpoch`, the command type and payload. CAS
+commands require `baseRevision`, row-targeting commands also require `baseLogEpoch`; a retry must
+reuse the original `commandId`. The CLI adjudicates idempotency, epoch, CAS and product guards with
+the command inbox.
 
-当前命令全集以 `packages/shared/src/zcode-protocol-v4/command.ts` 为唯一类型事实源，主要分组如下：
+The full command set is typed in `packages/shared/src/zcode-protocol-v4/command.ts` (the single type
+source of truth); main groups:
 
-| 分组          | 命令                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------- |
-| 会话/输入     | `createSession`、`createSelectionSideSession`、`sendText`、`sendGoalCommand`、`renameSession`、`deleteSession` |
-| 生成控制      | `stop`、`compact`、`retryTurn`、`editUserQuery`、`forkAssistant`                        |
-| 文件回退      | `applyFileRewind`                                                                       |
-| 队列          | `sendQueuedNow`、`editQueueItem`、`reorderQueueItem`、`deleteQueueItem`、`setAutoDrain` |
-| 配置          | `switchModelConfig`、`switchCollaborationMode`、`setFollowupMode`                       |
-| Goal/后台工作 | `pauseGoal`、`resumeGoal`、`cancelBackgroundWork`                                       |
-| 阻塞交互      | `resolveInteraction`、`snoozeInteractionAutoResolution`                                |
+| Group                    | Commands                                                                                                       |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Session / input          | `createSession`, `createSelectionSideSession`, `sendText`, `sendGoalCommand`, `renameSession`, `deleteSession` |
+| Generation control       | `stop`, `compact`, `retryTurn`, `editUserQuery`, `forkAssistant`                                               |
+| File rewind              | `applyFileRewind`                                                                                              |
+| Queue                    | `sendQueuedNow`, `editQueueItem`, `reorderQueueItem`, `deleteQueueItem`, `setAutoDrain`                        |
+| Config                   | `switchModelConfig`, `switchCollaborationMode`, `setFollowupMode`                                              |
+| Goal / background work   | `pauseGoal`, `resumeGoal`, `cancelBackgroundWork`                                                              |
+| Blocking interaction     | `resolveInteraction`, `snoozeInteractionAutoResolution`                                                        |
 
-`session/steer`、`session/rewind` 和独立 rewind 命令已经删除。引导输入由 `sendText` + `inputRouting`/follow-up mode 裁决；重试和编辑分别使用 `retryTurn`、`editUserQuery`；workspace 文件撤销使用 `applyFileRewind`，不会隐式截断会话历史。
+`session/steer`, `session/rewind` and the standalone rewind command are deleted. Guide input is
+adjudicated by `sendText` + `inputRouting`/follow-up mode; retry and edit use `retryTurn` and
+`editUserQuery`; workspace file undo uses `applyFileRewind` and does not implicitly truncate session
+history.
 
-ACK 状态为 `accepted | rejected | stale | duplicate | noop | failed`。ACK 只表示 command 裁决结果；最终 UI 状态必须以带 `sourceCommandId` 的权威 projection 回流为准。
+ACK statuses are `accepted | rejected | stale | duplicate | noop | failed`. An ACK only means the
+command adjudication result; the final UI state must come from the authoritative projection flowing
+back with `sourceCommandId`.
 
-## sessions-index 与 workspace-config
+## sessions-index and workspace-config
 
-除了 conversation topic，V4 还提供两个 workspace 级 conflated topic：
+Besides the conversation topic, V4 provides two workspace-level conflated topics:
 
-- `sessions-index/<workspaceId>`：会话列表活性摘要；pin/archive/group/unread 等组织态仍从
-  tasks-index 读取并在客户端 join。
-- `workspace-config/<workspaceId>`：模型/模式等 configOptions 与 slash command 目录；它服务草稿和
-  toolbar catalog，不覆盖已绑定 session 的 `snapshot.config`。
+- `sessions-index/<workspaceId>`: session-list liveness summary; organization state such as pin/archive/group/unread is still read from tasks-index and joined on the client.
+- `workspace-config/<workspaceId>`: configOptions such as model/mode and the slash command catalog; it serves the draft and toolbar catalog and does not override the bound session's `snapshot.config`.
 
-二者各自拥有 seq/logEpoch/subscription recovery，不能共享 conversation 的水位或把 workspacePath
-替代远程 workspaceIdentity。
+Each has its own seq/logEpoch/subscription recovery; they cannot share a conversation's watermark or
+substitute workspacePath for the remote workspaceIdentity.
 
-## 队列语义
+## Queue semantics
 
-CLI runtime command queue 是唯一权威队列。running 时的普通输入和 `/goal` 都在 CLI admission 边界按 `inputRouting` 决定立即执行、enqueue、guide 或要求用户处理 held queue。桌面和手机不各自维护一条 accepted queue。
+The CLI runtime command queue is the only authoritative queue. While running, ordinary input and
+`/goal` are decided at the CLI admission boundary by `inputRouting` to run now, enqueue, guide, or ask
+the user to handle the held queue. Desktop and mobile do not each maintain an accepted queue.
 
-UI 可以做短暂 optimistic 展示，但删除、编辑、立即发送、排序和 auto-drain 都必须发送对应 V4 command，并等待 snapshot/delta 收敛。
+The UI may show brief optimistic state, but delete, edit, send-now, reorder and auto-drain must send
+the matching V4 command and wait for snapshot/delta convergence.
 
-输入在执行前写入 `session_input` lifecycle ledger；它用于 promotion 原子性和跨重启查重，不是重启后
-自动恢复执行的持久队列。CLI 重启时未 promotion 的 admitted 输入会明确转成 discarded，客户端只能
-提示用户确认重发。
+Input is written to the `session_input` lifecycle ledger before execution; it serves promotion
+atomicity and cross-restart dedup and is not a persistent queue that resumes execution automatically
+after restart. On CLI restart, admitted inputs not yet promoted are explicitly turned into discarded,
+and the client can only prompt the user to confirm a resend.
 
-## 进程与工作区隔离
+## Process and workspace isolation
 
-一个 App 可以运行多个 workspace window；每个窗口有独立 Local Host，远程连接另由该窗口作用域内的
-Remote Host 承载。所有 Host 都以 `workspaceKey = workspaceIdentity?.trim() || workspacePath`
-隔离 workspace，每个 workspaceKey 最多启动一个聊天 CLI 进程：
+One App may run multiple workspace windows; each window has an independent Local Host, and remote
+connections are carried by the Remote Host scoped to that window. All Hosts isolate workspaces by
+`workspaceKey = workspaceIdentity?.trim() || workspacePath`, and each workspaceKey starts at most one
+chat CLI process:
 
 ```text
 App
-  └─ workspace window
-      ├─ Local Host
-      │  ├─ workspaceKey A ── zcode-cli A
-      │  └─ workspaceKey B ── zcode-cli B
-      └─ Remote Host(s)
-          └─ remoteSessionId / attachment ── workspaceKey C ── zcode-cli C
+  '- workspace window
+      |- Local Host
+      |  |- workspaceKey A -- zcode-cli A
+      |  '- workspaceKey B -- zcode-cli B
+      '- Remote Host(s)
+          '- remoteSessionId / attachment -- workspaceKey C -- zcode-cli C
 ```
 
-`workspacePath` 只用于文件系统与命令 cwd；身份、缓存、队列、会话绑定和跨进程关联必须使用 workspaceKey。远程 workspace 必须贯穿传递 `workspaceIdentity` 和 `remoteSessionId`。
+`workspacePath` is used only for the filesystem and command cwd; identity, cache, queue, session
+binding and cross-process correlation must use workspaceKey. A remote workspace must carry
+`workspaceIdentity` and `remoteSessionId` end to end.
 
-## Provider 配置
+## Provider config
 
-Host 的 `modelProviderService` 是 provider registry 配置源；CLI 是 session 当前模型和运行态的事实源。
-Host 把带 revision 的 registry 同步给对应 workspace CLI。聊天 UI 用 app/workspace config catalog 构造
-可选模型，用 conversation snapshot 读取当前配置；endpoint 和 API key 不进入 snapshot，也不随每次输入
-重复下发。草稿可读取该 workspace 下的全局上次选择作为 create/预热种子，但它不能覆盖已有 session。
+The Host's `modelProviderService` is the provider registry config source; the CLI is the source of
+truth of the session's current model and run state. The Host syncs the revisioned registry to the
+corresponding workspace CLI. The chat UI builds selectable models from the app/workspace config
+catalog and reads the current config from the conversation snapshot; the endpoint and API key do not
+enter the snapshot and are not re-sent with every input. A draft may read the global last selection
+under that workspace as the create/prewarm seed, but it cannot override an existing session.
 
-运行中切换配置默认影响下一轮。secret 不进入 snapshot；远程 workspace 也使用同一 provider-registry command，不依赖旧版配置文件。
+Switching config while running affects the next turn by default. Secrets do not enter the snapshot; a
+remote workspace uses the same provider-registry command and does not depend on old config files.
 
-## 兼容工具调度事件
+## Compatible tool-scheduling events
 
-旧 `session/event` 链路仍接收 CLI 发出的 `tool.updated(kind=scheduled)`。
-其可选 `assistantMessageId` 表示所属 assistant 消息，必须通过 App 的严格校验并保留；
-不携带该字段的旧事件继续兼容。字段存在时必须是非空字符串，其他未知字段仍拒绝。
-完整 `input` 和 `inputOmitted/inputRef=model_stream` 两种调度载荷均遵守此契约。
+The old `session/event` chain still receives `tool.updated(kind=scheduled)` emitted by the CLI. Its
+optional `assistantMessageId` denotes the owning assistant message, must pass the App's strict
+validation and be preserved; old events without the field stay compatible. When present it must be a
+non-empty string, and other unknown fields are still rejected. Both the full `input` and the
+`inputOmitted/inputRef=model_stream` scheduling payloads obey this contract.
 
-2026-09-07 的 60 轮飞书长任务暴露了消费侧 schema 遗漏该字段的问题：CLI 正常发送，
-Host 却因 `Unrecognized key: assistantMessageId` 丢弃整条 scheduled 事件。
-这里只补齐既有兼容字段，不新增聊天能力，也不改变 V4 projection、workspace 隔离、
-desktop-continuous 或 web-remote-replayable 的投递与恢复边界。
+A 60-round Feishu long task on 2026-09-07 exposed that the consumer-side schema omitted this field: the
+CLI sent it normally, but the Host dropped the whole scheduled event with
+`Unrecognized key: assistantMessageId`. The fix only completes the existing compatibility field; it
+adds no chat capability and changes no delivery or recovery boundary of the V4 projection, workspace
+isolation, desktop-continuous or web-remote-replayable.
 
-回归需覆盖两种 deliveryKind、两种 input 形式、缺省字段兼容及非法/未知字段拒绝。
+Regression must cover both deliveryKinds, both input forms, missing-field compatibility and
+invalid/unknown-field rejection.
 
-## 修改规则
+## Change rules
 
-- 修改协议前先改 `packages/shared/src/zcode-protocol-v4/` 的 schema、纯函数和 spec。
-- 协议变更必须同时验证 CLI reducer、Host transport、desktop continuous 与 mobile replayable。
-- 禁止在 UI、relay 或 Electron main 中复制 session/task/stream/queue/snapshot 业务状态。
-- 旧 `packages/shared/src/zcode-protocol/index.ts` 只能缩减兼容面，不能承接新的聊天能力。
+- Before changing the protocol, first change the schema, pure functions and spec in `packages/shared/src/zcode-protocol-v4/`.
+- A protocol change must verify the CLI reducer, Host transport, desktop continuous and mobile replayable together.
+- Do not copy session/task/stream/queue/snapshot business state into the UI, relay or Electron main.
+- The old `packages/shared/src/zcode-protocol/index.ts` may only shrink the compatibility surface and must not take new chat capability.

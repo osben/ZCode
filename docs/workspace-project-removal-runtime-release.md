@@ -1,72 +1,82 @@
-# 项目移除释放 Workspace Runtime
+# Project removal releases the workspace runtime
 
-## 背景
+## Background
 
-Windows 会把进程当前工作目录和打开的文件句柄视为目录占用。用户在 ZCode 侧边栏移除项目并退出应用后，如果该项目对应的 Agent、终端、文件监听或远端 runtime 仍未释放，项目目录可能仍无法删除或重命名。
+Windows treats a process's current working directory and open file handles as directory usage. If,
+after the user removes a project in the ZCode sidebar and quits, that project's Agent, terminal, file
+watcher or remote runtime is still alive, the project directory may be impossible to delete or
+rename.
 
-另一个 Windows 兼容风险是保留设备名文件。`nul`、`con`、`aux`、`com1`、`lpt1` 等名字在 Windows Win32 路径解析中不是普通文件名；一旦项目内存在这类文件，用户后续在资源管理器或普通 PowerShell 命令里删除、重命名项目目录时可能遇到 “MS-DOS 功能无效”。
+A second Windows risk is files with reserved device names. `nul`, `con`, `aux`, `com1`, `lpt1`, etc.
+are not ordinary file names under Win32 path resolution; if such a file exists in a project, later
+deleting or renaming the project directory in Explorer or plain PowerShell can fail with "MS-DOS
+function is not valid".
 
-## 问题
+## Problem
 
-“移除项目”是一个 workspace 生命周期动作，不只是 UI 入口移除。旧行为只关闭 tab 并失效任务缓存：
+"Remove project" is a workspace lifecycle action, not just a UI entry removal. The old behavior only
+closed the tab and invalidated the task cache:
 
 ```text
-点击侧边栏项目移除
+click sidebar project remove
   -> closeTab(tab.id)
   -> invalidateTaskQueryCacheByScopes(...)
 ```
 
-这会让项目从侧边栏消失，但不会保证 host 内该 workspace 的预热 Agent 或 runtime 被释放。`useWorkspaceShellLifecycle` 只在 App workspace 组件卸载时 best-effort 回收未使用预热态，无法覆盖侧边栏直接移除项目的入口。
+The project disappeared from the sidebar, but the workspace's prewarmed Agent or runtime in the host
+was not guaranteed to be released. `useWorkspaceShellLifecycle` only reclaims unused prewarmed state
+on a best-effort basis when the App workspace component unmounts and cannot cover the direct
+sidebar removal. The old flow also did not warn about a running chat/runtime under that workspace,
+so a conversation still `creating`, `restoring` or `streaming` could be removed unnoticed.
 
-旧行为也不会在移除前提示该 workspace 下仍有运行中 chat/runtime。用户可能无感移除一个仍在 `creating`、`restoring` 或 `streaming` 的对话。
+## Target behavior
 
-## 目标行为
-
-侧边栏移除项目时，必须先检查运行中 chat/runtime，再触发 workspace runtime 释放：
+Removing a project from the sidebar first checks for running chat/runtime, then releases the
+workspace runtime:
 
 ```text
-点击侧边栏项目移除
-  -> 读取当前 workspace task runtime 状态
-  -> 如果存在 creating/restoring/streaming task 或 draft runtime
-       -> 弹确认：移除会停止该项目运行中的对话/Agent
-       -> 用户取消：不移除
-       -> 用户确认：继续
+click sidebar project remove
+  -> read the current workspace task runtime state
+  -> if a creating/restoring/streaming task or draft runtime exists
+       -> confirm: removing stops the project's running conversations/Agents
+       -> user cancels: do not remove
+       -> user confirms: continue
   -> closeTab(tab.id)
   -> zcodeTaskService.releaseWorkspacePreparation({ workspacePath, workspaceIdentity?, provider })
        -> zcodeAgentService.disposeWorkspace(...)
        -> zcodeAgentProcessManager.disposeWorkspace(...)
-       -> Windows taskkill /T /F 清理 Agent 子进程树
+       -> Windows taskkill /T /F cleans the Agent child process tree
   -> invalidateTaskQueryCacheByScopes(...)
-  -> 异步轻量扫描 Windows 保留设备名文件并提示风险
+  -> async lightweight scan for Windows reserved device-name files and warn of the risk
 ```
 
-约束：
+Constraints:
 
-- 运行中 chat/runtime 检查只读取 ZCode 当前 workspace UI/runtime 状态，不扫描磁盘，允许同步阻塞移除。
-- 有运行中 chat/runtime 时必须由用户确认后才能继续移除。
-- runtime 释放是 best-effort，不阻塞 UI 移除项目。
-- 必须传递 `workspaceIdentity`，避免远程 workspace 与同路径本地 workspace 混淆。
-- 释放失败只记录日志，不能把已移除的项目重新显示回来。
-- 不归档、不删除 task 历史；移除项目只移除入口和 runtime 占用。
-- Windows 保留设备名检查不是用户系统删除失败诊断，也不承诺项目一定可删除；它只对 ZCode/Agent 可能触达的常见项目文件做轻量风险提示。
-- Windows 保留设备名检查异步执行，不阻塞项目从侧边栏移除。
-- 默认跳过 `.git`、`node_modules`、`dist`、`build`、`.next`、`out`、`coverage`、`.cache`、`.turbo`、`.vite` 等高成本低相关目录。
-- Windows 保留设备名检查需要限量，找到前若干个风险路径即可提示，扫描失败只记录日志。
-- 桌面端 `desktop-continuous` 与手机远控 `web-remote-replayable` 的 realtime 边界不变；本修复只调用已有 workspace-scoped release API，不新增 replay/snapshot 行为。
+- The running chat/runtime check reads only ZCode's current workspace UI/runtime state, does not scan the disk, and may block removal synchronously.
+- With a running chat/runtime, removal continues only after user confirmation.
+- Runtime release is best-effort and does not block the UI removal.
+- `workspaceIdentity` must be passed so a remote workspace is not confused with a local one at the same path.
+- A release failure is only logged; the removed project is never shown again.
+- Task history is not archived or deleted; removal drops only the entry and the runtime hold.
+- The reserved-device-name check is not a diagnosis of the user's system delete failures and does not promise the project can be deleted; it is a lightweight risk hint for common project files ZCode/Agent may touch.
+- The check runs asynchronously and does not block removing the project from the sidebar.
+- It skips high-cost, low-relevance directories by default: `.git`, `node_modules`, `dist`, `build`, `.next`, `out`, `coverage`, `.cache`, `.turbo`, `.vite`, etc.
+- It is bounded: it may stop after finding the first few risky paths; a scan failure is only logged.
+- The `desktop-continuous` and mobile `web-remote-replayable` realtime boundaries are unchanged; the fix only calls the existing workspace-scoped release API and adds no replay/snapshot behavior.
 
-## Windows 保留设备名规则
+## Windows reserved device-name rule
 
-风险判断按 path segment 执行：
+The risk check runs per path segment:
 
 ```text
-文件名 segment
-  -> 去掉尾部空格和点
-  -> 取扩展名前 basename
-  -> 转大写
-  -> 匹配保留设备名
+file name segment
+  -> strip trailing spaces and dots
+  -> take the basename before the extension
+  -> uppercase
+  -> match reserved device names
 ```
 
-首版覆盖：
+First version covers:
 
 ```text
 CON
@@ -77,7 +87,7 @@ COM1 ~ COM9
 LPT1 ~ LPT9
 ```
 
-示例风险文件：
+Example risky files:
 
 ```text
 nul
@@ -89,13 +99,13 @@ COM1.json
 LPT1.tmp
 ```
 
-## 验收
+## Acceptance
 
-- 本地 workspace 点击移除后会调用 `releaseWorkspacePreparation({ workspacePath, provider })`。
-- 远程 workspace 点击移除后会调用 `releaseWorkspacePreparation({ workspacePath, workspaceIdentity, provider })`。
-- 释放失败时项目仍从侧边栏移除，并通过 UI logger 记录错误。
-- workspace 存在运行中 task/draft runtime 时，点击移除会先弹确认。
-- 用户取消运行中确认时，不关闭 tab，不释放 runtime，不失效 task cache。
-- 用户确认运行中确认时，继续关闭 tab、释放 runtime 并失效 task cache。
-- 移除后异步发现 `nul` / `con.md` / `COM1.json` 等 Windows 保留设备名文件时，通过 toast 提示风险。
-- Windows 保留设备名扫描默认跳过高成本目录，且失败不影响移除流程。
+- Removing a local workspace calls `releaseWorkspacePreparation({ workspacePath, provider })`.
+- Removing a remote workspace calls `releaseWorkspacePreparation({ workspacePath, workspaceIdentity, provider })`.
+- If release fails, the project is still removed from the sidebar and the error is logged via the UI logger.
+- With a running task/draft runtime in the workspace, clicking remove shows a confirmation first.
+- If the user cancels the running-chat confirmation, the tab is not closed, the runtime is not released and the task cache is not invalidated.
+- If the user confirms, the tab is closed, the runtime released and the task cache invalidated.
+- After removal, asynchronously discovering Windows reserved device-name files such as `nul` / `con.md` / `COM1.json` shows a risk toast.
+- The reserved-device-name scan skips high-cost directories by default and its failure does not affect the removal flow.

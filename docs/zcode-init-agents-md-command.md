@@ -14,7 +14,7 @@
 
 | Round | Question | User answer | Boundary fixed | Follow-up needed |
 | --- | --- | --- | --- | --- |
-| 1 | Should ZCode mirror Claude-style `/init`, but target ZCode instructions? | "加一下" after the proposed plan. | Implement `/init` as a built-in prompt command that creates `AGENTS.md`. | no |
+| 1 | Should ZCode mirror Claude-style `/init`, but target ZCode instructions? | "加一下" ("add it") after the proposed plan. | Implement `/init` as a built-in prompt command that creates `AGENTS.md`. | no |
 | 1 | Is `AGNENTS.md` intended literally? | Not corrected after the plan; project source of truth is `AGENTS.md`. | Treat `AGNENTS.md` as a typo and create/update `AGENTS.md`. | no |
 | 1 | Should v1 include user-global instructions? | No explicit request. | v1 targets the current workspace root only. | yes, future `/init --user` can be specified later. |
 

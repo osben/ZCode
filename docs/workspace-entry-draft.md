@@ -1,69 +1,74 @@
-# Workspace / App 入口草稿态
+# Workspace / App entry draft state
 
 ## Feature Summary
 
-| Field                 | Value                                                                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Change                | app 冷启动和 workspace 级打开入口不再自动选择上次 session，只进入空草稿                                                    |
-| User-visible surfaces | Desktop 启动恢复、打开本地/远程 workspace、侧栏 workspace 行、系统 workspace focus                                         |
-| Existing docs         | `docs/conversation-session-case-catalog.md` TSL、`docs/v4-refactor/06-ui.md`                                               |
-| State owners          | tab/workspace 激活由 tab store 持有；草稿/`activeTaskId` 由 workspace Zustand 桶持有；pane/group 是 renderer-local UI 状态 |
-| Out of scope          | 显式点击历史 session、通知/task deep link、session 内容恢复、CLI projection、手机 replayable gap/snapshot                  |
+| Field                 | Value                                                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Change                | App cold launch and workspace-level open entries no longer auto-select the last session; they only enter an empty draft                |
+| User-visible surfaces | Desktop launch restore, opening a local/remote workspace, sidebar workspace row, system workspace focus                                |
+| Existing docs         | `docs/conversation-session-case-catalog.md` TSL, `docs/v4-refactor/06-ui.md`                                                           |
+| State owners          | Tab/workspace activation: tab store. Draft and `activeTaskId`: workspace Zustand bucket. Pane/group: renderer-local UI state           |
+| Out of scope          | Explicit history-session click, notification/task deep link, session content restore, CLI projection, mobile replayable gap/snapshot  |
 
 ## Clarification Log
 
-| Round | Question                                             | User answer          | Boundary fixed                                   | Follow-up needed |
-| ----- | ---------------------------------------------------- | -------------------- | ------------------------------------------------ | ---------------- |
-| 1     | 打开 workspace 或启动 app 是否需要默认打开 session？ | 不需要，只需要草稿态 | workspace/app 级入口必须保持 `activeTaskId=null` | no               |
-| 2     | 远程连接成功后的 workspace 切换期间，右侧是否允许先空白再显示草稿？ | 不允许；仍需激活远程 workspace，但右侧应直接进入新建对话 | 远程 tab 激活与目标 workspace 的 `startDraft` 必须属于同一提交阶段，列表刷新不得夹在两者之间 | no |
-| 3     | 从侧栏激活断连 remote workspace 时，连接期间右侧显示什么？ | 连接期间保留当前右侧内容；连接 ready 后再切换为远程新建对话 | 不得先激活缺少 `remoteSessionId` 的断连 tab；连接、identity 和 services ready 后再原子提交 tab + draft | no |
-| 4     | 从远程历史入口打开断连 workspace 时，成功后是否只更新 tab？ | 不可以；与侧栏重连一致，ready 后必须进入目标 workspace 的新建对话 | 历史入口必须传递统一的 workspace 激活回调；顺序固定为补齐 tab → 激活精确 identity → `startDraft` → pinned/timeline 刷新 | no |
+| Round | Question                                                                 | User answer                                                                             | Boundary fixed                                                                                                          | Follow-up needed |
+| ----- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 1     | Should opening a workspace or launching the app open a session by default? | No, only the draft state                                                             | Workspace/app-level entries keep `activeTaskId=null`                                                                    | no               |
+| 2     | While switching to a remote workspace after a successful connection, may the right side go blank before the draft? | No; still activate the remote workspace, but the right side goes straight to a new conversation | Remote tab activation and the target workspace's `startDraft` belong to one commit stage; a list refresh must not sit between them | no |
+| 3     | Activating a disconnected remote workspace from the sidebar: what does the right side show while connecting? | Keep the current right-side content; switch to the remote new conversation once the connection is ready | Never activate a disconnected tab lacking `remoteSessionId`; commit tab + draft atomically after connection, identity and services are ready | no |
+| 4     | Opening a disconnected workspace from the remote history entry: only update the tab on success? | No; as with sidebar reconnect, enter the target workspace's new conversation once ready | The history entry passes the shared workspace-activation callback; order is fixed: complete tab -> activate exact identity -> `startDraft` -> pinned/timeline refresh | no |
 
 ## Boundary Decisions
 
-### 默认本地项目失效（2026-09-15）
+### Unavailable default local project (2026-09-15)
 
-启动恢复选中的本地项目目录不存在、不是目录或不可访问时，默认进入「任务」的无项目草稿，
-不将不可用项目设为活动工作区。失效项目入口及历史任务保留；不删除项目、不创建正式 session。
-草稿沿用 `fileService.ensureConversationWorkspace()` 返回的 app-owned cwd，归属为
-`projectId=null`、`activeTaskId=null`。
+When the local project directory selected by launch restore does not exist, is not a directory or is
+inaccessible, the app enters the project-less draft of "Tasks" and does not make the unavailable
+project the active workspace. The unavailable project entry and its history tasks are kept; no
+project is deleted and no formal session is created. The draft uses the app-owned cwd returned by
+`fileService.ensureConversationWorkspace()`, owned by `projectId=null`, `activeTaskId=null`.
 
-恢复选择仍由 `restorePersistedRemoteWorkspaceSessions` 一次计算并提交给 TabStore：
+The restore selection is still computed once by `restorePersistedRemoteWorkspaceSessions` and
+submitted to TabStore:
 
 ```text
-Main 检查默认本地目录 → unavailableWorkspacePath
-Host 解析无项目 cwd → Renderer 计算恢复列表与活动索引
-  → 首帧激活无项目工作区 → 现有 primary draft / composer
-  → active-first 后补失效入口，保持用户当前选择
+Main checks the default local directory -> unavailableWorkspacePath
+Host resolves the project-less cwd -> Renderer computes restore list and active index
+  -> first frame activates the project-less workspace -> existing primary draft / composer
+  -> active-first, then append the unavailable entry, keeping the user's current selection
 ```
 
-同时覆盖新版 `lastActiveWorkspace` 和旧版列表恢复，列表顺序不影响兜底选择。
-无项目目录解析失败时保留原有错误/只读恢复能力，不把失效目录冒充可发送草稿。
-有效本地目录及显式历史任务导航维持既有语义；远程同路径不使用本地不可用标记。
-本次只改变桌面启动导航，不改 Host/CLI 状态归属、持久化 schema，也不改手机 shared-host
-attachment 和 `web-remote-replayable` 恢复边界。
+Both the new `lastActiveWorkspace` and the legacy list restore are covered; list order does not
+affect the fallback selection. If the project-less directory fails to resolve, the existing
+error/read-only restore ability is kept and the unavailable directory is never passed off as a
+sendable draft. Valid local directories and explicit history-task navigation keep existing
+semantics; a remote workspace with the same path does not use the local unavailable marker. Only
+desktop launch navigation changes: no Host/CLI state ownership, persistence schema, mobile
+shared-host attachment or `web-remote-replayable` recovery boundary changes.
 
-验证：恢复函数单测覆盖新版/旧版、顺序、active-first 补齐和用户新选择；Desktop E2E
-完整重启后断言无项目草稿可输入，失效目录仍不存在，刷新后仍可输入。
+Verification: unit tests of the restore function cover new/legacy, order, active-first completion
+and the user's newer selection; a Desktop E2E full restart asserts the project-less draft accepts
+input, the unavailable directory still does not exist, and input still works after refresh.
 
-| Boundary         | Decision                                             | Includes                                  | Excludes / prunes               | Source                |
-| ---------------- | ---------------------------------------------------- | ----------------------------------------- | ------------------------------- | --------------------- |
-| app 冷启动       | 恢复 workspace tab，但不恢复可见 session owner       | 本地、SSH/WSL/Docker tab                  | 不删除历史 session              | user                  |
-| workspace 级入口 | 每次显式打开/激活 workspace 都进入草稿               | 文件夹选择、workspace 行、系统 focus      | 显式 session/task 导航          | user                  |
-| renderer reload  | 保留当前 session 的 pane 恢复                        | 同一 renderer 刷新、输出中续流            | app 进程冷启动                  | existing M3 contract  |
-| 首次执行         | 首次发送或必须依附 session 的命令才创建/绑定 session | draft promotion                           | 启动/打开时隐藏创建正式 session | conversation protocol |
-| 多端             | workspace 入口语义一致；delivery profile 不变        | desktop continuous、web remote replayable | relay/main 持有 session 状态    | architecture          |
-| 远程连接完成     | ready 前保留当前右侧；ready 后激活远程 tab 并立即切换该 workspace 的草稿归属 | SSH/WSL/Docker/Server 首次连接与断连 tab 复用 | 提前激活 `remote-waiting` tab；等 pinned/timeline 刷新后才 `startDraft` | user |
+| Boundary                  | Decision                                                                 | Includes                                      | Excludes / prunes                                                    | Source                |
+| ------------------------- | ------------------------------------------------------------------------ | --------------------------------------------- | -------------------------------------------------------------------- | --------------------- |
+| App cold launch           | Restore workspace tabs, but not a visible session owner                  | Local, SSH/WSL/Docker tabs                    | History sessions are not deleted                                     | user                  |
+| Workspace-level entry     | Every explicit open/activate of a workspace enters the draft             | Folder picker, workspace row, system focus    | Explicit session/task navigation                                     | user                  |
+| Renderer reload           | Keep the current session's pane restore                                  | Same-renderer refresh, streaming continuation | App process cold launch                                              | existing M3 contract  |
+| First execution           | Only the first send or a command needing a session creates/binds one    | Draft promotion                               | Hidden creation of a formal session at launch/open                   | conversation protocol |
+| Multi-client              | Workspace entry semantics are the same; delivery profile unchanged       | desktop continuous, web remote replayable     | relay/main holding session state                                     | architecture          |
+| Remote connection done    | Before ready, keep the current right side; after ready, activate the remote tab and immediately switch that workspace's draft ownership | SSH/WSL/Docker/Server first connect and disconnected-tab reuse | Activating a `remote-waiting` tab early; calling `startDraft` only after pinned/timeline refresh | user |
 
 ## Domain Scope And State Owners
 
-| Domain                        | Include?       | Authority / evidence                                                         |
-| ----------------------------- | -------------- | ---------------------------------------------------------------------------- |
-| Conversation/session behavior | yes            | `activeTaskId`、draft DOM、首次 `createSession` command                      |
-| UI shell / persistence        | yes            | tab activation、pane layout、workbench group、last-session renderer storage  |
-| Workspace identity            | yes            | `workspaceKey = workspaceIdentity?.trim() \|\| workspacePath`               |
-| Mobile replayable             | representative | 只证明入口不选 session；不改变 snapshot/gap/owner/lease                      |
-| Provider/runtime/queue        | pruned         | 不改变首次发送后的既有行为                                                   |
+| Domain                        | Include?       | Authority / evidence                                                          |
+| ----------------------------- | -------------- | ----------------------------------------------------------------------------- |
+| Conversation/session behavior | yes            | `activeTaskId`, draft DOM, first `createSession` command                      |
+| UI shell / persistence        | yes            | Tab activation, pane layout, workbench group, last-session renderer storage   |
+| Workspace identity            | yes            | `workspaceKey = workspaceIdentity?.trim() \|\| workspacePath`                |
+| Mobile replayable             | representative | Only proves the entry does not select a session; snapshot/gap/owner/lease unchanged |
+| Provider/runtime/queue        | pruned         | Behavior after the first send is unchanged                                    |
 
 ```text
 app cold launch / open workspace
@@ -93,24 +98,24 @@ remote workspace selection / disconnected workspace reconnect
 
 ## Candidate Combinations And Pruning
 
-| Candidate ID | State                                    | Event                                 | Expected effect                                          | Status   | Notes                                        |
-| ------------ | ---------------------------------------- | ------------------------------------- | -------------------------------------------------------- | -------- | -------------------------------------------- |
-| WED-01       | persisted workspace + last session       | app cold launch                       | workspace visible, primary draft, no session selected    | accepted | stale pane/group owner cannot override draft |
-| WED-02       | workspace has historical sessions        | workspace-level open/activate         | target workspace draft                                   | accepted | exact identity bucket only                   |
-| WED-03       | historical session exists                | explicit session click/task deep link | open target session                                      | accepted | not a workspace-only entry                   |
-| WED-04       | session is running in current renderer   | renderer reload                       | restore the selected session and continue projection     | accepted | preserves M3 refresh continuity              |
-| WED-05       | mobile remote attachment                 | workspace-only switch                 | draft without changing replayable recovery               | accepted | shared-host boundary unchanged               |
-| WED-06       | 当前右侧正在显示本地或其它 workspace；目标远程 workspace 尚未连接 | 选择远程目录、点击侧栏断连 workspace，或从远程历史入口打开断连 workspace | 连接期间保留当前右侧；services ready 后先补齐 tab，再激活精确远程 workspace，并在任务列表刷新完成前同步进入该 workspace 草稿 | accepted | 禁止暴露 `remote-waiting` active tab；三条入口必须复用同一 tab activation 与 draft owner 提交语义 |
-| WED-P01      | provider/model/theme/locale combinations | any WED entry                         | same navigation result                                   | pruned   | these dimensions do not own selection        |
-| WED-P02      | queue/goal/compact/fork/tool state       | app/workspace entry                   | historical session remains in history, not auto-selected | pruned   | no command is sent to that session           |
+| Candidate ID | State                                                              | Event                                                                                                      | Expected effect                                                                                                                                                  | Status   | Notes                                                                                                                      |
+| ------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| WED-01       | persisted workspace + last session                                 | app cold launch                                                                                            | workspace visible, primary draft, no session selected                                                                                                            | accepted | stale pane/group owner cannot override draft                                                                               |
+| WED-02       | workspace has historical sessions                                  | workspace-level open/activate                                                                              | target workspace draft                                                                                                                                           | accepted | exact identity bucket only                                                                                                 |
+| WED-03       | historical session exists                                          | explicit session click/task deep link                                                                      | open target session                                                                                                                                              | accepted | not a workspace-only entry                                                                                                 |
+| WED-04       | session is running in current renderer                             | renderer reload                                                                                            | restore the selected session and continue projection                                                                                                             | accepted | preserves M3 refresh continuity                                                                                            |
+| WED-05       | mobile remote attachment                                           | workspace-only switch                                                                                      | draft without changing replayable recovery                                                                                                                       | accepted | shared-host boundary unchanged                                                                                             |
+| WED-06       | right side shows a local or other workspace; target remote workspace not connected | select a remote directory, click a disconnected sidebar workspace, or open a disconnected workspace from the remote history entry | keep the current right side while connecting; once services are ready, complete the tab, activate the exact remote workspace and enter that workspace's draft synchronously before the task list refresh completes | accepted | never expose a `remote-waiting` active tab; all three entries reuse the same tab activation and draft-owner commit semantics |
+| WED-P01      | provider/model/theme/locale combinations                           | any WED entry                                                                                              | same navigation result                                                                                                                                           | pruned   | these dimensions do not own selection                                                                                      |
+| WED-P02      | queue/goal/compact/fork/tool state                                 | app/workspace entry                                                                                        | historical session remains in history, not auto-selected                                                                                                         | pruned   | no command is sent to that session                                                                                         |
 
 ## Accepted Cases And Matrix Backfill
 
-| Case ID | Setup                                    | Action                             | Assertions                                                               | Evidence                            | E2E status |
-| ------- | ---------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------ | ----------------------------------- | ---------- |
-| TSL08   | persisted last-session/group/pane exists | cold launch or workspace-only open | `activeTaskId=null`; one primary draft; no restored session subscription | UI + renderer store + command trace | planned    |
-| TSL09   | current renderer shows a running session | reload renderer                    | same session is rebound; projection continues                            | UI + subscription/session id        | planned    |
-| TSL10   | draft or another workspace is visible    | click a historical session         | target session opens; exact workspace identity selected                  | UI + renderer store                 | planned    |
+| Case ID | Setup                                                                                  | Action                                                        | Assertions                                                                                                                                                                  | Evidence                                             | E2E status   |
+| ------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ------------ |
+| TSL08   | persisted last-session/group/pane exists                                               | cold launch or workspace-only open                            | `activeTaskId=null`; one primary draft; no restored session subscription                                                                                                    | UI + renderer store + command trace                  | planned      |
+| TSL09   | current renderer shows a running session                                               | reload renderer                                               | same session is rebound; projection continues                                                                                                                               | UI + subscription/session id                         | planned      |
+| TSL10   | draft or another workspace is visible                                                  | click a historical session                                    | target session opens; exact workspace identity selected                                                                                                                     | UI + renderer store                                  | planned      |
 | TSL35   | local/other workspace conversation is visible; target remote workspace is disconnected | select a remote directory or click the disconnected workspace | current conversation remains mounted while connecting; after services become ready, exact remote tab and its primary draft become visible before pinned/timeline refresh settles | UI + tab/Zustand ordering + deferred connect/refresh | covered-unit |
 
-E2E 使用无 provider 请求的启动/导航 fixture；TSL08 在首次发送前必须断言没有 `createSession` conversation command。TSL09 继续使用 controlled stream 证明 reload 续流，不把 app 冷启动与 renderer reload 混成同一等价类。
+E2E uses a launch/navigation fixture without provider requests. TSL08 must assert no `createSession` conversation command before the first send. TSL09 keeps using a controlled stream to prove reload continuation; app cold launch and renderer reload are not merged into one equivalence class.

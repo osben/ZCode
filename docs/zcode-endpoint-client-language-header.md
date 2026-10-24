@@ -1,60 +1,60 @@
 # ZCode Endpoint Client Language Header
 
-## 背景
+## Background
 
-ZCode endpoint 请求的 `X-Client-Language` 以前取进程的 `Intl.DateTimeFormat().resolvedOptions().locale`。
-App 从 Finder/Dock 启动时进程没有 `LANG`，Node ICU 回退为 `en-US`；即使有 `LANG`，它也只代表系统语言，
-不跟随界面语言设置。结果是 `billing/balance`、`client/configs` 等请求在中文界面下仍发送 `en-US`。
+The `X-Client-Language` header of ZCode endpoint requests used to take the process's
+`Intl.DateTimeFormat().resolvedOptions().locale`. When the App starts from Finder/Dock the process has
+no `LANG` and Node ICU falls back to `en-US`; even with `LANG` it reflects only the system language
+and does not follow the UI language setting. As a result `billing/balance`, `client/configs` and
+similar requests still sent `en-US` under a Chinese UI.
 
-`marketing/touch` 不受影响：UI 把 `useZCodeIntl().locale` 作为参数传给服务，服务显式写入该 header，
-覆盖 `NodeApiClient` 的默认值。
+`marketing/touch` is unaffected: the UI passes `useZCodeIntl().locale` to the service, which writes
+the header explicitly and overrides the `NodeApiClient` default.
 
-## 状态 owner
+## State owner
 
-实时界面语言的 owner 是 UI 状态；Main 通过 `SetApplicationLocale` 立即收到，保存在
-`currentApplicationLocale`（菜单、托盘等已经使用它）。`setting.json` 的 `locale` 只用于重启恢复：
-写入是异步的，失败不阻断 UI，所以不能作为实时请求的来源。
+The owner of the live UI language is UI state. Main receives it immediately through
+`SetApplicationLocale` and keeps it in `currentApplicationLocale` (already used by menus, tray, etc.).
+The `locale` in `setting.json` is only for restart recovery: writing is asynchronous and its failure
+does not block the UI, so it cannot be the source for live requests.
 
 ```text
-UI locale ──立即──> Main.currentApplicationLocale（实时 owner）
-   │                  ├─ Main 自身请求：client/configs 灰度、帮助配置
-   │                  ├─ spawn Host：InitLocal.locale（初值）
-   │                  └─ 切换时：向所有窗口 Host post application-locale-changed
-   │                        └─ Host 内存 clientLocale ──同步读──> NodeApiClient 默认来源头
-   └─异步、可失败──> setting.json（重启恢复）
+UI locale --immediately--> Main.currentApplicationLocale (live owner)
+   |                         |- Main's own requests: client/configs gray rollout, help config
+   |                         |- spawn Host: InitLocal.locale (initial value)
+   |                         '- on change: post application-locale-changed to every window's Host
+   |                               '- Host in-memory clientLocale --sync read--> NodeApiClient default source header
+   '--async, may fail--> setting.json (restart recovery)
 ```
 
-## 规则
+## Rules
 
-- Host 只读内存值，不做 I/O；语言读取不会影响请求的取消与超时。
-- InitLocal 与变更消息走同一个 utility process 端口，按发送顺序到达，初值不会覆盖较新的变更。
-- Main 启动时先读取持久化语言（缺失时用系统语言），再启动 client/configs 灰度预热，
-  预热请求不会带默认语言进入 1 小时缓存。
-- 调用方显式传入的 `X-Client-Language` 仍然优先（`marketing/touch` 行为不变）。
-- 没有收到语言时，回退到原有 `Intl` 规则，不阻断请求。
-- 远端 `zcode-server`（SSH/WSL/Docker）不注入，保持原有 `Intl` 行为；远端同步另行设计。
+- The Host reads only the in-memory value and does no I/O; reading the language does not affect request cancellation or timeout.
+- InitLocal and change messages travel over the same utility-process port and arrive in send order, so the initial value cannot overwrite a newer change.
+- At startup Main first reads the persisted language (system language if absent) and then starts the client/configs gray-rollout prewarm, so the prewarm request does not enter the 1-hour cache with the default language.
+- An explicit `X-Client-Language` passed by the caller still wins (`marketing/touch` behavior unchanged).
+- If no language has been received, fall back to the original `Intl` rule and do not block the request.
+- Remote `zcode-server` (SSH/WSL/Docker) is not injected and keeps the original `Intl` behavior; remote sync is designed separately.
 
-## 测试覆盖
+## Test coverage
 
-E2E：`packages/desktop/test/e2e/settings/settings-client-language-header.test.ts`。用 `x-request-id`
-区分 Host（`NodeApiClient`）和 Main（Electron `net`）的 `client/configs` 请求。
+E2E: `packages/desktop/test/e2e/settings/settings-client-language-header.test.ts`. It uses
+`x-request-id` to tell Host (`NodeApiClient`) from Main (Electron `net`) `client/configs` requests.
 
-| Case   | 场景                                                                 | 断言                                                           |
-| ------ | -------------------------------------------------------------------- | -------------------------------------------------------------- |
-| CLH-01 | 持久化 `en-US`（不同于启动默认 `zh-CN`）后重启 App                   | 启动预热与 Host 请求都带 `en-US`                               |
-| CLH-02 | 第二个窗口的 Host 写 `setting.json` 失败；在该窗口设置页切到 `zh-CN` | 两个窗口的 Host 与 Main 的新请求都带 `zh-CN`；磁盘仍是 `en-US` |
+| Case   | Scenario                                                                                          | Assertion                                                                                  |
+| ------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| CLH-01 | Persist `en-US` (different from the startup default `zh-CN`), then restart the App                | Startup prewarm and Host requests both carry `en-US`                                       |
+| CLH-02 | The second window's Host fails to write `setting.json`; switch to `zh-CN` on that window's settings page | New requests from both windows' Hosts and Main carry `zh-CN`; the disk still holds `en-US` |
 
-E2E 无法稳定守住的约束：
+Constraints E2E cannot hold stably:
 
-- InitLocal 初值：渲染进程挂载时会把语言同步给 Main，Main 再推给 Host，挂载后的请求看不出差别（反向修改已实测）。
-  由 `desktopWindowLifecycle.test.ts` 覆盖下发；Host 消息校验由 `hostMessagePortGuard.test.ts` 覆盖。
-- 预热晚于读取持久化语言：预热读语言前还有两次 `await`，正常时序下启动读取先完成，竞态无法复现（反向修改已实测）；
-  只靠 `main/index.ts` 中的调用顺序保证。
-- Host 初始化期间收到变更：同样会被挂载后的同步掩盖（推断，未实测）。顺序由「消息处理在任何 `await` 之前同步赋值」保证。
-- 只推给发起窗口的 Host：其他窗口的渲染进程收到语言广播后也会各自同步给 Main，用户可见行为不变（推断，未实测）。
+- InitLocal initial value: when the renderer mounts it syncs the language to Main, which pushes to Host, so post-mount requests show no difference (reverse modification verified). Delivery is covered by `desktopWindowLifecycle.test.ts`; Host message validation by `hostMessagePortGuard.test.ts`.
+- Prewarm later than reading the persisted language: there are two more `await`s before the prewarm reads the language; under normal timing the startup read completes first and the race cannot be reproduced (reverse modification verified). Guaranteed only by call order in `main/index.ts`.
+- A change received during Host initialization: also masked by the post-mount sync (inferred, not verified). Order is guaranteed by "message handling assigns synchronously before any `await`".
+- Push only to the initiating window's Host: other windows' renderers also sync to Main on receiving the language broadcast, so user-visible behavior is unchanged (inferred, not verified).
 
-## 未覆盖
+## Not covered
 
-- 远端 `zcode-server` 发起的请求。
-- `offPeakServerClient` 直接 `fetch`，仍用 `Intl` 规则。
-- CLI（`apps/zcode-cli`）的 provider endpoint routing 与 standalone Built-in 下载。
+- Requests initiated by remote `zcode-server`.
+- `offPeakServerClient` calls `fetch` directly and still uses the `Intl` rule.
+- CLI (`apps/zcode-cli`) provider endpoint routing and standalone Built-in download.
