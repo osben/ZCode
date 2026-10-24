@@ -1,61 +1,80 @@
-# 文件 Mention 稳定性与 Host 搜索
+# File Mention Stability and Host Search
 
-> 2026-09-16：Composer `@` 通过 Host 查询文件候选，不再下载完整文件索引。
+> 2026-09-16: Composer `@` queries file candidates through the Host and no longer downloads the full file
+> index.
 
-## 范围与契约
+## Scope and contract
 
-- 只迁移 `@` 文件候选的查询与索引归属；文件树、命令中心继续使用原分块列表接口。
-- 复用当前 `.zcodeignore`、目录过滤、隐藏文件、软链接规则及既有 fuzzy 匹配/排序。纯匹配算法放在 shared，UI 旧入口继续复用同一算法。
-- 新增 `IFileService.searchWorkspaceFiles({ rootPath, workspaceIdentity?, query, limit?, refresh? })`，返回 `WorkspaceFileEntry[]`。默认/最大 1000 条，空 query 仍按现有文件优先顺序，Composer 保持已有预览数量。
-- 该接口只通过现有 file RPC；不改公共 RPC、attachment、Agent 协议或 continuous/replayable 恢复语义。
+- Only the query and index ownership of `@` file candidates move; the file tree and Command Center keep using
+  the original chunked list interface.
+- Reuse the current `.zcodeignore`, directory filtering, hidden file and symlink rules, and the existing fuzzy
+  matching/ordering. The pure matching algorithm lives in shared, and the old UI entry keeps reusing the same
+  algorithm.
+- Add `IFileService.searchWorkspaceFiles({ rootPath, workspaceIdentity?, query, limit?, refresh? })`,
+  returning `WorkspaceFileEntry[]`. Default/max 1000 entries; an empty query keeps the existing
+  files-first ordering, and the Composer keeps its existing preview count.
+- The interface goes only through the existing file RPC; the public RPC, attachment, Agent protocol and
+  continuous/replayable recovery semantics are unchanged.
 
-## 状态、缓存与时序
+## State, cache and sequence
 
 ```text
-Renderer（关键词、当前查询结果、错误态）
+Renderer (keyword, current query result, error state)
     -> file.searchWorkspaceFiles(query, limit, workspaceIdentity)
-    -> workspace 所在 Host（文件扫描/索引的唯一 owner）
-       -> .zcodeignore + 60s 索引缓存 + 有界候选匹配
-    <- 至多 limit 条候选
+    -> Host of the workspace (the only owner of file scanning/indexing)
+       -> .zcodeignore + 60s index cache + bounded candidate matching
+    <- at most limit candidates
 
-query / workspace / service / enabled 改变
-    -> 旧查询结果失效 -> 仅最新查询可更新面板
+query / workspace / service / enabled changes
+    -> old query result invalidated -> only the latest query may update the panel
 
-loaded + 非空 query 无命中
-    -> 本次 query 最多一次 refresh:true -> Host 绕过缓存重新扫描
-error -> 停止自动请求 -> 关闭再打开/切换 workspace 或 service 才可恢复
+loaded + non-empty query with no hit
+    -> at most one refresh:true for this query -> Host bypasses the cache and rescans
+error -> stop automatic requests -> only closing and reopening, or switching workspace or service, recovers
 ```
 
-- 缓存归属 file service 实例，按 `workspaceIdentity?.trim() || rootPath` 隔离，并校验 rootPath 与 `.zcodeignore` 指纹。索引短 TTL 60s 与既有 Host 策略一致；同一 key 的扫描去重；缓存有数量上限，移除过期条目。
-- 规则修改后下次查询即按新规则执行；refresh 不能被旧缓存吞掉，旧扫描完成不能覆盖后发扫描。
-- 关闭面板清理 Renderer 查询/错误状态；重新打开请求 Host。UI 不再持有完整候选数组或文件搜索 Worker。
-- Host 分批执行候选构建和匹配，批次间让出事件循环；查询结果受数量上限约束，输入不承担全量索引的传输/解码。
-- 本地和远程均使用当前 workspace 对应的 file service；同路径不同 identity、不同 service 不共享缓存或在途查询。手机复用同一 hook 与 RPC，不另建 Host。
+- The cache belongs to the file service instance, is isolated by `workspaceIdentity?.trim() || rootPath`, and
+  validates rootPath and the `.zcodeignore` fingerprint. The index short TTL is 60s, consistent with the
+  existing Host policy; scans for the same key are deduplicated; the cache has a size cap and drops expired
+  entries.
+- After a rule change the next query runs with the new rules; a refresh must not be swallowed by an old cache,
+  and a finishing old scan must not overwrite a later scan.
+- Closing the panel clears the Renderer query/error state; reopening requests the Host. The UI no longer holds
+  the full candidate array or a file search Worker.
+- The Host builds candidates and matches in batches, yielding the event loop between batches; query results are
+  bounded by the count cap, and the input does not bear the transfer/decoding of a full index.
+- Local and remote both use the file service of the current workspace; the same path with a different identity
+  or service shares neither cache nor in-flight queries. Mobile reuses the same hook and RPC and builds no
+  separate Host.
 
-## 影响简报
+## Impact brief
 
-| 项目              | 结论                                                                                                                                   |
+| Item              | Conclusion                                                                                                                             |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 能力/层级         | Composer 文件引用；option-source、缓存 owner 迁移                                                                                      |
-| UI Surface Matrix | 桌面/手机 Composer `@` -> MentionPlugin -> useFileMentionProvider -> file service；输入/展示归 UI，索引归 Host，选中后的 Markdown 不变 |
-| 共享与差异        | `.zcodeignore` 和匹配算法共享；文件树/命令中心保留全量 packed+Worker 数据路径                                                          |
-| must-inspect      | file service 接口、索引 owner、provider 最新结果/错误态、跨 workspace 隔离                                                             |
-| invariant-only    | RPC 协议、其余 mention 分组、文件树/命令中心、桌面 continuous/手机 replayable                                                          |
-| 状态与提交        | Host 内存索引；UI 有界结果；选中后的 canonical mention 及发送行为不变，无新增持久化                                                    |
-| Codegraph         | useFileMentionProvider -> MentionPlugin -> LexicalChatInput（深度 2）；服务列表接口代码以快进后的磁盘为准，索引正在重建                |
-| 图谱漂移/更新     | 现有 @ surface 缺少文件索引 owner；补充 Host 搜索 service 节点及 options-from 关系                                                     |
-| 未决问题          | 无；本会话已确认仅调整 @ 搜索，公共 RPC 不变                                                                                           |
+| Capability/layer  | Composer file reference; option-source, cache owner migration                                                                          |
+| UI Surface Matrix | Desktop/mobile Composer `@` -> MentionPlugin -> useFileMentionProvider -> file service; input/display belong to the UI, the index to the Host, and the Markdown after selection is unchanged |
+| Shared vs divergent | `.zcodeignore` and the matching algorithm are shared; the file tree/Command Center keep the full packed+Worker data path             |
+| must-inspect      | file service interface, index owner, provider latest-result/error state, cross-workspace isolation                                     |
+| invariant-only    | RPC protocol, the other mention groups, file tree/Command Center, desktop continuous / mobile replayable                               |
+| State and commit  | Host in-memory index; bounded UI result; the canonical mention after selection and the send behavior are unchanged, no new persistence |
+| Codegraph         | useFileMentionProvider -> MentionPlugin -> LexicalChatInput (depth 2); the service list interface code follows the fast-forwarded disk, and the index is being rebuilt |
+| Graph drift/update | The existing @ surface lacks a file-index owner; add the Host search service node and options-from relation                          |
+| Open questions    | None; this session confirmed only the @ search is adjusted, the public RPC is unchanged                                                |
 
-## 验收与测试计划
+## Acceptance and test plan
 
-| 用例  | 设置与操作                                            | 断言/证据                                                             |
-| ----- | ----------------------------------------------------- | --------------------------------------------------------------------- |
-| MFH01 | 大工作区打开 @、搜索、选择；桌面宽度和手机宽度        | 搜索接口返回有界结果，不调用 length/range；文件可选且输入响应；UI E2E |
-| MFH02 | 同一索引查询空串/名称/路径/中文/大小写/无命中         | 与现有 fuzzy 排序一致；服务+算法单测                                  |
-| MFH03 | 无命中后外部新建文件，再查询/补扫                     | refresh 绕过缓存；服务和 hook 单测                                    |
-| MFH04 | 延迟响应期间改变关键词、identity、service，或关闭面板 | 旧结果不得覆盖；hook 单测                                             |
-| MFH05 | 查询报错后输入更多文字                                | 无重试循环；关闭重开恢复；hook 单测                                   |
-| MFH06 | 改 .zcodeignore、两个 service/identity 使用相同路径   | 新规则生效，隔离成立；服务单测                                        |
-| MFH07 | 文件树与命令中心原接口                                | 分块返回及 shared 匹配兼容；既有单测                                  |
+| Case  | Setup and action                                                  | Assertion/evidence                                                              |
+| ----- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| MFH01 | Open @ in a large workspace, search, select; desktop and mobile width | The search interface returns a bounded result, no length/range calls; the file can be selected and input stays responsive; UI E2E |
+| MFH02 | Query the same index with empty/name/path/Chinese/case/no hit     | Consistent with the existing fuzzy ordering; service + algorithm unit tests     |
+| MFH03 | After a no-hit, create a file externally, then query/rescan       | refresh bypasses the cache; service and hook unit tests                         |
+| MFH04 | Change keyword, identity, service or close the panel during a delayed response | A stale result must not overwrite; hook unit test                   |
+| MFH05 | Type more text after a query error                                | No retry loop; close and reopen recovers; hook unit test                        |
+| MFH06 | Change .zcodeignore; two services/identities with the same path   | The new rule takes effect, isolation holds; service unit test                   |
+| MFH07 | Original file tree and Command Center interfaces                  | Chunked returns and shared matching stay compatible; existing unit tests        |
 
-已确认边界：保留空 query、数量、排序、失败终态、miss-refresh；不新增持久索引、文件监听系统或搜索 UI。主题与语言不改变语义；使用同一界面和 canonical mention，重点验证查询契约与桌面/手机交互。E2E 新用例保留 manual-review/pending，推广/CI 准入按既有流程，不在本次自动转正。
+Confirmed boundary: keep the empty query, count, ordering, terminal failure state and miss-refresh; no new
+persistent index, file watcher system or search UI. Theme and language do not change the semantics; the same UI
+and canonical mention are used, and the focus is the query contract and desktop/mobile interaction. The new E2E
+case stays manual-review/pending; promotion/CI admission follows the existing process and is not auto-promoted
+here.

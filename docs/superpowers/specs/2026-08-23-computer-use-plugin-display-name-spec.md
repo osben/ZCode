@@ -1,47 +1,47 @@
-# Computer Use 插件展示名规范
+# Computer Use Plugin Display Name Spec
 
-## 背景
+## Background
 
-CUA 插件的历史 manifest 名称是 `zcode-cua`，而 Browser Use 的内部 slug 是
-`browser-use`。当前官方目录已经把 CUA 的展示名设为 `Computer Use`，但已安装插件、
-能力分组和部分确认文案仍直接把旧 manifest 名称格式化成 `Zcode Cua`，造成两个官方
-插件的用户可见命名风格不一致。
+The CUA plugin's historical manifest name is `zcode-cua`, while Browser Use's internal slug is `browser-use`.
+The official catalog already sets CUA's display name to `Computer Use`, but installed plugins, capability
+groups and some confirmation copy still formatted the old manifest name directly as `Zcode Cua`, making the
+user-visible naming of the two official plugins inconsistent.
 
-## 目标
+## Goals
 
-- 所有用户可见的 CUA 插件名称统一使用 `Computer Use`；中文使用 `电脑控制`。
-- 需要 slug 的用户可见上下文使用 `computer-use`（例如 MCP server 名称），不再把
-  `zcode-cua` 当作产品名称展示。
-- model-facing Skill 的 canonical name 使用 `computer-use`，qualified name 为
-  `computer-use:computer-use`；producer 与 consumer 的 Skill 目录、同步脚本和 provenance
-  必须保持同名。
-- 保持 `@zcode/zcode-cua` 包名、producer 仓库、producer pin、源码路径和 macOS Helper
-  bundle identity 不变；本次不提供旧插件 ID 或旧 Skill 名称的兼容别名。
+- Every user-visible CUA plugin name uses `Computer Use`; Chinese uses `电脑控制`.
+- User-visible contexts that need a slug use `computer-use` (for example the MCP server name); `zcode-cua` is
+  no longer shown as a product name.
+- The model-facing Skill canonical name is `computer-use`, with qualified name `computer-use:computer-use`;
+  the producer and consumer Skill directories, sync scripts and provenance must keep the same name.
+- The `@zcode/zcode-cua` package name, producer repository, producer pin, source paths and the macOS Helper
+  bundle identity are unchanged; no compatibility alias for the old plugin ID or old Skill name is provided.
 
-## 方案
+## Design
 
-1. 继续以 official marketplace listing 的 `displayName`/`displayNameI18n` 作为展示名
-   权威来源，不在 manifest 中复制一套会与目录分叉的展示字段。
-2. 设置页的已安装插件列表、面包屑、卸载确认、Skills/Commands/Subagents/Hooks/MCP
-   能力分组都通过同一套 listing display-name 解析逻辑展示；没有 listing 的第三方
-   插件继续按原 slug 格式化降级。
-3. CUA 仓库只调整面向用户的插件标题、README/launcher 日志等文案，并将 model-facing
-   Skill 从 `zcode-computer-use` 重命名为 `computer-use`；manifest 的 `name: computer-use`、
-   `mcpServers.computer-use`、包名和运行时协议字段保持不变。
+1. The official marketplace listing's `displayName`/`displayNameI18n` stays the authoritative source of the
+   display name; the manifest does not duplicate display fields that could diverge from the catalog.
+2. The settings page's installed plugin list, breadcrumbs, uninstall confirmation, and the
+   Skills/Commands/Subagents/Hooks/MCP capability groups all resolve names through the same listing
+   display-name logic; third-party plugins without a listing keep degrading to the original slug formatting.
+3. The CUA repository changes only user-facing plugin titles, README/launcher log copy, and renames the
+   model-facing Skill from `zcode-computer-use` to `computer-use`; the manifest `name: computer-use`,
+   `mcpServers.computer-use`, the package name and runtime protocol fields are unchanged.
 
-## 不变量
+## Invariants
 
-- 安装、启停、卸载、更新、权限 broker 注入和 MCP runtime namespace 仍按
-  `computer-use@zcode-plugins-official` 与 `plugin:computer-use:computer-use` 关联。
-- SkillPort 发现的官方 Skill 必须是 `computer-use:computer-use`；不得继续发布
-  `zcode-cua:zcode-computer-use`，也不得同时暴露两个官方 Skill。
-- 展示名变更不得改变桌面端 continuous 或 Web remote replayable 的运行链路，也不得
-  改变技能、命令、subagent 的 provenance/权限判断。
-- 缺失或无法解析 marketplace listing 时，UI 必须安全回退到原有 canonical slug，
-  不伪造或硬编码其他插件的名称。
+- Install, enable/disable, uninstall, update, permission broker injection and the MCP runtime namespace are
+  still associated through `computer-use@zcode-plugins-official` and `plugin:computer-use:computer-use`.
+- The official Skill found by SkillPort must be `computer-use:computer-use`; do not keep publishing
+  `zcode-cua:zcode-computer-use`, and never expose two official Skills at once.
+- A display-name change must not alter the desktop continuous or Web remote replayable runtime chain, nor the
+  provenance/permission decisions of skills, commands and subagents.
+- When the marketplace listing is missing or cannot be resolved, the UI safely falls back to the original
+  canonical slug and never fabricates or hard-codes another plugin's name.
 
-## 验证
+## Verification
 
-- 单元测试覆盖 CUA listing 的中英文展示名解析，以及已安装插件列表使用 listing 名称。
-- z-code 运行 `pnpm typecheck`、`pnpm lint` 和受影响 UI/插件单测。
-- CUA 运行 `pnpm typecheck`、`pnpm lint` 和受影响脚本/文案契约测试。
+- Unit tests cover zh/en display-name resolution of the CUA listing and the installed plugin list using the
+  listing name.
+- z-code runs `pnpm typecheck`, `pnpm lint` and the affected UI/plugin unit tests.
+- CUA runs `pnpm typecheck`, `pnpm lint` and the affected script/copy contract tests.
