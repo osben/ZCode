@@ -412,4 +412,15 @@ it("SBV-CHILD: projects/timeline/pinned rows bind child-session selection to the
     );
     view.unmount();
   }
+  mocks.rowProps.length = 0;
+  render(
+    createElement(
+      ProjectTaskListContext.Provider,
+      { value: { isWebRemoteControl: true } },
+      createElement(ProjectTaskRows, { tasks: [parent], onSelect, refresh }),
+    ),
+  );
+  expect(mocks.rowProps.find((props) => props.task.taskId === "parent")?.onSelectChildSession).toBe(
+    undefined,
+  );
 });

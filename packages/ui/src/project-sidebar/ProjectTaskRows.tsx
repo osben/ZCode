@@ -85,7 +85,8 @@ export const ProjectTaskRow = memo(function Row({
         hoverEnabled={!presentation.isWebRemoteControl}
         sortBy="updated"
         onSelectTask={select}
-        onSelectChildSession={selectChild}
+        // Phone rows stay unchanged (spec §7: mobile child rows are out of scope).
+        onSelectChildSession={presentation.isWebRemoteControl ? undefined : selectChild}
         onRenameTask={rename}
         onSetTaskPinned={pin}
         onArchiveTask={archive}
