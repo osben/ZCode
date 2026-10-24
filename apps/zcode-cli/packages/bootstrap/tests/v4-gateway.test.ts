@@ -4958,7 +4958,7 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
     });
   });
 
-  it("exposes detached child running state and notifies the parent when child events arrive", () => {
+  it("exposes detached child running state without notifying the parent (sidebar §9)", () => {
     const host = makeHost();
     const gateway = makeGateway(host);
     const childLog = new EventLog("child-facts");
@@ -4980,11 +4980,7 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
     expect(gateway.getDetachedChildSessionFacts()[0]?.running).toBe(true);
     gateway.ingestDetachedLiveSession("child-facts", childTurnComplete(childLog), "parent-facts");
     expect(gateway.getDetachedChildSessionFacts()[0]?.running).toBe(false);
-    expect(host.childActivity).toEqual([
-      { parentSessionId: "parent-facts", childSessionId: "child-facts" },
-      { parentSessionId: "parent-facts", childSessionId: "child-facts" },
-      { parentSessionId: "parent-facts", childSessionId: "child-facts" },
-    ]);
+    expect(host.childActivity).toEqual([]);
   });
 
   it("notifies the parent for ordinary child records through the host lookup", () => {
@@ -4994,99 +4990,6 @@ describe("detached subagent child publisher 生命周期（session-idle-deactiva
     gateway.ingest("child-record", sessionCreated(new EventLog("child-record")));
     expect(host.childActivity).toEqual([
       { parentSessionId: "parent-record", childSessionId: "child-record" },
-    ]);
-  });
-
-  it("exposes only running cancellable subagent background works keyed by child session id", () => {
-    const host = makeHost();
-    const gateway = makeGateway(host);
-    expect(gateway.getCancellableSubagentBackgroundWorks("parent-unknown")).toEqual(new Map());
-
-    const log = new EventLog("parent-bg");
-    gateway.ingest("parent-bg", sessionCreated(log));
-    const backgroundTaskStarted = (taskId: string, extra: Record<string, unknown>): SessionEvent =>
-      log.push(SessionEventType.BackgroundTaskStarted, {
-        taskId,
-        taskKind: "subagent",
-        status: "running",
-        cancellable: true,
-        ...extra,
-      });
-    gateway.ingest("parent-bg", backgroundTaskStarted("work-1", { childSessionId: "child-1" }));
-    // bash kind, non-cancellable, and missing childSessionId never enter the map.
-    gateway.ingest(
-      "parent-bg",
-      backgroundTaskStarted("work-bash", { taskKind: "bash", childSessionId: "child-bash" }),
-    );
-    gateway.ingest(
-      "parent-bg",
-      backgroundTaskStarted("work-nc", { cancellable: false, childSessionId: "child-nc" }),
-    );
-    gateway.ingest("parent-bg", backgroundTaskStarted("work-noid", {}));
-    expect(gateway.getCancellableSubagentBackgroundWorks("parent-bg")).toEqual(
-      new Map([["child-1", "work-1"]]),
-    );
-
-    // Two live works claiming the same child cannot say which one owns it → omit the child.
-    gateway.ingest("parent-bg", backgroundTaskStarted("work-2", { childSessionId: "child-1" }));
-    expect(gateway.getCancellableSubagentBackgroundWorks("parent-bg")).toEqual(new Map());
-
-    // A terminal work releases the ambiguity; the still-running work owns the child again.
-    gateway.ingest(
-      "parent-bg",
-      log.push(SessionEventType.BackgroundTaskCompleted, {
-        taskId: "work-2",
-        taskKind: "subagent",
-        status: "completed",
-        cancellable: true,
-        childSessionId: "child-1",
-      }),
-    );
-    expect(gateway.getCancellableSubagentBackgroundWorks("parent-bg")).toEqual(
-      new Map([["child-1", "work-1"]]),
-    );
-  });
-
-  it("routes parent background-task lifecycle through the child-activity refresh path", () => {
-    const host = makeHost();
-    const gateway = makeGateway(host);
-    const log = new EventLog("parent-bg");
-    gateway.ingest("parent-bg", sessionCreated(log));
-    expect(host.childActivity).toEqual([]);
-    gateway.ingest(
-      "parent-bg",
-      log.push(SessionEventType.BackgroundTaskStarted, {
-        taskId: "work-1",
-        taskKind: "subagent",
-        status: "running",
-        cancellable: true,
-        childSessionId: "child-1",
-      }),
-    );
-    // ModelStreaming and non-subagent background work never enter the child-facts path.
-    gateway.ingest("parent-bg", textDelta(log, "stream"));
-    gateway.ingest(
-      "parent-bg",
-      log.push(SessionEventType.BackgroundTaskStarted, {
-        taskId: "bash-1",
-        taskKind: "bash",
-        status: "running",
-        cancellable: true,
-      }),
-    );
-    gateway.ingest(
-      "parent-bg",
-      log.push(SessionEventType.BackgroundTaskCompleted, {
-        taskId: "work-1",
-        taskKind: "subagent",
-        status: "completed",
-        cancellable: true,
-        childSessionId: "child-1",
-      }),
-    );
-    expect(host.childActivity).toEqual([
-      { parentSessionId: "parent-bg", childSessionId: "parent-bg" },
-      { parentSessionId: "parent-bg", childSessionId: "parent-bg" },
     ]);
   });
 

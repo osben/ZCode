@@ -15,11 +15,21 @@ import {
 } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
 
-/** Host-owned child-conversation facts (spec: sidebar-child-conversation-counts.md §7). */
+/** Host-owned child-conversation facts (spec: sidebar-child-conversation-counts.md §7, §9). */
 export type TaskChildSessionFacts = Pick<
   WindowHostControllerTaskRow["meta"],
-  "sideChatCount" | "subagentCount" | "runningSubagentCount" | "childSessions"
+  "sideChatCount" | "childSessions"
 >;
+
+/**
+ * The sidebar lists side chats only (§9). Older fork CLIs still send subagent rows and counters;
+ * every renderer mapping drops them here so they degrade to the same rendering.
+ */
+export function sideChatChildSessions(
+  childSessions: TaskChildSessionFacts["childSessions"],
+): TaskChildSessionFacts["childSessions"] {
+  return childSessions?.filter((child) => child.taskType === "selection_side_chat");
+}
 
 /** Live sidecars a task row carries on top of persisted task-index facts. */
 export interface WindowControllerTaskOverlay {
@@ -34,11 +44,9 @@ export function pickTaskChildSessionFacts(
 ): TaskChildSessionFacts | undefined {
   const facts: TaskChildSessionFacts = {
     ...(meta.sideChatCount !== undefined ? { sideChatCount: meta.sideChatCount } : {}),
-    ...(meta.subagentCount !== undefined ? { subagentCount: meta.subagentCount } : {}),
-    ...(meta.runningSubagentCount !== undefined
-      ? { runningSubagentCount: meta.runningSubagentCount }
+    ...(meta.childSessions !== undefined
+      ? { childSessions: sideChatChildSessions(meta.childSessions) }
       : {}),
-    ...(meta.childSessions !== undefined ? { childSessions: meta.childSessions } : {}),
   };
   return Object.keys(facts).length > 0 ? facts : undefined;
 }

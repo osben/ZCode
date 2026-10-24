@@ -197,11 +197,11 @@ describe("session tree count and erase", () => {
       const sideChats = await h.store.listSessions({ taskTypes: ["selection_side_chat"] });
       expect(sideChats.map((session) => session.id)).toEqual([createSessionId("chat")]);
       const counts = await h.store.countChildSessions({ parentIds: [parent] });
-      expect(counts.get(String(parent))).toEqual({ sideChats: 1, subagents: 1 });
+      expect(counts.get(String(parent))).toEqual({ sideChats: 1 });
       const children = await h.store.listChildSessions({ parentIds: [parent], limitPerParent: 10 });
-      expect(children.get(String(parent))?.map((child) => child.id)).toEqual(
-        expect.arrayContaining([createSessionId("chat"), createSessionId("sub")]),
-      );
+      expect(children.get(String(parent))?.map((child) => child.id)).toEqual([
+        createSessionId("chat"),
+      ]);
     } finally {
       h.close();
     }

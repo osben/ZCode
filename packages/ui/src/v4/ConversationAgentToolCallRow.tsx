@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type PointerEvent,
+} from "react";
 import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
 import { TID_V4_ROW, TID_V4_SUBAGENT_OPEN_SIDE_PANE, testId } from "@zcode/shared/test-ids";
 import { formatCompactTokenNumber } from "@/lib/tokenNumberFormat.js";
 import { getSubagentToolUsage, subscribeSubagentToolUsage } from "@/lib/messageTelemetry.js";
@@ -12,6 +21,15 @@ import { toolCallRowToLegacyNode } from "@/v4/toolCallRowAdapter.js";
 import { runUserAction } from "@/lib/userActionTelemetry.js";
 import { formatConversationWorkDuration } from "@/v4/conversationWorkDuration.js";
 import { useScopedConversationTelemetrySupervisor } from "@/v4/telemetry/ConversationTelemetryAttachment.js";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu.js";
+import { useIsMobileTextInputViewport } from "@/lib/mobileTextInput.js";
+import { useModelTrajectoryStore } from "@/store/modelTrajectoryStore.js";
+import { copyTextToClipboard } from "@/useTaskListItemContextActions.js";
 
 export function openSubagentSessionFromSummary({
   backgrounded: _backgrounded = false,
@@ -155,13 +173,46 @@ export function ConversationAgentToolCallRow({
     [canOpenChildSession, childSessionId, handleOpenChildSession],
   );
 
+  // Agent row context menu (specs/conversation-agent-row-context-menu.md): the trajectory reader
+  // reads files on this machine, so remote workspaces and phones keep the native menu.
+  const isMobileViewport = useIsMobileTextInputViewport();
+  const workspaceKey = context.workspaceIdentity?.trim() || context.workspacePath;
+  const menuEnabled = Boolean(
+    childSessionId &&
+    !isMobileViewport &&
+    !context.workspaceRemoteSessionId &&
+    !isRemoteWorkspaceIdentity(workspaceKey),
+  );
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // A text selection inside the row keeps the native menu (Copy). Decided on the right-button
+  // pointerdown, which React flushes before the contextmenu event reaches the trigger.
+  const [selectionInRow, setSelectionInRow] = useState(false);
+  const handlePointerDownCapture = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 2) return;
+    const selection = window.getSelection();
+    const row = rowRef.current;
+    setSelectionInRow(
+      Boolean(
+        selection &&
+        !selection.isCollapsed &&
+        row &&
+        selection.anchorNode &&
+        row.contains(selection.anchorNode),
+      ),
+    );
+  }, []);
+  const copyLabel = intl.formatMessage({ id: "appHeader.copySessionId" });
+
   // Agent 工具行和普通工具行同属工作流，不能在配对壳上额外加 px-4，
   // 否则会和未配对 toolCall 行产生左右缩进差异。
-  return (
+  const rowNode = (
     <div
+      ref={rowRef}
       data-row-id={item.row.rowId}
       data-conversation-selectable="true"
       data-testid={testId(TID_V4_ROW, String(item.row.rowId))}
+      onPointerDownCapture={menuEnabled ? handlePointerDownCapture : undefined}
     >
       <ToolCallBlock
         toolCallNode={toolCallNode}
@@ -179,5 +230,36 @@ export function ConversationAgentToolCallRow({
         agentUsageSummaryVersion={summaryTextVersion}
       />
     </div>
+  );
+  if (!menuEnabled || !childSessionId) return rowNode;
+  return (
+    <ContextMenu onOpenChange={setMenuOpen}>
+      <ContextMenuTrigger asChild disabled={selectionInRow}>
+        {rowNode}
+      </ContextMenuTrigger>
+      {menuOpen ? (
+        <ContextMenuContent>
+          <ContextMenuItem
+            data-agent-row-menu-trajectory={childSessionId}
+            onSelect={() =>
+              useModelTrajectoryStore.getState().requestOpen({
+                taskId: childSessionId,
+                workspaceKey,
+                title,
+                kind: "v2",
+              })
+            }
+          >
+            {intl.formatMessage({ id: "taskList.viewModelTrajectoryV2" })}
+          </ContextMenuItem>
+          <ContextMenuItem
+            data-agent-row-menu-copy-id={childSessionId}
+            onSelect={() => void copyTextToClipboard(copyLabel, childSessionId)}
+          >
+            {copyLabel}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      ) : null}
+    </ContextMenu>
   );
 }

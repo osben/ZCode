@@ -228,7 +228,8 @@ export async function listSessions(
 }
 
 /** Sidebar child facts cover exactly these task types (specs/sidebar-child-conversation-counts.md). */
-const CHILD_SESSION_TASK_TYPES = ["selection_side_chat", "subagent_child"] as const;
+// Sidebar lists side chats only (spec sidebar-child-conversation-counts §9): subagents are reached from the parent conversation.
+const CHILD_SESSION_TASK_TYPES = ["selection_side_chat"] as const;
 
 function buildChildSessionScope(parentIds: readonly SessionId[]): {
   where: string;
@@ -243,21 +244,14 @@ function buildChildSessionScope(parentIds: readonly SessionId[]): {
 export function countChildSessions(
   db: DatabaseSync,
   parentIds: readonly SessionId[],
-): Map<string, { sideChats: number; subagents: number }> {
-  const result = new Map<string, { sideChats: number; subagents: number }>();
+): Map<string, { sideChats: number }> {
+  const result = new Map<string, { sideChats: number }>();
   if (parentIds.length === 0) return result;
   const scope = buildChildSessionScope(parentIds);
   const rows = db
-    .prepare(
-      `select parent_id, task_type, count(*) as n from session where ${scope.where} group by parent_id, task_type`,
-    )
-    .all(...scope.values) as unknown as Array<{ parent_id: string; task_type: string; n: number }>;
-  for (const row of rows) {
-    const entry = result.get(row.parent_id) ?? { sideChats: 0, subagents: 0 };
-    if (row.task_type === "selection_side_chat") entry.sideChats += row.n;
-    else entry.subagents += row.n;
-    result.set(row.parent_id, entry);
-  }
+    .prepare(`select parent_id, count(*) as n from session where ${scope.where} group by parent_id`)
+    .all(...scope.values) as unknown as Array<{ parent_id: string; n: number }>;
+  for (const row of rows) result.set(row.parent_id, { sideChats: row.n });
   return result;
 }
 
@@ -281,7 +275,7 @@ export function listChildSessions(
     .all(...scope.values, limitPerParent) as unknown as SessionRow[];
   for (const row of rows) {
     const info = decodeSessionRow(row);
-    if (info.taskType !== "selection_side_chat" && info.taskType !== "subagent_child") continue;
+    if (info.taskType !== "selection_side_chat") continue;
     const parentKey = String(info.parentID);
     const bucket = result.get(parentKey) ?? [];
     if (bucket.length >= limitPerParent) continue;

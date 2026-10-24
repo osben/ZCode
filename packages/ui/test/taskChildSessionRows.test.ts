@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-// Child-conversation list shared by every sidebar view (spec: sidebar-child-conversation-counts.md
-// §4, §7): child selection carries the capability (subagent → read-only, side chat → writable),
-// the overflow row opens the parent, and expansion persists through the single localStorage owner.
+// Side-chat list shared by every sidebar view (spec: sidebar-child-conversation-counts.md §4, §7,
+// §9): side chats open writable with restricted commands, the overflow row opens the parent, each
+// row owns its context menu, and expansion persists through the single localStorage owner.
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,12 +19,25 @@ vi.mock("@/i18n/IntlProvider.js", () => ({
 vi.mock("@/lib/taskListItemPresentation.js", () => ({
   formatTaskRelativeTime: () => "1m",
 }));
+vi.mock("@/logger.js", () => ({
+  logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
 } from "@/components/TaskChildSessionRows.js";
 import { isChildSessionsExpanded } from "@/lib/childSessionExpansionPreference.js";
+
+function sideChat(sessionId: string, title: string) {
+  return {
+    sessionId,
+    title,
+    taskType: "selection_side_chat" as const,
+    lastActivityAt: 1,
+    running: false,
+  };
+}
 
 function parentTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
   return {
@@ -34,24 +47,8 @@ function parentTask(overrides: Partial<ZCodeTaskMeta> = {}): ZCodeTaskMeta {
     workspacePath: "/ws",
     createdAt: 1,
     updatedAt: 2,
-    subagentCount: 3,
-    sideChatCount: 1,
-    childSessions: [
-      {
-        sessionId: "sub-1",
-        title: "sub",
-        taskType: "subagent_child",
-        lastActivityAt: 1,
-        running: true,
-      },
-      {
-        sessionId: "side-1",
-        title: "side",
-        taskType: "selection_side_chat",
-        lastActivityAt: 1,
-        running: false,
-      },
-    ],
+    sideChatCount: 3,
+    childSessions: [sideChat("side-1", "first"), sideChat("side-2", "second")],
     ...overrides,
   } as ZCodeTaskMeta;
 }
@@ -62,7 +59,7 @@ afterEach(() => {
 });
 
 describe("TaskChildSessionRows", () => {
-  it("opens a subagent read-only, a side chat writable, and the overflow row opens the parent", () => {
+  it("opens a side chat with its capability and the overflow row opens the parent", () => {
     const onSelectSession = vi.fn();
     const onRowClick = vi.fn();
     render(
@@ -72,127 +69,63 @@ describe("TaskChildSessionRows", () => {
         createElement(TaskChildSessionRows, {
           task: parentTask(),
           expanded: true,
-          onToggle: vi.fn(),
           onSelectSession,
         }),
       ),
     );
-    fireEvent.click(screen.getByLabelText("taskList.childSubagentRowLabel:sub"));
-    expect(onSelectSession).toHaveBeenLastCalledWith(
-      "sub-1",
-      { readOnly: true, selectionSideChat: false },
-      "sub",
-    );
-    fireEvent.click(screen.getByLabelText("taskList.childSideChatRowLabel:side"));
-    expect(onSelectSession).toHaveBeenLastCalledWith(
-      "side-1",
-      { readOnly: false, selectionSideChat: true },
-      "side",
-    );
-    // 1 side chat + 3 subagents listed as 2 rows → 2 more; it opens the parent conversation.
+    fireEvent.click(screen.getByLabelText("taskList.childSideChatRowLabel:first"));
+    expect(onSelectSession).toHaveBeenLastCalledWith("side-1", { selectionSideChat: true });
+    // 3 side chats, 2 listed (summary cap) → 1 more; it opens the parent conversation.
     fireEvent.click(screen.getByText("taskList.childMoreLabel"));
-    expect(onSelectSession).toHaveBeenLastCalledWith(
-      "parent",
-      { readOnly: false, selectionSideChat: false },
-      undefined,
-    );
+    expect(onSelectSession).toHaveBeenLastCalledWith("parent", {});
     // Child clicks never select the parent row underneath.
     expect(onRowClick).not.toHaveBeenCalled();
   });
 
-  it("renders nothing without listed children", () => {
-    const { container } = render(
+  it("renders nothing without listed children or while collapsed (§9: no running-inline rows)", () => {
+    const empty = render(
       createElement(TaskChildSessionRows, {
         task: parentTask({ childSessions: [] }),
         expanded: true,
-        onToggle: vi.fn(),
         onSelectSession: vi.fn(),
       }),
     );
-    expect(container.innerHTML).toBe("");
-  });
-});
-
-describe("TaskChildSessionRows collapsed (spec §8)", () => {
-  it("keeps running children visible and the finished ones behind an expander row", () => {
-    const onToggle = vi.fn();
-    const onSelectSession = vi.fn();
-    const { container } = render(
+    expect(empty.container.innerHTML).toBe("");
+    const collapsed = render(
       createElement(TaskChildSessionRows, {
         task: parentTask(),
         expanded: false,
-        onToggle,
-        onSelectSession,
-      }),
-    );
-    const rows = [...container.querySelectorAll("[data-child-session-id]")].map((row) =>
-      row.getAttribute("data-child-session-id"),
-    );
-    expect(rows).toEqual(["sub-1"]);
-    // 1 side chat + 3 subagents, 1 shown → 3 hidden; the row expands instead of navigating.
-    const more = screen.getByText("taskList.childMoreLabel");
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(more);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-    expect(onSelectSession).not.toHaveBeenCalled();
-  });
-
-  it("renders nothing while collapsed when no child is running", () => {
-    const task = parentTask();
-    const { container } = render(
-      createElement(TaskChildSessionRows, {
-        task: {
-          ...task,
-          childSessions: task.childSessions!.map((child) => ({ ...child, running: false })),
-        },
-        expanded: false,
-        onToggle: vi.fn(),
         onSelectSession: vi.fn(),
       }),
     );
-    expect(container.innerHTML).toBe("");
+    expect(collapsed.container.innerHTML).toBe("");
   });
-});
 
-describe("TaskChildSessionRows Stop (spec §8.3)", () => {
-  it("shows Stop only for running children with a background work id", () => {
-    const onStopBackgroundWork = vi.fn();
+  it("right-click opens the side chat's own menu, never the parent's (§9.4)", async () => {
     const onSelectSession = vi.fn();
-    const task = parentTask();
-    const { container } = render(
-      createElement(TaskChildSessionRows, {
-        task: {
-          ...task,
-          childSessions: [
-            { ...task.childSessions![0]!, backgroundWorkId: "work-1" },
-            {
-              sessionId: "sub-fg",
-              title: "foreground",
-              taskType: "subagent_child",
-              lastActivityAt: 1,
-              running: true,
-            },
-            {
-              sessionId: "sub-done",
-              title: "done",
-              taskType: "subagent_child",
-              lastActivityAt: 1,
-              running: false,
-              backgroundWorkId: "stale",
-            },
-          ],
-        },
-        expanded: true,
-        onToggle: vi.fn(),
-        onSelectSession,
-        onStopBackgroundWork,
-      }),
+    const onParentContextMenu = vi.fn();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    render(
+      createElement(
+        "div",
+        { onContextMenu: onParentContextMenu },
+        createElement(TaskChildSessionRows, {
+          task: parentTask(),
+          expanded: true,
+          onSelectSession,
+        }),
+      ),
     );
-    const stops = [...container.querySelectorAll("[data-child-session-stop]")];
-    expect(stops.map((stop) => stop.getAttribute("data-child-session-stop"))).toEqual(["sub-1"]);
-    fireEvent.click(stops[0]!);
-    expect(onStopBackgroundWork).toHaveBeenCalledWith("work-1");
-    expect(onSelectSession).not.toHaveBeenCalled();
+    fireEvent.contextMenu(screen.getByLabelText("taskList.childSideChatRowLabel:second"));
+    expect(onParentContextMenu).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByText("appHeader.copySessionId"));
+    expect(writeText).toHaveBeenCalledWith("side-2");
+
+    fireEvent.contextMenu(screen.getByLabelText("taskList.childSideChatRowLabel:second"));
+    fireEvent.click(await screen.findByText("common.open"));
+    expect(onSelectSession).toHaveBeenLastCalledWith("side-2", { selectionSideChat: true });
   });
 });
 

@@ -7,20 +7,20 @@ import { resolveWorkspaceRemoteSessionId } from "@/lib/workspaceServiceResolver.
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { sendInteractionAutoResolutionSnooze } from "@/v4/interactionAutoResolutionCommand.js";
 
-export interface TaskConversationCommandTarget {
+interface TaskConversationCommandTarget {
   workspacePath: string;
   workspaceIdentity?: string;
   remoteSessionId?: string;
 }
 
-export type TaskConversationCommandSender = (envelope: CommandEnvelope) => Promise<CommandAck>;
+type TaskConversationCommandSender = (envelope: CommandEnvelope) => Promise<CommandAck>;
 
 /**
  * Sidebar tasks may come from local/remote, timeline, or pinned lists. Resolve the original Host by workspace identity
  * for conversation commands; do not send them to the current window's service just because a different tab is active.
  * Returns null while the target Host is not attached.
  */
-export function useTaskConversationCommandSender(
+function useTaskConversationCommandSender(
   target: TaskConversationCommandTarget,
 ): TaskConversationCommandSender | null {
   const contextServices = useOptionalServices();

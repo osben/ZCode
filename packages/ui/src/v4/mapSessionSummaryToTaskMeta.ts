@@ -4,6 +4,7 @@
 // session.removed only removes live detail, while persistent-row deletion is still determined by the tasks-index row/tombstone.
 import type { TraceId, ZCodeProvider, ZCodeTaskMeta } from "@zcode/shared";
 import type { SessionSummary } from "@zcode/shared/zcode-protocol-v4";
+import { sideChatChildSessions } from "@/v4/windowControllerTaskListRegistry.js";
 import {
   attachTaskListRowActivity,
   type TaskListMetaWithActivity,
@@ -42,6 +43,7 @@ export function mapSessionSummaryToTaskMeta(
 ): TaskListMetaWithActivity {
   const previous = options.previous;
   const status = phaseToStatus(summary.phase);
+  const sideChats = sideChatChildSessions(summary.childSessions);
   const summaryTitleIsCustom = summary.titleSource === "custom";
   // If the old task-index already has a manual title with titleOverridden=true,
   // the sessions-index cold-start summary may still contain the first_input/generated title. Treat summary.title as the new manual-title authority only when the v4 session
@@ -84,17 +86,10 @@ export function mapSessionSummaryToTaskMeta(
           }
         : {}),
       ...(summary.executionWorktree ? { executionWorktree: summary.executionWorktree } : {}),
-      // Child-conversation facts (spec: sidebar-child-conversation-counts.md); zero/absent stay absent.
-      // The wire element and ZCodeTaskChildSession are structurally identical — pass by reference
-      // like executionWorktree above.
+      // Child-conversation facts (spec: sidebar-child-conversation-counts.md §9): side chats only;
+      // zero/absent stay absent. Subagent rows and counters from older CLIs are dropped.
       ...(summary.sideChatCount ? { sideChatCount: summary.sideChatCount } : {}),
-      ...(summary.subagentCount ? { subagentCount: summary.subagentCount } : {}),
-      ...(summary.runningSubagentCount
-        ? { runningSubagentCount: summary.runningSubagentCount }
-        : {}),
-      ...(summary.childSessions && summary.childSessions.length > 0
-        ? { childSessions: summary.childSessions }
-        : {}),
+      ...(sideChats?.length ? { childSessions: sideChats } : {}),
       // Worktree health flag rides at the summary top level (cross-version wire shape); absent = healthy.
       ...(summary.executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
       ...(summary.incognito ? { incognito: true } : {}),

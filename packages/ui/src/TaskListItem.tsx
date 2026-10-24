@@ -75,7 +75,6 @@ import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
-  useStopChildBackgroundWork,
   visibleChildSessions,
   type ChildSessionSelectHandler,
 } from "@/components/TaskChildSessionRows.js";
@@ -246,15 +245,6 @@ export const MemoTaskItem = memo(function TaskListItem({
     ? (actionsDisabledReason ??
       intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" }))
     : undefined;
-  const stopChildBackgroundWork = useStopChildBackgroundWork(
-    {
-      workspacePath,
-      ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
-      ...(remoteSessionId ? { remoteSessionId } : {}),
-      sessionId: task.taskId,
-    },
-    intl.formatMessage({ id: "taskList.childStopFailed" }),
-  );
   const snoozeInteractionAutoResolution = useTaskInteractionAutoResolutionSnooze({
     workspacePath,
     ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
@@ -490,9 +480,7 @@ export const MemoTaskItem = memo(function TaskListItem({
       <TaskChildSessionRows
         task={task}
         expanded={childSessionsExpanded}
-        onToggle={toggleChildSessions}
         onSelectSession={onSelectChildSession}
-        onStopBackgroundWork={(workId) => void stopChildBackgroundWork(workId)}
       />
     ) : null;
   const hasBelowTitleLines = hasWorkflowRunLines || hasChildSessionRows;

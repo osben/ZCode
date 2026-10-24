@@ -186,3 +186,23 @@ The hierarchy already exists in the DB and in `context.sessions`; the only gap i
 Event order for child invalidation remains: lifecycle owner updates child state → resolver invalidates the parent → parent summary is published → a TTL-eligible store refresh completes → refreshed parent summary is published. `ModelStreaming` does not enter this path.
 
 Additional acceptance scenarios: a detached workflow child never affects the subagent count; an in-TTL invalidation refreshes automatically at TTL expiry; streaming chunks do not publish parent-summary refreshes; a restored child pane survives top-level-index omission when the store confirms its subagent type; a separate pane in the same workspace remains writable.
+
+## 9. Side chats only (2026-10-24, supersedes §8 and the subagent parts of §1–§7)
+
+User decision 2026-10-24: the sidebar shows side chats only. Subagents are no longer listed, counted or controlled from the sidebar; they stay reachable from the parent conversation (Agent rows open the right-pane `subagent-session` tab) and stoppable from the status panel.
+
+**9.1 Producer (CLI host).** `countChildSessions` / `listChildSessions` scope their SQL to `selection_side_chat` (live, not tombstoned). `countChildSessions` returns `{ sideChats }` per parent; `ChildSessionInfo.taskType` is `selection_side_chat`. The cap (`SESSION_SUMMARY_CHILD_SESSIONS_MAX`) and the true total therefore apply to side chats alone, so a parent with many subagents can never push its side chats out of the list. `child-session-facts` resolves `sideChatCount` and `childSessions` (each `running: false`) only: no busy counting, no detached-child or background-work lookups, no subagent-driven invalidation. Side-chat parent discovery from live session records stays (it keeps those parents refreshing).
+
+**9.2 Wire compatibility.** The summary and task-meta schemas keep `subagentCount`, `runningSubagentCount`, `childSessions[].running`, `childSessions[].backgroundWorkId` and the `subagent_child` enum value, marked deprecated: an older or remote fork CLI still sends them, and narrowing the nested enum would reject the whole summary. The new host never sends the counters or `backgroundWorkId`.
+
+**9.3 Consumer.** One filter at the renderer mapping (`mapSessionSummaryToTaskMeta` and the controller overlay `pickTaskChildSessionFacts`) drops `subagent_child` entries and the subagent counters, so an old CLI degrades to side chats only. The marker renders only the message-circle segment (`sideChatCount`); the child list shows side chats, collapsed by default (no running-inline rows); the overflow row counts `sideChatCount − shown`. Removed: the bot segment and its running form, §8.1 live rows, §8.2 sidebar→right-pane subagent open (`pendingSubagentOpen` / `subagentTarget` path), §8.3 sidebar Stop, and their i18n keys.
+
+**9.4 Side-chat context menu.** A child row owns its own context menu; right-click never reaches the parent row's menu (grouped `ContextMenuTrigger` and flat `<li onContextMenu>`). Items: **Open** (same as click: main pane, writable with restricted commands) and **Copy session ID** (the side chat's id, through the existing copy helper and `appHeader.copySessionId` label). The menu content mounts only while open. The parent's hover card may still show over child rows (accepted).
+
+Acceptance (§9):
+
+1. A parent with 3 side chats and 10 subagents shows the message-circle marker `3` and no bot segment; expanding lists the 3 side chats and no subagent rows; no `+N more`.
+2. A parent with only subagents shows no marker and no child list.
+3. Old CLI sending subagent rows and counters → the same rendering as 1–2 (consumer filter).
+4. Right-click on a side-chat row opens the side-chat menu, not the parent's; **Open** opens the side chat; **Copy session ID** copies the side chat id.
+5. Running subagents produce no spinner, row or Stop in the sidebar.

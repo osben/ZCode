@@ -106,15 +106,7 @@ export function useProjectTaskNavigation(
           });
         }
       }
-      // A sidebar subagent opens under its parent only after the parent workspace is attached.
-      if (options?.subagentTarget && props.onOpenSubagentSession) {
-        props.onOpenSubagentSession({
-          ...options.subagentTarget,
-          ...(remoteSessionId ? { remoteSessionId } : {}),
-        });
-        return;
-      }
-      // Child sessions carry their capability (subagent → read-only) through to the shell.
+      // Child sessions carry their capability (side chat → restricted commands) through to the shell.
       props.onSelectTask(path, taskId, identity, remoteSessionId, unreadAt, options);
     };
     void open().catch((error) => {

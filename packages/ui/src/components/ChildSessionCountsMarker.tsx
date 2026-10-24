@@ -1,12 +1,11 @@
 /**
- * Sidebar child-conversation marker (spec: sidebar-child-conversation-counts.md): message-circle and
- * bot glyph segments with tabular counts, styled like the neighboring clock/moon/worktree meta icons
- * (size-3.5, the row's muted meta color). A segment renders only when its own count is non-zero;
- * while subagents run, the bot segment uses the row's existing loading idiom — a spinning LoaderIcon
- * next to running/total. With an onToggle the marker doubles as the child-list expander (click stops
- * row propagation so it does not select the task); without one it renders display-only (drag overlay).
+ * Sidebar side-chat marker (spec: sidebar-child-conversation-counts.md §4, §9): a message-circle
+ * glyph with the tabular side-chat count, styled like the neighboring clock/moon/worktree meta icons
+ * (size-3.5, the row's muted meta color). Subagents are not counted (§9). With an onToggle the marker
+ * doubles as the side-chat list expander (click stops row propagation so it does not select the
+ * task); without one it renders display-only (drag overlay).
  */
-import { Bot, LoaderIcon, MessageCircle } from "lucide-react";
+import { MessageCircle } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { ZCodeTaskMeta } from "@zcode/shared";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -22,49 +21,13 @@ export function ChildSessionCountsMarker({
 }) {
   const { intl } = useZCodeIntl();
   const sideChats = task.sideChatCount ?? 0;
-  const subagents = task.subagentCount ?? 0;
-  const running = task.runningSubagentCount ?? 0;
-  // Within the facts TTL the cached total can lag the live running count (first subagent of a
-  // parent); the denominator clamps so the running form is never "2/1"-shaped.
-  const subagentTotal = Math.max(subagents, running);
-  if (sideChats <= 0 && subagentTotal <= 0) return null;
-  const tooltipParts: string[] = [];
-  if (sideChats > 0) {
-    tooltipParts.push(intl.formatPlural({ id: "taskList.childSideChatsCount" }, sideChats));
-  }
-  if (subagentTotal > 0) {
-    tooltipParts.push(intl.formatPlural({ id: "taskList.childSubagentsCount" }, subagentTotal));
-  }
-  if (running > 0) {
-    tooltipParts.push(intl.formatPlural({ id: "taskList.childSubagentsRunningCount" }, running));
-  }
-  const tooltip = tooltipParts.join(" · ");
-  const segmentClass = "flex items-center gap-0.5 tabular-nums";
+  if (sideChats <= 0) return null;
+  const tooltip = intl.formatPlural({ id: "taskList.childSideChatsCount" }, sideChats);
   const content = (
-    <>
-      {sideChats > 0 ? (
-        <span className={segmentClass}>
-          <MessageCircle aria-hidden="true" className="size-3.5 shrink-0" />
-          {sideChats}
-        </span>
-      ) : null}
-      {subagentTotal > 0 ? (
-        <span className={segmentClass}>
-          {running > 0 ? (
-            // Rotate the HTML wrapper, not the SVG, matching TaskListItem (assumed cheaper; not profiled).
-            <span
-              aria-hidden="true"
-              className="flex size-3.5 shrink-0 items-center justify-center motion-safe:animate-spin"
-            >
-              <LoaderIcon className="size-3.5" />
-            </span>
-          ) : (
-            <Bot aria-hidden="true" className="size-3.5 shrink-0" />
-          )}
-          {running > 0 ? `${running}/${subagentTotal}` : subagentTotal}
-        </span>
-      ) : null}
-    </>
+    <span className="flex items-center gap-0.5 tabular-nums">
+      <MessageCircle aria-hidden="true" className="size-3.5 shrink-0" />
+      {sideChats}
+    </span>
   );
   if (!onToggle) {
     return (

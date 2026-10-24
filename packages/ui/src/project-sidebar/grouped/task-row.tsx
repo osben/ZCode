@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.js";
 import { ProjectTaskListContext } from "@/project-sidebar/ProjectTaskListContext.js";
-import { routeChildSessionSelection } from "@/project-sidebar/child-session-navigation.js";
 import { IncognitoTaskMarker } from "@/components/IncognitoTaskMarker.js";
 import { WorktreeTaskMarker } from "@/components/WorktreeTaskMarker.js";
 import { TaskPullRequestMarker } from "@/components/TaskPullRequestMarker.js";
@@ -28,7 +27,6 @@ import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
-  useStopChildBackgroundWork,
   type ChildSessionSelectOptions,
 } from "@/components/TaskChildSessionRows.js";
 import { toast } from "@/components/ui/toast.js";
@@ -302,15 +300,6 @@ function GroupedTaskInteractiveRow({
   const workspaceActionsDisabledReason = workspaceActionsDisabled
     ? intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" })
     : undefined;
-  const stopChildBackgroundWork = useStopChildBackgroundWork(
-    {
-      workspacePath: task.workspacePath,
-      ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
-      ...(remoteSessionId ? { remoteSessionId } : {}),
-      sessionId: task.taskId,
-    },
-    intl.formatMessage({ id: "taskList.childStopFailed" }),
-  );
   const snoozeInteractionAutoResolution = useTaskInteractionAutoResolutionSnooze({
     workspacePath: task.workspacePath,
     ...(task.workspaceIdentity ? { workspaceIdentity: task.workspaceIdentity } : {}),
@@ -410,22 +399,10 @@ function GroupedTaskInteractiveRow({
   // Phone rows stay unchanged (spec §7): the web remote switcher cannot open child sessions.
   const presentation = useContext(ProjectTaskListContext);
   const childSessionsEnabled = !presentation.isWebRemoteControl;
-  const handleSelectChildSession = (
-    sessionId: string,
-    options: ChildSessionSelectOptions,
-    title?: string,
-  ) =>
-    routeChildSessionSelection({
-      parent: task,
-      sessionId,
-      options,
-      title,
-      openSubagentSession: presentation.onOpenSubagentSession,
-      selectInMainPane: () =>
-        onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
-          ...options,
-          parentTaskId: task.taskId,
-        }),
+  const handleSelectChildSession = (sessionId: string, options: ChildSessionSelectOptions) =>
+    onSelectTask(task.workspacePath, sessionId, task.workspaceIdentity, {
+      ...options,
+      parentTaskId: task.taskId,
     });
   const archiveLabel = intl.formatMessage({
     id: archiveConfirming ? "common.confirm" : "taskList.archive",
@@ -721,9 +698,7 @@ function GroupedTaskInteractiveRow({
         <TaskChildSessionRows
           task={task}
           expanded={childSessionsExpanded}
-          onToggle={handleToggleChildSessions}
           onSelectSession={handleSelectChildSession}
-          onStopBackgroundWork={(workId) => void stopChildBackgroundWork(workId)}
         />
       ) : null}
     </div>
