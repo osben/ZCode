@@ -42,6 +42,8 @@ console.* / dependency logs    -> stderr -> Host log collector
 
 This boundary applies to both desktop-local and SSH/WSL/Docker remote agents; it does not change protocol messages or the delivery semantics of desktop continuous or web remote replayable.
 
+<a id="协议进程生命周期"></a>
+
 ## Protocol process lifecycle
 
 The CLI entry takes over stdin/stdout and signals before the first async initialization, and owns the single shutdown deadline. At startup it catches protocol bytes with a backpressured input buffer, and must not drop requests in order to observe EOF. bootstrap receives the cancel signal through `RunZCodeProtocolAgentOptions.lifecycle`, initiates exit and reads the same absolute deadline; it only releases runtime resources and does not decide the process exit code. The `--prepare-storage` Worker and plugin-host keep their own lifecycles.
