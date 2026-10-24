@@ -28,6 +28,7 @@ import { TaskSidebarHoverCard } from "@/components/TaskSidebarHoverCard.js";
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
+  useStopChildBackgroundWork,
   type ChildSessionSelectOptions,
 } from "@/components/TaskChildSessionRows.js";
 import { toast } from "@/components/ui/toast.js";
@@ -51,7 +52,6 @@ import {
 } from "@/project-sidebar/grouped/types.js";
 import { TaskWorkflowRunLines } from "@/components/workflow-run-line/TaskWorkflowRunLines.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
-import { useStopChildBackgroundWork } from "@/hooks/useStopChildBackgroundWork.js";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly } from "@/store/tabStore.js";
 import { TaskTitleOverflowText } from "@/components/TaskTitleOverflowText.js";

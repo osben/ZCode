@@ -8,13 +8,13 @@ const mocks = vi.hoisted(() => ({
   sender: null as null | ((envelope: unknown) => Promise<unknown>),
   toast: vi.fn(),
 }));
-vi.mock("@/hooks/useTaskConversationCommandSender.js", () => ({
+vi.mock("@/hooks/useTaskInteractionAutoResolutionSnooze.js", () => ({
   useTaskConversationCommandSender: () => mocks.sender,
 }));
 vi.mock("@/components/ui/toast.js", () => ({ toast: mocks.toast }));
 vi.mock("@/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() } }));
 
-import { useStopChildBackgroundWork } from "@/hooks/useStopChildBackgroundWork.js";
+import { useStopChildBackgroundWork } from "@/components/TaskChildSessionRows.js";
 
 const parent = { workspacePath: "/repo", sessionId: "parent" };
 

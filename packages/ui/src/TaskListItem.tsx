@@ -49,7 +49,6 @@ import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { useV4SplitPaneEntry } from "@/v4/splitPaneEntryContext.js";
 import { buildWorkbenchSessionKey, useWorkbenchGroupStore } from "@/v4/workbenchGroupStore.js";
 import { useTaskInteractionAutoResolutionSnooze } from "@/hooks/useTaskInteractionAutoResolutionSnooze.js";
-import { useStopChildBackgroundWork } from "@/hooks/useStopChildBackgroundWork.js";
 import {
   WORKBENCH_SESSION_DRAG_MIME,
   clearActiveWorkbenchSessionDragPayload,
@@ -76,6 +75,7 @@ import { ChildSessionCountsMarker } from "@/components/ChildSessionCountsMarker.
 import {
   TaskChildSessionRows,
   useChildSessionsExpansion,
+  useStopChildBackgroundWork,
   visibleChildSessions,
   type ChildSessionSelectHandler,
 } from "@/components/TaskChildSessionRows.js";
