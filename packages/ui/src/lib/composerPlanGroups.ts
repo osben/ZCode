@@ -81,7 +81,15 @@ export function buildComposerPlanGroups(
               p.accountState?.availability === "available" &&
               p.accountState.entitled)),
       )
-      .map((p) => ({ providerId: p.providerId, config: p.effectiveConfig, models: [] })) ?? [];
+      .map((p) => ({
+        providerId: p.providerId,
+        config: p.effectiveConfig,
+        // ISSUE-058: provider rows only browse, so an inactive plan lists its enabled settings
+        // models; the connection switch re-checks the pick against the synchronized catalog.
+        models: (p.models ?? [])
+          .filter((model) => model.enabled)
+          .map((model) => ({ modelId: model.modelId, config: model.effectiveConfig })),
+      })) ?? [];
   const candidates = [
     ...groups.filter((group) => includeProvider(group.key.replace(/^registry-provider:/, ""))),
     // 原因：未激活个人套餐由此补充；漏传当前语言会回退成英文 Individual。

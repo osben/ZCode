@@ -32,6 +32,9 @@ Browsing never changes the selection.
    connection-switch owner (`useComposerConnectionSwitch`) with that exact model, so team rows
    that share model values with another team still switch the account connection, and the
    loading / error / presentation-receipt rules stay as they are.
+   6b. An inactive account plan (Individual or Team not in the executable registry) lists the
+   enabled models from its Provider Settings view, so it stays reachable through a model pick;
+   the switch then re-checks that model against the synchronized catalog (rule 6a).
 7. The provider list's check mark stays on the selected provider, not the browsed one. The
    provider trigger row shows the browsed provider.
 8. Browse state is UI-local to the open menu. It resets when the menu closes or when the
@@ -77,5 +80,5 @@ same React component on both.
 - Team rows: browse "Team Two" and pick its model: the connection switch runs with that model.
 
 Coverage: `packages/ui/test/composerModelPickerBrowseOnly.test.ts`,
-`packages/ui/test/composerModelThinking.test.ts`, `packages/ui/test/composerTeamMenu.test.ts`,
+`packages/ui/test/composerModelThinking.test.ts`, `packages/ui/test/composerPlanGroups.test.ts`, `packages/ui/test/composerTeamMenu.test.ts`,
 `packages/ui/test/v4ComposerToolbarRecovery.test.ts`, `packages/ui/test/composerConnectionSwitch.test.ts`.
