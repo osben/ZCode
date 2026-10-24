@@ -353,6 +353,18 @@ export interface ExternalTextInsertRequest {
   mode?: "replace" | "prepend-if-missing" | "prepend-text";
 }
 
+function pickPersistedComposerContent(draft: Pick<V4ComposerDraft, "editorStateJson" | "text">): {
+  text: string;
+  editorStateJson?: string;
+} {
+  return draft.text.trim()
+    ? {
+        text: draft.text,
+        ...(draft.editorStateJson ? { editorStateJson: draft.editorStateJson } : {}),
+      }
+    : { text: "" };
+}
+
 export function restorePersistedComposerDraftIntoInput({
   draft,
   inputApi,
@@ -1204,6 +1216,8 @@ function ConversationComposerImpl({
   // ISSUE-060: set while a scope switch waits for the editor to receive the new scope's draft. The
   // editor (and textRef) still hold the previous scope's text then, so no writer may persist it.
   const scopeRestorePendingRef = useRef(false);
+  // Whether the restore for the previous target was still pending when the target changed again.
+  const priorScopeRestorePendingRef = useRef(false);
   const draftPersistClaimRef = useRef<string | null>(null);
   const updateComposerContentRef = useRef(updateComposerContent);
   updateComposerContentRef.current = updateComposerContent;
@@ -1394,6 +1408,20 @@ function ConversationComposerImpl({
     workspaceKey,
   ]);
 
+  // Raise the write guard at commit time: an editor change can land before the passive scope
+  // effect below runs, and it must not reach the new scope's owner with the old scope's text.
+  useLayoutEffect(() => {
+    const previousTarget = draftTargetRef.current;
+    if (
+      previousTarget.scopeId === draftScopeId &&
+      previousTarget.workspacePath === workspacePath &&
+      previousTarget.workspaceIdentity === workspaceIdentity
+    )
+      return;
+    priorScopeRestorePendingRef.current = scopeRestorePendingRef.current;
+    scopeRestorePendingRef.current = true;
+  }, [draftScopeId, workspaceIdentity, workspacePath]);
+
   // scope 切换：先落旧 scope 草稿，再恢复新 scope（editorStateJson 优先，退纯文本）。
   useEffect(() => {
     const previousTarget = draftTargetRef.current;
@@ -1407,7 +1435,11 @@ function ConversationComposerImpl({
         window.clearTimeout(draftPersistTimerRef.current);
         draftPersistTimerRef.current = null;
       }
-      const previousDraft = snapshotDraftOfEditor();
+      // While the previous target's restore was still pending, the editor holds an even older
+      // scope's text; the previous target's own content is its owner draft.
+      const previousDraft = priorScopeRestorePendingRef.current
+        ? pickPersistedComposerContent(ownerDraftRef.current.draft)
+        : snapshotDraftOfEditor();
       const shouldTransferDraft =
         previousTarget.scopeId.startsWith(V4_DRAFT_SCOPE_ROOT) &&
         draftScopeId.startsWith(V4_DRAFT_SCOPE_ROOT) &&
@@ -1927,6 +1959,8 @@ function ConversationComposerImpl({
       existingTelemetrySeed?: ConversationPromptTelemetrySeed,
       requestedDelivery?: "startNow" | "queue" | "guide",
     ) => {
+      // The editor does not hold this scope's draft yet (ISSUE-060); its text is not this scope's input.
+      if (scopeRestorePendingRef.current) return;
       const trimmed = textRef.current.trim();
       const submittedQueueItemIds =
         snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];

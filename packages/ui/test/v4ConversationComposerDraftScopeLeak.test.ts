@@ -13,7 +13,11 @@ import {
   type V4ComposerDraft,
 } from "@/v4/composer/composerDraftStore.js";
 import { TEST_LOCALE } from "./helpers/uiCopy.js";
-import { installMinimalDom } from "./v4ConversationComposerLateAckHarness.js";
+import {
+  clearV4ComposerDraftWorkspaceTransferRequest,
+  requestV4ComposerDraftWorkspaceTransfer,
+} from "@/v4/composer/composerDraftWorkspaceTransfer.js";
+import { flushAsyncWork, installMinimalDom } from "./v4ConversationComposerLateAckHarness.js";
 
 const { editor } = vi.hoisted(() => ({
   editor: {
@@ -21,6 +25,7 @@ const { editor } = vi.hoisted(() => ({
     // While false the mocked prompt editor exposes no input API (editor not mounted yet).
     attached: true,
     onChange: null as ((value: string) => void) | null,
+    onSubmit: null as ((value: string) => boolean) | null,
     apiRef: null as { current: unknown } | null,
   },
 }));
@@ -56,6 +61,7 @@ vi.mock("@/prompt-editor/ChatPromptEditor.js", async () => {
   return {
     ChatPromptEditor: (props: Record<string, unknown>) => {
       editor.onChange = props.onChange as (value: string) => void;
+      editor.onSubmit = props.onSubmit as (value: string) => boolean;
       const inputApiRef = props.inputApiRef as { current: unknown } | undefined;
       if (inputApiRef) {
         editor.apiRef = inputApiRef;
@@ -116,6 +122,7 @@ function createInputApi() {
 }
 
 const SESSION_A = "qa-session-a";
+const onSendText = vi.fn(async () => {});
 let pendingFrames: FrameRequestCallback[] = [];
 let root: Root;
 
@@ -123,20 +130,20 @@ function scopeOf(sessionId: string | null) {
   return sessionId ?? V4_DRAFT_SCOPE_ROOT;
 }
 
-function storedText(sessionId: string | null) {
-  return readV4ComposerDraft("/workspace", undefined, scopeOf(sessionId))?.text ?? null;
+function storedText(sessionId: string | null, workspacePath = "/workspace") {
+  return readV4ComposerDraft(workspacePath, undefined, scopeOf(sessionId))?.text ?? null;
 }
 
 // Emulates the SessionPane draft owner: each render gets the owner of the scope it shows.
-function composerFor(sessionId: string | null) {
+function composerFor(sessionId: string | null, workspacePath: string) {
   const scopeId = scopeOf(sessionId);
-  let ownedDraft: V4ComposerDraft = readV4ComposerDraft("/workspace", undefined, scopeId) ?? {
+  let ownedDraft: V4ComposerDraft = readV4ComposerDraft(workspacePath, undefined, scopeId) ?? {
     text: "",
     updatedAt: 0,
   };
   const write = (next: V4ComposerDraft) => {
     ownedDraft = next;
-    persistV4ComposerDraft("/workspace", undefined, scopeId, ownedDraft);
+    persistV4ComposerDraft(workspacePath, undefined, scopeId, ownedDraft);
   };
   return createElement(
     ZCodeIntlProvider,
@@ -145,7 +152,7 @@ function composerFor(sessionId: string | null) {
       draftMode: sessionId === null,
       onSelectModel: vi.fn(),
       onSelectThought: vi.fn(),
-      onSendText: vi.fn(async () => {}),
+      onSendText,
       submissionReady: true,
       modelSelectionView: null,
       modelSelectionSettled: false,
@@ -157,13 +164,13 @@ function composerFor(sessionId: string | null) {
       provider: undefined,
       sessionId,
       snapshot: null,
-      workspacePath: "/workspace",
+      workspacePath,
     }),
   );
 }
 
-function render(sessionId: string | null) {
-  act(() => root.render(composerFor(sessionId)));
+function render(sessionId: string | null, workspacePath = "/workspace") {
+  act(() => root.render(composerFor(sessionId, workspacePath)));
 }
 
 function runFrames() {
@@ -204,7 +211,10 @@ beforeEach(() => {
   editor.text = "";
   editor.attached = true;
   editor.onChange = null;
+  editor.onSubmit = null;
   editor.apiRef = null;
+  onSendText.mockClear();
+  clearV4ComposerDraftWorkspaceTransferRequest();
   root = createRoot(container);
 });
 
@@ -296,6 +306,45 @@ describe("ConversationComposer draft scope switch (ISSUE-060)", () => {
       editor.onChange?.(editor.text);
     });
     expect(storedText(null)).toBe("qa draft new!");
+    expect(storedText(SESSION_A)).toBe("qa draft A");
+  });
+
+  it("DL04: a submit before the new scope's draft lands does not send the previous session's text", async () => {
+    openSessionAWithDraft();
+
+    editor.attached = false;
+    render(null);
+    await act(async () => {
+      editor.onSubmit?.("qa draft A");
+      await flushAsyncWork();
+    });
+
+    expect(onSendText).not.toHaveBeenCalled();
+    expect(storedText(SESSION_A)).toBe("qa draft A");
+  });
+
+  it("DL05: a workspace transfer during a pending restore carries the draft's own text, not the editor's", () => {
+    openSessionAWithDraft();
+    persistV4ComposerDraft("/workspace", undefined, V4_DRAFT_SCOPE_ROOT, {
+      text: "qa draft new",
+      mode: "build",
+      updatedAt: 2,
+    });
+
+    editor.attached = false;
+    render(null);
+    requestV4ComposerDraftWorkspaceTransfer({
+      sourceWorkspacePath: "/workspace",
+      targetWorkspacePath: "/other",
+    });
+    render(null, "/other");
+
+    expect(storedText(null, "/other")).toBe("qa draft new");
+
+    editor.attached = true;
+    render(null, "/other");
+    runFrames();
+    expect(editor.text).toBe("qa draft new");
     expect(storedText(SESSION_A)).toBe("qa draft A");
   });
 });
