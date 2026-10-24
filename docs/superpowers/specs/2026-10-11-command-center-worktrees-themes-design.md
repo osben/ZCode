@@ -1,178 +1,282 @@
-# Command Center: Worktrees и Themes
+# Command Center: Worktrees and Themes
 
-> Статус: исследовательский черновик. Описывает целевое поведение для обсуждения; реализация и границы продукта ещё не подтверждены.
+> Status: research draft. Describes target behavior for discussion; implementation and product boundaries were not
+> yet confirmed in this document. Later sections record the decisions and shipped behavior (PR #70 review rounds).
 
-## Цель
+Full history: `git show 37b98ff8:docs/superpowers/specs/2026-10-11-command-center-worktrees-themes-design.md` (Russian
+original).
 
-Добавить в существующий Command Center быстрый выбор Git worktree и темы. Клавиатура, поиск, локализация и визуальное поведение должны опираться на уже работающий Command Center. До реализации нужно выбрать объём управления worktree и правила для локальных и удалённых workspace.
+## Goal
 
-## Что уже есть
+Add quick Git worktree and theme selection to the existing Command Center. Keyboard, search, localization and visual
+behavior build on the Command Center that already works. Before implementation the scope of worktree management and
+the rules for local and remote workspaces had to be chosen.
 
-- Command Center открывается через `Cmd/Ctrl+K` или `Cmd/Ctrl+Shift+P`; `Cmd/Ctrl+P` и `Cmd/Ctrl+G` ведут в ту же поверхность.
-- Палитра группирует команды, conversations и файлы; у команд есть стабильный id, группа, локализованное название, поисковые ключи, иконка и обработчик.
-- В палитре есть команда переключения light/dark. Это переключатель текущего режима, а не выбор из списка.
-- Настройки уже разделяют режим `light/dark/system` и палитру из фиксированного списка; изменение применяет настройки приложения и синхронизируется между окнами существующим способом.
-- Открытые workspace уже представлены вкладками и повторное открытие того же workspace может активировать существующую вкладку.
-- Git-слой распознаёт `main-tree` и `linked-worktree`. В найденном контракте нет операции перечисления или создания worktree.
-- Создание сессии принимает workspace-ссылку, поэтому будущий flow сможет сначала подготовить путь, затем передать его существующему session owner. Сам протокол создания сессии не создаёт Git worktree.
-- Workflow-контракт уже принимает `isolation: "worktree"`, но runtime сейчас явно завершает такой запрос ошибкой «not implemented». Это отдельная незавершённая возможность, её нельзя считать работающим механизмом.
+## What exists
 
-Эти факты взяты из текущей реализации и существующих спецификаций ZCode. В Copilot исследованы извлечённые frontend-бандлы: палитра использует страницы с переходом вперёд/назад, а создание новой сессии предлагает выбрать проект и ветку. Бандлы минифицированы; это ориентир поведения, не исходная реализация для копирования.
+- Command Center opens with `Cmd/Ctrl+K` or `Cmd/Ctrl+Shift+P`; `Cmd/Ctrl+P` and `Cmd/Ctrl+G` lead to the same
+  surface.
+- The palette groups commands, conversations and files; a command has a stable id, group, localized name, search
+  keys, icon and handler.
+- It has a light/dark toggle command: a switch for the current mode, not a pick from a list.
+- Settings already separate the mode `light/dark/system` from a palette chosen from a fixed list; a change applies
+  app settings and syncs across windows the existing way.
+- Open workspaces are tabs, and reopening the same workspace can activate the existing tab.
+- The Git layer recognizes `main-tree` and `linked-worktree`. The contract found had no operation to list or create
+  worktrees.
+- Session creation accepts a workspace reference, so a future flow can prepare a path first and pass it to the
+  existing session owner. The session-creation protocol itself does not create Git worktrees.
+- The workflow contract accepts `isolation: "worktree"`, but the runtime currently ends such a request with a "not
+  implemented" error; that is a separate unfinished capability and not a working mechanism.
 
-## Реверс Copilot.app: подтверждённая механика (2026-10-11)
+These facts come from the current implementation and existing ZCode specs. For Copilot, the extracted frontend bundles
+were studied: the palette uses pages with forward/back navigation and new-session creation offers choosing a project
+and branch. The bundles are minified; this is a behavior reference, not source to copy.
 
-Статический анализ фронтенд-бандла `/Applications/GitHub Copilot.app` 1.1.28 (Tauri v2; дамп чанков в `/tmp/copilot-frontend`, см. память `copilot-app-palette-analysis`). Ориентир поведения, код не копируется.
+## Copilot.app reverse engineering: confirmed mechanics (2026-10-11)
 
-### Палитра (quick-open)
+Static analysis of the frontend bundle of `/Applications/GitHub Copilot.app` 1.1.28 (Tauri v2). A behavior reference;
+no code is copied.
 
-- У пункта может быть свойство `page: {id, placeholder, dynamic}` — выбор пушит под-страницу в стек страниц той же палитры (`pushPage`/`popPage`/`resetPages`); Escape закрывает палитру целиком, back возвращается с сохранением контекста.
-- Команда может объявлять `valueList` (`arg`, `prompt`, `title`, `options`, `current`) — палитра рендерит страницу выбора значения с отметкой текущего. Так работают `model` («Pick a model»), `effort` и `app.theme.set` («Pick a theme mode»: Match system / Light / Dark; `run` применяет значение немедленно).
-- «New session» — пункт с `page: new-session-project` («Pick a project…»): список проектов (первые 5 + остальные отсортированные) плюс пункт «No project». Выбор проекта открывает composer новой сессии.
-- Цветовые темы в палитре НЕ меняются: в quick-open только режим; палитры цветов — страница Themes в Settings.
+### Palette (quick-open)
 
-### Composer новой сессии
+- An item may carry `page: {id, placeholder, dynamic}`: selecting it pushes a sub-page onto the page stack of the same
+  palette (`pushPage`/`popPage`/`resetPages`); Escape closes the whole palette, back returns keeping context.
+- A command may declare a `valueList` (`arg`, `prompt`, `title`, `options`, `current`): the palette renders a
+  value-selection page with the current one marked. That is how `model` ("Pick a model"), `effort` and
+  `app.theme.set` ("Pick a theme mode": Match system / Light / Dark; `run` applies the value immediately) work.
+- "New session" is an item with `page: new-session-project` ("Pick a project..."): a project list (first 5 + the rest
+  sorted) plus a "No project" item; picking a project opens the new-session composer.
+- Color themes are NOT changed in the palette: quick-open has only the mode; color palettes are the Themes page in
+  Settings.
 
-- Назначение сессии — дропдаун: `New worktree` («Separate directory for each session») / `Current checkout` («Work in the existing checkout») / `cloud`. Worktree — основной обычный путь, не отдельная экзотическая команда.
-- Базовая ветка — combobox «Base branch» / «Checkout branch» с поиском («Search branches…») и per-project default branch (`branchesByProject → defaultBranch`).
-- Имя ветки генерируется из prefix-шаблона; валидация («Not a valid branch name», «Generated branch name is invalid») и копирование в clipboard.
-- Worktree создаётся лениво: empty-state списка файлов сессии — «Start prompting in this session to create the worktree». Полностью совпадает с инвариантом ZCode: runtime-сессия создаётся первым сообщением.
+### New-session composer
 
-### Настройки
+- The session destination is a dropdown: `New worktree` ("Separate directory for each session") / `Current checkout`
+  ("Work in the existing checkout") / `cloud`. Worktree is the main ordinary path, not an exotic command.
+- The base branch is a combobox "Base branch" / "Checkout branch" with search ("Search branches...") and a per-project
+  default branch (`branchesByProject -> defaultBranch`).
+- The branch name is generated from a prefix template; validation ("Not a valid branch name", "Generated branch name
+  is invalid") and copy to clipboard.
+- The worktree is created lazily: the session's file-list empty state is "Start prompting in this session to create
+  the worktree". This matches the ZCode invariant that the runtime session is created by the first message.
 
-- Глобально (zustand persist, user-level): стор `branch-prefix-settings`, поле `branchPrefixTemplate`, дефолт `%username%-` («Use %username% for your GitHub login»). Worktree location — path-шаблон `worktreePathTemplate` с пресетами (sibling next to repository / inside / under global storage / custom).
-- Per-project: `project-default-branch`, `project-branch-prefix` («Branch prefix override»), `project-branch-update-strategy`, `project-reusable-worktrees`, `project-sparse-checkout`. Модель — глобальный дефолт плюс явный project override; reusable/sparse отложены и в ZCode.
+### Settings
 
-### Решения по результатам реверса
+- Global (zustand persist, user level): store `branch-prefix-settings`, field `branchPrefixTemplate`, default
+  `%username%-` ("Use %username% for your GitHub login"). Worktree location is a path template `worktreePathTemplate`
+  with presets (sibling next to repository / inside / under global storage / custom).
+- Per project: `project-default-branch`, `project-branch-prefix` ("Branch prefix override"),
+  `project-branch-update-strategy`, `project-reusable-worktrees`, `project-sparse-checkout`. The model is a global
+  default plus an explicit project override; reusable/sparse are deferred in ZCode too.
 
-Направление «как в Copilot» подтверждено пользователем 2026-10-11:
+### Decisions from the reverse engineering
 
-1. **Вложенные страницы** — page-stack внутри Command Center: пункт несёт `page`, выбор пушит под-страницу, back возвращается. Отдельный WorktreeDialog не делаем.
-2. **Theme** — команда с valueList-страницей в той же палитре (режим: System/Light/Dark с отметкой текущего, применение без закрытия). Палитра цветов — вторая valueList-страница (расширение относительно Copilot, где цвета только в Settings; соответствует текущим настройкам ZCode с двумя независимыми значениями).
-3. **Хранение настроек** — глобальный дефолт в `AppSettings` через `ISettingService` + per-project override-словарь в том же объекте; в репозиторий проекта ничего не пишем. Поле префикса хранится как строка-шаблон (будущие `%username%` не сломают формат); MVP раскрывает только literal-префикс.
-4. **Источник проектов** — открытые workspace (tabStore) + `AppSettings.recentProjects`; отдельный directory picker не добавляем.
-5. **Форма создания** — вместо wizard-страницы «Проверка» используется аналог session-формы Copilot: после выбора проекта открывается setup-страница палитры с контролями назначения (worktree / текущий checkout), базовой ветки и сгенерированного имени ветки с валидацией. Отличие от Copilot: worktree создаётся при нажатии Start (eager), а не при первом сообщении — идентичность workspace в ZCode построена на пути, а composer привязан к уже существующему workspace, поэтому контроли живут на setup-странице до создания каталога. Runtime-сессия по-прежнему создаётся только первым сообщением. Дефолтное расположение до этапа настроек — sibling-каталог `<parent>/<repo>-worktrees/<branch>`.
-6. **Ревью-рекомендации 2026-10-11 (после живого просмотра):** (a) в настройках Worktree location под выбором опции всегда показывается пример результирующего пути, пересчитываемый при смене опции/префикса/своего пути; (b) поле branch prefix: Enter фиксирует, Escape откатывает к сохранённому значению, ширина не режет типовые префиксы; (c) в empty state нового draft — галочка «в новом worktree» с мини-формой (имя ветки, база по умолчанию); при активной галочке отправка первого сообщения перехватывается: создаёт worktree и переводит draft в новый каталог с сохранением набранного текста (механика composer draft workspace transfer), после чего пользователь нажимает отправку ещё раз — сессия создаётся обычным путём уже в worktree-workspace. Авто-отправка после переноса сознательно не сделана: нет программного API сабмита composer, а ожидание готовности нового workspace потребовало бы таймаутов (запрещено правилами репо). Worktree eager относительно отправки; это тот же контракт `createWorktree` + открытие/draft, что и в palette-flow.
+The "like Copilot" direction was confirmed by the user on 2026-10-11:
 
-### Уточнения по ревью 2026-10-12
+1. **Nested pages**: a page stack inside Command Center; an item carries `page`, selecting pushes a sub-page, back
+   returns. No separate WorktreeDialog.
+2. **Theme**: a command with a valueList page in the same palette (mode: System/Light/Dark with the current marked,
+   applied without closing). The color palette is a second valueList page (an extension over Copilot, where colors
+   live only in Settings; it matches ZCode's two independent settings).
+3. **Settings storage**: global defaults in `AppSettings` via `ISettingService` plus a per-project override map in the
+   same object; nothing is written to the project repository. The prefix is stored as a template string (future
+   `%username%` will not break the format); the MVP expands only a literal prefix.
+4. **Project source**: open workspaces (tabStore) + `AppSettings.recentProjects`; no separate directory picker.
+5. **Creation form**: instead of a wizard "Review" page, an analog of Copilot's session form: after picking a project
+   a palette setup page opens with controls for destination (worktree / current checkout), base branch and the
+   generated branch name with validation. Difference from Copilot: the worktree is created on Start (eager), not on
+   the first message, because ZCode workspace identity is path-based and the composer is bound to an existing
+   workspace, so the controls live on the setup page before the directory is created. The runtime session is still
+   created only by the first message. Until the settings stage the default location is the sibling directory
+   `<parent>/<repo>-worktrees/<branch>`.
+6. **Review recommendations 2026-10-11 (after live review)**: (a) in settings, under the Worktree location choice an
+   example of the resulting path is always shown, recomputed when option/prefix/custom path changes; (b) branch
+   prefix field: Enter commits, Escape reverts to the saved value, width does not cut typical prefixes; (c) in the
+   new-draft empty state a "in a new worktree" checkbox with a mini-form (branch name, default base); with the
+   checkbox on, sending the first message is intercepted: it creates the worktree and moves the draft to the new
+   directory keeping the typed text (composer draft workspace transfer), after which the user presses send again and
+   the session is created the normal way in the worktree workspace. Auto-send after transfer was deliberately not
+   done: there is no programmatic composer submit API and waiting for the new workspace to be ready would need
+   timeouts (forbidden by repo rules). The worktree is eager relative to sending; it is the same `createWorktree`
+   contract plus open/draft as in the palette flow. (Superseded by "Clarification 2026-10-13 (second)" below.)
 
-- **Start attempt ownership:** каждая новая попытка Start получает возрастающий id. Закрытие палитры и новый Start делают старые ответы неактуальными; устаревшая попытка не меняет состояние занятого индикатора или результат текущей попытки. Только владелец актуального id может очистить `worktreeStartBusy` в `finally`.
-- **Project override drafts:** при обновлении сохранённых настроек обновлять черновик только для полей, которые не менялись пользователем относительно предыдущего сохранённого значения. Незавершённый ввод сохраняется; каждое поле синхронизируется независимо.
-- **System theme:** при системном режиме схема, используемая образцами палитры в Command Center, подписана на изменения `prefers-color-scheme` и обновляется без изменения сохранённого выбора `system`.
+### Review clarifications 2026-10-12
 
-## Предлагаемый интерфейс
+- **Start attempt ownership**: each new Start attempt gets an increasing id. Closing the palette and a new Start make
+  old replies stale; a stale attempt must not change the busy indicator or the current attempt's result. Only the
+  owner of the current id may clear `worktreeStartBusy` in `finally`.
+- **Project override drafts**: when saved settings update, refresh a draft only for fields the user did not change
+  relative to the previous saved value. Unfinished input is kept; each field syncs independently.
+- **System theme**: in system mode the color scheme used by the palette swatches in Command Center subscribes to
+  `prefers-color-scheme` changes and updates without changing the saved `system` choice.
+
+## Proposed interface
 
 ### Worktrees
 
-Добавить действие `New task in worktree` в Command Center. Это основной Copilot-подобный сценарий: создать Git worktree для новой задачи и подготовить draft в полученном workspace.
+Add the action `New task in worktree` to Command Center. It is the main Copilot-like scenario: create a Git worktree
+for a new task and prepare a draft in the resulting workspace.
 
-Предлагаемый flow (по результатам реверса, eager-создание):
+Flow (from the reverse engineering, eager creation):
 
-1. **Проект** — под-страница палитры `page: new-task-project`: открытые workspace + `recentProjects` с поиском; отметка «уже открыт».
-2. **Setup-страница** — вторая под-страница палитры (аналог session-формы Copilot): назначение (`New worktree` / `Current checkout`), базовая ветка (combobox с поиском по `listLocalBranches`), имя новой ветки с валидацией — занято, недопустимо или ветка уже подключена к worktree (код ошибки `branch-in-other-worktree`); превью целевого каталога.
-3. **Start** — если worktree: сервис `createWorktree`, затем открытие workspace существующим контрактом (`activateTabByPath`/`addTab` + `startDraft`) в новом каталоге; при ошибке `target-path-exists` с уже существующим worktree этой ветки — открыть его без второго каталога (WT-04). Если текущий checkout: `startDraft` в самом проекте. Runtime-сессия создаётся позже обычной отправкой первого сообщения.
+1. **Project**: palette sub-page `page: new-task-project`: open workspaces + `recentProjects` with search; an
+   "already open" mark.
+2. **Setup page**: a second sub-page (analog of Copilot's session form): destination (`New worktree` / `Current
+   checkout`), base branch (combobox searching `listLocalBranches`), new branch name with validation (taken, invalid,
+   or branch already attached to a worktree: error code `branch-in-other-worktree`); preview of the target directory.
+3. **Start**: for a worktree, service `createWorktree`, then open the workspace by the existing contract
+   (`activateTabByPath`/`addTab` + `startDraft`) in the new directory; on error `target-path-exists` with an existing
+   worktree of this branch, open it without a second directory (WT-04). For current checkout, `startDraft` in the
+   project itself. The runtime session is created later by the normal first-message send.
 
-Отдельное действие **Open existing worktree** может показывать уже созданные Git worktree текущего проекта с веткой, путём и отметкой «уже открыт». Выбор использует существующее открытие/дедупликацию workspace и сам по себе не создаёт новую сессию.
+A separate action **Open existing worktree** may list the project's existing Git worktrees with branch, path and an
+"already open" mark. Selecting it uses the existing workspace open/dedupe and creates no session by itself.
 
-На страницах сохраняются введённые проект/ветка при переходе назад; фокус возвращается в поиск. `Escape` закрывает Command Center по текущему контракту.
+Pages keep the entered project/branch when going back and focus returns to search. `Escape` closes Command Center per
+the current contract.
 
-Состояния flow: загрузка проектов и веток, пустой результат, проект не является Git-репозиторием, недоступный Git, ветка уже существует/занята, подготовка каталога, ошибка создания worktree. При ошибке Git не открывать вкладку и не создавать draft. Если worktree создан, но его не удалось открыть как workspace, показать путь и действие «Open worktree»; повторная попытка не должна создавать второй каталог. Ошибки валидации имени ветки показываются в composer возле поля и не закрывают его.
+Flow states: loading projects and branches, empty result, project is not a Git repository, Git unavailable, branch
+exists/occupied, preparing the directory, worktree creation error. On a Git error no tab is opened and no draft is
+created. If the worktree was created but could not be opened as a workspace, show the path and an "Open worktree"
+action; a retry must not create a second directory. Branch-name validation errors show in the composer next to the
+field and do not close it.
 
-**Предлагаемая первая граница:** начать новую задачу в отдельном worktree из локального Git-проекта. Открытие уже существующих worktree — полезное соседнее действие, но его можно оставить отдельным этапом. Git-операции принадлежат сервису/Host; Command Center только собирает параметры и показывает результат.
+**First boundary proposed**: start a new task in a separate worktree from a local Git project. Opening existing
+worktrees is a useful neighboring action that can be a separate stage. Git operations belong to the service/Host;
+Command Center only collects parameters and shows the result.
 
-### Настройки Worktree
+### Worktree settings
 
-В Copilot настройки разделены на общие настройки новых сессий и настройки проекта. В ZCode сейчас не найден отдельный раздел Worktree, поэтому предлагается добавить настройки вместе с feature, но хранение значений нужно решить до реализации.
+Copilot splits settings into general new-session settings and project settings. ZCode had no separate Worktree
+section, so settings are added together with the feature.
 
-**Общие настройки** — раздел `Worktrees` в Settings:
+**General settings**: section `Worktrees` in Settings:
 
-| Контрол               | Поведение                                                                                                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Worktree location     | Выбор: Global storage, Inside repository, Next to repository или Custom. Для Custom показывать поле пути и кнопку `Choose folder`.                             |
-| Default branch prefix | Текстовое поле, пример результирующего имени ветки и кнопка `Reset to default`. В preview явно раскрывать переменные, если синтаксис шаблонов будет поддержан. |
+| Control | Behavior |
+| --- | --- |
+| Worktree location | Choice: Global storage, Inside repository, Next to repository or Custom. For Custom show a path field and a `Choose folder` button. |
+| Default branch prefix | Text field, an example of the resulting branch name and a `Reset to default` button. If a template syntax is supported, the preview expands variables explicitly. |
 
-**Настройки проекта** — доступны из проекта/workspace и переопределяют общие значения:
+**Project settings**: available from the project/workspace and override the general values:
 
-| Контрол                | Поведение                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Default base branch    | Выбор ветки, от которой создаётся новая worktree-ветка; в форме создания её можно заменить для одной задачи. |
-| Branch prefix override | Необязательный префикс для проекта; действие `Reset to global` возвращает наследование общего префикса.      |
+| Control | Behavior |
+| --- | --- |
+| Default base branch | Choice of the branch a new worktree branch is created from; the creation form can replace it for one task. |
+| Branch prefix override | Optional project prefix; `Reset to global` returns to inheriting the general prefix. |
 
-Параметры влияют только на следующие создания worktree. Изменение location само по себе ничего не перемещает и не создаёт. В форме создания показывать вычисленный target path до подтверждения. Для Custom проверять доступность и отсутствие уже занятого пути; ошибка остаётся возле поля и не закрывает форму.
+Parameters affect only later worktree creations. Changing the location moves and creates nothing by itself. The
+creation form shows the computed target path before confirmation. For Custom, check availability and that the path is
+not taken; the error stays next to the field and does not close the form.
 
-У Copilot также есть `Branch update strategy`, `Reusable worktree` и `Worktree sparse-checkout`. Это дополнительные настройки: reusable pool управляет диском и очисткой, sparse-checkout меняет содержимое checkout и требует Git 2.27+. Предлагается не включать их в первую версию; исследовать отдельно после базового create/open flow.
+Copilot also has `Branch update strategy`, `Reusable worktree` and `Worktree sparse-checkout`: extra settings (a
+reusable pool manages disk and cleanup; sparse-checkout changes checkout content and needs Git 2.27+). They are not in
+the first version and need separate research after the basic create/open flow.
 
-> **Отклонение Stage D снято этапом F (2026-10-11).** Режим `Global storage` реализован: `IPlatformService.getAppWorktreesDir?()` (desktop-only) отдаёт рендереру каталог `~/.zcode/worktrees`, путь worktree — `~/.zcode/worktrees/<repoName>/<branch>` (структура по референсу Copilot `…-worktrees/<repo>/<branch>`); в UI отображается с `~`. На платформах без метода (web/mobile) опция Global в Settings скрыта, а сохранённый режим global обрабатывается как недопустимое расположение: Start/первая отправка блокируются с внутренней ошибкой `commandCenter.worktree.error.global-location-unavailable`. Каталог рендерер запрашивает лениво — только когда эффективный режим global. Примеры расположений в Settings для предустановленных режимов — фиксированные короткие строки (`example-repo-worktrees/my-branch` / `example-repo/.worktrees/my-branch` / `~/.zcode/worktrees/example-repo/my-branch`); custom показывает реальный вычисленный путь. Конвенция sibling переименована: `<parent>/<repoName>-worktrees/<branch>` (было `<repoName>.worktrees`); inside остаётся `<repoRoot>/.worktrees/<branch>`; custom без изменений. Прочее соответствует реализации: `worktreeLocationMode` / `worktreeCustomLocationPath` / `worktreeBranchPrefix` (literal-шаблон) в `AppSettings` + `worktreeProjectOverrides` (keyed by workspacePath), префикс проекта побеждает глобальный, `Reset to global` удаляет запись override.
+> **The Stage D deviation was lifted by stage F (2026-10-11).** The `Global storage` mode is implemented:
+> `IPlatformService.getAppWorktreesDir?()` (desktop-only) gives the renderer the directory `~/.zcode/worktrees`; the
+> worktree path is `~/.zcode/worktrees/<repoName>/<branch>` (structure after Copilot's `...-worktrees/<repo>/<branch>`),
+> shown with `~` in the UI. On platforms without the method (web/mobile) the Global option in Settings is hidden, and a
+> saved global mode is treated as an unusable location: Start / first send are blocked with the internal error
+> `commandCenter.worktree.error.global-location-unavailable`. The renderer requests the directory lazily, only when the
+> effective mode is global. Location examples in Settings for the preset modes are fixed short strings
+> (`example-repo-worktrees/my-branch` / `example-repo/.worktrees/my-branch` /
+> `~/.zcode/worktrees/example-repo/my-branch`); custom shows the real computed path. The sibling convention was
+> renamed to `<parent>/<repoName>-worktrees/<branch>` (was `<repoName>.worktrees`); inside stays
+> `<repoRoot>/.worktrees/<branch>`; custom unchanged. Implementation matches otherwise: `worktreeLocationMode` /
+> `worktreeCustomLocationPath` / `worktreeBranchPrefix` (literal template) in `AppSettings` +
+> `worktreeProjectOverrides` (keyed by workspacePath); the project prefix beats the global one and `Reset to global`
+> deletes the override entry.
 
-**Настройки Theme** остаются в существующем разделе Appearance. Новая Theme-страница в Command Center — быстрый выбор тех же значений, а команда `Open appearance settings` ведёт к подробным настройкам, если они понадобятся. Выбор в палитре немедленно обновляет выбранное значение в Appearance.
+**Theme settings** stay in the existing Appearance section. The new Theme page in Command Center is a quick pick of
+the same values, and the `Open appearance settings` command leads to detailed settings if needed. A pick in the
+palette immediately updates the selected value in Appearance.
 
 ### Themes
 
-Добавить действие или группу `Theme` с двумя отдельными блоками:
+Add a `Theme` action or group with two separate blocks:
 
-- **Режим:** System, Light, Dark.
-- **Палитра:** Neutral, Z.ai, Ocean, Forest, Ember, Violet, Slate, Rose, Sand, Mint.
+- **Mode**: System, Light, Dark.
+- **Palette**: Neutral, Z.ai, Ocean, Forest, Ember, Violet, Slate, Rose, Sand, Mint.
 
-Каждая строка — обычный пункт с иконкой/образцом цвета и отметкой текущего выбора. Выбор сразу применяет значение и оставляет пользователя в Command Center. Выбор режима не меняет палитру; выбор палитры не меняет режим. Существующий `Switch theme` можно сохранить как быстрый toggle, но скрыть дубликат из Theme-группы либо заменить его ссылкой на выбор режима.
+Each row is a normal item with an icon/color swatch and a mark on the current choice. Picking applies the value at
+once and leaves the user in Command Center. Picking a mode does not change the palette and vice versa. The existing
+`Switch theme` can stay as a quick toggle but its duplicate is hidden from the Theme group or replaced by a link to
+the mode choice.
 
-Палитра использует существующие setters и список палитр. Новое хранение, отдельная синхронизация или собственные значения тем не добавляются.
+The palette uses the existing setters and palette list. No new storage, separate sync or own theme values are added.
 
-### Что ещё полезно взять из Command Center Copilot
+### Other useful ideas from Copilot's Command Center
 
-1. **Switch workspace** — быстро переключаться между уже открытыми workspace без поиска файлов или обращения к Git. Это дополняет worktree flow: workspace может быть не Git-репозиторием.
-2. **Страницы с контекстом** — вложенные выборы (проект → ветка → подтверждение) используют ту же палитру, сохраняют контекст при возврате и фокусируют поиск.
-3. **Позже изучить быстрый ввод ссылок** — вставка URL или `owner/repo#123` с переходом к соответствующему объекту. Включать стоит после проверки текущих GitHub/PR маршрутов ZCode.
+1. **Switch workspace**: quickly switch among already open workspaces without file search or Git; complements the
+   worktree flow because a workspace may not be a Git repository.
+2. **Pages with context**: nested choices (project -> branch -> confirmation) use the same palette, keep context on
+   return and focus search.
+3. **Later: quick link input**: paste a URL or `owner/repo#123` and jump to the object; only after checking ZCode's
+   current GitHub/PR routes.
 
-Не предлагается переписывать текущий реестр команд: он уже существует. Новые действия добавляются через его текущий контракт, а операции Git остаются за сервисным/API слоем.
+The current command registry is not rewritten; new actions are added through its contract and Git operations stay
+behind the service/API layer.
 
-## Правила и границы
+## Rules and boundaries
 
-- Workspace определяется его существующей identity: `workspaceIdentity?.trim() || workspacePath`; путь остаётся целью файловых и Git-операций.
-- Результат открытия должен использовать текущую дедупликацию вкладок; не создавать отдельную сессию или Agent только из-за выбора worktree.
-- Мобильный web remote control остаётся attach-only. Не добавлять туда локальные directory/Git операции.
-- До решения о remote Git не считать, что путь клиента браузера указывает на репозиторий host-а.
-- Удаление worktree, удаление ветки, очистка изменений и автоматическое переключение базовой ветки в этот объём не входят.
-- Theme действует через существующее состояние приложения; отдельная настройка внутри workspace не вводится.
+- A workspace is defined by its existing identity: `workspaceIdentity?.trim() || workspacePath`; the path stays the
+  target of file and Git operations.
+- The open result must use the current tab deduplication; do not create a separate session or Agent just because a
+  worktree was picked.
+- Mobile web remote control stays attach-only. No local directory/Git operations are added there.
+- Until remote Git is decided, do not assume a browser client's path points to the host's repository.
+- Deleting a worktree, deleting a branch, discarding changes and automatically switching the base branch are out of
+  this scope (worktree removal and prune were later added; see the 2026-10-13 stage-two section).
+- Theme acts through the existing app state; no per-workspace setting is introduced.
 
-## Acceptance-сценарии для уточнения
+## Acceptance scenarios
 
-| ID       | Сценарий                                                               | Ожидаемый результат                                                                                                                           |
-| -------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `WT-01`  | Создать задачу в новом worktree для локального Git-проекта             | Worktree создаётся из выбранной базы; открывается workspace и draft-задача. Runtime-сессия создаётся только после обычной отправки сообщения. |
-| `WT-02`  | Имя ветки уже занято или ветка активна в другом worktree               | Создание не начинается; показано понятное объяснение и доступное действие для выбора другой ветки.                                            |
-| `WT-03`  | Проект не Git-репозиторий или Git недоступен                           | Показано отдельное состояние; worktree и сессия не создаются.                                                                                 |
-| `WT-04`  | Создание worktree прошло, открытие workspace/draft завершилось ошибкой | Показан существующий путь и доступен повторный запуск без создания второго worktree.                                                          |
-| `WT-05`  | Открыть существующий worktree, уже открытый во вкладке                 | Активируется существующая вкладка; дубликат workspace не создаётся.                                                                           |
-| `TH-01`  | Выбрать Light, Dark или System                                         | Меняется только режим; текущая палитра сохраняется.                                                                                           |
-| `TH-02`  | Выбрать палитру                                                        | Меняется только палитра; текущий режим сохраняется.                                                                                           |
-| `TH-03`  | Изменить тему в одном окне                                             | Command Center показывает новое выбранное значение; другие окна получают обновление по текущему механизму.                                    |
-| `CC-01`  | Открыть вложенный выбор, вернуться назад                               | Поиск получает фокус, введённый контекст сохранён.                                                                                            |
-| `WTS-01` | Выбрать Custom worktree location                                       | Поле пути появляется, target path в форме создания обновляется; до подтверждения папка не создаётся.                                          |
-| `WTS-02` | Для проекта задан branch prefix override                               | Preview использует project prefix; `Reset to global` возвращает общий prefix.                                                                 |
-| `WTS-03` | Изменить общую Worktree настройку                                      | Настройка сохраняется в общем scope и действует на последующие worktree; уже созданные пути/ветки не меняются.                                |
+| ID | Scenario | Expected result |
+| --- | --- | --- |
+| `WT-01` | Create a task in a new worktree for a local Git project | The worktree is created from the chosen base; the workspace and a draft task open. The runtime session is created only after the normal message send. |
+| `WT-02` | Branch name taken or branch active in another worktree | Creation does not start; a clear explanation and an action to choose another branch. |
+| `WT-03` | Project is not a Git repository or Git unavailable | A separate state is shown; no worktree and no session are created. |
+| `WT-04` | Worktree created, but opening the workspace/draft failed | The existing path is shown and a retry is available without creating a second worktree. |
+| `WT-05` | Open an existing worktree already open in a tab | The existing tab is activated; no duplicate workspace is created. |
+| `TH-01` | Pick Light, Dark or System | Only the mode changes; the current palette is kept. |
+| `TH-02` | Pick a palette | Only the palette changes; the current mode is kept. |
+| `TH-03` | Change the theme in one window | Command Center shows the new selected value; other windows get the update by the current mechanism. |
+| `CC-01` | Open a nested choice, go back | Search gets focus, the entered context is kept. |
+| `WTS-01` | Pick Custom worktree location | The path field appears, the target path in the creation form updates; the folder is not created before confirmation. |
+| `WTS-02` | A branch prefix override is set for the project | The preview uses the project prefix; `Reset to global` returns the general prefix. |
+| `WTS-03` | Change a general Worktree setting | It is saved in the general scope and applies to later worktrees; already created paths/branches do not change. |
 
-## Решения, которые меняют объём
+## Decisions that change scope
 
-| Вопрос                                                         | Варианты                                                                                  | Предлагаемое направление                                                                                             |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Что означает Worktree в этой функции?                          | Новая сессия в отдельном worktree / открыть существующий / оба                            | Рекомендация: основной flow — новая задача в отдельном worktree; открытие существующих оставить отдельным действием. |
-| Откуда выбирать проект?                                        | Только активный workspace / любой уже открытый workspace / список всех локальных проектов | Начать с уже открытых локальных workspace; не добавлять новый каталоговый picker в этот flow.                        |
-| Как поступать, если выбранная ветка уже подключена к worktree? | Переиспользовать его / создать другую ветку / показать выбор                              | Явно показать существующий worktree и запросить выбор; не переключать workspace молча.                               |
-| Какие окружения поддержать?                                    | Desktop local / также Web и remote workspace                                              | Начать с Desktop local; remote требует host-side Git-контракта.                                                      |
-| Как хранить созданную папку?                                   | Рядом с проектом / в выбранном каталоге / через общую настройку                           | Решить до реализации; у Copilot это настраиваемый путь, у ZCode аналогичного контракта не найдено.                   |
-| Где хранить настройки?                                         | Локально у пользователя / в конфиге проекта / общий default плюс проектный override       | Рекомендация: общий default плюс явные project overrides; формат и синхронизацию пока не выбирать.                   |
-| Какой синтаксис branch prefix поддержать?                      | Только literal prefix / шаблоны вроде `%username%`                                        | Начать с literal prefix; шаблоны требуют определения источника username и fallback поведения.                        |
-| Нужны ли reusable worktrees и sparse checkout сразу?           | MVP / отдельный этап                                                                      | Отложить: они добавляют lifecycle очистки и правила содержания checkout.                                             |
-| Что значит «раздел Theme»?                                     | Только режим / режим и палитра                                                            | Режим и палитра как независимые блоки, согласно текущим настройкам ZCode.                                            |
-| Что из дополнительных идей включить?                           | Switch workspace / ввод PR-URL / пока ничего                                              | Switch workspace — наиболее простой следующий элемент; URL требует отдельного исследования маршрутов.                |
+| Question | Options | Proposed direction |
+| --- | --- | --- |
+| What does Worktree mean in this feature? | New session in a separate worktree / open an existing one / both | Main flow is a new task in a separate worktree; opening existing ones stays a separate action. |
+| Where to pick the project from? | Only the active workspace / any already open workspace / list of all local projects | Start with already open local workspaces; no new directory picker in this flow. |
+| What if the chosen branch is already attached to a worktree? | Reuse it / create another branch / show a choice | Show the existing worktree explicitly and ask for a choice; do not switch workspaces silently. |
+| Which environments to support? | Desktop local / also Web and remote workspace | Start with Desktop local; remote needs a host-side Git contract. |
+| How to store the created folder? | Next to the project / in a chosen directory / via a general setting | Decide before implementation; Copilot has a configurable path, ZCode had no such contract. |
+| Where to store settings? | Local to the user / in project config / general default plus project override | General default plus explicit project overrides; format and sync not chosen yet. |
+| Which branch prefix syntax? | Literal prefix only / templates like `%username%` | Start with a literal prefix; templates need a username source and fallback behavior. |
+| Reusable worktrees and sparse checkout now? | MVP / separate stage | Defer: they add cleanup lifecycle and checkout content rules. |
+| What is the "Theme section"? | Mode only / mode and palette | Mode and palette as independent blocks per current ZCode settings. |
+| Which extra ideas to include? | Switch workspace / PR URL input / nothing yet | Switch workspace is the simplest next item; URL input needs separate research of routes. |
 
-## Карта реализации для следующего этапа
+## Implementation map
 
-- Command Center: `CommandCenterDialog` и `createQuickPickCommands` — существующая поверхность, группы и действия.
-- Workspace/task: `tabStore`, корневые workspace actions и `startDraft` — дедупликация workspace, открытие вкладки и начало draft-задачи. Подтверждённый контракт открытия по пути: `activateTabByPath` → fallback `addTab` → `store.startDraft(path, provider, identity, {createSource})` (`packages/ui/src/App.tsx`). Фактическое создание runtime-сессии остаётся в текущем send/CommandInbox flow.
-- Theme: `useTheme`, Zustand store и реестр `THEME_PALETTES` — текущие значения и применение.
-- Settings: `SettingsPage` уже содержит Appearance, но отдельной секции Worktrees нет; persistence owner выбран: `AppSettings` через `ISettingService` (файл + broadcast уже работают), per-project override — словарь в том же объекте.
-- Git: `GitCliRepo` и shared Git-контракты — есть определение вида репозитория, `listLocalBranches` (for-each-ref с upstream и датой) и классификация ошибки `branch-in-other-worktree` (stderr «is already used by worktree at»); операций list/create worktree нет — их нужно добавить в контракт и сервис.
-- Перед реализацией потребуется оформить Git list/create операции в соответствующих спецификации и контракте; UI не должен напрямую вызывать Git CLI или Repo.
+- Command Center: `CommandCenterDialog` and `createQuickPickCommands`: existing surface, groups and actions.
+- Workspace/task: `tabStore`, root workspace actions and `startDraft`: workspace dedupe, tab opening and starting a
+  draft task. Confirmed open-by-path contract: `activateTabByPath` -> fallback `addTab` ->
+  `store.startDraft(path, provider, identity, {createSource})` (`packages/ui/src/App.tsx`). Actual runtime session
+  creation stays in the current send/CommandInbox flow.
+- Theme: `useTheme`, the Zustand store and the `THEME_PALETTES` registry: current values and application.
+- Settings: `SettingsPage` has Appearance but no Worktrees section; persistence owner chosen: `AppSettings` via
+  `ISettingService` (file + broadcast already work), per-project override is a map in the same object.
+- Git: `GitCliRepo` and shared Git contracts: repository-kind detection, `listLocalBranches` (for-each-ref with
+  upstream and date) and the `branch-in-other-worktree` error classification (stderr "is already used by worktree
+  at"); list/create worktree operations did not exist and had to be added to the contract and service. The Git
+  list/create operations go into the corresponding spec and contract first; the UI must not call the Git CLI or Repo
+  directly. The Git underlying contract is in `docs/git/worktree-operations.md`.
 
 ```mermaid
 flowchart LR
@@ -184,163 +288,269 @@ flowchart LR
   B -. Git error .-> G[Show error; do not open tab or create draft]
 ```
 
-## Границы влияния
+## Impact boundaries
 
-| Поверхность         | Draft / отображаемое состояние                              | Действие и авторитетный владелец                                         | Граница                                                  |
-| ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------- |
-| Worktree setup      | Проект, ветка и каталог временно живут во вложенном UI-flow | Git-операция должна выполняться сервисом на Host, владеющем репозиторием | Первая версия предлагается только для локального Desktop |
-| Открытие результата | Workspace tab и draft-задача                                | `Root` открывает/переиспользует вкладку; `App.startDraft` создаёт draft  | Не создавать сессию до отправки сообщения                |
-| Theme               | Выбранный режим и палитра показываются отдельно             | Существующие store setters применяют и сохраняют выбор                   | Режим не перезаписывает палитру и наоборот               |
+| Surface | Draft / displayed state | Action and authoritative owner | Boundary |
+| --- | --- | --- | --- |
+| Worktree setup | Project, branch and directory live temporarily in the nested UI flow | The Git operation must be run by the service on the Host that owns the repository | First version proposed for local Desktop only |
+| Opening the result | Workspace tab and draft task | `Root` opens/reuses the tab; `App.startDraft` creates the draft | Do not create a session before a message is sent |
+| Theme | Selected mode and palette are shown separately | Existing store setters apply and save the choice | Mode does not overwrite the palette and vice versa |
 
-Перед реализацией сохранить следующие инварианты:
+Invariants to keep before implementation:
 
-- Workspace identity остаётся `workspaceIdentity?.trim() || workspacePath`; Git и файловые операции выполняются по `workspacePath`.
-- Выбор worktree не обходит обычный draft/send/CommandInbox путь и не создаёт runtime сессию напрямую из UI.
-- Remote workspace использует Git-сервис своего Host; browser path не трактуется как локальный путь. Мобильное remote управление остаётся attach-only.
-- Режим и палитра остаются отдельными настройками с текущей межоконной синхронизацией.
+- Workspace identity stays `workspaceIdentity?.trim() || workspacePath`; Git and file operations run by `workspacePath`.
+- Worktree selection does not bypass the normal draft/send/CommandInbox path and does not create a runtime session
+  directly from the UI.
+- A remote workspace uses its own Host's Git service; a browser path is not treated as a local path. Mobile remote
+  control stays attach-only.
+- Mode and palette stay separate settings with the current cross-window sync.
 
-В графе влияния пока нет отдельной capability для Command Center/quick-open. Предлагаемый graph delta — поверхности `new task in worktree` и `theme selection`; добавлять их в граф следует после выбора первой версии worktree и платформенной границы. Codegraph-инструмент в этой среде недоступен; call paths выше проверены по текущим исходникам и документации.
+The impact graph has no separate capability for Command Center/quick-open. Proposed graph delta: surfaces `new task
+in worktree` and `theme selection`, to be added after the first worktree version and platform boundary are chosen.
+The codegraph tool was unavailable in this environment; call paths were checked against current source and docs.
 
-## Следующий шаг
+## Next step
 
-Решения зафиксированы в разделе «Реверс Copilot.app» (направление «как в Copilot», подтверждено пользователем 2026-10-11). Дальше: зафиксировать acceptance-сценарии под composer-паттерн и разбить работу на вертикальные этапы: Theme (valueList-страница) → page-stack в Command Center → Git list/create worktree в контракте и сервисе → composer-контроли назначения/ветки → Settings-секция Worktrees.
+Decisions are recorded in "Copilot.app reverse engineering" (direction "like Copilot", confirmed by the user
+2026-10-11). Then: fix the acceptance scenarios for the composer pattern and split work into vertical stages: Theme
+(valueList page) -> page stack in Command Center -> Git list/create worktree in contract and service -> composer
+destination/branch controls -> Settings Worktrees section.
 
-## Уточнение 2026-10-13: empty-state форма, автогенерация имени, существующая ветка
+## Clarification 2026-10-13: empty-state form, name auto-generation, existing branch
 
-Референс (внешнее приложение, скриншот пользователя): модель «либо работаем в ветке (Current checkout), либо новые worktree идут от выбранной ветки» — тумблер `New worktree` + строка `Branch: <name> ›`. В палитре ZCode эта модель уже реализована (страница «Where to work»: назначение + Base branch). Уточнение закрывает три дельты empty-state/палитры; Git-контракт (`docs/git/worktree-operations.md`) не меняется — `createWorktree` уже допускает checkout существующей ветки.
+Reference (external app, user screenshot): the model "either work in a branch (Current checkout), or new worktrees go
+from the chosen branch": a `New worktree` toggle plus a `Branch: <name> >` line. The ZCode palette already implements
+this model (page "Where to work": destination + Base branch). The clarification closes three empty-state/palette
+deltas; the Git contract (`docs/git/worktree-operations.md`) does not change since `createWorktree` already allows
+checking out an existing branch.
 
-### 1. Base branch в empty-state становится выбором
+### 1. Base branch in the empty state becomes a choice
 
-- Строка «Base: <branch>» (сейчас display-only в `ChatEmptyWorktreeTaskToggle`) превращается в интерактивный контрол вида «Base branch: <name> ›», открывающий список локальных веток (`listLocalBranches`).
-- Семантики дефолта и подмены — те же, что в палитре: override проекта `defaultBaseBranch` → текущая ветка репозитория → первая в списке (`resolveDefaultBaseBranch`); выбор обновляет превью целевого пути и `baseBranch` в `createWorktree`.
-- Состояния загрузки/ошибки наследуются от текущей мини-формы: пока список не загружен, отправка блокируется (уже реализовано), контрол отображает «Loading branches…».
+- The "Base: <branch>" line (display-only in `ChatEmptyWorktreeTaskToggle`) becomes an interactive control "Base
+  branch: <name> >" opening the list of local branches (`listLocalBranches`).
+- Default and override semantics match the palette: project override `defaultBaseBranch` -> the repository's current
+  branch -> first in the list (`resolveDefaultBaseBranch`); the choice updates the target-path preview and
+  `baseBranch` in `createWorktree`.
+- Loading/error states are inherited from the current mini-form: until the list loads, sending is blocked (already
+  implemented) and the control shows "Loading branches...".
 
-### 2. Автогенерация имени ветки (паттерн Copilot)
+### 2. Branch-name auto-generation (Copilot pattern)
 
-- При открытии формы (галочка empty-state и setup-страница палитры) поле имени предзаполняется сгенерированным именем `<adjective>-<noun>`: нижний регистр ASCII, git-safe (`sanitizeWorktreePathSegment`-совместимо).
-- Отдельный «карандаш» не вводится: поле остаётся обычным редактируемым input; рядом кнопка «перегенерировать», генерирующая новое имя. Ручная правка сохраняется, пока пользователь её не сотрёт.
-- Генератор — чистая функция в `worktreeTaskFlow` (общая для обоих входов), учитывает загруженный список веток и не предлагает занятое имя (ограниченное число попыток; если все заняты — отдаёт как есть, конфликт покажет существующая валидация).
-- Композиция с префиксом не меняется: `composeBranchName(prefix, generated)`; префикс из настроек/override по-прежнему применяется к сгенерированному имени.
-- Словарь — встроенный, без новых зависимостей (решение подтверждено 2026-10-13): ~43 прилагательных × ~85 существительных, слова lowercase ASCII git-safe. Группы: характер/настроение, животные, фантастические существа, абсурдные предметы/еда, sci-fi. Веса паттернов: `adjective+animal` 35, `adjective+fantasy` 20, `adjective+object` 20, `scifi+animal` 10, `scifi+object` 10, `scifi+fantasy` 5 (в реализации сведены в группы 35/20/20/25). Генератор — чистая функция `generateWorktreeBranchName({ isTaken, random? })`: не предлагает занятые (составное имя с префиксом), до 10 попыток, RNG инъецируется для тестов.
-- **Формат имени фиксированный (ревью 2026-10-13):** отдельная настройка «Branch name template» отклонена — свободный шаблон это поверхность ошибок (опечатки в плейсхолдерах, невалидные для git символы, статические имена-коллизии). Генератор всегда выдаёт `<adjective>-<noun>` из встроенных списков; ручной ввод и префикс (`worktreeBranchPrefix`) работают как раньше.
-- **Дефолт префикса `zcode/` (ревью 2026-10-13):** при незаданных override и глобальной настройке эффективный префикс — `DEFAULT_WORKTREE_BRANCH_PREFIX = "zcode/"`; явная пустая строка в настройках тоже резолвится в дефолт (отдельной конфигурации «без префикса» нет). Настройки показывают эффективное значение; «Reset» (иконка с тултипом) удаляет сохранённое поле и возвращает дефолт. Поле Prefix — full-width строка (ввод flex-1 + иконка reset), под ней превью `Preview: <эффективный префикс><сгенерированное имя>` с фиксированным RNG (ревью 2026-10-13).
-- **Empty-state — только галочка (ревью 2026-10-13, второй раунд):** мини-форма под чекбоксом «New worktree» скрыта. Галочка означает «создать worktree для первого сообщения»: имя генерируется полностью автоматически (словари + префикс, коллизии избегаются), base — текущий checkout репозитория (пер-проектный override соблюдается тихо), выбор ветки/имени остался только в палитре. Под чекбоксом появляется только временный статус: «Creating worktree…», инлайн-ошибка или кнопка WT-04-восстановления.
-- **Worktree location: пункт Custom временно disabled** (ревью 2026-10-13); ранее сохранённый custom-режим продолжает работать.
-- Известная проблема (воспроизведена пользователем, режим inside): после создания worktree первой отправкой новый проект появляется в списке, но view не переключается и черновик не переносится. Компонентный контракт (create → open → draft transfer) покрыт тестами; сбой — на уровне живого шелла (переключение pane / перенос draft при смене workspace). Требует воспроизведения с консолью (info-лог «[ChatEmptyWorktree] worktree created, redirecting the draft» показывает, дошло ли до открытия).
+- On opening the form (empty-state checkbox and palette setup page) the name field is prefilled with a generated name
+  `<adjective>-<noun>`: lowercase ASCII, git-safe (`sanitizeWorktreePathSegment`-compatible).
+- No separate "pencil": the field stays an ordinary editable input with a "regenerate" button next to it. Manual edits
+  are kept until the user clears them.
+- The generator is a pure function in `worktreeTaskFlow` (shared by both entries), takes the loaded branch list into
+  account and does not offer a taken name (bounded attempts; if all are taken it returns as is and existing validation
+  shows the conflict).
+- Prefix composition is unchanged: `composeBranchName(prefix, generated)`; the prefix from settings/override is still
+  applied to the generated name.
+- Dictionary is built in, no new dependencies (confirmed 2026-10-13): about 43 adjectives x 85 nouns, lowercase ASCII
+  git-safe words. Groups: character/mood, animals, fantasy creatures, absurd objects/food, sci-fi. Pattern weights:
+  `adjective+animal` 35, `adjective+fantasy` 20, `adjective+object` 20, `scifi+animal` 10, `scifi+object` 10,
+  `scifi+fantasy` 5 (merged into groups 35/20/20/25 in the implementation). The generator is the pure function
+  `generateWorktreeBranchName({ isTaken, random? })`: does not offer taken names (composite name with prefix), up to 10
+  attempts, RNG injected for tests.
+- **Fixed name format (review 2026-10-13)**: a separate "Branch name template" setting was rejected; a free template
+  is an error surface (typos in placeholders, git-invalid characters, static colliding names). The generator always
+  yields `<adjective>-<noun>` from the built-in lists; manual input and the prefix (`worktreeBranchPrefix`) work as
+  before.
+- **Default prefix `zcode/` (review 2026-10-13)**: with no override and no global setting the effective prefix is
+  `DEFAULT_WORKTREE_BRANCH_PREFIX = "zcode/"`; an explicit empty string in settings also resolves to the default (there
+  is no "no prefix" configuration). Settings show the effective value; "Reset" (icon with tooltip) deletes the saved
+  field and returns the default. The Prefix field is a full-width row (input flex-1 + reset icon) with a preview
+  `Preview: <effective prefix><generated name>` below it using a fixed RNG.
+- **Empty state is only a checkbox (review 2026-10-13, second round)**: the mini-form under the "New worktree"
+  checkbox is hidden. The checkbox means "create a worktree for the first message": the name is fully automatic
+  (dictionaries + prefix, collisions avoided), base is the repository's current checkout (a per-project override is
+  honored silently), and branch/name choice remains only in the palette. Under the checkbox only a transient status
+  appears: "Creating worktree...", an inline error or the WT-04 recovery button.
+- **Worktree location: the Custom item is temporarily disabled** (review 2026-10-13); a previously saved custom mode
+  keeps working.
+- Known issue (reproduced by the user, inside mode): after a worktree is created by the first send, the new project
+  appears in the list but the view does not switch and the draft is not transferred. The component contract (create ->
+  open -> draft transfer) is covered by tests; the failure is at the live shell level (pane switch / draft transfer on
+  workspace change). Needs reproduction with the console (the info log "[ChatEmptyWorktree] worktree created,
+  redirecting the draft" shows whether it reached opening). (Superseded in intent by the next clarification.)
 
-### 3. Существующая ветка — открытие вместо ошибки
+### 3. Existing branch: open instead of an error
 
-- Сегодня ввод существующего имени даёт клиентскую ошибку `branch-already-exists`. Новое поведение:
-  - ветка уже подключена к worktree → инлайн-оффер «открыть существующий worktree <path>» по контракту WT-04 (`findWorktreeForBranch`); создания второго каталога нет;
-  - ветка существует и свободна → форма разрешает создать worktree с checkout этой ветки (клиентская блокировка снимается; сервер остаётся авторитетным и по-прежнему вернёт `branch-in-other-worktree` при гонке).
-- Выбор всегда за пользователем: автоматическая подмена действия без явного оффера запрещена.
+- Previously entering an existing name gave the client error `branch-already-exists`. New behavior:
+  - the branch is already attached to a worktree -> inline offer "open existing worktree <path>" per the WT-04
+    contract (`findWorktreeForBranch`); no second directory is created;
+  - the branch exists and is free -> the form allows creating a worktree that checks out that branch (the client block
+    is lifted; the server stays authoritative and still returns `branch-in-other-worktree` on a race).
+- The choice is always the user's: silently substituting the action without an explicit offer is forbidden.
 
-### Acceptance-сценарии
+### Acceptance scenarios
 
-| #     | Сценарий                                    | Ожидание                                                                                                                                                                                                                      |
-| ----- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WT-G1 | Открыл empty-state, включил галочку         | Галочка задаёт автоматическое создание worktree для первого сообщения; имя генерируется, base берётся из текущего checkout с учётом тихого project override; форма не показывает редактор имени, выбор base или перегенерацию |
-| WT-G2 | Открыл выбор Base branch                    | Список локальных веток; выбор обновляет превью пути и уходит в `createWorktree`                                                                                                                                               |
-| WT-G3 | Ввёл имя ветки, у которой уже есть worktree | Инлайн-оффер «открыть существующий»; принял → каталог открыт, draft перенесён, второй каталог не создан                                                                                                                       |
-| WT-G4 | Ввёл имя существующей свободной ветки       | Worktree создаётся с checkout этой ветки; `baseBranch` игнорируется сервером                                                                                                                                                  |
-| WT-G5 | Префикс `dev/` + генерация                  | Итог `dev/<adjective>-<noun>`; валидация и превью как раньше                                                                                                                                                                  |
-| WT-G6 | Открыл setup-страницу палитры и меняет имя  | Поле имени доступно для ручной правки; перегенерация меняет только сгенерированное имя                                                                                                                                        |
+| # | Scenario | Expectation |
+| --- | --- | --- |
+| WT-G1 | Open the empty state, enable the checkbox | The checkbox sets automatic worktree creation for the first message; the name is generated, base comes from the current checkout honoring the silent project override; the form shows no name editor, base choice or regenerate |
+| WT-G2 | Open the Base branch choice | A list of local branches; the choice updates the path preview and goes to `createWorktree` |
+| WT-G3 | Enter a branch name that already has a worktree | Inline offer "open existing"; accepted -> the directory opens, the draft is transferred, no second directory is created |
+| WT-G4 | Enter the name of an existing free branch | A worktree is created checking out that branch; `baseBranch` is ignored by the server |
+| WT-G5 | Prefix `dev/` + generation | Result `dev/<adjective>-<noun>`; validation and preview as before |
+| WT-G6 | Open the palette setup page and edit the name | The name field is editable by hand; regenerate changes only the generated name |
 
-Тесты: unit на генератор (детерминизм при фиксированном seed/списке, не предлагает занятые) и на derive-логику; e2e на WT-G3 (перехват первой отправки + открытие существующего). i18n: новые ключи en-US / uk-UA / zh-CN.
+Tests: unit tests for the generator (determinism with a fixed seed/list, does not offer taken names) and the derive
+logic; e2e for WT-G3 (first-send interception + opening the existing one). i18n: new keys en-US / uk-UA / zh-CN.
 
-### В объём работ входит и второй этап (подтверждено 2026-10-13): удаление и prune
+### Second stage also in scope (confirmed 2026-10-13): removal and prune
 
-Удаление worktree и `git worktree prune` входят в скоуп текущей работы. Контракт расширяется в `docs/git/worktree-operations.md` (`removeWorktree` / `pruneWorktrees`); размещение в UI:
+Worktree removal and `git worktree prune` are in the scope of the current work. The contract is extended in
+`docs/git/worktree-operations.md` (`removeWorktree` / `pruneWorktrees`); UI placement:
 
-- Список существующих worktree проекта — секция на setup-странице палитры «New task in worktree» (данные уже есть: `listWorktrees`): ветка + путь + отметка «уже открыт» для открытых вкладок; для non-main, не открытых и не текущего workspace записей — действие удаления.
-- Удаление: сначала без `--force`; при незакоммиченных изменениях сервис возвращает структурированный issue, UI показывает подтверждение «удалить с изменениями» и повторяет с `force`. Main worktree, текущий workspace, открытые вкладки и worktree с активной сессией удалению из UI не подлежат. Для вкладок и сессий путь сравнивается с Git-списком через каноническую identity, разрешённую на Git/service boundary с realpath и правилами регистра текущей платформы; точное совпадение имени ветки служит дополнительным fallback только для активной сессии с известным `branchName`. При ошибке разрешения identity удаление блокируется.
-- Prune: действие рядом со списком; чистит stale-записи (каталог удалён вручную). Runtime-сессии это не затрагивает: удаление каталога worktree с активной сессией блокируется проверкой открытых вкладок, а владелец сессии — Host, который переживает недоступность каталога так же, как любую другую пропажу файлов.
+- The list of the project's existing worktrees is a section on the "New task in worktree" palette setup page (data
+  exists: `listWorktrees`): branch + path + an "already open" mark for open tabs; a delete action for non-main entries
+  that are not open and not the current workspace.
+- Removal: first without `--force`; with uncommitted changes the service returns a structured issue, the UI shows a
+  "delete with changes" confirmation and retries with `force`. The main worktree, the current workspace, open tabs and
+  worktrees with an active session cannot be removed from the UI. For tabs and sessions the path is compared with the
+  Git list through a canonical identity resolved at the Git/service boundary with realpath and the current platform's
+  case rules; an exact branch-name match serves as an additional fallback only for an active session with a known
+  `branchName`. If identity resolution fails, removal is blocked.
+- Prune: an action next to the list; cleans stale entries (directory deleted manually). It does not touch runtime
+  sessions: removing a worktree directory with an active session is blocked by the open-tab check, and the session
+  owner is the Host, which survives a directory becoming unavailable like any other missing files.
 
-Git-контракт второго этапа — см. `docs/git/worktree-operations.md` (removeWorktree / pruneWorktrees).
+The stage-two Git contract is in `docs/git/worktree-operations.md` (removeWorktree / pruneWorktrees).
 
-## Уточнение 2026-10-13 (второе): worktree-сессия живёт в текущем проекте
+## Clarification 2026-10-13 (second): a worktree session lives in the current project
 
-Ревью пользователя (скриншот): после галочки «New worktree» созданный worktree появляется отдельным проектом в сайдбаре, чат не открывается, сессия не стартует. Это неправильная модель. Целевое поведение:
+User review (screenshot): after the "New worktree" checkbox the created worktree appears as a separate project in the
+sidebar, the chat does not open and the session does not start. That model is wrong. Target behavior:
 
-1. **Сессия запускается в пределах текущего проекта** — появляется в списке задач текущего workspace, а не новым проектом.
-2. **Чат открывается и стартует сразу** — первое сообщение уходит как обычная отправка; на время создания worktree показывается статус «Creating worktree…».
-3. Агент при этом физически работает в каталоге созданного worktree (отдельная ветка, основной checkout не затрагивается).
+1. **The session starts within the current project**: it appears in the task list of the current workspace, not as a
+   new project.
+2. **The chat opens and starts at once**: the first message goes as a normal send; while the worktree is being
+   created the status "Creating worktree..." is shown.
+3. The agent physically works in the created worktree directory (separate branch, the main checkout is untouched).
 
-### Модель: execution worktree у сессии
+### Model: the session's execution worktree
 
-Владелец решения — сессия (CLI runtime), а не workspace. Вводится понятие **execution worktree**: каталог, в котором агент исполняется, при том что сессия остаётся привязана к родительскому workspace (листинг, identity, Host — без изменений).
+The owner of the decision is the session (CLI runtime), not the workspace. The concept **execution worktree** is
+introduced: the directory in which the agent runs while the session stays bound to the parent workspace (listing,
+identity, Host unchanged).
 
-- **Создание worktree остаётся за UI** (`IGitService.createWorktree`, уже реализовано и протестировано: классификация ошибок, WT-04, генерация имени, префикс). CLI не дублирует git-логику; работа с ветками/настройками локации не переезжает.
-- **Привязка к сессии — через протокол.** Поле `executionWorktree: { path, branchName }` (опциональное) в:
-  - v4-команде `createSession` (`packages/shared/src/zcode-protocol-v4/command.ts`);
-  - `zcodeSessionCreateParamsSchema` (`packages/shared/src/zcode-protocol/index.ts`) — схема strict, без поля bridge-парс его отбросил бы.
-    Совместимость: v4-схема команды не strict — старый CLI молча отбрасывает ключ (fail-closed, сессия создаётся в родительском каталоге без ошибки).
-- **Персистентность.** Строка сессии получает новые nullable-колонки `execution_directory` / `execution_branch` (миграция `0023_session_execution_worktree`). Колонки `directory`/`path` **продолжают хранить путь родительского workspace**: листинг сессий фильтрует по `directory = ?` и `workspaceID || path || directory` (`server-operations.listSessions`), поэтому запись worktree в `directory` скрыла бы сессию из списка проекта.
-- **Резюме.** Cold-resume передаёт сохранённые `execution_directory` / `execution_branch` в создание app/runtime record, чтобы и `workingDirectory`, и зависимости, привязанные к каталогу (включая MCP и custom commands), создавались относительно execution worktree. `resume.ts` продолжает читать `execution_directory ?? directory`.
-- **Выполнение.** `createZCodeApp` нормализует `workingDirectory = executionWorktree.path ?? runtimeConfig.workingDirectory ?? process.cwd()`; `projectID` для персистентных настроек режима считается от `workspacePath` (родитель), чтобы настройки режима проекта не разъезжались между сессиями проекта.
+- **Worktree creation stays with the UI** (`IGitService.createWorktree`, already implemented and tested: error
+  classification, WT-04, name generation, prefix). The CLI does not duplicate git logic; branch/location settings work
+  does not move.
+- **Binding to the session is through the protocol.** The optional field `executionWorktree: { path, branchName }` in:
+  - the v4 command `createSession` (`packages/shared/src/zcode-protocol-v4/command.ts`);
+  - `zcodeSessionCreateParamsSchema` (`packages/shared/src/zcode-protocol/index.ts`): the schema is strict; without the
+    field the bridge parse would drop it.
 
-### Поток отправки (empty-state, галочка)
+  Compatibility: the v4 command schema is not strict, so an old CLI silently drops the key (fail-closed: the session is
+  created in the parent directory without an error).
+- **Persistence.** The session row gets new nullable columns `execution_directory` / `execution_branch` (migration
+  `0023_session_execution_worktree`). The `directory`/`path` columns **keep the parent workspace path**: session
+  listing filters by `directory = ?` and `workspaceID || path || directory` (`server-operations.listSessions`), so
+  writing the worktree into `directory` would hide the session from the project list.
+- **Resume.** Cold resume passes the stored `execution_directory` / `execution_branch` into app/runtime record
+  creation so both `workingDirectory` and directory-bound dependencies (including MCP and custom commands) are created
+  relative to the execution worktree. `resume.ts` keeps reading `execution_directory ?? directory`.
+- **Execution.** `createZCodeApp` normalizes `workingDirectory = executionWorktree.path ?? runtimeConfig.workingDirectory
+  ?? process.cwd()`; `projectID` for persisted mode settings is computed from `workspacePath` (the parent) so a
+  project's mode settings do not diverge across the project's sessions.
 
-- Контракт `ComposerDraftWorktreeIntentSlot.interceptFirstSend` меняется с `boolean` на результат `{ action: "cancel" } | { action: "proceed", executionWorktree }`:
-  - создание worktree не удалось (любой issue) → `cancel`, инлайн-ошибка/WT-04-оффер как сейчас, черновик остаётся;
-  - создание удалось → `proceed`, композер продолжает обычную отправку в текущем workspace, передавая `executionWorktree` в options первого send.
-- Переключение workspace и перенос черновика (`onOpenWorktreeDraft` + draft transfer) из этого флоу уходят; остаются только в WT-04-восстановлении («открыть существующий worktree» — явный выбор пользователя) и в палитре.
-- **Prewarm-сессия обходится**: draft-prewarm создаёт пустую сессию в cwd родителя, для worktree-отправки она непригодна. При наличии `executionWorktree` в отправке promote-prewarm пропускается, сессия создаётся fallback-путём `createSession` с полем; непродвинутая prewarm-сессия удаляется существующим механизмом (hook disable → dispose → delete).
-- Прогресс: на время `interceptFirstSend` — статус «Creating worktree…» в empty-state (уже есть), далее — существующий pending-spinner композера до ack `createSession`/`sendText`.
+### Send flow (empty state, checkbox)
 
-### Диаграмма владельцев и порядка событий
+- The contract `ComposerDraftWorktreeIntentSlot.interceptFirstSend` changes from `boolean` to a result
+  `{ action: "cancel" } | { action: "proceed", executionWorktree }`:
+  - worktree creation failed (any issue) -> `cancel`, inline error / WT-04 offer as now, the draft stays;
+  - creation succeeded -> `proceed`, the composer continues the normal send in the current workspace, passing
+    `executionWorktree` in the options of the first send.
+- Workspace switching and draft transfer (`onOpenWorktreeDraft` + draft transfer) leave this flow; they remain only in
+  the WT-04 recovery ("open existing worktree" is an explicit user choice) and in the palette.
+- **The prewarm session is bypassed**: draft prewarm creates an empty session in the parent's cwd, unusable for a
+  worktree send. When `executionWorktree` is present in the send, promote-prewarm is skipped and the session is created
+  by the fallback `createSession` path with the field; the unpromoted prewarm session is deleted by the existing
+  mechanism (hook disable -> dispose -> delete).
+- Progress: during `interceptFirstSend` the status "Creating worktree..." in the empty state (exists), then the
+  composer's existing pending spinner until the `createSession`/`sendText` ack.
+
+### Owners and event-order diagram
 
 ```
 UI (composer submit)
   └─ interceptFirstSend (ChatEmptyWorktreeTaskToggle)
-       └─ IGitService.createWorktree (RPC → GitService → GitCliRepo)   [владелец: UI/Git-сервис]
-  ── proceed: onSendText(options.executionWorktree) ──>
+       └─ IGitService.createWorktree (RPC -> GitService -> GitCliRepo)   [owner: UI/Git service]
+  -- proceed: onSendText(options.executionWorktree) -->
 SessionPane
   ├─ skip prewarm promote (executionWorktree present)
-  ├─ command createSession { workspaceId: текущий, executionWorktree }  [владелец провода: shared v4 schema]
-  └─ command sendText (обычный)
-CLI Host (v4 gateway → bridge → createRecord)
-  ├─ runtimeConfig.executionWorktree → createZCodeApp workingDirectory = worktree  [владелец: CLI runtime]
-  └─ первый turn → persistSession: directory/path = parent, execution_directory = worktree  [владелец: core]
-Cold resume: resume.ts читает execution_directory ?? directory  [владелец: core]
+  ├─ command createSession { workspaceId: current, executionWorktree }  [wire owner: shared v4 schema]
+  └─ command sendText (normal)
+CLI Host (v4 gateway -> bridge -> createRecord)
+  ├─ runtimeConfig.executionWorktree -> createZCodeApp workingDirectory = worktree  [owner: CLI runtime]
+  └─ first turn -> persistSession: directory/path = parent, execution_directory = worktree  [owner: core]
+Cold resume: resume.ts reads execution_directory ?? directory  [owner: core]
 ```
 
-### Видимость worktree-сессии (раунд 2026-10-13, ревью пользователя)
+### Visibility of the worktree session (round 2026-10-13, user review)
 
-Факт `executionWorktree` доезжает до UI через sessions-index: `sessionSummarySchema.executionWorktree` (additive), CLI кладёт его из рантайма (`AgentRuntime.getExecutionWorktree()` через host-хук `getSessionIndexMeta`) для живых сессий и из колонок `execution_directory/execution_branch` для cold-сидов (`loadStoredSessionSummaries`); проекция сравнивает поле в `summariesEqual` (появление worktree даёт delta). В UI поле проходит `mapSessionSummaryToTaskMeta` → merge с task-index строкой → `ZCodeTaskMeta.executionWorktree`.
+The `executionWorktree` fact reaches the UI through sessions-index: `sessionSummarySchema.executionWorktree` (additive);
+the CLI fills it from the runtime (`AgentRuntime.getExecutionWorktree()` via the host hook `getSessionIndexMeta`) for
+live sessions and from the columns `execution_directory/execution_branch` for cold seeds
+(`loadStoredSessionSummaries`); the projection compares the field in `summariesEqual` (a worktree appearing produces a
+delta). In the UI the field goes `mapSessionSummaryToTaskMeta` -> merge with the task-index row ->
+`ZCodeTaskMeta.executionWorktree`.
 
-- **Сайдбар:** строка задачи с worktree-сессией показывает иконку GitBranch (титул «Worktree session · <branch>», i18n ×3), в правом кластере рядом с cron/off-peak иконками.
-- **«Открыть в IDE» (заголовок задачи):** кнопка редактора открывает `executionWorktree.path`, а не корневой checkout (поле идёт из `resolvedActiveTaskMeta` в `WorkspaceHeaderActionSection` → `WorkspaceEditorButtonGroup`).
-- **Панель дерева файлов:** «Open in file manager» и «Copy path» ведут в worktree (target строится из `resolveTaskFileTreeTarget` и несёт `executionWorktreePath`).
-- Известная граница: содержимое дерева файлов продолжает показывать родительский checkout (ре-рут дерева в worktree — отдельный шаг; пути в транскрипте указывают на worktree).
+- **Sidebar**: a task row with a worktree session shows a GitBranch icon (title "Worktree session · <branch>", i18n
+  x3) in the right cluster next to the cron/off-peak icons.
+- **"Open in IDE" (task header)**: the editor button opens `executionWorktree.path`, not the root checkout (the field
+  comes from `resolvedActiveTaskMeta` in `WorkspaceHeaderActionSection` -> `WorkspaceEditorButtonGroup`).
+- **File-tree panel**: "Open in file manager" and "Copy path" lead to the worktree (the target is built from
+  `resolveTaskFileTreeTarget` and carries `executionWorktreePath`).
+- Known boundary: the file-tree content still shows the parent checkout (re-rooting the tree into the worktree is a
+  separate step; paths in the transcript point to the worktree).
 
-### Ревью PR #70 (2026-10-14)
+### PR #70 review (2026-10-14)
 
-- Execution cwd worktree-сессии не меняет корень проекта и область project memory; холодное восстановление сохраняет те же границы, что и создание сессии.
-- После создания worktree при первой отправке путь сохраняется в черновике до принятой отправки. Ошибка подготовки вложений, блокировка или требование подтверждения оставляют retry привязанным к созданному worktree. Inline-вложения копируются в attachment store новой сессии после её создания; в send уходят только принадлежащие ей refs, а prewarm-сессия остаётся до завершения копирования.
-- Удаление worktree недоступно, если на него ссылается открытая вкладка или активная сессия. Пути сравниваются через service-resolved canonical identity; при невозможности разрешить identity удаление блокируется. Для активной сессии точное имя ветки служит дополнительным fallback, если метаданные ветки сохранены.
-- Индикатор execution worktree показывается и в обычной интерактивной строке сгруппированной задачи, и в её drag overlay.
-- Сбой необязательной загрузки списка worktree не блокирует проект/ветки и действие Start. Занятая ветка требует явного действия Open worktree; Start сам вкладку не открывает.
-- Возврат к той же записи проекта сохраняет введённую ветку и состояние touched guard. Пустой branch prefix показывается как действующий default `zcode/`.
-- Удаление через `--force` учитывает Git locked worktree и при необходимости использует двойной `-f`. Нормализация завершающих разделителей пути линейна для длинных путей.
+- The execution cwd of a worktree session does not change the project root and the project-memory scope; cold resume
+  keeps the same boundaries as session creation.
+- After a worktree is created on first send, the path is kept in the draft until a send is accepted. An attachment
+  preparation error, a block or a confirmation requirement keeps the retry bound to the created worktree. Inline
+  attachments are copied into the new session's attachment store after it is created; only refs belonging to it go in
+  the send, and the prewarm session stays until copying finishes.
+- Worktree removal is unavailable if an open tab or an active session references it. Paths are compared through the
+  service-resolved canonical identity; if identity cannot be resolved, removal is blocked. For an active session the
+  exact branch name is an additional fallback if branch metadata is saved.
+- The execution-worktree indicator is shown in the ordinary interactive row of a grouped task and in its drag overlay.
+- A failure of the optional worktree-list load does not block the project/branches and the Start action. An occupied
+  branch requires the explicit Open worktree action; Start itself does not open a tab.
+- Returning to the same project entry keeps the entered branch and the touched-guard state. An empty branch prefix is
+  shown as the effective default `zcode/`.
+- Removal via `--force` accounts for Git locked worktrees and uses a double `-f` when needed. Normalization of trailing
+  path separators is linear for long paths.
 
-### Исправление гонки удалённого prewarm (ревью-логи 2026-10-13)
+### Remote prewarm race fix (review logs 2026-10-13)
 
-Логи live-QA зафиксировали `fault.subscribe.sessionNotFound` через ~2с после успешной worktree-отправки. Цепочка: draft-панель подписана на prewarm-сессию; при отправке с галочкой промоут пропускается и prewarm удаляется CLI-side (`dispose` → `deleteSession`), но его projection-store остаётся в keep-warm (30с) и реагирует на «runtime available» новой сессии — реконнект к удалённой сессии падает. Гонка существовала и раньше (переключение workspace с непрорамоученным prewarm), но worktree-флоу делает её воспроизводимой в каждом happiest-path.
+Live-QA logs recorded `fault.subscribe.sessionNotFound` about 2s after a successful worktree send. Chain: the draft
+panel is subscribed to the prewarm session; on a send with the checkbox the promote is skipped and the prewarm is
+deleted CLI-side (`dispose` -> `deleteSession`), but its projection store stays in keep-warm (30s) and reacts to the new
+session's "runtime available"; the reconnect to the deleted session fails. The race existed before (switching
+workspace with an unpromoted prewarm), but the worktree flow makes it reproducible on every happy path.
 
-Исправление: `fault.subscribe.sessionNotFound` в `ConversationProjectionStore.connect` — терминальный исход: флаг `sessionGone` останавливает все пути реконнекта (retry, runtime-restart/available/unavailable), а `SessionDataLayer` по колбэку `onSessionGone` сбрасывает keep-warm-запись (если на стор нет активных ссылок панели). Существующий discard-флоу draft-панели не менялся.
+Fix: `fault.subscribe.sessionNotFound` in `ConversationProjectionStore.connect` is a terminal outcome: the flag
+`sessionGone` stops all reconnect paths (retry, runtime-restart/available/unavailable), and `SessionDataLayer`, on the
+`onSessionGone` callback, drops the keep-warm entry (if the store has no active panel references). The existing discard
+flow of the draft panel is unchanged.
 
-### Известные границы (не в первом срезе)
+### Known limits (not in the first slice)
 
-- Legacy-путь `session/create` из `packages/services` (боты, saved workflows) поле не передаёт — только v4-флоу десктопа.
-- `isolation: "worktree"` в script-workflow-runtime (динамические workflow-субагенты) — отдельная незавершённая возможность, сюда не входит.
-- Первое сообщение, начинающееся с `/goal` (empty-goal), при включённой галочке создаёт worktree, но сам команда остаётся в draft-scope — редкий эдж; обычная отправка и `/goal <текст>` идут по основному пути.
+- The legacy `session/create` path from `packages/services` (bots, saved workflows) does not pass the field: only the
+  desktop v4 flow.
+- `isolation: "worktree"` in the script-workflow runtime (dynamic workflow subagents) is a separate unfinished
+  capability, not included here.
+- A first message that starts with `/goal` (empty goal), with the checkbox on, creates the worktree but the command
+  itself stays in the draft scope: a rare edge; a normal send and `/goal <text>` take the main path.
 
-### Acceptance-сценарии
+### Acceptance scenarios
 
-| #     | Сценарий                                                          | Ожидание                                                                                                                                            |
-| ----- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WT-H1 | Галочка + первое сообщение                                        | Сессия создаётся в текущем проекте; worktree-каталог и ветка созданы; первый turn исполняется в worktree; отдельный проект в сайдбаре не появляется |
-| WT-H2 | Ошибка создания worktree (git unavailable)                        | Отправка отменена, инлайн-ошибка, черновик на месте, сессия не создана                                                                              |
-| WT-H3 | Перезапуск приложения, открытие worktree-сессии из списка проекта | Резюме в том же worktree (`execution_directory`)                                                                                                    |
-| WT-H4 | Prewarm-сессия уже создана до отправки                            | Promote пропущен, сессия создана с `executionWorktree`; prewarm-сессия не остаётся висеть                                                           |
+| # | Scenario | Expectation |
+| --- | --- | --- |
+| WT-H1 | Checkbox + first message | The session is created in the current project; the worktree directory and branch are created; the first turn runs in the worktree; no separate project appears in the sidebar |
+| WT-H2 | Worktree creation error (git unavailable) | The send is cancelled, an inline error, the draft stays, no session is created |
+| WT-H3 | Restart the app, open the worktree session from the project list | Resume in the same worktree (`execution_directory`) |
+| WT-H4 | A prewarm session was already created before sending | Promote is skipped, the session is created with `executionWorktree`; the prewarm session does not linger |
