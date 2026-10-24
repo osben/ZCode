@@ -967,25 +967,6 @@ export function useAppPanels(options: {
     [commitOpenedSidePaneState, revealSidePaneForCurrentOwner],
   );
 
-  // Sidebar child rows select the parent first; the tab can only open once this hook's render-scoped
-  // owner/workspace equal that parent, after the workspace-restore and scope effects above ran
-  // (spec sidebar-child-conversation-counts §8.2). A newer queue call or null replaces the intent.
-  const [queuedSubagentOpen, setQueuedSubagentOpen] =
-    useState<OpenScopedSubagentSideTabRequest | null>(null);
-  const handleQueueSubagentSessionOpen = useCallback(
-    (request: OpenScopedSubagentSideTabRequest | null) => setQueuedSubagentOpen(request),
-    [],
-  );
-  useEffect(() => {
-    if (!queuedSubagentOpen) return;
-    const targetWorkspaceKey =
-      queuedSubagentOpen.workspaceIdentity?.trim() || queuedSubagentOpen.workspacePath;
-    const targetOwner = queuedSubagentOpen.rootSessionId ?? queuedSubagentOpen.parentSessionId;
-    if (activeWorkspaceKey !== targetWorkspaceKey || sidePaneOwnerId !== targetOwner) return;
-    setQueuedSubagentOpen(null);
-    handleOpenSubagentSession(queuedSubagentOpen);
-  }, [activeWorkspaceKey, handleOpenSubagentSession, queuedSubagentOpen, sidePaneOwnerId]);
-
   const handleOpenSubagentDirectory = useCallback(
     (request: OpenScopedSubagentDirectorySideTabRequest) => {
       const workspaceKey = request.workspaceIdentity?.trim() || request.workspacePath;
@@ -1705,7 +1686,6 @@ export function useAppPanels(options: {
     handleOpenTerminalTab,
     handleOpenModelTrajectory,
     handleOpenSubagentSession,
-    handleQueueSubagentSessionOpen,
     handleOpenBackgroundBash,
     handleOpenSubagentDirectory,
     handleSyncSubagentSessionTabs,

@@ -1171,13 +1171,13 @@ export interface LocalSettingStorePort {
 
 /**
  * Bounded child-session fact for sidebar child lists (specs/sidebar-child-conversation-counts.md).
- * Only selection_side_chat and subagent_child children are listed; workflow children stay owned by
- * workflowActivity and forks are not children for this purpose.
+ * Only selection_side_chat children are listed (§9): subagents are reached from the parent
+ * conversation, workflow children stay owned by workflowActivity, and forks are not children.
  */
 export interface ChildSessionInfo {
   id: SessionId;
   title: string;
-  taskType: Extract<SessionTaskType, "selection_side_chat" | "subagent_child">;
+  taskType: Extract<SessionTaskType, "selection_side_chat">;
   lastActivityAt: number;
 }
 
@@ -1243,13 +1243,12 @@ export interface SessionStorePort {
   getSession(sessionID: SessionId): Promise<SessionInfo | null>;
   listSessions(input?: ListSessionsInput): Promise<SessionInfo[]>;
   /**
-   * Grouped child counts for sidebar rows: one count per (parent, kind) over non-archived
-   * selection_side_chat / subagent_child children. Counts are true totals even when the
-   * corresponding listChildSessions result is capped.
+   * Grouped side-chat counts for sidebar rows over live selection_side_chat children. Counts are
+   * true totals even when the corresponding listChildSessions result is capped.
    */
   countChildSessions(input: {
     parentIds: readonly SessionId[];
-  }): Promise<Map<string, { sideChats: number; subagents: number }>>;
+  }): Promise<Map<string, { sideChats: number }>>;
   /**
    * Latest non-archived child sessions per parent, newest first, capped at limitPerParent;
    * same task-type scope as countChildSessions. Parents with no children are omitted.

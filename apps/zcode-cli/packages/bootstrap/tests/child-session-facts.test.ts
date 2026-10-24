@@ -1,6 +1,6 @@
 // Unit tests for the bridge-level child-conversation facts resolver (spec:
-// sidebar-child-conversation-counts.md §3): TTL gating, stale-serve, failure backoff, cold-parent
-// seeding, live-registry parent discovery, and busy-based running facts.
+// sidebar-child-conversation-counts.md §3, §9): TTL gating, stale-serve, failure backoff, cold-parent
+// seeding, and live-registry side-chat parent discovery.
 import { describe, expect, it, vi } from "vitest";
 import type { ChildSessionInfo, SessionStorePort } from "@zcode/contracts";
 import type { ZCodeProtocolSessionRecord } from "../src/zcode-protocol/server-types.js";
@@ -13,40 +13,24 @@ function record(overrides: {
   sessionId: string;
   parentSessionId?: string;
   taskType?: string;
-  busy?: boolean;
 }): ZCodeProtocolSessionRecord {
   return {
     sessionId: overrides.sessionId,
     parentSessionId: overrides.parentSessionId,
     taskType: overrides.taskType,
-    activeAbortController: overrides.busy ? ({ abort: () => {} } as AbortController) : undefined,
-    app: {
-      runtime: { hasResidencyBlockingWork: () => overrides.busy === true },
-    },
   } as unknown as ZCodeProtocolSessionRecord;
 }
 
 function createHarness(
-  initialCounts: Map<string, { sideChats: number; subagents: number }> = new Map(),
+  initialCounts: Map<string, { sideChats: number }> = new Map(),
 ) {
   const sessions = new Map<string, ZCodeProtocolSessionRecord>();
   const children = new Map<string, ChildSessionInfo[]>();
   const clockMs = { value: 10_000 };
   const warnings: string[] = [];
   let shouldFail = false;
-  const detachedChildren: Array<{
-    parentSessionId: string;
-    sessionId: string;
-    running: boolean;
-    taskType: string;
-  }> = [];
-  const backgroundWorkIds = new Map<string, Map<string, string>>();
   const onRefresh = vi.fn();
   const store = {
-    getSession: vi.fn(async (sessionId: string) => {
-      const detached = detachedChildren.find((child) => child.sessionId === sessionId);
-      return detached ? { id: sessionId, taskType: detached.taskType } : null;
-    }),
     countChildSessions: vi.fn(async () => {
       if (shouldFail) throw new Error("store down");
       return new Map(initialCounts);
@@ -59,9 +43,6 @@ function createHarness(
   const resolver = createChildSessionFactsResolver({
     store: () => store,
     sessions,
-    getDetachedChildren: () => detachedChildren,
-    getBackgroundWorkIds: (parentSessionId) =>
-      backgroundWorkIds.get(parentSessionId) ?? new Map(),
     onRefresh,
     logger: { warn: (message: string) => warnings.push(message) },
     now: () => clockMs.value,
@@ -79,14 +60,8 @@ function createHarness(
     setChildren: (parentKey: string, ...items: ChildSessionInfo[]) => {
       children.set(parentKey, items);
     },
-    setBackgroundWork: (parentKey: string, childSessionId: string, workId: string) => {
-      const works = backgroundWorkIds.get(parentKey) ?? new Map<string, string>();
-      works.set(childSessionId, workId);
-      backgroundWorkIds.set(parentKey, works);
-    },
-    detachedChildren,
     onRefresh,
-    setCount: (parentKey: string, value: { sideChats: number; subagents: number }) => {
+    setCount: (parentKey: string, value: { sideChats: number }) => {
       initialCounts.set(parentKey, value);
     },
   };
@@ -103,14 +78,14 @@ describe("child session facts resolver", () => {
   });
 
   it("cold-seeded parents refresh once, serve stale within the TTL, and refresh again after it", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 2 }]]));
+    const harness = createHarness(new Map([["s-parent", { sideChats: 1 }]]));
     harness.resolver.noteParents(["s-parent"]);
     // First resolve schedules the refresh; until it lands the cache is empty (stale-serve).
     expect(harness.resolver.resolve("s-parent")).toEqual({});
     await flushMicrotasks();
     expect(harness.countCalls()).toBe(1);
     expect(harness.listCalls()).toBe(1);
-    expect(harness.resolver.resolve("s-parent")).toEqual({ sideChatCount: 1, subagentCount: 2 });
+    expect(harness.resolver.resolve("s-parent")).toEqual({ sideChatCount: 1 });
 
     // Within the TTL no further reads happen…
     harness.clockMs.value += 500;
@@ -128,7 +103,7 @@ describe("child session facts resolver", () => {
   it("does not requeue fresh parents when refresh publishes its result", async () => {
     vi.useFakeTimers();
     try {
-      const harness = createHarness(new Map([['s-parent', { sideChats: 1, subagents: 0 }]]));
+      const harness = createHarness(new Map([['s-parent', { sideChats: 1 }]]));
       harness.onRefresh.mockImplementation((parentKeys: string[]) => {
         for (const parentKey of parentKeys) {
           harness.resolver.resolve(parentKey);
@@ -152,185 +127,46 @@ describe("child session facts resolver", () => {
     }
   });
 
-  it("running facts come from busy registry children; resident-but-idle children never run", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 0, subagents: 2 }]]));
-    // The registry scan discovers the parent (no cold seed) and counts only the busy subagent.
+  it("discovers side-chat parents from live records; subagent records never register a parent", async () => {
+    const harness = createHarness(new Map([["s-parent", { sideChats: 1 }]]));
     harness.sessions.set(
-      "child-busy",
-      record({
-        sessionId: "child-busy",
-        parentSessionId: "s-parent",
-        taskType: "subagent_child",
-        busy: true,
-      }),
+      "child-agent",
+      record({ sessionId: "child-agent", parentSessionId: "s-other", taskType: "subagent_child" }),
     );
-    harness.sessions.set(
-      "child-idle",
-      record({
-        sessionId: "child-idle",
-        parentSessionId: "s-parent",
-        taskType: "subagent_child",
-        busy: false,
-      }),
-    );
-    expect(harness.resolver.resolve("s-parent")).toEqual({ runningSubagentCount: 1 });
+    harness.resolver.resolve("s-other");
     await flushMicrotasks();
-    expect(harness.countCalls()).toBe(1);
+    expect(harness.countCalls()).toBe(0);
 
-    // Once the cached list lands, the busy child carries running=true, the idle one false, and a
-    // resident side chat never does even while its record is busy.
-    harness.setChildren(
-      "s-parent",
-      { id: "child-busy", title: "busy subagent", taskType: "subagent_child", lastActivityAt: 50 },
-      { id: "child-idle", title: "idle subagent", taskType: "subagent_child", lastActivityAt: 40 },
-      { id: "child-chat", title: "side chat", taskType: "selection_side_chat", lastActivityAt: 30 },
-    );
     harness.sessions.set(
       "child-chat",
-      record({
-        sessionId: "child-chat",
-        parentSessionId: "s-parent",
-        taskType: "selection_side_chat",
-        busy: true,
-      }),
+      record({ sessionId: "child-chat", parentSessionId: "s-parent", taskType: "selection_side_chat" }),
     );
-    harness.clockMs.value += 1_500;
-    harness.resolver.resolve("s-parent");
-    await flushMicrotasks();
-    expect(harness.resolver.resolve("s-parent")).toEqual({
-      subagentCount: 2,
-      runningSubagentCount: 1,
-      childSessions: [
-        {
-          sessionId: "child-busy",
-          title: "busy subagent",
-          taskType: "subagent_child",
-          lastActivityAt: 50,
-          running: true,
-        },
-        {
-          sessionId: "child-idle",
-          title: "idle subagent",
-          taskType: "subagent_child",
-          lastActivityAt: 40,
-          running: false,
-        },
-        {
-          sessionId: "child-chat",
-          title: "side chat",
-          taskType: "selection_side_chat",
-          lastActivityAt: 30,
-          running: false,
-        },
-      ],
+    harness.setChildren("s-parent", {
+      id: "child-chat",
+      title: "Side chat",
+      taskType: "selection_side_chat",
+      lastActivityAt: 10,
     });
-  });
-
-  it("merges backgroundWorkId only for running subagent children found in the parent work map", () => {
-    const harness = createHarness();
-    for (const [childId, busy] of [
-      ["child-bg", true],
-      ["child-fg", true],
-      ["child-done", false],
-    ] as const) {
-      harness.sessions.set(
-        childId,
-        record({
-          sessionId: childId,
-          parentSessionId: "s-parent",
-          taskType: "subagent_child",
-          busy,
-        }),
-      );
-    }
-    harness.sessions.set(
-      "child-chat",
-      record({
-        sessionId: "child-chat",
-        parentSessionId: "s-parent",
-        taskType: "selection_side_chat",
-        busy: false,
-      }),
-    );
-    harness.resolver.seed(
-      ["s-parent"],
-      new Map([["s-parent", { sideChats: 1, subagents: 3 }]]),
-      new Map<string, ChildSessionInfo[]>([
-        [
-          "s-parent",
-          [
-            { id: "child-bg", title: "bg", taskType: "subagent_child", lastActivityAt: 50 },
-            { id: "child-fg", title: "fg", taskType: "subagent_child", lastActivityAt: 40 },
-            { id: "child-done", title: "done", taskType: "subagent_child", lastActivityAt: 30 },
-            { id: "child-chat", title: "chat", taskType: "selection_side_chat", lastActivityAt: 20 },
-          ],
-        ],
-      ]),
-    );
-    // Finished children stay in the map only to prove they never pick the id up.
-    harness.setBackgroundWork("s-parent", "child-bg", "work-1");
-    harness.setBackgroundWork("s-parent", "child-done", "work-stale");
-    const resolved = harness.resolver.resolve("s-parent");
-    const byId = new Map(resolved.childSessions?.map((child) => [child.sessionId, child]));
-    expect(byId.get("child-bg")).toStrictEqual({
-      sessionId: "child-bg",
-      title: "bg",
-      taskType: "subagent_child",
-      lastActivityAt: 50,
-      running: true,
-      backgroundWorkId: "work-1",
-    });
-    // Foreground running child (absent from the map), finished child (in the map), and the side
-    // chat all omit the key entirely — the wire schema rejects an empty/undefined value.
-    for (const childId of ["child-fg", "child-done", "child-chat"]) {
-      expect("backgroundWorkId" in (byId.get(childId) ?? {})).toBe(false);
-    }
-    expect(resolved.runningSubagentCount).toBe(2);
-  });
-
-  it("discovers idle side chats and counts detached running subagents without session records", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 1 }]]));
-    harness.sessions.set(
-      "child-chat",
-      record({
-        sessionId: "child-chat",
-        parentSessionId: "s-parent",
-        taskType: "selection_side_chat",
-        busy: false,
-      }),
-    );
-    harness.detachedChildren.push({
-      parentSessionId: "s-parent",
-      sessionId: "child-detached",
-      running: true,
-      taskType: "subagent_child",
-    });
-    // Detached facts are counted only after the persisted task type is confirmed.
     expect(harness.resolver.resolve("s-parent")).toEqual({});
     await flushMicrotasks();
-    expect(harness.resolver.resolve("s-parent")).toMatchObject({ runningSubagentCount: 1 });
     expect(harness.countCalls()).toBe(1);
-
-    harness.setChildren(
-      "s-parent",
-      { id: "child-chat", title: "Side chat", taskType: "selection_side_chat", lastActivityAt: 10 },
-      { id: "child-detached", title: "Subagent", taskType: "subagent_child", lastActivityAt: 20 },
-    );
-    harness.clockMs.value += 1_001;
-    harness.resolver.resolve("s-parent");
-    await flushMicrotasks();
-    expect(harness.resolver.resolve("s-parent")).toMatchObject({
+    expect(harness.resolver.resolve("s-parent")).toEqual({
+      sideChatCount: 1,
       childSessions: [
-        { sessionId: "child-chat", running: false },
-        { sessionId: "child-detached", running: true },
+        {
+          sessionId: "child-chat",
+          title: "Side chat",
+          taskType: "selection_side_chat",
+          lastActivityAt: 10,
+          running: false,
+        },
       ],
-      runningSubagentCount: 1,
     });
   });
 
   it("seeds cold facts into the live cache and refreshes only invalidated parents", async () => {
     const harness = createHarness();
-    const counts = new Map([["s-parent", { sideChats: 2, subagents: 1 }]]);
+    const counts = new Map([["s-parent", { sideChats: 2 }]]);
     const children = new Map<string, ChildSessionInfo[]>([
       [
         "s-parent",
@@ -340,7 +176,6 @@ describe("child session facts resolver", () => {
     harness.resolver.seed(["s-parent"], counts, children);
     expect(harness.resolver.resolve("s-parent")).toEqual({
       sideChatCount: 2,
-      subagentCount: 1,
       childSessions: [
         {
           sessionId: "child",
@@ -354,7 +189,7 @@ describe("child session facts resolver", () => {
     await flushMicrotasks();
     expect(harness.countCalls()).toBe(0);
 
-    harness.setCount("s-parent", { sideChats: 3, subagents: 1 });
+    harness.setCount("s-parent", { sideChats: 3 });
     harness.clockMs.value += 1_001;
     harness.resolver.invalidate(["s-parent"]);
     await harness.resolver.refresh(["s-parent"]);
@@ -364,10 +199,10 @@ describe("child session facts resolver", () => {
   });
 
   it("keeps child-event invalidation store reads within the per-parent TTL", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 0 }]]));
+    const harness = createHarness(new Map([["s-parent", { sideChats: 1 }]]));
     harness.resolver.seed(
       ["s-parent"],
-      new Map([["s-parent", { sideChats: 1, subagents: 0 }]]),
+      new Map([["s-parent", { sideChats: 1 }]]),
       new Map(),
     );
     harness.resolver.invalidate(["s-parent"]);
@@ -380,28 +215,13 @@ describe("child session facts resolver", () => {
     expect(harness.countCalls()).toBe(1);
   });
 
-  it("does not count detached workflow children as running subagents", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 0, subagents: 0 }]]));
-    harness.detachedChildren.push({
-      parentSessionId: "s-parent",
-      sessionId: "workflow-child",
-      running: true,
-      taskType: "workflow_child",
-    });
-
-    expect(harness.resolver.resolve("s-parent")).toEqual({});
-    await flushMicrotasks();
-    expect(harness.resolver.resolve("s-parent")).toEqual({});
-    expect(harness.countCalls()).toBe(1);
-  });
-
   it("automatically refreshes an invalidation deferred by the TTL", async () => {
     vi.useFakeTimers();
     try {
-      const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 0 }]]));
+      const harness = createHarness(new Map([["s-parent", { sideChats: 1 }]]));
       harness.resolver.seed(
         ["s-parent"],
-        new Map([["s-parent", { sideChats: 1, subagents: 0 }]]),
+        new Map([["s-parent", { sideChats: 1 }]]),
         new Map(),
       );
       harness.resolver.invalidate(["s-parent"]);
@@ -417,7 +237,7 @@ describe("child session facts resolver", () => {
   });
 
   it("a failing store backs off a full TTL instead of retrying on every fan-out", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 1, subagents: 0 }]]));
+    const harness = createHarness(new Map([["s-parent", { sideChats: 1 }]]));
     harness.resolver.noteParents(["s-parent"]);
     harness.failNextRefreshes();
     harness.resolver.resolve("s-parent");
@@ -440,9 +260,9 @@ describe("child session facts resolver", () => {
   });
 
   it("fetch batches both store reads for the cold path", async () => {
-    const harness = createHarness(new Map([["s-parent", { sideChats: 3, subagents: 4 }]]));
+    const harness = createHarness(new Map([["s-parent", { sideChats: 3 }]]));
     const [counts] = await harness.resolver.loadStoredFacts(["s-parent"]);
-    expect(counts.get("s-parent")).toEqual({ sideChats: 3, subagents: 4 });
+    expect(counts.get("s-parent")).toEqual({ sideChats: 3 });
     expect(harness.listCalls()).toBe(1);
   });
 });

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-// Grouped-view child navigation (spec: sidebar-child-conversation-counts.md §4, §7): the child
-// capability reaches the sidebar onSelectTask contract, so a subagent opens read-only.
+// Grouped-view side-chat navigation (spec: sidebar-child-conversation-counts.md §4, §7, §9): the
+// side-chat capability reaches the sidebar onSelectTask contract, and a side-chat row's right-click
+// opens its own menu instead of the parent row's.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ZCodeTaskMeta } from "@zcode/shared";
@@ -34,6 +35,7 @@ vi.mock("@/useTaskListItemContextActions.js", () => ({
     handleOpenTaskPathInFileManager: async () => {},
     handleOpenProviderConfig: async () => {},
   }),
+  copyTextToClipboard: async () => {},
 }));
 
 const parent: ZCodeTaskMeta = {
@@ -45,12 +47,12 @@ const parent: ZCodeTaskMeta = {
   createdAt: 1,
   updatedAt: 1,
   mode: "default",
-  subagentCount: 1,
+  sideChatCount: 1,
   childSessions: [
     {
       sessionId: "grouped-child",
       title: "Child",
-      taskType: "subagent_child",
+      taskType: "selection_side_chat",
       lastActivityAt: 1,
       running: false,
     },
@@ -75,9 +77,8 @@ afterEach(() => {
 });
 
 describe("grouped child-session navigation", () => {
-  it("passes the subagent read-only capability as the fourth onSelectTask argument", () => {
-    const onSelectTask = vi.fn();
-    const view = render(
+  function renderRow(onSelectTask = vi.fn()) {
+    return render(
       createElement(
         TooltipProvider,
         null,
@@ -97,6 +98,11 @@ describe("grouped child-session navigation", () => {
         }),
       ),
     );
+  }
+
+  it("passes the side-chat capability as the fourth onSelectTask argument", () => {
+    const onSelectTask = vi.fn();
+    const view = renderRow(onSelectTask);
     fireEvent.click(view.container.querySelector('[data-child-sessions-marker="true"]')!);
     fireEvent.click(view.container.querySelector('[data-child-session-id="grouped-child"]')!);
     expect(onSelectTask).toHaveBeenCalledTimes(1);
@@ -104,8 +110,35 @@ describe("grouped child-session navigation", () => {
       "/tmp/grouped-parent",
       "grouped-child",
       "remote:server:a:/tmp/grouped-parent",
-      { readOnly: true, selectionSideChat: false, parentTaskId: parent.taskId },
+      { selectionSideChat: true, parentTaskId: parent.taskId },
     );
+  });
+
+  it("right-click on a side-chat row opens its own menu, not the parent row's (§9.4)", async () => {
+    const view = renderRow();
+    fireEvent.click(view.container.querySelector('[data-child-sessions-marker="true"]')!);
+    fireEvent.contextMenu(view.container.querySelector('[data-child-session-id="grouped-child"]')!);
+    expect(await screen.findByText("common.open")).toBeTruthy();
+    expect(screen.queryByText("taskList.archive")).toBeNull();
+  });
+
+  it("renders the side-chat list outside the parent row's hover target (§9.5)", () => {
+    const view = renderRow();
+    const row = view.container.querySelector<HTMLElement>("[data-grouped-task-key]")!;
+    const archive = () => view.container.querySelector('[data-testid^="task-archive"]');
+    fireEvent.click(view.container.querySelector('[data-child-sessions-marker="true"]')!);
+    const list = view.container.querySelector<HTMLElement>("[data-child-sessions-list]")!;
+    expect(row.contains(list)).toBe(false);
+    fireEvent.mouseEnter(list);
+    expect(archive()).toBeNull();
+    fireEvent.mouseEnter(row);
+    expect(archive()).not.toBeNull();
+  });
+
+  it("right-click on the parent row itself still opens the parent menu (control)", async () => {
+    renderRow();
+    fireEvent.contextMenu(screen.getByText("Parent"));
+    expect(await screen.findByText("taskList.archive")).toBeTruthy();
   });
 
   it("phone rows (web remote control) render no child marker", () => {

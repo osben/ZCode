@@ -53,19 +53,26 @@ sequenceDiagram
 5. Start the same extracted release with `--web`; verify HTML, `/api/server-info`, workspace and WebSocket connection, then stop it.
 6. Run root typecheck, lint and architecture checks. Report actual platform and any unexecuted cross-platform or model-call paths.
 
-## Recorded validation (2026-09-20, open-source branch)
+## Recorded validation
 
 - `node --test scripts/zcode-distribution.test.mjs`: 5 process/installer tests passed.
-- `pnpm build:zcode --base-url https://downloads.example.com/zcode/`: complete CLI, server and Web build passed. Final assembly was repeated with `--skip-build` after adding the CLI sidecar config.
-- `node scripts/zcode-distribution-smoke.mjs dist/zcode/releases/3.14.0/zcode-3.14.0.tar.gz`: passed on macOS arm64, Node 24.14.0, outside the repository with an isolated data directory. Covers native TUI import, initialized screen, keyboard exit, Web HTML, server-info, workspace, WebSocket and shutdown. Exit code 0; no model prompt sent.
-- Root `pnpm typecheck`, `pnpm lint` and `pnpm architecture:check --changed` passed; lint retains existing repository warnings.
-- Cross-platform assets were collected, but Linux, Windows and macOS x64 execution were not tested. WebSocket connectivity is checked; an authenticated model conversation and browser GUI E2E are outside this packaging smoke test.
-- Third-party notice freshness check passed after regenerating the root package manifest hash; the repository still reports 14 pre-existing material-review items, so this is not a strict release-compliance approval.
-
-## Recorded validation (2026-09-24, closed repository `closed/infra-absorb`)
-
-- `node --test scripts/zcode-distribution.test.mjs`: 5 process/installer tests passed.
-- `pnpm build:zcode --base-url http://downloads.example.invalid/zcode/`: CLI, server and Web builds passed; assembly first failed because `@zcode/shared` has no build script and its `dist/` only exists after root `pnpm typecheck` (`tsc -b` emit). After `pnpm typecheck`, assembly with `--skip-build` passed. Running `pnpm typecheck` after the server build overwrites `packages/server/dist/entry-http.js` with the unbundled `tsc` output, so rebuild the server before assembling.
-- The server HTTP bundle inlined `yauzl` and crashed on load (`Dynamic require of "fs" is not supported`); `yauzl` is now external and declared by `@zcode/server`, and both this distribution and `build:lite` copy it.
-- `node scripts/zcode-distribution-smoke.mjs dist/zcode/releases/3.14.3/zcode-3.14.3.tar.gz`: passed on macOS arm64, Node 24.14.0 (native TUI import, initialized render, keyboard exit, Web HTML, server-info, workspace, WebSocket, shutdown). The TUI readiness check now strips terminal control sequences because the renderer interleaves them between characters.
-- Linux, Windows and macOS x64 execution were not tested.
+- Smoke test (`node scripts/zcode-distribution-smoke.mjs dist/zcode/releases/<version>/zcode-<version>.tar.gz`),
+  run on macOS arm64 outside the repository with an isolated data directory: native TUI import,
+  initialized screen, keyboard exit, Web HTML, `/api/server-info`, workspace, WebSocket and
+  shutdown; exit code 0, no model prompt sent. The TUI readiness check strips terminal control
+  sequences because the renderer interleaves them between characters.
+- Build caveats: `@zcode/shared` has no build script; its `dist/` only exists after root
+  `pnpm typecheck` (`tsc -b` emit), so run typecheck before assembling with `--skip-build`. Running
+  `pnpm typecheck` after the server build overwrites `packages/server/dist/entry-http.js` with the
+  unbundled `tsc` output, so rebuild the server before assembling. The server HTTP bundle must keep
+  `yauzl` external (an inlined `yauzl` crashes on load with `Dynamic require of "fs" is not
+supported`); it is declared by `@zcode/server`, and both this distribution and `build:lite` copy
+  it.
+- Root `pnpm typecheck`, `pnpm lint` and `pnpm architecture:check --changed` passed; lint retains
+  existing repository warnings.
+- Linux, Windows and macOS x64 assets are collected but their execution was not tested. WebSocket
+  connectivity is checked; an authenticated model conversation and browser GUI E2E are outside this
+  packaging smoke test.
+- Third-party notice freshness check passed after regenerating the root package manifest hash; the
+  repository still reports 14 pre-existing material-review items, so this is not a strict
+  release-compliance approval.

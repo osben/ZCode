@@ -35,7 +35,7 @@ it("keeps the row action stable across tree refreshes and uses the latest naviga
   expect(second).toHaveBeenCalledWith("/same", "task", undefined, undefined, undefined, undefined);
 });
 
-it("forwards a child session's capability so a sidebar subagent opens read-only", async () => {
+it("forwards a side chat's capability so it opens with restricted commands", async () => {
   const select = vi.fn();
   const { result } = renderHook(() =>
     useProjectTaskNavigation({ onSelectTask: select } as unknown as ProjectSidebarProps, {
@@ -45,13 +45,11 @@ it("forwards a child session's capability so a sidebar subagent opens read-only"
   );
   await act(async () => {
     result.current("/same", "child", undefined, undefined, undefined, {
-      readOnly: true,
-      selectionSideChat: false,
+      selectionSideChat: true,
     });
   });
   expect(select).toHaveBeenCalledWith("/same", "child", undefined, undefined, undefined, {
-    readOnly: true,
-    selectionSideChat: false,
+    selectionSideChat: true,
   });
 });
 
@@ -92,52 +90,6 @@ it("attaches a remote child session through its owning parent task", async () =>
     undefined,
     options,
   );
-});
-
-it("attaches a remote parent before handing a sidebar subagent open to the shell", async () => {
-  const select = vi.fn();
-  const openSubagent = vi.fn();
-  const parent = {
-    taskId: "remote-parent",
-    workspacePath: "/same",
-    workspaceIdentity: "remote:server:s:/same",
-    hostId: "remote:server:s",
-  };
-  const { result } = renderHook(() =>
-    useProjectTaskNavigation(
-      {
-        workspacePath: "/current",
-        onSelectTask: select,
-        onOpenSubagentSession: openSubagent,
-      } as unknown as ProjectSidebarProps,
-      { projects: [], tasks: [parent] } as never,
-      { readDirectory: async () => ({ hosts: [{ id: parent.hostId }] }) } as never,
-    ),
-  );
-  const subagentTarget = {
-    workspacePath: parent.workspacePath,
-    workspaceIdentity: parent.workspaceIdentity,
-    parentSessionId: parent.taskId,
-    childSessionId: "child",
-    title: "Explore",
-  };
-  attach.mockClear();
-  await act(async () => {
-    result.current(
-      parent.workspacePath,
-      parent.taskId,
-      parent.workspaceIdentity,
-      undefined,
-      undefined,
-      { subagentTarget },
-    );
-  });
-  expect(attach).toHaveBeenCalledWith(expect.objectContaining({ hostId: parent.hostId }));
-  expect(openSubagent).toHaveBeenCalledWith({
-    ...subagentTarget,
-    remoteSessionId: "remote-session",
-  });
-  expect(select).not.toHaveBeenCalled();
 });
 
 it.each(["task", "draft"])(

@@ -2048,9 +2048,6 @@ export function createConversationV4Gateway(
   const childSessionFactsResolver = createChildSessionFactsResolver({
     store: () => context.deps.sessionStore,
     sessions: context.sessions,
-    getDetachedChildren: () => context.v4Gateway?.getDetachedChildSessionFacts() ?? [],
-    getBackgroundWorkIds: (parentSessionId) =>
-      context.v4Gateway?.getCancellableSubagentBackgroundWorks(parentSessionId) ?? new Map(),
     onRefresh: (parentKeys) => {
       for (const parentKey of parentKeys) {
         context.v4Gateway?.publishSessionIndexChildFacts(
@@ -2179,10 +2176,7 @@ export function createConversationV4Gateway(
                 }
               : {}),
             ...(childCounts?.sideChats ? { sideChatCount: childCounts.sideChats } : {}),
-            ...(childCounts?.subagents ? { subagentCount: childCounts.subagents } : {}),
-            ...(childList.length
-              ? { childSessions: childList.map((child) => toWireChildSession(child, false)) }
-              : {}),
+            ...(childList.length ? { childSessions: childList.map(toWireChildSession) } : {}),
             ...(executionWorktreeMissing ? { executionWorktreeMissing: true } : {}),
             ...(session.incognito ? { incognito: true } : {}),
           };
@@ -2380,21 +2374,15 @@ export function createConversationV4Gateway(
     },
     getChildSessionParentId: (sessionId) => {
       const record = context.sessions.get(sessionId);
-      if (
-        (record?.taskType === "selection_side_chat" || record?.taskType === "subagent_child") &&
-        record.parentSessionId
-      ) {
+      // Sidebar child facts cover side chats only (sidebar-child-conversation-counts §9).
+      if (record?.taskType === "selection_side_chat" && record.parentSessionId) {
         return String(record.parentSessionId);
       }
       return null;
     },
     onChildSessionActivity: (parentSessionId) => {
+      // Refreshed persisted totals/list are published by onRefresh.
       childSessionFactsResolver.invalidate([parentSessionId]);
-      // Update live running flags immediately; refreshed persisted totals/list are published by onRefresh.
-      context.v4Gateway?.publishSessionIndexChildFacts(
-        parentSessionId,
-        childSessionFactsResolver.resolve(parentSessionId),
-      );
       void childSessionFactsResolver.refresh([parentSessionId]);
     },
     getSessionIndexMeta: (sessionId) => {

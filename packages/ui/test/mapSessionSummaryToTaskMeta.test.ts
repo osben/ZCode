@@ -121,6 +121,56 @@ describe("mapSessionSummaryToTaskMeta", () => {
     expect(meta.titleOverridden).toBe(true);
   });
 
+  it("keeps side chats only and drops subagent rows and counters from older hosts (§9)", () => {
+    const sideChat = {
+      sessionId: "chat-1",
+      title: "side chat",
+      taskType: "selection_side_chat" as const,
+      lastActivityAt: 10,
+      running: false,
+    };
+    const meta = mapSessionSummaryToTaskMeta(
+      summary({
+        sideChatCount: 1,
+        subagentCount: 3,
+        runningSubagentCount: 1,
+        childSessions: [
+          {
+            sessionId: "agent-1",
+            title: "agent",
+            taskType: "subagent_child",
+            lastActivityAt: 20,
+            running: true,
+            backgroundWorkId: "work-1",
+          },
+          sideChat,
+        ],
+      }),
+      { workspacePath: "/ws" },
+    );
+    expect(meta.sideChatCount).toBe(1);
+    expect(meta.childSessions).toEqual([sideChat]);
+    expect("subagentCount" in meta).toBe(false);
+    expect("runningSubagentCount" in meta).toBe(false);
+
+    const onlyAgents = mapSessionSummaryToTaskMeta(
+      summary({
+        subagentCount: 1,
+        childSessions: [
+          {
+            sessionId: "a",
+            title: "a",
+            taskType: "subagent_child",
+            lastActivityAt: 1,
+            running: false,
+          },
+        ],
+      }),
+      { workspacePath: "/ws" },
+    );
+    expect("childSessions" in onlyAgents).toBe(false);
+  });
+
   it("workspaceIdentity 透传", () => {
     const meta = mapSessionSummaryToTaskMeta(summary(), {
       workspacePath: "/ws",

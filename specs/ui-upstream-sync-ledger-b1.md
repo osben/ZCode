@@ -45,8 +45,12 @@ the upstream file and added each fork hunk, instead of taking the fork file.
 - Tests that fail on this shell's contracts (other buckets): `v4WorkspacePaneActiveSync` (3 cases: shell passes `onCreateTaskInWorkspace` and the read-only and side-chat flags to V4WorkspaceChatArea, which is not ported yet), `v4WorkspaceStatusPanelWiring` (3 cases: same contract), `sidePaneToggleEmptyState` (reads App.tsx, AnimatedSidePanePanel, useAppPanels), `chatViewDragDropScope` (reads ConversationComposer). `chatEmptyWorktreeTaskToggle` fails to import `@/ChatEmptyState.js` (file absent upstream; see item 2 above). Passing in this bucket: `automationsMainDragRegion`, `settingsFrameContentLayout`, `useRootWorkspaceActionsTargetWorkspace`, `workspaceShellRemoteMobileLayout`, `sidePaneTerminalSessionRegistry`, `composerDestinationControl`, `linuxDesktopTitlebarOverlay`, `draftBranchIntent`.
 - `packages/ui/src/v4/composer/*` and `ProjectComposerMenu` / `GitBranchSwitcher`: the imports used here exist upstream. The `GitBranchSwitcher` intent props (`selectionIntent`, `disabled`, `triggerTitle`) already exist upstream.
 
-## Remaining typecheck and lint status for this file
+## Typecheck and lint status for this file (at port time)
 
-- `tsc -p packages/ui`: the errors in this file are the contracts listed above (types.ts props, usePaneSessionPersistence signature, V4ChatPane, V4WorkspaceChatArea, AnimatedSidePanePanel). Also present upstream and not from this port: `tab.workspacePath` on `WorkspaceTabState` (line ~530), `getGitDirtyFileCount` argument type (line ~1116), and the `TS6305` shared-dist messages (unbuilt dist).
-- `oxlint`: one warning, `handleCreateProjectDraft` unused. Upstream declares it unused too (pre-existing).
-- `oxfmt`: the file was formatted with the repo config (fork-changed file).
+- `tsc -p packages/ui`: the only errors in this file were the cross-bucket contracts listed above
+  (types.ts props, usePaneSessionPersistence signature, V4ChatPane, V4WorkspaceChatArea,
+  AnimatedSidePanePanel). Also present upstream and not from this port: `tab.workspacePath` on
+  `WorkspaceTabState` (line ~530), `getGitDirtyFileCount` argument type (line ~1116), and the
+  `TS6305` shared-dist messages (unbuilt dist).
+- `oxlint`: one warning, `handleCreateProjectDraft` unused (pre-existing upstream). `oxfmt` applied
+  with the repo config (fork-changed file).

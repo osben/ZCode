@@ -1,22 +1,26 @@
 # Web client: desktop-only controls and the sidebar toggle
 
-Fork-owned spec. Covers ISSUE-065 (ZCO-54) and ISSUE-066 (ZCO-55) from the 2026-10-23 web QA run.
+Fork-owned spec. Covers ISSUE-065 (ZCO-54) and ISSUE-066 (ZCO-55).
 
 ## Rules
 
-1. A control that needs the client machine's native apps is shown only when the platform says it can run.
-   The capability is `IPlatformService.canOpenLocalFiles` (`packages/shared/src/platform.ts`).
-   Desktop sets it to `true`; the web client (plain web and web remote control) sets it to `false`.
-   UI never checks `window.zcode` or the user agent to decide visibility.
+1. A control that needs the client machine's native apps is shown only when the platform says it can
+   run. The capability is `IPlatformService.canOpenLocalFiles`
+   (`packages/shared/src/platform.ts`). Desktop sets it to `true`; the web client (plain web and web
+   remote control) sets it to `false`. UI never checks `window.zcode` or the user agent to decide
+   visibility.
 2. The task action menus hide "Open in Finder / File Explorer / file manager" and "Go to config"
    when `canOpenLocalFiles` is not `true`. This applies to every menu built from
    `useTaskListItemContextActions`: the sidebar row dropdown and context menu (`TaskActionMenuContent`),
-   the task header "More" menu (`TaskActionMenuContent`), the grouped-view context menu, and the
-   Session Manager row menu.
+   the task header "More" menu, the grouped-view context menu, and the Session Manager row menu.
+   Wide-screen web remote control hides them too, matching `OpenSplitButton`, which already hides
+   native open actions when the capability is false; it no longer opens the folder on the desktop
+   host through the platform proxy.
 3. The plain web client shows an on-screen sidebar toggle (`desktop-top-logo-sidebar-toggle`'s web
-   counterpart, test id `web-top-sidebar-toggle`) in the top-left overlay at every width. It calls the
-   same `onToggleSidebar` command as ⌘B, so the sidebar visibility keeps one owner and one write path.
-   The web remote control shell keeps its own navigation controls and does not get this button.
+   counterpart, test id `web-top-sidebar-toggle`) in the top-left overlay at every width. It calls
+   the same `onToggleSidebar` command as ⌘B, so the sidebar visibility keeps one owner and one write
+   path. The web remote control shell keeps its own navigation controls and does not get this
+   button.
 
 ## Owners
 
@@ -28,14 +32,8 @@ Fork-owned spec. Covers ISSUE-065 (ZCO-54) and ISSUE-066 (ZCO-55) from the 2026-
 
 - Web (`pnpm dev:web`): no "Open in Finder" or "Go to config" item in any task menu.
 - Desktop: both items are still shown and work as before.
-- Web at any width, including 390×844: a tappable button in the top-left toggles the sidebar; after one
-  tap with the sidebar open, `v4-composer-send` is fully inside the viewport.
-
-## Behavior change on web remote control
-
-Wide-screen web remote control used to show "Open in Finder", which opened the folder on the desktop
-host through the platform proxy. It is now hidden there too, matching `OpenSplitButton`, which already
-hides native open actions when `canOpenLocalFiles` is false. Narrow remote control already hid both items.
+- Web at any width, including 390×844: a tappable button in the top-left toggles the sidebar; after
+  one tap with the sidebar open, `v4-composer-send` is fully inside the viewport.
 
 ## Not covered (needs a product decision)
 
@@ -43,7 +41,7 @@ A full phone layout for the plain web client is out of scope. Options recorded i
 
 - a) Plain web gets a phone layout: the sidebar starts collapsed below `md` and opens as an overlay
   drawer, and the side pane (Review) opens as a full-screen sheet instead of a split.
-- b) Phone browsers are sent to the mobile remote control UI (`/remote/v4`), and the plain web client
-  declares a minimum supported width.
+- b) Phone browsers are sent to the mobile remote control UI (`/remote/v4`), and the plain web
+  client declares a minimum supported width.
 - c) Only the visible toggle (this spec). The sidebar still opens at its persisted width on phones,
   the Review split can still squeeze the chat, and the header title still truncates.

@@ -42,63 +42,54 @@ describe("子代理冷恢复主列表隔离", () => {
     // 真正重启 CLI 清空 detached publisher；打开历史详情必须恢复原身份。
     await restartIntoWorkspacePreservingProfile();
     await assertChildIsolated(childId);
-    await assertProjectsViewChildRow(parentId, childId);
-    await activateGroupedView();
-    const parent = $(`[data-grouped-task-key*="${encodeURIComponent(parentId)}"]`);
-    await parent.waitForDisplayed({ timeout: 30000 });
-    await parent.click();
-    await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
-    const childMarker = parent.$('[data-child-sessions-marker="true"]');
-    await childMarker.waitForDisplayed({ timeout: 30000 });
-    await childMarker.click();
-    const childRow = parent.$(`[data-child-session-id="${childId}"]`);
-    await childRow.waitForDisplayed({ timeout: 30000 });
-    await childRow.click();
-    await assertChildOpenedInSidePane(parentId, childId);
-    await childMarker.click();
-    await parent.click();
-    await waitForV4Pane(
-      (state) => state.sessionId === parentId,
-      "reselecting the parent row did not restore the parent session",
-      30000,
+    // Spec §9: the sidebar lists side chats only, so a parent with only a subagent child shows
+    // no marker and no child row in the projects view and in the grouped view.
+    await assertNoSidebarSubagent(
+      $(`[data-testid="${testId(TID_TASK_ITEM, parentId)}"]`),
+      parentId,
+      childId,
     );
-    await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
-    await openChild();
-    await assertChildIsolated(childId);
+    await activateGroupedView();
+    await assertNoSidebarSubagent(
+      $(`[data-grouped-task-key*="${encodeURIComponent(parentId)}"]`),
+      parentId,
+      childId,
+    );
+    await openChildTrajectoryFromAgentRow(childId);
     expect(readChildId(parentId)).toBe(childId);
   });
 });
 
-// Default projects view (spec sidebar-child-conversation-counts.md §7): the shared TaskListItem row
-// renders the same marker and child list as the grouped row; collapsing it leaves the grouped row
-// collapsed too because expansion has one per-parent owner.
-async function assertProjectsViewChildRow(parentId: string, childId: string) {
-  const parent = $(`[data-testid="${testId(TID_TASK_ITEM, parentId)}"]`);
+async function assertNoSidebarSubagent(
+  parent: ReturnType<typeof $>,
+  parentId: string,
+  childId: string,
+) {
   await parent.waitForDisplayed({ timeout: 30000 });
   await parent.click();
-  await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
-  const marker = parent.$('[data-child-sessions-marker="true"]');
-  await marker.waitForDisplayed({ timeout: 30000 });
-  await marker.click();
-  const childRow = parent.$(`[data-child-session-id="${childId}"]`);
-  await childRow.waitForDisplayed({ timeout: 30000 });
-  await childRow.click();
-  await assertChildOpenedInSidePane(parentId, childId);
-  await marker.click();
-  await childRow.waitForDisplayed({ timeout: 30000, reverse: true });
-}
-
-// Spec §8.2: a sidebar subagent row keeps the parent as the active session and opens the child in
-// the right-pane subagent-session tab (read-only).
-async function assertChildOpenedInSidePane(parentId: string, childId: string) {
   await waitForV4Pane(
     (state) => state.sessionId === parentId,
-    "sidebar subagent selection did not keep the parent as the active session",
+    "selecting the parent row did not open the parent session",
     30000,
   );
-  const tab = $(`[data-side-pane-tab-id$="${childId}"]`);
-  await tab.waitForExist({ timeout: 30000 });
-  await assertChildIsolated(childId);
+  await waitForV4AssistantMessageContaining(PARENT_DONE, 30000);
+  expect(await parent.$('[data-child-sessions-marker="true"]').isExisting()).toBe(false);
+  expect(await $(`[data-child-session-id="${childId}"]`).isExisting()).toBe(false);
+}
+
+// specs/conversation-agent-row-context-menu.md: right-clicking the Agent row opens the child's
+// model trajectory v2 tab.
+async function openChildTrajectoryFromAgentRow(childId: string) {
+  const block = await waitForToolCallBlockByToolCallId("toolu_e2e_subagent_sidebar", 30000);
+  const row = $(`[data-testid="${block.testId}"]`);
+  await row.waitForDisplayed({ timeout: 30000 });
+  await row.click({ button: "right" });
+  const item = $(`[data-agent-row-menu-trajectory="${childId}"]`);
+  await item.waitForDisplayed({ timeout: 15000 });
+  await item.click();
+  await $(`[data-side-pane-tab-id="model-trajectory-v2:${childId}"]`).waitForExist({
+    timeout: 30000,
+  });
 }
 
 async function activateGroupedView() {
