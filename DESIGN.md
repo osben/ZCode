@@ -221,29 +221,29 @@ feature-scoped token family:
 
 | Token                             | Purpose                                                    |
 | --------------------------------- | ---------------------------------------------------------- |
-| `--color-markdown-inline-code`    | Markdown 行内代码背景，沿用 tag / label 胶囊层级           |
+| `--color-markdown-inline-code`    | Markdown inline code background, following the tag / label capsule level           |
 | `--color-popover-header`          | Popover header                                             |
-| `--color-tab`                     | Tab 默认背景                                               |
-| `--color-tab-active`              | 当前激活 tab                                               |
-| `--color-tab-border`              | Tab 分隔线                                                 |
-| `--color-feedback-privacy-hint`   | 反馈截图隐私提醒文字及叹号图标；独立一行，使用辅助说明字号 |
-| `--color-git-none`                | Git 无变更状态，沿用普通文件名颜色                         |
-| `--color-git-modified`            | Git modified，表示已跟踪文件有未提交修改                   |
-| `--color-git-added`               | Git added，表示新增文件已进入工作树 / 暂存区               |
-| `--color-git-deleted`             | Git deleted，表示已跟踪文件被删除                          |
-| `--color-git-renamed`             | Git renamed，表示已跟踪文件移动或重命名                    |
-| `--color-git-untracked`           | Git untracked，表示 Git 尚未跟踪的新文件                   |
-| `--color-git-ignored`             | Git ignored，继承弱化文本层级                              |
-| `--color-git-descendant`          | Git descendant，表示目录后代包含变更                       |
-| `--color-file-node`               | 文件 mention node 背景                                     |
-| `--color-file-node-hover`         | 文件 mention node hover 背景                               |
-| `--color-file-node-foreground`    | 文件 mention node 文字 / 图标                              |
-| `--color-skill-node`              | Skill mention node 背景                                    |
-| `--color-skill-node-hover`        | Skill mention node hover 背景                              |
-| `--color-skill-node-foreground`   | Skill mention node 文字 / 图标                             |
-| `--color-command-node`            | Command mention node 背景                                  |
-| `--color-command-node-hover`      | Command mention node hover 背景                            |
-| `--color-command-node-foreground` | Command mention node 文字 / 图标                           |
+| `--color-tab`                     | Default tab background                                               |
+| `--color-tab-active`              | Active tab                                               |
+| `--color-tab-border`              | Tab divider                                                 |
+| `--color-feedback-privacy-hint`   | Feedback screenshot privacy hint text and exclamation icon; on its own line, in the helper-text size |
+| `--color-git-none`                | Git no-change state, using the normal file name color                         |
+| `--color-git-modified`            | Git modified: a tracked file has uncommitted changes                   |
+| `--color-git-added`               | Git added: a new file is in the work tree / index               |
+| `--color-git-deleted`             | Git deleted: a tracked file was deleted                          |
+| `--color-git-renamed`             | Git renamed: a tracked file was moved or renamed                    |
+| `--color-git-untracked`           | Git untracked: a new file Git does not track yet                   |
+| `--color-git-ignored`             | Git ignored: inherits the weakened text level                              |
+| `--color-git-descendant`          | Git descendant: a descendant of the directory contains changes                       |
+| `--color-file-node`               | File mention node background                                     |
+| `--color-file-node-hover`         | File mention node hover background                               |
+| `--color-file-node-foreground`    | File mention node text / icon                              |
+| `--color-skill-node`              | Skill mention node background                                    |
+| `--color-skill-node-hover`        | Skill mention node hover background                              |
+| `--color-skill-node-foreground`   | Skill mention node text / icon                             |
+| `--color-command-node`            | Command mention node background                                  |
+| `--color-command-node-hover`      | Command mention node hover background                            |
+| `--color-command-node-foreground` | Command mention node text / icon                           |
 
 Git file statuses must use `text-git-*` / `bg-git-*`, rather than borrowing diff or warning tokens.
 Mention tokens belong to prompt-editor and UserPrompt mention nodes; their background, hover,
@@ -266,14 +266,14 @@ currently mapped to `--color-tag`.
 - `DesktopWindowFrame` uses `bg-background-alt` on macOS desktop. Windows, Linux, and Web keep `bg-background-win-alt`; child surface colors remain independent.
 - Linux desktop uses a `16px` outer window-shell radius around the `12px` workspace panels and their `4px` outer inset. Keep the shell radius and compositor clip path equal; maximized windows use `0px`.
 
-### Lucide 前景透明度
+### Lucide foreground opacity
 
-- Lucide 的次级、三级前景使用不透明描边绘制完整图标，再整体与背景混合，避免多条路径交点加深。次级为 60%，三级浅色为 40%、深色为 30%。
-- 保留现有 `text-foreground-subtle` / `text-foreground-subtlest` 调用；同时支持颜色类直接位于图标和从父元素继承。文字继续使用原有半透明颜色。
-- 颜色 utility 的 hover、group-hover、focus、disabled 和 data 状态应同步图标层级；子元素显式使用其他颜色时清除继承的弱化层级。已有 `opacity-*` 继续独立叠加，`opacity-0` 仍隐藏图标。
-- 本次适配范围为 Tailwind 颜色 utility；自定义 CSS / inline 的颜色与滤镜不作为层级入口，不全局改写非 Lucide SVG。标准 Lucide 的 `stroke="currentColor"` 是适配入口。
-- 支持普通百分比颜色修饰符（如 `/50`）以及 `fill-current` 的实心图标。不支持相对颜色语法的浏览器保留原始绘制方式。
-- 验收：390px / 1200px、Zai Light / Zai Dark，分别检查页面、面板和彩色背景上的直接/继承颜色、交点与非交点像素一致、文字颜色不变、交互颜色覆盖和额外透明度。
+- Secondary and tertiary Lucide foregrounds draw the full icon with an opaque stroke and then blend the whole icon with the background, so overlapping path intersections do not darken. Secondary is 60%; tertiary is 40% in light themes and 30% in dark themes.
+- Keep the existing `text-foreground-subtle` / `text-foreground-subtlest` usage. Color classes directly on the icon and colors inherited from a parent are both supported. Text keeps its original translucent colors.
+- Hover, group-hover, focus, disabled and data states of color utilities update the icon level in step; a child that explicitly uses another color clears the inherited weakened level. Existing `opacity-*` classes still stack independently, and `opacity-0` still hides the icon.
+- Scope: Tailwind color utilities. Custom CSS / inline colors and filters are not level entry points, and non-Lucide SVGs are not rewritten globally. The entry point is the standard Lucide `stroke="currentColor"`.
+- Plain percentage color modifiers (such as `/50`) and solid icons using `fill-current` are supported. Browsers without relative color syntax keep the original drawing.
+- Acceptance: at 390px / 1200px in Zai Light / Zai Dark, check direct and inherited colors on pages, panels and colored backgrounds; intersection and non-intersection pixels match; text color is unchanged; interaction color overrides and extra opacity work.
 
 ## Typography
 
@@ -673,4 +673,4 @@ adding breakpoint overrides.
 
 Remote state mapping: connected → success (neutral cloud in project rows); connecting/updating → progress; disconnected → neutral surface/subtle foreground; needs attention → warning; failed → destructive. SSH/WSL/Docker tokens are reserved for connection type labels, never connection status. Always include visible status text outside the connected state; recovery attempts are visible text. See the remote device UX specification for the authoritative mapping and glossary.
 
-远程可读辅助文字：`--color-remote-foreground-muted` / `text-remote-foreground-muted` 用于远程向导、设备卡和日志辅助文字、侧栏设备标签与设置导航；侧栏共享的任务/项目视图切换、分组操作及搜索快捷键也沿用此可读辅助文字等级，浅色 `#595959`、深色 `#b3b3b3`，在 sidebar / popover / surface / card / selected / background 上保持至少 4.5:1。Zai Light SSH 类型标签前景为 `#0867ce`，保持与 `#ebf4ff` 底色至少 4.5:1。
+Remote readable helper text: `--color-remote-foreground-muted` / `text-remote-foreground-muted` is used for remote wizard, device card and log helper text, sidebar device labels and settings navigation. The shared sidebar task/project view switch, group actions and search shortcut also use this readable helper level: `#595959` in light and `#b3b3b3` in dark, keeping at least 4.5:1 on sidebar / popover / surface / card / selected / background. The Zai Light SSH type label foreground is `#0867ce`, keeping at least 4.5:1 against its `#ebf4ff` background.

@@ -8,7 +8,6 @@ Web frontend or run an Agent: Desktop must stay running to execute commands.
 
 Protocol and client behavior: `docs/web-remote-control/relay-v2-pairing.md`.
 Design, owner decisions and the test plan: `specs/relay-v2-migration.md` (sections 10 to 14).
-This README replaces the V1 deployment notes that used to live in `self-hosted-remote-relay.md`.
 
 ## Identity modes
 
@@ -72,8 +71,6 @@ error names the variable, never its value.
 Limits (defaults): `ZCODE_RELAY_MAX_CONNECTIONS` 2000, `ZCODE_RELAY_REGISTRATIONS_PER_MINUTE` 20
 per source address (applies to `/session` and `/device`), `ZCODE_RELAY_MAX_REGISTRATIONS` 100000,
 `ZCODE_RELAY_MAX_BUFFERED_BYTES` 2097152, `ZCODE_RELAY_MAX_TOTAL_BUFFERED_BYTES` 67108864.
-
-`ZCODE_RELAY_STORAGE_KEY` from V1 is removed: device records hold no secret.
 
 ## Keys and rotation
 
