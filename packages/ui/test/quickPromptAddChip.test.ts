@@ -1,13 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { IQuickPromptService, QuickPromptSnapshot } from "@zcode/services";
 import { QuickPromptBar } from "@/quick-prompts/QuickPromptBar.js";
-import { QuickPromptSavePopover } from "@/quick-prompts/QuickPromptSavePopover.js";
 
-// Spec: specs/composer-quick-prompts.md (rules 3, 14, 15). "Save draft" is for text only: attachments and contexts
-// are never part of a quick prompt, so a draft with only those must not offer to save an empty body.
+// Spec: specs/composer-quick-prompts.md (rules 3, 14). The row's last chip is always "+", whatever the draft holds;
+// there is no "Save draft" shortcut.
 
 vi.mock("@/i18n/IntlProvider.js", () => ({
   useZCodeIntl: () => ({ intl: { formatMessage: ({ id }: { id: string }) => id } }),
@@ -62,81 +61,14 @@ afterEach(() => {
   cleanup();
 });
 
-describe("quick prompt Save draft chip (spec rule 3, rule 14)", () => {
-  it("shows the add chip, not Save draft, when the draft holds only attachments", () => {
-    renderBar({ draftHasText: false, draftHasContent: true });
+describe("quick prompt add chip (spec rules 3, 14)", () => {
+  it.each([
+    { draftHasText: false, draftHasContent: false },
+    { draftHasText: false, draftHasContent: true },
+    { draftHasText: true, draftHasContent: true },
+  ])("shows the add chip and no Save draft for draft %o", (draft) => {
+    renderBar(draft);
     expect(screen.queryByTestId("quick-prompt-save-draft")).toBeNull();
-    expect(screen.getByLabelText("quickPrompts.add")).toBeTruthy();
-  });
-
-  it("offers Save draft once the editor has text", () => {
-    renderBar({ draftHasText: true, draftHasContent: true });
-    expect(screen.getByTestId("quick-prompt-save-draft")).toBeTruthy();
-  });
-});
-
-describe("quick prompt save popover refuses an empty body (spec rule 15)", () => {
-  it("disables Save while the editor body is blank, and enables it for text", async () => {
-    const handle = handleWithBody("   ");
-    const service = { create: vi.fn(async () => ({})) };
-    const { rerender } = render(
-      createElement(QuickPromptSavePopover, {
-        open: true,
-        onOpenChange: vi.fn(),
-        service: service as unknown as IQuickPromptService,
-        project: null,
-        snapshot: emptySnapshot,
-        inputApiRef: { current: handle } as never,
-        refresh: vi.fn(async () => undefined),
-        onMoreOptions: vi.fn(),
-        children: createElement("button", { type: "button" }, "trigger"),
-      }),
-    );
-
-    // A valid name leaves the body as the only reason Save can be disabled.
-    await waitFor(() => expect(screen.getByTestId("quick-prompt-save-name")).toBeTruthy());
-    fireEvent.change(screen.getByTestId("quick-prompt-save-name"), { target: { value: "Typed" } });
-    expect((screen.getByTestId("quick-prompt-save-submit") as HTMLButtonElement).disabled).toBe(
-      true,
-    );
-    expect(service.create).not.toHaveBeenCalled();
-
-    handle.getSerializedBody.mockReturnValue({
-      markdown: "review",
-      nodes: JSON.stringify([{ type: "paragraph", version: 1, children: [] }]),
-    });
-    rerender(
-      createElement(QuickPromptSavePopover, {
-        open: false,
-        onOpenChange: vi.fn(),
-        service: service as unknown as IQuickPromptService,
-        project: null,
-        snapshot: emptySnapshot,
-        inputApiRef: { current: handle } as never,
-        refresh: vi.fn(async () => undefined),
-        onMoreOptions: vi.fn(),
-        children: createElement("button", { type: "button" }, "trigger"),
-      }),
-    );
-    rerender(
-      createElement(QuickPromptSavePopover, {
-        open: true,
-        onOpenChange: vi.fn(),
-        service: service as unknown as IQuickPromptService,
-        project: null,
-        snapshot: emptySnapshot,
-        inputApiRef: { current: handle } as never,
-        refresh: vi.fn(async () => undefined),
-        onMoreOptions: vi.fn(),
-        children: createElement("button", { type: "button" }, "trigger"),
-      }),
-    );
-    await waitFor(() =>
-      expect((screen.getByTestId("quick-prompt-save-submit") as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
-    );
-    fireEvent.click(screen.getByTestId("quick-prompt-save-submit"));
-    await waitFor(() => expect(service.create).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("quick-prompt-add")).toBeTruthy();
   });
 });

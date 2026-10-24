@@ -158,15 +158,6 @@ export function quickPromptPreviewText(markdown: string): string {
     .trim();
 }
 
-/** Rule 14: prefill the name from the first words of the draft; mention links are shown by their label. */
-export function prefillQuickPromptName(markdown: string): string {
-  const plain = quickPromptPreviewText(markdown);
-  if (plain.length <= QUICK_PROMPT_NAME_MAX_LENGTH) return plain;
-  const cut = plain.slice(0, QUICK_PROMPT_NAME_MAX_LENGTH);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd();
-}
-
 /** Rule 15: name required, at most 40 characters after trimming. */
 export function isValidQuickPromptName(name: string): boolean {
   const trimmed = name.trim();

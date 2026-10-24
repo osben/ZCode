@@ -9349,7 +9349,6 @@ const ukUA: Record<string, string> = {
   "quickPrompts.add": "Додати швидку підказку",
   "quickPrompts.add.hint":
     "Збережіть підказку, яку часто використовуєте, і вставляйте її одним кліком.",
-  "quickPrompts.saveDraft": "Зберегти чернетку",
   "quickPrompts.hint.tooltip":
     "Клацання — вставити · {modifier} + клацання — надіслати · Правий клік — редагувати",
   "quickPrompts.scope.project": "Проєкт",
@@ -9359,8 +9358,6 @@ const ukUA: Record<string, string> = {
   "quickPrompts.scope.noProject": "Підказки проєкту потребують проєкту. У цієї сесії його немає.",
   "quickPrompts.limit.reached":
     "Список заповнено (50 швидких підказок). Видаліть одну, щоб додати іншу.",
-  "quickPrompts.save.moreOptions": "Більше параметрів…",
-  "quickPrompts.save.submit": "Зберегти",
   "quickPrompts.editor.title.create": "Нова швидка підказка",
   "quickPrompts.editor.title.edit": "Редагувати швидку підказку",
   "quickPrompts.editor.name": "Назва",

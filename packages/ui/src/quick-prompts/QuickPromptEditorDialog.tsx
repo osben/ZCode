@@ -406,6 +406,7 @@ export function QuickPromptEditorDialog({
             taskId={null}
             syncInitialValueOnMount={false}
             inputApiRef={inputApiRef}
+            inputTestId="quick-prompt-editor-body"
             triggerPanelContainer={panelContainer}
             enterSubmits={false}
             submitLabel={intl.formatMessage({ id: "quickPrompts.editor.save" })}
