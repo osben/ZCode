@@ -1,108 +1,117 @@
-# OpenAI-compatible 前置 system message 合并设计
+# OpenAI-compatible Leading System Message Merge Design
 
 ## Feature/change summary
 
 | Field | Value |
 | --- | --- |
-| Change | OpenAI-compatible 请求发出前，将开头连续的多条 system message 合并为一条 |
-| User-visible surfaces | 无直接 UI 变化；旧式 chat template 不再因多条前置 system 报错或只保留最后一条 |
-| Existing code owners | `apps/zcode-cli/packages/adapters/src/model/transform.ts`、`system-message-compat.ts` |
-| Evidence | adapter 单测与真实 `@ai-sdk/openai-compatible` fake-fetch wire body |
-| Out of scope | Anthropic、OpenAI Responses、gateway/custom provider、core ContextBuilder、会话中段 system 语义 |
+| Change | Before an OpenAI-compatible request is sent, consecutive leading system messages are merged into one |
+| User-visible surfaces | No direct UI change; legacy chat templates no longer error on, or keep only the last of, multiple leading system messages |
+| Existing code owners | `apps/zcode-cli/packages/adapters/src/model/transform.ts`, `system-message-compat.ts` |
+| Evidence | Adapter unit tests and the real `@ai-sdk/openai-compatible` fake-fetch wire body |
+| Out of scope | Anthropic, OpenAI Responses, gateway/custom provider, core ContextBuilder, mid-conversation system semantics |
 
-## 背景与根因
+## Background and root cause
 
-Core ContextBuilder 为不同稳定性与 cache boundary 有意生成 CLI prefix、stable body、dynamic body
-三段 system message。AI SDK 的 OpenAI-compatible Chat Completions 转换器会逐条发送这些 message，
-不会代替调用方合并。
+Core ContextBuilder intentionally emits three system messages (CLI prefix, stable body, dynamic body) for
+different stability levels and cache boundaries. The AI SDK OpenAI-compatible Chat Completions converter sends
+them one by one and does not merge on the caller's behalf.
 
-OpenAI-compatible 只约束 HTTP 外形，不约束后端模型的 chat template。部分旧式 template 只接受
-一个开头 system；还有 template 会在遍历多条 system 时覆盖旧值。因此，多段 system 必须保留在
-provider-neutral core 内，但需要在 OpenAI-compatible adapter 序列化边界归一化。
+OpenAI-compatible constrains only the HTTP shape, not the backend model's chat template. Some legacy templates
+accept a single leading system; others overwrite the earlier value while iterating multiple system messages.
+The multi-part system therefore stays in the provider-neutral core and is normalized at the OpenAI-compatible
+adapter serialization boundary.
 
-## Clarification log
+## Clarified decisions
 
-| Round | Question | User answer | Boundary fixed | Follow-up needed |
-| --- | --- | --- | --- | --- |
-| 1 | 是否可以在 OpenAI-compatible 发请求前合并多个 system | 用户确认可以并要求实现 | 这是兼容性修复，不改变 core prompt assembly | no |
-| 1 | 是否把会话中段 system 一并提升到开头 | 接受调研结论：只合并开头连续 system | 禁止改变 system 的因果位置 | no |
-| 2 | 是否拒绝前置 prefix 之后的 system | 用户确认该校验属于过度兜底，要求移除 | adapter 只合并前置 prefix，中段 system 原样透传 | no |
+1. Merging multiple system messages before an OpenAI-compatible request is a compatibility fix; core prompt
+   assembly is unchanged.
+2. Only the consecutive leading system prefix is merged. Mid-conversation system messages are not hoisted to
+   the front; the causal position of a system message never changes.
+3. The adapter does not reject a system message that appears after the leading prefix (such a check was
+   judged over-defensive and removed); it passes through unchanged.
 
-## 请求合同
+## Request contract
 
-仅当 `providerKind === "openai-compatible"` 时执行：
+Applies only when `providerKind === "openai-compatible"`:
 
-1. 从消息索引 0 开始识别连续的 system prefix。
-2. prefix 中存在两条及以上 system 时，按原顺序使用精确分隔符 `\n\n` 连接文本，不 trim、
-   不排序、不得丢失空白。
-3. 合并结果占据原第一条 system 的位置；其余 user、assistant、tool message 内容与顺序不变。
-4. 0 条或 1 条前置 system 不创建额外变换。
-5. 前置 prefix 结束后若再次出现 system，保持其原始位置和内容；adapter 不负责提升、降级、
-   改写或拒绝中段 system。
-6. Anthropic、OpenAI、gateway、custom provider 继续保留原始多段 system。
-7. Core ContextBuilder 继续保留多段 system，避免破坏 Anthropic cache boundary。
+1. Identify the consecutive system prefix starting at message index 0.
+2. With two or more system messages in the prefix, join their text in the original order with the exact
+   separator `\n\n`: no trim, no reordering, no loss of whitespace.
+3. The merged result takes the position of the original first system message; user, assistant and tool
+   message content and order are unchanged.
+4. Zero or one leading system message creates no extra transform.
+5. A system message appearing after the prefix keeps its original position and content; the adapter does not
+   promote, demote, rewrite or reject mid-conversation system messages.
+6. Anthropic, OpenAI, gateway and custom providers keep the original multi-part system.
+7. Core ContextBuilder keeps the multi-part system, so the Anthropic cache boundary is not broken.
 
 ```text
 provider-neutral core          adapter                         HTTP wire
 system(prefix)  ┐
 system(stable)  ├─ openai-compatible ─> system(prefix\n\nstable\n\ndynamic)
 system(dynamic) ┘                                  │
-user / assistant / tool ───────────────────────────┴─> 原顺序不变
+user / assistant / tool ───────────────────────────┴─> original order unchanged
 
-非 OpenAI-compatible ─────────────────────────────────> 全部原样保留
-user ... system(mid-conversation) ─────────────────────> 原位置透传，不 hoist
+non-OpenAI-compatible ─────────────────────────────────> all kept as is
+user ... system(mid-conversation) ─────────────────────> passed through in place, no hoist
 ```
 
 ## Domain scope and high-risk cross-products
 
 | Domain | Include? | Decision |
 | --- | --- | --- |
-| Model/provider/runtime config | yes | `providerKind` 是唯一启用开关，转换归 adapter 所有 |
-| Conversation/session behavior | limited | 只保护消息顺序，不修改 session/history/persistence |
-| Mobile remote/replayable | no | desktop 与 mobile 最终共用 agent adapter；不改变 delivery 语义 |
-| Workspace identity | no | 不读取 workspace 相关字段 |
-| Protocol/schema | no | `ModelInputMessage` 与 `@zcode/protocol` 均不变化 |
+| Model/provider/runtime config | yes | `providerKind` is the only switch; the adapter owns the transform |
+| Conversation/session behavior | limited | Only message order is protected; session/history/persistence are untouched |
+| Mobile remote/replayable | no | Desktop and mobile ultimately share the agent adapter; delivery semantics unchanged |
+| Workspace identity | no | No workspace-related fields are read |
+| Protocol/schema | no | `ModelInputMessage` and `@zcode/protocol` are unchanged |
 
-高风险交叉项只有 provider kind × system 位置 × system 数量。客户端、workspace、stream/generate
-均由相同 adapter 归一化函数折叠，不扩展成独立产品状态。
+The only high-risk cross-product is provider kind x system position x system count. Client, workspace and
+stream/generate are all collapsed by the same adapter normalization function and are not separate product
+states.
 
 ## Candidate combinations and pruning
 
 | Candidate ID | Provider | Input shape | Expected effect | Status |
 | --- | --- | --- | --- | --- |
-| OCS-01 | OpenAI-compatible | 0 个 system | 原样转换 | accepted |
-| OCS-02 | OpenAI-compatible | 1 个前置 system | 原样转换 | accepted |
-| OCS-03 | OpenAI-compatible | 2+ 个前置 system | 合并为一个，顺序与文本不变 | accepted |
-| OCS-04 | OpenAI-compatible | user 后出现 system | 保持原位置和内容，不 hoist | accepted |
-| OCS-05 | Anthropic/OpenAI/gateway/custom | 2+ 个前置 system | 不合并 | accepted |
-| OCS-06 | generate/stream | 相同 message 输入 | 因共用 `toAiSdkMessages` 而保持相同结果 | accepted |
+| OCS-01 | OpenAI-compatible | 0 system | Converted as is | accepted |
+| OCS-02 | OpenAI-compatible | 1 leading system | Converted as is | accepted |
+| OCS-03 | OpenAI-compatible | 2+ leading system | Merged into one, order and text unchanged | accepted |
+| OCS-04 | OpenAI-compatible | system after a user message | Position and content kept, no hoist | accepted |
+| OCS-05 | Anthropic/OpenAI/gateway/custom | 2+ leading system | Not merged | accepted |
+| OCS-06 | generate/stream | Same message input | Same result because both share `toAiSdkMessages` | accepted |
 
-以下组合剪枝：桌面/手机、local/remote、continuous/replayable、workspace identity。它们都在请求进入
-adapter 前决定 transport 或 runtime 归属，不改变本设计的纯 message/providerKind 输入。
+Pruned: desktop/mobile, local/remote, continuous/replayable, workspace identity. They decide transport or
+runtime ownership before the request enters the adapter and do not change this design's pure
+message/`providerKind` input.
 
 ## Accepted cases
 
 | Case ID | Setup | Action | Assertions | Evidence layers | E2E status |
 | --- | --- | --- | --- | --- | --- |
-| OCS-01/02 | OpenAI-compatible，0/1 system | 调用 message transform | 数量和内容不变 | unit | adapter unit |
-| OCS-03 | 三条前置 system + 普通历史 | 调用 transform 和真实 SDK generate | wire 只有一条 system，后续 roles/order 不变 | unit + network body | adapter wire |
-| OCS-04 | user 后插入 system | 调用 transform | 保持原位置和内容，前置 prefix 仍正常合并 | unit | adapter unit |
-| OCS-05 | Anthropic 两条前置 system | 调用 transform | 仍为两条 system | unit | adapter unit |
+| OCS-01/02 | OpenAI-compatible, 0/1 system | Call message transform | Count and content unchanged | unit | adapter unit |
+| OCS-03 | Three leading system + normal history | Call transform and real SDK generate | Wire has one system; later roles/order unchanged | unit + network body | adapter wire |
+| OCS-04 | System inserted after a user message | Call transform | Position and content kept; leading prefix still merges | unit | adapter unit |
+| OCS-05 | Anthropic, two leading system | Call transform | Still two system messages | unit | adapter unit |
 
-不补 conversation-session E2E catalog/matrix：该修复不增加用户交互状态，真实 SDK wire test 已直接
-覆盖最终验收面，桌面 E2E 只会重复 adapter 请求合同。
+No conversation-session E2E catalog/matrix entry is added: the fix adds no user-interaction state, the real
+SDK wire test already covers the final acceptance surface, and desktop E2E would only repeat the adapter
+request contract.
 
-## 实现边界
+## Implementation boundary
 
-- 在 `system-message-compat.ts` 提供专属纯函数，并在 `toAiSdkMessages()` 进入逐角色转换前调用。
-- 不修改 `buildProviderRequestMessages()`，保持 core/provider projection 中立。
-- 不在 final JSON fetch wrapper 解析并重写未知 body；typed message 边界能保留角色与顺序约束。
-- 合并后的 system 继承最后一个前置 system 的 cache-control marker。该 marker 只投影到 Anthropic
-  provider options，不影响 OpenAI-compatible wire；保留它用于避免 adapter 中间态无谓漂移。
+- A dedicated pure function lives in `system-message-compat.ts` and is called in `toAiSdkMessages()` before
+  per-role conversion.
+- `buildProviderRequestMessages()` is unchanged, keeping the core/provider projection neutral.
+- The final JSON fetch wrapper does not parse and rewrite unknown bodies; the typed message boundary preserves
+  the role and order constraints.
+- The merged system inherits the cache-control marker of the last leading system. The marker projects only to
+  Anthropic provider options and does not affect the OpenAI-compatible wire; it is kept to avoid needless
+  intermediate-state drift in the adapter.
 
-## 验证
+## Verification
 
-- `model-transform.test.ts`：OCS-01 至 OCS-05。
-- `openai-compatible-system-messages-wire.test.ts`：真实 SDK fake fetch，断言最终 `messages`。
-- `pnpm --filter @zcode/adapters typecheck`。
-- 根目录 `pnpm typecheck` 与 `pnpm lint`。
+- `model-transform.test.ts`: OCS-01 to OCS-05.
+- `openai-compatible-system-messages-wire.test.ts`: real SDK fake fetch, asserting the final `messages`.
+- `pnpm --filter @zcode/adapters typecheck`.
+- Root `pnpm typecheck` and `pnpm lint`.

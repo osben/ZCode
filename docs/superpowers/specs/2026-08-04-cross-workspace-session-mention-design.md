@@ -1,153 +1,156 @@
-# `#` 跨 Workspace 对话 Mention
+# `#` Cross-Workspace Session Mention
 
 ## Feature Summary
 
 | Field                 | Value                                                                                                             |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| Change                | Composer 的 `#` 面板聚合当前会话存储 authority 下全部已打开或已恢复 workspace，并把每个 workspace 的可见候选限制为 20 条 |
+| Change                | The composer `#` panel aggregates all opened or restored workspaces under the current session-storage authority and limits visible candidates to 20 per workspace |
 | Change layer          | `option-source + presentation`                                                                                    |
-| User-visible surfaces | `MentionPlugin` 的 `#` sessions 面板                                                                              |
-| Existing docs         | `docs/ui/mention-panel-layout.md`、`docs/session-context-tool.md`                                                 |
-| Existing code owners  | `sessionsMentionProvider`、`useWorkspaceSessionsIndexItems`、Tab Store、remote workspace service resolver         |
-| Out of scope          | `@` 对话候选范围、改写 canonical mention、跨 Host 搬运会话、Agent/协议变更、stream/queue/snapshot/replayable 语义 |
+| User-visible surfaces | The `#` sessions panel of `MentionPlugin`                                                                         |
+| Existing docs         | `docs/ui/mention-panel-layout.md`, `docs/session-context-tool.md`                                                 |
+| Existing code owners  | `sessionsMentionProvider`, `useWorkspaceSessionsIndexItems`, Tab Store, remote workspace service resolver         |
+| Out of scope          | `@` session candidate scope, rewriting the canonical mention, moving sessions across Hosts, Agent/protocol changes, stream/queue/snapshot/replayable semantics |
 
-## 产品边界
+## Product boundary
 
-用户要求 `#` 能选择所有 workspace 里的对话。本功能把“所有 workspace”定义为当前窗口任务区中
-已打开或启动恢复、并且与当前 composer 共享同一会话存储 authority 的 workspace：
+The user asked that `#` can select sessions in all workspaces. "All workspaces" means the workspaces that are
+opened or startup-restored in the current window's task area and share the same session-storage authority as
+the current composer:
 
-- `@` 虽然在当前代码中也复用 session provider，但不是本次产品入口；它继续只查询当前 workspace。
-- `#` 每个 workspace 最多展示 20 条候选。空 query 时取该 workspace 最近更新的 20 条；有 query
-  时先在全部历史会话中完成匹配，再按 `workspaceKey` 对匹配结果各取前 20 条，因此较老会话仍可搜索。
-- 该上限只约束 renderer 候选结果，不改变 sessions-index 的订阅、snapshot 或持久化协议。
+- `@` also reuses the session provider in the current code but is not the entry of this feature; it keeps
+  querying only the current workspace.
+- `#` shows at most 20 candidates per workspace. With an empty query it takes the 20 most recently updated of
+  that workspace; with a query it first matches across the full history, then takes the first 20 matches per
+  `workspaceKey`, so older sessions stay searchable.
+- The cap constrains only the renderer candidate result; the sessions-index subscription, snapshot and
+  persistence protocol are unchanged.
 
-- 本地 composer 可以选择当前 window-scoped Local Host 下全部本地 workspace 的会话。多个本地
-  Agent 进程共享同一个 SQLite session DB，选中后 `ReadSessionContext` 能按 session id 读取。
-- 远程 composer 可以选择同一个 `remoteSessionId` / Agent service authority 下多个 workspace 的会话。
-- 本地与远程 Host 之间、两个不同远程 Host 之间不共享 session DB。本轮不展示另一 authority 的
-  会话，避免生成能选择但 `ReadSessionContext` 返回 `not_found` 的失效引用。
-- 已断开的远程 workspace 不回退到本地 service；恢复对应 remote attachment 后才重新进入候选。
-- 关闭、未在当前窗口恢复的 workspace 不在候选范围；本轮不新增全局持久 workspace catalog。
+- A local composer can select sessions of all local workspaces under the current window-scoped Local Host.
+  Multiple local Agent processes share one SQLite session DB, so `ReadSessionContext` can read a selected
+  session by id.
+- A remote composer can select sessions of multiple workspaces under the same `remoteSessionId` / Agent
+  service authority.
+- A local and a remote Host, or two different remote Hosts, do not share a session DB. Sessions of another
+  authority are not shown, to avoid references that can be selected but make `ReadSessionContext` return
+  `not_found`.
+- A disconnected remote workspace does not fall back to the local service; it re-enters the candidates only
+  after the remote attachment is restored.
+- Closed workspaces that are not restored in the current window are not candidates; no global persistent
+  workspace catalog is added.
 
 ```text
 Composer trigger
         |
-        +-- @ ----------------------------> 当前 workspace sessions-index（保持原行为）
+        +-- @ ----------------------------> current workspace sessions-index (original behavior)
         |
         +-- #
              |
              v
-当前 composer workspace
+current composer workspace
         |
         v
-解析 conversation storage authority
+resolve conversation storage authority
         |
         +-- Local Host / base service
-        |      └-- 当前窗口全部 local workspace sessions-index
+        |      └-- sessions-index of all local workspaces in the current window
         |
         +-- Remote Host / remoteSessionId
-               └-- 同一 remote authority 下全部 workspace sessions-index
+               └-- sessions-index of all workspaces under the same remote authority
 
-其他 Host / 未连接 remote
-        └-- 剪枝：不展示，不回退到 base service
+other Host / unconnected remote
+        └-- pruned: not shown, no fallback to the base service
 
-聚合结果
-  -> workspaceKey = workspaceIdentity?.trim() || workspacePath 去重 scope
-  -> session id 去重
-  -> 当前 workspace 优先
-  -> 其余按最近更新时间
-  -> 全量 query 匹配
-  -> 每个 workspaceKey 最多保留 20 条
-  -> 仍插入 [#Title](#sess_id)
+aggregated result
+  -> dedupe scope by workspaceKey = workspaceIdentity?.trim() || workspacePath
+  -> dedupe by session id
+  -> current workspace first
+  -> rest by most recent update
+  -> match the query over the full set
+  -> keep at most 20 per workspaceKey
+  -> still insert [#Title](#sess_id)
 ```
 
-## UI Surface Matrix
+## Shared implementation and differing behavior
 
-| 用户场景              | 入口组件                        | 候选来源                                                                    | 本地状态                             | 校验/门禁                                                    | 提交结果                        | Authority / 持久化                | 多端边界                                                  |
-| --------------------- | ------------------------------- | --------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------ | ------------------------------- | --------------------------------- | --------------------------------------------------------- |
-| 在 `@` 中选择相关对话 | `MentionPlugin` sessions 分组   | 当前 workspace 的 sessions-index（保持原行为）                              | Lexical trigger/query/selected index | 沿用现有门禁                                                 | 插入原 session mention Markdown | 当前 Host 的 SQLite session store | 本轮不改变                                                |
-| 在 `#` 中选择相关对话 | `MentionPlugin` sessions 单分组 | 同 authority workspace tabs 的 sessions-index                               | 同上                                 | remote workspace 必须已解析 `remoteSessionId` 与对应 service | 同上                            | 同上                              | Desktop/Web/Mobile 共用 provider；不改变 delivery profile |
-| 搜索跨 workspace 对话 | `MentionPanel`                  | 标题、session id、workspacePath、workspaceIdentity、model/provider keywords | query                                | 先匹配全部历史，再按 `workspaceKey` 各保留最多 20 条          | 同上                            | 无新增持久化                      | workspace label 兼容 Windows/macOS/Linux 路径             |
-
-## 共享实现与差异行为
-
-- `@` 与 `#` 继续共用一个 `useSessionsMentionProvider`，由触发器显式传入 workspace scope 策略；`@`
-  使用 `current-workspace`，`#` 使用 `same-authority-workspaces`，不能在 provider 内无条件扩容。
-- `useWorkspaceSessionsIndexItems` 继续按 `endpointKey + workspaceKey` 引用计数复用订阅；面板关闭后释放
-  本消费者引用，不影响侧栏已有订阅。
-- 候选行继续用 `description` 展示 workspace 末级名称；无需新增布局、颜色或字号。
-- 当前 workspace 候选排在其他 workspace 前；每个分组内部继续按最近活动排序。
-- `#` 的 20 条上限在 query 匹配之后按 `workspaceKey` 独立计数，不能对合并结果做全局 `slice(0, 20)`；
-  否则当前 workspace 会挤掉其他 workspace。`@` 不应用该限制，保持既有当前 workspace 行为。
-- canonical mention、历史解析和 `ReadSessionContext` 工具输入只保留 session id，不增加 workspace 字段。
-
-## 影响关系
-
-| Rank           | Relation                                                    | Reason                                                                     |
-| -------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------- |
-| must-inspect   | `sessionsMentionProvider -> useWorkspaceSessionsIndexItems` | 唯一候选 scope 构造点与实时聚合 owner                                      |
-| must-inspect   | Tab Store + workspace service resolver                      | 提供全部已知 workspace，并阻止 remote 错路由到 base service                |
-| should-inspect | `collectSessionMentionItems`                                | 已支持跨 workspace 排序、workspace label、搜索关键词和 session 去重        |
-| invariant-only | `mentionMarkdown -> ReadSessionContext`                     | canonical 与运行时读取契约不得变化                                         |
-| invariant-only | desktop continuous / web remote replayable                  | 只扩大低频 sessions-index 订阅集合，不拼接 conversation stream 或 snapshot |
-| evidence-only  | mention focused tests / sessions-index hook tests           | 证明 scope、排序、隔离和不预订阅行为                                       |
+- `@` and `#` keep sharing one `useSessionsMentionProvider`; the trigger passes the workspace scope policy
+  explicitly: `@` uses `current-workspace`, `#` uses `same-authority-workspaces`. The provider must not widen
+  unconditionally.
+- `useWorkspaceSessionsIndexItems` keeps reusing subscriptions by `endpointKey + workspaceKey` reference
+  count; when the panel closes it releases this consumer's reference without affecting the sidebar's existing
+  subscription.
+- Candidate rows keep showing the last workspace name in `description`; no new layout, color or font size.
+- Current workspace candidates sort before other workspaces; inside each group the order stays by most recent
+  activity.
+- The `#` cap of 20 is counted per `workspaceKey` after query matching; a global `slice(0, 20)` of the merged
+  result is wrong because the current workspace would crowd out the others. `@` does not apply the cap and
+  keeps the existing current-workspace behavior.
+- The canonical mention, history parsing and `ReadSessionContext` tool input keep only the session id; no
+  workspace field is added.
 
 ## State Owners
 
 | State / fact                | Authority                                          | Mirrors / caches        | Evidence                               |
 | --------------------------- | -------------------------------------------------- | ----------------------- | -------------------------------------- |
-| 当前窗口 workspace 集合     | window-scoped Tab Store                            | tab persistence restore | hook test 的 workspace tabs            |
-| remote workspace -> service | `remoteSessionId` + remote workspace session store | identity/path lookup    | 不同 endpoint mock service 调用次数    |
-| 会话候选事实                | 各 Host 的 sessions-index                          | shared registry store   | snapshot/delta 聚合结果                |
-| session context 内容        | 当前 Agent Host 的 SQLite session store            | 无跨 Host mirror        | `ReadSessionContext` 文档与 store 实现 |
-| workspace 隔离 key          | `workspaceIdentity?.trim() \|\| workspacePath`     | scope/registry key      | 同路径不同 identity focused case       |
+| Workspace set of the window | window-scoped Tab Store                            | tab persistence restore | workspace tabs in hook test            |
+| remote workspace -> service | `remoteSessionId` + remote workspace session store | identity/path lookup    | mock service call counts per endpoint  |
+| Session candidate facts     | sessions-index of each Host                        | shared registry store   | snapshot/delta aggregation result      |
+| session context content     | SQLite session store of the current Agent Host     | no cross-Host mirror    | `ReadSessionContext` docs and store implementation |
+| workspace isolation key     | `workspaceIdentity?.trim() \|\| workspacePath`     | scope/registry key      | same path, different identity focused case |
 
 ## Boundary Decisions
 
-| Boundary       | Decision                               | Includes                              | Excludes / prunes                  | Source                                   |
-| -------------- | -------------------------------------- | ------------------------------------- | ---------------------------------- | ---------------------------------------- |
-| workspace 集合 | 当前窗口已打开或恢复的 workspace tabs  | 本地 tabs、已连接 remote tabs         | 已关闭且未恢复的历史 workspace     | 用户请求 + 当前 Tab Store authority      |
-| Host authority | 只聚合同一 Agent service/session store | local-local、同 remote endpoint       | local-remote、不同 remote endpoint | `ReadSessionContext` + SQLite store 架构 |
-| 排序           | 当前 workspace 优先，其余最近更新      | 同标题、同路径不同 identity           | 全局相关度重排                     | 现有 `collectSessionMentionItems`        |
-| 展示预算       | `#` 每个 workspace 最多 20 条          | 空 query 最近 20；query 后匹配前 20   | 全局 20 条；先截断再搜索           | 2026-08-05 用户确认                      |
-| canonical      | 保持 `[#Title](#sess_id)`              | `#`（`@` 原行为也不变）               | workspace/endpoint 写入 mention    | 现有 runtime contract                    |
-| delivery       | 不改变                                 | desktop continuous、mobile replayable | stream/snapshot/queue 修改         | 远控事实文档                             |
+- **Workspace set:** workspace tabs opened or restored in the current window (local tabs, connected remote
+  tabs); closed, unrestored workspaces are excluded.
+- **Host authority:** only the same Agent service/session store (local-local, same remote endpoint); never
+  local-remote or different remote endpoints.
+- **Ordering:** current workspace first, the rest by recent update; no global relevance re-ranking.
+- **Display budget:** `#` shows at most 20 per workspace (empty query: recent 20; with query: first 20 matches),
+  never a global 20 and never truncating before search (confirmed by the user 2026-08-05).
+- **Canonical:** `[#Title](#sess_id)` unchanged for `#` and `@`; no workspace/endpoint in the mention.
+- **Delivery:** desktop continuous and mobile replayable unchanged; no stream/snapshot/queue changes.
 
-## Candidate Combinations 与剪枝
+## Candidate Combinations and pruning
 
-| Candidate ID | State                                                | Event                | Expected effect                                           | Status   |
-| ------------ | ---------------------------------------------------- | -------------------- | --------------------------------------------------------- | -------- |
-| CWM01        | local draft，窗口有 workspace A/B                    | 在 A 输入 `#`        | A/B 会话均出现，A 优先                                    | accepted |
-| CWM02        | remote draft，同一 remote authority 有 workspace A/B | 在 A 输入 `#`        | A/B 会话均从 remote service 出现                          | accepted |
-| CWM03        | local 与 remote workspace 同时存在                   | 在 local 输入 `#`    | 只出现 local authority 会话，remote 不错误走 base service | accepted |
-| CWM04        | 两个 remote authority 同时存在                       | 在 remote A 输入 `#` | 只出现 A authority 会话，B 不进入失效候选                 | accepted |
-| CWM05        | remote tab 尚未恢复 service                          | 打开 `#`             | 不订阅本地 host；连接恢复后重新聚合                       | accepted |
-| CWM06        | panel 未启用                                         | 普通 composer render | 不预订阅额外 sessions-index                               | accepted |
-| CWM07        | local draft，窗口有 workspace A/B                    | 在 A 输入 `@`        | 只订阅 A，B 不进入 `@` 对话分组                           | accepted |
-| CWM08        | 同 authority 的 workspace A/B 各有超过 20 条会话     | 在 A 输入空 query `#` | A/B 各自只保留最近 20 条，不能由 A 挤掉 B                 | accepted |
-| CWM09        | workspace B 的命中会话不在最近 20 条内                | 在 A 输入 `#` 并搜索  | 先匹配 B 的全部历史，再在 B 的匹配结果中最多展示 20 条     | accepted |
+| Candidate ID | State                                                  | Event                       | Expected effect                                              | Status   |
+| ------------ | ------------------------------------------------------ | --------------------------- | ------------------------------------------------------------ | -------- |
+| CWM01        | local draft, window has workspace A/B                  | type `#` in A               | sessions of A and B appear, A first                          | accepted |
+| CWM02        | remote draft, same remote authority has workspace A/B  | type `#` in A               | sessions of A and B both appear from the remote service      | accepted |
+| CWM03        | local and remote workspaces coexist                    | type `#` in local           | only local authority sessions appear, remote does not wrongly go through the base service | accepted |
+| CWM04        | two remote authorities coexist                         | type `#` in remote A        | only authority A sessions appear, B does not enter the invalid candidates | accepted |
+| CWM05        | remote tab has not restored its service                | open `#`                    | does not subscribe the local host; re-aggregates after the connection recovers | accepted |
+| CWM06        | panel not enabled                                      | ordinary composer render    | no extra sessions-index pre-subscription                     | accepted |
+| CWM07        | local draft, window has workspace A/B                  | type `@` in A               | subscribes only A; B does not enter the `@` session group    | accepted |
+| CWM08        | workspaces A/B in the same authority each have more than 20 sessions | type empty-query `#` in A | A and B each keep only their recent 20; A must not crowd out B | accepted |
+| CWM09        | a matching session of workspace B is not in its recent 20 | type `#` in A and search | match B's full history first, then show at most 20 of B's matches | accepted |
 
-剪枝：主题、locale、task phase、model/provider、连续流与 replayable 恢复不与候选 scope 做笛卡尔积；
-它们不改变 workspace authority。Desktop local + remote endpoint focused tests 作为代表，现有共享组件
-继续承担响应式、主题和键盘交互覆盖。
+Pruned: theme, locale, task phase, model/provider, continuous stream and replayable recovery do not form a
+Cartesian product with candidate scope, since they do not change workspace authority. Desktop local + remote
+endpoint focused tests are the representatives, and the existing shared components keep covering responsive,
+theme and keyboard interaction.
 
-## 验收
+## Acceptance
 
-- 本地 workspace A 打开 `#` 时，可以搜索并选择本地 workspace B 的会话；打开 `@` 时仍只显示 A。
-- 当前 workspace 会话仍排在其他 workspace 前，候选行展示来源 workspace 名称。
-- `#` 空 query 时每个 workspace 最多展示最近 20 条；搜索时仍能找到不在最近 20 条内的历史会话，
-  且每个 workspace 的匹配结果仍不超过 20 条。不得把限制误写成全局 20 条。
-- 同一路径不同 `workspaceIdentity` 不串 scope；Windows 与 Unix 路径都能展示末级 workspace 名称。
-- remote 候选只通过对应 remote service 订阅；未连接或其他 endpoint 不回退到 base host。
-- 选择后仍插入原 session mention Markdown；不修改 protocol、Agent runtime、queue、stream 或 snapshot。
-- 面板未启用时不新增 sessions-index 订阅。
+- With local workspace A, `#` can search and select sessions of local workspace B; `@` still shows only A.
+- Current workspace sessions still sort before other workspaces, and the candidate row shows the source
+  workspace name.
+- With an empty `#` query each workspace shows at most its recent 20; a search still finds history sessions
+  outside the recent 20, with each workspace's matches still at most 20. The cap must not be written as a
+  global 20.
+- The same path with a different `workspaceIdentity` does not mix scopes; both Windows and Unix paths show the
+  last workspace name.
+- Remote candidates subscribe only through the corresponding remote service; an unconnected or other endpoint
+  does not fall back to the base host.
+- After selection the original session mention Markdown is still inserted; protocol, Agent runtime, queue,
+  stream and snapshot are unchanged.
+- No extra sessions-index subscription when the panel is not enabled.
 
-## 测试交接
+## Test handoff
 
-- focused hook test：仅 `#` 的本地 A/B 聚合、`@` current-only、remote 同 authority 聚合、跨 authority
-  剪枝、disabled 不订阅。
-- pure function test：当前 workspace 优先、其他 workspace 最近更新、workspace label/keywords。
-- pure/provider test：空 query 按 `workspaceKey` 各取最近 20 条；query 先匹配全量历史再各取 20 条；
-  `@` 不应用跨 workspace 上限。
-- 本轮不新增 provider replay E2E：候选 scope 是 renderer 低频 index 组合，canonical 与正式 E2E 已覆盖；
-  case catalog / coverage matrix 登记 focused 覆盖，不冒充跨 Host context transfer。
+- focused hook test: `#`-only local A/B aggregation, `@` current-only, remote same-authority aggregation,
+  cross-authority pruning, disabled does not subscribe.
+- pure function test: current workspace first, other workspaces by recent update, workspace label/keywords.
+- pure/provider test: empty query takes the recent 20 per `workspaceKey`; a query matches the full history
+  first then takes 20 each; `@` does not apply the cross-workspace cap.
+- No provider replay E2E this round: the candidate scope is a low-frequency renderer index composition, and the
+  canonical and formal E2E already cover it; the case catalog / coverage matrix records focused coverage and
+  does not pose as cross-Host context transfer.

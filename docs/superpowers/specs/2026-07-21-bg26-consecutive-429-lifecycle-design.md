@@ -1,64 +1,75 @@
 # BG26 429 Failure Projection Isolation Design
 
-## 目标
+## Goal
 
-稳定 BG26 的 case-local synthetic `429` replay，验证 provider 原始错误进入 background subagent failed notification、失败 hover 与 snapshot restore。BG26 不新增或修改产品侧主模型 retry、queue、stream recovery 语义。
+Stabilize BG26's case-local synthetic `429` replay. It verifies that the original provider error reaches the
+background subagent failed notification, the failure hover and snapshot restore. BG26 does not add or change
+any product-side main-model retry, queue or stream-recovery semantics.
 
-## 运行时证据与根因
+## Evidence and root cause
 
-早期失败 run `desktop-e2e-20260721-110945-241` 中，child attempt 1～6 到达 replay server，attempt 7 只有 `model.request.started` / `model.network.started`；其它 run 的停点会漂移。下列实验均被真实 E2E 否定：
-
-1. 调整产品侧 stream cleanup/abort 顺序后，focused test 通过，但 BG26 仍卡在物理请求发送前。
-2. 显式关闭 429 响应连接后，run `desktop-e2e-20260721-121455-420` 收到第一个 429，却在 attempt 2 发送前卡住。
-3. 仅把 BG26 retry 设为 0 后，run `desktop-e2e-20260721-122552-864` 已记录 child `attempt=1/maxAttempts=1`，但首个物理请求仍未到 replay server。
-
-因此失败不在 projection、hover、snapshot restore 或产品错误转换。BG26 作为 projection case 同时继承了产品默认 retry 和进程级 global fetch 通道；父请求完成后，child 请求在该共享测试通道上可能停在 replay server 之前。把 retry 降为一次只能缩小 case 语义，不能单独隔离不稳定通道。
+In the early failing run `desktop-e2e-20260721-110945-241`, child attempts 1-6 reached the replay server and
+attempt 7 only logged `model.request.started` / `model.network.started`; the stall point drifted between runs.
+Real E2E rejected three experiments: reordering product-side stream cleanup/abort, explicitly closing the 429
+response connection, and setting only BG26 retry to 0 (the first physical request still never reached the
+replay server). The failure is therefore not in projection, hover, snapshot restore or product error
+conversion: BG26 as a projection case inherits both the product default retry and the process-level global
+fetch channel, and after the parent request completes a child request on that shared test channel can stall
+before the replay server. Lowering retry only narrows the case semantics and does not isolate the unstable
+channel.
 
 ```text
-旧链路
+old chain
   parent title / launch / ACK
-    -> 进程级 global fetch 通道
-  child 429（默认还会 retry）
-    -> 某次或首个 attempt 只有 network.started
+    -> process-level global fetch channel
+  child 429 (default retry also applies)
+    -> some or the first attempt only logs network.started
     -X-> replay server
-    -> child 无 terminal failed
-    -> 父 notification 永不到达
+    -> child has no terminal failed
+    -> parent notification never arrives
 
-目标链路
+target chain
   BG26 worker
     -> retry = 0
-    -> ZCODE_HTTP_PROXY = 当前 replay server
-    -> Node http + 当前请求独立 ProxyAgent
-    -> 1 次真实 429
+    -> ZCODE_HTTP_PROXY = current replay server
+    -> Node http + per-request ProxyAgent
+    -> 1 real 429
     -> child terminal failed
     -> parent failed notification
     -> live hover
-    -> 切换任务后的 snapshot restore
+    -> snapshot restore after switching tasks
 ```
 
-## 方案
+## Design
 
-采用 case-local worker 隔离，不修改产品网络代码：
+Case-local worker isolation; product network code is unchanged.
 
-1. WDIO `beforeSession` 根据当前 worker specs 判断 BG26，仅该 worker 设置 `ZCODE_MODEL_RETRY_MAX_RETRIES=0`。
-2. replay server 启动并获得动态端口后，仅 BG26 worker 设置 `ZCODE_HTTP_PROXY` 为该 server 的 base URL，并清空显式 `ZCODE_NO_PROXY`。`ProxyAgent` 会发送 absolute-form HTTP URL，而 replay server 已支持该格式。
-3. 非 BG26 worker 和 capture 模式恢复 WDIO 启动前的 proxy/no-proxy 配置，避免串扰其它 case 或开发者环境。
-4. BG26 fixture 保留一次真实 `429 AccountRateLimitExceeded`、原始 provider message 和 `retry-after: 0`，删除不属于本 case 合同的 retry fixture。
-5. provider message、status code、child marker、notification matcher 和 UI/restore 断言保持不变。
+1. WDIO `beforeSession` detects BG26 from the current worker specs and sets `ZCODE_MODEL_RETRY_MAX_RETRIES=0`
+   for that worker only.
+2. After the replay server starts and gets its dynamic port, only the BG26 worker sets `ZCODE_HTTP_PROXY` to
+   that server's base URL and clears an explicit `ZCODE_NO_PROXY`. `ProxyAgent` sends absolute-form HTTP URLs,
+   which the replay server already supports.
+3. Non-BG26 workers and capture mode restore the proxy/no-proxy configuration from before WDIO started, so
+   other cases and developer environments are not affected.
+4. The BG26 fixture keeps one real `429 AccountRateLimitExceeded`, the original provider message and
+   `retry-after: 0`; the retry fixture outside this case's contract is removed.
+5. Provider message, status code, child marker, notification matcher and UI/restore assertions are unchanged.
 
-该边界与 conversation case catalog 中 BG26 的已确认语义一致：`429` 只作为真实失败代表，不定义主模型 retry/queue 语义。产品默认 retry 仍由 adapters focused tests 覆盖。
+This matches the confirmed BG26 semantics in the conversation case catalog: `429` is only a representative
+real failure and does not define main-model retry/queue semantics. Product default retry stays covered by the
+adapters focused tests.
 
-## 影响边界
+## Impact boundary
 
-- 只修改测试基础设施、BG26 fixture/manifest 与定向测试。
-- 不修改 `apps/zcode-cli`、`packages/ui`、`product-projection.ts`、conversation projection 或 E2E timeout。
-- 桌面 `continuous` 与手机 `web-remote-replayable` 的运行态、snapshot 和恢复边界均不改变。
+- Only test infrastructure, the BG26 fixture/manifest and targeted tests change.
+- Unchanged: `apps/zcode-cli`, `packages/ui`, `product-projection.ts`, conversation projection, E2E timeouts.
+- Desktop `continuous` and mobile `web-remote-replayable` runtime, snapshot and recovery boundaries are
+  unchanged.
 
-## 验证结果
+## Verification
 
-- Worker isolation 与 replay server focused tests：`8 passed`。
-- BG26 fixture contract：`5 fixtures`，通过。
-- 原样 BG26 连续两轮通过：
-  - `desktop-e2e-20260721-123822-673`
-  - `desktop-e2e-20260721-124220-804`
-- 两轮 capture 都是 5 条 complete 请求，child 只有一个 `429`；Agent 日志记录 `attempt=1/maxAttempts=1/statusCode=429`，随后出现 `turn.failed`、`subagent.background.failed` 和父 notification 请求，原始 provider message 保留。
+- Worker isolation and replay server focused tests (`8 passed`); BG26 fixture contract (`5 fixtures`).
+- Unmodified BG26 passed two consecutive rounds (`desktop-e2e-20260721-123822-673`,
+  `desktop-e2e-20260721-124220-804`): 5 complete requests, a single child `429`, Agent log
+  `attempt=1/maxAttempts=1/statusCode=429`, then `turn.failed`, `subagent.background.failed` and the parent
+  notification request with the original provider message preserved.
