@@ -43,6 +43,7 @@ export function ComposerProviderMenu({
   isDisabled,
   separatorBeforeKey,
   group,
+  selectedKey,
   label,
   providerFooter,
   onSelect,
@@ -54,7 +55,10 @@ export function ComposerProviderMenu({
   loading?: boolean;
   isDisabled?: (group: ModelSelectGroup) => boolean;
   separatorBeforeKey?: string;
+  /** Browsed group shown in the trigger row. */
   group: ModelSelectGroup | undefined;
+  /** Group of the selected model; owns the check mark. */
+  selectedKey: string | undefined;
   label: string;
   providerFooter?: ReactNode;
   onSelect: (group: ModelSelectGroup) => void;
@@ -78,7 +82,7 @@ export function ComposerProviderMenu({
         </div>
       ) : null}
       <DropdownMenuRadioGroup
-        value={group?.key}
+        value={selectedKey ?? ""}
         data-composer-provider-list
         className="min-h-0 overflow-y-auto"
       >

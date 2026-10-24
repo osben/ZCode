@@ -30,11 +30,11 @@ Provider 行左侧依次为当前供应商图标、名称、接入方式标识�
 
 子菜单使用 Portal 避免父菜单裁切。窄屏侧向空间不足时，子菜单允许覆盖父菜单并避开 Provider 触发器行，保持高于父菜单的层级；不改变 Provider 选择和模型切换逻辑。
 
-切换 Provider 立即选择该分组按目录顺序的第一个未锁定模型，沿用已有 onSelectModel 更新 Composer，Think 由既有模型切换逻辑同步为有效档位，弹层保持打开。重复选择当前 Provider 保留其当前可用模型。没有可用模型的 Provider 仍可浏览和配置，但不覆盖当前模型，Think 禁用。滑杆按 Option Spec 的原始顺序逐格选择，不排序、不转换成 Token Budget。仅 Off 单档隐藏整个 Effort 区域及分割线；其他单档禁用滑杆但显示档位；无模型／无有效档位不制造默认选择。选择档位保持弹层打开，点击外部或 Escape 收起。桌面关闭后恢复输入焦点；手机不主动弹出软键盘。
+Provider 行只用于浏览（2026-10-23 ISSUE-058 用户裁决，见 [`specs/composer-model-picker-browse-only-providers.md`](../specs/composer-model-picker-browse-only-providers.md)）：点击、键盘确认或悬停 Provider 只切换 Models 列表展示的分组，不改模型、档位或账号连接；只有选择模型行才改变选择，新模型按既有规则取目标模型默认档位，重复选择当前模型不改写档位。浏览非当前 Provider 时 Think 显示「—」并禁用，弹层保持打开。滑杆按 Option Spec 的原始顺序逐格选择，不排序、不转换成 Token Budget。仅 Off 单档隐藏整个 Effort 区域及分割线；其他单档禁用滑杆但显示档位；无模型／无有效档位不制造默认选择。选择档位保持弹层打开，点击外部或 Escape 收起。桌面关闭后恢复输入焦点；手机不主动弹出软键盘。
 
 ### 模型菜单关闭
 
-- 点击或键盘确认可用模型后保持菜单打开，包括重复选择当前模型，便于继续调整思考档位；锁定模型不提交、不关闭。切换 Provider 和调档仍保持菜单打开。
+- 点击或键盘确认可用模型后保持菜单打开，包括重复选择当前模型，便于继续调整思考档位；锁定模型不提交、不关闭。浏览 Provider 和调档仍保持菜单打开。
 - 普通输入框、全屏插件中的浮动输入框共用同一个菜单打开状态。点击菜单外侧一次即关闭，包括插件 webview 所占区域；该次点击只关闭菜单，不触发底下插件操作。Escape 保持关闭行为。
 - 菜单关闭后沿用现有焦点规则：桌面恢复输入框，手机不主动弹出软键盘。不改变模型选择 owner、提交和协议。
 
@@ -65,7 +65,8 @@ Provider / Effort 操作 → 原有选择链路 → 菜单保持打开
 ```text
 ModelSelectionView（支持的模型与档位）
                  ↓
-选择 Provider → 当前可用模型或首个可用模型 → 现有 onSelectModel → Composer 草稿
+浏览 Provider → 弹层本地 browse 状态（不写草稿）
+选择模型行 → 现有 onSelectModel／连接切换 owner → Composer 草稿
 合并弹层 → 现有 onSelectModel / onSelectThought → Composer 草稿（唯一选择 owner）
                                                      ↓ 发送
                                                冻结 Submission
@@ -75,7 +76,7 @@ ModelSelectionView（支持的模型与档位）
 
 ## 验证
 
-- 组件交互：Provider 自动选择可用模型、跳过锁定模型、重复选择当前 Provider、无可用模型、模型选中后菜单保持打开、视觉标签、离散滑杆、单档／无效档、继承的连接方式和管理入口。
+- 组件交互：Provider 仅浏览（点击、键盘不改模型与档位）、浏览后选模型、重复选择当前模型保留档位、无可用模型、模型选中后菜单保持打开、视觉标签、离散滑杆、单档／无效档、继承的连接方式和管理入口。
 - 布局：各级收缩与逆向恢复、缺失 Computer/Plan、最终图标＋绿条；真实浏览器桌面与手机宽度、深浅主题。
 - Desktop E2E：模型与档位修改仍更新 Composer；普通模式不再渲染独立 Think 入口；合并菜单与 Mode 互斥。
 
@@ -102,7 +103,7 @@ ModelSelectionView（支持的模型与档位）
 - accepted：滑杆点击和拖拽分别从最低档开始，明确改变目标档位；断言 range 和 Composer config 都到达目标，随后一次外部点击关闭且选择不回退。
 - accepted：鼠标置于菜单外、通过键盘聚焦滑杆后，打开态缩窄再恢复，保留同一按钮、菜单、range 节点和滑杆焦点；模型/Provider/档位不被 resize 改写；窄态继续按 End 调档，思考条与 config 同步；关闭再打开仍是图标＋思考条。
 - pruned：主题/语言/全部宽度不与 desktop E2E 全量叉乘；共享 CSS 的浏览器视觉证据单列，不能算作手机 `/remote` 真机或原生侧栏拖拽覆盖。当前 E2E 设置工具栏容器宽度以确定性触发真实 ResizeObserver，不伪造 compact 属性。
-- 已有覆盖保留：Provider 自动选模型、模型/Provider 切换不清空目录、Tooltip 操作文案、最高档渐变与气泡、模式菜单互斥、管理模型、scope reset。
+- 已有覆盖保留：Provider 浏览后选模型、模型/Provider 切换不清空目录、Tooltip 操作文案、最高档渐变与气泡、模式菜单互斥、管理模型、scope reset。
 
 影响面：must-inspect 为 V4ComposerToolbar → ModelConfigSelect/ComposerModelMenu 与 useComposerToolbarFit；选择权威仍为 Composer 草稿，布局测量只投影 DOM。AutomationEditView、OffPeakEditView、SubagentsSection 与 workflow settings 虽复用 ModelConfigSelect，但各自持久化边界不同且不启用 composerOptions，属隔离边界；本次不修改产品代码。Desktop continuous 与手机 replayable 不涉及改动。当前环境无可调用 codegraph，未执行图索引的 depth-2 扫描，以当前源码调用点和现有用例核对，不宣称完成 codegraph 影响扫描；无新增语义图节点或 owner 关系。沿用 CT 已有 case-local fixture，不新增发送或 fixture 请求。
 
@@ -156,7 +157,7 @@ Effort 快捷键外观复用 ControlHintTooltip 的键帽：h-4、rounded-md、t
 
 主菜单与供应商子菜单保留 12px 视口安全边距及 no-drag。宽屏供应商子菜单外框与主菜单顶部对齐，外框相隔 4px；碰撞时优先保证可见。Provider 高亮使用 menu-hover/50。供应商列表独立收缩/滚动，Manage models 固定。
 
-小于 640px 时在原菜单内显示供应商页，顶部为本地化返回入口，不叠加左右两层。菜单页状态由 ComposerProviderMenu 唯一持有；关闭后自然重置，返回不修改模型，选择供应商复用现有自动选模型链路并返回模型页。视口变宽后恢复子菜单导航。模型页仍仅 Models 滚动，不改变桌面/远控数据链路。
+小于 640px 时在原菜单内显示供应商页，顶部为本地化返回入口，不叠加左右两层。菜单页状态由 ComposerProviderMenu 唯一持有；关闭后自然重置，返回不修改模型，选择供应商只切换浏览分组并返回模型页，不选择模型。视口变宽后恢复子菜单导航。模型页仍仅 Models 滚动，不改变桌面/远控数据链路。
 
 验证计划：扩展既有管理模型 E2E 检查安全边距、对齐和供应商滚动样式；组件验证窄屏返回与选择；真实浏览器验证两主题、桌面/手机宽度及长列表滚动。原生窗口拖拽命中和手机远控真机另行验证。
 
@@ -200,9 +201,10 @@ CR-01 验证：新增测试先复现空 Effort；修复后 51 项组件测试、
 团队入口来自已有企业 pricing 的 subscribed 产品，使用真实组织名，身份包含 family/productId/organizationId/projectId；身份不完整或无组织名不制造入口，同名不同身份不得去重。未选团队额度 unknown 不等于未购买；入口以已购目录为准，执行模型在选择后校验。
 
 ```text
-点击个人/团队行 → 根设置保存完整身份 → 现有 Provider 刷新 → 目标 Host 可用模型
+点击个人/团队行 → 仅浏览该行模型（不写设置，ISSUE-058）
+选择该行模型 → 根设置保存完整身份 → 现有 Provider 刷新 → 目标 Host 可用模型
                                                         ↓
-             保留可用同名模型，否则第一个可用模型 → Composer 模型 owner → 勾选/标题
+                         用户所选模型 → Composer 模型 owner → 勾选/标题
 失败 → 恢复原设置并同步 → 保留原模型并显示可重试错误
 ```
 

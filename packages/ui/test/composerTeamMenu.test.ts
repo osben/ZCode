@@ -59,9 +59,9 @@ function Harness({ pending = false, error = null }: { pending?: boolean; error?:
             selectedKey: selected,
             pending,
             error,
-            onSelect: (g) => {
+            onSelectModel: (g, value) => {
               setSelected(g.key);
-              setModel(g.items[0]!.value);
+              setModel(value);
             },
           },
         },
@@ -76,7 +76,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("Composer direct team provider menu", () => {
-  it("保持主菜单一行供应商，直接选择第二团队时勾选不落到同模型的第一团队", async () => {
+  it("保持主菜单一行供应商，浏览第二团队并选模型后勾选不落到同模型的第一团队", async () => {
     render(createElement(Harness));
     expect(screen.queryByTestId("composer-connection-trigger")).toBeNull();
     fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
@@ -84,6 +84,15 @@ describe("Composer direct team provider menu", () => {
     await waitFor(() =>
       expect(screen.getByTestId("composer-provider-trigger").textContent).toContain("Team Two"),
     );
+    // ISSUE-058: browsing keeps the check mark on the selected connection.
+    fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
+    expect(
+      (await screen.findByRole("menuitemradio", { name: "BigModel Individual" })).getAttribute(
+        "aria-checked",
+      ),
+    ).toBe("true");
+    fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "Escape" });
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "GLM-5.3", exact: true }));
     fireEvent.keyDown(screen.getByTestId("composer-provider-trigger"), { key: "ArrowRight" });
     expect(
       (await screen.findByRole("menuitemradio", { name: "BigModel Team Two" })).getAttribute(
@@ -174,7 +183,7 @@ it("连接 loading 期间固定原菜单展示，完成后一次采用新目录"
               selectedKey: target ? "api" : "personal",
               pending,
               error: null,
-              onSelect: () => {},
+              onSelectModel: () => {},
             },
           },
         }),

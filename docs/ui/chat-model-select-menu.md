@@ -10,7 +10,7 @@
 
 - `packages/ui/src/ModelConfigSelect.tsx`
   - 使用现有 `DropdownMenu` 组件渲染模型菜单，保持 `bg-menu`、紧凑行高和键盘菜单语义。
-  - 多个 provider 时，一级菜单展示 provider；悬停或键盘展开二级菜单后展示该 provider 下的 model。
+  - 多个 provider 时，合并菜单顶部是当前浏览的 provider 行，展开（悬停、点击或键盘）后为 provider 列表，下方 Models 列表展示所浏览 provider 的 model。provider 行只用于浏览：点击或键盘确认 provider 只切换 Models 列表，悬停只高亮；模型、思考档位和账号连接只在选择 model 行时改变（ISSUE-058，见 [`specs/composer-model-picker-browse-only-providers.md`](../../specs/composer-model-picker-browse-only-providers.md)）。
   - Z.ai / BigModel family 在分组标题展示当前连接方式短徽标，例如 `Start`、`Individual`、`Team`、
     `API`；连接方式徽标使用无边框的弱表面圆形 pill，模型项本身不重复徽标。连接方式只在设置页切换，输入框菜单只消费当前 selection。
   - 只有一个 provider 时，一级菜单直接展示 model 列表，不额外包一层 provider。

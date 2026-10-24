@@ -40,7 +40,8 @@ export interface ComposerModelOptions {
     selectedKey?: string;
     pending: boolean;
     error: string | null;
-    onSelect: (group: ComposerPlanGroup) => void;
+    /** A model row picked inside a browsed group other than the selected one, or a retry after an error. */
+    onSelectModel: (group: ComposerPlanGroup, value: string) => void;
   };
   providerLabel: string;
   modelsLabel: string;
@@ -99,6 +100,12 @@ export function ComposerThoughtIndicator({
   );
 }
 
+export interface ComposerModelItemsOptions {
+  /** Value that owns the check mark; undefined when the shown group is only browsed. */
+  selectedValue: string | undefined;
+  onSelect: (value: string) => void;
+}
+
 export function ComposerModelMenu({
   groups,
   normalizedValue,
@@ -106,30 +113,28 @@ export function ComposerModelMenu({
   renderItems,
   renderConnection,
   providerFooter,
-  isItemLocked,
   onSelectModel,
 }: {
   groups: readonly ModelSelectGroup[];
   normalizedValue: string;
   options: ComposerModelOptions;
-  renderItems: (items: ModelSelectGroup["items"]) => ReactNode;
+  renderItems: (items: ModelSelectGroup["items"], options: ComposerModelItemsOptions) => ReactNode;
   renderConnection: (group: ModelSelectGroup) => ReactNode;
   providerFooter?: ReactNode;
-  isItemLocked: (value: string) => boolean;
   onSelectModel: (value: string) => void;
 }) {
-  // 无可用模型的分组仍可浏览配置；实际选择始终由 Composer owner 回传。
+  // ISSUE-058: provider rows are browse-only (specs/composer-model-picker-browse-only-providers.md).
+  // Browse is UI-local; model, effort and connection change only on a model row pick.
   const [browse, setBrowse] = useState<{ key: string; selection: string } | null>(null);
   const menuGroups: readonly ComposerPlanGroup[] = options.providerMenu?.groups ?? groups;
   const selected =
     menuGroups.find((group) => group.key === options.providerMenu?.selectedKey) ??
     menuGroups.find((group) => group.items.some((item) => item.value === normalizedValue));
-  const group =
-    (browse?.selection === normalizedValue
+  const browsed =
+    browse?.selection === normalizedValue
       ? menuGroups.find((item) => item.key === browse.key)
-      : undefined) ??
-    selected ??
-    menuGroups[0];
+      : undefined;
+  const group = browsed ?? selected ?? menuGroups[0];
   // 视觉只由选中模型名称派生，避免供应商名或内部 value 含 highspeed 时误触发。
   const modelName = selected?.items.find((item) => item.value === normalizedValue)?.name ?? "";
   const highspeed = isGlmHighspeedModel(modelName);
@@ -148,6 +153,24 @@ export function ComposerModelMenu({
       : 0;
   const sliderFilled =
     currentGroupSelected && currentIndex >= 0 && !isNoThoughtLevel(options.levels[currentIndex]!);
+  const browsingOther = Boolean(browsed) && browsed?.key !== selected?.key;
+  const providerMenu = options.providerMenu;
+  const itemsOptions: ComposerModelItemsOptions = {
+    selectedValue: browsingOther ? undefined : normalizedValue,
+    onSelect: (value) => {
+      if (!group) return;
+      // Team rows share model values, so a pick in a browsed group must carry the group to the
+      // connection owner; a retry after a failed switch goes the same way.
+      if (providerMenu && (browsingOther || (currentGroupSelected && providerMenu.error))) {
+        providerMenu.onSelectModel(group as ComposerPlanGroup, value);
+        return;
+      }
+      // Re-picking the selected model would re-complete the selection and reset a valid effort;
+      // a missing effort still gets the model default.
+      if (value === normalizedValue && !browsingOther && currentIndex >= 0) return;
+      onSelectModel(value);
+    },
+  };
   const selectSliderValue = (index: number) => {
     const level = options.levels[index];
     if (!sliderDisabled && level && level.value !== options.value)
@@ -170,21 +193,10 @@ export function ComposerModelMenu({
             : undefined
         }
         group={group}
+        selectedKey={selected?.key}
         label={options.providerLabel}
         providerFooter={providerFooter}
-        onSelect={(candidate) => {
-          if (options.providerMenu) {
-            options.providerMenu.onSelect(candidate as ComposerPlanGroup);
-            return;
-          }
-          setBrowse({ key: candidate.key, selection: normalizedValue });
-          // 复用唯一选择链路，供应商页只负责导航，不缓存模型状态。
-          const model =
-            candidate.items.find(
-              (item) => item.value === normalizedValue && !isItemLocked(item.value),
-            ) ?? candidate.items.find((item) => !isItemLocked(item.value));
-          if (model && model.value !== normalizedValue) onSelectModel(model.value);
-        }}
+        onSelect={(candidate) => setBrowse({ key: candidate.key, selection: normalizedValue })}
       >
         <DropdownMenuSeparator className="bg-border/50" />
         <DropdownMenuLabel className="text-ui-sm text-foreground-subtle">
@@ -196,7 +208,7 @@ export function ComposerModelMenu({
           inert={options.providerMenu?.pending || undefined}
           data-composer-model-list
         >
-          {group ? renderItems(group.items) : null}
+          {group ? renderItems(group.items, itemsOptions) : null}
         </ScrollFadeViewport>
         {showEffort ? (
           <>

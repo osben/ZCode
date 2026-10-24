@@ -113,7 +113,7 @@ export function useComposerConnectionSwitch({
     intl,
   ]);
   const select = useCallback(
-    async (connection: ComposerConnection, previousKey?: string) => {
+    async (connection: ComposerConnection, previousKey?: string, modelName?: string) => {
       if (inFlight.current || !rpcReady || connection.disabled) return;
       const currentOwner = owner.current;
       const stillCurrent = () =>
@@ -143,6 +143,9 @@ export function useComposerConnectionSwitch({
           );
           if (!restoring && !candidate?.items.length)
             throw new Error("Selected connection has no available models");
+          // Checked inside synchronize so a missing pick rolls the persisted connection back.
+          if (!restoring && modelName && !candidate?.items.some((item) => item.name === modelName))
+            throw new Error("Selected model is not available on the connection");
           return view;
         };
         const view = connection.selection
@@ -158,11 +161,19 @@ export function useComposerConnectionSwitch({
         const group = buildRegistryModelSelectGroups(agentProvider, view).find(
           (g) => g.key === `registry-provider:${connection.providerId}`,
         );
-        const model = chooseConnectionModel(
-          group?.items ?? [],
-          decodeCustomModelValue(normalizedValue)?.modelName,
-        );
-        if (!model) throw new Error("Selected connection has no available models");
+        // An explicit model pick must never fall back to another model of the target catalog.
+        const model = modelName
+          ? group?.items.find((item) => item.name === modelName)
+          : chooseConnectionModel(
+              group?.items ?? [],
+              decodeCustomModelValue(normalizedValue)?.modelName,
+            );
+        if (!model)
+          throw new Error(
+            modelName
+              ? "Selected model is not available on the connection"
+              : "Selected connection has no available models",
+          );
         logger.debug("[composer-connection] 连接同步完成", {
           providerId: connection.providerId,
           connectionKey: connection.key,
