@@ -497,6 +497,56 @@ describe("remote workspace connect telemetry IPC", () => {
     },
   );
 
+  it("forwards the refusing Profile of an unknown host key so the renderer can offer trust", async () => {
+    const profileId = "17ef20b3-622d-4a53-98c1-0cdff29f3e6d";
+    const { handler } = await registerHarness({
+      createRemoteWorkspaceSession: vi.fn(async () => {
+        throw Object.assign(new Error("Unrecognized host key"), {
+          code: "remote-host-key-unknown",
+          retryable: false,
+          profileId,
+          // A host key failure never carries a WSL identity; Main must not echo one.
+          resolvedWslTarget: { kind: "wsl", distro: "Ubuntu", user: "dev" },
+        });
+      }),
+    });
+    await expect(
+      handler(
+        { sender: { id: 74 } },
+        { target: { kind: "ssh", host: "127.0.0.1", port: 2222, username: "dev" } },
+      ),
+    ).resolves.toEqual({
+      success: false,
+      error: "Unrecognized host key",
+      reasonCode: "remote-host-key-unknown",
+      retryable: false,
+      profileId,
+    });
+  });
+
+  it("does not forward a Profile for failures that need no Profile-scoped follow-up", async () => {
+    const { handler } = await registerHarness({
+      createRemoteWorkspaceSession: vi.fn(async () => {
+        throw Object.assign(new Error("Host identity has changed"), {
+          code: "remote-host-key-changed",
+          retryable: false,
+          profileId: "17ef20b3-622d-4a53-98c1-0cdff29f3e6d",
+        });
+      }),
+    });
+    await expect(
+      handler(
+        { sender: { id: 74 } },
+        { target: { kind: "ssh", host: "127.0.0.1", port: 2222, username: "dev" } },
+      ),
+    ).resolves.toEqual({
+      success: false,
+      error: "Host identity has changed",
+      reasonCode: "remote-host-key-changed",
+      retryable: false,
+    });
+  });
+
   it("埋点 reporter 抛错时不改写已经成功的远程连接结果", async () => {
     const reportRemoteUsageEvent = vi.fn(() => {
       throw new Error("telemetry reporter unavailable");
