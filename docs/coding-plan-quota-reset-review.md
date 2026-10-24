@@ -1,99 +1,96 @@
-# Coding Plan Quota Reset 分支审查与联调记录
+# Coding Plan Quota Reset review and integration record
 
-> 分支：`codex/feat-quota-reset-ui`（基准 `staging`）
-> 审查日期：2026-08-12 ｜ 审查人：团队成员 + ZCode agent
-> 状态：**分支审查记录**（随联调与修复进展更新）
+> Branch: `codex/feat-quota-reset-ui` (based on `staging`)
+> Status: branch review record (updated as integration and fixes progress)
 
-## 0. 范围与方法
-
-- 全量 diff：30+ 文件，+4798/-58（services / shared / ui / 测试 / spec）
-- 方法：diff 分层精读 + 核心源文件全文核对 + 历史提交溯源（`git log -S`）+ 实跑验证
-  （provider/hook/lib/组件测试 29+52 例、`pnpm typecheck`、`pnpm lint`）
-- 自动化验证结论：本分支相关测试全绿、typecheck 通过、改动文件 lint 0 警告 0 错误
-
-## 1. 架构快照（当前实现）
+## 1. Architecture snapshot (current implementation)
 
 ```text
-UI 组件 (packages/ui/components/coding-plan-quota-reset/*)
-  └─ useCodingPlanQuotaResetUi (hook, 60s 轮询 + inflight 去重 + 1.5s 缓存)
-       ├─ zustand 窗口内共享（codingPlanQuotaResetUiBySource，不广播不持久化）
-       ├─ lib/codingPlanQuotaResetUi（状态机纯函数 available/processing/completed）
+UI components (packages/ui/components/coding-plan-quota-reset/*)
+  └─ useCodingPlanQuotaResetUi (hook, 60s polling + inflight dedupe + 1.5s cache)
+       ├─ zustand window-shared (codingPlanQuotaResetUiBySource, not broadcast, not persisted)
+       ├─ lib/codingPlanQuotaResetUi (state machine pure functions available/processing/completed)
        └─ IUsageStatsService ── BigModelUsageQuotaProvider
-            ├─ Authorization: zcode JWT（credentials["zcodejwttoken"]）
-            ├─ X-Bigmodel-Authorization: MaaS 登录态 JWT（credentials["oauth:bigmodel:access_token"]）
+            ├─ Authorization: zcode JWT (credentials["zcodejwttoken"])
+            ├─ X-Bigmodel-Authorization: MaaS login JWT (credentials["oauth:bigmodel:access_token"])
             ├─ TEAM scope: Bigmodel-Organization / Bigmodel-Project
             └─ GET /status  POST /opportunity  POST /use  POST /history/read
-                   base: /api/v1/coding-plan/reset  （snake_case envelope，Unix 毫秒）
+                   base: /api/v1/coding-plan/reset  (snake_case envelope, Unix milliseconds)
 ```
 
-## 2. 联调契约变更记录（按时间线）
+## 2. Integration contract changes
 
-| 日期  | 变更                                                                                                                         | 提交         | 说明                                                                                                                   |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| 08-12 | `X-Bigmodel-Authorization` 由 Coding Plan API key 改传 **MaaS 登录态 JWT**（`oauth:bigmodel:access_token`，直传不套 Bearer） | `6a06e7e8dd` | 后端按 JWT 识别用户；provider 解析只剩「确认 Coding Plan 已配置 + 推导 Team scope」两个用途；Team 不再复制项目 API key |
-| 08-12 | envelope 业务错误的 error message 追加 ` (x-request-id:xxx)`                                                                 | `3cc99c4f69` | RPC FAIL 日志与 UI warn 可直接按 request-id 与后端对账；前缀契约不变；无该 header 时 message 原样                      |
+| Date | Change                                                                                              | Commit      | Notes                                                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 08-12 | `X-Bigmodel-Authorization` changed from the Coding Plan API key to the **MaaS login JWT** (`oauth:bigmodel:access_token`, passed directly, no Bearer) | `6a06e7e8dd` | the backend identifies the user by JWT; the provider now only confirms the Coding Plan is configured and derives the Team scope; Team no longer duplicates the project API key |
+| 08-12 | envelope business-error messages append ` (x-request-id:xxx)`                                        | `3cc99c4f69` | RPC FAIL logs and UI warns can be reconciled with the backend by request-id; the prefix contract is unchanged; without the header the message stays as-is |
 
-## 3. 联调运行时观察（`~/.zcode/v2/logs/2026-08-12.log`）
+## 3. Open issues
 
-- 当日 500+ 条 `[coding-plan-reset] status refresh failed`，**无一次成功**。
-- 错误演进：`bigmodel_coding_plan_api_key_required`（11-13 点，key 未就位）→ 2007（主）+ 3101/429/zcode_jwt_required 混合。
-- **JWT 修复后（16:07 bundle / 16:14 进程）2007 依旧**（41 条，含 16:26:28.680 最新一条），
-  且 0 条 `maas_jwt_required`（守卫未触发）⇒ 请求已带 MaaS JWT 发出，**2007 属后端 → MAAS 链路问题**，待后端按 request-id 排查。
-- 429 共 11 次：四接口限频下 60s 轮询本不该触发，疑似多入口/多 tab 并发重放，频率低暂不阻塞。
+Recommended fixes:
 
-## 4. 静态审查问题清单
+1. ~~Spec/implementation drift~~ — fixed: `docs/coding-plan-quota-reset-ui.md` now
+   states the facts: the UI keeps no `nextTryAt` or bare-429 local cooldown; when
+   no opportunity exists, the next 60-second visibility poll re-evaluates. The
+   service keeps the `nextTryAt` mapping as an interface contract and integration
+   observability field.
+2. **use accepted but unconfirmed within 2.5s → false "reset failed"** —
+   `useCodingPlanQuotaResetUi.ts:653-676`: if the backend already redeemed and
+   only the status confirmation times out, the failure branch fires (toast +
+   back to available), and 60s later polling flips to completed. The
+   `useAccepted` branch should differ in copy/duration from the failure branch.
+3. **Optimistic 100% overlay duration depends on `onEntitlementRefresh`** —
+   `codingPlanQuotaResetUi.ts:272-284`: `quotaOverridePending` clears only on a
+   successful refresh; if a caller omits the callback or the refresh chain fails,
+   the quota card keeps overlaying 100% remaining (fake data) while completed.
+   Verify the wiring of every mounting entry.
+4. **"Late completed" from unread old history** — product semantics to confirm:
+   `has_unread_history` does not distinguish "seconds ago" from "overnight"; a
+   first mount after a night still enters completed (toast + brief 100% overlay);
+   the existing lib bugfix only guards pure old history with
+   `has_unread_history=false`.
+5. **Bare-429 cooldown fallback removed client-side** (`a80ef94c6d`) — needs
+   written backend confirmation that the client retrying `/opportunity` every 60s
+   with a fresh idempotency key is accepted (the backend absorbs the risk of
+   double-issued quota on timeout).
 
-### ✅ 本次已修复（1）
+Optional improvements:
 
-1. **spec 与实现脱节** — 已修复
-   `docs/coding-plan-quota-reset-ui.md` 已改为当前事实：UI 不维护 `nextTryAt` 或裸 429 的本地冷却；
-   无机会时由下一次 60 秒可见轮询重新判断。Service 仍保留 `nextTryAt` 映射，作为接口契约和联调可观测字段。
+6. `buildTypeController` rebuilds its object every render
+   (`useCodingPlanQuotaResetUi.ts:686-705`) — currently harmless since consumers
+   only destructure fields; consider useMemo or a documented convention.
+7. Confetti `zIndex:"100"` is hardcoded (`codingPlanQuotaResetConfetti.ts:30`) —
+   not tokenized per DESIGN.md z-index levels.
+8. `formatCountdown` hardcodes `locale === "zh-CN"`
+   (`CodingPlanQuotaResetOpportunity.tsx:16`).
+9. The hook is 700 lines with `eslint-disable max-lines`; add a regression test
+   for "polling continues after 429/3301 and terminal states are correct".
+10. Clicking use inside the 60s window between a voucher's expiry moment and the
+    next status filter's exclusion gets rejected by MAAS (2007 toast).
 
-### 🟡 建议修复（4）
+## 4. Residual-risk integration cases
 
-2. **use 已接受但 2.5s 未确认 → 误报「重置失败」** — `useCodingPlanQuotaResetUi.ts:653-676`
-   后端已核销、仅 status 确认超时即走失败分支（toast + 恢复 available），60s 后轮询又会 completed。
-   建议 `useAccepted` 分支与失败分支区分文案/时长。
-3. **乐观覆盖 100% 的停留时长取决于 `onEntitlementRefresh`** — `codingPlanQuotaResetUi.ts:272-284`
-   `quotaOverridePending` 只有刷新成功才置 false；调用方未传回调或刷新链路失败时，
-   quota 卡在 completed 期间持续覆盖为 100% 剩余（假数据）。需核对全部挂载入口的接线。
-4. **未读旧历史的「迟到 completed」** — 产品语义确认项
-   `has_unread_history` 不区分几秒前/隔夜；隔夜首次挂载仍进 completed（提示+短暂覆盖 100%），
-   lib 的既有 bugfix 只防住 `has_unread_history=false` 的纯旧历史。
-5. **裸 429 的冷却兜底在客户端已整体移除**（`a80ef94c6d`）——需与后端书面确认：
-   客户端每 60s 换新幂等键重试 /opportunity 的行为被后端接受（超时重复发放的额度风险由后端承接）。
+The main loop closes once the APIs work; these cases remain to verify, in
+priority order:
 
-### 🔵 可选优化
+| Priority | Case                                  | Expected verification point                                                       |
+| -------- | ------------------------------------- | --------------------------------------------------------------------------------- |
+| P0       | click "reset" -> send a message now   | whether newly redeemed quota is immediately consumable (UI-optimistic 100% vs real rate limiting) |
+| P0       | use succeeds but status confirms slowly | whether the contradictory "failure toast then completed" feedback reproduces   |
+| P1       | first mount after overnight unread history | whether the completed verdict and 100% overlay flash match product expectations |
+| P1       | two windows clicking "reset" at once (2-voucher scenario) | whether MAAS redeeming the earliest-expiring voucher consumes both vouchers; product semantics to confirm |
+| P2       | clicking a near-expiry voucher in status | toast experience when use is rejected by MAAS at the expiry moment        |
 
-6. `buildTypeController` 每渲染重建对象（`useCodingPlanQuotaResetUi.ts:686-705`）——当前消费方仅解构字段无害；建议 useMemo 或注释约定。
-7. confetti `zIndex:"100"` 硬编码（`codingPlanQuotaResetConfetti.ts:30`）——未按 DESIGN.md 层级 token 化。
-8. `formatCountdown` 的 `locale === "zh-CN"` 硬编码（`CodingPlanQuotaResetOpportunity.tsx:16`）。
-9. hook 700 行 + `eslint-disable max-lines`；建议补 1 个「429/3301 后轮询不中断、终态正确」回归测试。
-10. 券到期瞬间本地时钟与下轮 status 过滤之间的 60s 窗口内点击 use 会被 MAAS 拒绝（2007 toast）。
+## 5. Backend alignment leftovers
 
-### 检查通过项
-
-- 测试/typecheck/lint 全绿；i18n en-US/zh-CN key 完全对齐；日志规范合规（UI→`@/logger.js`，services→`createServiceLogger`）；
-  DESIGN.md token 合规、confetti 双主题 + `prefers-reduced-motion` 防御；
-  effects 依赖/清理完整、WeakMap 缓存无泄漏、UUID 三级降级正确；
-  FIVE_HOUR/WEEK 双类型 `ownsUnread` 归属逻辑正确；分层边界无违规；提交符合 Conventional Commits。
-
-## 5. 接口正常后的残余风险推演（2026-08-12 分析）
-
-主流程闭环成立；以下为接口全部正常时仍可能暴露的问题，已含于第 4 节，此处只列联调用例优先级：
-
-| 优先级 | 用例                             | 预期验证点                                                         |
-| ------ | -------------------------------- | ------------------------------------------------------------------ |
-| P0     | 点「重置」→ 立即发消息           | MAAS 核销后新额度是否立即可消费（UI 乐观 100% 与真实限流的一致性） |
-| P0     | use 成功但 status 确认慢         | 是否复现「先失败 toast 后 completed」的矛盾反馈                    |
-| P1     | 隔夜未读历史首挂载               | completed 判定与 100% 覆盖闪变是否符合产品预期                     |
-| P1     | 双窗口同时点「重置」（2 券场景） | MAAS 最早过期核销是否导致双券消耗，产品语义确认                    |
-| P2     | status 接近过期券点击            | 到期瞬间 use 被 MAAS 拒绝的 toast 体验                             |
-
-## 6. 后端对齐遗留问题
-
-1. manual/auto 核销来源：status 接口无法区分（MAAS query 不带来源，ZCODE status 不读自 MySQL 流水）。
-   若产品要求展示区分来源，方案为「按 scope 查最近一条 use 流水 + used_at 精确等值匹配 + null 兜底」；
-   后端称「不好区分」，待按真/伪困难清单（见对话记录）继续推进或降级为前端本地推导。
-2. 2007 定位：等后端按 16:26:28.680 / `GET /status` / personal scope 查网关日志；
-   新提交 `3cc99c4f69` 之后可直接按日志内 x-request-id 对账。
+1. manual/auto redemption source: the status API cannot distinguish (the MAAS
+   query carries no source; ZCODE status does not read the MySQL flow). If the
+   product requires showing the source, the approach is "query the latest use
+   flow record by scope + exact `used_at` matching + null fallback"; the backend
+   calls it hard to distinguish — keep pushing on the real-vs-fake difficulty
+   list or degrade to frontend-local inference.
+2. 2007 investigation: waiting on the backend to check gateway logs (16:26:28.680 /
+   `GET /status` / personal scope); after commit `3cc99c4f69`, reconcile directly
+   by the x-request-id in logs. Observed so far: after the JWT fix, requests do
+   carry the MaaS JWT (no `maas_jwt_required` guard hits), so 2007 sits in the
+   backend -> MAAS chain.

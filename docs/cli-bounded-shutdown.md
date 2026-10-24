@@ -1,61 +1,72 @@
-# ZCode CLI 有界关闭规格
+# ZCode CLI bounded shutdown spec
 
-> 状态：accepted，2026-07-22。
+> Status: accepted.
 
-协议型 CLI 的生命周期由[Agent Server spec](../apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md#协议进程生命周期)
-定义：其 deadline 从首次 EOF/信号/致命错误开始，覆盖启动中和在途请求；不依赖 `run()`
-返回才启动 watchdog。下文一次性命令与 plugin-host 的既有规则保持不变。
+The lifecycle of the protocol-mode CLI is defined by the
+[Agent Server spec](../apps/zcode-cli/docs/design/v2/zcode-protocol-agent-server.md#协议进程生命周期):
+its deadline starts at the first EOF/signal/fatal error and covers startup and
+in-flight requests; it does not wait for `run()` to return before the watchdog
+starts. The existing rules for one-shot commands and the plugin host are unchanged.
 
-## Feature/change summary
+## Change summary
 
-| 字段         | 决策                                                                                                                                    |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Change       | 修正一次性 CLI 在模型完成后被继承 pipe、悬空 Browser close 或其它 adapter handle 永久保活的问题                                         |
-| 用户可见入口 | `zcode --prompt`、`--target` 与 TUI 退出；Desktop/remote host 复用同一 session cleanup 不变量                                           |
-| 状态 owner   | Execution adapter 持有命令进程组和 stdio；managed CDP adapter 持有 Chromium；session facade 编排 teardown；CLI entry 只持有最终退出边界 |
-| 成功标准     | 正常清理优先；任一外部 close 永不 settle 时，ZCode CLI 仍在固定上限内结束，不等待孤儿进程自然死亡                                       |
-| Out of scope | 纯 Node 跨平台保证杀死已经 `setsid`/daemonize 并脱离原进程组的任意第三方进程；改变 desktop continuous / mobile replayable 语义          |
+| Field       | Decision                                                                                                                               |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Change      | Fix one-shot CLIs being kept alive forever after the model finished, by inherited pipes, a dangling Browser close, or other adapter handles |
+| Entry points | `zcode --prompt`, `--target`, and TUI exit; Desktop/remote hosts reuse the same session cleanup invariants                          |
+| State owner | The execution adapter owns command process groups and stdio; the managed CDP adapter owns Chromium; the session facade orchestrates teardown; the CLI entry owns only the final exit boundary |
+| Success     | Normal cleanup first; if any external close never settles, the ZCode CLI still ends within a fixed bound and does not wait for orphan processes to die naturally |
+| Out of scope | Cross-platform Node guarantees to kill arbitrary third-party processes that already `setsid`/daemonized out of the original process group; changing desktop continuous / mobile replayable semantics |
 
-## Clarification log
+## Clarified boundaries
 
-| 问题                                 | 用户输入 / 现场证据                                                                               | 固定边界                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| 只修继承 pipe 是否足够               | 单独打包 `fix(cli): clean up inherited subprocess pipes` 后仍复现                                 | 关闭必须覆盖 execution、browser、MCP 与 CLI entry，不把 pipe 修复当全局 teardown                 |
-| 直接 `process.exit()` 是否作为主修复 | teardown 日志可完成，但 Node event loop 仍可能被未知 handle 保活                                  | 先做所有已知资源的有界清理；仅在 `run()` 已返回且 event loop 仍存活时由 watchdog 强退            |
-| `run()` 返回是否总表示进程应退出     | `__zcode-plugin-host` 的 MCP `server.connect()` 完成后 `main()` 会返回，但 stdio 服务仍应持续运行 | watchdog 只属于一次性 CLI；plugin-host 由 MCP stdio/父进程持有生命周期，不进入一次性退出策略     |
-| 是否必须杀任意 daemon                | POSIX 新 session / Windows reparent 后，父 PID 或原 PGID 不再足以寻址                             | 同组后代尽力清杀；失去 ownership 时销毁本端 pipe 并保证 CLI 退出，OS 级绝对 containment 另立能力 |
+- A pipe-only fix is not enough: shutdown must cover execution, browser, MCP, and
+  the CLI entry; pipe cleanup is not global teardown.
+- `process.exit()` is not the primary fix: do all known bounded cleanup first; the
+  watchdog force-exits only when `run()` has returned and the event loop is still
+  alive.
+- `run()` returning does not always mean the process should exit: after
+  `__zcode-plugin-host`'s MCP `server.connect()` completes, `main()` returns while
+  the stdio service must keep running. The watchdog belongs to the one-shot CLI
+  only; the plugin host's lifetime is owned by MCP stdio/the parent process.
+- Killing arbitrary daemons is not guaranteed: after a POSIX new session or Windows
+  reparent, the parent PID or original PGID no longer addresses the process. Kill
+  same-group descendants best-effort; when ownership is lost, destroy the local end
+  of the pipe and guarantee CLI exit. OS-level absolute containment is a separate
+  capability.
 
 ## Boundary decisions
 
-| 边界                     | 决策                                                                                                                       | 禁止行为                                                                               |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| root shell `exit`        | 只代表直接子进程结束，不代表 execution 的 pipe/后代完成                                                                    | 不能在 pipe 未 EOF 时立刻从 active ownership 移除 background execution                 |
-| foreground pipe drain    | 最多等待有限 drain；随后清理进程组并销毁本端读流                                                                           | 不能用无上限 `await closePromise` 阻塞 prompt                                          |
-| background session close | 即使组长已经退出，也继续向原进程组发送 TERM/KILL；最终销毁 pipe                                                            | 不能因 `exited === true` 跳过 cancel                                                   |
-| runtime admission        | teardown 第一拍关闭 background notification/model wake admission                                                           | 不能让 execution cancel 的 terminal event 在关库期间新开模型轮次                       |
-| resource teardown        | Browser session、Execution、MCP、Node REPL broker 各自容错并带 deadline；一个失败不能跳过其它资源                          | 不能串行 `await` 一个永不 settle 的 close 后永久停住                                   |
-| managed Chromium         | context、browser、late launch 都使用有界 close；CLI adapter 仍负责 best-effort 回收                                        | 不能因 `context.close()` 或 `browser.close()` 悬空阻断 execution cleanup               |
-| CLI entry                | 一次性命令的 `run()` 返回后设置 unref watchdog；event loop 自然耗尽时不触发，否则保留既有 exit code 强退                   | 不能在模型响应/stdio 输出尚未完成时提前 `process.exit()`                               |
-| plugin-host entry        | `__zcode-plugin-host` 成功启动 MCP server 后由 stdio/父进程决定存活与关闭，不注册一次性 CLI watchdog；初始化失败仍有界强退 | 不能把 MCP server 的有效 stdio handle 当成泄漏，也不能让失败插件残留的 handle 永久保活 |
+| Boundary              | Decision                                                                                                   | Forbidden                                                                                       |
+| --------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| root shell `exit`     | Only means the direct child process ended, not that execution pipes/descendants finished                   | Removing a background execution from active ownership while its pipe has not EOF'd              |
+| foreground pipe drain | Wait at most a bounded drain; then clean the process group and destroy the local read stream               | Blocking the prompt with an unbounded `await closePromise`                                      |
+| background session close | Even after the group leader exited, keep sending TERM/KILL to the original process group; finally destroy the pipe | Skipping cancel because `exited === true`                                                       |
+| runtime admission     | The first teardown beat closes background notification/model wake admission                                | A cancelled execution's terminal event opening new model turns while stores are closing         |
+| resource teardown     | Browser session, Execution, MCP, and Node REPL broker each tolerate errors and carry a deadline; one failure must not skip the others | Serially `await`ing one never-settling close and stalling forever                               |
+| managed Chromium      | context, browser, and late launch all use bounded close; the CLI adapter still does best-effort reclaim    | A dangling `context.close()` or `browser.close()` blocking execution cleanup                    |
+| CLI entry             | After the one-shot `run()` returns, set an unref watchdog; it does not fire when the event loop drains naturally, otherwise force-exits with the existing exit code | `process.exit()` before model responses/stdio output finish                                     |
+| plugin-host entry     | After `__zcode-plugin-host` successfully starts the MCP server, stdio/the parent process own liveness and shutdown; no one-shot watchdog is registered; init failure still force-exits within a bound | Treating the MCP server's valid stdio handle as a leak, or letting a failed plugin's leftover handles keep the process alive |
 
 ## Domain scope and high-risk cross-products
 
-主域是 architecture/process boundary、background Bash lifecycle、managed Browser lifecycle 与 CLI release。
+Main domains: architecture/process boundary, background Bash lifecycle, managed
+Browser lifecycle, and CLI release.
 
-| Cross-product                                           | 风险                                                                      | 处理                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| background Bash × root exited × inherited stdout/stderr | `close` 事件依赖孙进程 EOF，CLI 永久保活                                  | accepted：保留 ownership、杀组、销毁流                             |
-| detached descendant × lost PGID                         | 第三方服务仍活着且原 pipe 不 EOF                                          | accepted：本端释放 + CLI watchdog；进程回收只承诺 best-effort      |
-| BrowserContext close × WS/SSE 页面                      | Playwright close 可能永不 resolve                                         | accepted：per-operation deadline，继续 execution/MCP cleanup       |
-| normal prompt × unknown active handle                   | 所有已知 teardown 已结束但 event loop 不空                                | accepted：入口 watchdog                                            |
-| plugin-host × MCP stdio active handle                   | `server.connect()` 返回后 stdio handle 是服务存活条件，不是一次性命令泄漏 | accepted：跳过 CLI exit watchdog，父端关闭 stdin 后自然退出        |
-| desktop/mobile/remote delivery × cleanup                | 错把 host cleanup 扩散为 conversation replay 规则                         | pruned：不改 protocol、snapshot、queue、clientMode 或 deliveryKind |
+| Cross-product                                           | Risk                                                                 | Resolution                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
+| background Bash × root exited × inherited stdout/stderr | `close` waits on grandchild EOF and the CLI stays alive forever      | accepted: keep ownership, kill the group, destroy the streams    |
+| detached descendant × lost PGID                         | Third-party service stays alive and the original pipe never EOFs     | accepted: local release + CLI watchdog; process reclaim is best-effort only |
+| BrowserContext close × WS/SSE pages                     | A Playwright close may never resolve                                 | accepted: per-operation deadline, continue execution/MCP cleanup |
+| normal prompt × unknown active handle                   | All known teardown finished but the event loop is not empty          | accepted: entry watchdog                                        |
+| plugin-host × MCP stdio active handle                   | After `server.connect()` returns, the stdio handle is the service's liveness condition, not a one-shot leak | accepted: skip the CLI exit watchdog; exit naturally when the parent closes stdin |
+| desktop/mobile/remote delivery × cleanup                | Mistaking host cleanup for conversation replay rules                 | pruned: protocol, snapshot, queue, clientMode, and deliveryKind unchanged |
 
 ## State sequence
 
 ```text
 model terminal
-  -> runtime.beginShutdown()          # 封住新 notification/model wake
+  -> runtime.beginShutdown()          # block new notification/model wake
   -> [browser session | execution | MCP | REPL broker] bounded cleanup
        | timeout/error on one stage
        +---------------------------------> other stages still run
@@ -69,24 +80,30 @@ model terminal
        + plugin-host   -> MCP stdio owns lifetime -> parent closes stdin / signal exits
 ```
 
-## Candidate combinations and pruning
+## Candidate combinations
 
-| Case       | Setup / action                                                     | Assertions                                                              | 分类 / 证据                                         |
-| ---------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- | --------------------------------------------------- |
-| CLI-SD-001 | foreground wrapper 退出，孙进程继承 pipe                           | 有限 drain 后孙进程组被清理；流销毁；result 收口                        | accepted；真实进程集成                              |
-| CLI-SD-002 | background wrapper 退出，孙进程继承 pipe，随后 session close       | close 前 task 仍 running；close 后 cancelled/killed，CLI 不被 pipe 保活 | accepted；真实进程集成                              |
-| CLI-SD-003 | 孙进程另建 session/进程组并继续持 pipe                             | 本端 pipe 最终销毁，close 有上限；不声称必然杀死已逃逸进程              | accepted；真实进程集成 + finally 清理 fixture       |
-| CLI-SD-004 | BrowserContext `close()` 永不 settle                               | Browser close 仍被尝试；Execution/MCP cleanup 仍执行                    | accepted；adapter/session focused test              |
-| CLI-SD-005 | `browser.close()` 或 app `close()` 永不 settle                     | prompt/TUI cleanup 返回；入口 watchdog 使用原 exit code 强退            | accepted；CLI focused test                          |
-| CLI-SD-006 | 所有 close 正常，event loop 自然耗尽                               | watchdog 为 unref，不人为延迟正常退出                                   | accepted；CLI focused test                          |
-| CLI-SD-007 | Windows process tree                                               | `taskkill /T /F` best-effort，pipe fallback 与 watchdog 相同            | accepted pairwise；当前 macOS 不能实机验证 taskkill |
-| CLI-SD-008 | mobile replayable / remote identity 全排列                         | cleanup 不读取或改变 delivery/workspace 状态                            | pruned；host-side invariant                         |
-| CLI-SD-009 | plugin-host 的 `main()` 在 MCP connect 后返回，父端保持 stdin 打开 | 超过一次性 watchdog deadline 后 host 仍存活；父端关闭 stdin 后正常退出  | accepted；真实 CLI 子进程集成 + SEA smoke           |
-| CLI-SD-010 | plugin-host 初始化占住 stdin 后抛错                                | 保留失败 exit code，并由 watchdog 有界强退                              | accepted；真实 CLI 子进程集成                       |
+| Case       | Setup / action                                                        | Assertions                                                                       | Status                                |
+| ---------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------- |
+| CLI-SD-001 | foreground wrapper exits, grandchild inherits the pipe                | Bounded drain, then the grandchild process group is cleaned; streams destroyed; result settles | accepted; real process integration   |
+| CLI-SD-002 | background wrapper exits, grandchild inherits the pipe, then session close | Task still running before close; cancelled/killed after; CLI not kept alive by the pipe | accepted; real process integration   |
+| CLI-SD-003 | grandchild creates a new session/process group and keeps the pipe      | The local pipe end is destroyed and the close is bounded; no claim to kill escaped processes | accepted; real process integration + finally cleanup fixture |
+| CLI-SD-004 | BrowserContext `close()` never settles                                | Browser close is still attempted; execution/MCP cleanup still runs               | accepted; adapter/session focused test |
+| CLI-SD-005 | `browser.close()` or app `close()` never settles                      | prompt/TUI cleanup returns; the entry watchdog force-exits with the original exit code | accepted; CLI focused test           |
+| CLI-SD-006 | All closes normal, event loop drains naturally                        | The watchdog is unref'd and does not delay normal exit                           | accepted; CLI focused test           |
+| CLI-SD-007 | Windows process tree                                                  | `taskkill /T /F` best-effort; pipe fallback and watchdog are the same            | accepted pairwise; taskkill not verifiable on macOS today |
+| CLI-SD-008 | mobile replayable / remote identity permutations                      | Cleanup reads or changes no delivery/workspace state                             | pruned; host-side invariant          |
+| CLI-SD-009 | plugin-host `main()` returns after MCP connect, parent keeps stdin open | The host stays alive past the one-shot watchdog deadline; exits normally when the parent closes stdin | accepted; real CLI child process integration + SEA smoke |
+| CLI-SD-010 | plugin-host init holds stdin then throws                              | The failure exit code is kept and the watchdog force-exits within a bound        | accepted; real CLI child process integration |
 
-## Coverage matrix / E2E handoff
+## Coverage / E2E handoff
 
-- conversation background catalog：`BG40`，focused adapter/runtime coverage，不新增 GUI E2E。
-- Browser Use matrix：`BCP-212` / `HCDP-013`，覆盖悬空 close 与后续 cleanup。
-- CLI 层以真实子进程集成和 Node focused test 为主；plugin-host 必须覆盖“保持 stdin 超过 watchdog deadline 仍存活、关闭 stdin 后退出”；GUI E2E 无法比进程 PID/pipe handle 证据更强。
-- Linux/Windows 待 CI 补对应 process-tree 实机；macOS 本地验证 POSIX PGID、detached escape 与最终有界退出。
+- conversation background catalog: `BG40`, focused adapter/runtime coverage, no new
+  GUI E2E.
+- Browser Use matrix: `BCP-212` / `HCDP-013`, covering dangling close and subsequent
+  cleanup.
+- The CLI layer relies on real child-process integration and Node focused tests; the
+  plugin host must cover "staying alive past the watchdog deadline with stdin open,
+  exiting when stdin closes"; GUI E2E cannot be stronger evidence than process
+  PID/pipe-handle evidence.
+- Linux/Windows process-tree runs await CI; macOS locally verifies POSIX PGID,
+  detached escape, and the final bounded exit.

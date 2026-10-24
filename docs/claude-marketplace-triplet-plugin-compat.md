@@ -1,30 +1,28 @@
-# Claude Marketplace 三件套插件兼容验证规格
+# Claude Marketplace triplet plugin compatibility spec
 
-## 背景
+## Background
 
-在 `docs/hooks-implementation-analysis.md` 之后，需要继续验证 Claude Code marketplace
-中同时包含 **skills、commands、MCP servers** 的插件，确认 ZCode 当前插件发现、安装、
-runtime projection 与下游 skill/command/MCP adapter 是否能完整兼容。
+Following `docs/hooks-implementation-analysis.md`, this spec verifies Claude Code
+marketplace plugins that bundle **skills, commands, and MCP servers** together, to
+confirm that ZCode plugin discovery, installation, runtime projection, and the
+downstream skill/command/MCP adapters are fully compatible.
 
-本轮只验证低风险资源投影：不启动真实 MCP server、不执行 command、不运行 hook。
+Only low-risk resource projection is verified: no real MCP server starts, no
+command executes, no hook runs.
 
-## 样本来源
+## Samples
 
-样本来自本机 Claude CLI 已缓存的 `claude-plugins-official` marketplace manifest：
+Samples come from the locally cached `claude-plugins-official` marketplace manifest:
 
 ```text
 ~/.claude/plugins/marketplaces/claude-plugins-official/.claude-plugin/marketplace.json
 ```
 
-筛选方式：读取 marketplace entry 的 GitHub `tree`，确认插件根目录同时存在：
+Selection: read a marketplace entry's GitHub `tree` and confirm the plugin root
+contains all of `skills/*/SKILL.md`, `commands/*.md`, and `.mcp.json` or an MCP
+config referenced by manifest `mcpServers`. The fixed 10 samples:
 
-- `skills/*/SKILL.md`
-- `commands/*.md`
-- `.mcp.json` 或 manifest `mcpServers` 指向的 MCP 配置
-
-固定 10 个样本如下：
-
-| 插件 | source 形态 | skills | commands | MCP |
+| Plugin | source shape | skills | commands | MCP |
 | --- | --- | ---: | ---: | --- |
 | `appwrite` | repo root | 11 | 2 | `.mcp.json` |
 | `aws-agents-for-devsecops` | `git-subdir` | 13 | 9 | `.mcp.json` |
@@ -37,68 +35,82 @@ runtime projection 与下游 skill/command/MCP adapter 是否能完整兼容。
 | `legalzoom` | `git-subdir` | 1 | 1 | `.mcp.json` |
 | `logfire` | `git-subdir` | 3 | 4 | `.mcp.json` / `mcp.json` |
 
-候补样本：`mercadopago`、`nimble`、`notion`。
+Backup samples: `mercadopago`, `nimble`, `notion`.
 
-## 本地测试策略
+## Local test strategy
 
-新增 adapter 层离线 fixture 测试，不依赖网络、不读取真实 marketplace cache：
+Offline adapter-layer fixture tests, no network, no real marketplace cache:
 
-1. 在临时目录构造一个 marketplace manifest，包含上述 10 个插件。
-2. 每个插件写入 `.claude-plugin/plugin.json`、`skills/`、`commands/`、`.mcp.json`。
-3. 通过 `addMarketplace()` + `installMarketplacePlugin()` 模拟 marketplace 安装。
-4. 通过 `createNodePluginAdapter().discoverPlugins()` 启用 10 个插件。
-5. 验证插件层输出：
-   - 10 个插件都 enabled。
-   - 每个插件都有 `skillRoots`、`commandRoots`、`mcpServers`。
-   - MCP server key 被命名空间化为 `plugin:<plugin-name>:<server-name>`。
-6. 继续调用下游 adapter 验证：
-   - `createNodeSkillAdapter().discoverSkills({ roots })` 能发现每个插件的 skill。
-   - `createNodeCustomCommandAdapter().discoverCommands({ roots })` 能发现每个插件的 command。
+1. Build a marketplace manifest in a temp directory containing the 10 plugins.
+2. Write each plugin's `.claude-plugin/plugin.json`, `skills/`, `commands/`, and
+   `.mcp.json`.
+3. Simulate marketplace install via `addMarketplace()` + `installMarketplacePlugin()`.
+4. Enable all 10 via `createNodePluginAdapter().discoverPlugins()`.
+5. Assert: all 10 plugins enabled; each has `skillRoots`, `commandRoots`,
+   `mcpServers`; MCP server keys are namespaced as
+   `plugin:<plugin-name>:<server-name>`.
+6. Call the downstream adapters:
+   `createNodeSkillAdapter().discoverSkills({ roots })` finds each plugin's skills;
+   `createNodeCustomCommandAdapter().discoverCommands({ roots })` finds each
+   plugin's commands.
 
-## 兼容判据
+## Compatibility criteria
 
-认为兼容：
+Compatible:
 
-- `.claude-plugin/plugin.json` 可被读取。
-- 默认 `skills/` / `commands/` 目录可投影到 runtime roots。
-- manifest path 形式（例如 `skills: "./skills/"`、`commands: "./commands/"`、
-  `mcpServers: "./.mcp.json"`）可投影。
-- `.mcp.json` 可被读取并转换为 ZCode `McpServerConfig`。
-- MCP env 中 `${CLAUDE_PLUGIN_ROOT}`、`${CLAUDE_PLUGIN_DATA}`、`${ZCODE_PROJECT_DIR}`
-  等变量可替换。
+- `.claude-plugin/plugin.json` is readable.
+- Default `skills/` / `commands/` directories project onto runtime roots.
+- Manifest path forms (for example `skills: "./skills/"`, `commands: "./commands/"`,
+  `mcpServers: "./.mcp.json"`) project.
+- `.mcp.json` is readable and convertible into a ZCode `McpServerConfig`.
+- MCP env variables `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`,
+  `${ZCODE_PROJECT_DIR}` are substituted.
 
-认为不兼容或需单独诊断：
+Not compatible / needs separate diagnosis:
 
-- 只有根目录 `mcp.json` 且 manifest 未通过 `mcpServers` 指向时，ZCode 当前不会自动读取。
-- 真实 MCP server 是否能启动不在本轮测试范围内；本轮只验证配置投影。
+- A root `mcp.json` that the manifest does not reference through `mcpServers` is not
+  read automatically by ZCode today.
+- Whether a real MCP server can start is out of scope; only config projection is
+  verified.
 
-## skills 字段语义（已修复差一层目录问题）
+## skills field semantics
 
-Claude 插件规范里 manifest `skills` 的数组项指向「技能目录本身」（项内直接是
-`SKILL.md`，如 `./skills/engineering/tdd`）；字符串形式则指向「技能集合目录」
-（其下一层子目录各自是技能）。两类形态统一由共享扫描规则
-（`apps/zcode-cli/packages/adapters/src/skills/scan.ts`）处理：
+In the Claude plugin spec, array items of manifest `skills` point at the **skill
+directory itself** (with `SKILL.md` directly inside, e.g. `./skills/engineering/tdd`);
+the string form points at a **skill collection directory** (whose child directories
+are each a skill). Both shapes are handled by the shared scan rules in
+`apps/zcode-cli/packages/adapters/src/skills/scan.ts`:
 
-- 技能根自身含 `SKILL.md` 时，根自身就是一个技能（数组项语义，与桌面 services 侧
-  `skillDiscoveryWalk` 的 depth-0 产出一致）；
-- 再扫一层子目录（字符串形式/默认 `skills/` 目录的 ZCode 一层布局），子目录命中
-  需校验 `SKILL.md` 真实存在，分类目录（如 `skills/engineering/`）不会误计；
-- 声明根与默认根命中同一个 `SKILL.md` 时按文件路径去重，计数与发现结果不翻倍；
-- manifest 显式声明的 skills 路径扫描为 0 个技能时发 `plugin_skill_root_empty`
-  warning 诊断（声明路径写进 message；协议 wire schema 不携带 path 字段），插件
-  详情页「警告」区展示，不再静默。message 区分原因：`does not exist`（manifest
-  配错，只认 ENOENT/ENOTDIR）与 `does not contain any skills`（内容为空，含
-  链接被安全拒绝后扫描为空的情形）。
-- 信任边界：插件内容不可信，plugin-scope 扫描**一律不跟随符号链接**（含 Windows
-  junction）——根自身、子目录候选、`SKILL.md` 文件三个粒度全部拒绝链接，目录级
-  逃逸（`skills/evil-link -> ../../outside`）与文件级逃逸（`SKILL.md -> ~/.aws/
-  credentials`）同标准封堵；拒绝链接即无逃逸，不依赖判定链接指向（无跨盘符
-  `relative` 谓词，无平台分支）。组件枚举（`collectSkillComponents`）对插件根
-  无条件适用同一规则，不依赖 manifest 是否解析成功。词法防线（`resolveInside`
-  拒绝绝对路径与 `..` 穿越）继续生效。用户级技能根（`~/.zcode/skills` 的
-  symlink 导入是受支持功能）保持默认跟随，行为不变。
+- If a skill root itself contains `SKILL.md`, the root is one skill (array-item
+  semantics, matching the desktop services side's depth-0 output of
+  `skillDiscoveryWalk`);
+- Otherwise scan one level of child directories (the string form / default
+  `skills/` directory, ZCode's one-level layout); a child hit must verify that
+  `SKILL.md` really exists, so category directories (like `skills/engineering/`)
+  are not miscounted;
+- If a declared root and a default root hit the same `SKILL.md`, deduplicate by
+  file path so counts and discovery results do not double;
+- When a manifest-declared skills path scans to 0 skills, emit a
+  `plugin_skill_root_empty` warning diagnostic (the declared path goes into the
+  message; the protocol wire schema carries no path field), shown in the plugin
+  detail page's warnings area instead of staying silent. The message distinguishes
+  `does not exist` (misconfigured manifest; only ENOENT/ENOTDIR count) from
+  `does not contain any skills` (empty content, including links rejected by the
+  security check leaving the scan empty).
+- Trust boundary: plugin content is untrusted, so plugin-scope scanning **never
+  follows symlinks** (including Windows junctions) — rejected at all three
+  granularities: the root itself, child-directory candidates, and the `SKILL.md`
+  file. Directory-level escapes (`skills/evil-link -> ../../outside`) and
+  file-level escapes (`SKILL.md -> ~/.aws/credentials`) are blocked by the same
+  standard; rejecting links is enough, no escape check depends on resolving link
+  targets (no cross-drive `relative` predicate, no platform branches).
+  Component enumeration (`collectSkillComponents`) applies the same rule to the
+  plugin root unconditionally, regardless of whether the manifest parsed. The
+  lexical defense (`resolveInside` rejecting absolute paths and `..` traversal)
+  stays in force. User-level skill roots (symlink imports under `~/.zcode/skills`
+  are a supported feature) keep following links by default, unchanged.
 
-## 验证命令
+## Verification commands
 
 ```bash
 pnpm --filter @zcode/adapters test plugins

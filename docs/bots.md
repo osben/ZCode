@@ -256,7 +256,7 @@ The service, RPC service, HTTP route, persisted data, and UI all use the Bots na
 - Only private inbound messages may create or advance tasks; group messages retain the existing private-chat-only response. Private delivery uses `open_id`; no speculative `chat_id` fallback or new retries.
 - Message create/update failures retain HTTP status, business `code`, `msg`, and `log_id` (response body first, response header fallback). Creation diagnostics include receive ID type, never credentials or message content.
 - `BotRuntimeInfo.deliveryError` tracks the latest failed Feishu/Lark message write independently of connection status. A successful message write clears it; a WebSocket reconnect does not. This state is volatile and shown in Bot settings with a localized delivery-failed label and diagnostic detail. While the dialog is open, status refreshes serially every two seconds after the preceding read completes; closing it cancels further polling and ignores late results.
-- Existing bounded streaming retry/circuit and task completion behavior remain unchanged. This change improves diagnosis; it does not claim to resolve the upstream rejection.
+- Existing bounded streaming retry/circuit and task completion behavior remain unchanged. This diagnostics surface does not claim to resolve the upstream rejection.
 - Bot streams remain `bot-channel-continuous`; desktop `desktop-continuous` and mobile `web-remote-replayable` boundaries and workspace routing do not change.
 
 ```text
@@ -267,57 +267,38 @@ WebSocket status ------------------------> connection status (independent)
 
 References: [send](https://open.feishu.cn/document/server-docs/im-v1/message/create.md), [reply](https://open.feishu.cn/document/server-docs/im-v1/message/reply.md). Official send documentation recommends open_id for user recipients; no documented resolution for this ticket's error text was found.
 
-## Provider 重构升级与回滚
+## Provider refactor upgrade and rollback
 
-当前配置、状态内容版本均为 3。对应 v3 文件不存在时，Repository 单向导入旧
-`bot-config.json`、`bot-state.v2.json`（更早状态为 `bot-state.json`），立即写入 v3。
-旧文件仅为回滚保留，不修改、不删除、不持续双写。v3 存在后只读新字段，解析或 IO 错误
-直接暴露，不偷偷退回旧文件。旧模型按 Todo 72 的明确身份转换；无法确定时留空并保留 Bot。
-回滚后的旧 App 看到升级前 Bot 快照，不承诺看到新版新增、删除或修改的 Bot。
+Config and state content versions are both 3. When the v3 files do not exist, the Repository one-way imports the old `bot-config.json` and `bot-state.v2.json` (earlier state was `bot-state.json`) and immediately writes v3. Old files are kept only for rollback — never modified, deleted, or continuously double-written. Once v3 exists, only the new fields are read; parse or IO errors surface directly, with no silent fallback to old files. Old models convert through Todo 72's explicit identity mapping; when undeterminable, leave the field empty and keep the Bot. After a rollback, the old App sees the pre-upgrade Bot snapshot; it is not promised to see newly added, deleted, or modified Bots from the new version.
 
-## R3 remote identity resolution（A3，2026-09-16）
+## R3 remote identity resolution (A3)
 
-Bot 的连接检查、显式重连、runtime attachment、工作区列表、上下文及授权匹配必须使用同一 Source stable identity。控制端 `lastWorkspaceSession` 是回退兼容快照，不是 R3 连接目录。
+The Bot's connection checks, explicit reconnect, runtime attachment, workspace list, context, and authorization matching must all use the same Source stable identity. The controller's `lastWorkspaceSession` is a backward-compatible snapshot, not the R3 connection directory.
 
-- Window Host 注入窄 resolver，使用 `SourceServerDirectory` 与当前 `WindowRemoteConnectionRegistry`。services 层不导入 Desktop 实现。
-- stable identity 按 Source 精确匹配；legacy identity 只在已握手 Profile / workspace history 证明唯一映射时转换。禁止仅按 path、别名或相似主机名猜测。
-- 在线时优先使用当前窗口已连接的 logical session target，不能因 preferred Profile 改变就误报断线。离线仅 `/reconnect` 使用当前 active Profile 的正式 credential refs；lookup 不解密凭据、不建连接。
-- retired/rebound Profile 造成旧 route 对应多个 Source 时拒绝迁移；目标缺失、身份含糊或本窗口无会话时不回落到 Local Host。
-- Bot workspace refs、context 与精确 allowedWorkspaces 通过同一解析器按需规范化；不改变 `*` 或本地 path 权限语义。已绑定 taskId、pending interaction 和 draft options 保留。未知 legacy identity 保留并由连接边界拒绝，不靠同路径升级。
-- runtime cache 按 stable workspace + 当前 logical session/generation 隔离，旧连接不可复用；同代并发 task/model 获取共用一个 attachment。换代/关闭后的迟到结果释放，不进入新缓存。
-- Main 继续执行 window + path + stable identity + target 精确匹配。旧 `lastWorkspaceSession`、凭据 mirror 和 Source canonical storage key 不改写。
+- The Window Host injects a narrow resolver using `SourceServerDirectory` and the current `WindowRemoteConnectionRegistry`. The services layer does not import Desktop implementations.
+- Stable identities match by Source exactly; a legacy identity converts only when a handshaken Profile / workspace history proves a unique mapping. Never guess by path, alias, or similar hostname alone.
+- When online, prefer the logical session target already connected in the current window; a changed preferred Profile must not be reported as disconnected. Offline, only `/reconnect` uses the current active Profile's formal credential refs; lookup neither decrypts credentials nor opens connections.
+- A retired/rebound Profile that maps an old route to multiple Sources refuses migration; a missing target, ambiguous identity, or no session in this window never falls back to the Local Host.
+- Bot workspace refs, context, and exact allowedWorkspaces are normalized on demand through the same resolver; the semantics of `*` and local path permissions do not change. Bound taskId, pending interaction, and draft options are preserved. Unknown legacy identities are kept and rejected at the connection boundary, not upgraded by same-path matching.
+- The runtime cache is isolated by stable workspace + the current logical session/generation, so old connections are not reused; concurrent task/model fetches in the same generation share one attachment. Late results after a generation change or close are released and never enter the new cache.
+- Main keeps exact matching by window + path + stable identity + target. The old `lastWorkspaceSession`, the credentials mirror, and the Source canonical storage key are not rewritten.
 
 ```text
 Bot legacy / stable ref
-  -> owning Window Host resolver（Directory 的已证明映射）
+  -> owning Window Host resolver (Directory's proven mappings)
   -> stable workspace ref + current route generation
-  -> Main 精确路由 -> 同一 Window Host 的既有 remote scope
-  -> 目标 Environment 的 task / model selection
+  -> Main exact routing -> the same Window Host's existing remote scope
+  -> target Environment's task / model selection
 ```
 
-修复不改变 Bot/desktop/mobile 各自既有 delivery profile、stream、snapshot、queue 或 Source 登录态，也不扩展 Source Core 自身启动 Bot 的产品范围。验证使用合成 Bot actor/消息与隔离 repo，不向真实聊天平台发送消息。
+The fix does not change Bot/desktop/mobile delivery profiles, streams, snapshots, queues, or Source login state, and does not extend the product scope of Source Core starting Bots itself. Verification uses synthetic Bot actors/messages and an isolated repo; no messages are sent to real chat platforms.
 
-### Group reply delivery actions (2026-09-07)
+### Group reply delivery actions
 
-Desktop and mobile no longer display the persistent group-sync/shared-workspace
-banner above the composer. Group synchronization and source labels remain active.
-The composer has no delivery panel. Failed or uncertain deliveries expose a small
-localized icon beside the corresponding completed reply timestamp; clicking opens
-retry or reconciliation actions without repeating the reply body or sender ID.
-Successful and in-flight sends stay hidden. The group activation reply retains its
-shared-file disclosure. See the group collaboration spec for per-turn association
-and crash-safe delivery projection.
+Desktop and mobile no longer display the persistent group-sync/shared-workspace banner above the composer. Group synchronization and source labels remain active. The composer has no delivery panel. Failed or uncertain deliveries expose a small localized icon beside the corresponding completed reply timestamp; clicking opens retry or reconciliation actions without repeating the reply body or sender ID. Successful and in-flight sends stay hidden. The group activation reply retains its shared-file disclosure. See the group collaboration spec for per-turn association and crash-safe delivery projection.
 
-### Group task switching after stop (2026-09-07)
+### Group task switching after stop
 
-Group switching reads the CLI control phase, queue and pending interactions. Cached
-Bot permission/question cards cannot independently block a new draft after stop.
-An idle CLI clears stale interaction records before switching; running, queued,
-and interaction-blocked states return distinct localized guidance. Disconnected
-remote workspaces still require explicit reconnect. Desktop continuous and mobile
-replayable boundaries and the single CLI queue remain unchanged.
+Group switching reads the CLI control phase, queue and pending interactions. Cached Bot permission/question cards cannot independently block a new draft after stop. An idle CLI clears stale interaction records before switching; running, queued, and interaction-blocked states return distinct localized guidance. Disconnected remote workspaces still require explicit reconnect. Desktop continuous and mobile replayable boundaries and the single CLI queue remain unchanged.
 
-Group member labels use the current chat member directory. Enable the application
-permission `im:chat.members:read` and publish it to show names without requiring
-organization-wide contacts access. Missing permission preserves message handling
-and shows a short stable member identifier. See the group collaboration spec.
+Group member labels use the current chat member directory. Enable the application permission `im:chat.members:read` and publish it to show names without requiring organization-wide contacts access. Missing permission preserves message handling and shows a short stable member identifier. See the group collaboration spec.
