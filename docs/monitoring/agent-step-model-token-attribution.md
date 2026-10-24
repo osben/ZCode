@@ -50,16 +50,14 @@ main wake round from background notification
    for `SubagentStopped` to first fill.
 5. Mirrored child tools keep independent `tool_call_id` and token `0`; they use the same
    `agent_id` as the parent `Agent` step, and model uses the child's real request model.
-6. Background child's usage only attributed to its own `Agent` step, does not refill completed parent turn.
-   Child tools keep token `0`, Agent step appends on first child terminal or SubagentStopped,
-   using child-local next loop*index.
-   Agent step's tool_call_id uses `tool_subagent*<agentId>\_<parentToolCallId>`; existing
-Agent launch step in parent session only describes the launch action. Accumulated usage is not a snapshot
-of each tool end time.
-Active child receiving any of the above terminal states, even without usage, also preserves Agent step
-state, errors and known model; token/request count uses foreground default `0`, does not fabricate
-   requestId or usage scope. Aligns with foreground exception closure's known usage snapshot, not duplicate
-   summary, not补补 after closure received.
+6. Background child's usage is attributed only to its own `Agent` step and never refills the completed parent
+   turn. Child tools keep token `0`; the Agent step is appended on the first child terminal or `SubagentStopped`,
+   using the child-local next `loop_index`. Its `tool_call_id` is `tool_subagent_<agentId>_<parentToolCallId>`;
+   the Agent launch step in the parent session only describes the launch action, and accumulated usage is not a
+   snapshot of each tool end time. An active child receiving any terminal state, even without usage, still
+   reports the Agent step with state, errors and known model; token/request count default to `0` and no
+   requestId or usage scope is fabricated. This matches the foreground exception closure's known-usage snapshot:
+   no duplicate summary and no top-up after closure.
 7. Background mirror's tool/permission fact must carry `background=true`, filtered before entering main prompt
    telemetry, avoiding duplicate counting of same child tool or permission wait.
 8. Background child's report uses parent session、`sourceCommandId`、`parentToolCallId` and
@@ -98,7 +96,7 @@ Authoritative field sources:
 | child attribution | `SubagentSpawned.childSessionId + parentToolCallId + agentId`            |
 
 `ModelComplete` has no independent requestId, therefore normalizer only correlates the most recently completed
-request within the same session, same `querySource`; if uncorrelated, still可用 for message completion total,
+request within the same session, same `querySource`; if uncorrelated, it is still usable for the message completion total,
 but cannot fabricate step model attribution.
 
 ## `agent_step` Fields
@@ -134,9 +132,8 @@ This field indicates the Agent composition of the current main turn:
 background child finishing itself does not set this field; its synthesis notification is dequeued and triggers
 independent main turn, or in current active-loop actual merge position. Bash notifications do not count as Subagent results.
 
-Todo103 re-attaches preserving current flat request model facts and ModelSelection execution boundary; statistics do not read
-Provider configuration to guess model, nor call valid selection parse second replace already executed model. Submitted E2E artifact
-is historical evidence, does not indicate that the integration branch has been verified through.
+Statistics keep the current flat request model facts and the ModelSelection execution boundary: they do not read
+Provider configuration to guess the model, nor re-resolve the selection to replace an already executed model.
 
 All numeric fields continue to use string encoding. Steps without real usage must write `0`, cannot estimate.
 
@@ -180,7 +177,7 @@ message B turn.started/facts ----+---- buffer ----------> activate/replay B
 - After `SubagentStopped`, still preserves child association to message closure to handle late mirror tool closure.
 - renderer reload/recovery does not fabricate historical embeds, maintain existing live-only boundary.
 - desktop continuous & web remote replayable share no-text facts schema; existing product rules only allow trusted
-  desktop continuous attachment to consume workspace telemetry, recovery replay does not补报.
+  desktop continuous attachment to consume workspace telemetry, recovery replay does not re-report.
 
 Background child's `model.request.status(started)` freezes tool model; `usage.delta` aggregated by requestId
 after dedup. `turn.terminal` / `SubagentStopped` share a one-time Agent summary calculation, taking first closure's received
@@ -190,7 +187,7 @@ child terminal arrival cleans up, no longer guesses clean-up moment based on pre
 
 - Only consumes existing Runtime events: normalizer retains existing `SubagentStopped.error` as `errorMessage`.
   No new Runtime event, does not change execution, cancel, notification, main wake or foreground behavior; does not add timer,
-  does not补 child completion. Exception closure's late-arrival usage not counted in already-reported summary, does not promise
+  does not synthesize child completion. Exception closure's late-arrival usage not counted in already-reported summary, does not promise
   complete tail consumption.
 
 ## Main Turn ID
@@ -219,7 +216,7 @@ At least covers:
 7. Mirrored WebFetch: same `agent_id` as parent `Agent` step, model is child model, token `0`.
 8. Active background child without usage: success/failure/cancel still produces one zero-token Agent step; distinguish
    from request count/scope. Covers only stopped, with/without usage, two terminal orders, duplicate terminal and stopped
-   late tool; summary reported once only, error text retained, no independent `message_completion`, no补补 late usage, not clean up
+   late tool; summary reported once only, error text retained, no independent `message_completion`, no late-usage top-up, not clean up
    started tool closure upon cleanup.
 9. Background child's multiple tool step's `loop_index` increments within child, parallel child starts from `1` independently.
 10. Ordinary reasoning, generation, tool_call and foreground `Agent` step coexist in one message; all retained, `agent_step_cnt`
@@ -232,7 +229,7 @@ At least covers:
     `request_time`, real wall clock duration and step count completes first, then next message uses original
     `sourceCommandId` to independently report step and completion.
 
-## Postscript (2026-09-14): Third Source — Dynamic Workflow Sub-agent
+## Postscript: Third Source — Dynamic Workflow Sub-agent
 
 Rules see `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` "Token telemetry for subagents". Differences from
 the first two sources are only three points:
@@ -245,5 +242,5 @@ the first two sources are only three points:
 - `agent_role = "workflow subagent"`, also with `workflow_run_id` / `child_session_id` /
   `workflow_tool_call_id`; `token_usage_scope` still reuses `subagent_requests`.
 
-All other rules (tool step token `0`, requestId dedup, no补 after terminal, live-only, no usage also zero-value summary)
+All other rules (tool step token `0`, requestId dedup, no top-up after terminal, live-only, no usage also zero-value summary)
 verbatim along.

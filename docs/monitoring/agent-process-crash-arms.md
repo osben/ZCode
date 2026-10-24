@@ -185,20 +185,19 @@ CLI process-level boundary
              └─ CLI owner stop taking work, cancel and cleanup, non-zero exit
 ```
 
-Early implementation used listener keepalive, relying on Host timeout recycle; when parent already gone this assumption invalid, and
-stderr async EPIPE would again trigger boundary and loop writing broken pipe. Now stderr writing boundary independently absorbs this stream's
-sync/async failure and disables outlet; must not globally ignore other streams' EPIPE. `uncaughtExceptionMonitor`
+The stderr writing boundary independently absorbs this stream's sync/async failure and disables the outlet (so an
+async EPIPE cannot re-trigger the boundary and loop on a broken pipe); EPIPE of other streams is never globally ignored. `uncaughtExceptionMonitor`
 only records origin, strict rejection still unified reported by rejection listener. Cleanup-period subsequent exceptions
 do not repeat diagnosis, do not extend first exit time limit. Full timing see CLI protocol process lifecycle spec.
 
 This boundary only installed in protocol mode, does not change ordinary headless CLI、TUI、doctor、login etc. commands'
 original failure exit semantics. `perf_agent_crash` still indicates actual exit; whether exit occurs after exception does not affect JS error reporting.
 
-### CLI JS Exception Reporting (2026-09-14 introduced)
+### CLI JS Exception Reporting
 
-Root cause: exception boundary retains process, but stderr only goes to debug / exit tail, Electron SDK cannot automatically
-capture Node child process exception. Must explicitly send `exception` when exception occurs, cannot rely on exit log's
-`console.error` auto-collection.
+The Electron SDK cannot automatically capture Node child process exceptions and stderr only goes to debug / exit
+tail, so `exception` is sent explicitly when an exception occurs instead of relying on exit-log `console.error`
+auto-collection.
 
 ```text
 CLI exception boundary (errorId unique fact source)

@@ -1,29 +1,57 @@
-# 02 — Relay V2 共享契约与假 relay 测试夹具
+# 02 — Relay V2 shared contract and fake relay test fixture
 
-**What to build:** 在不改变任何现有 V1 行为的前提下（expand 阶段），为桌面与手机两端提供 Relay V2 的共享契约：V2 relay 消息类型与运行时校验、设备注册/列表/删除与一次性 token 的 HTTP 契约类型、支持无 `hash` 的二维码 URL 构建与解析、V2 心跳常量；以及一个两端测试共用的进程内假 relay V2。完成后，任何一端都能在不依赖线上环境的情况下针对 V2 握手、心跳、错误码和 HTTP 失败编写并运行测试。
+**What to build:** Without changing any existing V1 behavior (expand phase), give desktop and phone the shared
+Relay V2 contract: V2 relay message types with runtime validation; HTTP contract types for device registration/
+list/delete and the one-time token; QR URL build/parse without `hash`; V2 heartbeat constants; and an in-process
+fake relay V2 shared by both ends' tests. Afterwards either end can write and run tests for the V2 handshake,
+heartbeat, error codes and HTTP failures without live environments.
 
-**Blocked by:** None — can start immediately.
+**Blocked by:** None.
 
 **Status:** in-progress
 
-**Parent:** [Web 远控接入 Relay V2：手机登录后连接桌面](./01-relay-v2-login-pairing.md)
+**Parent:** [Web remote control on Relay V2: phone logs in, then connects to the desktop](./01-relay-v2-login-pairing.md)
 
-## 验收标准
+## Acceptance criteria
 
-- [x] 文档先行：新建 `docs/web-remote-control/relay-v2-pairing.md` 骨架，写入 V2 WebSocket 消息契约（`auth_init` 无 `role`、`pair_status_query` 无 `device_sid`、`client_ts` 为 Unix 秒）、HTTP 契约（设备注册/列表/删除、`role=device|terminal` 一次性 token）与假 relay 的能力边界。
-- [x] shared 新增 V2 出入站 relay 消息类型、HTTP 请求/响应类型及对应的运行时解析函数；解析拒绝非法字段。V1 类型与解析保持不动，现有 shared 测试全部通过。
-- [x] 二维码 URL 构建器支持不带 `passHash`/`timestamp` 的 V2 形态；解析器接受 `sid`、`mid`、`name`、`app_version` 全部可选且无 `hash` 的 URL。V1 带 `hash` 的解析结果不变。
-- [x] 心跳常量新增 V2 组：基准 5 秒、jitter ±1 秒、ACK deadline 15 秒；V1 常量保留。
-- [x] 假 relay V2 夹具：进程内同时提供设备注册/列表/删除与 token 签发的 HTTP 处理器，以及 `/api/v1/remote/ws2?token=` WebSocket 服务器。token 一次性、绑定 `role` 与用户；`auth_init` 校验设备归属，非本用户设备返回 `AUTH_FAILED`；同角色新连接替换旧连接并向旧连接发送 `KICKED`；`data` 在配对双方间透传并替换 `client_ts` 为 `server_ts`。
-- [x] 假 relay 可编排：`auth_ack`/`pair_status_ack` 的 `pair_status`、任意错误码（`AUTH_FAILED`/`WRONG_PARAM`/`KICKED`/`INTERNAL`/`DEVICE_OFFLINE`）、服务端主动断连、HTTP 401/5xx/网络错误；记录收到的每条消息与每次 HTTP 调用供断言。既能服务 Node `ws` 客户端，也能服务浏览器 WebSocket 兼容客户端。
-- [x] 假 relay 自身有测试证明上述行为与 V2 文档一致。夹具放在桌面与手机测试都能导入的位置，具体位置在实现时决定并写入 `relay-v2-pairing.md`。
-- [ ] `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、受影响单测通过。
+- [x] Docs first: create the `docs/web-remote-control/relay-v2-pairing.md` skeleton with the V2 WebSocket
+  message contract (`auth_init` without `role`, `pair_status_query` without `device_sid`, `client_ts` in Unix
+  seconds), the HTTP contract (device register/list/delete, `role=device|terminal` one-time token) and the
+  fake relay's capability boundary.
+- [x] shared adds V2 inbound/outbound relay message types, HTTP request/response types and runtime parsers
+  that reject illegal fields. V1 types and parsing stay untouched and existing shared tests pass.
+- [x] The QR URL builder supports the V2 shape without `passHash`/`timestamp`; the parser accepts URLs with
+  `sid`, `mid`, `name`, `app_version` all optional and no `hash`. V1 parsing with `hash` is unchanged.
+- [x] Heartbeat constants gain a V2 group: base 5 s, jitter ±1 s, ACK deadline 15 s; V1 constants stay.
+- [x] Fake relay V2 fixture: in-process HTTP handlers for device register/list/delete and token issuing plus
+  a `/api/v1/remote/ws2?token=` WebSocket server. Tokens are one-time and bound to role and user; `auth_init`
+  checks device ownership and answers `AUTH_FAILED` for another user's device; a new connection of the same
+  role replaces the old one and sends it `KICKED`; `data` passes through between the paired sides with
+  `client_ts` replaced by `server_ts`.
+- [x] The fake relay can script `pair_status` of `auth_ack`/`pair_status_ack`, any error code
+  (`AUTH_FAILED`/`WRONG_PARAM`/`KICKED`/`INTERNAL`/`DEVICE_OFFLINE`), server-initiated disconnects, and HTTP
+  401/5xx/network errors; it records every received message and HTTP call for assertions. It serves both Node
+  `ws` clients and browser-WebSocket-compatible clients.
+- [x] The fake relay has its own tests proving the above matches the V2 doc. The fixture lives where desktop
+  and phone tests can both import it; the location is decided at implementation and written into
+  `relay-v2-pairing.md`.
+- [ ] `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, affected unit tests pass.
 
 ## Comments
 
-2026-09-19：功能实现完成，验证门禁仍有基线/环境阻塞，状态保留 `in-progress`，未提交。
+2026-09-19: Feature implementation is done; the verification gate still has baseline/environment blockers, so
+the status stays `in-progress`; nothing committed.
 
-- 契约依据与夹具 API 见 [Relay V2 配对契约](../../web-remote-control/relay-v2-pairing.md)。shared 独立 V2 消息/HTTP 解析、显式 V2 二维码解析、V2 心跳常量及共用假 relay 已实现，V1 默认行为保留。
-- `pnpm typecheck`、`pnpm lint`（0 errors，60 个既有 warnings）、`pnpm architecture:check --changed` 通过；最终共享包及桌面/手机既有 transport 回归为 133 文件、1,504 测试通过。
-- implement 要求的全量 `pnpm test:unit` 已执行：1,914 文件通过、4 文件失败、2 文件跳过；17,943 测试通过。定向复跑后 CUA staging、TTFT 超时及 teardown 错误未再出现，仍失败的是 `e2eRuntimePaths.test.ts`（既有 `feedback-upload-privacy.test.ts:105` 使用 `/private/tmp`）和 `storagePreparationProtocol.test.ts`（`@zcode/adapters/storage` 导出的本地 dist 缺少源码已有的 `SqliteSessionStore.openStartup`）。相关源码相对任务开始基线无改动；未混入与本票无关的修复。
-- code-review 双轴评审：Standards 无发现；Spec 发现的删除 HTTP 状态/业务码差异已修复并复核关闭。全量门禁未通过，遵循根规则保留改动，不自动 commit。
+- Contract basis and fixture API: [Relay V2 pairing contract](../../web-remote-control/relay-v2-pairing.md).
+  Independent shared V2 message/HTTP parsing, explicit V2 QR parsing, V2 heartbeat constants and the shared
+  fake relay are implemented; V1 default behavior is kept.
+- `pnpm typecheck`, `pnpm lint` (0 errors, 60 pre-existing warnings) and `pnpm architecture:check --changed`
+  pass; final shared package plus existing desktop/phone transport regressions: 133 files, 1,504 tests passed.
+- Full `pnpm test:unit`: 1,914 files passed, 4 failed, 2 skipped; 17,943 tests passed. After targeted reruns the
+  CUA staging, TTFT timeout and teardown errors no longer appeared; still failing are `e2eRuntimePaths.test.ts`
+  (pre-existing `feedback-upload-privacy.test.ts:105` uses `/private/tmp`) and
+  `storagePreparationProtocol.test.ts` (local dist of `@zcode/adapters/storage` lacks
+  `SqliteSessionStore.openStartup` that exists in source). The related source is unchanged from the task
+  baseline; no unrelated fixes were mixed in.
+- Two-axis review: Standards no findings; Spec found a delete HTTP status/business-code difference, fixed and
+  re-verified. The full gate did not pass; per root rules the changes are kept and not auto-committed.

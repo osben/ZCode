@@ -1,24 +1,23 @@
 # Business Quality Monitoring
 
-> **2026-09-11 Current Supplement (Todo129)**: V4 ConversationTelemetrySupervisor has consumed real request facts and reports step/completion. After provider refactor, the official identity only restores old statistics ID at event field construction; Personal/Team share old Coding Plan bucket, Start independent, off-peak two share old off-peak bucket. UUID and unknown identity not inferred; model name encoding, usage, attribution, deduplication and historical data unchanged. Detailed mapping and acceptance see [Todo129](../working-memory/provider-refactor/steps/todo-129-impact-and-cases.md). The description below of "V4 not yet connected" only represents historical state.
+> **Current state:** the V4 `ConversationTelemetrySupervisor` consumes real request facts and reports
+> `agent_step` / `message_completion`. After the provider refactor, the official identity only restores the old
+> statistics ID at event-field construction: Personal/Team share the old Coding Plan bucket, Start is
+> independent, and the two off-peak plans share the old off-peak bucket. UUID and unknown identities are not
+> inferred; model-name encoding, usage, attribution, de-duplication and historical data are unchanged. Mapping
+> and acceptance: [Todo129](../working-memory/provider-refactor/steps/todo-129-impact-and-cases.md).
+>
+> The field tables below describe the metric design. Statements below that "the V4 main link does not call"
+> the old `finalizePromptTelemetry()` / `reportAppTelemetryEvent()` path describe the old UI aggregation, whose
+> entries (`useZCodeChat`, `taskStreamEventHandlers`) were deleted.
 
-> **Status**: Metric design / historical scope. V4 `SessionPane` + projection main link has not yet connected back to the `message_completion` / `agent_step` aggregation described in this article; old `useZCodeChat`, `taskStreamEventHandlers` entries have been deleted. Before V4 telemetry wiring and verification complete, do not treat the following fields as current stable collected data.
+## Boundary with non-business monitoring
 
-## Scope (to be supplemented)
+| Belongs to this document                                     | Does not belong (see [performance-monitoring.md](./performance-monitoring.md)) |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Product behavior, session/task quality, telemetry events     | Page performance, JS errors, crashes, RUM, development profiling               |
 
-<!-- Product behavior, session/task quality, telemetry events, local statistical display, etc. -->
-
-## Boundary with Non-Business Monitoring
-
-| Belongs to this article | Does not belong to this article (see [performance-monitoring.md](./performance-monitoring.md)) |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| To be supplemented      | Page performance, JS errors, crashes, RUM, development Profiling                               |
-
-## Reporting and Storage (to be supplemented)
-
-<!-- For example /report, agent observable library, settings page display, etc. — scope and fields defined by requirements -->
-
-## Metrics and Event List (to be supplemented)
+## Metrics and event list
 
 ### `send_btn`
 
@@ -42,7 +41,7 @@ this dimension will follow flip, this is declared scope not identity jump; doing
 ### `message_completion`
 
 Agent single round message completion event historical design aggregated by UI side `finalizePromptTelemetry()`, then
-reported via `reportAppTelemetryEvent()` to `/event/report`; current V4 main link does not call this接口.
+reported via `reportAppTelemetryEvent()` to `/event/report`; the current V4 main link does not call this interface.
 
 | Field                  | Type          | New | Description                                                 | Scope / Example                                                                                                                |
 | ---------------------- | ------------- | --- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -72,7 +71,7 @@ reported via `reportAppTelemetryEvent()` to `/event/report`; current V4 main lin
 Implementation location:
 
 - Field aggregation: `packages/ui/src/lib/messageTelemetry.ts`
-- Completion reporting: old entry deleted, V4 awaiting wiring
+- Completion reporting: old entry deleted; reported by the V4 supervisor
 - UI reporting encapsulation: `packages/ui/src/lib/appTelemetry.ts`
 
 ### `agent_step`
@@ -137,7 +136,7 @@ Counting scope:
 Implementation location:
 
 - State machine and field aggregation: `packages/ui/src/lib/messageTelemetry.ts`
-- Stream event access and reporting: old entry deleted, V4 awaiting wiring
+- Stream event access and reporting: old entry deleted; reported by the V4 supervisor
 - UI reporting encapsulation: `packages/ui/src/lib/appTelemetry.ts`
 
 ## Multi-end and clientMode
@@ -160,7 +159,7 @@ Only positioning reference before requirements finalized, code prevails:
 - Agent usage persistence: `apps/zcode-cli/docs/design/v2/usage-observability.md` (CLI design spec, not document in this directory)
 - App Usage aggregation: `docs/superpowers/specs/2026-06-02-app-usage-db-migration-design.md` (feature spec, not document in this directory)
 
-## Postscript (2026-09-14): Workflow Sub-agent Enters `agent_step` / `agent_composition`
+## Postscript: Workflow Sub-agent Enters `agent_step` / `agent_composition`
 
 Spec: `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` "Token telemetry for subagents". Field scope increments:
 
@@ -170,6 +169,6 @@ Spec: `apps/zcode-cli/packages/dynamic-workflow/docs/execution-engine.md` "Token
 | `agent_step.agent_id`                                                       | Workflow sub-agent is `siteId@ordinal`                                                                                                                                         |
 | `agent_step.workflow_run_id` / `child_session_id` / `workflow_tool_call_id` | New, only present on workflow sub-agent steps                                                                                                                                  |
 | `agent_step.tool_call_id`                                                   | Workflow sub-agent: tool step `tool_workflow_<agentId>_<childToolCallId>`, summary step `tool_workflow_<agentId>_<runId>`                                                      |
-| `agent_step.message_id`                                                     | Workflow sub-agent hangs under inputId of round that initiated run; middle center directly starts as run-dedicated synthetic UUID v7, this message has no `message_completion` |
+| `agent_step.message_id`                                                     | Workflow sub-agent steps hang under the inputId of the round that initiated the run; a run started directly from the middle center uses a run-dedicated synthetic UUID v7 and that message has no `message_completion` |
 | `message_completion.agent_composition`                                      | Adds `main_plus_wf` / `main_plus_fg_wf` / `main_plus_bg_wf` / `main_plus_fg_bg_wf`: run notification consumed by main conversation some round sets position                    |
 | `message_completion.message_source`                                         | Independent round woken by workflow notification records `background_workflow`                                                                                                 |

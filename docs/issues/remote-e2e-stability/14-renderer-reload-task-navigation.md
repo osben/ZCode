@@ -1,55 +1,43 @@
-# Renderer 重载后已就绪的远程任务无法切换
+# After a Renderer reload, a ready remote task cannot be switched to
 
 Status: ready-for-human
 
-## 真实指针复验
+## Real-pointer revalidation
 
-业务基线不变，测试补丁 07；批次 `r3-server-20261011125749338-152f05` 的 `renderer`
-在 143.5 秒后失败。这次按项目 identity 限定任务行，等待可见后使用 WebDriver 真实指针点击。
-Main 仍为 A/B 两个原 session 各记录一次有效 reload ready ACK，2026ms 后 Renderer 可操作。
+Baseline unchanged, test patch 07; batch `r3-server-20261011125749338-152f05`, case `renderer`, failed after
+143.5 s. The task row was scoped by project identity, waited until visible, then clicked with a real WebDriver
+pointer. Main logged one valid reload ready ACK for each of the two original sessions (A/B); the Renderer was
+operable 2026 ms later.
 
-`beforeSelectingA` 表明当前页面为 B，导航缓存没有 A；真实点击 A 后缓存仍没有 A，active 仍是 B。
-`afterSelectingA.panes` 只有一个可见 pane，sessionId 为 B 的
-`session_18e17db7fc3de951f1952295a7f6d8cd`。因此这次失败不是只点了隐藏旧行，
-也不是探针先读到隐藏 pane；真实可见页面没有切换。
+`beforeSelectingA`: current page is B, the navigation cache has no A. After the real click the cache still has
+no A and B stays active; `afterSelectingA.panes` has a single visible pane, B's
+`session_18e17db7fc3de951f1952295a7f6d8cd`. So the failure is not a click on a hidden stale row or a probe
+reading a hidden pane.
 
-当前任务导航链先调用 `ensureTaskNavigationWorkspace` / `activateTabByPath`；缺少远程 tab
-有拒绝分支。这与“attachment 已 ready、导航缓存缺项、点击不生效”的事实相符，但没有足够
-日志把唯一根因定位到该分支。修复需核对实际 attachment 与导航入口的交接，不能仅补一个无端口的假 tab。
-本轮保留业务代码与失败断言。
-
-```text
-Renderer reload → A/B 原 attachment ready
-  → 当前 B、缓存缺 A
-  → 真实点击项目 A 的原任务
-  → B 仍是唯一可见 pane（30 秒后失败）
-```
-
-证据目录：`packages/desktop/.e2e-artifacts/r3-server-20261011125749338-152f05-renderer/`。
-
-## 首次发现与排除项
-
-业务基线 `d31e735905cf744e75a0a93548a80acabe871ae5`，测试补丁 06。
-定向批次 `r3-server-20261011123601821-eca14c`，`renderer`，184.6 秒失败。
-
-重载后 2232ms Renderer 可操作；Main 分别为两个原 remoteSessionId 写出了有效
-`renderer-reload` ready ACK，因此不能继续把这个结果归为两个 attachment 未恢复。
-用例从侧栏打开 A 成功，再以 task B 的 test id 触发 DOM click，30 秒后 primary pane 仍是 A。
-失败视频末帧显示 A 的标题和首轮正文，不能只用缓存探针解释为界面已切换但检测错误。
-
-B 的任务为 `session_bcb5ecb4a2c7bc043954b54e1f376f6c`。Desktop 日志确认重载时 B 的
-conversation 订阅曾成功；切到 A 后 B 释放订阅，随后未见再次订阅 B。当前尚未确认未切换的直接原因。
-代码阅读发现任务导航存在以 tab 激活结果判断远程准入的分支，但本次日志没有明确证明命中该分支，
-不将其直接写成根因。
+The task-navigation chain calls `ensureTaskNavigationWorkspace` / `activateTabByPath` first, and there is a
+reject branch when a remote tab is missing. That fits "attachment ready, navigation cache missing the entry,
+click ineffective", but the logs do not pin the root cause to that branch. The fix must reconcile the actual
+attachment with the navigation entry; adding a port-less fake tab is not acceptable. Product code and the
+failing assertion are unchanged.
 
 ```text
-Renderer reload → A/B 原 attachment 都 ready
-  → 侧栏选择 A → A 可见
-  → DOM 选择 B → A 仍可见（失败）
-  → 下一步：限定项目的真实指针点击 + 记录前后 tab / 可见 pane
+Renderer reload → A/B original attachments ready
+  → current B, cache lacks A
+  → real click on project A's original task
+  → B remains the only visible pane (fails after 30 s)
 ```
 
-上述 DOM 操作疑点已由本页开头的真实指针复验排除。没有通过创建新会话代替原任务恢复。
+## First finding and ruled-out causes
 
-证据目录：`packages/desktop/.e2e-artifacts/r3-server-20261011123601821-eca14c-renderer/`，
-包含 `renderer-reload.json`、失败视频及 Desktop 日志。
+Baseline `d31e735905cf744e75a0a93548a80acabe871ae5`, test patch 06, batch
+`r3-server-20261011123601821-eca14c`, `renderer`, failed after 184.6 s. After the reload the Renderer was
+operable at 2232 ms and Main wrote valid `renderer-reload` ready ACKs for both original remoteSessionIds, so
+this was not a missing attachment. Opening A from the sidebar worked; a DOM click on task B's test id left A
+as the primary pane after 30 s (video end frame shows A's title and first-turn body).
+
+B's task is `session_bcb5ecb4a2c7bc043954b54e1f376f6c`. B's conversation subscription succeeded at reload,
+was released when switching to A, and was never re-subscribed. The DOM-click suspicion was ruled out by the
+real-pointer run above. No new session was created as a substitute for restoring the original task.
+
+Evidence: `packages/desktop/.e2e-artifacts/r3-server-20261011125749338-152f05-renderer/` and
+`...r3-server-20261011123601821-eca14c-renderer/` (`renderer-reload.json`, failure video, Desktop log).
