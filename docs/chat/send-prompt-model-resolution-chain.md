@@ -1,71 +1,59 @@
-# 发送消息时的当前模型判定链路
+# Send Prompt Model Resolution Chain
 
-更新日期：2026-07-15
+Updated: 2026-07-15
 
-> **历史链路审计，已被 Provider Refactor 取代。** 本文中的 workspace Provider Registry 推送、
-> `runtimeModel` fallback 和 App/CLI 双目录不再是当前实现。当前模型由目标 Environment 的
-> Model Selection、Registry 与 ModelFactory 解析。当前设计见
-> `docs/working-memory/provider-refactor/design/`。
+> Historical chain audit, superseded by the Provider Refactor. The workspace Provider Registry push, `runtimeModel` fallback and the App/CLI dual catalog described here are no longer the current implementation. The current model is resolved by the target Environment's Model Selection, Registry and ModelFactory; see `docs/working-memory/provider-refactor/design/`.
 
-V4 `sendText` 不携带“本次使用哪个模型”的第二份 UI 决策。模型属于 session config；发送只在配置
-命令之后进入同一 CLI session。这样 toolbar、队列和 runtime 不会分别保存互相覆盖的模型值。
+V4 `sendText` carries no second UI decision about "which model this send uses". The model belongs to session config; send enters the same CLI session only after the config commands. Thus the toolbar, queue and runtime never keep mutually overriding model values.
 
-## 总链路
+## Overall chain
 
 ```text
 toolbar config action ─┐
-                      ├─> configCommandBarrier（线性化用户操作）
+                      ├─> configCommandBarrier (linearizes user actions)
 composer sendText ─────┘
   -> V4 command ACK/admission
-  -> 当前 session runtime config
+  -> current session runtime config
   -> prompt turn
-  -> ModelSelected/rows/snapshot 投影
+  -> ModelSelected/rows/snapshot projection
 ```
 
-## 已有 session
+## Existing session
 
-已有 session 发送时：
+1. `SessionPane.dispatchSendText` puts the send into `configCommandBarrier`.
+2. Model, thought, mode and follow-up commands enqueued before it must complete first.
+3. The `sendText` payload carries only the text, ready attachment references and the explicit disposition of a held queue.
+4. The CLI decides by the current `inputRouting`: start now, guide, enqueue or require a choice; the model is still the session runtime's current config.
+5. The ACK proves only the admission result; the final UI settles on the conversation projection.
 
-1. `SessionPane.dispatchSendText` 把发送动作放进 `configCommandBarrier`。
-2. 在它之前入队的模型、thought、mode 和 follow-up 命令必须先完成。
-3. `sendText` payload 只携带文本、已 ready 的附件引用，以及 held queue 的显式 disposition。
-4. CLI 按当前 `inputRouting` 裁决立即开始、guide、enqueue 或要求 choice；模型仍取 session runtime
-   当前 config。
-5. ACK 只证明 admission 结果；最终 UI 以 conversation projection 收口。
+So "switch model -> send" uses the new model; "send -> switch model" cannot rewrite an already admitted turn. This guarantees only the same renderer's operation order; desktop continuous and web remote replayable are not merged into a global client FIFO.
 
-因此“切模型 → 发送”使用新模型；“发送 → 切模型”不能反向改写已经 admitted 的 turn。这里保证的是同一
-renderer 操作顺序，不把 desktop continuous 与 web remote replayable 合并成全局客户端 FIFO。
+## Draft first send
 
-## 草稿首发
+A draft has no formal session, so the model is established with creation:
 
-草稿没有正式 session，模型必须随创建建立：
+- Prewarm session exists: align `draftConfigRef` to the prewarm runtime again before first send, then `sendText`.
+- No prewarm: `createSession.config` carries provider/model/thought/mode/followupMode; with no attachments it can be submitted atomically with `firstInput`.
+- After a successful first send the draft pane binds the returned sessionId in place; afterwards it only reads snapshot config.
 
-- 预热 session 已存在：首发前再次把 `draftConfigRef` 对齐到预热 runtime，再 `sendText`。
-- 无预热：`createSession.config` 携带 provider/model/thought/mode/followupMode；无附件时可与
-  `firstInput` 原子提交。
-- 首发成功后 draft pane 原地绑定返回的 sessionId；后续只读 snapshot config。
+Details: `docs/chat/new-task-model-resolution-chain.md`.
 
-具体见 `docs/chat/new-task-model-resolution-chain.md`。
+## Busy and queue
 
-## Busy 与队列
+The V4 queue is decided inside the CLI command core; there is no old renderer-local conversation queue:
 
-V4 queue 在 CLI command core 内裁决，不再存在旧 renderer-local conversation queue：
+- `inputRouting.mode=enqueue`: accepted input enters the session's authoritative queue; the command does not copy the model.
+- `inputRouting.mode=choice`: ordinary input must carry `heldQueueDisposition`, otherwise the UI asks for confirmation.
+- A queued input runs with the runtime config already linearized and written to the session at that time.
+- Stop/held/auto-drain product semantics are decided by the snapshot and CLI queue handler; the relay/main keep no queue.
 
-- `inputRouting.mode=enqueue` 时，accepted input 进入 session 权威队列；command 不复制模型。
-- `inputRouting.mode=choice` 时，普通输入必须携带 `heldQueueDisposition`，否则 UI 要求确认。
-- queued input 真正执行时使用当时已经线性化并写入 session 的 runtime config。
-- stop/held/auto-drain 的产品语义由 snapshot 与 CLI queue handler 决定，relay/main 不保存队列。
+So a model switch can affect queue items not yet started. The project has no product semantics of "each queued prompt pins the model at enqueue time"; docs and tests must not assume it.
 
-这意味着切模型可以影响尚未开始的队列项。项目目前没有“每条 queued prompt 固定入队时模型”的产品语义，
-文档和测试不得作此假设。
+## Provider recovery and failure
 
-## Provider 恢复和失败
+If a model config command returns `provider.notInRegistry`, the UI first syncs that workspace's provider registry, then resolves `runtimeModel` and retries exactly once. If recovery still fails, it does not go on to send a prompt that merely appears to use the new model; the send barrier surfaces the failure to the caller. A config noop may continue because the runtime is already at the target value.
 
-模型配置命令如果返回 `provider.notInRegistry`，UI 先同步该 workspace 的 provider registry，再解析
-`runtimeModel` 并只重试一次。恢复仍失败时不会继续发送一个看似使用新模型的 prompt；发送屏障会把失败
-暴露给调用方。配置 noop 则可继续，因为 runtime 已经处于目标值。
-
-## 当前代码入口
+## Code entry points
 
 - `packages/ui/src/v4/SessionPane.tsx`
 - `packages/ui/src/v4/configCommandBarrier.ts`

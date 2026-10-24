@@ -1,835 +1,113 @@
-# zai and BigModel Team Plan Full-Chain Symmetrization
+# zai and BigModel Team Plan Full-Chain Symmetry
 
 Updated: 2026-08-05
 
-> Historical implementation spec. The latter sections of this document describing `ModelProviderService`, Registry Snapshot, and runtime-key projection have been superseded by Provider Refactor. Current Team/Individual execution is handled via Effective Provider Config, ModelFactory, and Account Request Auth Service; dynamic credentials do not enter the Registry. This document preserves the old root causes and migration rationale, and is not the current code map.
+> Historical implementation spec. The sections describing `ModelProviderService`, Registry Snapshot and runtime-key projection are superseded by Provider Refactor: current Team/Individual execution goes through Effective Provider Config, ModelFactory and the Account Request Auth Service, and dynamic credentials do not enter the Registry. This document keeps the root causes and migration rationale; it is not the current code map.
 
 ## Background
 
-The Model Provider settings detail page's "Connection Method" supports four modes: Start Plan / Individual Coding Plan / Team Plan / API Key. Historically, Team Plan was only truly operational for the `bigmodel` family; the `zai` family's Team Plan was a **broken incomplete state**: the key generation layer had a partial set of facilities, but identification, matching, data retrieval, UI rendering, and login recovery were all hardcoded to bigmodel or blocked by `familySpec.id === "bigmodel"` guards, making zai team keys dead code.
-
-This spec describes the changes to align zai and bigmodel across the full Team Plan chain.
+The Model Provider settings detail page's "Connection Method" supports four modes: Start Plan / Individual Coding Plan / Team Plan / API Key. Team Plan used to work only for the `bigmodel` family. For `zai` it was a broken, incomplete state: key generation had partial support, but identification, matching, data retrieval, UI rendering and login recovery were hardcoded to bigmodel or blocked by `familySpec.id === "bigmodel"` guards, so zai team keys were dead code. This spec aligns zai and bigmodel across the whole Team Plan chain.
 
 ## Terminology
 
-- `ProviderFamilyDomain = ModelProviderFamilyId = "zai" | "bigmodel"`
-- Team Plan connection key: formatted as `team-plan:<codingPlanProviderId>:<productId>:<orgId>:<projectId>`, used to identify "the currently selected subscription of a specific team" within `modelProviderFamilySelectedKeys[family]`.
-- Enterprise pricing / team products: the plan list returned by `GET /subscription/enterprise/v2/pricing`, requested independently by family.
+- `ProviderFamilyDomain = ModelProviderFamilyId = "zai" | "bigmodel"`.
+- Team Plan connection key: `team-plan:<codingPlanProviderId>:<productId>:<orgId>:<projectId>`, identifying "the currently selected subscription of a specific team" inside `modelProviderFamilySelectedKeys[family]`.
+- Enterprise pricing / team products: the plan list from `GET /subscription/enterprise/v2/pricing`, requested independently per family.
 
-## Current State: 5-Stage Asymmetry Table
+## Original asymmetry (five stages)
 
-```text
-Stage                  bigmodel                          zai
-──────────────────────────────────────────────────────────────────────
-① service routing     createCodingPlanSubscriptionService
-                       └─ new BigModelCodingPlanSubscriptionProvider
-                          enterprise read methods hardcode bigmodelCodingPlan   ❌ no zai routing
-                          + bigmodel host + bigmodel token                 All calls go directly to bigmodel provider
+| Stage | bigmodel | zai (before) |
+| --- | --- | --- |
+| 1 service routing | `createCodingPlanSubscriptionService` -> `BigModelCodingPlanSubscriptionProvider`; enterprise read methods hardcode `bigmodelCodingPlan` + bigmodel host + bigmodel token | no zai routing; all calls go to the bigmodel provider |
+| 2 request type | `EnterpriseCodingPlanPricingRequest { authenticated?: boolean }` | no family field |
+| 3 data hook | `useEnterpriseCodingPlanProducts`: `getStaticTeamProducts` reads `bigmodelCodingPlan`, no family parameter | serves only bigmodel |
+| 4 connection key | `plan-identity.ts` `createBigModelTeamPlanConnectionKey`, prefix `team-plan:builtin:bigmodel-coding-plan:`; the dispatcher falls to generic concatenation for zai but parse/matches recognize only the bigmodel prefix | zai keys always fail to match |
+| 5 UI visibility | `providerFamilyConnectionVisibility.ts` (`filterStartPlanItems`, `appendSubscribedTeamPlanItems`, `buildEntitlementTeamPlanItems`) and login-recovery `resolveLatestModelProviderFamilyConnectionSelection` guarded by `familySpec.id === "bigmodel"`; the invalid-key cleanup effect (duplicated in `ModelProviderSection`) read only `selectedKeys.bigmodel` | zai always false / not cleaned |
 
-② request type        EnterpriseCodingPlanPricingRequest
-                       └─ { authenticated?: boolean }                   ❌ no family field
+zai team keys were never written to the user's `modelProviderFamilySelectedKeys.zai` (guards blocked every path), so no existing zai team keys needed migration.
 
-③ data retrieval hook  useEnterpriseCodingPlanProducts
-                       ├─ getStaticTeamProducts reads bigmodelCodingPlan    ❌ no family parameter
-                       └─ getEnterprisePricing({ authenticated })          Single instance serves only bigmodel
+## Design
 
-④ connection key       plan-identity.ts
-                       createBigModelTeamPlanConnectionKey               ⚠️ dispatcher falls to generic concatenation for zai
-                       prefix = "team-plan:builtin:bigmodel-coding-plan:"   but parse/matches only recognize the bigmodel prefix
-                                                                        zai keys always fail to match (dead code)
+### Backend contract
 
-⑤ UI visibility        providerFamilyConnectionVisibility.ts
-                       ├─ filterStartPlanItems:
-                       │  hasTeamPlanEntitlement =
-                       │    familySpec.id === "bigmodel" && ...           ❌ zai always false
-                       ├─ appendSubscribedTeamPlanItems:
-                       │  codingPlanItem = items.find(bigmodelCodingPlan) ❌ derived only from bigmodel
-                       └─ buildEntitlementTeamPlanItems:
-                          entitlements[bigmodelCodingPlan]                ❌ reads only bigmodel entitlement
+- zai uses its own domain (`resolveZaiCodingPlanHost()`, `api.z.ai`).
+- Except purchase paths, pricing / team projects / subscription queries / balance reuse bigmodel's URL structure, differing only in host, providerId and OAuth token.
+- Purchase: Stripe / PayPal are already zai-aware inside the bigmodel provider (`assertZaiPaymentProvider` + `/api/pay` prefix + zai token) and are reused as is. Alipay `createSign`/`updateSign` explicitly throws `CODING_PLAN_ZAI_OVERSEAS_PAYMENT_REQUIRED` for zai, unchanged.
+- Verified against the test environment: `https://api.z.ai/api/biz/customer/getCustomerInfo` returns a structure isomorphic to bigmodel (`organizations[].projects[]`, `projectType=2` identifies team coding projects); the zai token uses a `Bearer` header (bigmodel uses a bare token). Team availability checks (customerInfo team project verification) therefore reuse bigmodel's URL structure with host -> `buildRuntimeZaiBusinessUrl`, token -> `oauth:zai:access_token`, header -> `createZaiLoginAuthHeaders`.
 
-After login, select key  resolveLatestModelProviderFamilyConnectionSelection
-                        familySpec.id === "bigmodel" guard                  ❌ zai has subscriptions but is not recognized
+### Key decisions
 
-Invalidation cleanup    ModelProviderSection cleanup useEffect (duplicate copy)
-                        reads only selectedKeys.bigmodel                     ❌ zai not cleaned up
-```
+1. Independent zai provider class. The bigmodel provider's enterprise read methods (`getEnterprisePricing`, `getEnterpriseBalance`, `getEnterprisePendingOrders`, `checkEnterpriseOrderStatus`, `enrichEnterprisePricingTeamProjects`) hardcode `BUILTIN_MODEL_PROVIDER_IDS.bigmodelCodingPlan` + host + token, so parameterized reuse is infeasible. `ZaiCodingPlanSubscriptionProvider` inherits `BigModelCodingPlanSubscriptionProvider`, overrides host (`resolveZaiCodingPlanHost()`), providerId (`zaiCodingPlan`), token (`loadZaiAuthorization`) and header, and overrides `enrichEnterprisePricingTeamProjects` (customerInfo to the zai domain + zai token, prewarm keys with the zai providerId). Purchase paths are not overridden. `codingPlanSubscriptionService` routes by `request.family`, falling back to bigmodel when family is missing.
+2. Connection keys by family, no migration risk. `packages/shared/src/plan-identity.ts` has `TEAM_PLAN_CONNECTION_KEY_PREFIX_BY_FAMILY` and family-aware `create/parse/matches/resolveFamily` helpers (`createTeamPlanConnectionKeyByFamily`, `parseTeamPlanConnectionKeyByFamily`, `matchesTeamPlanConnectionKeyByFamily`). The bigmodel branch delegates to the existing `*BigModelTeamPlanConnectionKey` (prefix unchanged); zai uses prefix `team-plan:builtin:zai-coding-plan:` with symmetric structure/legacy rules.
+3. Existing bigmodel literals (`team-plan:builtin:bigmodel-coding-plan:`, ~15 source and ~10 test files) are untouched; new zai code uses the family-aware helpers and introduces no new literals.
+4. `EnterpriseCodingPlanPricingRequest.family?: ProviderFamilyDomain`; `OffPeakCodingPlanKind` gains `zai-team`.
 
-**Key facts (verified by reading source code directly)**:
-
-- `createTeamPlanConnectionKey` dispatcher (`packages/ui/src/lib/modelProviderFamilyConnectionSelection.ts:29-45`)
-  for zai falls to generic string concatenation producing `team-plan:builtin:zai-coding-plan:...`, the sole partially symmetric point.
-- But downstream `matchesBigModelTeamPlanConnectionKey` strictly checks the bigmodel prefix, so zai keys always fail to match.
-- `resolveLatestModelProviderFamilyConnectionSelection`'s `familySpec.id === "bigmodel"` guard means zai
-  is not recognized as a team connection even when it has subscribed team products.
-- zai team keys were never truly written to user `modelProviderFamilySelectedKeys.zai` (blocked by guards everywhere),
-  **no existing zai team keys require migration**.
-
-## Goal: 5-Stage Symmetry + Keys Generated by Family
+### Target: five-stage symmetry
 
 ```text
-Stage ① service:    Route to independent ZaiCodingPlanSubscriptionProvider by request.family
-Stage ② request:    Add family?: ProviderFamilyDomain to EnterpriseCodingPlanPricingRequest
-Stage ③ hook:       Add family parameter to useEnterpriseCodingPlanProducts
-Stage ④ key:        New family-aware create/parse/matches
-                   zai prefix = "team-plan:builtin:zai-coding-plan:"
-Stage ⑤ UI visibility: Remove bigmodel hardcode from appendSubscribed/buildEntitlement/filterStartPlan
-                     Login recovery / invalidation cleanup opened to zai
+Stage 1 service:   route to ZaiCodingPlanSubscriptionProvider by request.family
+Stage 2 request:   EnterpriseCodingPlanPricingRequest.family
+Stage 3 hook:      useEnterpriseCodingPlanProducts(family)
+Stage 4 key:       family-aware create/parse/matches; zai prefix team-plan:builtin:zai-coding-plan:
+Stage 5 UI:        remove bigmodel hardcodes from appendSubscribed/buildEntitlement/filterStartPlan;
+                   login recovery and invalidation cleanup open to zai
 ```
 
-## Backend Contract (User Confirmed)
-
-- zai uses its own domain (test `api.z.ai` / production `api.z.ai`, i.e. `resolveZaiCodingPlanHost()`).
-- Except for "purchase"-related paths, the URL structures for pricing / team projects / subscription queries / balance reuse bigmodel's URL structure,
-  differing only in host, providerId, and OAuth token.
-- Purchase paths: Stripe / PayPal are already zai-aware within the bigmodel provider (`assertZaiPaymentProvider` +
-  `/api/pay` prefix + zai token), reuse as-is. Alipay `createSign`/`updateSign` explicitly throws
-  `CODING_PLAN_ZAI_OVERSEAS_PAYMENT_REQUIRED` for zai, unchanged.
-
-## Key Technical Decisions
-
-### 1. Independent zai provider class (do not reuse bigmodel provider instance)
-
-The bigmodel provider's enterprise read methods (`getEnterprisePricing`, `getEnterpriseBalance`,
-`getEnterprisePendingOrders`, `checkEnterpriseOrderStatus`, `enrichEnterprisePricingTeamProjects`)
-hardcode `BUILTIN_MODEL_PROVIDER_IDS.bigmodelCodingPlan` as providerId + bigmodel host + bigmodel token,
-making parameterized reuse infeasible. Create a new `ZaiCodingPlanSubscriptionProvider`:
-
-- Inherit or compose `BigModelCodingPlanSubscriptionProvider`
-- Override enterprise read methods: host uses `resolveZaiCodingPlanHost()`, providerId uses `zaiCodingPlan`,
-  token uses `loadZaiAuthorization`
-- Override `enrichEnterprisePricingTeamProjects`: customerInfo goes to zai domain + zai token,
-  team project prewarm keys use zai providerId
-- Purchase paths (Stripe/PayPal) are not overridden; reused from parent class (already zai-aware)
-
-### 2. Connection keys generated by family (no migration risk)
-
-`packages/shared/src/plan-identity.ts` adds:
-
-- `createTeamPlanConnectionKeyByFamily(family, parts)`
-- `parseTeamPlanConnectionKeyByFamily(family, key)`
-- `matchesTeamPlanConnectionKeyByFamily(family, candidateKey, selectedKey)`
-
-The bigmodel branch delegates to existing `*BigModelTeamPlanConnectionKey` (backward compatible, bigmodel prefix unchanged).
-The zai branch uses the `team-plan:builtin:zai-coding-plan:` prefix, with structure / legacy compatibility rules symmetric to bigmodel.
-
-**No existing migration**: zai team keys were never written to user selectedKey; no migration exists. The bigmodel prefix is unchanged.
-
-### 3. No changes to bigmodel literals
-
-~15 source files + ~10 test files containing `team-plan:builtin:bigmodel-coding-plan:` literals remain untouched.
-New zai code uniformly uses the new family-aware helper, introducing no new literals.
-
-## Implementation Order (TDD: spec → tests → implementation)
-
-### Phase 1 — shared layer
-
-- `packages/shared/src/plan-identity.ts`: Add 3 family-aware helpers
-- `packages/shared/src/coding-plan-subscription.ts`: Add `family?: ProviderFamilyDomain` to `EnterpriseCodingPlanPricingRequest`
-- `packages/shared/test/planIdentitySnapshot.test.ts`: Add zai family test cases (create/parse/matches/legacy/wildcard)
-
-### Phase 2 — services layer
-
-- New `packages/services/src/coding-plan-subscription/zaiCodingPlanSubscriptionProvider.ts`
-- `packages/services/src/coding-plan-subscription/codingPlanSubscriptionService.ts`: Route to bigmodel / zai provider instances by `request.family` (falls to bigmodel when family is missing, backward compatible)
-- `packages/services/test/`: Add zai provider unit tests (enterprise pricing goes to zai host/token, service routing)
-
-### Phase 3 — UI layer
-
-- `useEnterpriseCodingPlanProducts.ts`: Add `family` parameter; read the corresponding family's static bucket;
-  pass family to service
-- `providerFamilyConnectionVisibility.ts`: Loop or parameterize `appendSubscribedTeamPlanItems` / `buildEntitlementTeamPlanItems`
-  / `filterStartPlanItems` by family
-- `ModelProviderSection.tsx`: Also call the hook for the zai family to get zai subscribedTeamProducts;
-  cleanup useEffect made family-aware (**merge the two currently duplicate effects**); `showPurchasedTeamPlanFallback` family-aware
-- `modelProviderFamilyConnectionSelection.ts`: Remove `familySpec.id === "bigmodel"` guard,
-  zai also follows team key parsing; matcher uses the family-aware version
-- `oauthProviderFamilySelectionRefresh.ts` / `modelProviderFamilySelectedKeyMigration.ts`:
-  Team recognition opened to zai (`resolveCodingPlanProviderIdFromSelectedKey` recognizes zai prefix;
-  `migrateBigModelTeamPlanSelectedKey` generalized to family-aware)
-
-### Phase 4 — Consumer alignment
-
-14+ `parse/matches/create` call sites (model selection groups, usage sources, telemetry, off-peak,
-composer, services layer) are each updated to family-aware. Most are already within the `createTeamPlanConnectionKey` dispatcher,
-requiring only downstream matchers/parsers to use the family-aware version. Each literal `startsWith("team-plan:...")` check point is evaluated individually.
-
-### Phase 5 — Verification
-
-- `pnpm typecheck` + `pnpm lint`
-- Unit tests: plan-identity zai, zai provider, UI visibility, selectedKey migration, login recovery
-- E2E: zai team plan connection visibility / login recovery / invalidation cleanup
-- Test environment actually calls the zai domain enterprise pricing to verify the backend contract
-
-## Implementation Log (2026-08-05)
-
-### Backend Contract Verification
-
-Test environment actually calls `https://api.z.ai/api/biz/customer/getCustomerInfo` (zai domain) successfully,
-returning a structure isomorphic to bigmodel (containing `organizations[].projects[]`, `projectType=2` identifies team coding projects).
-zai token uses a `Bearer` header (distinct from bigmodel's bare token).
-
-Conclusion: zai team plan availability checks (customerInfo team project verification) can reuse bigmodel's URL structure,
-only needing host → `buildRuntimeZaiBusinessUrl`, token → `oauth:zai:access_token`, header → `createZaiLoginAuthHeaders`.
-
-### Injection Flow Runtime Verification (dev:desktop:test)
-
-The 5-stage symmetrization is end-to-end operational for zai, with evidence from app logs + `~/.zcode-dev` credential manual calls to `api.z.ai`:
-
-1. **Routing is correct**: `getEnterprisePricing` is handled by `ZaiCodingPlanSubscriptionProvider`, prewarm logs carry
-   `family: "builtin:zai-coding-plan"`, requests land on the test environment zai biz domain `api.z.ai`
-   (`TEST_ZAI_BUSINESS_BASE_URL`, not the zcode frontend domain `zcode.z.ai`).
-2. **customerInfo is correct**: The test account has `projectType: 2` team projects under `org-2B118...` / `proj_50399...`,
-   `getCustomerInfo` succeeds with 200, and the structure is isomorphic to bigmodel.
-3. **Injection flow reuse**: Prewarm has already executed list + POST create `zcode-team-api-key` for zai:
-   ```
-   list:   { code: 200, apiKeyCount: 2, usableApiKeyCount: 0 }   ← no key with name=zcode-team-api-key
-   create: { code: 500, "You currently do not have a valid team subscription grant record,
-                      unable to create API Key" }
-   status: "missing"
-   ```
-
-**The root cause for not seeing the team plan = missing zai test account backend grant** (unrelated to the symmetrization code):
-no key with `name=zcode-team-api-key, keyType=2` exists under that org/project, and POST creation is rejected by the zai backend.
-`status: "missing"` → `apiKeyStatus: "unavailable"` → the UI filters out menu items based on `apiKeyStatus === "unavailable"`
-(`modelSelectionGroups.ts` / `providerFamilyConnectionVisibility.ts`).
-
-> Note: Although the zai backend returns keys with `name="member-{userId}", keyType=2` under that project, the client injection flow
-> **should not** relax the name validation of `isUsableBigModelTeamPlanApiKey` to recognize it — `zcode-team-api-key` is
-> zcode client's unified naming contract, and both zai and bigmodel must comply. The fix is to add a grant for the zai test account,
-> allowing POST to successfully create `zcode-team-api-key`, rather than making a family-specific judgment on the client.
-
-### Actually Modified Files
-
-**shared**
-
-- `plan-identity.ts`: `TEAM_PLAN_CONNECTION_KEY_PREFIX_BY_FAMILY` + family-aware `create/parse/matches/resolveFamily`
-- `coding-plan-subscription.ts`: `EnterpriseCodingPlanPricingRequest.family?`
-- `off-peak-types.ts`: `OffPeakCodingPlanKind` adds `zai-team`
-
-**services**
-
-- `coding-plan-subscription/`: New `zaiCodingPlanSubscriptionProvider` (inherits bigmodel, overrides host/token/header/providerId); `codingPlanSubscriptionService` routes by `request.family`
-- `model-provider/codingPlanProviderAvailability.ts`: Generalize `validateSelectedTeamPlanAvailability(family, ...)` to zai, also goes through customerInfo verification; add team project verification to `validateZaiCodingPlanPairAvailability`
-- `session/offPeakRuntimeModel.ts`: Remove `providerFamily === "bigmodel"` guard, zai team plan can use off-peak
-
-**UI lib**
-
-- `modelProviderFamilyConnectionSelection.ts`: Remove `familySpec.id === "bigmodel"` guard (latest + missing)
-- `modelProviderFamilySelectedKeyMigration.ts`: `migrateBigModelTeamPlanSelectedKey` → family-aware `migrateTeamPlanSelectedKeyForDomain`; parameter `upgradeBigModelTeamPlan` → `upgradeTeamPlan`
-- `oauthProviderFamilySelectionRefresh.ts`: `resolveCodingPlanProviderIdFromSelectedKey` recognizes zai prefix; `getEnterprisePricingProducts` fetches pricing for zai; `hasCompleteTeamPlanConnectionKey` family-aware; startup recovery protection branch opened to zai
-- `modelSelectionGroups.ts`: Remove `familyId !== "bigmodel"` guard from `buildTeamPlanConnectionOptions` (zai team options can be generated); `createTeamPlanConnectionKey`/`matchesTeamPlanConnectionKey`/`isSelectedTeamPlanKnownUnavailable`/`resolveSelectedTeamPlanConnectionKey`/`isSelectedFamilyTeamPlanConnection` all family-aware
-- `codingPlanUsageSources.ts`: Team usage sources generate keys + providerId by `product.family`; `matchesTeamPlanUsageSourceKey` family-aware
-- `codingPlanEntitlementContext.ts`: New `resolveTeamPlanEntitlementContext(family, ...)` + zai version
-- `codingPlanFunnelTelemetry.ts`: Team plan recognition family-aware
-
-**UI section**
-
-- `ModelProviderSection.tsx`: Merge the two duplicate invalid team key cleanup useEffects into a single family-aware effect; `showPurchasedTeamPlanFallback` family-aware; `isSelectedTeamPlanStillSubscribed` family-aware; independently call `useEnterpriseCodingPlanProducts` for zai and merge `subscribedTeamProducts`
-- `providerFamilyConnectionVisibility.ts`: `buildEntitlementTeamPlanItems`/`buildSelectedTeamPlanFallbackItems` loop over both families; `resolveTeamPlanProjectKey` family-aware
-- `useModelProviderNavigation.ts`: `resolveRestoredSelection` team key recovery family-aware; passing `selectedTeamPlanKey` also covers zai
-- `useCodingPlanEntitlements.ts`: zai team plan queries carry organizationId/projectId/cacheKey (symmetric to bigmodel)
-- `useEnterpriseCodingPlanProducts.ts`: Add `family` parameter (Phase 3)
-- `enterpriseCodingPlanProducts.ts`: Add `family` field (Phase 3)
-
-**UI misc**
-
-- `v4/composer/V4ComposerToolbar.tsx`: `resolveContextTeamUsageSourceFromEntitlementSnapshot` determines family by snapshot.provider.id
-- `store/offPeakTaskStore.ts`: `hasAnyOffPeakCodingPlanProvider` team recognition family-aware
-
-### Paths Explicitly Retained as bigmodel-only
-
-The following paths **do not need** zai symmetrization, as they are semantically bigmodel-only or zai has independent equivalent paths:
-
-- `codingPlanProviderAvailability.ts`'s `validateBigModelCodingPlanPairAvailability` — the function itself separates by family, zai has an independent `validateZaiCodingPlanPairAvailability`
-- `modelProviderService.ts:178`'s `resolveSelectedBigModelTeamContext` — reads `selectedKeys.bigmodel`, dedicated to the bigmodel bucket
-- `zcodeAgentService.ts:1024` — guard `providerId !== bigmodelCodingPlan` directly returns false, serves only the bigmodel provider's project member prompts
-
-### Items Pending Evaluation
-
-- ~~`WorkspaceSidebarFooterUsageSummary`'s `CurrentSidebarCodingPlanUsageSource.team` branch type hard-binds `bigmodelCodingPlan`; zai team usage summary display requires type + caller alignment (currently zai shows only individual in the sidebar)~~ ✅ Fixed (see "Consumer symmetrization gaps" section below)
-- E2E: zai team plan connection visibility / login recovery / invalidation cleanup E2E tests still needed
-
-## Fix: zai Plan Card Stuck on "Loading" (appendSubscribedTeamPlanItems bigmodel guard short-circuits)
-
-Date: 2026-08-06
-
-### Symptom
-
-After zai OAuth login succeeds + team plan provider is persisted + selectedKey is already the team key,
-the Settings page Z.AI Plan Card continues to display "Loading..." and cannot enter connection mode details.
-
-### Root Cause (confirmed via CDP React fiber + runtime state)
-
-`appendSubscribedTeamPlanItems` (`providerFamilyConnectionVisibility.ts`) has a
-**bigmodel hardcoded pre-check guard**:
-
-```typescript
-const bigmodelCodingPlanItem = items.find(
-  (item) => item.presetId === BUILTIN_MODEL_PROVIDER_IDS.bigmodelCodingPlan,
-);
-if (!bigmodelCodingPlanItem) {
-  return items; // ← short-circuits!
-}
-```
-
-When the settings page `providerFamilyDomain === "zai"`, `codingPlanItems` after
-`shouldShowCodingPlanForProviderFamilyDomain` filtering **contains only zai family** (zai-coding-plan
-
-- zai-start-plan), with no `bigmodelCodingPlan`. The guard returns directly, so the zai teamPlan item
-  is **never generated**.
-
-Downstream cascade:
-
-- `connectionModeCodingPlanItems` does not contain the teamPlan item
-- `resolveSavedPlanConnectionItem(selectableNavigationItems, teamKey)` finds no match → null
-- `pickFamilyModeNavigationItem` takes the `if (mode === "oauth" && savedItemKey)` branch →
-  savedItemKey is not a startPlan key → **returns null**
-- `selectedNavItem = null`
-- `Detail.tsx` L269 `if (!selectedNavItem) return <ModelProviderLoadingCard>` →
-  **always loading**
-
-### Fix
-
-Remove the bigmodel pre-check guard from `appendSubscribedTeamPlanItems`; the three builders (entitlement /
-fallback / product) each resolve the corresponding codingPlanItem by family using `resolveCodingPlanItemForFamily` (changed in Phase 3); skip that family if it does not exist. The fallback insertion point is also changed to find the anchor by the family of the first team item (instead of the hardcoded `bigmodelCodingPlanItem.key`).
-
-### Tests
-
-`packages/ui/test/providerFamilyConnectionVisibility.test.ts` adds 1 regression test
-"zai-only view (no bigmodel codingPlan item) still generates zai Team Plan connection items,"
-covering the scenario where selectedTeamPlanKey exists + items contain only zai. All 13 tests pass.
-
-### Runtime Verification
-
-CDP captures React fiber state before and after the fix:
-
-- Before fix: `connectionModeCodingPlanItems` has only 1 item (zai-coding-plan),
-  no teamPlan item; `selectedNavItem = null`; Detail renders `<ModelProviderLoadingCard>`.
-- After fix: After HMR, "Loading..." disappears from the page (`loadingCount: 0`), Plan Card renders normally.
-
-## Fix: zai Team Plan Not Displayed in Sidebar Badge / Chat Box Model Selection / Usage Stats (Consumer Symmetrization Gaps)
-
-Date: 2026-08-06
-
-### Symptom
-
-After zai OAuth login + team plan persisted + the Settings page Plan Card correctly displays the team plan, the following three areas still **do not display** zai team plan content:
-
-1. **Sidebar avatar badge**: Team identifier / quota not displayed
-2. **Chat box model selector**: zai team model groups do not appear
-3. **Usage stats page**: zai team source / quota not displayed
-
-### Root Cause
-
-All three areas are consumer-side gaps missed during Phase 3 zai symmetrization. The lib layer `modelSelectionGroups.ts` / `codingPlanEntitlementContext.ts` / `codingPlanUsageSources.ts` are already symmetric (can generate zai team data), but the consuming UI components still use bigmodel's single-family old-style writing, blocking zai team data from being consumed:
-
-```text
-Area                        Break point
-─────────────────────────────────────────────────────────────────────
-Sidebar badge               WorkspaceSidebarFooterUsageSummary.tsx
-  ├─ Only fetches bigmodel enterprise products (no zai hook)
-  ├─ resolveSidebarCurrentCodingPlanUsageSource only passes bigmodel selectedKey
-  ├─ teamEntitlement.enabled hard-binds providerId === bigmodelCodingPlan
-  ├─ teamEntitlement.preferredProviderId hardcodes bigmodelCodingPlan
-  ├─ profilePlanBadge.hasTeamPlanEntitlement has bigmodelFamilyAllowed pre-check guard
-  └─ providerEntitlements team branch hard-judges bigmodelCodingPlan providerId
-
-Chat box model selector     V4ComposerToolbar.tsx
-  ├─ resolveV4ContextPlanConnection only recognizes the bigmodel team-plan prefix
-  │  (zai team selectedKey falls to personalCoding judgment then returns none)
-  ├─ V4ContextPlanConnection.teamCoding type hard-binds family: "bigmodel"
-  ├─ resolveContextCodingPlanUsageSource providerId type/guard hard-binds bigmodel
-  ├─ contextCodingPlanUsageTeamSource reads entitlements[bigmodelCodingPlan]
-  ├─ enterpriseProducts hook does not pass family (defaults to fetching only bigmodel pricing)
-  └─ buildModelSelectGroups passes [] and false as the 8th/9th parameters (team groups never created)
-
-Usage stats page             SettingsPage.tsx + CodingPlanUsagePanel.tsx
-  ├─ SettingsPage only fetches bigmodel enterprise products (no zai hook)
-  ├─ checkingUsageCodingPlanTab only waits for bigmodel loading
-  ├─ CodingPlanUsagePanel.zaiEntitlement does not exclude team (team treated as personal queries)
-  ├─ CodingPlanUsagePanel.teamEntitlement hard-binds bigmodelCodingPlan providerId
-  └─ CodingPlanUsagePanel.effectiveEntitlement zai providerId always takes the personal branch
-```
-
-### Fix Strategy
-
-Uniformly align with the verified "dual-family hook + merge subscribedTeamProducts" pattern at `ModelProviderSection.tsx:486-522`:
-
-**Lib layer first** (`codingPlanUsageSources.ts`):
-
-- Relax `CurrentSidebarCodingPlanUsageSource.team.providerId` from the hard-bound `bigmodelCodingPlan` to `SidebarUsageCodingPlanProviderId`
-- Add `zaiSelectedKey` parameter to `resolveSidebarCurrentCodingPlanUsageSource`; the zai branch first checks the team-plan prefix, returning the team source when matched
-- `formatTeamUsageSourceLabel` takes the brand prefix by `product.family` (zai → `Z.ai - `, bigmodel → `BigModel - `)
-
-**Consumer 1 — Sidebar badge** (`WorkspaceSidebarFooterUsageSummary.tsx`):
-
-- Add `zaiEnterpriseProducts` hook, merging `subscribedTeamProducts` from both families
-- Pass `zaiSelectedKey` to `currentUsageSource`
-- Route `teamEntitlement` by `currentUsageSource.audience === "team"`, dynamically resolving `preferredProviderId`
-- Remove the `bigmodelFamilyAllowed` pre-check guard from `profilePlanBadge`, merge dual-family loading for `teamEntitlementLoading`
-- Route the `providerEntitlements` team branch by `audience === "team"` (compatible with zai/bigmodel)
-
-**Consumer 2 — Chat box model selector** (`V4ComposerToolbar.tsx`):
-
-- Relax `V4ContextPlanConnection.teamCoding` type to `family: ProviderFamilyDomain` + zai/bigmodel providerId
-- Add the zai team-plan prefix recognition branch to `resolveV4ContextPlanConnection`
-- Relax the providerId type/guard from `resolveContextCodingPlanUsageSource`, route by the `team-plan:` prefix
-- Resolve the corresponding entitlement snapshot from `contextCodingPlanUsageTeamSource` by `connection.providerId`
-- Pass `family: connection.family` to the `enterpriseProducts` hook
-- Add the `showPurchasedTeamPlanFallback` calculation (display when either family has a team key, aligned with `ModelProviderSection.tsx:549-558`)
-- Pass `subscribedTeamProducts` + `showPurchasedTeamPlanFallback` to `buildModelSelectGroups` (replacing the original `[]` / `false`)
-
-**Consumer 3 — Usage stats page** (`SettingsPage.tsx` + `CodingPlanUsagePanel.tsx`):
-
-- Add `usageZaiEnterpriseProducts` hook to `SettingsPage`, merge `usageSubscribedTeamProducts` from both families; merge dual-family loading for `checkingUsageCodingPlanTab`
-- Add the `!effectiveSourceIsTeamPlan` guard to `CodingPlanUsagePanel.zaiEntitlement` (team sources should not be queried as personal)
-- Route `CodingPlanUsagePanel.teamEntitlement` by `effectiveSourceIsTeamPlan`, dynamically resolve `preferredProviderId`
-- First check the team plan from `CodingPlanUsagePanel.effectiveEntitlement` (takes teamEntitlement when matched), otherwise follows the personal branch by providerId
-
-### Tests
-
-`packages/ui/test/codingPlanUsagePanel.test.ts` adds 5 zai symmetrization regression tests:
-
-- zai team products expand into usage sources with zai providerId + `Z.ai - ` brand prefix
-- `resolveSidebarCurrentCodingPlanUsageSource` resolves the zai team selectedKey into a team source
-- When the zai team key does not match the source, returns null (does not fall back to individual)
-- zai personal coding-plan key resolves to individual
-- `matchesTeamPlanUsageSourceKey` correctly matches the zai team sourceId/selectedKey
-
-All relevant tests (codingPlanUsagePanel 17 + providerFamilyConnectionVisibility / modelSelectionGroups /
-sidebarUsageCodingPlanProviderPreference / codingPlanEntitlements / enterpriseCodingPlanProducts /
-v4ComposerToolbarRecovery / modelProviderCodingPlan / modelProviderCodingPlanI18n /
-zcodeModelSelectionResolution / modelProviderFamilyConnectionSelection /
-workspaceSidebarFooterWebRemoteControlTooltip) total **319 tests, all pass**.
-
-### Multi-platform / Remote Control Impact
-
-These changes only affect the UI renderer layer (React components + libs consuming entitlement / enterprise pricing data),
-involving no stream / snapshot / queue / owner / replayable remote control semantics; both desktop continuous and mobile replayable pipelines are unaffected.
-
-## Fix: zai Team Plan Chat Box Model Selector Still Not Showing (refreshCodingPlanApiKey zai branch missed passing selectedKeys)
-
-Date: 2026-08-06
-
-### Symptom
-
-After the previous section's "consumer symmetrization gaps" fix, the sidebar badge / usage stats page now display zai team plan, but **the chat box model selector still does not display zai team models** (`modelGroups` is an empty array).
-
-### Root Cause (confirmed via CDP React fiber + config.json)
-
-The `builtin:zai-coding-plan` provider has `enabled: false`, causing `shouldIncludeModelProviderInSelection` →
-`isModelProviderEnabled(provider)` to return false → the provider is filtered by `filterModelProvidersByEntitlement` →
-`buildModelSelectGroups` cannot get `codingPlanProvider` → team model groups cannot be built.
-
-`enabled` is set by the availability check (`applyCodingPlanAvailabilityToProvider`). The zai availability check
-`validateZaiCodingPlanPairAvailability` → `validateSelectedTeamPlanAvailability("zai", context)` needs
-`context.modelProviderFamilySelectedKeys` to parse the selectedKey → query team projects → return `available`.
-
-But when `refreshCodingPlanApiKey` (`modelProviderService.ts:1465`) calls the zai branch, it **missed passing**
-`modelProviderFamilySelectedKeys` (the bigmodel branch passes it, zai does not):
-
-```typescript
-// Before fix: zai branch only passes apiClient + credentialService
-isZaiCodingPlanProviderId(providerId)
-  ? await validateZaiCodingPlanPairAvailability(providers, {
-      apiClient,
-      credentialService,                    // ← missing modelProviderFamilySelectedKeys
-    })
-  : ...
-    ? await validateBigModelCodingPlanPairAvailability(providers, {
-        apiClient,
-        credentialService,
-        modelProviderFamilySelectedKeys: ...,  // ← bigmodel passes it
-      })
-```
-
-Pipeline: `context.modelProviderFamilySelectedKeys` undefined → `resolveSelectedTeamContext` returns null →
-`validateSelectedTeamPlanAvailability` returns `{ kind: "unknown" }` → falls back to personal `subscription/list` →
-team accounts without personal subscriptions → `{ kind: "unavailable", reason: "coding_plan_not_entitled" }` → `enabled: false`.
-
-`resolveCodingPlanEntryStatus` (entry cache) has the same zai missing-pass bug.
-
-### Fix
-
-Both call sites in `modelProviderService.ts` uniformly load `loadProviderRegistryFamilySettings()` once,
-with the zai/bigmodel branches sharing `modelProviderFamilySelectedKeys`:
-
-- `refreshCodingPlanApiKey` (:1462-1482)
-- `resolveCodingPlanEntryStatus` (:1300-1313)
-
-### Tests
-
-`packages/services/test/modelProviderService.test.ts` adds regression tests
-"When a Z.ai Team Plan project is selected, refreshing the Coding Plan validates against team projects and enables the provider (aligned with BigModel),"
-covering zai team selectedKey + getCustomerInfo team project scenarios. Verified: this test fails before the fix and passes after.
-
-## Fix: After Selecting zai Team Plan, Sending Messages Still Uses Personal Coding Plan (Runtime Registry Misses Team apiKey Projection)
-
-Date: 2026-08-06
-
-### Symptom
-
-After selecting zai team plan, provider is already `enabled: true`, the chat box can select team models, but sending messages throws
-`[1113][Insufficient balance or no resource package. Please recharge.]`. Logs show the request hits the
-**personal zai coding plan quota**, not the selected team project's quota.
-
-### Root Cause
-
-`buildZCodeProviderRegistrySnapshot` (`modelProviderService.ts`) — the provider credential snapshot sent to agent runtime during message sending — only has the bigmodel team runtime key projection (`resolveSelectedBigModelTeamPlanRuntimeApiKey`),
-**no corresponding zai implementation**:
-
-```text
-buildZCodeProviderRegistrySnapshot
-  ├─ bigmodelTeamRuntimeApiKey = resolveSelectedBigModelTeamPlanRuntimeApiKey(...)  ✅
-  ├─ zaiTeamRuntimeApiKey     = (does not exist)                                          ❌
-  └─ filter.map(provider):
-       bigmodel team selected → overrides apiKey = team-ak.team-secret + enabled:true          ✅
-       zai team selected     → does not override → still personal coding plan's empty apiKey / start plan JWT ❌
-```
-
-Also in `filterResolvedProviderFamiliesForRegistry`, only bigmodel passes `forceCodingPlan: true` to
-`pickResolvedFamilyProvider`. When zai selects the team plan, the coding provider (`enabled:false`, because it's only enabled after
-team is selected) is discarded early by `pickResolvedFamilyProvider`, so even if the runtime key projection exists,
-the provider cannot be obtained → the sent payload is zai-start-plan / personal zai provider → personal Coding Plan quota is used.
-
-Pipeline: registry sends personal start plan JWT → agent runtime authenticates based on this → hits the personal account quota → `[1113]` insufficient balance.
-
-### Fix (aligned with bigmodel in three places)
-
-1. **`resolveSelectedZaiTeamContext`**: Align with `resolveSelectedBigModelTeamContext`, using family-aware
-   `parseTeamPlanConnectionKeyByFamily("zai", selectedKey)` to extract `organizationId` / `projectId`.
-2. **`resolveSelectedZaiTeamPlanRuntimeApiKey`**: Align with `resolveSelectedBigModelTeamPlanRuntimeApiKey`,
-   reads `oauth:${ZAI_PROVIDER_ID}:access_token` → validates zcode JWT is not expired → calls zai business domain
-   (`resolveZaiBusinessBaseUrl` + `createZaiLoginAuthHeaders`) `getCustomerInfo` to verify org/project
-   exists → `ensureBigModelTeamPlanProjectApiKey` + `copyBigModelTeamPlanProjectApiKeySecret`
-   (zai/bigmodel business API paths are isomorphic, differing only in host/providerId/token) → returns `${apiKey}.${secretKey}`.
-3. **Integration into `buildZCodeProviderRegistrySnapshot`**: Add `zaiTeamRuntimeApiKey` + `selectedZaiTeamContext`
-   calculation; keep zai coding provider in the filter phase; override `apiKey` + `enabled: true` in the map phase when zai team is selected.
-4. **`filterResolvedProviderFamiliesForRegistry`**: zai also passes
-   `forceCodingPlan: Boolean(resolveSelectedZaiTeamContext(familySelectedKeys))`, symmetric to bigmodel.
-
-### Tests
-
-`packages/services/test/modelProviderService.test.ts` adds regression tests
-"Z.ai Team Plan selection causes the provider registry to use the team project API Key (aligned with BigModel)," covering:
-zai team selectedKey + zai business domain `getCustomerInfo` / `api_keys` / `api_keys/copy` mock scenarios,
-asserting the registry returns `apiKey: { source: "inline", value: "team-ak-zai.team-secret-zai" }`,
-`models[0].disabledReason` is undefined, and all business request authorization headers are the raw zai token.
-
-Verified via stash: this test fails before the fix and passes after. typecheck (no new errors in changed files) + lint (0 errors) pass.
-
-### Multi-platform / Remote Control Impact
-
-This fix only affects the construction of the provider credential snapshot sent by the host process to agent runtime (`modelProviderService`),
-involving no stream / snapshot / queue / owner / replayable remote control semantics. Both desktop continuous and mobile replayable
-pipelines read providers through the same `getProviderRegistrySnapshot`, and both benefit from the zai team apiKey projection fix,
-without changing their respective delivery boundaries.
-
-## Fix: Missing Credentials for Personal Plan Usage Statistics After Team Plan Startup
-
-Date: 2026-08-17
-
-### Symptom and Root Cause
-
-When an account has both a personal plan and a Team Plan, and the App starts with the Team Plan connection method, the "Usage Statistics" still displays personal plan sources based on account entitlements. However, personal usage queries only read the current cached Coding Plan provider's `apiKey`. When the Team Plan starts, this provider may not have the personal plan key. The initial fix attempt to call a generic key refresh was still incomplete: personal key parsing continues to guess the project by "default name, otherwise the first project." When Team Plan projects come first, it mistakenly enters `projectType=2` team projects, where creating personal `zcode-api-key` is rejected. After refresh, the key remains empty, ultimately throwing
-`bigmodel_coding_plan_api_key_required` / `zai_coding_plan_api_key_required`.
-
-### Semantics
-
-Usage statistics are account-level multi-source views; credentials must be resolved independently based on the source the user clicks:
-
-```text
-Personal source (no organizationId / projectId)
-  -> When provider apiKey is missing, refresh that family's personal Coding Plan apiKey
-  -> Only resolve personal keys from projects with projectType != 2 in customerInfo
-  -> After re-reading the provider, query personal usage
-
-Team source (with organizationId / projectId)
-  -> Continue copying the Team Plan API Key for the corresponding org + project
-  -> Do not fall back to the personal provider apiKey
-```
-
-Personal credential recovery reuses `IModelProviderService.refreshCodingPlanApiKey`; do not duplicate the OAuth
-or API Key redemption logic within the usage provider. On refresh failure or if the key remains empty after refresh, preserve the original error semantics.
-
-### Boundaries Between Runtime Connection and Source Statistics
-
-Usage statistics are multi-source views; the user's clicked personal plan is not the current model runtime connection. When the Team Plan is
-the current connection, the personal Coding Plan provider is marked as `enabled=false`, but it still serves as the credential container for personal
-statistics sources. Therefore:
-
-```text
-Explicitly click personal statistics source
-  -> Exact match preferredProviderId
-  -> Allow reading the enabled=false personal provider API Key
-  -> Do not modify the current Team Plan runtime connection
-
-Runtime model selection for provider
-  -> Continue requiring enabled=true
-```
-
-Relaxation only applies to explicitly specified-source Coding Plan statistics queries and must not change the current connection choice of the agent registry.
-
-## Fix: zai Team Plan Usage Stats Page Throws "Cannot Read Usage Statistics" (bigmodelUsageQuotaProvider Has Multiple bigmodel Hardcodes)
-
-Date: 2026-08-06
-
-### Symptom
-
-After zai team plan is selected, the provider is enabled, the chat box can select team models, and sending messages goes to the team project,
-opening the "Usage Statistics" page's Coding Plan panel still throws the error: "Cannot read usage statistics. Please retry later, or check network and provider configuration." Logs show the error is `zai_coding_plan_api_key_required`.
-
-### Root Cause
-
-`packages/services/src/usage-stats/providers/bigmodelUsageQuotaProvider.ts` (quota / monitor usage query
-provider) has 4 places that only recognize `bigmodelCodingPlan`; zai coding plan team plan cannot get through:
-
-```text
-① shouldUseBigModelTeamContext(provider) — returns true only for bigmodelCodingPlan
-   zai coding plan with org/project still does not enter the team branch
-   → teamContext = null → takes the personal branch using provider.apiKey (empty in zai coding plan team mode)
-   → resolveAuthorization returns null → throws "zai_coding_plan_api_key_required"
-
-② isProviderSelectableForQuota — relaxes the "apiKey is empty" interception only for bigmodel team
-   zai team provider's apiKey is a runtime projection (not persisted to provider config), filtered out directly by here
-
-③ shouldAllowDisabledBigModelTeamProvider — also recognizes only bigmodel
-   zai team's disabled provider is not permitted → pickQuotaProvider cannot select it
-
-④ resolveBigModelTeamProjectApiKey — hardcodes BIGMODEL_OAUTH_ACCESS_TOKEN_KEY + resolveBigModelApiOrigin
-   zai team cannot read the token even if it enters this branch (the key name is wrong)
-```
-
-Pipeline: any of the above intercepts → `pickQuotaProvider` returns null or team authorization resolution returns null →
-`getCodingPlanUsageSnapshot` throws → UI displays "Cannot read usage statistics."
-
-### Fix (4 places made family-aware)
-
-1. `BigModelTeamContext` → `TeamPlanContext`, adds `family: ProviderFamilyDomain` field
-2. `shouldUseBigModelTeamContext` + `resolveBigModelTeamContext` → merged into
-   `resolveTeamPlanContextForProvider(provider, request)`: any coding plan provider
-   (`isCodingPlanModelProviderId`) combined with org/project resolves to a team context with family
-3. `resolveBigModelTeamProjectApiKey` → `resolveTeamPlanProjectApiKey`: selects the OAuth token key by `teamContext.family` (`oauth:zai:access_token` vs `oauth:bigmodel:access_token`) +
-   business domain (`resolveZaiBusinessBaseUrl` vs `resolveBigModelApiOrigin`). Header construction
-   (`createBigModelBizHeaders`, containing `bigmodel-organization`/`bigmodel-project`) zai/bigmodel
-   business interfaces have been verified as isomorphic; reused as-is
-
-> **Token key convention (critical)**: The OAuth credential key uses the **OAuth provider id**
-> (`ZAI_PROVIDER_ID = "zai"` / `BIGMODEL_PROVIDER_ID = "bigmodel"`), not the
-> **builtin provider id** (`BUILTIN_MODEL_PROVIDER_IDS.zai = "builtin:zai"`).
-> The initial fix mistakenly used `BUILTIN_MODEL_PROVIDER_IDS.zai` to construct the key, resulting in `oauth:builtin:zai:access_token`,
-> while the actual credential stores `oauth:zai:access_token` (aligned with `loadZaiAuthorization`),
-> causing the token to never load → `zai_coding_plan_api_key_required`. Fixed to use `ZAI_PROVIDER_ID`.
-
-4. `shouldAllowDisabledBigModelTeamProvider` → `shouldAllowDisabledTeamProvider`:
-   any coding plan provider combined with team org/project permits disabled providers.
-5. `isProviderSelectableForQuota`: when team org/project exists, relax the apiKey-empty interception for any coding plan provider (the exact `preferredProviderId` match is handled by `pickQuotaProvider` as fallback).
-
-### Tests
-
-`packages/services/test/usageStatsService.test.ts` adds 2 zai symmetrization regression tests:
-
-- "Z.ai Team Plan usage copies the team project API Key when the provider apiKey is empty (aligned with BigModel)"
-- "Z.ai Team Plan usage allows logged-in but disabled Coding Plan providers (aligned with BigModel)"
-
-Covers: zai coding plan provider + zai OAuth token (`oauth:zai:access_token`, aligned with
-`loadZaiAuthorization`) + zai business domain (`api.z.ai`) + team project api_keys list/copy +
-monitor quota/model-usage/tool-usage. Verified via stash: both tests fail before the fix
-(token key mismatch causes `zai_coding_plan_api_key_required`), pass after.
-All 12 usageStatsService tests pass.
-
-typecheck (0 errors in the services package) + lint (0 errors) pass.
-
-### Multi-platform / Remote Control Impact
-
-This fix only affects the usage stats queries of the host process (`usageStatsService` → monitor API), involving no
-stream / snapshot / queue / owner / replayable remote control semantics. Both desktop continuous and mobile replayable
-pipelines read usage through the same `usageStatsService`, and both benefit from the zai team usage query fix.
-
-## Fix: zai Team Plan Context Usage Does Not Display Quota Next to Input Box (V4ComposerToolbar teamEntitlement hardcodes bigmodelCodingPlan)
-
-Date: 2026-08-06
-
-### Symptom
-
-After zai team plan is selected, the "context usage / remaining plan quota" area to the left of the input box does not display the zai team plan
-quota (falls empty or displays as blank).
-
-### Root Cause
-
-The `preferredProviderId` passed to the `teamEntitlement` hook in `packages/ui/src/v4/composer/V4ComposerToolbar.tsx` (`V4ComposerModelControls`) is hardcoded to `bigmodelCodingPlan`:
-
-```typescript
-const teamEntitlement = useUsageEntitlement({
-  ...
-  preferredProviderId: BUILTIN_MODEL_PROVIDER_IDS.bigmodelCodingPlan, // ← hardcoded
-  requirePreferredProvider: true,
-  organizationId: contextCodingPlanUsageTeamSource?.organizationId,
-  projectId: contextCodingPlanUsageTeamSource?.projectId,
-});
-```
-
-When the zai team plan is selected, `contextCodingPlanUsageTeamSource.providerId` correctly produces
-`zaiCodingPlan` (handled by family in `resolveContextTeamUsageSourceFromEntitlementSnapshot` /
-`resolveV4ContextPlanConnection`), but this code does not follow it and still passes `bigmodelCodingPlan`.
-
-Pipeline: `preferredProviderId=bigmodelCodingPlan` + zai team org/project →
-the server-side `pickQuotaProvider` matches exactly by `provider.id === preferredProviderId`
-(`requirePreferredProvider: true`) → zai coding plan provider does not match bigmodelCodingPlan →
-returns null → `resolveAuthorization` returns null → `teamEntitlement.snapshot` is empty →
-the context usage area next to the input box does not display zai team quotas.
-
-### Fix
-
-Change `preferredProviderId` to follow `contextCodingPlanUsageTeamSource.providerId`:
-
-```typescript
-preferredProviderId:
-  contextCodingPlanUsageTeamSource?.providerId ??
-  BUILTIN_MODEL_PROVIDER_IDS.bigmodelCodingPlan,
-```
-
-`contextCodingPlanUsageTeamSource.providerId` is already correctly produced in
-`resolveContextTeamUsageSourceFromEntitlementSnapshot` (reverse-looks up the coding plan provider id by family)
-and `resolveV4ContextPlanConnection` (the zai team branch produces `zaiCodingPlan`), so it can be reused directly.
-
-### Multi-platform / Remote Control Impact
-
-This fix only affects the UI renderer layer (the entitlement query parameters for the context usage next to the input box), involving no
-stream / snapshot / queue / owner / replayable remote control semantics; both desktop and mobile pipelines are unaffected.
-
-## Risks
-
-| Risk                                                                                    | Mitigation                                                                                                                                                                                                                                                                                                               |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| ~~zai backend enterprise interface behavior unknown~~                                   | ✅ Verified: test environment `api.z.ai` getCustomerInfo succeeds, structure is isomorphic to bigmodel; injection flow (list + POST create `zcode-team-api-key`) is already reused for zai, visible in prewarm logs. Test account POST creation rejected (missing grant) is a backend-side issue, no code changes needed |
-| ~~ModelProviderSection cleanup useEffect is duplicated (anomaly)~~                      | ✅ Merged into a single family-aware effect                                                                                                                                                                                                                                                                              |
-| ~~`WorkspaceSidebarFooterUsageSummary` explicitly excludes `providerFamily !== "zai"`~~ | ✅ Fixed: all three consumers (sidebar badge / chat box model selection / usage stats page) are now fully symmetric (see "Consumer symmetrization gaps" above)                                                                                                                                                           |
-| Literal prefix check points missed                                                      | grep all literals `team-plan:` individually evaluated; core paths covered                                                                                                                                                                                                                                                |
-
-## Fix: zai Coding Plan Provider Not Persisted (Endpoint Fallback Symmetrization)
-
-Date: 2026-08-05
-
-### Symptom
-
-After zai OAuth login succeeds, the Settings page Plan Card still displays "Disconnected." Reading `config.json` directly shows
-`builtin:zai-coding-plan` provider does not exist, while `builtin:bigmodel-coding-plan` exists normally.
-
-### Root Cause
-
-The endpoint resolution in `loadSinglePresetProvider` (`packages/services/src/model-provider/repo/oauthPresetProviderRepo.ts`)
-is **asymmetric**:
-
-```text
-oauthProvider === BIGMODEL_PROVIDER_ID
-  ? buildBigModelCodingPlanAnthropicEndpoints(matchedProviders)  // ✅ has fallback domain built-in
-  : collectSchemaEndpoints(matchedProviders)                     // ❌ no fallback
-```
-
-- bigmodel: `buildBigModelCodingPlanAnthropicEndpoints` → `resolveBigModelCodingPlanAnthropicBaseUrl`
-  hardcodes the fallback `https://open.bigmodel.cn/api/anthropic`; endpoints can be constructed even when the remote does not send the baseUrl.
-- zai: `collectSchemaEndpoints` directly `continue`s when `baseUrl` is empty (`oauthPresetProviderRepoShared.ts`),
-  returning empty endpoints → `getModelProviderEndpointKinds(endpoints).length === 0` →
-  `loadSinglePresetProvider` returns null → `builtin:zai-coding-plan` is never persisted.
-
-The UI determines `hasCodingPlanProvider=false` in `resolveCodingPlanEntitlementState` → displays "Disconnected."
-
-### Fix (fully symmetric to bigmodel)
-
-Add the zai trio to `packages/services/src/model-provider/repo/oauthPresetProviderRepoShared.ts`:
-
-1. `resolveZaiCodingPlanAnthropicBaseUrl(env)` → `${resolveZaiBusinessBaseUrl(env)}/api/anthropic`
-   (test `api.z.ai` / production `api.z.ai`, consistent with the runtime domain of the builtin:zai API Key provider)
-2. `normalizeZaiCodingPlanAnthropicBaseUrlForEnv(baseUrl, env)`: prefer remote baseUrl; fall back to the fallback when missing or invalid; add a layer of `new URL()` validity check (`normalizeModelProviderBaseUrlForKind` does not intercept plain text)
-3. `buildZaiCodingPlanAnthropicEndpoints(providers)`: prefer remote anthropic baseUrl; otherwise the fallback; paths use `/v1/messages`
-
-Change the endpoint branch in `packages/services/src/model-provider/repo/oauthPresetProviderRepo.ts`:
-
-```typescript
-const endpoints =
-  oauthProvider === BIGMODEL_PROVIDER_ID
-    ? buildBigModelCodingPlanAnthropicEndpoints(matchedProviders)
-    : buildZaiCodingPlanAnthropicEndpoints(matchedProviders); // switched from collectSchemaEndpoints
-```
-
-(`oauthProvider` has only two values in this function: `BIGMODEL_PROVIDER_ID` / `ZAI_PROVIDER_ID`, both are coding plan providers.)
-
-### Tests
-
-`packages/services/test/oauthPresetProviderRepoSharedZai.test.ts` (all 7 tests pass) covers:
-remote baseUrl priority, fallback when missing baseUrl, fallback for invalid URLs, environment resolution, and symmetry to bigmodel.
-
-### Multi-platform / Remote Control Impact
-
-This fix only affects the provider persistence layer (local config.json writes), involving no stream / snapshot / queue /
-owner / replayable remote control semantics; both desktop continuous and mobile replayable pipelines are unaffected.
-
-## Quota Limit Type Equivalence (CREDIT_LIMIT ↔ TOKENS_LIMIT)
-
-### Symptom
-
-After zai Team Plan is selected, the "5 hours / Weekly" quota card on the Usage Statistics page is blank; the chat box context usage
-and Usage Remaining overlays also do not display quotas. The monitor API `getCodingPlanUsageSnapshot` returns OK,
-but the UI cannot match the limit.
-
-### Root Cause (confirmed via runtime logs)
-
-The zai business backend's `/api/monitor/usage/quota/limit?type=2` returns limit `type` as
-`CREDIT_LIMIT`, while the bigmodel business backend returns `TOKENS_LIMIT`. Their `unit/number` semantics are completely identical:
-
-| Card            | Query Condition    | bigmodel returns | zai returns                       |
-| --------------- | ------------------ | ---------------- | --------------------------------- |
-| 5 hours         | `unit=3, number=5` | `TOKENS_LIMIT`   | `CREDIT_LIMIT`                    |
-| Weekly          | `unit=6`           | `TOKENS_LIMIT`   | `CREDIT_LIMIT`                    |
-| Tools (monthly) | `unit=5, number=1` | `TIME_LIMIT`     | (zai test account did not return) |
-
-Four consumers (`CodingPlanUsagePanel` / `CodingPlanContextUsage` /
-`CodingPlanUsageRemainingPanel` / `StatusCards`) originally hard-bound `TOKENS_LIMIT`/`TIME_LIMIT` exact matching;
-all miss when zai returns `CREDIT_LIMIT` → quota cards are not rendered.
-
-### Fix
-
-Add the equivalence type set and classification judgment to `packages/ui/src/lib/codingPlanQuotaPresentation.ts`:
-
-```typescript
-const TOKEN_LIMIT_TYPES = new Set(["TOKENS_LIMIT", "CREDIT_LIMIT"]);
-const TOOL_LIMIT_TYPES = new Set(["TIME_LIMIT"]);
-
-export function isSameLimitCategory(limitType, queryType): boolean {
-  if (limitType === queryType) return true;
-  if (TOKEN_LIMIT_TYPES.has(queryType)) return TOKEN_LIMIT_TYPES.has(limitType);
-  if (TOOL_LIMIT_TYPES.has(queryType)) return TOOL_LIMIT_TYPES.has(limitType);
-  return false;
-}
-```
-
-- `findCodingPlanQuotaLimit` now uses `isSameLimitCategory`; `unit/number` still exact-matches.
-  Covers `CodingPlanUsagePanel` / `CodingPlanContextUsage` / `CodingPlanUsageRemainingPanel`.
-- The file-scoped `findUsageLimit` in `StatusCards.tsx` also uses the exported `isSameLimitCategory`,
-  aligned with the former (originally relying on `isDisplayableUsageLimit` as fallback; now exact-match cards also hit).
-
-### Design Notes
-
-zai's backend uses `CREDIT_LIMIT` as the current online behavior (both api.z.ai and api.z.ai do this).
-Per the product expectation of "it should be the same as bigmodel," `CREDIT_LIMIT` is treated as a legacy name to be aligned by the zai backend;
-after consumers match equivalently, if the zai backend uniformly switches to `TOKENS_LIMIT` in the future, the UI does not need further changes.
-The `unit/number` semantics are a stable contract; type enumeration differences are absorbed through the equivalence set.
-
-### Tests
-
-`packages/ui/test/codingPlanUsagePanel.test.ts` adds 2 tests:
-
-- zai `CREDIT_LIMIT` hits equivalently when queried as `TOKENS_LIMIT` (5h / weekly); missing items return null
-- bigmodel `TOKENS_LIMIT`/`TIME_LIMIT` original behavior is unchanged; `CREDIT_LIMIT` does not falsely match `TIME_LIMIT` queries
-
-### Multi-platform / Remote Control Impact
-
-Pure UI layer limit matching logic; no stream / snapshot / queue / owner / replayable semantics involved.
-
-## Related Documentation
-
-- `docs/coding-plan-enterprise.md` — Enterprise coding plan purchase closure (bigmodel current state)
-- `docs/input-model-provider-team-plan-linkage.md` — Input box model/Provider/Team Plan pipeline
-- `docs/coding-plan-purchase-panel-flow.md` — Purchase panel flow
-- `docs/model-provider-coding-plan-availability.md` — Coding Plan availability calculation
+### Implemented changes by layer
+
+- shared: `plan-identity.ts`, `coding-plan-subscription.ts`, `off-peak-types.ts` as above.
+- services:
+  - `coding-plan-subscription/` (zai provider + family routing).
+  - `model-provider/codingPlanProviderAvailability.ts`: `validateSelectedTeamPlanAvailability(family, ...)` generalized to zai (customerInfo verification); `validateZaiCodingPlanPairAvailability` adds team project verification.
+  - `session/offPeakRuntimeModel.ts`: removed the `providerFamily === "bigmodel"` guard, so zai team plans can use off-peak.
+- UI lib:
+  - `modelProviderFamilyConnectionSelection.ts`: removed the `familySpec.id === "bigmodel"` guard (latest + missing).
+  - `modelProviderFamilySelectedKeyMigration.ts`: `migrateBigModelTeamPlanSelectedKey` -> family-aware `migrateTeamPlanSelectedKeyForDomain` (`upgradeBigModelTeamPlan` -> `upgradeTeamPlan`).
+  - `oauthProviderFamilySelectionRefresh.ts`: `resolveCodingPlanProviderIdFromSelectedKey` recognizes the zai prefix; `getEnterprisePricingProducts` fetches zai pricing; `hasCompleteTeamPlanConnectionKey` family-aware; startup recovery protection opened to zai.
+  - `modelSelectionGroups.ts`: removed `familyId !== "bigmodel"` from `buildTeamPlanConnectionOptions`; `createTeamPlanConnectionKey` / `matchesTeamPlanConnectionKey` / `isSelectedTeamPlanKnownUnavailable` / `resolveSelectedTeamPlanConnectionKey` / `isSelectedFamilyTeamPlanConnection` family-aware.
+  - `codingPlanUsageSources.ts`: team sources generate keys + providerId by `product.family`; `matchesTeamPlanUsageSourceKey` family-aware. `codingPlanEntitlementContext.ts`: `resolveTeamPlanEntitlementContext(family, ...)`. `codingPlanFunnelTelemetry.ts`: team recognition family-aware.
+- UI section: `ModelProviderSection.tsx` (the two duplicate invalid-key cleanup effects merged into one family-aware effect; `showPurchasedTeamPlanFallback`, `isSelectedTeamPlanStillSubscribed` family-aware; independent `useEnterpriseCodingPlanProducts` for zai merged into `subscribedTeamProducts`), `providerFamilyConnectionVisibility.ts` (entitlement/fallback builders loop both families, `resolveTeamPlanProjectKey` family-aware), `useModelProviderNavigation.ts` (`resolveRestoredSelection` team recovery and `selectedTeamPlanKey` cover zai), `useCodingPlanEntitlements.ts` (zai team queries carry organizationId/projectId/cacheKey), `useEnterpriseCodingPlanProducts.ts` and `enterpriseCodingPlanProducts.ts` (`family`).
+- UI misc: `v4/composer/V4ComposerToolbar.tsx` (`resolveContextTeamUsageSourceFromEntitlementSnapshot` determines family by `snapshot.provider.id`), `store/offPeakTaskStore.ts` (`hasAnyOffPeakCodingPlanProvider` team recognition family-aware).
+
+Retained as bigmodel-only (zai has an independent equivalent or the path is semantically bigmodel-only): `validateBigModelCodingPlanPairAvailability` (zai has `validateZaiCodingPlanPairAvailability`), `resolveSelectedBigModelTeamContext` in `modelProviderService.ts:178` (reads `selectedKeys.bigmodel`), and the `providerId !== bigmodelCodingPlan` guard in `zcodeAgentService.ts:1024` (project member prompts, bigmodel only).
+
+## Defects found after the first implementation (root causes and rules)
+
+| Defect | Root cause | Resulting rule |
+| --- | --- | --- |
+| zai plan card stuck on "Loading" | `appendSubscribedTeamPlanItems` had a bigmodel pre-check (`items.find(bigmodelCodingPlan)`); with `providerFamilyDomain === "zai"` the items contain only zai, so the guard returned early, no team item was generated, `resolveSavedPlanConnectionItem` found nothing, `pickFamilyModeNavigationItem` returned null, `selectedNavItem = null`, and `Detail.tsx` rendered `ModelProviderLoadingCard` | The three builders (entitlement/fallback/product) resolve the codingPlanItem per family with `resolveCodingPlanItemForFamily` and skip a family without one; the fallback insertion anchor comes from the first team item's family. Regression test: "zai-only view (no bigmodel codingPlan item) still generates zai Team Plan connection items" |
+| Sidebar badge / chat model selector / usage stats showed no zai team | Consumer components still used the bigmodel single-family form while the lib layer was already symmetric (sidebar `WorkspaceSidebarFooterUsageSummary` fetched only bigmodel products and bound `teamEntitlement` to `bigmodelCodingPlan`; `V4ComposerToolbar` `resolveV4ContextPlanConnection` recognized only the bigmodel prefix, `teamCoding` was typed `family: "bigmodel"`, `buildModelSelectGroups` got `[]`/`false`; `SettingsPage` / `CodingPlanUsagePanel` fetched only bigmodel products and treated team as personal) | All consumers follow the dual-family hook + merged `subscribedTeamProducts` pattern: `CurrentSidebarCodingPlanUsageSource.team.providerId` relaxed to `SidebarUsageCodingPlanProviderId`; `resolveSidebarCurrentCodingPlanUsageSource` takes `zaiSelectedKey`; `formatTeamUsageSourceLabel` prefixes by family (`Z.ai - ` / `BigModel - `); team entitlement routed by `audience === "team"` with dynamic `preferredProviderId`; `CodingPlanUsagePanel.zaiEntitlement` excludes team sources |
+| Chat model selector empty for zai team (`modelGroups = []`) | `builtin:zai-coding-plan` had `enabled: false`: `refreshCodingPlanApiKey` (`modelProviderService.ts:1465`) and `resolveCodingPlanEntryStatus` (:1300) did not pass `modelProviderFamilySelectedKeys` in the zai branch, so `validateSelectedTeamPlanAvailability` returned `unknown`, fell back to personal `subscription/list`, and a team-only account got `coding_plan_not_entitled` | Both call sites load `loadProviderRegistryFamilySettings()` once and both families share `modelProviderFamilySelectedKeys` |
+| Sending after selecting zai team hit the personal quota (`[1113]` insufficient balance) | `buildZCodeProviderRegistrySnapshot` had only the bigmodel team runtime key projection; `filterResolvedProviderFamiliesForRegistry` passed `forceCodingPlan` only for bigmodel, so the disabled zai coding provider was discarded | Added `resolveSelectedZaiTeamContext`, `resolveSelectedZaiTeamPlanRuntimeApiKey` (OAuth token -> JWT not expired -> zai `getCustomerInfo` verifies org/project -> `ensureBigModelTeamPlanProjectApiKey` + `copyBigModelTeamPlanProjectApiKeySecret` -> `${apiKey}.${secretKey}`), the registry override of `apiKey` + `enabled: true`, and `forceCodingPlan` for zai (superseded by Provider Refactor) |
+| Personal usage stats credential missing after Team Plan startup | Personal usage queries read only the cached provider `apiKey`; personal key parsing guessed the project as "default name, else first project" and could enter `projectType=2` team projects where creating personal `zcode-api-key` is rejected, ending in `bigmodel_coding_plan_api_key_required` / `zai_coding_plan_api_key_required` | Credentials are resolved per clicked source. Personal source (no organizationId/projectId): when apiKey is missing refresh that family's personal key via `IModelProviderService.refreshCodingPlanApiKey` (do not duplicate OAuth/key redemption), resolving only from projects with `projectType != 2`, then re-read the provider. Team source: keep copying the Team Plan API key for that org + project and never fall back to the personal apiKey. On refresh failure or still-empty key keep the original error. A source statistics query for an explicitly specified source (exact `preferredProviderId`) may read the `enabled=false` personal provider's key without changing the current Team Plan runtime connection; runtime model selection still requires `enabled=true` |
+| zai team usage page error "Cannot read usage statistics" (`zai_coding_plan_api_key_required`) | `bigmodelUsageQuotaProvider.ts` had four bigmodel-only spots: `shouldUseBigModelTeamContext`, `isProviderSelectableForQuota` (apiKey-empty interception), `shouldAllowDisabledBigModelTeamProvider`, `resolveBigModelTeamProjectApiKey` (hardcoded `BIGMODEL_OAUTH_ACCESS_TOKEN_KEY` + `resolveBigModelApiOrigin`) | `BigModelTeamContext` -> `TeamPlanContext` with `family`; `resolveTeamPlanContextForProvider`; `resolveTeamPlanProjectApiKey` picks the OAuth token key and business domain by family; `shouldAllowDisabledTeamProvider`; `isProviderSelectableForQuota` relaxes the apiKey-empty interception when team org/project exists |
+| Context usage next to the input box empty for zai team | `V4ComposerToolbar` `useUsageEntitlement` passed `preferredProviderId: bigmodelCodingPlan` hardcoded; `pickQuotaProvider` matches exactly with `requirePreferredProvider: true` | `preferredProviderId: contextCodingPlanUsageTeamSource?.providerId ?? BUILTIN_MODEL_PROVIDER_IDS.bigmodelCodingPlan` |
+| zai coding plan provider never persisted ("Disconnected" after OAuth login) | `loadSinglePresetProvider` (`oauthPresetProviderRepo.ts`) used `buildBigModelCodingPlanAnthropicEndpoints` (fallback domain) for bigmodel but `collectSchemaEndpoints` (no fallback, skips empty `baseUrl`) for zai, returning empty endpoints so the provider was never written | `oauthPresetProviderRepoShared.ts` adds `resolveZaiCodingPlanAnthropicBaseUrl(env)` = `${resolveZaiBusinessBaseUrl(env)}/api/anthropic`, `normalizeZaiCodingPlanAnthropicBaseUrlForEnv` (prefer remote baseUrl, fallback when missing or invalid, with a `new URL()` validity check) and `buildZaiCodingPlanAnthropicEndpoints` (paths `/v1/messages`); the endpoint branch uses it for zai |
+| zai quota cards blank | zai `/api/monitor/usage/quota/limit?type=2` returns limit type `CREDIT_LIMIT` where bigmodel returns `TOKENS_LIMIT` (same `unit/number`: 5 hours `unit=3, number=5`; weekly `unit=6`; tools monthly `unit=5, number=1` is `TIME_LIMIT`); four consumers matched `TOKENS_LIMIT`/`TIME_LIMIT` exactly | `packages/ui/src/lib/codingPlanQuotaPresentation.ts` `isSameLimitCategory` with `TOKEN_LIMIT_TYPES = {TOKENS_LIMIT, CREDIT_LIMIT}` and `TOOL_LIMIT_TYPES = {TIME_LIMIT}`; `findCodingPlanQuotaLimit` and `StatusCards.tsx` `findUsageLimit` use it; `unit/number` stays an exact-match stable contract. `CREDIT_LIMIT` is treated as a legacy name; if the zai backend later switches to `TOKENS_LIMIT` the UI needs no change |
+
+Token key convention (critical): the OAuth credential key uses the OAuth provider id (`ZAI_PROVIDER_ID = "zai"` / `BIGMODEL_PROVIDER_ID = "bigmodel"`), not the builtin provider id (`BUILTIN_MODEL_PROVIDER_IDS.zai = "builtin:zai"`). Constructing the key with the builtin id yields `oauth:builtin:zai:access_token`, while the real credential is `oauth:zai:access_token` (aligned with `loadZaiAuthorization`), so the token never loads.
+
+## Verification
+
+- Unit tests cover plan-identity zai (create/parse/matches/legacy/wildcard), zai provider and service routing, UI visibility (including the zai-only view), selectedKey migration, login recovery, `codingPlanUsagePanel` zai sources and limit equivalence (zai `CREDIT_LIMIT` matches `TOKENS_LIMIT` queries; bigmodel behavior unchanged; `CREDIT_LIMIT` does not falsely match `TIME_LIMIT`), `modelProviderService` (zai team availability validation, registry team API key projection), `usageStatsService` (zai team usage copies the team project API key; allows disabled Coding Plan providers), and `oauthPresetProviderRepoSharedZai` (remote baseUrl priority, missing/invalid baseUrl fallback, environment resolution).
+- Runtime verification in the test environment: `getEnterprisePricing` is handled by `ZaiCodingPlanSubscriptionProvider` against the zai biz domain `api.z.ai` (`TEST_ZAI_BUSINESS_BASE_URL`, not `zcode.z.ai`); the test account has `projectType: 2` team projects. Prewarm ran list + POST create `zcode-team-api-key`: list returned `apiKeyCount: 2, usableApiKeyCount: 0`, create returned `code: 500` ("You currently do not have a valid team subscription grant record, unable to create API Key") and status `missing` -> `apiKeyStatus: "unavailable"` -> the UI filters menu items on `apiKeyStatus === "unavailable"` (`modelSelectionGroups.ts` / `providerFamilyConnectionVisibility.ts`). The remaining "team plan not visible" for that account is a missing backend grant on the zai test account, unrelated to this code.
+- The client must not relax `isUsableBigModelTeamPlanApiKey`'s name validation to accept the `member-{userId}` keys (keyType=2) the zai backend returns: `zcode-team-api-key` is the zcode client's unified naming contract for both families. Fix by granting the zai test account, not by a family-specific client judgment.
+
+## Impact on multi-platform / remote control
+
+All changes are UI renderer, host-process provider/usage/credential logic or local config persistence. None involves stream / snapshot / queue / owner / replayable semantics; desktop continuous and mobile replayable both read through the same services and are unaffected.
+
+## Risks and open items
+
+| Item | Status |
+| --- | --- |
+| Literal `team-plan:` prefix check points missed | All literals found by grep are evaluated individually; core paths covered |
+| E2E for zai team plan connection visibility / login recovery / invalidation cleanup | Still missing |
+| Other consumers of `parse/matches/create` (model selection groups, usage sources, telemetry, off-peak, composer, services; 14+ call sites) | Updated to family-aware where needed; each literal `startsWith("team-plan:...")` evaluated individually |
+
+## Related documentation
+
+- `docs/coding-plan-enterprise.md`: enterprise coding plan purchase closure (bigmodel current state)
+- `docs/input-model-provider-team-plan-linkage.md`: input box model/Provider/Team Plan pipeline
+- `docs/coding-plan-purchase-panel-flow.md`: purchase panel flow
+- `docs/model-provider-coding-plan-availability.md`: Coding Plan availability calculation

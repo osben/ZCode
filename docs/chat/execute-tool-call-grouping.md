@@ -1,42 +1,33 @@
-# Execute 工具分组
+# Execute Tool Grouping
 
-## 发布状态
+## Release state
 
-功能当前用户设置默认开启。Settings 中的“分组终端命令”持久化为应用级
-`toolGroupingTerminalEnabled`；缺失时由 `ENABLE_TERMINAL_TOOL_CALL_GROUPING=true` 兜底。关闭时非只读
-Shell 保持原始独立工具行，分类、command、output/error、协议和 session 持久化均不改变。
+The feature is on by default as a user setting. The Settings toggle "分组终端命令" (group terminal commands) persists as the app-level `toolGroupingTerminalEnabled`; when missing, `ENABLE_TERMINAL_TOOL_CALL_GROUPING=true` is the fallback. When off, non-read-only Shell calls keep their original standalone tool rows; classification, command, output/error, protocol and session persistence are unchanged.
 
-## Feature Summary
+## Summary
 
-| Field                 | Value                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------ |
-| Change                | 聚合连续非只读 Shell，并让 `Execute` 父级使用可见阶段边界和滚动 command 摘要                           |
-| User-visible surfaces | 桌面 `desktop-continuous`、普通 Web、手机 `/remote` 的 `web-remote-replayable` conversation work items |
-| Existing behavior     | 只读 Shell 进入 `Explore`；其他连续 Shell 聚合为 `Execute`                                             |
-| State owner           | CLI v4 projection 持有原始 `ToolCallRow`；renderer 派生分组、摘要与父级状态                            |
-| Out of scope          | 不修改协议、工具执行、permission、session 持久化、snapshot、relay/main 或 runtime                      |
+| Field | Value |
+| --- | --- |
+| Behavior | Aggregate consecutive non-read-only Shell calls; the `Execute` parent uses visible stage boundaries and a scrolling command summary |
+| Surfaces | Desktop `desktop-continuous`, plain Web, mobile `/remote` `web-remote-replayable` conversation work items |
+| Existing behavior | Read-only Shell goes into `Explore`; other consecutive Shell calls aggregate into `Execute` |
+| State owner | The CLI v4 projection owns the raw `ToolCallRow`; the renderer derives grouping, summary and parent status |
+| Out of scope | Protocol, tool execution, permission, session persistence, snapshot, relay/main and runtime are unchanged |
 
-## Clarification Log
+Scope of the first version: only consecutive Shell calls not absorbed by Explore; Write/Edit/ApplyPatch are excluded. Parent shows overall progress and counts; each child keeps its single-command summary. The parent is a UI container, and a failed child does not make the parent `failed`.
 
-| Round | Question         | User answer                                | Boundary fixed                                                                                    | Follow-up needed |
-| ----- | ---------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------- | ---------------- |
-| 1     | 第一版范围       | 先修改第一版                               | 只聚合未被 Explore 吸收的连续 Shell；不包含 Write/Edit/ApplyPatch                                 | no               |
-| 1     | 父子 summary     | 父级负责整体进度和统计，子级保留单命令摘要 | 运行中父级显示最新命令；结束后显示命令数及失败/停止计数                                           | no               |
-| 1     | 父级终态         | 参考 Explore                               | 父级是 UI 容器；子项失败不把父级标成 failed                                                       | no               |
-| 2     | 父级运行态与摘要 | 使用 Explore 的阶段边界判断，同时需要滚动  | 位于 running segment 可见尾部时保持 in_progress；运行中滚动最新 command，阶段结束立即收敛最终统计 | no               |
+## Boundary decisions
 
-## Boundary Decisions
+| Boundary | Decision | Includes | Excludes |
+| --- | --- | --- | --- |
+| Classification | `identity.family === "shell"` and `isExploreToolCall(...) === false` | Non-read-only Bash/Shell/execute commands, or commands missing the read-only allowlist | Read/Search/Explore, Write/Edit, Agent, Todo, blocking interaction |
+| Continuity | Only consecutive Execute rows in the user's currently visible row sequence | Hidden non-first reasoning may be crossed | Visible reasoning, Explore, text and other tools break the group |
+| Status | Parent is `in_progress` while the Execute sits at the visible tail of a running work segment; after a visible boundary or segment terminal state it is completed/stopped | The model gap after all children complete | Child lifecycle no longer decides parent running; error does not bubble to failed |
+| Summary | While running, vertically scroll the full `Running <command>`; styled like Explore, action word `text-foreground-subtle`, command `text-foreground-subtlest`; a fixed `·` separates `Execute` and the summary; stats appear immediately when the stage ends | `Execute · Running <command>`, `Execute · N 个命令` | stdout/stderr and concrete errors stay in children; the old command is not replayed in the terminal state |
+| Permission | The permission dialog keeps rendering a single Execute | Conversation work item aggregation | Approval identity is not aggregated |
+| Group title | The parent group uses the cross-platform category name `Terminal` / `终端` | PowerShell, cmd.exe, Git Bash, WSL, Unix shell | Does not mean the Windows Terminal app; single-Execute child tool copy is unchanged |
 
-| Boundary   | Decision                                                                                                                                                                                              | Includes                                            | Excludes / prunes                                                  | Source                        |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------- |
-| 分类       | `identity.family === "shell"` 且 `isExploreToolCall(...) === false`                                                                                                                                   | Bash/Shell/execute 的非只读或未命中只读白名单命令   | Read/Search/Explore、Write/Edit、Agent、Todo、blocking interaction | user + current code           |
-| 连续性     | 只聚合用户当前可见 row 序列中的连续 Execute                                                                                                                                                           | 隐藏的非首条 reasoning 可跨越                       | 可见 reasoning、Explore、文本及其他工具均截断                      | existing Explore contract     |
-| 状态       | Execute 位于 running work segment 的可见尾部时父级 `in_progress`；出现可见边界或 segment 终态后 completed/stopped                                                                                     | children 全部完成后的模型间隔                       | 子项生命周期不再决定父级 running；error 不冒泡 failed              | user + Explore stage contract |
-| 摘要       | 运行阶段纵向滚动完整的 `Running <command>`；样式与 Explore 对齐，动作词使用 `text-foreground-subtle`，command 使用 `text-foreground-subtlest`；`Execute` 与摘要之间固定显示 `·`；阶段结束立即显示统计 | `Execute · Running <command>`、`Execute · N 个命令` | stdout/stderr 和具体错误只留在子项；不在终态补播旧 command         | user                          |
-| Permission | permission dialog 继续渲染单条 Execute                                                                                                                                                                | conversation work item 聚合                         | 不聚合审批身份                                                     | architecture invariant        |
-| 分组标题   | 父分组使用跨平台类别名 `Terminal` / `终端`                                                                                                                                                            | PowerShell、cmd.exe、Git Bash、WSL、Unix shell      | 不指代 Windows Terminal 应用；单条 Execute 子工具文案不变          | user                          |
-
-## State And Event Flow
+## State and event flow
 
 ```text
 ToolCallRow(shell)
@@ -60,55 +51,51 @@ Execute parent status
         `----------------------------------------------> completed
 ```
 
-`Execute` 父节点不是协议工具调用，也不对应一次工具执行。它的 key 和合成 tool id 锚定首个子
-`ToolCallRow`，流式追加后只更新 children，避免组件重建和展开状态丢失。
+The `Execute` parent is not a protocol tool call and does not correspond to one tool execution. Its key and synthetic tool id anchor to the first child `ToolCallRow`; streaming appends only update children, avoiding component rebuilds and lost expansion state.
 
-## Summary Contract
+## Summary contract
 
 ### Parent
 
-| State                  | Primary summary                                                                  | Status |
-| ---------------------- | -------------------------------------------------------------------------------- | ------ |
-| running                | `Running <command>`；children 均终态时回退最新 command，并对完整动作摘要纵向滚动 | 执行中 |
-| completed, all success | `N 个命令`                                                                       | 已完成 |
-| completed, failures    | `N 个命令，M 个失败`                                                             | 已完成 |
-| stopped                | `N 个命令，K 个已停止`，同时保留失败计数                                         | 已停止 |
+| State | Primary summary | Status |
+| --- | --- | --- |
+| running | `Running <command>`; when all children are terminal, fall back to the latest command; the full action summary scrolls vertically | in progress |
+| completed, all success | `N 个命令` | completed |
+| completed, failures | `N 个命令，M 个失败` | completed |
+| stopped | `N 个命令，K 个已停止`, failure count kept | stopped |
 
-父级不展示 stdout、stderr 或具体错误。失败详情继续由对应子工具卡展示，避免父子重复失败状态。
+The parent shows no stdout, stderr or concrete error; failure detail stays on the child tool card so failure state is not duplicated.
 
 ### Child
 
-子项继续使用 `ExecuteToolCallBlock`：收起态显示执行动作和 command；展开态显示 `$ command`。
-父组进行中展开时，父 summary 只显示 `Terminal · N commands`，当前命令由下方子 tool summary 表达。
-以及结果或错误；无输出的终态显示既有“无输出”文案。
+Children keep using `ExecuteToolCallBlock`: collapsed shows the action and command; expanded shows `$ command` and the result or error; a terminal state with no output shows the existing "no output" copy. When the group is expanded while in progress, the parent summary shows only `Terminal · N commands`; the current command is expressed by the child tool summary below.
 
-## Pruning Decisions
+## Pruning decisions
 
-| Decision ID | Pruned combinations                   | Guard/invariant                                              | Representative coverage      |
-| ----------- | ------------------------------------- | ------------------------------------------------------------ | ---------------------------- |
-| ETG-P01     | Bash/execute/shell 工具名全排列       | `resolveToolCallIdentity` 已统一为 Shell family              | family 代表单测              |
-| ETG-P02     | Write/Edit/ApplyPatch 与 Execute 混合 | file-write 进入独立 Changes 组，仍保留原始文件摘要和撤销语义 | 边界单测                     |
-| ETG-P03     | theme/locale/OS/workspace 类型全排列  | 共享 renderer + i18n；不读平台或 workspace 状态              | zh/en 文案与 focused UI test |
-| ETG-P04     | continuous/replayable 物理网络排列    | 分组只消费最终 UI rows，不修改 transport                     | renderer unit + 既有 STIP03  |
-| ETG-P05     | permission/approval 组合              | PermissionDialog 不经过 conversation 分组构建器              | 既有 permission tests        |
+| ID | Pruned combinations | Guard/invariant | Representative coverage |
+| --- | --- | --- | --- |
+| ETG-P01 | All Bash/execute/shell tool-name permutations | `resolveToolCallIdentity` already unifies them into the Shell family | family representative unit test |
+| ETG-P02 | Write/Edit/ApplyPatch mixed with Execute | file-write goes into its own Changes group and keeps file summary and undo semantics | boundary unit test |
+| ETG-P03 | theme/locale/OS/workspace-type permutations | shared renderer + i18n; no platform or workspace state read | zh/en copy and focused UI test |
+| ETG-P04 | continuous/replayable physical network permutations | grouping consumes only final UI rows, no transport change | renderer unit + existing STIP03 |
+| ETG-P05 | permission/approval combinations | PermissionDialog does not pass through the conversation grouping builder | existing permission tests |
 
-## Accepted Cases
+## Accepted cases
 
-| Case ID | Setup                                             | Action                              | Assertions                                                                 | Evidence layers           | E2E status   |
-| ------- | ------------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------- | ------------------------- | ------------ |
-| ETG01   | 单条非只读 Shell                                  | 构建 work items                     | 保持原始 Shell 工具行，不创建单 child 父组                                 | UI unit                   | covered-unit |
-| ETG02   | 连续至少两个非只读 Shell                          | 流式追加 rows                       | 第二项到达后生成父组，保持同一父 key/tool id，children 顺序不变            | UI unit                   | covered-unit |
-| ETG03   | Execute 两侧出现 Explore/文本/可见 reasoning      | 构建 work items                     | 分成多个组，不跨可见边界                                                   | UI unit                   | covered-unit |
-| ETG04   | Execute 两侧只有被隐藏的非首 reasoning            | 关闭 reasoning                      | 合并；开启 reasoning 时拆分                                                | UI unit                   | covered-unit |
-| ETG05   | Shell command 尚未到达                            | 先构建，再补 readonly/other command | 首帧隐藏；之后只出现 Explore 或 Execute 中的一种                           | UI unit                   | covered-unit |
-| ETG06   | Execute 是 running segment 的真实可见尾部         | children 全部完成或继续追加 command | 父级保持 in_progress；新增 command 摘要纵向滚动                            | UI + renderer unit        | covered-unit |
-| ETG07   | Execute 展开                                      | 渲染父组                            | 子项继续显示 command、output/error                                         | renderer unit             | covered-unit |
-| ETG08   | desktop/replayable 恢复得到相同最终 rows          | 构建 work items                     | 分组结果一致，不新增恢复状态                                               | shared renderer invariant | partial      |
-| ETG09   | Execute 后出现可见非 Execute row，或 segment 终态 | 构建 work items                     | 父级 completed/stopped；child running 仍只在明细展示；终态立即显示聚合统计 | UI + renderer unit        | covered-unit |
+| ID | Setup | Action | Assertions | Evidence | E2E status |
+| --- | --- | --- | --- | --- | --- |
+| ETG01 | Single non-read-only Shell | build work items | Keeps the original Shell tool row; no single-child parent group | UI unit | covered-unit |
+| ETG02 | At least two consecutive non-read-only Shell calls | stream-append rows | Parent group appears when the second arrives, same parent key/tool id, children order unchanged | UI unit | covered-unit |
+| ETG03 | Explore/text/visible reasoning on either side of Execute | build work items | Split into several groups; never crosses a visible boundary | UI unit | covered-unit |
+| ETG04 | Only hidden non-first reasoning on either side of Execute | turn reasoning off | Merged; split when reasoning is on | UI unit | covered-unit |
+| ETG05 | Shell command not yet arrived | build, then add readonly/other command | Hidden in first frame; afterwards only Explore or Execute appears, one of them | UI unit | covered-unit |
+| ETG06 | Execute is the real visible tail of a running segment | all children complete or more commands append | Parent stays in_progress; new command summary scrolls vertically | UI + renderer unit | covered-unit |
+| ETG07 | Execute expanded | render parent group | Children keep showing command, output/error | renderer unit | covered-unit |
+| ETG08 | desktop/replayable recovery yields the same final rows | build work items | Same grouping result, no new recovery state | shared renderer invariant | partial |
+| ETG09 | Visible non-Execute row after Execute, or segment terminal | build work items | Parent completed/stopped; a running child still shows only in detail; aggregate stats appear immediately in the terminal state | UI + renderer unit | covered-unit |
 
-## E2E Handoff Notes
+## E2E handoff notes
 
-- 第一版核心为 deterministic row-to-render-item 和 renderer summary，使用 focused unit tests。
-- 若晋升正式 E2E，controlled-stream fixture 应依次发送两条非只读 Bash，并在中间插入可见/隐藏
-  reasoning，断言父 group identity、summary 和展开后的两条命令。
-- 手机 `/remote` 不用 desktop fixture 冒充 replayable 证明；沿用 STIP03 的最终 row 恢复合同。
+- The first version's core is a deterministic row-to-render-item mapping and renderer summary, covered by focused unit tests.
+- If promoted to formal E2E, the controlled-stream fixture sends two non-read-only Bash calls with visible/hidden reasoning in between and asserts the parent group identity, the summary and the two commands after expanding.
+- Mobile `/remote` must not be proven with the desktop fixture; reuse the STIP03 final-row recovery contract.

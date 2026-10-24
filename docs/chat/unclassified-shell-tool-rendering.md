@@ -1,30 +1,26 @@
-# 未分类 Shell 工具渲染
+# Unclassified Shell Tool Rendering
 
-## Feature/change summary
+A v4 conversation Shell tool must not first show as an ordinary Bash/Shell row before its command arrives and then merge into "Explore" (flicker).
 
-| Field                 | Value                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------ |
-| Change                | 修复 v4 conversation 中 Shell 工具在 command 到达前先显示普通 Bash/Shell、随后又并入“探索”的闪烁       |
-| User-visible surfaces | 桌面 `desktop-continuous`、普通 Web、手机 `/remote` 的 `web-remote-replayable` conversation work items |
-| State owner           | CLI v4 projection 持有 `ToolCallRow`；renderer 只派生当前 row 是否可见以及是否属于 Explore             |
-| Out of scope          | 不修改 tool input 协议、delta 节奏、工具执行时机、permission、relay/main、snapshot schema              |
+## Summary
 
-## Clarification log
+| Field | Value |
+| --- | --- |
+| Behavior | Defer rendering of a Shell row until its command is classifiable; then show it only as Explore or Execute |
+| Surfaces | Desktop `desktop-continuous`, plain Web, mobile `/remote` `web-remote-replayable` conversation work items |
+| State owner | The CLI v4 projection owns `ToolCallRow`; the renderer only derives whether the current row is visible and whether it belongs to Explore |
+| Out of scope | Tool input protocol, delta pacing, tool execution timing, permission, relay/main, snapshot schema |
 
-| Round | Question                                         | User answer     | Boundary fixed                                                | Follow-up needed |
-| ----- | ------------------------------------------------ | --------------- | ------------------------------------------------------------- | ---------------- |
-| 1     | 只处理 Bash 还是所有 Shell family                | 所有 Shell 类型 | 按 `resolveToolCallIdentity(...).family === "shell"` 统一处理 | no               |
-| 1     | 最终失败或被拒绝且始终没有 command 是否显示      | 显示            | 错误/拒绝结果优先于待分类隐藏规则                             | no               |
-| 1     | desktop continuous 与 mobile replayable 是否一致 | 一样            | 两种 delivery profile 使用同一 renderer 可见性合同            | no               |
+Decisions: all Shell types are handled uniformly by `resolveToolCallIdentity(...).family === "shell"`; a row that finally fails or is denied and never has a command is shown (error/denied result wins over the pending-classification hiding rule); desktop continuous and mobile replayable use the same renderer visibility contract.
 
-## Domain scope and concept map
+## Domain scope
 
-| Domain/concept                | Owner                                    | Contract                                                                                  |
-| ----------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Conversation/session behavior | CLI ProductProjection                    | `tool_input_start` 可以先产生只有工具名、没有 command 的 `ToolCallRow`                    |
-| Rendering/performance         | renderer `buildAssistantWorkRenderItems` | 未分类 Shell 是临时输入态，不是普通 Shell 的最终产品分类                                  |
-| Permission/tool               | shared tool identity                     | 所有 Shell 工具通过 family 收敛；Read/Write 等非 Shell 工具不受影响                       |
-| Mobile replayable             | delivery profile + renderer              | replayable 可以过滤 live `inputText` delta，但最终 upsert/snapshot 到达后使用相同分类规则 |
+| Concept | Owner | Contract |
+| --- | --- | --- |
+| Conversation/session behavior | CLI ProductProjection | `tool_input_start` may first produce a `ToolCallRow` with only a tool name and no command |
+| Rendering/performance | renderer `buildAssistantWorkRenderItems` | An unclassified Shell is a temporary input state, not the final product classification of an ordinary Shell |
+| Permission/tool | shared tool identity | All Shell tools converge through the family; non-Shell tools (Read/Write, ...) are unaffected |
+| Mobile replayable | delivery profile + renderer | replayable may filter live `inputText` deltas, but once the final upsert/snapshot arrives the same classification rule applies |
 
 ```text
 tool_input_start { toolName: Shell, command: absent }
@@ -39,34 +35,34 @@ tool reaches error/denied without command
   -> visible error row
 ```
 
-## Dimensions and candidate decisions
+## Accepted candidates
 
-| Candidate ID | Row state                                  | Shell input          | Expected effect                                         | Status   |
-| ------------ | ------------------------------------------ | -------------------- | ------------------------------------------------------- | -------- |
-| USR01        | `inputStreaming` / `running`               | command absent       | 不产生可见 work item，等待后续 row 更新                 | accepted |
-| USR02        | nonterminal                                | readonly command     | 立即按现有规则并入 Explore group                        | accepted |
-| USR03        | nonterminal                                | non-readonly command | 立即进入 Execute group                                  | accepted |
-| USR04        | `error` / denied result                    | command absent       | 显示错误 Shell row，不吞错误正文                        | accepted |
-| USR05        | desktop continuous / web remote replayable | 任一上述终态         | 相同 row 输入得到相同可见结果；不改变各自 delivery 语义 | accepted |
+| ID | Row state | Shell input | Expected effect |
+| --- | --- | --- | --- |
+| USR01 | `inputStreaming` / `running` | command absent | No visible work item; wait for later row updates |
+| USR02 | nonterminal | readonly command | Immediately merges into the Explore group by existing rules |
+| USR03 | nonterminal | non-readonly command | Immediately enters the Execute group |
+| USR04 | `error` / denied result | command absent | Show the error Shell row; do not swallow the error body |
+| USR05 | desktop continuous / web remote replayable | any terminal state above | Same row input gives the same visible result; each delivery's semantics unchanged |
 
 ## Pruning decisions
 
-| Decision ID | Pruned combinations                    | Guard/invariant                                                                    | Representative coverage                      |
-| ----------- | -------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------- |
-| USR-P01     | Bash/execute/shell 等工具名全排列      | `resolveToolCallIdentity` 已将它们收敛为 Shell family                              | family 代表用例 + identity 既有测试          |
-| USR-P02     | theme/locale/OS/workspace 类型         | guard 是无文案、无布局、无平台依赖的纯 row 派生                                    | focused renderer unit test                   |
-| USR-P03     | continuous/replayable 物理网络全排列   | 本变更不修改 transport；最终 row 的 renderer 合同相同                              | renderer unit + 既有 STIP03 profile 收口测试 |
-| USR-P04     | permission UI 行为                     | permission/elicitation 有独立 blocker surface；本变更只决定 conversation work item | 既有 permission tests                        |
+| ID | Pruned combinations | Guard/invariant | Representative coverage |
+| --- | --- | --- | --- |
+| USR-P01 | Bash/execute/shell tool-name permutations | `resolveToolCallIdentity` converges them to the Shell family | family representative + existing identity tests |
+| USR-P02 | theme/locale/OS/workspace type | The guard is a pure row derivation with no copy, layout or platform dependency | focused renderer unit test |
+| USR-P03 | continuous/replayable physical network permutations | No transport change; the final-row renderer contract is identical | renderer unit + existing STIP03 profile test |
+| USR-P04 | permission UI behavior | permission/elicitation have a separate blocker surface; this only decides the conversation work item | existing permission tests |
 
 ## Accepted cases and evidence
 
-| Case ID | Setup                                                                       | Action                                                       | Assertions                                                                      | Evidence layers                          | E2E status              |
-| ------- | --------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------- |
-| STIP04  | v4 running turn 收到 Shell `tool_input_start`，input/inputText 尚无 command | renderer 构建 work items；随后分别补 readonly 与普通 command | 首帧无 Bash/Shell；readonly 更新后只出现 Explore；普通 command 更新后只出现 Execute group | UI row derivation + runtime log ordering | partial（focused unit） |
-| STIP05  | Shell row 无 command 且状态为 error/denied                                  | renderer 构建 work items                                     | 错误 row 可见，错误正文继续由 tool error surface 展示                           | UI adapter + tool error rendering        | partial（focused unit） |
+| ID | Setup | Action | Assertions | Evidence | E2E status |
+| --- | --- | --- | --- | --- | --- |
+| STIP04 | A v4 running turn receives Shell `tool_input_start`; input/inputText has no command yet | renderer builds work items; then a readonly and a non-readonly command are supplied separately | No Bash/Shell in the first frame; after the readonly update only Explore appears; after a non-readonly command only an Execute group appears | UI row derivation + runtime log ordering | partial (focused unit) |
+| STIP05 | Shell row without command in error/denied state | renderer builds work items | The error row is visible; the error body is still shown by the tool error surface | UI adapter + tool error rendering | partial (focused unit) |
 
 ## E2E handoff
 
-- 本次不新增 conversation E2E；核心 guard 是纯 deterministic row-to-render-item 函数，先由 focused unit tests 回归。
-- 若后续升级正式 E2E，使用 `controlled-stream` fixture 分开发送 `tool_input_start` 与 command delta，并同时断言 Bash 文案在首帧不存在、分类后只出现一个稳定 work item。
-- 手机真实 gap/snapshot 恢复仍沿用 STIP03，不用 desktop continuous fixture 冒充物理 replayable 证明。
+- No conversation E2E yet; the core guard is a pure deterministic row-to-render-item function covered by focused unit tests.
+- If promoted to formal E2E, use a `controlled-stream` fixture that sends `tool_input_start` and the command delta separately, asserting the Bash copy is absent in the first frame and exactly one stable work item appears after classification.
+- Real mobile gap/snapshot recovery stays with STIP03; the desktop continuous fixture must not stand in for physical replayable proof.

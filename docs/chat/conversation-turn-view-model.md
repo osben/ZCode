@@ -1,20 +1,12 @@
 # Conversation Turn View Model
 
-## 背景
+The chat area must not squash real messages, user commands, runtime-only inputs and timeline lifecycle into one `ChatMessage[]` fact stream. The UI first normalizes by turn transaction, then generates render rows.
 
-聊天区不能再把真实消息、用户命令、runtime-only 输入和 timeline lifecycle 都压进同一条
-`ChatMessage[]` 事实流。UI 需要先按 turn 事务归一化，再生成渲染行。
+## Domain model
 
-## 领域模型
+A `Conversation` consists of `Turn`s. A turn is one conversation transaction accepted by the main session and entered into the CLI/runtime. It is not a single user message, an assistant message or the Nth group in a UI array.
 
-`Conversation` 由多个 `Turn` 组成。一个 turn 是一次被主 session 接受并进入 CLI/runtime 的
-conversation transaction，而不是单独的 user message、assistant message，也不是 UI 数组里的第 N
-组消息。
-
-turn 的权威身份是 CLI/runtime 产生的 `turnId`。UI 展示用的 `turnOrdinal` / 历史兼容字段
-`turnIndex` 只能表达“第几轮”，不能作为新协议里的 mutation target、timeline anchor 或恢复事实源。
-fork、edit、rewind、file summary、timeline placement 等需要稳定身份的能力，应优先使用
-`messageId`、`turnId`、`anchorTurnId` 或 `anchorMessageId`。
+The authoritative turn identity is the CLI/runtime `turnId`. The display-only `turnOrdinal` / legacy `turnIndex` expresses "which round" and must not be a mutation target, timeline anchor or recovery source in the new protocol. Fork, edit, rewind, file summary and timeline placement should prefer `messageId`, `turnId`, `anchorTurnId` or `anchorMessageId`.
 
 ```ts
 interface ConversationView {
@@ -35,8 +27,8 @@ interface TurnView {
     | "manual_compact";
   status: "running" | "settling" | "completed" | "interrupted" | "failed";
   visibleInputs: ConversationInput[];
-  // 同一 product turn 内，原始输入与每条 accepted steer 分别开启一个视觉工作段。
-  // 这不是 turn 边界；command target、fork/retry 仍锚定 product turn 的最终正文。
+  // Within one product turn, the original input and each accepted steer each open a visual work segment.
+  // This is not a turn boundary; command target, fork/retry still anchor to the product turn's final body.
   workSegments: TurnWorkSegmentView[];
   modelOnlyInputs: RuntimeInput[];
   workLog: WorkLogItem[];
@@ -54,10 +46,7 @@ interface TurnWorkSegmentView {
 }
 ```
 
-`status=settling` 表示主 assistant 输出已经完成，但这个 turn 的 completion-blocking post work 还没有
-收口，例如 goal verifier、goal continuation 前置判断或其它 foreground active work。此时 UI 不应再显示
-assistant 正在输出，但 session 仍可能 `sessionEnded=false`，停止按钮仍由 session control projection
-决定是否可用。
+`status=settling` means the main assistant output is complete but the turn's completion-blocking post work has not settled (goal verifier, pre-continuation goal judgment, other foreground active work). The UI no longer shows the assistant as outputting, but the session may still have `sessionEnded=false`, and the stop button is still enabled by the session control projection.
 
 ```text
 turn t1
@@ -72,11 +61,9 @@ session control:
   stopTargetKind = goalVerifier
 ```
 
-## Row Projection
+## Row projection
 
-UI 渲染 conversation 时应消费 `rows[]`，而不是直接对 flat `ChatMessage[]` 做 role + 数组位置分组。
-`rows[]` 是产品渲染行索引：它可以引用 transcript message、timeline event、workLog item 或 lineage event，
-但它本身不是 provider message。
+The UI renders `rows[]`, not flat `ChatMessage[]` grouped by role + array position. `rows[]` is the product render-row index: it can reference a transcript message, timeline event, workLog item or lineage event, but is not a provider message.
 
 ```ts
 type ConversationRowPlacement =
@@ -107,8 +94,6 @@ interface ConversationRenderRow {
 }
 ```
 
-示例：
-
 ```text
 ConversationView
 |-- turns
@@ -124,27 +109,23 @@ ConversationView
     `-- row:t2:assistant:assistant-msg-9    inside_turn_assistant
 ```
 
-新数据不允许 UI 用“最近一条 assistant”“最近一条 user”“`Math.floor(index / 2)`”决定 row 归属。旧数据缺少
-anchor 时可以由兼容层生成 fallback row，但 fallback 必须标记为 compatibility recovery，不能作为新协议事实。
+For new data the UI must not use "latest assistant", "latest user" or `Math.floor(index / 2)` to decide row ownership. For old data without an anchor the compatibility layer may generate a fallback row, marked as compatibility recovery and never a new-protocol fact.
 
-## 用户输入规则
+## User input rules
 
-所有用户显式提交的命令都是 conversation event。命令的状态副作用不能替代用户输入本身。
+Every explicitly submitted user command is a conversation event; the command's state side effect cannot replace the user input itself.
 
-- 首次 `/goal <objective>`：落一条 visible user query，并设置 goal。
-- replace `/goal <objective>`：同样落一条 visible user query，并更新 goal。
-- queued `/goal <objective>`：作为 queue item 保留；真正消费时落 visible user query 并更新 goal。
-- goal continuation reminder：属于 runtime `modelOnlyInputs`，不得渲染成用户气泡。
-- turn steering accepted：属于当前 turn 的 `visibleInputs`，显示为当前 turn 的用户补充。
-- 每条 turn steering accepted 同时开启新的 visual work segment；前一 segment 在注入边界收口，但两段仍共享同一 `turnId` / `productTurnId`。
-- turn steering rejected 或 fallback queue：属于未来 turn 的 pending input，不提前写进当前 turn。
-- background result 回到 main session：属于新的 `origin=background_result` turn；provider 侧可表现为
-  `role=user`，但产品层必须保留 `humanAuthored=false` 和 background source，不开放普通用户 edit 语义。
+- First `/goal <objective>`: persist a visible user query and set the goal.
+- Replace `/goal <objective>`: persist a visible user query and update the goal.
+- Queued `/goal <objective>`: stays a queue item; when consumed, persist a visible user query and update the goal.
+- Goal continuation reminder: runtime `modelOnlyInputs`, never rendered as a user bubble.
+- Turn steering accepted: belongs to the current turn's `visibleInputs`, shown as a user addition to the current turn. Each accepted steer also opens a new visual work segment; the previous segment closes at the injection boundary, but both share the same `turnId` / `productTurnId`.
+- Turn steering rejected or fallback queue: pending input of a future turn, not written into the current turn early.
+- Background result returning to the main session: a new `origin=background_result` turn. The provider side may show `role=user`, but the product layer keeps `humanAuthored=false` and the background source, and opens no ordinary user edit semantics.
 
-## Timeline 分类
+## Timeline classification
 
-timeline 不是业务数据的父节点，也不应伪装成普通 assistant message。它是 render row 的定位信息和
-产品 lifecycle event。每条 timeline row 必须声明稳定身份、折叠策略、placement 和 anchor。
+A timeline is not the parent of business data and must not pose as an ordinary assistant message. It is positioning information for a render row plus a product lifecycle event. Each timeline row declares a stable identity, fold policy, placement and anchor.
 
 ```ts
 type TimelineFoldPolicy = "worklog" | "never";
@@ -162,66 +143,61 @@ interface TimelineRenderRow {
 }
 ```
 
-| Timeline | placement | foldPolicy | 说明 |
+| Timeline | placement | foldPolicy | Note |
 | --- | --- | --- | --- |
-| context compact | `inside_turn_worklog` | `worklog` 或 running 时可见 | assistant worklog，不切 turn |
-| goal verification | `after_turn` | `never` | 被验证 turn 的 post-turn 裁判事件 |
-| session fork | `session_lineage` | `never` | conversation lineage event，不属于 assistant worklog |
-| model change | `session_lineage` 或 `after_turn` | `never` | 取决于是否锚定某个 turn；新数据必须显式 placement |
+| context compact | `inside_turn_worklog` | `worklog`, or visible while running | assistant worklog, does not split the turn |
+| goal verification | `after_turn` | `never` | post-turn judge event of the verified turn |
+| session fork | `session_lineage` | `never` | conversation lineage event, not assistant worklog |
+| model change | `session_lineage` or `after_turn` | `never` | depends on whether a turn is anchored; new data must set placement explicitly |
 
 ### Compact
 
-上下文压缩是 assistant turn 的中间过程，属于 `workLog`：
+Context compaction is an intermediate step of an assistant turn and belongs to `workLog`:
 
-- auto compact completed 可以被“已工作 xxx”折叠。
-- running / retrying compact 需要保持可见，避免用户看不到当前状态。
-- compact row 的稳定身份优先使用 `operationId`，本地 optimistic 与 agent lifecycle 用
-  `inputId` / `operationId` 合并。
+- A completed auto compact may be folded by "worked for xxx".
+- A running / retrying compact stays visible so the user sees the current state.
+- Stable identity prefers `operationId`; local optimistic and agent lifecycle merge by `inputId` / `operationId`.
 
-### Goal Verify
+### Goal verify
 
-goal verify 是 assistant 输出后的裁判事件，属于 `postTurnEvents`：
+A judge event after assistant output, in `postTurnEvents`:
 
-- 必须在被验证的 assistant 输出之后出现。
-- 不得进入“已工作 xxx”折叠。
-- UI row key 必须是 `goal:${targetId}:iteration:${goalIteration}`。
-- `verificationId` 是 verifier attempt id，只能用于 attempts 明细，不能作为 row key。
-- 同一 `targetId + goalIteration` 的 started / completed / failed / cancelled 必须更新同一条 row。
-- verifier 明确返回 `passed: false` 时显示未通过；verifier JSON 解析失败属于裁判链路故障，
-  默认 fail-open 为 `passed: true`，但 reason 必须保留格式错误原因，便于排查。
+- Must appear after the verified assistant output and never enters the "worked for xxx" fold.
+- UI row key is `goal:${targetId}:iteration:${goalIteration}`. `verificationId` is a verifier attempt id for attempt details only, never a row key.
+- started / completed / failed / cancelled of the same `targetId + goalIteration` update the same row.
+- Verifier returning `passed: false` shows "not passed". Verifier JSON parse failure is a judge-chain fault: fail-open to `passed: true` by default, but the reason must keep the format-error cause for troubleshooting.
 
 ### Fork
 
-fork 是 conversation lineage event，不属于 assistant worklog：
+A conversation lineage event, not assistant worklog:
 
-- 不得被“已工作 xxx”折叠。
-- 有 `targetMessageId` 时可跳回父会话源消息。
-- 只有 `parentSessionId` 的旧数据只能恢复不可跳转 fallback row。
+- Never folded by "worked for xxx".
+- With `targetMessageId`, can jump back to the parent session's source message.
+- Old data with only `parentSessionId` recovers a non-navigable fallback row.
 
-## 历史恢复
+## History recovery
 
-新数据应提供强 anchor：
+New data provides strong anchors:
 
-- message: `turnId` 或可由 projection 明确归属到某个 `turnId`
-- timeline: `timelineEventId`、`anchorTurnId`，可选 `anchorMessageId`
-- goal verify: `anchorTurnId`，可选 `anchorAssistantMessageId`
-- fork: `targetMessageId`，可选当前会话 `anchorTurnId`
+- message: `turnId`, or unambiguously attributable by projection to a `turnId`
+- timeline: `timelineEventId`, `anchorTurnId`, optional `anchorMessageId`
+- goal verify: `anchorTurnId`, optional `anchorAssistantMessageId`
+- fork: `targetMessageId`, optional current-session `anchorTurnId`
 
-旧数据没有 anchor 时，UI 可以使用时间和最近 assistant 作为 fallback，但 fallback 只能用于兼容老历史，
-不能作为新数据的事实来源。
+Old data without an anchor may use time and the nearest assistant as fallback, only for legacy history and never as a source of fact for new data.
 
-## 强不变量
+## Invariants
 
-- `turnId` 是 CLI/runtime 权威身份；`turnIndex` / `ordinal` 只能用于展示。
-- 新协议里的 history target 优先使用 `messageId` 或 `turnId`；只有兼容旧数据时才 fallback 到 `turnIndex`。
-- timeline placement 必须来自 projection；UI 禁止用数组下标或最近消息推断 timeline 位置。
-- 一条 row 只能有一个明确 placement；同一个 timeline identity 的 started/completed/failed/cancelled 更新必须落到同一 row。
-- background work 不阻塞当前 turn completion；background result 回 main 后开启新的 foreground turn。
+- `turnId` is the CLI/runtime authoritative identity; `turnIndex` / `ordinal` are display only.
+- History targets in the new protocol prefer `messageId` or `turnId`; fall back to `turnIndex` only for old data.
+- Timeline placement comes from projection; the UI must not infer it from array index or recent message.
+- A row has exactly one placement; started/completed/failed/cancelled updates of one timeline identity land on the same row.
+- Background work does not block the current turn's completion; a background result returning to main opens a new foreground turn.
 
-## 多端边界
+## Multi-end boundary
 
-本模型不改变 task realtime 所有权：
+This model does not change task realtime ownership:
 
-- 桌面端仍走 `desktop-continuous` direct realtime。
-- 手机 Web 远控仍走 `web-remote-replayable` snapshot / gap 恢复。
-- relay 和 main process 不拥有 session、stream、queue、snapshot 或 timeline 业务状态。
+- Desktop keeps `desktop-continuous` direct realtime.
+- Mobile Web remote keeps `web-remote-replayable` snapshot / gap recovery.
+- The relay and main process own no session, stream, queue, snapshot or timeline business state.

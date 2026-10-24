@@ -1,5 +1,5 @@
-# GLM API Error Quota Banner（V4 待迁移）
+# GLM API Error Quota Banner (V4, pending migration)
 
-旧链路对 GLM quota/API 错误提供模型设置、升级或恢复 CTA。当前 V4 composer 使用通用 `ChatErrorBanner`，尚未接回这些专用 CTA 和抑制规则。
+The old path offered model-settings, upgrade or recovery CTAs for GLM quota/API errors. The current V4 composer uses the generic `ChatErrorBanner` and has not yet reconnected those dedicated CTAs and suppression rules.
 
-因此当前行为是展示 projection 中的通用错误并允许本地 dismiss；不能承诺本文标题中的专用 quota 体验。后续实现应使用结构化 fault code 和 provider/entitlement 状态，不依赖错误文案匹配。
+Current behavior: show the generic error from the projection and allow local dismiss. The dedicated quota experience named in the title is not promised. A future implementation must use structured fault codes and provider/entitlement state, not error-text matching.

@@ -1,6 +1,6 @@
-# Conversation Rendering Performance（当前事实）
+# Conversation Rendering Performance (current state)
 
-V4 渲染边界是 `snapshot.rows.window`，不是 legacy `messages[]`。
+The V4 render boundary is `snapshot.rows.window`, not the legacy `messages[]`.
 
 ```text
 rows.window
@@ -10,9 +10,9 @@ rows.window
   -> ConversationRowView
 ```
 
-- `ConversationProjectionStore` 按 delta 更新 row/window；未变化 row 应保持稳定引用。
-- `ConversationTimeline` 使用 `@tanstack/react-virtual`、动态测高和 overscan，只渲染可见 turn。
-- 流式 row 高度变化由测量回流；follow-bottom 是 UI 状态，不写入 projection。
-- 性能优化不能合并不同 seq、丢 row action、破坏 terminal snapshot 一致性或让 renderer 维护第二份消息数组。
+- `ConversationProjectionStore` updates rows/window by delta; unchanged rows keep a stable reference.
+- `ConversationTimeline` uses `@tanstack/react-virtual` with dynamic height measurement and overscan, rendering only visible turns.
+- Streaming row height changes flow back through measurement; follow-bottom is UI state and is not written to the projection.
+- Performance optimizations must not merge different seqs, drop row actions, break terminal snapshot consistency or make the renderer keep a second message array.
 
-主要入口：`packages/ui/src/v4/ConversationTimeline.tsx`、`ConversationRowView.tsx`、`ConversationProjectionStore.ts`。
+Main entry points: `packages/ui/src/v4/ConversationTimeline.tsx`, `ConversationRowView.tsx`, `ConversationProjectionStore.ts`.
