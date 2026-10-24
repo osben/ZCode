@@ -8,46 +8,34 @@
 
 ## 1. Problem
 
-Provider settings page has left Provider navigation and right detail panel independently scrolling, but macOS default may hide system scrollbars. Fixed-height containers cutting off exactly at full-row boundaries, users easily misjudge no more content below.
-
-This Todo does not change scroll areas, container heights, Provider/Model ordering, or config saving, only adds conditional scroll edge affordance.
+The Provider settings page has independently scrolling left Provider navigation and right detail panel, but macOS may
+hide system scrollbars. Fixed-height containers that cut exactly at full-row boundaries make users misjudge that no
+more content is below. This Todo only adds a conditional scroll edge affordance; scroll areas, container heights,
+Provider/Model ordering and config saving are unchanged.
 
 ## 2. Interaction
 
 ```text
-No overflow
-└─ No affordance displayed
-
-At top with content below
-└─ Only bottom gradient displayed
-
-In middle
-├─ Top gradient displayed
-└─ Bottom gradient displayed
-
-At bottom
-└─ Only top gradient displayed
+No overflow                  -> no affordance
+At top with content below    -> bottom gradient only
+In middle                    -> top and bottom gradients
+At bottom                    -> top gradient only
 ```
 
-- Left and right columns measure separately, update separately, do not share scroll state;
-- Retain system scrollbar behavior, do not force persistent, do not add text or arrows;
-- Gradient layer does not receive pointer events, does not block model actions, dragging, or Provider selection;
-- Use semantic Card colors, consistent under Zai Light / Zai Dark;
-- Content changes, container scaling, and window resizing trigger re-measurement;
-- Scroll listening uses passive listener, avoiding same-boundary-state causing duplicate React render.
+- Left and right columns measure and update separately, with no shared scroll state.
+- System scrollbar behavior stays; no forced persistent scrollbar, text or arrows.
+- The gradient layer does not receive pointer events (`pointer-events-none`), so it never blocks model actions,
+  dragging or Provider selection; the detail feedback banner stays on a higher layer.
+- Semantic Card colors, consistent under Zai Light / Zai Dark.
+- Content changes, container scaling and window resizing trigger re-measurement (`ResizeObserver` on
+  viewport/content).
+- Scroll listening is passive; an unchanged `top/bottom` state keeps the original object so scrolling causes no
+  meaningless React render.
 
-## 3. Verification
+## 3. Implementation and verification
 
-- Pure function covering no overflow, top, middle, bottom, and 1px error;
-- Component test covers `top/bottom` affordance state after scrolling;
-- Layout test proves Provider navigation and detail both use same component;
-- Regression Provider/Model dragging, left-right independent scrolling, detail feedback banner, and narrow-screen layout;
-- Execute UI directed tests, typecheck, lint, format check, and `git diff --check`.
-
-## 4. Implementation Results
-
-- Added `ScrollEdgeShadowViewport`, left and right columns reuse same boundary measurement and semantic color gradient;
-- Listens to passive scroll of current viewport, uses `ResizeObserver` to observe viewport/content dimension changes;
-- Same `top/bottom` state keeps original object, avoiding meaningless React render during scrolling;
-- Gradient layer uses `pointer-events-none`, detail feedback banner stays at higher layer;
-- 322 Provider settings-related tests, workspace-wide typecheck and lint passed; lint retains only pre-existing warnings before this round.
+`ScrollEdgeShadowViewport` is shared by the left and right columns. Verification: a pure function covering no
+overflow, top, middle, bottom and 1px error; a component test for `top/bottom` state after scrolling; a layout test
+that Provider navigation and detail use the same component; regression of Provider/Model dragging, left-right
+independent scrolling, detail feedback banner and narrow-screen layout. 322 Provider settings-related tests,
+workspace-wide typecheck and lint passed (lint keeps only pre-existing warnings).

@@ -10,162 +10,121 @@
 > [`Todo 27`](./todo-27-provider-settings-dogfood-closeout.md),
 > [`Todo 28`](./todo-28-model-rule-precedence-and-order-canonicalization.md)
 
-## 1. Problem Positioning
+## 1. Problem
 
-New model popup already resolves Model Config Rules through Host based on `providerId/modelId/api.type/baseURL`,
-but Renderer uses three inconsistent projections for the same resolution result:
+The new-model popup already resolved Model Config Rules through Host by `providerId/modelId/api.type/baseURL`, but
+Renderer projected the same resolution three inconsistent ways: context/max output as inherited placeholder, boolean
+properties copied into the local Draft, reasoning JSON not connected (wrongly shown as "—"). So `GLM-5.3-Flash`
+actually hit 1M context, 128K max output, Image/Video and reasoning rules while the popup showed only some defaults.
+Debounces were also inconsistent (new model parsing 300ms, model ID edit parsing 180ms, Provider text save 800ms),
+so brief pauses triggered requests, field jumps, config writes and Registry refreshes.
 
-```text
-Model Config Rules Resolution
-├─ context/max output ──> inherited placeholder
-├─ boolean properties ──> copied into local Draft
-└─ reasoning JSON ──────> not connected, wrongly displayed as "—"
-```
+This Todo consolidates default config resolution, sparse Draft, success feedback and text idle trigger. It does not
+change Model Config Rule precedence, Provider/Model Overlay order, Registry integrity or Active Model freeze.
 
-Therefore `GLM-5.3-Flash` actually hits 1M context, 128K max output, Image/Video, and reasoning
-rules, but popup only partially displays default facts. Meanwhile, new model parsing uses 300ms debounce, editing model ID
-parsing uses 180ms debounce, Provider text save uses 800ms idle save; brief pauses frequently trigger requests, field jumps,
-config writes, and Registry refreshes.
+## 2. Unified domain naming
 
-This Todo consolidates default config parsing, sparse Draft, success feedback, and text idle-trigger. It does not change Model Config Rule
-precedence, Provider/Model Overlay order, Registry integrity, or Active Model freeze semantics.
-
-## 2. Unified Domain Naming
-
-Settings page no longer uses `previewModelConfig`, `previewPersonalModelDraft`, `resolvedDefaults` and other synonymous concepts.
-Sole operation named `resolveModelConfig`:
+`previewModelConfig`, `previewPersonalModelDraft`, `resolvedDefaults` and similar are retired. The sole operation:
 
 ```ts
 const resolution = await providerSettingsService.resolveModelConfig(input);
 setResolution(resolution);
 ```
 
-- Method: `resolveModelConfig`;
-- Return structure: `ModelConfigResolution`;
-- Renderer local state: `resolution`;
-- Returned content continues as `inheritedConfig/effectiveConfig/issues`;
-- New model only parses current candidate ID; editing model can carry unsaved Personal Exact Draft and original Model ID,
-  but does not write Personal Config, does not change Registry revision.
+Method `resolveModelConfig`; return structure `ModelConfigResolution` (`inheritedConfig/effectiveConfig/issues`);
+Renderer local state `resolution`. A new model resolves only the current candidate ID; an editing model may carry the
+unsaved Personal Exact Draft and original Model ID. Resolving never writes Personal Config or changes Registry
+revision; whether to persist is decided by a separate save command (`preview` is no longer a domain name).
 
-`resolve` expresses obtaining config result by current Rules; whether persisted decided by independent save command, `preview` no longer used as domain name.
-
-## 3. Draft and Inheritance Facts
-
-New and editing models both follow same Overlay display chain:
+## 3. Draft and inheritance facts
 
 ```text
-ZCode Built-in + Personal Match Rules
-                 |
-                 v
-        inheritedConfig
-                 +
-     sparse Personal Draft
-                 |
-                 v
-        effectiveConfig display
+ZCode Built-in + Personal Match Rules -> inheritedConfig + sparse Personal Draft -> effectiveConfig display
 ```
 
-- Renderer can cache Resolution boolean values in form display state, but that cache is not Personal Config;
-- Fields explicitly touched by user recorded separately, late Resolution must not override those fields;
-- Numbers, booleans, and JSON all derive display values from same Resolution;
-- context/max output and reasoning JSON use inherited/effective placeholder;
-- Boolean controls display `Personal Draft ?? inheritedConfig`, only displaying Personal Override style when user explicitly modifies;
-- `false` in general Rules is complete default fact, not "default value not obtained";
-- On save, only new Provider's Personal model members and truly existing sparse Exact Rules created, no reverse-materialization of Effective Config.
+- Renderer may cache Resolution boolean values in form display state; that cache is not Personal Config.
+- Fields explicitly touched by the user are recorded separately; a late Resolution must not override them.
+- Numbers, booleans and JSON all derive display values from the same Resolution; context/max output and reasoning
+  JSON use inherited/effective placeholder.
+- Boolean controls display `Personal Draft ?? inheritedConfig` and show the Personal Override style only when the
+  user explicitly modifies them.
+- `false` in general Rules is a complete default fact, not "default not obtained".
+- On save, only the new Provider's Personal model members and truly existing sparse Exact Rules are created;
+  Effective Config is never reverse-materialized.
 
-## 4. Unified Idle Trigger
+## 4. Unified idle trigger
 
-Provider text save, new model config parsing, and editing model config parsing share one idle-trigger dispatch semantics:
+Provider text save, new-model config resolution and editing-model config resolution share one idle-trigger semantics:
 
 ```text
-onChange
-├─ Immediately update local Draft
-├─ Cancel previous timer
-└─ 1200ms no new input
-       |
-       v
-  Execute current action
-  ├─ Provider: save Personal Provider Draft
-  └─ Model: parse Model Config
-
-onBlur / Enter / explicit save
-└─ Cancel timer and immediately flush current action
+onChange: update local Draft immediately; cancel previous timer; after 1200ms of no new input execute the action
+  Provider: save Personal Provider Draft
+  Model: resolve Model Config
+onBlur / Enter / explicit save: cancel timer and flush the action immediately
 ```
 
-- Unified idle time 1200ms;
-- Continuous input executes only last;
-- IME composition period does not trigger;
-- Resolution requests use monotonically increasing sequence or equivalent identity validation, expired responses must not update current Model ID;
-- When clicking model save while parsing still scheduled/in-flight, must immediately flush and wait completion, then save in same click,
-  no requiring user double-click;
-- Provider blur/Enter/pre-save and unload protection unchanged; only replacing timed dispatch, no creating second save queue.
+- Idle time is 1200ms; continuous input executes only the last; IME composition does not trigger.
+- Resolution requests use a monotonically increasing sequence (or equivalent identity check); expired responses must
+  not update the current Model ID.
+- Clicking model save while resolution is scheduled/in flight immediately flushes and waits, then saves in the same
+  click (no double-click).
+- Provider blur/Enter/pre-save and unload protection are unchanged; only timed dispatch is replaced, no second save
+  queue.
 
-## 5. Resolution Success Banner
+## 5. Resolution success banner
 
-Model popup displays green success banner when new Resolution genuinely changes inherited config:
-
-> Model default config loaded
+A green banner "Model default config loaded" appears when a new Resolution genuinely changes inherited config:
 
 ```text
 Resolution complete
-├─ inheritedConfig same as currently applied result
-│  └─ Silent: do not update fields, do not display banner
-└─ inheritedConfig genuinely changed
-   ├─ Atomic update all inherited display
-   └─ Display one success banner
+├─ inheritedConfig same as currently applied result -> silent: no field update, no banner
+└─ inheritedConfig genuinely changed -> update all inherited display atomically + show one success banner
 ```
 
-- Displayed on first successful config load;
-- Not displayed on repeated blur, repeated parse, same-case-only changes with same config, and different IDs getting identical inherited config;
-- Failure, expired, or incomplete Resolution does not display success banner;
-- Banner located at fixed feedback position of model popup content area, using existing semantic success color, checkmark, and internationalization, not scrolling out of view;
-- Same stable key in-situ replacement, no stacking multiple same feedback.
+- Shown on the first successful config load.
+- Not shown on repeated blur, repeated resolution, case-only changes with the same config, or different IDs getting
+  identical inherited config.
+- Failure, expired or incomplete Resolution shows no success banner.
+- The banner sits at the model popup content area's fixed feedback position, uses the existing semantic success
+  color, checkmark and i18n, never scrolls out of view, and replaces in place by a stable key (no stacking).
 
-"Loaded" only indicates a rule parse baseline obtained; general `modelMatch: ".*"` can also provide default config, text does not claim
-server has recognized or authorized that model.
+"Loaded" only means a rule-resolution baseline was obtained; a general `modelMatch: ".*"` can also provide default
+config, and the text does not claim the server recognizes or authorizes the model.
 
-## 6. Impact Boundaries
+## 6. Impact boundaries
 
-| Layer         | This Round Handling                                      | Unchanged                                           |
-| ------------- | -------------------------------------------------------- | --------------------------------------------------- |
-| draft-default | Unified Resolution projection and sparse Draft           | Rule content and override precedence                |
-| presentation  | New success banner, eliminate JSON default wrong display | Model field order and editable scope                |
-| commit-effect | Unified 1200ms idle/blur flush                           | Host save, Registry refresh, and revision authority |
-| validation    | Wait for current Resolution before save                  | Integrity rules and Adapter compatibility           |
-| persistence   | Provider text still auto-saves                           | Personal Config Schema and physical location        |
+| Layer         | This round                                         | Unchanged                                       |
+| ------------- | -------------------------------------------------- | ----------------------------------------------- |
+| draft-default | Unified Resolution projection and sparse Draft     | Rule content and override precedence            |
+| presentation  | New success banner, fix JSON default wrong display | Model field order and editable scope            |
+| commit-effect | Unified 1200ms idle/blur flush                     | Host save, Registry refresh, revision authority |
+| validation    | Wait for current Resolution before save            | Integrity rules and Adapter compatibility       |
+| persistence   | Provider text still auto-saves                     | Personal Config Schema and physical location    |
 
-Does not modify model selection, connection testing, account plan, Remote Provisioning, Desktop continuous, Mobile replayable, queue, or recovery chain.
+Model selection, connection testing, account plan, Remote Provisioning, Desktop continuous, Mobile replayable, queue
+and recovery are untouched.
 
-## 7. Test Plan
+## 7. Acceptance scenarios
 
-1. `GLM-5.3-Flash + anthropic-messages` displays 1M, 128K, Image/Video, reasoning spec, and mapping;
-2. Built-in `false` capabilities displayed as inheritance values, but not written to Personal Rule;
-3. reasoning JSON uses Resolution placeholder, no longer displays wrong "--";
-4. 1200ms continuous input does not call Resolution/Provider save, calls only once after stabilization;
-5. blur/Enter immediately flushes, clicking save waits for Resolution and completes in one operation;
-6. Late Resolution discarded; same inheritedConfig does not redundantly update fields or display banner;
-7. Banner displayed once when config changes, failure and incomplete results do not display;
-8. Provider name/baseURL/API Key idle save changed to 1200ms, blur and pre-save does not regress;
-9. New model untouched fields only save members and necessary sparse Personal Rule;
-10. Chinese/English, light/dark themes, keyboard, and narrow window banner usable.
+1. `GLM-5.3-Flash + anthropic-messages` displays 1M, 128K, Image/Video, reasoning spec and mapping.
+2. Built-in `false` capabilities display as inheritance values but are not written to a Personal Rule.
+3. Reasoning JSON uses the Resolution placeholder, no wrong "--".
+4. 1200ms continuous input does not call Resolution/Provider save; one call after stabilization.
+5. blur/Enter flushes immediately; clicking save waits for Resolution and completes in one operation.
+6. A late Resolution is discarded; the same inheritedConfig neither updates fields nor shows the banner.
+7. The banner shows once when config changes; failure and incomplete results show none.
+8. Provider name/baseURL/API key idle save is 1200ms; blur and pre-save do not regress.
+9. New model untouched fields save only members and necessary sparse Personal Rules.
+10. Chinese/English, light/dark, keyboard and narrow window keep the banner usable.
 
-## 8. Completion Criteria
+## 8. Completion and Outcome
 
-- Settings has only one domain naming `resolveModelConfig` and one Resolution state;
-- All inherited fields in new/edit popups from same Resolution;
-- Renderer does not materialize inherited booleans as persistent Personal Config;
-- Text idle-trigger unified to 1200ms, proactively ending editing immediately flushes;
-- Success banner only appears when inherited config changes;
-- Related Design, Feature Graph, unit tests, typecheck, lint, and format checks pass;
-- Submit Conventional Commit upon completion.
-
-## 9. Implementation Results
-
-- Settings Facade and Service deleted two `preview*` interfaces, unified to `resolveModelConfig()`,
-  `ModelConfigResolution`, and Renderer `resolution` state;
-- New and rename popups share 1200ms idle-trigger, blur, Enter, and save immediately flush; save no longer requires double-click due to parsing in-flight;
-- Numbers, booleans, Reasoning Option Spec, and Reasoning Mapping all displayed by same Resolution;
-- New model form separately records touched fields, late Resolution does not override user input, final Personal Config remains sparse;
-- "Model default config loaded" displayed only when complete `inheritedConfig` genuinely changes; repeated parsing does not renew, does not stack;
-- Provider name, Base URL, and API Key idle-stop-save uniformly extended to 1200ms, blur/Enter/pre-save unchanged;
-- Real Built-in Config, Facade, Provider auto-save, model popup, late response, and sparse submission all have directed regression evidence.
+- Settings has one domain name `resolveModelConfig` and one Resolution state; all inherited fields in new/edit popups
+  come from the same Resolution; Renderer does not materialize inherited booleans as persistent Personal Config.
+- Settings Facade and Service deleted the two `preview*` interfaces; new and rename popups share the 1200ms
+  idle-trigger with blur, Enter and save immediate flush.
+- New model form records touched fields separately; the final Personal Config stays sparse.
+- "Model default config loaded" appears only when the complete `inheritedConfig` genuinely changes.
+- Provider name, Base URL and API key idle save extended to 1200ms; blur/Enter/pre-save unchanged.
+- Real Built-in Config, Facade, Provider auto-save, model popup, late response and sparse submission have directed
+  regression evidence; Design, Feature Graph, unit tests, typecheck, lint and format checks pass.

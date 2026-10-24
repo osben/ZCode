@@ -1,128 +1,100 @@
-# Todo 45：Models API 发布者证据工具
+# Todo 45: Models API Publisher Evidence Tool
 
-> 状态：待执行；真实目录校正受访问凭据阻塞
+> Status: Pending; real catalog calibration blocked by access credentials
 >
-> 日期：2026-08-28
+> Date: 2026-08-28
 >
-> 来源：Todo 41/43 完成后的 Built-in 模型事实复核
+> Source: Built-in model fact review after Todo 41/43
 
-## 0. 任务定位
+## 0. Task Positioning
 
-为 Built-in Provider Config 的维护者提供一个发布前证据工具。工具按正式 Provider 配置中的
-`Endpoint + API Schema`，结合执行时提供的访问材料调用厂商 Models API，生成当前访问材料可见模型与
-`builtinModelIds` 的差异报告。
-
-```text
-ZCode Built-in Provider Config
-        |
-        | Endpoint + API Schema + builtinModelIds
-        v
-Publisher Models API Inspector <--- 执行期访问材料
-        |
-        v
-实时模型目录 / 已录制 Fixture
-        |
-        v
-结构化差异报告
-        |
-        v
-发布者人工复核并修改 Built-in Config
-```
-
-它是发布者维护工具，不是客户端 Runtime、Registry、Config Source 或第四层 Config Overlay。工具默认只报告，
-不得自动改写 `zcode-builtin.json`。
-
-## 1. 放置与边界
-
-可复用实现放在：
+A pre-release evidence tool for Built-in Provider Config maintainers. Using the `Endpoint + API Schema` of the formal
+Provider config plus access material supplied at execution time, it calls the vendor Models API and produces a diff
+report between the models visible to the current access material and `builtinModelIds`.
 
 ```text
-packages/provider-node/src/publisher/model-discovery/
+ZCode Built-in Provider Config (Endpoint + API Schema + builtinModelIds)
+  -> Publisher Models API Inspector (+ execution-time access material)
+  -> live model catalog / recorded Fixture -> structured diff report -> publisher manual review -> edit Built-in Config
 ```
 
-这里可以复用正式 Built-in Release Parser、Provider Schema 和 Node 网络能力，但不得从
-`@zcode/provider-node` 公共根入口导出，避免应用运行时依赖发布工具。
+It is a publisher maintenance tool, not client Runtime, Registry, Config Source or a fourth Config Overlay. By
+default it only reports and must never rewrite `zcode-builtin.json` automatically.
 
-薄命令入口放在：
+## 1. Placement and boundary
 
-```text
-scripts/provider/inspect-builtin-models.mjs
-```
-
-命令入口只负责参数、访问材料输入和报告输出；协议请求、响应解析与差异计算必须是可测试实现。推荐命令名表达
-“采集和检查证据”，不使用会暗示完整业务校验的泛化 `validate`：
+Reusable implementation lives in `packages/provider-node/src/publisher/model-discovery/` (it may reuse the formal
+Built-in Release Parser, Provider Schema and Node networking but must not be exported from the
+`@zcode/provider-node` public root, so the app runtime never depends on publisher tooling). A thin command entry in
+`scripts/provider/inspect-builtin-models.mjs` handles arguments, access material input and report output; protocol
+requests, response parsing and diff computation are testable implementation. The command name expresses "collect and
+inspect evidence", not a generic `validate`:
 
 ```bash
 pnpm provider:inspect-models --provider minimax
 ```
 
-## 2. 证据模式
+## 2. Evidence modes
 
-工具应支持三种明确模式：
+- `live`: real access material calls the Models API, producing evidence stamped with time, Endpoint, Schema and
+  Provider identity.
+- `fixture`: reads sanitized, reviewed response fixtures to verify protocol parsing and the diff algorithm.
+- `static`: checks Built-in members, Rule parsing and other static facts through the formal Parser with no network.
 
-1. `live`：使用真实访问材料调用 Models API，形成带时间、Endpoint、Schema 和 Provider 身份的实时证据；
-2. `fixture`：读取已脱敏、已审阅的响应 Fixture，验证协议解析和差异算法；
-3. `static`：只通过正式 Parser 检查 Built-in 成员、Rule 解析等静态事实，不访问网络。
+Reports label the evidence level explicitly; documentation examples, Fixtures and live responses are never mixed as
+one kind of "verified".
 
-不同模式的报告必须显式标注证据等级。文档示例、Fixture 和实时响应不能混写为同一种“已验证”。
+## 3. Credentials and security
 
-## 3. 凭据与安全边界
+Most vendor Models APIs need an API key, OAuth token or account access material; without it you usually get only
+`401/403`, which does not prove the model set visible to the Endpoint. Access material is injected only at execution
+time: preferably from environment variables or stdin; never written to Built-in Config, Fixtures, diff reports or
+Git; never passed as a plain command-line argument (shell history, process list); reports record only credential type
+and an irreversible identifier. A vendor's OpenAI-compatible and Anthropic-compatible Endpoints are requested and
+recorded separately, never extrapolated from one another. Start/Individual/Team account-specific members stay
+governed by Account product interfaces and the Account Overlay; the generic Models API does not replace account
+entitlement interfaces. When a vendor has no Models API, the Endpoint does not support catalog queries or the access
+material lacks permission, the report returns explicit `unsupported`, `unauthorized` or `unavailable` and never
+guesses a catalog.
 
-大多数厂商 Models API 需要 API Key、OAuth Token 或账号访问材料。没有访问材料时通常只能得到
-`401/403`，不能证明该 Endpoint 当前真实可见的模型集合。
+## 4. Current blocker
 
-访问材料只在执行期注入：
+Blocked is "calibrating Built-in Config against live interfaces", not the offline tool code: no usable access
+material for the Built-in vendors in the working environment; Models API returns the catalog visible to the current
+access material (accounts, regions and plans differ, anonymous requests cannot substitute); vendors' Models paths,
+auth and capability fields are not uniform, so each protocol must be adapted and confirmed with real responses;
+OpenAI-compatible responses usually prove only model identity, not context, output limit or multimodality; and no
+automatic edit of the release config is allowed before live evidence and manual review. So the current Built-in
+revision is a "vendor docs and product facts calibrated" version and cannot claim live Models API calibration for all
+vendors. Unblocking needs the maintainer to provide test access material for target vendors, or sanitized real
+responses collected in a trusted environment.
 
-- 优先从环境变量或标准输入读取；
-- 禁止写入 Built-in Config、Fixture、差异报告或 Git；
-- 禁止通过普通命令行参数传递明文，避免进入 shell history 和进程列表；
-- 报告只记录凭据类型和不可逆标识，不记录原值；
-- 同一厂商的 OpenAI-compatible 与 Anthropic-compatible Endpoint 分别请求和记录，不从其中一条外推另一条；
-- Start/Individual/Team 等账号特定成员继续以 Account 产品接口和 Account Overlay 为准，通用 Models API
-  不取代账号权益接口。
+## 5. Scope
 
-厂商没有 Models API、当前 Endpoint 不支持目录查询或当前访问材料无权限时，报告必须返回明确的
-`unsupported`、`unauthorized` 或 `unavailable`，不得猜测目录。
+Unified discovery result, evidence metadata and error classification; OpenAI-compatible and Anthropic-compatible
+Models API adapters; read Provider, Endpoint, Schema and `builtinModelIds` from the formal Built-in Release; report
+added, missing, common, case-different and duplicate members; JSON and Markdown output; Fixtures sanitized with
+source Endpoint, Schema, collection time and evidence state; one Provider failing does not swallow other Providers'
+reports but the process exits non-zero for incomplete runs; no entry into app startup, Registry refresh, model
+selection or ordinary model requests; no automatic Config writes and no mapping of unknown interface capabilities
+into Model Rules.
 
-## 4. 当前阻塞原因
+## 6. Tests and completion
 
-当前阻塞的是“用实时接口全面校正 Built-in Config”，不是离线工具代码本身：
+- Fixtures cover OpenAI-compatible, Anthropic-compatible, unauthorized, unsupported, malformed responses and
+  pagination.
+- The real Domain Parser reads the Built-in Release (no copied Provider/Model Schema).
+- Reports never contain the input secret.
+- Catalog diffs compare only by Provider identity, Endpoint and Schema, never merging across Providers.
+- At least one OpenAI-compatible and one Anthropic-compatible Endpoint have real sanitized evidence.
+- Reports generated and manually reviewed for all Built-in Providers that have a Models API and supplied access
+  material; Providers without access material or Models API keep an explicit evidence gap, not a fake pass.
+- Related unit tests, `pnpm typecheck`, `pnpm lint`; Conventional Commit.
 
-1. 当前工作环境没有各 Built-in 厂商对应的可用访问材料；
-2. Models API 返回的是“当前访问材料可见目录”，不同账号、区域和套餐可能不同，匿名请求不能替代；
-3. 各厂商的 Models 路径、认证方式与响应能力字段并不统一，必须逐个协议适配并用真实响应确认；
-4. OpenAI-compatible 响应通常只证明模型身份，不能据此校正上下文、输出上限和多模态等未返回能力；
-5. 在取得实时证据和人工审阅前，不能让工具自动修改发布配置。
+## 7. Relation to the historical publish gate
 
-因此当前 Built-in revision 仍属于“官网和产品事实校正版”，不能宣称已经过所有厂商 Models API 实时校正。
-解除实时校正阻塞需要维护者为目标厂商提供可用的测试访问材料，或提供由可信环境采集并脱敏的真实响应。
-
-## 5. 实施范围
-
-- 定义统一的 discovery 结果、证据元数据和错误分类；
-- 实现 OpenAI-compatible 与 Anthropic-compatible Models API 适配器；
-- 从正式 Built-in Release 读取 Provider、Endpoint、Schema 和 `builtinModelIds`；
-- 生成新增、缺失、共同成员、大小写差异和重复成员报告；
-- 支持 JSON 与 Markdown 输出；
-- Fixture 必须脱敏并带来源 Endpoint、Schema、采集时间和证据状态；
-- 单个 Provider 失败不吞掉其他 Provider 的报告，但进程最终以非零状态表达未完成；
-- 不直接进入应用启动、Registry 刷新、模型选择或普通模型请求链路；
-- 不自动写 Config，不把接口返回的未知 capability 猜测映射进 Model Rules。
-
-## 6. 测试与完成标准
-
-- 用 Fixture 覆盖 OpenAI-compatible、Anthropic-compatible、未授权、不支持、畸形响应和分页；
-- 使用真实 Domain Parser 读取 Built-in Release，不复制 Provider/Model Schema；
-- 证明报告不会包含输入的秘密值；
-- 证明模型目录差异只按 Provider 身份、Endpoint 和 Schema 比较，不跨 Provider 合并；
-- 至少取得一个 OpenAI-compatible 和一个 Anthropic-compatible Endpoint 的真实脱敏证据；
-- 为所有具备 Models API 且已提供访问材料的 Built-in Provider 生成并人工审阅报告；
-- 无访问材料或无 Models API 的 Provider 明确保留证据缺口，不伪装为通过；
-- 通过相关单测、`pnpm typecheck`、`pnpm lint`，并以 Conventional Commit 提交。
-
-## 7. 与历史发布门禁讨论的关系
-
-本 Todo 只解决“实时模型目录证据采集与差异报告”。已废弃的 Todo 19 曾讨论更大的 Built-in Release 业务完整性
-发布门禁，包括发布责任、静态完整性、误发布/回滚、CI 准入和客户端最小防线。
-
-如果未来重新建立发布门禁，Todo 45 的报告可以作为证据输入，但 Todo 45 本身不会升级为强制发布门禁。
+This Todo only collects live model catalog evidence and diff reports. The abandoned
+[Todo 19](./todo-19-zcode-builtin-release-integrity-validation.md) discussed a larger Built-in Release business
+integrity publish gate (publish ownership, static integrity, mis-publish/rollback, CI admission, minimal client
+defense). If a publish gate is re-established, Todo 45's report can be an evidence input, but Todo 45 itself does
+not become a mandatory publish gate.

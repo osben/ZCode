@@ -1,363 +1,342 @@
-# Todo 145：进入 ZCode 前统一准备数据库
+# Todo 145: Prepare databases before entering ZCode
 
-> 状态：代码已实现并复审；桌面 GUI / Windows、macOS 和 ARMS 后台验收尚未通过，不标为可发布。
-> 日期：2026-09-14。代码评估基线：`fix-database-migration-startup`，`845391b5dc`。
-> 最新范围：重做应用启动流程，包含 Host 数据库初始化、ARMS 启动诊断与轻量磁盘采样；不修改迁移脚本。
-> 本文替代 Todo 144 的后续执行清单及旧方案的工作区 loading 设计；历史验证记录继续保留，但不代表新方案通过。
-> 计划完整性与影响面审查：[开工审查](../../../desktop/database-startup-plan-review.md)。当前实施证据见 [实施复审](../../../desktop/database-startup-implementation-review.md)，其中明确已完成项、实现边界和未通过的发布验收。
+> Status: code implemented and reviewed; desktop GUI, Windows/macOS and ARMS backend acceptance have not
+> passed, so it is not releasable (2026-09-14; baseline `fix-database-migration-startup`, `845391b5dc`).
+> Scope: rework the app startup flow, including Host database initialization, ARMS startup diagnostics and
+> light disk sampling; migration scripts are not modified.
+> This Todo replaces Todo 144's follow-up checklist and its workspace-loading design. Plan review:
+> [kickoff review](../../../desktop/database-startup-plan-review.md); implementation evidence:
+> [implementation review](../../../desktop/database-startup-implementation-review.md) (done items, boundaries
+> and failed release acceptance).
 
-## 1. 目标与不变量
+## 1. Goal and invariants
 
-用户打开 ZCode 后，先看到独立启动页。本地启动必需数据库准备完成后，才挂载正常业务 Root、恢复工作区并放行依赖数据库的后台业务。
-不能仅覆盖界面、让 Root hooks 或 scheduler 在背后继续访问未就绪数据库。没有工作区的新用户也必须走同一启动流程。
+After opening ZCode the user first sees a standalone startup page. Only after the local databases required
+for startup are ready is the normal business Root mounted, the workspace restored and database-dependent
+background work released. Covering the UI is not enough: Root hooks or the scheduler must not keep touching
+a not-ready database behind it. Users without a workspace take the same flow.
 
-- 原 migration ID、SQL、checksum、账本和执行顺序保持不变；已完成项按既有规则校验并跳过。
-- 不实现 SQL 优化、替代 executor、batch、新索引、数据清理或迁移格式分叉；不承诺减少原脚本的峰值内存或磁盘占用。
-- SQLite 的事务和账本决定迁移互斥及完成事实；Host 仅持有当前启动状态，不新增持久化“已迁移”标记或跨进程文件锁。
-- 本地启动覆盖 `tasks-index.sqlite`、会话 `db.sqlite` 及审计发现的其他启动必需库。先列出真实清单，不能用“所有库”掩盖漏项。
-- 不主动连接所有历史 SSH/WSL/Docker 环境。远端数据库在对应连接建立时准备，不成为本地启动的前置条件。
-- 路径必须沿用真实配置解析，包括自定义数据目录、会话库路径；不能用默认路径迁一个库、业务再打开另一个库。
-- 独立 Provider 配置读取保护保留；本任务不修改账号、Provider 或模型选择语义。
+- Migration IDs, SQL, checksums, ledger and execution order are unchanged; completed items are verified and skipped by the existing rules.
+- No SQL optimization, replacement executor, batch, new index, data cleaning or migration-format fork; no promise to reduce the original scripts' peak memory or disk use.
+- SQLite transactions and the ledger decide migration mutual exclusion and completion; the Host holds only the current startup state, with no persisted "migrated" marker or cross-process file lock.
+- Local startup covers `tasks-index.sqlite`, the session `db.sqlite` and any other startup-required databases found by audit (list the real set; "all databases" must not hide omissions).
+- Historical SSH/WSL/Docker environments are not actively connected; remote databases are prepared when their connection is established and are not a local startup prerequisite.
+- Paths follow the real config resolution (custom data dir, session db path); never migrate one database and have the business open another.
+- The independent Provider config read protection is kept; account, Provider and model-selection semantics are not changed.
 
-## 2. 目标时序与职责
+## 2. Target order and responsibilities
 
 ```text
-Main 创建窗口、启动 Host、转发启动消息
-           ↓
-Renderer 显示独立启动页，订阅并读取启动快照
-           ↓
-Host 建立可提前访问的启动控制面
-           ↓
-解析本地配置和数据库身份（不等待登录、Key、权益或可选网络）
-           ↓
-准备 Host 数据库：迁移 + 必需的迁移后初始化
-           ↓
-通过 Agent 自身存储入口准备会话库
-           ↓
-全部数据库就绪 + 必需服务装配成功
-           ↓
-启动协调器报告 ready → 放行业务消费者 → 挂载业务 Root / 恢复工作区
-
-任一阶段失败 → failed → 显示诊断和恢复操作
-                              ↓ 用户重试
-                  新 attempt → 重查配置及真实迁移账本
+Main creates the window, starts the Host, forwards startup messages
+Renderer shows the standalone startup page, subscribes and reads the startup snapshot
+Host builds a startup control plane reachable early
+resolve local config and database identity (no wait for login, Key, entitlement or optional network)
+prepare Host databases: migration + required post-migration initialization
+prepare the session database through the Agent's own storage entry
+all databases ready + required services assembled
+startup coordinator reports ready -> release business consumers -> mount business Root / restore workspace
+any stage fails -> failed -> diagnostics and recovery actions; user retry -> new attempt -> re-resolve config and real migration ledger
 ```
 
-启动状态通道的建立必须早于阻塞式数据库操作；双方启动顺序不同或消息早到时，快照必须能补齐状态。
-Main 只调度和透传，不承载迁移业务。Host 拥有启动编排，Agent 拥有会话库迁移实现，UI 只展示状态并提交重试意图。
-正常服务通道尚未发布时，启动页也必须能显示失败；不能依赖 `createLocalServices()` 成功后才能拿到状态。
+The startup status channel is established before blocking database operations; with different start
+orders or early messages the snapshot fills in state. Main only schedules and relays; the Host owns startup
+orchestration, the Agent owns session-database migration, the UI shows state and submits retry intent. The
+startup page must show failure even if the normal service channel is not published yet.
 
-建议状态：`starting → preparing_host_storage → preparing_session_storage → starting_services → ready`，任一阶段可进入 `failed`。
-各数据库子阶段为 checking / waiting_for_lock / migrating / committing / ready / failed。
-保留 attempt、数据库身份、阶段序号、开始时间、错误码和诊断 ID；旧 attempt 和乱序事件不能覆盖新状态。
-`starting_services` 失败应说明服务启动失败，不能误报数据库迁移失败。
+States: `starting -> preparing_host_storage -> preparing_session_storage -> starting_services -> ready`,
+any stage can go `failed`. Per-database sub-stages: checking / waiting_for_lock / migrating / committing /
+ready / failed. Keep attempt, database identity, stage sequence, start time, error code and diagnostic ID;
+old attempts and out-of-order events cannot overwrite newer state. A `starting_services` failure says the
+service start failed, never a database migration failure.
 
-### 2.1 重试规则（实施约束）
+### 2.1 Retry rule
 
-迁移失败后停留失败页，明确原因和处理建议；不自动重试、不因超时重启 SQL、不因页面刷新启动新迁移。只有用户点击重试才创建新 attempt，运行中及旧 attempt 的重复请求无效。SQLite 等锁属于当前尝试；ARMS 网络有限重试是独立遥测行为，不触发数据库操作。坏库/校验不匹配应引导诊断处理，不能暗示反复重试会修好。
+After a migration failure the page stays on failure with reason and advice; no auto-retry, no SQL restart on
+timeout, no new migration on page refresh. Only a user click creates a new attempt; duplicate requests while
+running or from old attempts are ignored. SQLite lock waiting belongs to the current attempt; ARMS network
+retry is separate telemetry behavior and never triggers database operations. A corrupt database / checksum
+mismatch points to diagnosis and never suggests that repeated retry will fix it.
 
-## 3. 旧实现处理清单
+## 3. Old implementation disposition
 
-| 范围                                                       | 处理                                   | 复用前必须证明                                          |
-| ---------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------- |
-| `Root.tsx` 内迁移拦截、`useStorageStartup`、工作区快照订阅 | 撤掉旧接入，按应用启动重新实现         | 业务 Root 不提前挂载，无工作区也受保护                  |
-| `prepareStorage(workspace)` 和销毁工作区重试               | 不作为全局入口；审计调用方后删除或收窄 | 不伪造工作区，不因切 tab 重新触发全局启动               |
-| 原 SQL runner、等锁、回滚、COMMIT 后 ready                 | 按新设计逐项复用                       | 仍执行冻结原 SQL、账本兼容，等待可观测                  |
-| Agent 早期通知与 protocol 请求准入                         | 保留必要能力，调整接入并修复失败传播   | 无首通知、进程退出也产生可观察终态；普通 RPC 超时不退化 |
-| loading 展示组件、样式和文案                               | 可按需复用                             | 不夹带工作区状态，支持多阶段和错误恢复                  |
-| 事务、冻结 SQL、锁竞争、崩溃恢复测试                       | 保留并用于验收                         | 在新启动入口运行；旧通过结果不能替代本次回归            |
-| 工作区 hook / Root / 启动 E2E                              | 删除失效断言，先补新场景再实现         | 验证真实启动顺序，不只是组件显示                        |
-| 独立 Provider 配置保护                                     | 保留独立提交与测试                     | 不随启动重写被撤回                                      |
+| Scope                                                                                      | Disposition                                                   | Must prove before reuse                                                                                      |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Migration interception in `Root.tsx`, `useStorageStartup`, workspace snapshot subscription | remove old wiring, reimplement at app startup                 | business Root not mounted early; users without workspace protected                                           |
+| `prepareStorage(workspace)` and workspace-destroy retry                                    | not a global entry; audit callers then delete or narrow       | no fake workspace; no global restart on tab switch                                                           |
+| Original SQL runner, lock wait, rollback, ready after COMMIT                               | reuse item by item                                            | still runs frozen original SQL, ledger-compatible, observable waiting                                        |
+| Agent early notification and protocol request admission                                    | keep needed abilities, adjust wiring, fix failure propagation | terminal state observable even with no first notification or process exit; ordinary RPC timeout not degraded |
+| Loading components, styles, copy                                                           | reusable as needed                                            | no workspace state mixed in; multi-stage and error recovery                                                  |
+| Transaction, frozen SQL, lock contention, crash recovery tests                             | keep for acceptance                                           | run on the new startup entry; old passes do not substitute                                                   |
+| Workspace hook / Root / startup E2E                                                        | remove stale assertions, add new scenarios first              | verify the real startup order                                                                                |
+| Independent Provider config protection                                                     | keep independent commit and tests                             | not withdrawn by the startup rewrite                                                                         |
 
-不用整分支 hard reset 或改写已推送历史。通过后续提交替换旧实现；删除不用的协议、导出、文案和测试，避免长期维护两套门禁。
+No whole-branch hard reset or rewriting pushed history: later commits replace the old implementation and
+delete unused protocols, exports, copy and tests.
 
-## 4. 按顺序执行
+## 4. Execution checklist and status
 
-### A. 先完成启动 spec 和依赖审计
+A. Spec and dependency audit: [x] startup plan doc `docs/desktop/database-migration-startup-gate-plan.md` rewritten; [ ] architecture context/check and feature-boundary scan, Main/Renderer/Host/CLI order of creation, status channels, config reads, DB opens, service publication, warm-up and scheduler/bot/Wiki start order; [x] AutomationRepo, OffPeakTaskRepo, TaskIndexRepo construction/ensureReady/migration/post-migration repair checked (construction is not "migrated"); [x] session path vs workspace config checked, the prepared physical database set matches later consumers (a new different physical database needs its own admission); [x] Host synchronous SQLite execution placed (Host-owned Worker so the event loop stays responsive); [x] workspace-independent Agent storage-prepare entry and connection reuse/close rules (Host never copies SQL, never starts a full business Agent to probe); [x] startup protocol, error classification, timeout, exit, retry and multi-window contract frozen.
 
-- [x] 更新 `docs/desktop/database-migration-startup-gate-plan.md` 为新方案，移除与新范围冲突的当前设计；历史轨迹留在 Todo 144。
-- [ ] 执行 architecture context/check 和 feature-boundary 扫描；阅读 Agent 指令、DESIGN、远控当前事实文档及相关 E2E skill。
-- [ ] 列出 Main / Renderer / Host / CLI 的创建、状态通道、配置读取、DB 打开、服务发布、预热及 scheduler/bot/Wiki 启动顺序。
-- [x] 对 AutomationRepo、OffPeakTaskRepo、TaskIndexRepo 逐一核对构造、ensureReady、迁移和迁移后修复；不能把实例构造等同于已经迁移。
-- [x] 核对会话路径是否可能随 workspace 配置变化；本地全局准备的物理库集合必须与随后消费者一致，新增不同物理库仍需自己的准入。
-- [x] 明确 Host 同步 SQLite 执行的位置。优先评估 Host 所属 Worker，让 Host 事件循环持续响应；若改用其他执行单元，在 spec 写清边界和生命周期。
-- [x] 明确不依赖 workspace 的 Agent 存储准备入口及连接复用/关闭规则；不由 Host 复制 SQL，不启动完整业务 Agent 来间接探测数据库。
-- [x] 冻结启动协议、错误分类、超时、退出、重试及多窗口合同，再写实施测试。若审计发现需扩展已确认架构范围，先沟通具体缺口。
+B. Behavior tests: [x] frozen-SQL sync/async runner, same data/ledger, error rollback, cross-version Reader regression; [x] failure snapshots for Host post-migration init failure, service assembly failure, missing first status and process exit; [x] new startup E2E (not bypassed by a "wait for chat input ready" fixture); [ ] isolated databases with real old data and stage barriers proving the startup page is visible before Host migration and Root/background consumers are not entered; [ ] new user without workspace, old user pending migration, partial ledger, migrated, user edits not overwritten; [ ] section 5.1 classification and end-to-end copy tests (original cause, commit/cleanup failure, temp-disk-full, generic IO not misreported).
 
-### B. 先建立行为测试
+C. Host and Agent orchestration: [x] early status channel, snapshot read and retry entry (strict types + runtime schema, shared protocol updated); [x] one Host preparation entry per physical database, serialized required initialization, repos reuse the result; [x] SQLite cross-Host / standalone CLI exclusion kept (in-process dedupe is not a cross-process lock); [x] Agent original-SQL prepare entry with status sent before long SQL and ready after COMMIT; [x] missing-first-status failure observable, migration not killed by ordinary-request watchdog or idle reclaim; [x] shared semantic error classification with safe error codes passed explicitly (not everything squashed to `sql_failed`); original error kept for diagnostics; [x] ARMS lifecycle, duration, error and disk sampling (sampling/reporting faults never change the startup result); [ ] split services into prepare and start (registration/construction must not start database-dependent background tasks; scheduler, bot, Wiki, warm-up and remote-control access obey admission); [ ] distinguish storage ready from app ready (later assembly failure stays on the failure page and releases unpublished services/subscriptions/Workers).
 
-- [ ] 用隔离库、真实旧数据和阶段屏障，证明 Host 迁移前启动页已显示，Root 与后台数据库消费者尚未进入。
-- [ ] 覆盖新用户无 workspace、旧用户待迁移、部分账本、已迁移及用户后续修改不被覆盖。
-- [x] 保留同步/异步 runner 实际执行冻结 SQL、相同数据及账本、错误回滚和跨版本 Reader 回归。
-- [x] 加入 Host 迁移后初始化失败、服务装配失败、首次状态缺失和进程退出的失败快照测试。
-- [ ] 先补第 5.1 节错误分类及端到端文案测试，覆盖原始 cause、提交/清理失败、临时盘不足与一般 IO 错误不误报。
-- [x] 建立新启动 E2E，用例不能通过“先等待聊天框 ready”的 fixture 绕过待测阶段。
+D. Standalone startup page: [x] entry outside the normal Root (initializes theme, language, error boundary without the full business store/services); [x] real stages and elapsed time ("preparing local data", "updating task index / chat history", "waiting for another window to finish data update"); no fake percentage or ETA; long-wait hints never imply success, skip or auto-restart; [x] failure shows reason, diagnostic ID, copy details, applicable retry and exit (corruption never encourages endless retry); [x] storage-full uses the section 5.1 copy and recovery; UI and ARMS consume the same standard error category (never derive it from translated text); [x] workspace-driven global loading deleted; remote connection errors go back to the connection flow and are not misjudged as local DB failures; [ ] zh/en, light/dark, keyboard and window resize; phone shows the existing shared-host prepare/failure state, no second runtime.
 
-### C. 实现 Host 与 Agent 启动编排
+E. Verification and cleanup: [ ] acceptance matrix with UI, stage logs, process and ledger evidence (UI mock tests do not replace real processes and E2E); [ ] `pnpm typecheck`, `pnpm lint`, `pnpm architecture:check --changed`, CLI typecheck, affected unit tests and desktop E2E; [ ] spec, case catalog and coverage matrix updated only with real evidence; [x] stale workspace interfaces and duplicate state deleted, migration definitions' diff against the target branch empty, Provider patch retained; [ ] draft MR scope, evidence and limits updated (push/MR via the zcode-mr skill).
 
-- [x] 提前建立启动消息通道、快照读取和重试入口；使用严格类型与运行时 schema，协议变动同步到共享定义。
-- [x] 统一 Host 同一物理库的准备入口，串行完成必要初始化；业务 Repo 复用结果，避免多个 Repo 抢先打开并各自迁移。
-- [x] 保持 SQLite 跨 Host / 独立 CLI 互斥；不把进程内准备去重当成跨进程锁。
-- [x] 接入 Agent 原 SQL 准备入口，状态通知在长 SQL 前真正送出，ready 必须晚于 COMMIT。
-- [ ] 服务按准备与启动拆分：注册/构造不应偷偷启动依赖数据库的后台任务；scheduler、bot、Wiki、预热及远控访问均遵守准入。
-- [ ] 区分存储 ready 与应用 ready；后续装配失败保持失败页，并释放本次未成功发布的服务/订阅/Worker 资源。
-- [x] 修复旧实现首状态缺失时失败不可观察的问题；迁移中不被普通请求 watchdog 或 idle 回收反复杀掉。
-- [x] Host 和 Agent 共用语义一致的错误分类，显式传递安全错误码；不把所有非 BUSY 错误压成 sql_failed。保留原始错误作诊断，不改原迁移 SQL。
-- [x] 按第 9 节接入 ARMS 生命周期、耗时、错误和磁盘采样；采样及上报故障不能改变启动结果。
+## 5. Failure, rollback and recovery contract
 
-### D. 接入独立启动页
+Transaction boundaries are per database; no cross-database rollback. If the session database fails after
+the Host database committed, the Host database stays committed and retry skips completed migrations,
+running only truly missing items. Post-migration Host repairs may sit outside the migration transaction:
+their commit boundaries, idempotence and repeated-init side effects are checked; a complete ledger alone
+does not mean the Host is usable.
 
-- [x] 在正常 Root 外建立启动入口；初始化必需的主题、语言、错误边界，不依赖完整业务 store 或服务。
-- [x] 展示“正在准备本地数据”“正在更新任务索引/聊天记录”“正在等待其他窗口完成数据更新”等真实阶段及已用时间。
-- [x] 不显示虚假百分比或预计剩余时间；长时间提示不触发成功、跳过或自动重启。
-- [x] 失败展示可理解原因、诊断 ID、复制错误详情、适用的重试和退出入口；校验损坏不能鼓励无限重试。
-- [x] 空间不足使用第 5.1 节确定文案与恢复入口；UI 和 ARMS 消费同一个标准错误类别，不从翻译文本反推错误。
-- [ ] 支持中英文、深浅主题、键盘操作与窗口缩放；手机显示已有 shared-host 的准备/失败状态，不启动第二个 runtime。
-- [x] 删除工作区驱动的全局 loading；远程连接错误回到连接流程，不能被误判为本地 DB 失败并遮住重连入口。
+- SQL/COMMIT failure follows the original transaction rollback; if rollback itself fails keep the original error and recovery state and never promise rollback completed.
+- Crash / forced exit: next start SQLite recovers and the ledger is re-checked; a lost post-COMMIT notification must not trigger repeated conversion.
+- Disk full, permission, I/O, allocation failure, corruption, checksum mismatch, lock-hold over budget and executor exit are classified separately; unknown errors keep safe diagnostics.
+- Retry opens a new attempt only after the previous execution ended and transaction/connection cleanup is clear; a waiter never terminates another window's migration owner.
+- Page refresh or phone disconnect does not cancel migration; re-subscribing returns the current snapshot. Exit flows are tested for normal close and forced kill; graceful rollback on every OS kill is not guaranteed.
+- Never delete DB/WAL/SHM or the ledger, build a substitute empty database, auto-override checksums or treat failure as first start.
+- No default 20 GB full-database backup, and "free space > database size" is not presented as an exact minimum. With a full disk the necessary error can still be copied from the status snapshot, independent of exporting a ZIP.
+- Logs are per stage, migration item and terminal state with attempt, stage, duration, error code and redacted database identity; no lock-polling spam, message bodies or API keys.
 
-### E. 验证和清理
+### 5.1 Recognizing storage-full and other failures
 
-- [ ] 执行下方验收矩阵，保存 UI、阶段日志、进程及账本证据；UI mock 测试不能代替真实进程和 E2E。
-- [ ] 运行 `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed`、CLI 对应类型检查、受影响单测和桌面 E2E。
-- [ ] 更新 spec、case catalog、coverage matrix；仅有实际证据的条目标记完成。
-- [x] 删除失效工作区接口和重复状态；确认迁移定义相对目标分支 diff 为空，Provider 补丁仍在。
-- [ ] 更新草稿 MR 的最终范围、证据和限制，经必需检查再提交；推送/MR 更新使用 zcode-mr skill。
+The code had only coarse classes (open_failed / lock_timeout / checksum_mismatch / sql_failed...); the
+runner put non-BUSY SQLite exceptions under `sql_failed` with the original error in `cause`. This change is
+about error propagation and display, not migration definitions.
 
-## 5. 失败、回滚与恢复合同
+| Raw evidence                                                       | Standard category                     | UI behavior                                                                                                                                                |
+| ------------------------------------------------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite primary code 13 (SQLITE_FULL)                               | storage_full                          | storage full / capacity limit; retry after freeing space / checking quota                                                                                  |
+| system file operation ENOSPC                                       | storage_full                          | storage full; never auto-clean user files                                                                                                                  |
+| system file operation EDQUOT (if exposed)                          | storage_quota_exceeded                | storage quota insufficient; freeing other user files may not help                                                                                          |
+| SQLITE_BUSY; SQLITE_LOCKED judged separately                       | database_busy / database_locked       | external BUSY follows the lock-wait budget; same-connection LOCKED is not waited blindly, reports a conflict; not a disk problem, never ends another owner |
+| explicit EACCES / EPERM / SQLITE_READONLY                          | access_denied / read_only             | permission/read-only prompt; SQLITE_PERM alone does not imply a specific OS cause                                                                          |
+| SQLITE_NOMEM / explicit ENOMEM (incl. recognizable extended codes) | memory_unavailable                    | allocation failure; an unknown process exit is not proven OOM                                                                                              |
+| SQLITE_CORRUPT / NOTADB / checksum mismatch                        | database_invalid / migration_mismatch | block, offer diagnostics and help; no delete, ledger change or auto repair                                                                                 |
+| generic SQLITE_IOERR / CANTOPEN, unknown exception                 | io_failed / open_failed / unknown     | read/write/open failure or unknown; without explicit evidence never say "disk full"                                                                        |
 
-事务边界按数据库计算，不承诺跨数据库回滚。Host 库提交后会话库失败，Host 库保持已提交状态；重试时校验跳过已完成迁移，仅执行真实缺失项。
-迁移后的 Host 修复可能在迁移事务之外：逐项核对它们的提交边界、幂等性及重复初始化副作用；不能仅因迁移账本齐全就认为 Host 已可用。
+SQLite uses the raw numeric errcode (low 8 bits when extended) and structured reasons; Node's generic
+`ERR_SQLITE_ERROR` cannot replace SQLite sub-codes, and English `message` matching is forbidden. Reading
+the `cause` chain is bounded and cycle-safe; across Worker/IPC only allowed fields are serialized. If an
+explicit capacity limit such as `max_page_count` is identified, show the capacity-limit message;
+SQLITE_FULL itself does not prove any disk has zero space, and the temp-file disk may be the full one, so
+"drive D is full" is never stated without confirmation.
 
-- SQL/COMMIT 失败：遵守原事务回滚；rollback 自身失败也保留原始错误和恢复状态，不能向用户保证已经回滚完成。
-- 崩溃或强制退出：下次由 SQLite 恢复并重查账本；COMMIT 后通知丢失不能触发重复转换。
-- 磁盘满、权限、I/O、内存分配失败、损坏、checksum 不符、占锁超预算和执行者退出应分别分类；未知错误保留安全诊断。
-- 重试只在前次执行结束、事务/连接清理状态明确后开启新 attempt；等待者不能终止另一窗口的迁移 owner。
-- 刷新页面或手机断连不取消迁移；重新订阅获取当前快照。退出流程需测试正常关闭与系统强杀，不能保证所有系统终止都有优雅回滚。
-- 不删除 DB/WAL/SHM、账本，不建立空替代库，不自动覆盖 checksum，不将失败自动当作首次启动。
-- 不默认复制 20 GB 全库备份，不用“剩余空间大于数据库大小”冒充精确最低空间要求。磁盘满时仍能从状态快照复制必要错误，不依赖导出 ZIP 成功。
-- 日志按阶段、迁移项及终态记录，包含 attempt、阶段、耗时、错误码和脱敏库身份；无锁轮询刷屏、消息正文或 API Key。
+Default copy (final per DESIGN and i18n): "Storage space is insufficient or has reached its capacity limit,
+so the data update cannot complete. Check the free space of the disk holding the data directory and the
+system temp directory, free space or adjust the storage quota, then retry." Actions: retry, copy error
+details, exit; a confirmed specific failing path is shown only in local details (the main-db path is never
+guessed to be the failing temp file path). Retry waits for this attempt's cleanup and then prepares from
+the real ledger (never bypasses migration into the business). Disk sampling is only auxiliary: space
+freed by rollback, a last positive free-space value, no sample or a failed sample never override an
+explicit storage-full error. Open, migration SQL, COMMIT and post-migration repair are all covered by
+classification; secondary exceptions from rollback/close/recovery PRAGMA are recorded separately, never
+override the first migration failure, and "safely rolled back, data intact" is not claimed while recovery
+state is unconfirmed.
 
-### 5.1 空间不足及其他失败的识别与提示
+Acceptance: isolated tests produce FULL via a real SQLite capacity cap, unit tests with explicit OS error
+objects, fault injection for other filesystem errors (never fill a user disk); UI E2E asserts copy, action
+and standard error code are consistent; a capacity-cap fixture does not prove every real OS disk-full path.
 
-当前代码仅有 open_failed / lock_timeout / checksum_mismatch / sql_failed 等粗分类；runner 把非 BUSY 的普通 SQLite 异常归为 sql_failed，原始错误在 cause 中。共享 schema 和旧 loading 尚不能单独表达存储空间不足。本次改的是错误传递与展示，不是迁移定义。
+## 6. Wait budget
 
-| 原始证据                                       | 标准类别                              | UI 行为                                                                                                |
-| ---------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| SQLite 主错误码 13（SQLITE_FULL）              | storage_full                          | 提示存储空间不足或达到容量限制；清理空间/检查额度后可重试                                              |
-| 系统文件操作的 ENOSPC                          | storage_full                          | 提示存储空间不足；不自动清理用户文件                                                                   |
-| 系统文件操作的 EDQUOT（如有暴露）              | storage_quota_exceeded                | 提示存储额度不足；单纯清理其他用户文件不一定解决                                                       |
-| SQLITE_BUSY；SQLITE_LOCKED 单独判断            | database_busy / database_locked       | 外部 BUSY 按等锁预算处理；同连接 LOCKED 不盲目重复等锁，应报冲突诊断；不归为磁盘问题，不结束其他 owner |
-| 明确 EACCES / EPERM / SQLITE_READONLY          | access_denied / read_only             | 对应访问权限/只读提示；不能仅凭 SQLITE_PERM 推定具体 OS 原因                                           |
-| SQLITE_NOMEM / 明确 ENOMEM（含可识别的扩展码） | memory_unavailable                    | 内存分配失败；不把未知进程退出当成已证实 OOM                                                           |
-| SQLITE_CORRUPT / NOTADB / checksum mismatch    | database_invalid / migration_mismatch | 阻断、提供诊断与求助入口；不删库、不改账本、不自动修复                                                 |
-| 一般 SQLITE_IOERR / CANTOPEN、未知异常         | io_failed / open_failed / unknown     | 读写/打开失败或未知原因；无明确底层证据不能报“磁盘满”                                                  |
+| Scenario                  | Rule                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Global loading            | no total timeout that kills a process; state is determined by stage and executor lifecycle                                                                                |
+| Control-plane first state | keep 30 s, only for establishing the control plane; established before long SQL, not wrapping the whole migration                                                         |
+| SQLite write-lock wait    | keep the 60-minute cap with async backoff (single native busy 25 ms, async backoff 10-200 ms), independent of the business 5 s busy timeout; over budget fails explicitly |
+| Original SQL executing    | no auto-kill SQL timeout; no "no progress update" death judgment (synchronous SQL can run long)                                                                           |
+| Long-wait hint            | show elapsed-time note at 10 minutes and keep waiting; not a deadline and no guarantee that memory/space suffice                                                          |
+| Ordinary business request | keep the original timeout; migration-admission waiting is separate from business request timing                                                                           |
 
-SQLite 使用原始数值 errcode（含扩展码时提取低 8 位）及结构化原因判断；Node 的通用 ERR_SQLITE_ERROR 不能替代 SQLite 细分码，禁止仅匹配英文 message。读取 cause 链须有界、防循环，跨 Worker/IPC 显式序列化允许字段。
-如果识别出数据库 max_page_count 等明确容量上限，提示容量限制；SQLITE_FULL 本身不证明某个盘可用空间为零。临时文件所在盘也可能不足，未经确认不能直接提示“D 盘满了”。[SQLite 错误定义](https://www.sqlite.org/rescode.html#full)
+The execution thread and status channel keep the window responsive; "no SQL timeout" is never a reason for
+a UI without state or an endless loading after the process exits. After ready the business 5 s busy
+timeout is restored. A custom old Agent keeps the old path and switches to the new wait semantics after a
+valid startup frame. Historical ledger rows with unknown IDs keep their existing compatibility (only
+currently known IDs are checksum-verified; no new "fail on future ID" rule). With non-standard triggers
+the frozen original SQL runs; the two known AFTER INSERT sequence triggers of original 0015 are
+unaffected.
 
-默认文案（最终按 DESIGN 和 i18n 落地）：
+## 7. Acceptance matrix (all pending; old Todo ticks are not inherited)
 
-> 存储空间不足或已达到容量限制，无法完成数据更新。
-> 请检查数据目录及系统临时目录所在磁盘的可用空间，释放空间或调整存储额度后重试。
+| ID               | Scenario                                                                   | Must prove                                                                                                                 |
+| ---------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| GLOBALDB-01      | new user without workspace, no account/Key, network down                   | local required databases prepared, then normal first-use flow                                                              |
+| GLOBALDB-02      | Host old-database migration paused                                         | startup page visible, state readable, window responsive, business not started                                              |
+| GLOBALDB-03      | Host done, long session-database migration                                 | stages switch correctly; Root entered only when both databases and services are ready                                      |
+| GLOBALDB-04      | migrated, partially migrated, user edited after migration                  | completed items not repeated, later edits not overwritten; original SQL/checksum/ledger compatible                         |
+| GLOBALDB-05      | Host succeeds, session database fails, then retry                          | committed Host database not rolled back; uncommitted session transaction recovered; no config rebuild                      |
+| GLOBALDB-06      | Host post-migration repair fails; required service assembly fails          | no fake ready, accurate error ownership, retry has no repeated side effects or leaks                                       |
+| GLOBALDB-07      | multiple windows / standalone CLI, same and different databases            | same database SQLite-exclusive, no repeated migration; different databases do not mix state                                |
+| GLOBALDB-08      | lock wait over the old 5 s; over budget                                    | the former continues to success; the latter is diagnosable, never terminates the lock owner                                |
+| GLOBALDB-09      | kill before COMMIT; notification lost after COMMIT                         | real child process recovers correctly, ledger and data consistent                                                          |
+| GLOBALDB-10      | first status missing, Worker/Agent crash, IPC break                        | observable failure/reconnect state, no permanent feedback-less loading                                                     |
+| GLOBALDB-11      | page refresh, double-click retry, late old ready                           | no repeated start or cancelled migration; new attempt not overwritten by old state                                         |
+| GLOBALDB-12      | FULL, permission, I/O, checksum, corrupt database                          | clear reason, safe recovery entry, no fake success or empty-database fallback                                              |
+| GLOBALDB-13      | custom data dir and different session db configs                           | prepared database equals the business-opened one; no false global ready                                                    |
+| GLOBALDB-14      | scheduler / bot / Wiki / warm-up triggered together                        | server-side admission works without relying on a UI mask; accepted queue not copied                                        |
+| GLOBALDB-15      | local start with remote history, remote connection failure, old Agent      | does not connect all environments, network failure not reported as DB error; old protocol has explicit compatibility       |
+| GLOBALDB-16      | phone pairing, reconnect, access during shared-host preparation            | no second runtime; desktop continuous vs phone replayable boundaries unchanged                                             |
+| GLOBALDB-17      | Windows/macOS/Linux, theme, language, narrow screen                        | visible, operable, no white screen; packaged Worker/child-process resource paths work                                      |
+| GLOBALDB-18      | cold start of a migrated database, quit and restart                        | no stray Agent/Worker, duplicate background tasks or visible startup regression                                            |
+| GLOBALDB-19      | ARMS events, stage changes, failure copy and retry                         | accurate time boundaries, UI and telemetry errors from one source, terminal dedupe; final payload within attribute budget  |
+| GLOBALDB-20      | free space drops then recovers during long SQL                             | sampling independent; keeps the maximum drop vs the start baseline, recovered space after rollback does not erase the peak |
+| GLOBALDB-21      | multiple volumes, missing file, probe failure, SDK exception, offline      | missing values not zero-filled, per-volume distinction, business still prepares, no scan/report blocking                   |
+| GLOBALDB-22      | migration executor crash, forced app exit, only a start event              | confirmed failure vs unknown terminal state distinguishable; no invented SQL error, true peak or guaranteed report         |
+| GLOBALDB-23      | SQLite FULL / ENOSPC / EDQUOT; sampling still has space or is missing      | classification/copy accurate, not dependent on sampling, no wrong disk blamed                                              |
+| GLOBALDB-24      | IOERR / CANTOPEN / permission / NOMEM / unknown process exit               | no false disk-full or OOM, unknown stays unknown, UI and telemetry same source                                             |
+| GLOBALDB-25      | COMMIT or post-migration repair fails, then rollback/close fails           | original cause kept, cleanup/retry state clear, no false rollback claim                                                    |
+| GLOBALDB-26      | main-db disk has space, temp disk fails; space recovered at retry          | main-db headroom does not negate FULL; old peak kept, new attempt independent, ledger correct                              |
+| GLOBALDB-27 / 28 | Host rebuild revokes old startup listeners; historical project unavailable | pending E2E from the 2026-09-15 review fixes (see section 11)                                                              |
 
-入口：重试、复制错误详情、退出；已能确认的具体故障路径只在本地详情中展示，不能把主库路径猜成失败临时文件路径。重试等待本 attempt 清理结束，再按真实账本准备，不能绕过迁移直接进入业务。
-磁盘采样只作辅助，报错后回滚释放空间不改变原始 storage_full 类别。最后可用空间大于零、无采样、采样失败均不能覆盖明确的空间不足错误。
-打开、迁移 SQL、COMMIT、迁移后修复均覆盖错误分类；回滚/close/恢复 PRAGMA 的次生异常单独记录，不能覆盖首个迁移失败原因，也不能在恢复状态未确认时声称“已安全回滚、数据完整”。
+The 20 GB performance test stays deferred until explicitly authorized; this round is isolated-database
+functional verification only. A small-database success does not prove low-memory or low-disk users migrate
+successfully. Platforms, remote, E2E or performance that cannot be run stay open; a visible loading page
+alone is not delivery.
 
-验收：隔离测试真实 SQLite 容量上限产生 FULL，并单测明确 OS 错误对象；用故障注入覆盖其他文件系统错误，不填满用户磁盘。UI E2E 断言文案、动作和标准错误码一致；不能用容量上限 fixture 证明所有 OS 真实磁盘满路径都已通过。
+## 8. Release and delivery boundary
 
-## 6. 等待预算（新实现建议，待 A 阶段写入 spec）
+- One package covers new users, users with unfinished migration and migrated users; migration is chosen by the real ledger, not version number or UI marker.
+- Until the new scheme passes the existing MR stays draft. Verify migrated start first, then unmigrated, concurrency, failure recovery and cross-end; release runs its own flow.
+- Rolling back startup code does not reverse committed database migrations; whole-package rollback keeps the existing version-readability contract and deletes no ledger or data.
 
-| 场景             | 建议规则                                                                       |
-| ---------------- | ------------------------------------------------------------------------------ |
-| 全局 loading     | 不设一个到点杀进程的总超时；由阶段与执行者生命周期决定状态                     |
-| 启动控制面首状态 | 暂沿用 30 秒，但仅用于控制面建立；必须在长 SQL 前建立，不套在整个迁移上        |
-| SQLite 写锁等待  | 暂沿用 60 分钟上限与异步退避；独立于普通业务 5 秒 busy timeout，超预算明确失败 |
-| 正在执行原 SQL   | 不加自动杀进程的 SQL 超时；不能根据进度不更新判死，因为同步 SQL 可能持续很久   |
-| 长时间提示       | 10 分钟显示耗时说明，继续等待；不是截止时间，不承诺内存或空间足够              |
-| 普通业务请求     | 保持原超时；迁移准入等待与业务请求计时分开                                     |
+## 9. ARMS startup diagnostics and disk sampling (2026-09-14)
 
-执行线程与状态通道应确保窗口可响应；“SQL 无超时”不能成为 UI 无状态或进程退出后永远 loading 的理由。
+The user asked to report duration, status and errors of the unified database preparation and record the
+disk peak during migration where possible. Constraints: monitoring must not noticeably burden low-memory /
+low-free-space devices; duration/status/error first, the disk peak is a degradable diagnostic, no precise
+peak pursuit, and telemetry never delays ready.
 
-## 7. 最小验收矩阵
+### 9.1 Wiring and responsibility
 
-以下全部待执行，不继承旧 TODO 的完成勾选。
-
-| ID          | 场景                                                | 必须证明                                                             |
-| ----------- | --------------------------------------------------- | -------------------------------------------------------------------- |
-| GLOBALDB-01 | 新用户无工作区、无账号/Key、网络不可用              | 本地必需库准备成功后进入正常首次使用流程                             |
-| GLOBALDB-02 | Host 旧库迁移期间暂停执行                           | 启动页已可见、状态可读、窗口响应、业务尚未启动                       |
-| GLOBALDB-03 | Host 完成、会话库长迁移                             | 阶段正确切换；两库和服务都准备好才进入 Root                          |
-| GLOBALDB-04 | 已迁移、部分迁移、迁移后用户又修改数据              | 不重复已完成项、不覆盖后续修改；原 SQL/checksum/账本兼容             |
-| GLOBALDB-05 | Host 成功后会话库失败，再重试                       | 不回退已提交 Host 库；会话未提交事务恢复；无需重建配置               |
-| GLOBALDB-06 | Host 迁移后修复失败、必需服务装配失败               | 不假 ready，错误归属准确，重试无重复副作用或资源泄漏                 |
-| GLOBALDB-07 | 多窗口 / 独立 CLI 访问同库、不同库                  | 同库 SQLite 排他且不重复迁移；不同库不串状态                         |
-| GLOBALDB-08 | 等锁超过旧 5 秒、等锁超预算                         | 前者能继续成功；后者可诊断，不终止锁 owner                           |
-| GLOBALDB-09 | COMMIT 前强杀、COMMIT 后通知丢失                    | 真实子进程恢复正确，账本与数据一致                                   |
-| GLOBALDB-10 | 首状态缺失、Worker/Agent 崩溃、IPC 断链             | 可观察失败/重连状态，没有永久无反馈 loading                          |
-| GLOBALDB-11 | 页面刷新、双击重试、旧 ready 迟到                   | 不重复启动或取消迁移；新 attempt 不被旧状态覆盖                      |
-| GLOBALDB-12 | FULL、权限、I/O、checksum、坏库等错误               | 明确原因、安全恢复入口，无假成功或空库兜底                           |
-| GLOBALDB-13 | 自定义数据目录及不同会话库配置                      | 准备库与业务实际打开的库一致，不能误报全局就绪                       |
-| GLOBALDB-14 | 同时触发 scheduler / bot / Wiki / 预热              | 服务端准入有效，不依赖 UI 遮罩，不复制 accepted queue                |
-| GLOBALDB-15 | 本地启动与远程历史、远端连接失败、旧 Agent          | 不主动连接所有环境，不把网络失败误报 DB 错误；旧协议有明确兼容行为   |
-| GLOBALDB-16 | 手机配对、重连及 shared-host 准备期间访问           | 不另起 runtime；desktop continuous 与手机 replayable 边界不变        |
-| GLOBALDB-17 | Windows/macOS/Linux、主题语言与窄屏                 | 可见、可操作、无白屏；打包后 Worker/子进程资源路径可用               |
-| GLOBALDB-18 | 冷启动已迁移库、退出再启动                          | 无不必要 Agent/Worker 遗留、重复后台任务或明显启动回归               |
-| GLOBALDB-19 | ARMS 事件、阶段切换、失败文案及重试                 | 时间边界准确，UI 与遥测错误同源，终态去重；最终 payload 不超属性预算 |
-| GLOBALDB-20 | 长 SQL 执行中可用空间下降后恢复                     | 采样独立运行；保存相对开始基线的最大下降量，回滚后空间恢复不抹掉峰值 |
-| GLOBALDB-21 | 多卷、文件不存在、探测失败、SDK 异常及离线          | 缺失值不填零，按卷区分，业务仍正常准备，无扫描或上报阻塞             |
-| GLOBALDB-22 | 迁移执行者崩溃、应用强退、只有开始事件              | 可区分已确认失败与未知终态；不编造 SQL 错误、真实峰值或必达上报      |
-| GLOBALDB-23 | SQLite FULL / ENOSPC / EDQUOT；采样仍有空间或缺失   | 分类和文案准确，不依赖采样才能识别，不误指故障盘                     |
-| GLOBALDB-24 | IOERR / CANTOPEN / 权限 / NOMEM / 未知进程退出      | 不误报磁盘满或 OOM，未知信息保留未知，UI 与遥测同源                  |
-| GLOBALDB-25 | COMMIT 或迁移后修复失败，随后 rollback/close 再失败 | 原始原因保留，清理与重试状态明确，不假称完成回滚                     |
-| GLOBALDB-26 | 主库盘有空间、临时盘失败；重试时空间已恢复          | 不用主库余量否定 FULL；旧峰值保留，新 attempt 独立，账本正确         |
-
-20 GB 性能测试仍暂缓，后续明确授权再测；本轮仅隔离库功能验证。不能用小库成功推断低内存、磁盘不足用户必然迁移成功。
-无法完成的平台、远端、E2E 或性能验证须明确保留待验项，不能仅凭 loading 出现就交付。
-
-## 8. 发布与交付边界
-
-- 同一包覆盖新用户、未完成迁移和已经迁移用户；迁移选择由真实账本决定，不按版本号或 UI 标记判断。
-- 新方案通过前，现有 MR 保持草稿。先验证已迁移启动，再验证未迁移、并发、失败恢复和跨端；发布需单独执行发布流程。
-- 回滚启动代码不反向执行已提交数据库迁移；整包回退沿用既有版本可读性合同，不删除账本或数据。
-- 本轮交付为 TODO、人工影响面审查及文档索引；未做新方案代码、codegraph 自动扫描、运行时测试或发布。
-
-## 9. ARMS 启动诊断与磁盘采样（2026-09-14 补充）
-
-用户要求上报统一数据库准备的耗时、状态和错误，并尽可能记录迁移期间的磁盘峰值。本节为待实施方案，不表示已采集或已接通 ARMS。
-
-用户补充约束：监测不能给低内存、低剩余空间设备增加明显负担。耗时/状态/错误优先，磁盘峰值为可降级诊断；不追求精确峰值，不为了遥测延后 ready。
-
-### 9.1 接入与责任
-
-现有事实入口：
-
-- `packages/desktop/src/main/desktopArmsCustomEvent.ts`：统一 custom payload、应用版本/平台等上下文与最终发送前 E2E 捕获。
-- `packages/desktop/src/main/desktopRemoteUsageArmsTelemetry.ts`：Host/生命周期事实在 Main 汇总上报的参考实现。
-- `packages/services/src/storage/adapters/volumeProbe.ts`：异步 stat/statfs 探测卷容量，失败返回 null；复用须通过领域接口或依赖注入，不能跨域直接导入内部 adapter。
-- `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/storage-startup.ts`：现有迁移通知入口；新方案从同一启动状态生成 UI 和遥测，不解析日志文本推断状态。
+Existing fact entries: `packages/desktop/src/main/desktopArmsCustomEvent.ts` (unified custom payload,
+version/platform context, pre-send E2E capture), `packages/desktop/src/main/desktopRemoteUsageArmsTelemetry.ts`
+(Host/lifecycle facts reported from Main), `packages/services/src/storage/adapters/volumeProbe.ts` (async
+stat/statfs volume probe, null on failure; reuse through a domain interface or injection, no cross-domain
+internal import), `apps/zcode-cli/packages/bootstrap/src/zcode-protocol/storage-startup.ts` (existing
+migration notification; UI and telemetry are both generated from the same startup state, never by parsing
+log text).
 
 ```text
-Host/Agent 启动事实 ──→ 启动协调器 ──→ UI 阶段与安全错误提示
-                            └─────→ 有界诊断事件 ──→ Main 既有 ARMS 出口
-
-Host 独立采样器 ──异步读取所在文件系统可用空间──→ 本地聚合 ──→ 磁盘摘要事件
-      ↑
-SQLite 在 Worker / Agent 执行，同步 SQL 不能阻塞采样器
+Host/Agent startup facts -> startup coordinator -> UI stages and safe error text
+                                              `-> bounded diagnostic events -> Main's existing ARMS exit
+Host independent sampler (async free-space read of the file system) -> local aggregation -> disk summary event
+SQLite runs in a Worker / Agent; synchronous SQL never blocks the sampler
 ```
 
-Main 不解析 DB、不负责迁移状态机或磁盘业务探测。Reporter 通过注入接入，Web/独立 CLI 不依赖 Electron SDK。
-遥测不等待登录；依照现有采集配置和开关发送，不引入启动必需网络请求。ARMS 未就绪、离线或抛错时有界处理，不能阻止迁移、ready 或错误页。
+Main does not parse DB, run the migration state machine or probe disks. The reporter is injected, so Web /
+standalone CLI do not depend on the Electron SDK. Telemetry does not wait for login, follows the existing
+collection config and switches, and adds no startup-required network request; ARMS not ready, offline or
+throwing is bounded and never blocks migration, ready or the error page.
 
-### 9.2 耗时、状态与错误口径
+### 9.2 Duration, status and error semantics
 
-- `startup_id` 标识本次窗口启动，`attempt_id` 标识准备/重试，数据库子 attempt 与其关联；页面刷新不另记一次迁移。
-- **数据库准备总耗时**：启动协调器开始解析所需配置/准备库，到所有必需库及数据库初始化成功，或该阶段失败；包含等锁，不包含其后的业务服务装配。
-- **放行主界面耗时**：启动协调器开始，到必需服务就绪并发出 app ready；与数据库准备耗时分开。窗口创建到首屏属于现有应用启动指标，不用跨进程墙钟相减伪造。
-- 各库分别记录检查、等锁、迁移执行、提交及迁移后初始化耗时。单进程内用单调时钟计时，跨进程传递已计算的 duration；跨库总时长由协调器单独计，不盲加并行时段。
-- 状态包括 started / 当前阶段 / success / failed / interrupted 或 unknown；阶段变化来自权威状态，无需由 Renderer 重复上报。
-- 错误记录失败阶段、库种类、可得的 migration ID、标准 error code、稳定的 UI message key、恢复动作类型和 diagnostic ID。UI 文案与上报来自同一错误分类，不能一边提示磁盘满、一边上报未知 SQL 错误。
-- ARMS 不直接接收原始异常 message、完整路径、SQL、聊天内容或 Key。需要人读的错误摘要采用安全模板；原始 cause 留在现有本地诊断机制中并脱敏。
-- SDK 接受发送不等于远端已入库；强杀/断电可能丢失尾部事件。只有开始事件不能直接统计为迁移失败，更不能断言 OOM。
+- `startup_id` identifies this window start, `attempt_id` the prepare/retry; database sub-attempts link to it; a page refresh does not record another migration.
+- **Database preparation total**: from the coordinator starting config resolution / database preparation to all required databases and initialization succeeding or the stage failing; includes lock waiting, excludes later business service assembly.
+- **Main UI release time**: coordinator start to required services ready and app ready emitted; separate from the preparation time. Window creation to first paint remains an existing app-startup metric and is not faked by cross-process wall-clock subtraction.
+- Per-database check, lock wait, migration execution, commit and post-migration initialization durations. Single-process timing uses a monotonic clock; cross-process passes computed durations; the cross-database total is computed by the coordinator, not by summing parallel spans.
+- Statuses: started / current stage / success / failed / interrupted or unknown; stage changes come from authoritative state, not Renderer duplicates.
+- Errors record failing stage, database kind, migration ID when available, standard error code, stable UI message key, recovery action type and diagnostic ID; UI copy and reporting come from the same classification. ARMS never receives raw exception messages, full paths, SQL, chat content or keys (safe message templates; raw cause stays in local diagnostics, redacted).
+- SDK acceptance does not equal backend ingestion; kill/power loss may lose tail events; a start event alone is not a migration failure, and never asserts OOM.
 
-建议事件划分（实施时冻结 schema）：
+Events (schema frozen at implementation): `database_startup_started` (once per attempt), `database_startup_stage` (per real stage change, value = previous stage duration), `database_startup_result` (one terminal state per attempt, value = total preparation duration), `app_startup_ready` or a failure summary (one terminal per release attempt, value = coordinator-to-app-ready/failure duration), `database_startup_disk` (one terminal summary per observed scope; long migrations at most one aggregated summary per 5 minutes; not per sample). Keep full collection for the few started/result/error events (if sampling is needed, sample consistently per attempt and record the ratio). Correlation IDs are diagnostic only, not high-cardinality aggregation dimensions; success rate must account for offline/unclosed samples. ARMS custom has a 20-attribute budget (shared fields count); split by event and test the final payload.
 
-| 事件                               | 频率/主指标                                               | 用途                                                                   |
-| ---------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `database_startup_started`         | 每 attempt 一次                                           | 记录准备开始；与后续事件关联                                           |
-| `database_startup_stage`           | 每实际阶段切换一次，value 为前一阶段耗时                  | 定位具体卡在哪个库、等锁还是执行                                       |
-| `database_startup_result`          | 每 attempt 一个终态，value 为准备总耗时                   | 成功率、失败原因、重试、P50/P95/P99                                    |
-| `app_startup_ready` 或对应失败摘要 | 每次放行尝试一个终态，value 为协调器至 app ready/失败耗时 | 区分 DB 完成后业务装配卡住                                             |
-| `database_startup_disk`            | 每观测 scope 终态摘要；长迁移最多每 5 分钟一条聚合摘要    | 保留最新已观测空间状态，减少执行者崩溃时完全没有尾部证据；不逐样本发送 |
-
-优先为少量 started/result/error 事件保留完整采集，不继承高频资源角色采样的默认比例；如必须采样，按 attempt 一致采样并记录比例。
-started/result 的关联标识只作诊断，不做高基数聚合维度；成功率必须考虑离线/未闭合样本，不能简单用 started 减 result 当失败数。
-现有资源遥测代码提示 ARMS custom 有 20 属性预算；最终公共字段也占额度。实施时核对 SDK/平台限制，按事件拆分，测试最终 payload，不能把所有阶段与磁盘字段塞进同一事件。
-
-### 9.3 一个磁盘主指标，区分采到与送达
-
-用户要求从原理及各操作系统差异决定指标，避免上传大量难以解释的数值，并确保失败路径尽可能保留、送达摘要。此前多文件大小、10 秒采样等候选已从当前清单移除，历史过程在 Git 提交中保留；既有小测试不作为实际磁盘 IO 成本或跨平台可靠性证据。本轮未追加性能测试或遥测实现。
-
-#### 主指标与看板
-
-主指标使用 **准备期间可用空间的最大下降量**：
+### 9.3 One disk primary metric
 
 ```text
-A0 = 开始准备前，目标文件系统的有效可用字节数
-Amin = 本次准备期间有效样本中的最低可用字节数（包含 A0）
+A0 = effective free bytes of the target file system before preparation starts
+Amin = lowest effective free bytes during preparation (including A0)
 observed_available_drop_peak_bytes = max(0, A0 - Amin)
-
-例：开始可用 30 GB → 最低可用 18 GB → 回滚后可用 29 GB
-    上报峰值下降量 12 GB，不用结束差值 1 GB 代替。
+e.g. start 30 GB -> lowest 18 GB -> after rollback 29 GB: report peak drop 12 GB, not the end difference 1 GB
 ```
 
-这是目标文件系统的**观测净变化**，不是迁移独占物理占用、累计写入量、迁移所需空间上界或精确瞬时峰值。其他程序写入/释放、系统回收、配额调整等都可能改变数值，甚至掩盖迁移自身增长；指标名和看板必须保留“观测”语义。
-选择依据：相较 DB/WAL 文件逻辑长度，它能观察同一空间池内临时文件、实际块分配等对可用空间的共同影响；相较遍历文件并统计物理块，它无需扫描、枚举临时文件或处理克隆块的复杂归属。
+This is the **observed net change** of the target file system, not the migration's exclusive physical
+usage, cumulative writes, a required-space upper bound or an exact instantaneous peak; other programs'
+writes/releases, system reclaim and quota changes can alter or mask it, so the name and dashboard keep the
+"observed" meaning. (Chosen over DB/WAL logical length because it captures temp files and real block
+allocation in the same pool, and over physical block traversal because it needs no scan.) Default dashboard
+shows only total preparation time, result / failing stage / error category and this peak; `min_available_bytes`
+is a failure-diagnosis helper (collapsed); total capacity, per-file lengths and per-round samples are not
+reported. Quality info per result: metric_version, baseline/coverage state, time since last sample; with no
+valid baseline or sample the metric is omitted, never 0 (a single start sample proves no growth).
+Results are deduplicated per attempt; checkpoint vs terminal are distinct; success rate and final peak
+distribution use terminal only.
 
-默认看板仅展示：准备总耗时、结果/失败阶段/错误类别、上述磁盘峰值。保留 `min_available_bytes` 作为失败排查辅助字段，展示时默认折叠；总容量、各文件开始/结束/最大长度、每轮样本不常规上报。
-每个有效结果保留少量质量信息：metric_version、baseline/coverage 状态、最后样本距结束的时间；无有效基线或样本时省略指标，不填 0。只有一个开始样本不能证明增长为零。
-主结果按 attempt 去重；checkpoint 与 terminal 明确区分，成功率和最终峰值分布只用 terminal，未闭合 attempt 单独看，不混算成失败或成功。
+| OS      | Entry and semantics                                                                                    | Interpretation limits                                                                                                                                       |
+| ------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows | Node async statfs `bavail * bsize`; verify the packaged libuv's CallerAvailableAllocationUnits mapping | caller-available amount, not total free ignoring quota; NTFS compression/sparse files make logical length differ from physical use                          |
+| macOS   | same statfs available-block semantics; no mixing with Finder capacity or Foundation estimates          | APFS volumes in one container share space; clones/snapshots change allocation; readings of different volumes may reflect the same pool and are never summed |
+| Linux   | same statfs `bavail * bsize`, not statvfs units or `bfree`                                             | ordinary-user available amount, not guaranteed to include all user quota / inode / metadata limits; ext4/Btrfs/overlay behave differently                   |
 
-#### 操作系统口径
+Principle: unify "OS-reported free-space change" without claiming equivalence across quota, reclaimable
+space and allocation policy; keep platform dimension grouping. Two local databases on the same file system
+share one continuous sample per attempt (baseline not reset per database); different file systems produce
+one summary per scope and peaks are never added; the same pool cannot be proven from drive letter or
+`st_dev`. statfs targets the real database directory directly (a nonexistent directory resolves to an
+existing ancestor once at path-resolution time, not per tick); the temp-dir file system is an extra scope
+only when reliably confirmed, with no global disk search.
 
-| 系统    | 统一入口与口径                                                                                  | 必须保留的解释边界                                                                                               |
-| ------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Windows | Node 异步 statfs 返回的 `bavail * bsize`；核对打包 libuv 的 CallerAvailableAllocationUnits 映射 | 使用调用者可用量，不能用忽略用户配额的总空闲量替代；NTFS 压缩/稀疏文件使逻辑长度不等于物理占用                   |
-| macOS   | 同一 statfs 可用块口径，不混用 Finder 容量或 Foundation 针对特定用途的容量估计                  | APFS 同容器多卷共享空间，克隆/快照改变物理分配；不同卷读数可能重复反映同一池的变化，绝不直接相加                 |
-| Linux   | 同一 statfs `bavail * bsize`，不混用 statvfs 的单位或 `bfree`                                   | 反映文件系统返回的普通用户可用量，但不保证包含所有用户配额/inode/元数据限制；ext4/Btrfs/overlay 等行为需分类理解 |
+Cost control: default every 2 s, one async statfs per target scope; no per-round 4 file stats; keep only A0,
+Amin, count and time (no time series, no per-sample disk write or ARMS network). At most one file-system
+request in flight, scopes polled in turn; a slow call skips ticks, no pile-up (libuv async IO uses the
+thread pool; "parallel per round" is not bounded concurrency). No file/directory scan, no database
+statistics SQL, no checkpoint/fsync, no new sampler process; the sampler lives in the responsive Host while
+SQLite runs in the Agent or planned migration Worker. Start the first query as soon as real paths resolve;
+only a baseline finished before the corresponding writes start counts as complete; no unbounded startup
+barrier for telemetry; a late baseline is marked partial/late and not mixed into the complete distribution;
+no baseline keeps duration/error and marks unavailable. The minimum is maintained until the terminal state;
+a failure does not reset the peak; one best-effort terminal re-sample never blocks the error page or ready
+and space recovered after cleanup is not the historical peak. slow/unavailable only lowers observation
+completeness and never overrides the migration error.
 
-总原则：统一“OS 报告的可用空间变化”，不假称三种 OS 对配额、可清理空间和分配策略完全等价。保留平台维度分组分析。SQLITE_FULL 也不等于该值一定为零。
-参考：[Node StatFs](https://nodejs.org/docs/latest-v24.x/api/fs.html#class-fsstatfs)、[Windows 调用者配额语义](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getdiskfreespaceexa)、[libuv Windows fs\_\_statfs](https://github.com/libuv/libuv/blob/v1.x/src/win/fs.c)、[macOS statfs](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/statfs.2.html)、[Apple APFS 空间共享](https://support.apple.com/en-gb/guide/mac-help/sysp560a2952/mac)、[Linux statfs](https://man7.org/linux/man-pages/man2/statfs.2.html)。
-
-默认本地两库同一文件系统时，整个准备 attempt 共用一次连续采样，不按库结束重置基线。不同目标文件系统按 scope 分别生成同一类摘要；每 scope 一个峰值，不把各卷峰值相加成全局值。无法证明同一空间池时不合并，不用盘符或 st_dev 冒充物理磁盘身份。
-可直接对真实数据库所在目录 statfs，无须逐层向上遍历找挂载点。不存在的目录在启动路径解析时选择已存在祖先，不能在每个 tick 重复探索。临时目录所在文件系统只有能可靠确认时才列为额外 scope；不全盘搜索，也不宣称覆盖未知临时目录。
-
-#### 成本控制与基线
-
-- 默认每 2 秒，每目标 scope 一次异步 statfs；取消默认每轮 4 次文件 stat。只保留 A0、Amin、计数与时间，不保存时间序列，不逐样本落盘或走 ARMS 网络。
-- 全采样器至多一个文件系统请求在途，逐 scope 轮询；慢调用未返回时跳过 tick，不堆积。Node/libuv 的异步文件 IO 会占线程池，不能把“一轮”里并行占满线程池的实现当作已限制并发。
-- 不扫描文件内容/目录，不查数据库统计 SQL，不触发 checkpoint/fsync，不创建新的采样进程。主采样器位于仍可响应的 Host，SQLite 在既有 Agent 或规划的迁移 Worker 中执行。
-- 配置解析出真实路径后尽早发起首次查询，只有在对应准备写入开始前完成的基线才进入完整口径。不为遥测添加无限等待的启动屏障；迟到基线标记 partial/late，不能与完整峰值混入同一分布；无基线就保留耗时/错误并标 unavailable。
-- 开始至终态持续维护最小值；失败后不重置峰值，不强制重新探测成功后才允许上报。可尝试一次终态补采，但不阻断错误页或 ready，也不能把终态回收后的空间当作历史峰值。
-- slow/unavailable 只降低观测完整性，不覆盖迁移错误。异步元信息查询仍可能发生文件系统锁等待或实际 IO；依据是固定数量查询而非零成本保证。
-
-#### 失败保留与 ARMS 送达
+Failure retention and delivery:
 
 ```text
-Host 采样并维护摘要 → 每次摘要变化时向 Main 镜像最新诊断（至多每 2 秒一次，小消息）
-执行者失败         → Host 生成 failed + 已有峰值 → Main 上报终态
-Host 退出          → Main 复用既有进程退出事实 + 最近诊断镜像 → 上报 interrupted
-整应用强退         → 依赖此前已送达 checkpoint / 已持久化终态补报；不能保证尾部值
+Host samples and keeps the summary -> mirrors the latest diagnostic to Main on change (at most once per 2 s, small message)
+executor fails -> Host builds failed + existing peak -> Main reports the terminal state
+Host exits -> Main reuses existing process-exit facts + latest mirror -> reports interrupted
+whole-app forced exit -> relies on previously delivered checkpoints / persisted terminal state; tail values not guaranteed
 ```
 
-Main 镜像是可丢弃的遥测数据，不成为迁移协调器、完成账本或重试决策者。UI reload 不重复报告；失败不依赖 Renderer 挂载、用户登录、导出日志 ZIP 或再次读取故障磁盘。
-原有 5 分钟聚合 checkpoint 可保留，但看板隐藏这些中间记录，只展示终态或最新未闭合摘要。checkpoint 频率属于网络可靠性预算，不能与 2 秒本地采样频率混淆。
+The Main mirror is discardable telemetry, not a coordinator, completion ledger or retry decider; UI reload
+does not re-report; failure does not depend on Renderer mount, login, ZIP export or re-reading the failing
+disk. The 5-minute aggregated checkpoint may stay (dashboard hides intermediate records); checkpoint
+frequency is a network-reliability budget, not the 2 s sampling frequency.
 
-已发现的 SDK 缺口（当前安装 `@arms/rum-electron` 0.0.3）：`sendCustom` 返回 void；Electron reporter 的 request 直接返回 fetch，没有在该层检查 HTTP status；基础 reporter 依赖请求 reject 触发配置内重试。不能仅靠 try/catch(sendCustom) 或 beforeReport/E2E 捕获断言网络成功，也不能假设 HTTP 500 一定重试。需在实施前核对实际打包补丁和最终有效配置。
-事实入口：`node_modules/@arms/rum-electron/dist/index.mjs` 的 electron-reporter/request，`@arms/rum-core/lib/model/reporter.js` 的 tryRequest，`packages/desktop/src/main/desktopArmsCustomEvent.ts` 的发送前捕获。
+SDK gaps found (`@arms/rum-electron` 0.0.3): `sendCustom` returns void; the Electron reporter's request
+returns fetch without checking HTTP status; the base reporter relies on request rejection for configured
+retries, so try/catch around `sendCustom` or beforeReport/E2E capture cannot assert network success and an
+HTTP 500 is not assumed to retry (facts: `node_modules/@arms/rum-electron/dist/index.mjs` electron-reporter/request,
+`@arms/rum-core/lib/model/reporter.js` tryRequest, `desktopArmsCustomEvent.ts` pre-send capture).
 
-- [x] 在统一遥测出口补齐可确认的发送结果合同：区分入 SDK 队列、接收端 HTTP 接收成功、ARMS 后台可查询；HTTP 非成功与明确网络异常进入有限退避重试；SDK 不支持取消时，超时仅标未确认，不复制仍在途的请求，不修改启动业务超时。
-- [x] 优先复用 SDK 支持的能力；若 SDK 不提供必要的发送确认/可靠重试，在 spec 单列最小 SDK 修复范围和回归，不从 Host 临时发一套绕过公共过滤的裸 HTTP。
-- [x] 关键终态采用稳定 event_id 去重，设置内存/次数/时间上限的补报；记录 event_time，防止下次启动补报混入新 attempt。
-- [ ] 若需跨重启补报，只持久化极小的待确认终态摘要，建议总量上限 64 KiB、TTL 7 天，无逐采样写盘；写入失败则继续内存发送，不阻断失败页。该边界替代早期“不新增持久化重试队列”的绝对限制，不扩展为通用遥测存储系统。成功接收再移除，重复发送由 event_id 去重。
-- [x] 数据库卷已满且摘要也无法落盘时，只能依赖存活进程内存和可用网络；不声称落盘或上传必然成功。应用断电、长期离线、SDK 禁用、ARMS 拒收均无法保证送达，不能为了“必达”无限占资源或阻止用户退出。
-- [ ] 用故障注入验证 FULL 后已有峰值保留、执行者/Host 退出、首样本缺失、SDK 未就绪、HTTP 非成功、网络断开及补报去重。发送确认路径需真正检验响应，不仅验证 mock sendCustom 被调用。
-- [ ] 发布验收用允许上报的隔离事件核对 ARMS 实际入库和查询，量化丢失/补报；本轮不发送生产遥测、不跑迁移性能测试。
+- [x] Send-result contract at the unified telemetry exit: distinguishes queued in SDK, HTTP receive success, ARMS backend queryable; HTTP non-success and explicit network errors use bounded backoff retry; when the SDK cannot cancel, a timeout only marks unconfirmed, does not duplicate an in-flight request and does not change startup business timeouts.
+- [x] Prefer SDK capabilities; if the SDK lacks send confirmation / reliable retry, list the minimum SDK fix in the spec; no bare HTTP from the Host bypassing common filters.
+- [x] Key terminal states use a stable `event_id` for dedupe, with memory/count/time-bounded re-reporting and an `event_time`, so a next-start re-report does not mix into a new attempt.
+- [ ] Optional cross-restart re-reporting: persist only a tiny pending-terminal summary (suggest 64 KiB total, 7-day TTL, no per-sample writes); on write failure keep sending from memory and never block the failure page; replaces the earlier absolute "no persistent retry queue" limit without becoming a general telemetry store; remove on receipt, dedupe by `event_id`.
+- [x] If the database volume is full and the summary cannot be persisted either, rely on the living process memory and available network; no claim that persistence or upload must succeed (power loss, long offline, SDK disabled and ARMS rejection cannot be guaranteed; no unbounded resource use or blocking user exit).
+- [ ] Fault injection: existing peak retained after FULL, executor/Host exit, missing first sample, SDK not ready, HTTP non-success, network drop and re-report dedupe; the confirmation path must actually check the response, not just that a mock `sendCustom` was called.
+- [ ] Release acceptance with allowed isolated events checks actual ARMS ingestion and query and quantifies loss/re-report; this round sends no production telemetry and runs no migration performance test.
 
-交付承诺应表述为：可恢复失败保留已观测指标，网络可用时带确认与有限重试，条件允许时跨重启补报。不能承诺全场景捕获真实峰值及 100% 送达。
+Delivery promise: recoverable failures keep observed metrics, with confirmation and bounded retry when the
+network is available, and cross-restart re-reporting when conditions allow; no promise of capturing the
+true peak in all scenarios or 100% delivery.
 
-## 10. 本次落地与待验收（2026-09-14）
+## 10. Landed and pending acceptance (2026-09-14)
 
-- 已实现两类 Host 所属 Worker、业务 Root 前启动壳、独立状态/控制通道、手动重试、安全错误、2 秒有界采样和 ARMS HTTP 接收确认。
-- 服务装配失败只提供退出重开；Worker 已退出，不能在部分服务已创建的 Host 内重复装配。跨库不整体回滚。
-- 本版使用存活 Main 内存中的摘要和有限网络重试，不实现可选的跨重启 outbox / 周期 checkpoint。超时请求不叠加；不承诺强杀/离线必达。
-- 手机仍使用既有 shared-host 连接/重连界面，准备期间 attachment 延后；未新增手机专用数据库阶段 UI。手机与远端回归仍待可运行环境验证。
-- 新 E2E 已写入 manual-review/pending，尚未晋级；Electron 在创建窗口前崩溃，不能把单测和 Node Worker 探针当成 GUI 验收。
-- 检查结果、复审修正及日志入口集中记录于实施复审，未勾选项不以旧方案通过结果代替。
+- Implemented: two Host-owned Workers, startup shell before the business Root, standalone status/control channel, manual retry, safe errors, bounded 2 s sampling, ARMS HTTP receive confirmation.
+- Service assembly failure offers exit-and-reopen only (the Worker has exited and services cannot be assembled twice inside a Host with partly created services). No cross-database rollback.
+- This version uses summaries in the living Main's memory and bounded network retry; the optional cross-restart outbox / periodic checkpoint is not implemented. Timed-out requests do not stack. No guaranteed delivery on kill/offline.
+- Phone keeps the existing shared-host connect/reconnect UI, attachment deferred during preparation; no phone-specific database stage UI. Phone/remote regression is pending a runnable environment.
+- The new E2E is in manual-review/pending, not promoted; Electron crashed (SIGTRAP) before creating the window, so unit tests and Node Worker probes are not GUI acceptance.
+- Check results, review fixes and log entries are in the implementation review; unticked items are not replaced by old-scheme passes.
 
-## 11. 2026-09-15 review 修复
+## 11. 2026-09-15 review fixes
 
-- [x] Host 重建撤销旧启动监听，退出后不再重放 ready；状态和初次/reload 端口绑定同代启动 ID。
-- [x] 历史项目不可用时与普通 Agent 共用异步 cwd fallback；真实数据库错误保持失败。
-- [x] 补充单测、ID 贯通测试与 GLOBALDB-27/28 pending E2E；类型/Lint/架构与构建通过。
-- [ ] 桌面 E2E 通过后提交：本环境最小 Electron 同样 SIGTRAP，记录见实施复审。
+- [x] Host rebuild revokes old startup listeners; no ready replay after exit; status and first/reload port binding carry the same-generation startup ID.
+- [x] When the historical project is unavailable it shares the ordinary Agent's async cwd fallback; real database errors stay failures.
+- [x] Added unit tests, ID propagation tests and GLOBALDB-27/28 pending E2E; typecheck/lint/architecture and build pass.
+- [ ] Commit after desktop E2E passes: in this environment even a minimal Electron app SIGTRAPs (recorded in the implementation review).

@@ -1,331 +1,205 @@
-# Todo 69：Provider 重构实用回滚兼容
+# Todo 69: Practical Rollback Compatibility for the Provider Refactor
 
-> 2026-09-10 数据库范围补充裁决：后续实施以 [Todo109](./todo-109-database-migration-consolidation-and-rollback-readability.md) 为准，旧基线固定为 staging_backup@790884b1ce。尽量不双写，但回滚后单条任务/消息/会话内容打不开时须最小必要兼容写入；配置丢失可重选。所有相关库迁移收口，原旧字段/值保留，新版正常读取不再重复补迁。本文“一律不双写”及允许个别内容不可读的旧范围不再约束这次数据库工作；历史证据和非数据库裁决保留。
+> Database-scope ruling (2026-09-10): later work follows [Todo109](./todo-109-database-migration-consolidation-and-rollback-readability.md); the old baseline is fixed at staging_backup@790884b1ce. Avoid dual writes where possible, but after a rollback a single task/message/session whose content cannot be opened needs minimal necessary compatibility writes; lost config can be re-selected. All related database migrations are consolidated, original old fields/values are kept, and the new version reads normally without re-migrating. This document's "never dual-write" and its tolerance of some unreadable content no longer constrain that database work; historical evidence and non-database rulings stay.
 
-> 验证归属更新（2026-09-09）：本文残余欠测/失败/人工晋级统一转交 [Todo102](todo-102-verification-debt-closeout.md)，关闭在本文中的独立验证排期；历史证据保留，转交不代表测试通过。
+> Verification ownership (2026-09-09): residual untested/failing/manual-promotion items moved to [Todo102](todo-102-verification-debt-closeout.md). Historical evidence stays; the hand-off does not mean the tests pass.
 
-> 状态：实现与阶段验收完成（2026-09-03）；未运行完整旧 App 回滚，证据范围见实施报告。
+> Status: implementation and phase acceptance done (2026-09-03); no full old-App rollback was run, evidence scope is in the implementation report.
 >
-> 更新：2026-09-03。本文取代此前的多领域持续双写方案。
+> This document replaces the earlier multi-domain continuous dual-write plan.
 >
-> 审查基线：当前分支 `eb8b9deee500` 及工作区；回滚目标仅为 `origin/staging@6e781fdd9029`。
+> Review baseline: branch `eb8b9deee500` plus working tree; the rollback target is only `origin/staging@6e781fdd9029`.
 >
-> 2026-09-09 后续裁决：用户明确旧字段不能因新选择接入被删除或清空，Off-Peak 编辑 / Wiki 保存两处需保留旧值，不要求持续反向双写；Session 已裁决改为原 entry.data 新增 modelSelection 并保留旧身份 / 档位字段。Subagent Markdown 沿用 [Todo97](./todo-97-subagent-markdown-in-place-migration-and-legacy-read-audit.md) 已裁决的可读性取舍及用户目录原字段迁移；此前将其列为待复审项是误记，已撤销。见 [Todo104 §6.18](./todo-104-pre-release-schema-review.md)（m2 原 Todo99）。这些是待实施补充，不修改本文冻结 Reader 的既有验证事实，也不恢复 Bot 原文件写入。
+> Later ruling (2026-09-09): old fields must not be deleted or cleared because of new-selection wiring. The Off-Peak edit and the Wiki save keep old values; continuous reverse dual-write is not required. Session was ruled to add `modelSelection` to the original entry.data and keep the old identity/level fields. Subagent Markdown follows the readability trade-off and user-directory in-place field migration already ruled in [Todo97](./todo-97-subagent-markdown-in-place-migration-and-legacy-read-audit.md); listing it earlier as a re-review item was a mistake and is withdrawn. See [Todo104 §6.18](./todo-104-pre-release-schema-review.md) (m2, formerly Todo99). These are pending additions; they do not change this document's verified facts about the frozen Reader and do not restore Bot original-file writing.
 
-## 1. 目标和最终裁决
+## 1. Goal and final ruling
 
-回滚到上述 staging 版本后，旧 App 能够启动，升级前的主要数据仍能打开。允许新版创建或修改的个别
-消息、任务、模型选择发生退化；不要求旧版完整理解当前 Provider 架构。
+After rolling back to the staging version, the old App starts and the main pre-upgrade data still opens. Individual messages, tasks and model selections created or changed by the new version may degrade; the old version need not understand the current Provider architecture.
 
-只处理会让整个文件、集合或 App 无法读取的关键兼容问题，不为单条新版记录的语义损失维护大量旧代码。
+Only critical compatibility problems that make a whole file, collection or the App unreadable are handled; no large amount of old code is maintained for the semantic loss of one new-version record.
 
 ```text
-当前版本写入数据
+data written by the current version
         |
         v
-staging 的真实 Reader
-        |
-        +-- 可以忽略新字段 / 新列 / 新文件
-        |      `--> 不增加兼容写入
-        |
-        +-- 只影响个别新版消息或任务
-        |      `--> 接受明确列出的退化，不增加兼容写入
-        |
-        `-- 一条新版记录导致整份文件或集合被拒绝
-               `--> 修复物理兼容边界
+staging's real Reader
+        +-- can ignore new fields / columns / files  --> no compatibility write
+        +-- affects only individual new messages/tasks --> accept the listed degradation, no compatibility write
+        `-- one new record makes a whole file or collection rejected --> fix the physical compatibility boundary
 ```
 
-最终范围：
+Final scope:
 
-- Provider Config、Session、Off-Peak、Automation、Account Settings、Subagent、Repo Wiki 均不持续双写旧字段。
-- SQLite 保持增量、可空的 Schema 变更，不执行破坏性降级。
-- **Bot Config 和 State 是此次审查中唯一确定的整域失败风险，采用文件版本隔离，不持续双写。**
-- Model/Reasoning 随所属记录处理，不新建通用旧版 Encoder、兼容 DTO 或第二套模型事实。
-- 当前版本对旧数据的单向升级读取仍需保留；取消降级双写不等于删除升级 Importer。
+- Provider Config, Session, Off-Peak, Automation, Account Settings, Subagent and Repo Wiki do not continuously dual-write old fields.
+- SQLite keeps additive nullable schema changes with no destructive downgrade.
+- **Bot Config and State are the only confirmed whole-domain failure risk and use file-version isolation, not continuous dual-write.**
+- Model/Reasoning follow their owning record; no generic old-version Encoder, compatibility DTO or second model fact.
+- One-way upgrade reads of old data in the current version stay; dropping downgrade dual-write does not remove upgrade Importers.
 
-## 2. 已核实的读取边界
+## 2. Verified read boundaries
 
-本轮对照了当前 Writer 与冻结 staging 提交的文件名、严格 Schema、空值处理、列表解析和失败范围。
-下表是代码事实，不再以“如果旧版不支持”作为实施依据。
+The current Writers were compared with the frozen staging commit's file names, strict Schemas, null handling, list parsing and failure scope. This is code fact.
 
-| 领域               | staging 的真实读取行为                                               | 允许的回滚退化                                     | 裁决           |
-| ------------------ | -------------------------------------------------------------------- | -------------------------------------------------- | -------------- |
-| Provider Config    | 读取旧 `config.json`；当前版本只写新 `provider_config.json`          | 使用升级前配置，看不到新版 Provider/Template 修改  | 不双写         |
-| Session            | 已认识 `runtime/model_selection`；消息、Part、Entry 是宽松 JSON 读取 | 新模型元数据、Reasoning 或个别新版消息展示可能退化 | 不双写         |
-| Off-Peak           | 旧 `model/thought_level` 可空，额外列不影响读取                      | 新任务可能使用 staging 原有默认模型                | 不双写         |
-| Automation         | 旧 `model/provider/thought_level` 可空，额外列不影响读取             | 新任务和 Run 不能精确保留新版冻结选择              | 不双写         |
-| Account Settings   | 非 strict Schema，忽略新字段，为缺失旧字段提供空值默认               | 账号连接或套餐选择可能需要重新选择                 | 不双写         |
-| 自定义 Subagent    | Frontmatter 只读取已知字段，不因新 `modelSelection` 拒绝整个文件     | 新式显式模型选择退化为继承或默认                   | 不双写         |
-| 内置 Subagent 状态 | 宽松挑选字段，忽略新版模型覆盖字段                                   | 模型覆盖丢失，`disabledAgentIds` 仍保留            | 不双写         |
-| Repo Wiki          | 新旧 Reader 都宽松解析 JSON                                          | Wiki 内容可读，重新生成可能需要重选模型            | 不双写         |
-| Bot Config/State   | 同一文件内的新旧 Options 均 strict，但字段集合互不兼容               | 不接受整份 Bot 配置/状态被拒绝                     | 版本化文件隔离 |
-| Model/Reasoning    | 没有独立持久化介质                                                   | 随所属领域决定                                     | 不建通用兼容层 |
+| Domain                  | Real staging read behavior                                                     | Accepted rollback degradation                              | Ruling                   |
+| ----------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------ |
+| Provider Config         | reads old `config.json`; current writes only new `provider_config.json`        | pre-upgrade config; new Provider/Template edits invisible  | no dual-write            |
+| Session                 | knows `runtime/model_selection`; message, Part, Entry are lenient JSON reads   | new model metadata, Reasoning or some new messages degrade | no dual-write            |
+| Off-Peak                | old `model/thought_level` nullable; extra columns harmless                     | new tasks may use staging's default model                  | no dual-write            |
+| Automation              | old `model/provider/thought_level` nullable; extra columns harmless            | new tasks and Runs cannot keep the new frozen selection    | no dual-write            |
+| Account Settings        | non-strict Schema, ignores new fields, empty defaults for missing old fields   | account connection or plan selection may need re-choosing  | no dual-write            |
+| Custom Subagent         | Frontmatter reads known fields only; new `modelSelection` does not reject file | explicit model selection degrades to inherit/default       | no dual-write            |
+| Built-in Subagent state | lenient field picking, ignores new model override fields                       | model override lost; `disabledAgentIds` kept               | no dual-write            |
+| Repo Wiki               | old and new Readers parse JSON leniently                                       | Wiki readable; regeneration may need model re-selection    | no dual-write            |
+| Bot Config/State        | same-file old and new Options both strict, field sets mutually incompatible    | whole Bot config/state rejected is unacceptable            | versioned file isolation |
+| Model/Reasoning         | no independent persistence medium                                              | follows owning domain                                      | no generic layer         |
 
-这里证明的是 Provider 重构相关字段不会被旧 Reader 整域拒绝，不等于已经完成完整旧 App 启动、展示与执行的
-实机验收。实施记录必须区分静态审查、定向测试和实机回滚证据。
+This proves the Provider-refactor fields are not rejected domain-wide by old Readers; it is not a full old-App startup, display and execution acceptance. Records must distinguish static review, targeted tests and real rollback evidence.
 
 ### 2.1 Provider Config
 
-当前正式文件为 `provider_config.json`。旧 `config.json` 只用于一次性升级输入，当前 Repository 不改写它、
-也不生成备份。现有 `packages/services/test/providerConfigRuntime.test.ts` 的
-“从旧 config.json 导入同目录 provider_config.json，不改写旧文件且不备份”测试固定了这个事实。
-
-因此 staging 回滚后继续使用升级前配置。新版新增的 Template 实例、Provider 和 Personal Model Rule 不反向
-同步。禁止因为部分新模型回滚后无法执行而恢复双 Provider 配置权威。
+The formal file is `provider_config.json`. Old `config.json` is a one-time upgrade input only; the Repository neither rewrites it nor creates a backup (pinned by the `packages/services/test/providerConfigRuntime.test.ts` test "imports old config.json into the same-directory provider_config.json, no rewrite and no backup"). After rolling back to staging the pre-upgrade config applies; new Template instances, Providers and Personal Model Rules are not synced back. Never restore a dual Provider config authority because some new models cannot run after rollback.
 
 ### 2.2 Session
 
-冻结 staging 已定义 `runtime/model_selection`；Session Store 对 `message.data`、`part.data` 和
-`session_entry.data` 使用 `JSON.parse` 后按消费路径读取，不对整份 Session 执行严格的新旧互斥 Schema。
+Frozen staging defines `runtime/model_selection`; the Session Store `JSON.parse`s `message.data`, `part.data` and `session_entry.data` and reads by consumption path, with no strict mutually exclusive Schema. Session Selection's Provider/Model identity fields stay readable; the current `options.reasoningLevel` may be ignored. New model metadata on User/Assistant/Timeline/Subtask may not be understood by old display or execution, but this does not imply the database or session list is unreadable.
 
-Session Selection 的 Provider/Model 身份字段仍可读，当前 `options.reasoningLevel` 可能被旧版忽略。
-User/Assistant/Timeline/Subtask 的新版模型元数据也可能不被旧展示或执行路径理解，但不能据此推导为数据库
-或整个会话列表无法读取。
-
-不新增以下回滚别名：
-
-- User Message 的旧 `model.providerID/modelID/variant`；
-- Assistant Message 的旧 `providerID/modelID/variant`；
-- Timeline/Subtask 的旧 Selection 字段；
-- Session Entry 的旧 `thoughtLevel`。
-
-当前版本读取旧 Session、识别失效选择、保证历史可打开由 Todo 70 处理，不在本 Todo 扩展为双写。
+No rollback aliases are added: User Message old `model.providerID/modelID/variant`; Assistant Message old `providerID/modelID/variant`; Timeline/Subtask old Selection fields; Session Entry old `thoughtLevel`. Reading old Sessions, detecting invalid selections and keeping history openable in the current version belong to Todo 70.
 
 ### 2.3 Off-Peak
 
-当前 `off_peak_tasks` 增加了可空 `model_selection`，保留原有旧列。当前创建逻辑写入：
+`off_peak_tasks` gained a nullable `model_selection` and keeps old columns. Creation writes `model_selection` = the complete ModelSelection, `model` = NULL, `thought_level` = NULL. Frozen staging's Row type and `rowToTask()` accept null old columns (mapped to `undefined`), so new rows do not break `list()`. Staging dispatch uses old model fields only when present, else its own default logic; after rollback a new task may not use the exact Provider/Model/Reasoning (accepted; no dual-write of `model/thought_level`).
 
-```text
-model_selection = 完整 ModelSelection
-model            = NULL
-thought_level    = NULL
-```
-
-冻结 staging 的 Row 类型和 `rowToTask()` 明确接受旧列为空，分别映射为 `undefined`。因此即使 `list()`
-直接 `map(rowToTask)`，这些新版行也不会因为缺少旧模型字段而拖垮列表。
-
-staging 的派发路径只在旧模型字段存在时使用它们，否则走自己的既有缺省逻辑。回滚后新任务可能不再使用
-原来精确选定的 Provider/Model/Reasoning；这是本次明确接受的退化，不双写 `model/thought_level`。
-
-注意方向区别：旧行没有当前 `model_selection` 导致**当前版本**恢复失败，是升级 Decoder/恢复容错问题，
-不是要求当前 Writer 反向双写的理由。
+Direction note: a legacy row lacking the current `model_selection` failing in the **current** version is an upgrade Decoder/recovery tolerance problem, not a reason for reverse dual-writes.
 
 ### 2.4 Automation
 
-当前 `automations` 同样保留可空旧列，并新增可空 `model_selection`；新建任务的旧
-`model/provider/thought_level` 为空。冻结 staging Reader 对这些列作空值兼容映射，能够加载列表。
-
-回滚后新任务可能采用 staging 默认模型，`automation_runs.model_selection` 也无法被旧版精确理解。
-不为此实现当前 Registry Provider ID 到旧 Agent Provider 枚举的反向映射，不双写旧模型列。
+`automations` keeps nullable old columns and adds nullable `model_selection`; new tasks have null old `model/provider/thought_level`. The staging Reader null-maps these and can load the list. After rollback new tasks may use the staging default model, and `automation_runs.model_selection` cannot be understood exactly by the old version. No reverse mapping from the current Registry Provider ID to the old Agent Provider enum and no dual-write of old model columns.
 
 ### 2.5 Account Settings
 
-当前字段是 `providerFamilyConnectionSelections`；staging 使用
-`modelProviderFamilyModes/modelProviderFamilySelectedKeys`。冻结 staging 的 Settings Schema 非 strict，
-会忽略新字段，并把缺失旧字段缺省为空对象，整份 Settings 仍可加载。
-
-用户回滚后可能需要重新选择账号连接。staging 后续保存 Settings 还可能移除它不认识的新版字段，再次升级时
-需要重选。这属于可重建设置退化，不维护新旧 Family 选择的持续反向投影。
+Current field `providerFamilyConnectionSelections`; staging uses `modelProviderFamilyModes/modelProviderFamilySelectedKeys`. The staging Settings Schema is non-strict, ignores new fields and defaults missing old fields to empty objects, so Settings load. Users may need to re-select the account connection; staging saves may drop unknown new fields, requiring re-selection after re-upgrade. This is a rebuildable settings degradation; no continuous reverse projection of Family selection.
 
 ### 2.6 Subagent
 
-自定义 Agent Markdown 的 staging Parser 只挑选已知 Frontmatter 字段，忽略当前 `modelSelection`，不会因此
-拒绝整个 Agent。模型选择可以退化为继承或默认。
-
-`agents-state.json` 的 staging Reader 也只是宽松解析并挑选：
+The staging Markdown Parser reads known Frontmatter fields only, ignores `modelSelection` and does not reject the Agent; model selection degrades to inherit/default. `agents-state.json` is parsed leniently:
 
 ```text
-staging                              当前版本
--------                              --------
+staging                              current
 builtInModelOverrides                builtInModelSelectionOverrides
 builtInThoughtLevelOverrides
 disabledAgentIds                     disabledAgentIds
 ```
 
-因此内置 Agent 的禁用状态仍可读，当前模型覆盖会被 staging 忽略，不会导致整个 Agent 集合消失。
-两种存储都不双写旧模型字段。
+Built-in Agent disable state stays readable; current model overrides are ignored by staging without losing the Agent set. Neither store dual-writes old model fields.
 
 ### 2.7 Repo Wiki
 
-`repoWikiStorage.ts` 对 Wiki 与 Draft 使用宽松 `JSON.parse`，不是严格的新旧互斥 Schema。回滚后 Wiki 主体
-仍可读取，当前 `modelSelection` 不被识别时，重新生成可能使用旧版默认或要求重选。
+`repoWikiStorage.ts` parses Wiki and Draft with lenient `JSON.parse`. After rollback the Wiki body stays readable; if `modelSelection` is unrecognized, regeneration may use the old default or require re-selection. No reverse generation of `generationModel/generationOptions.thoughtLevel`.
 
-不反向生成 `generationModel/generationOptions.thoughtLevel`。
+### 2.8 Bot: the confirmed hard exception
 
-### 2.8 Bot：确定的硬例外
+Current and staging both use `bot-config.json` and `bot-state.v2.json`, but `botCurrentOptionsSchema/botDraftOptionsSchema` are `.strict()`: staging Options `model / thoughtLevel` vs current `modelSelection`. Once the current version writes the new structure into the same file, staging rejects it for the unknown `modelSelection`; its Repository then falls back Bot Config to empty and Bot State to the legacy file or empty. That hits the whole Bot data. Writing old and new fields together does not work (staging rejects new fields, the current strict Schema rejects old fields), so the physical files are isolated.
 
-当前和 staging 都使用 `bot-config.json`、`bot-state.v2.json`。但
-`botCurrentOptionsSchema/botDraftOptionsSchema` 是 `.strict()`：
+Verified: the Bot Model Cache Repository is already removed and `bots-model-cache.v2.json` is no longer written; the old cache stays untouched and staging can keep using it.
 
-```text
-staging Options                    当前 Options
----------------                    ------------
-model / thoughtLevel               modelSelection
-mode / ...                         mode / ...
-```
-
-当前版本把同名文件写成新结构后，staging 会因未知 `modelSelection` 拒绝文件。其 Repository 随后把 Bot
-Config 回退为空，把 Bot State 回退到 legacy 文件或空状态。这会影响整份 Bot 数据，不是单个新选择丢失。
-
-同时写新旧字段无效：staging 拒绝新字段，当前 strict Schema 也拒绝旧字段。必须隔离物理文件。
-
-额外核实：当前已经删除 Bot Model Cache Repository，不再写 `bots-model-cache.v2.json`；旧缓存保持不动，
-staging 可继续使用，不需要新增缓存文件兼容方案。
-
-## 3. Bot 最小实施设计
+## 3. Bot minimal design
 
 ```text
-升级前文件（不再改写）
+pre-upgrade files (never rewritten)
 ├─ bot-config.json
 └─ bot-state.v2.json
-          |
-          | 对应 v3 文件不存在时，单向导入
-          v
-当前版本文件
+        | one-way import when the matching v3 file does not exist
+        v
+current-version files
 ├─ bot-config.v3.json
-└─ bot-state.v3.json
-          |
-          `--> 当前 Repository 读写的唯一权威
+└─ bot-state.v3.json   <- sole authority read/written by the current Repository
 
-回滚 staging
-└─ 继续读取升级前旧文件，不认识也不触碰 v3
+rollback staging: keeps reading the pre-upgrade files, never touches v3
 ```
 
-实施要求：
+1. Both Config and State are version-isolated (not State only).
+2. File name and content version rise to v3 together.
+3. If the matching v3 file does not exist, read the old file, reuse the one-way conversion, write v3; the old file is neither rewritten nor deleted.
+4. Once v3 exists, never fill, repair or overwrite current data from the old file; a corrupt current file never silently falls back to stale config.
+5. No old file: start from an empty v3, no fake old-version copy.
+6. Creating, editing, deleting a Bot and updating Draft/State write v3 only.
+7. Determinable old model fields convert to the current ModelSelection; undeterminable selections stay empty, the Bot body is kept, no Provider guessing.
+8. Reuse the existing file-write and Repository boundaries; no two-file distributed transaction or generic dual-write scheduler.
 
-1. Config 与 State 都版本隔离，不能只迁移 State 而遗漏 strict Config。
-2. 文件名与内容版本一起提升到 v3。
-3. 对应 v3 文件不存在时，从原有旧文件读取，复用单向转换，写出 v3；旧文件不改写、不删除。
-4. v3 存在后不再从旧文件补充、修复或覆盖当前数据；不得因当前文件损坏而偷偷回退陈旧配置。
-5. 没有旧文件时从空 v3 正常开始，不创建假的旧版副本。
-6. 创建、编辑、删除 Bot 和更新 Draft/State 都只写 v3。
-7. 可确定的旧模型字段转换为当前 ModelSelection；无法确定的选择留空，主体 Bot 数据保留，不猜测 Provider。
-8. 继续复用现有文件写入和 Repository 边界，不增加两文件分布式事务或通用双写调度器。
+"Reuse the one-way conversion" does not mean calling `bots/storageMigration.ts` as-is: `findUniqueProviderByModel` looks for other Providers by model name when the old Provider does not match, and `migrateDraftOptions` lets old `thoughtLevel` override an existing new `modelSelection.options.reasoningLevel`. Both are removed/fixed before wiring v3 and replaced by Todo 72's explicit identity conversion: an existing new selection trusts only its own fields, and an undeterminable one is left empty with no rerouting by model name.
 
-“复用单向转换”不等于原样调用 `bots/storageMigration.ts`：现有 `findUniqueProviderByModel` 在旧
-Provider 不匹配时会按模型名寻找其他 Provider，`migrateDraftOptions` 还会让旧 `thoughtLevel` 覆盖已有
-新 `modelSelection.options.reasoningLevel`。两条旧逻辑必须在接入 v3 前删除/修正，按 Todo 72 的明确身份
-转换替代；已有新选择只认自身字段，无法确定就留空，不按模型名改路由。
+The old files are a pre-upgrade snapshot, not a synced copy: after rollback users see the pre-upgrade Bot config and state; Bots added/removed/changed during the new version are not guaranteed to appear (accepted product boundary). A first import may complete the not-yet-generated v3 file on the next startup; it must not become continuous write-back on every save. Each file keeps the existing safe-write mechanism and failures are never disguised as success.
 
-旧文件是升级前快照，并不是同步副本。回滚后用户看见升级前的 Bot 配置和状态；新版期间新增、删除或修改的
-Bot 不保证体现在回滚版本中。这是明确接受的产品边界。
+Import context is assembled by the service layer: an ordinary Bot default config uses the owning Host's models and current login connection; legacy state with `workspaceIdentity` may use only that remote's model facts (never the local account to interpret an old Coding Plan). If the remote is unreachable or has no obtainable account context, unconfirmable bindings are left empty and the body imports normally. Parse/IO errors in the new file surface to the caller, never read back the old file, and never rewrite a corrupt file as empty.
 
-首次导入可以在下一次启动补齐尚未生成的另一个 v3 文件；不得把这种一次性导入误实现为每次保存持续回写。
-各文件写入继续使用既有安全写入机制，失败不伪装为成功。
+## 4. Scope constraints and neighbor Todos
 
-导入上下文由服务组装层注入：普通 Bot 默认配置使用所属 Host 的模型与当前登录连接；带
-`workspaceIdentity` 的旧状态只能使用该远端的模型事实，不能拿本地账号解释旧 Coding Plan。
-若当时远端不可连接或没有可取得的账号上下文，无法确认的绑定留空，主体状态照常导入。
-新文件的解析/IO 错误向调用方暴露，不回读旧文件，也不把损坏文件改写为空。
+Production changes target only Bot Config/State file isolation and its one-way upgrade entry. Other domains keep the current one-way upgrade read and add no downgrade writes.
 
-## 4. 范围约束及与相邻 Todo 的关系
-
-生产改动只针对 Bot Config/State 文件隔离及其单向升级入口。其他领域保留当前单向升级读取，不新增降级写入。
-
-禁止：
-
-- Provider Config 反向同步；
-- Session、Off-Peak、Automation、Settings、Subagent、Repo Wiki 持续写旧别名；
-- 为兼容旧版静默变换 Reasoning 档位或猜测旧 Agent Provider；
-- 通用旧版 Selection Encoder、兼容 DTO、第二份 Config/Registry 权威；
-- 整库副本、破坏性 SQLite 降级迁移；
-- 当前版本持续读取冻结旧文件修复当前数据。
+Forbidden: Provider Config reverse sync; Session, Off-Peak, Automation, Settings, Subagent, Repo Wiki continuously writing old aliases; silently remapping Reasoning levels or guessing the old Agent Provider for compatibility; a generic old-version Selection Encoder, compatibility DTO or second Config/Registry authority; whole-database copies and destructive SQLite downgrade migration; the current version continuously reading frozen old files to repair current data.
 
 ```text
-Todo 69：当前版本 -> staging 降级回滚
-└─ 防止整域数据被旧 Reader 拒绝；当前硬点是 Bot 文件隔离
-
-Todo 70：旧 Session -> 当前版本升级恢复
-└─ 新旧字段判定、可靠迁移、失效 Selection 与历史可打开性
-
-Todo 71：当前版本内 Composer -> Submission
-└─ 持久草稿和提交状态，不承担跨版本字段双写
-
-Todo 72：旧 Provider 配置与持久化选择 -> 当前身份
-└─ 修正内置分类、只迁 Built-in API Key、按迁移时当前连接转换旧 Coding Plan 身份
+Todo 69: current -> staging downgrade rollback
+         prevent whole-domain rejection by old Readers; current hard point: Bot file isolation
+Todo 70: old Session -> current upgrade recovery
+         old/new field decisions, reliable migration, invalid Selection, history openability
+Todo 71: Composer -> Submission inside the current version
+         persistent draft and submission state, no cross-version field dual-write
+Todo 72: old Provider config and persisted selection -> current identity
+         fix built-in classification, migrate Built-in API Key only, convert old Coding Plan identity by current connection at migration time
 ```
 
-升级身份规则见 [Todo 72](./todo-72-legacy-builtin-provider-and-model-selection-migration.md)，
-包括 Bot 一次性导入所需的身份转换；不扩大本文的降级兼容范围，不恢复持续双写。
+Upgrade identity rules are in [Todo 72](./todo-72-legacy-builtin-provider-and-model-selection-migration.md) (including the identity conversion for the one-time Bot import). Cutting the dual-write scope does not retract the confirmed upgrade principles: when the current structure exists, never fill from old fields; true legacy records may use a deterministic Decoder; unrecoverable ones are reported or handed to the user per owning domain. No change to Provider/Model Registry, Account Family, queues, Selection lifecycle or any execution chain. Local and remote Bot calls keep going through the same Repository; no old-file side path in the Remote/Bot Bridge.
 
-取消 Todo 69 原来的双写范围，不撤销已经确认的升级原则：当前结构存在时不从旧字段补值；真正旧记录才允许
-确定性 Decoder；无法可靠恢复时按所属领域报告或交由用户修复。
+## 5. Tests and acceptance
 
-不改变 Provider/Model Registry、Account Family、队列、Selection 生命周期或任何执行链。Bot 的本地和远端
-调用继续通过同一个 Repository，不能在 Remote/Bot Bridge 重新增加旧文件旁路。
+### 5.1 Bot (test first)
 
-## 5. 测试和验收
+- With representative frozen staging Config/State as input, show the same-file strict conflict before import.
+- First start generates v3; main Bot data and determinable Selections convert correctly.
+- After creating, editing, deleting a Bot and updating Draft/State in the current version, both old files are byte-identical.
+- With v3 present, never fill from the old file; v3 reads/writes satisfy the current strict Schema.
+- With only one of Config/State generated, the next start imports only the missing one without overwriting.
+- One old Bot whose Selection cannot convert does not break other Bots or drop its body config.
+- A same-named model offered only by another Provider is not used to migrate the old selection; when the current Selection conflicts with old thoughtLevel the current value stays.
+- The frozen staging strict Reader reads the preserved old files and gets pre-upgrade Bot data.
+- With the old file absent, an empty current config is created without an old copy.
 
-### 5.1 Bot 测试先行
+Only the necessary current-staging read contract is pinned; no multi-version compatibility framework, no restoration of new-version Bot changes.
 
-- 以冻结 staging 的代表性 Config/State 为输入，证明导入前的同文件 strict 冲突。
-- 首次启动生成 v3，主要 Bot 数据和能确定的 Selection 正确转换。
-- 当前版本创建、编辑、删除 Bot，以及更新 Draft/State 后，两个旧文件字节保持不变。
-- v3 已存在时不回读旧文件补值；当前 v3 读写符合当前 strict Schema。
-- Config/State 只有一个已生成时，下一次启动只导入缺失项，不覆盖已有项。
-- 单个旧 Bot 的 Selection 无法转换，不拖垮其他 Bot 或丢失主体配置。
-- 即使只有另一个 Provider 提供同名模型，也不把旧选择迁到它；当前 Selection 与旧 thoughtLevel 冲突时当前值不变。
-- 用冻结 staging 的 strict Reader 读取保留的旧文件，能够得到升级前 Bot 数据。
-- 旧文件缺失时正常创建当前空配置，不生成旧副本。
+### 5.2 Other domains (minimal)
 
-只固定当前 staging 的必要读取契约，不建立多版本兼容框架，不要求反向恢复新版 Bot 修改。
+Reuse the Provider Config test to show old `config.json` unchanged; use staging's Off-Peak/Automation Row Reader to read representative new rows with null old model columns (no need to obtain the exact new selection); confirm new SQLite columns are nullable and ignorable with no destructive deletion; for Session, Settings, Subagent and Wiki verify with representative new fields that old read entries are not rejected domain-wide (reuse existing tests, add only missing evidence). No "all old/new model values semantically equivalent" test.
 
-### 5.2 其他领域最小验证
+### 5.3 Full checks
 
-- 复用 Provider Config 测试，证明旧 `config.json` 不变。
-- 用 staging 的 Off-Peak/Automation Row Reader 验证旧模型列为空的新版代表行可读；不要求得到精确新选择。
-- 确认新增 SQLite 列为旧版可忽略的可空列，旧表/列不做破坏性删除。
-- 对 Session、Settings、Subagent、Wiki 使用代表性新字段输入，验证旧读取入口不会整域拒绝；优先复用现有
-  测试，只补没有直接证据的边界。
-- 不新增“所有新旧模型值必须语义等价”的测试，那不是本 Todo 目标。
+Targeted Bot, Services and storage-adapter tests; `pnpm typecheck`; `pnpm lint`; changed-file format check and `git diff --check`; a temp-directory rollback smoke "current version imports and edits Bot -> staging Reader reads the frozen old files". Never run destructive rollback tests on a user's real directory, Bot account or live database. Without a real old-App run the record may only say the Reader/storage smoke passed, not claim full-chain acceptance.
 
-### 5.3 完整检查
+## 6. Order and completion
 
-- 受影响 Bot、Services、存储适配层定向测试；
-- `pnpm typecheck`；
-- `pnpm lint`；
-- 本轮修改文件格式检查和 `git diff --check`；
-- 临时目录内执行“当前版本导入并修改 Bot -> staging Reader 读取冻结旧文件”的回滚冒烟。
+Order: verify the frozen staging target and add failing Bot tests; hook up Todo 72's tested old Provider identity conversion, then implement the two v3 files' Schema, paths and one-time Import; close all current Bot read/write entries and confirm old files unchanged; minimal regression of other domains (no continuous dual-write); update implementation record, allowed degradations and results and commit. The identity-conversion base of Todo 72 precedes Bot first-import acceptance; do not generate a wrong-identity v3 and patch later, and the boundary "once v3 exists never read the old file" holds.
 
-不要在用户真实目录、Bot 账号或运行中的数据库上做破坏性回滚测试。未运行旧 App 的实机启动时，实施记录
-只能写 Reader/存储冒烟通过，不能宣称旧 App 全链路验收完成。
+Completion:
 
-## 6. 实施顺序与完成标准
+- Bot's only authority is v3; pre-upgrade files stay unchanged; staging no longer rejects the whole Bot data over new fields.
+- Beyond Bot version isolation, no continuous dual-write or generic compatibility abstraction.
+- Current one-way upgrade reads were not removed by the narrowed rollback scope; SQLite physical structure stays additively compatible.
+- All allowed single-record / rebuildable-setting degradations are listed here.
+- Targeted tests, types, lint, format and diff checks pass; real-device status is recorded truthfully.
 
-实施顺序：
+## 7. Code evidence index
 
-1. 核对冻结 staging 目标，加入 Bot 失败测试。
-2. 衔接 Todo 72 已测试的旧 Provider 身份转换，再实现两个 v3 文件的 Schema、路径及一次性 Import。
-3. 收口所有 Bot 当前读写入口，确认旧文件不变。
-4. 执行其余领域的最小回归，确认未引入持续双写。
-5. 更新实施记录、回滚允许退化和验证结果后提交。
+Paths are relative to the frozen commit; later refactors shifting lines do not change the read contract.
 
-联合顺序见 Todo 72：其身份转换基础先于 Bot 首次导入验收，其他持久化入口随后接入。
-不先生成身份错误的 v3 再补迁移；v3 一旦存在就不回读旧文件的边界保持不变。
-
-完成标准：
-
-- Bot 当前只以 v3 为权威，升级前旧文件始终不变，staging 不再因新版字段拒绝整份 Bot 数据。
-- 除 Bot 版本隔离外，不新增持续双写和通用兼容抽象。
-- 当前单向升级读取没有因缩减回滚范围被误删。
-- SQLite 物理结构保持增量兼容。
-- 所有允许的单条记录/可重建设置退化均在本文列明。
-- 定向测试、类型、Lint、格式和差异检查通过；实机验证状态如实记录。
-
-## 7. 本轮代码证据索引
-
-以下路径以本节顶部冻结提交为基准，后续重构导致行号变化不影响读取契约：
-
-| 领域       | 主要证据路径                                                                                                                                                  |
+| Domain     | Main evidence paths                                                                                                                                           |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Provider   | `packages/services/src/model-provider/providerConfigRuntime.ts`；`packages/services/test/providerConfigRuntime.test.ts`                                       |
-| Session    | `apps/zcode-cli/packages/adapters/src/storage/session-store/codecs.ts`；`apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts`              |
-| Off-Peak   | `packages/services/src/session/offPeakTaskRepo.ts` 的 Schema、create、rowToTask/list                                                                          |
-| Automation | `packages/services/src/session/automationRepo.ts` 的 Schema、create、rowToAutomation/list                                                                     |
+| Provider   | `packages/services/src/model-provider/providerConfigRuntime.ts`; `packages/services/test/providerConfigRuntime.test.ts`                                       |
+| Session    | `apps/zcode-cli/packages/adapters/src/storage/session-store/codecs.ts`; `apps/zcode-cli/packages/contracts/src/interfaces/session-store.port.ts`              |
+| Off-Peak   | `packages/services/src/session/offPeakTaskRepo.ts` (Schema, create, rowToTask/list)                                                                           |
+| Automation | `packages/services/src/session/automationRepo.ts` (Schema, create, rowToAutomation/list)                                                                      |
 | Settings   | `packages/shared/src/validationAppSettings.ts`                                                                                                                |
-| Subagent   | `packages/services/src/subagents/subagentMarkdown.ts`；`packages/services/src/subagents/subagentsService.ts`                                                  |
+| Subagent   | `packages/services/src/subagents/subagentMarkdown.ts`; `packages/services/src/subagents/subagentsService.ts`                                                  |
 | Wiki       | `packages/services/src/repo-wiki/repoWikiStorage.ts`                                                                                                          |
-| Bot        | `packages/shared/src/bots.ts`；`packages/services/src/bots/config.ts`；`packages/services/src/bots/repo.ts`；`packages/services/src/bots/storageMigration.ts` |
+| Bot        | `packages/shared/src/bots.ts`; `packages/services/src/bots/config.ts`; `packages/services/src/bots/repo.ts`; `packages/services/src/bots/storageMigration.ts` |
 
-实施证据见 [68–72 实施报告](./68-72-implementation-report.md)。Bot v3、一次性导入及旧文件保留已实现；
-不再由运行中的 Service 重写旧状态。回滚验收是严格读取/文件字节边界，不是完整旧 App 实机验收。
+Implementation evidence: [68-72 implementation report](./68-72-implementation-report.md). Bot v3, the one-time import and old-file preservation are implemented; the running Service no longer rewrites old state. Rollback acceptance is the strict-read / file-byte boundary, not a full old-App real-device acceptance.

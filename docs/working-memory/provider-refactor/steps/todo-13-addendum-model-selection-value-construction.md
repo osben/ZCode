@@ -1,18 +1,13 @@
-# Todo 13 补充裁决：ModelSelection 值构造与 Option 缺省语义
+# Todo 13 addendum: ModelSelection value construction and Option defaults
 
-> 状态：已吸收并完成
+> Status: absorbed and done (2026-08-25). The sparse value construction and the Select/Submission
+> two-stage semantics are part of the Todo 13 implementation and Design.
 >
-> 日期：2026-08-25
->
-> 关联任务：[`todo-13-target-host-model-selection-authority.md`](./todo-13-target-host-model-selection-authority.md)
+> Related: [`todo-13-target-host-model-selection-authority.md`](./todo-13-target-host-model-selection-authority.md)
 
-本文独立保留 Todo 13 讨论后的补充裁决；其稀疏值构造与 Select/Submission 两阶段语义已经吸收到 Todo 13
-正式实现和 Design 中。
+## 1. Core rule
 
-## 1. 核心结论
-
-`ModelSelection` 是一个不可变的选择值，不是一个在原对象上持续 patch Provider、Model 和 Options 的可变
-容器。
+`ModelSelection` is an immutable selection value, not a mutable container patched in place.
 
 ```ts
 interface ModelSelection {
@@ -25,221 +20,127 @@ interface ModelSelection {
 }
 ```
 
-模型身份切换或 Option 调整完成后，发起方提交的都是一份新的完整 `ModelSelection` 值。Registry 和
-ModelFactory 消费该值，但不负责把旧 Selection 改造成新 Selection。
+After a model switch or an Option edit, the initiator submits a new, complete `ModelSelection`.
+Registry and ModelFactory consume the value; they never rewrite an old Selection into a new one.
+Terminology: say "reconstruct a `ModelSelection`", not "reconstruct a Model Selection Option".
 
-术语应当区分：
+## 2. Model identity switch: the initiator rebuilds the Selection
 
-- `ModelSelection`：包含 `providerId`、`modelId` 和可选 `options` 的完整选择值；
-- `ModelSelection.options`：Selection 内部只保存显式 option 覆盖的稀疏子结构；
-- 不使用“重新构造一个 Model Selection Option”指代整体切换，应称为“重新构造一个
-  `ModelSelection`”。
-
-## 2. 模型身份切换由发起方重新构造 Selection
-
-从模型 A 切换到模型 B，不是在旧 Selection 上覆盖 `providerId/modelId`，也不需要公共层设计一套“清空、
-迁移或兼容旧 options”的算法。
+Switching from model A to B does not overwrite `providerId/modelId` on the old Selection, and the common
+layer has no "clear/migrate/compat old options" algorithm.
 
 ```text
-旧 ModelSelection A
-|- providerId: provider-a
-|- modelId: model-a
-`- options: A 的显式意图
-
-用户选择目标模型 B
-        |
-        v
-切换方依据目标候选和本次用户意图重新构造
-        |
-        v
-新 ModelSelection B
-|- providerId: provider-b
-|- modelId: model-b
-`- options: 只包含这次明确指定给 B 的值
+old ModelSelection A -> user picks target B
+  -> switcher builds from the target candidate and this user intent
+  -> new ModelSelection B { providerId, modelId, options: only values explicitly given for B }
 ```
 
-推荐语义：
+Use `{ providerId: target.providerId, modelId: target.modelId }`. Never spread the previous Selection as a
+generic switch mechanism (`{ ...previousSelection, providerId, modelId }`): it leaks A's explicit options
+into B. If an interaction later needs "switch carrying a setting", that interaction constructs the target
+Selection explicitly and records its own product contract.
 
-```ts
-const nextSelection: ModelSelection = {
-  providerId: target.providerId,
-  modelId: target.modelId,
-};
-```
+## 3. Option edit on the same model still yields a new value
 
-禁止把展开旧对象作为通用切换机制：
+Editing reasoning etc. keeps model identity but still produces a new `ModelSelection`
+(`{ providerId, modelId, options: { reasoningLevel: "high" } }`). A same-model Option editor may keep
+other still-valid explicit leaves (editing one selection intent), unlike automatic cross-model option
+migration. Registry, ModelFactory and Session owner never mutate a Selection in place.
 
-```ts
-const nextSelection = {
-  ...previousSelection,
-  providerId: target.providerId,
-  modelId: target.modelId,
-};
-```
+## 4. Options hold explicit intent only
 
-后者会把源模型的显式 options 偶然带入目标模型，使切换行为依赖旧对象形状。即使两个模型当前恰好支持同名
-option，也不能由公共层推断用户希望继承；如果某个具体交互以后要支持“带着某项设置切换”，应由该交互明确
-构造目标 Selection，并单独留下产品契约。
-
-## 3. 同一模型的 Option 调整仍然产生新值
-
-只修改当前模型的 reasoning 等 option 时，模型身份不变，但结果仍是一份新的 `ModelSelection`：
-
-```ts
-const nextSelection: ModelSelection = {
-  providerId: current.providerId,
-  modelId: current.modelId,
-  options: {
-    reasoningLevel: "high",
-  },
-};
-```
-
-同一模型的 Option 编辑器可以有意识地保留该 Selection 中其他仍然有效的显式叶子；这是编辑同一个选择意图，
-不同于跨模型时自动迁移源模型 options。无论哪种情况，最终都提交新值，不要求 Registry、ModelFactory 或
-Session owner 原地修改 Selection。
-
-## 4. Options 只保存显式意图
-
-`ModelSelection.options` 是稀疏结构：
-
-- 没有显式指定的叶子不写入 Selection；
-- `options: {}` 应归一化为整个 `options` 字段缺失；
-- 正式 Selection 不保存 `null`；patch API 可以用 `null` 表达清除，但落盘结果删除相应叶子；
-- 用户明确选择一个恰好等于当前默认值的值，仍然属于显式 pin，应当保存；
-- UI 仅仅展示当前默认值，不构成显式赋值。
+- Leaves not explicitly specified are not written.
+- `options: {}` normalizes to the whole `options` field missing.
+- A formal Selection never stores `null`; a patch API may use `null` to clear, and the persisted result
+  deletes the leaf.
+- Explicitly choosing a value equal to the current default is still an explicit pin and is stored.
+- UI merely displaying the current default is not an explicit assignment.
 
 ```text
-新 ModelSelection（显式 options）
-        |
-        | + 当前 Model Config Option Spec 默认值
-        v
-Target Worker ModelFactory
-        |
-        v
-Active Model.options（完整且不可变）
+new ModelSelection (explicit options) + current Model Config Option Spec defaults
+  -> Target Worker ModelFactory -> Active Model.options (complete, immutable)
 ```
 
-ModelFactory 解析出的默认值只进入 Active Model，不反写 Draft、App Recent、Session Selection 或其他产品
-record。
+Defaults resolved by ModelFactory go only into the Active Model; they are never written back to Draft,
+App Recent, Session Selection or other product records.
 
-## 5. maxOutputTokens 的当前边界
+## 5. maxOutputTokens boundary
 
-`maxOutputTokens` 合理地属于通用 `ModelSelection.options` 契约，但当前模型选择接口不会有意为它赋值。因此
-本轮正常行为就是保持该叶子缺省，由 ModelFactory 使用 Model Config 中的默认值。
+`maxOutputTokens` belongs to the generic `ModelSelection.options` contract, but no current model-selection
+interface assigns it, so the leaf stays absent and ModelFactory uses the Model Config default. No
+inheritance/clearing policy on switch, no writing the default back, no proactive filling in UI/RPC/repository
+paths. If a product later exposes editing, it first defines interaction, persistence and inheritance; the
+caller then writes the explicit choice into a new Selection.
 
-这意味着当前不需要：
+## 6. Review checkpoints
 
-- 为模型切换设计 `maxOutputTokens` 的继承或清空策略；
-- 为了形成“完整 Selection”而把默认 `maxOutputTokens` 写回 Selection；
-- 在当前没有对应显式交互的 UI、RPC 或 repository 中主动补这个字段。
+1. Switch callers rebuild `ModelSelection` from the target candidate; no spreading of the old Selection.
+2. Registry/ModelFactory offer no cross-model Options migration, clearing or guessing helper.
+3. Paths without explicit `maxOutputTokens` input keep the field absent.
+4. ModelFactory applies Model Config defaults to absent leaves and fixes the complete result only in the Active Model.
+5. Session restore, RPC round-trip, UI display and repository saves never write Effective Options back to a Selection.
+6. Tests prove: new Selection across models, explicit same-model Option edit, and absent `maxOutputTokens` not materialized.
 
-未来如果某个产品真正开放 `maxOutputTokens` 编辑，需要先明确交互、持久化和继承语义；届时调用方把用户
-显式选择写入新 Selection，不改变本文的通用边界。
+## 7. Non-goals
 
-## 6. 实施与审阅检查点
+- No separate Selection Builder domain service (small stateless pure functions are fine).
+- `ModelSelection` does not become a mutable class.
+- No change to Model Config Option Specs, ModelFactory validation or Active Model lifecycle.
+- No settings page or product entry for the unexposed `maxOutputTokens`.
+- Select and Submission stages do not get two model identity or Options schemas.
 
-1. 模型切换调用方根据目标候选重新构造 `ModelSelection`，不展开旧 Selection 覆盖身份；
-2. Registry/ModelFactory 不提供跨模型 Options 迁移、清空或猜测 helper；
-3. 当前没有显式 `maxOutputTokens` 输入的路径保持字段缺失；
-4. ModelFactory 对缺省叶子应用 Model Config 默认值，并只把完整结果固定进 Active Model；
-5. Session restore、RPC round-trip、UI 展示和 repository 保存不得把 Effective Options 反写 Selection；
-6. 测试分别证明跨模型新建 Selection、同模型显式 Option 编辑，以及缺省 `maxOutputTokens` 不被物化。
+## 8. Select and Submission stages
 
-## 7. 非目标
-
-- 不新增另一套 Selection Builder 领域服务；普通调用方可以使用小型纯函数减少重复，但函数不拥有状态或默认值；
-- 不把 `ModelSelection` 改成可变 class；
-- 不改变 Model Config Option Specs、ModelFactory 校验或 Active Model 生命周期；
-- 不为当前未开放的 `maxOutputTokens` 增加设置页面或产品入口；
-- 不把 Select 阶段和 Submission 阶段实现成两套模型身份或 Options Schema。
-
-## 8. Select 与 Submission 两阶段
-
-所有会引用模型的产品状态按现有行为归入两种阶段，不再为 Automation、Repo Wiki、Bot、Off-Peak、Subagent
-和 Sidecar 分别发明模型生命周期：
+All product state that references a model belongs to one of two stages; there is no per-product model
+lifecycle for Automation, Repo Wiki, Bot, Off-Peak, Subagent or Sidecar.
 
 ```text
-Select
-|- 用户偏好、草稿或可复用产品配置
-|- modelSelection 可以缺失
-|- 缺失表示按该产品既定来源取得首选模型
-`- 可以反复编辑，不代表一次工作已经提交
-        |
-        | 产品触发执行
-        | 解析出具体 provider/model
-        v
-Submission
-|- 必须携带确定的 ModelSelection
-|- options 仍然只保存显式覆盖
-|- 进入 Queue、等待、远程传输或重试后不重新读取首选模型
-`- 最终交给 Target Worker Registry / ModelFactory
-        |
-        | Model Config 默认值只在创建时补齐
-        v
-Active Model
-`- 完整、不可变的本次执行事实
+Select: user preference, draft or reusable product config
+  - modelSelection may be absent (= take the product's established preferred source)
+  - editable repeatedly; not a submitted unit of work
+    | product triggers execution, resolves concrete provider/model
+    v
+Submission: must carry a concrete ModelSelection
+  - options still hold explicit overrides only
+  - not re-read after queue, wait, remote transport or retry
+  - finally handed to Target Worker Registry / ModelFactory (defaults filled at creation)
+    v
+Active Model: complete, immutable fact of this execution
 ```
 
-这里的 Select 是产品状态阶段，不新增名为 `ModelSelect` 的领域类型。Select 和 Submission 中引用模型时都
-使用同一个 `ModelSelection` Schema；差异只在外层状态是否允许缺失以及何时固定模型身份。
+Select is a product-state stage; no domain type named `ModelSelect` is added. Both stages use the same
+`ModelSelection` schema; they differ only in whether the outer state may omit it and when identity is fixed.
 
-### 8.1 阶段切换规则
+### 8.1 Stage transition rules
 
-判断依据不是产品名称，而是对象当前表达什么：
+- Drafts, preferences and reusable configs are Select; an accepted, to-be-executed unit of work is Submission.
+- A missing `modelSelection` in Select is resolved at the boundary where execution is triggered and the Submission formed.
+- After a Submission is accepted, queue, wait, ticket claim, remote transport, recovery and Retry use its fixed Selection.
+- If Host preferred, Provider Config or model visibility changes while waiting, there is no silent re-select; the Target Worker validates against the current Registry when building the Model and fails explicitly.
+- "Concrete Selection" only requires `providerId/modelId`; it must not materialize Option Spec defaults into `options`.
+- Edit/Retry that creates a new Submission may inherit the source Selection per that product's existing semantics (an explicit construction of a new value, not the old Submission re-reading defaults).
 
-- 草稿、用户偏好和可复用配置属于 Select；
-- 已经被系统接受、将要执行的一次工作属于 Submission；
-- Select 中缺少 `modelSelection` 时，在产品触发执行、形成 Submission 的边界解析首选模型；
-- Submission 一旦被接受，后续 Queue、等待、取票、远程传输、恢复和 Retry 都使用其中已经确定的 Selection；
-- 等待期间即使 Host preferred、Provider Config 或模型可见性发生变化，也不静默重选；Target Worker 在实际
-  构建 Model 时按当前 Registry 校验，失败就明确失败；
-- “确定的 Selection”只要求 `providerId/modelId` 已确定，不能借此把 Option Spec 默认值物化进
-  `ModelSelection.options`。
+### 8.2 Product mapping
 
-```text
-Select.modelSelection 缺失
-        |
-        | 读取触发时的既定首选来源
-        v
-Submission.modelSelection
-|- providerId/modelId：确定
-`- options：仍然稀疏
-        |
-        | 等待 / Queue / Retry
-        `----------------------> 不重新 Select
-```
+| Product/scenario | Select stage                                           | Boundary forming Submission                |
+| ---------------- | ------------------------------------------------------ | ------------------------------------------ |
+| Normal session   | Composer / Draft                                       | user sends and the system accepts          |
+| Automation       | optional model preference in the record                | each scheduled trigger                     |
+| Repo Wiki        | model choice in generate page or saved config          | user clicks generate                       |
+| Bot              | model preference in Bot config                         | message received, a task is created        |
+| Subagent         | optional model override in Profile                     | Child Agent creation                       |
+| Off-Peak         | model choice on the create page                        | user submits and the system accepts        |
+| Title/Memory/Git | usually no long-lived Select; intent from call context | each Sidecar call forms its own Submission |
 
-Edit、Retry 等操作如果产生一份新的 Submission，可以按该产品既有语义从源 Submission 继承 Selection；这
-是在创建新 Submission 时显式构造新值，不是让旧 Submission 在执行前重新读取默认模型。
+- Automation set to "follow Workspace" stores no `modelSelection`; each trigger reads Host preferred at that time and forms that run's Submission; later Host preferred changes do not affect it.
+- Off-Peak fixes the Selection when the task is accepted; waiting, ticket claim and dispatch execute only that Submission.
+- A Subagent Profile without override takes model identity from the Parent Active Model when the Child Submission is created, and does not follow later parent model changes.
 
-### 8.2 现有产品归类
+### 8.3 Checkpoints
 
-| 产品/场景        | Select 阶段                                       | 形成 Submission 的边界                     |
-| ---------------- | ------------------------------------------------- | ------------------------------------------ |
-| 普通会话         | Composer / Draft                                  | 用户发送并被系统接受                       |
-| Automation       | Automation record 中的可选模型偏好                | 每次定时触发                               |
-| Repo Wiki        | 生成页面或保存配置中的模型选择                    | 用户点击生成                               |
-| Bot              | Bot 配置中的模型偏好                              | 收到消息并创建一次任务                     |
-| Subagent         | Profile 中的可选 model override                   | 创建 Child Agent                           |
-| Off-Peak         | 创建页面中的模型选择                              | 用户提交闲时任务并被系统接受               |
-| Title/Memory/Git | 通常没有独立长期 Select，从当前调用上下文取得意图 | 每次 Sidecar 调用形成自己的执行 Submission |
-
-Automation record 是可复用 Select。它保持“跟随 Workspace”时不保存 `modelSelection`；每次定时触发都读取
-当时的 Host preferred，形成该次确定的 Submission。Host preferred 后续再次改变，不影响已经形成的那次
-Submission。
-
-Off-Peak 在用户确认创建闲时任务并被系统接受时形成 Submission，因此 Selection 在该边界固定。后续等待、
-取票和派发只执行这份 Submission，不重新读取 Host preferred。
-
-Subagent Profile 没有 override 时，创建 Child Submission 的边界从 Parent Active Model 取得模型身份；形成
-Child Submission 后同样不再跟随父级后来发生的模型变化。
-
-### 8.3 实施检查点
-
-1. 每个产品明确自己的 Select owner 和形成 Submission 的现有事件，不新增共享可变 Select Store；
-2. Select 可以缺少 `modelSelection`，Submission 不允许缺少具体 provider/model；
-3. 解析首选模型只发生在 Select 转 Submission 的边界；调度器、Queue consumer 和 Retry runner 不再次解析；
-4. Submission 持久化、协议和远程传输完整保留稀疏结构化 `ModelSelection`；
-5. Registry 更新只可能让已有 Submission 在 ModelFactory 处明确失败，不触发静默 fallback；
-6. 测试至少覆盖“首选模型在 Submission 形成前变化”和“形成后变化”两种时序，证明固定边界正确。
+1. Each product names its own Select owner and the existing event forming its Submission; no shared mutable Select Store.
+2. Select may omit `modelSelection`; Submission may not omit a concrete provider/model.
+3. Preferred-model resolution happens only at the Select-to-Submission boundary; scheduler, queue consumer and Retry runner never resolve again.
+4. Submission persistence, protocol and remote transport keep the sparse structured `ModelSelection` intact.
+5. Registry updates can only make an existing Submission fail explicitly at ModelFactory, never silently fall back.
+6. Tests cover both timings: preferred model changes before Submission formation and after.

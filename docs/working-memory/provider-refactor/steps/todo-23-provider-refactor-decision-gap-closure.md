@@ -1,12 +1,14 @@
 # 23 Provider Refactor Decision Gaps and Settings Transaction Consolidation
 
-> Verification ownership update (2026-09-09): Remaining untested/failed/manual-promoted items uniformly transferred to [Todo102](todo-102-verification-debt-closeout.md), closing independent verification schedules in this document; historical evidence retained, transfer does not represent test passing.
+> Verification ownership update (2026-09-09): remaining untested/failed/manual-promoted items moved to
+> [Todo102](todo-102-verification-debt-closeout.md), closing independent verification schedules here; historical
+> evidence is retained and the transfer does not mean the tests passed.
 
-> Status: Completed (automation consolidation; macOS Electron interaction re-validation proceeds with dev chain)
+> Status: Completed (automation consolidation; macOS Electron interaction re-validation proceeds with the dev chain)
 >
 > Date: 2026-08-27
 >
-> Source: Post-Provider Refactor completion reverse review
+> Source: reverse review after Provider Refactor completion
 >
 > Related tasks: [`05`](./todo-05-model-ref-retirement.md),
 > [`07`](./todo-07-account-connection-selection-and-access-context-cutover.md),
@@ -19,16 +21,12 @@
 
 ## 0. Task Positioning
 
-This Todo consolidates already-decided but incompletely implemented Provider Refactor decisions. It is not a new round of architecture rewriting, nor does it re-discuss already correctly
-implemented Provider group, Model enabled, Builtin-wins, Provider/Model order, specific Rules, Access protocol, or Host authoritative source.
+Consolidates decided but incompletely implemented Provider Refactor decisions; not a new architecture rewrite. Gaps
+fall into three kinds: old abstractions running under new names (e.g. `ForkModelRef`); Todo/Design declared complete
+but implementation unmet (Model editing atomic save, inheritance state); decided in discussion but not entered into
+official Todo/Design (public `accessId` retirement, simplified editor for normal Built-in Providers).
 
-Issues found by this review are divided into three categories:
-
-1. Old abstractions still running under new names, e.g., `ForkModelRef`;
-2. Todo/Design declared complete, but implementation did not meet requirements, e.g., Model editing atomic save and inheritance state;
-3. Already decided in discussion, but not entered into official Todo/Design, e.g., public `accessId` retirement and normal Built-in Provider simplified editor.
-
-After goals are complete, the main chain must re-satisfy:
+Target main chain:
 
 ```text
 Future execution intent
@@ -39,76 +37,73 @@ Provider Registry + ModelFactory
           |
           v
       Active Model
-          |
           +--> Account request-period auth (account service owns current connection and credentials)
           `--> Adapter / AI SDK
 
 Provider/Model Settings
     Host View @ revision R1
-          |
           v
       Local Draft
-          |
           v
 One atomic Host Mutation
-          |
           v
 Persist + Registry @ revision R2
 ```
 
-### 0.1 Decisions Not Reopened This Round
+### 0.1 Decisions not reopened
 
-- `modelMatch` does case-insensitive regex complete matching against complete Model ID; when including matching, Rule authors must explicitly write preceding/following `.*`, Resolver
-  does not auto-complement;
-- Existing semantics of Provider group, Provider visibility, Provider/Model enabled remain unchanged;
-- Provider/Model order, Builtin-wins, five Source Schema, and `provider-model` specific Rules remain unchanged;
-- Model Config, Runtime, and Protocol continue to share `properties.input_format/output_format`;
-- Local workspace uses Local Host, remote workspace uses Remote Host; Renderer does not regain configuration authority;
-- Does not establish `ModelIdentity`, second Registry, second set of capability DTOs, or new Config Document abstraction.
+- `modelMatch` does a case-insensitive regex complete match against the complete Model ID; Rule authors write
+  leading/trailing `.*` explicitly for containment; the Resolver does not auto-complete.
+- Provider group, Provider visibility, Provider/Model enabled, Provider/Model order, Builtin-wins, five Source
+  Schemas and `provider-model` specific Rules are unchanged.
+- Model Config, Runtime and Protocol keep sharing `properties.input_format/output_format`.
+- Local workspace uses Local Host, remote workspace uses Remote Host; Renderer does not regain configuration
+  authority.
+- No `ModelIdentity`, second Registry, second capability DTO set or new Config Document abstraction.
 
-### 0.2 Non-Goals
+### 0.2 Non-goals
 
-- Deferred OpenRouter, OpenCode Zen, Azure, Volcano Ark, AWS Bedrock from Todo 22;
-- Client Config global public Service refactoring;
-- Telemetry overall design refactoring;
-- Off-Peak string errors changed to structured protocol;
-- Conversation queue, continuous/replayable, workspace identity, or model selection product lifecycle changes;
-- Adding dual-read, compatibility aliases, or unnecessary migrations for currently unreleased branches.
+OpenRouter, OpenCode Zen, Azure, Volcano Ark, AWS Bedrock (Todo 22); Client Config global public Service refactor;
+Telemetry redesign; structured Off-Peak errors; conversation queue, continuous/replayable, workspace identity or
+model selection product lifecycle changes; dual-read, compat aliases or needless migrations for the unreleased
+branch.
 
-## 1. Confirmed Issues and Target States
+## 1. Gaps and Target States
 
-| ID  | Current Issue                                                                                                                    | Target State                                                                                                                   |
-| --- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| G1  | `accessId` simultaneously enters Account Overlay, Provider Config, Protocol, Credential key, Request Auth, and UI                | Deleted by Todo 24; account service parses current compatible connections by static family/planKind                            |
-| G2  | `ForkModelRef { providerId, modelId, variant }` is old `ModelRef` isomorphic alias                                               | Subsequent execution intent directly uses `ModelSelection`, `variant` exits                                                    |
-| G3  | `formatModelSelection()` cannot save `maxOutputTokens`, strings still treated as reversible domain format                        | Status, protocol, and persistence only pass structured `ModelSelection`; strings only as Picker/Legacy boundary values         |
-| G4  | Model editing submits and immediately closes, rename and config save are two Mutations                                           | Complete Draft submitted via one atomic Host Mutation, Registry observation success closes                                     |
-| G5  | When modifying Model ID, no first moving Personal-specific Rule and re-previewing Effective Config                               | Host provides non-persistent Preview; new ID immediately refreshes inheritance results, Personal explicit values unchanged     |
-| G6  | UI copies Effective values into Personal Draft, inheritance, not-set, and explicit override confused                             | Draft separates Personal values from Effective Preview, four-state semantics observable, editable, restorable                  |
-| G7  | Normal Built-in Provider and Personal-only Provider reuse complete editor                                                        | "Add Supplier" enters simplified editor; "Create Custom Provider" retains complete editor                                      |
-| G8  | `adapterCompatibility.reasoningReplay` preserves historical model specials as formal Config dimensions                           | Delete entire Compatibility container; all Adapters only execute canonical replay                                              |
-| G9  | Adapter execution files and comments continue using old Registry naming, old Todo completion claims inconsistent with code facts | Naming mechanically zeroed; historical Todos add correction notes, roadmap and Feature Graph synchronized after implementation |
+| ID  | Gap                                                                                                         | Target state                                                                                                             |
+| --- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| G1  | `accessId` enters Account Overlay, Provider Config, Protocol, Credential key, Request Auth and UI           | Deleted by Todo 24; the account service resolves the current compatible connection by static family/planKind             |
+| G2  | `ForkModelRef { providerId, modelId, variant }` is an isomorphic alias of the old `ModelRef`                | Future execution intent uses `ModelSelection` directly; `variant` exits                                                  |
+| G3  | `formatModelSelection()` cannot save `maxOutputTokens`; strings still treated as a reversible domain format | State, protocol and persistence pass only structured `ModelSelection`; strings only at Picker/Legacy boundaries          |
+| G4  | Model editing submits and closes immediately; rename and config save are two Mutations                      | Complete Draft submitted through one atomic Host Mutation; popup closes when Registry observes success                   |
+| G5  | Changing Model ID does not first move the Personal-specific Rule and re-preview Effective Config            | Host provides a non-persistent Preview; the new ID refreshes inheritance immediately, Personal explicit values unchanged |
+| G6  | UI copies Effective values into the Personal Draft; inheritance, not-set and explicit override are confused | Draft separates Personal values from Effective Preview; four-state semantics observable, editable, restorable            |
+| G7  | Normal Built-in Provider and Personal-only Provider reuse the complete editor                               | "Add Supplier" enters the simplified editor; "Create Custom Provider" keeps the complete editor                          |
+| G8  | `adapterCompatibility.reasoningReplay` keeps historical model specials as a formal Config dimension         | Delete the whole Compatibility container; all Adapters execute canonical replay only                                     |
+| G9  | Adapter execution files/comments keep old Registry naming; old Todo completion claims disagree with code    | Naming mechanically zeroed; historical Todos get correction notes; roadmap and Feature Graph synchronized                |
 
-## 2. Access: Replaced by Todo 24
+## 2. Access: replaced by Todo 24
 
-The account connection version and old Active Model invalidation design originally proposed by this Todo have been revoked. Access's sole current contract is in
-Todo 24 (this document exists only in official release), key points as follows:
+The account connection version and old Active Model invalidation design originally proposed here were revoked. The
+only current Access contract is in Todo 24:
 
-- Built-in fixed `family + planKind`; Account Overlay only projects `enabled` and Start account model members;
-- Current account, product, Team scope, and dynamic credentials are managed by account service, each request resolved by current compatible connection;
-- Does not save account connection ID or connection version, does not invalidate old Active Model manually due to account changes under same `family + planKind`;
-- Local, Remote, and Standalone each use their Environment's account service, failing closed at network front when compatible connection is missing.
+- Built-in fixes `family + planKind`; the Account Overlay projects only `enabled` and Start account model members.
+- Current account, product, Team scope and dynamic credentials are managed by the account service; each request
+  resolves the current compatible connection.
+- No account connection ID or version is saved; account changes under the same `family + planKind` do not manually
+  invalidate old Active Models.
+- Local, Remote and Standalone each use their Environment's account service and fail closed before the network when
+  no compatible connection exists.
 
-## 3. ModelSelection and `ModelRef` Mechanical Zero
+## 3. ModelSelection and `ModelRef` mechanical zero
 
-### 3.1 Fork Uses Standard `ModelSelection`
+### 3.1 Fork uses standard `ModelSelection`
 
-Delete public `ForkModelRef` and its `variant`:
+Public `ForkModelRef` and its `variant` are deleted:
 
 ```text
 Fork / Side Chat / Before-input Fork
     Subsequent need to create Model
-          |
           v
     Save ModelSelection
     ├─ providerId
@@ -116,41 +111,32 @@ Fork / Side Chat / Before-input Fork
     └─ options.reasoningLevel / maxOutputTokens (when present)
 ```
 
-Historical messages have actual provider/model/reasoning facts but no complete future choice; that consumer explicitly decides whether it can construct Selection; cannot create another
-Ref/Identity type to bypass semantic judgment. `Model.options` is still the bound execution value, cannot be generically reverse-projected to future choice.
+Historical messages carry actual provider/model/reasoning facts but no complete future choice; the consumer decides
+explicitly whether it can build a Selection and may not invent another Ref/Identity type. `Model.options` is the
+bound execution value and cannot be reverse-projected to a future choice.
 
-### 3.2 Structured Selection is Sole Domain Representation
+### 3.2 Structured Selection is the only domain representation
 
-`modelSelectionSchema` continues to be the sole strict Schema for structured objects. The following positions can only save or transmit objects:
+`modelSelectionSchema` stays the sole strict Schema. Only objects may be saved or transmitted in protocol
+commands/responses; Session/Task/Automation/Subagent/Repo Wiki states; Fork/Compact/Child execution intents; Host
+and Agent model settings, defaults and submission parameters.
 
-- Protocol commands and responses;
-- Session/Task/Automation/Subagent/Repo Wiki and other product states;
-- Fork/Compact/Child and other subsequent execution intents;
-- Host and Agent model settings, defaults, and submission parameters.
+Strings are allowed only as (1) the UI Select control's Picker Value and (2) explicitly published Legacy string
+reading. Helpers are named `formatModelPickerValue`, `parseModelPickerValue`, `parseLegacyModelSelectionValue` and
+must not claim `parse(format(selection))` recovers a Selection with `maxOutputTokens`; callers hold the structured
+Selection and never rebuild it from a Picker Value.
 
-Strings are allowed in only two boundary positions:
+### 3.3 Comparison semantics
 
-1. UI Select control's required Picker Value;
-2. Explicitly published Legacy string reading.
+No unified `sameModelSelection()` or `ModelIdentity` helper. Each consumer compares the fields it cares about and
+keeps its pre-change behavior: execution target change may compare only `providerId/modelId`; user-choice change
+compares that product's saved option leaves; reasoning does not re-enter identity.
 
-Related functions must be named with true semantics as `formatModelPickerValue`, `parseModelPickerValue`, or
-`parseLegacyModelSelectionValue`, and must not continue claiming `parse(format(selection))` can recover complete Selection containing `maxOutputTokens`.
-Callers must hold structured Selection simultaneously, cannot reconstruct from Picker Value and override complete state.
+## 4. Settings: Model editing as a real manual transaction
 
-### 3.3 Comparison Semantics
+### 4.1 Single submission contract
 
-No unified `sameModelSelection()` or `ModelIdentity` helper is added. Each consumer continues to explicitly compare fields they genuinely care about, maintaining pre-modification behavior:
-
-- When judging whether execution target changes, can compare only `providerId/modelId`;
-- When judging whether user choice changes, that product explicitly compares its saved option leaves;
-- reasoning does not re-enter identity;
-- No change to existing comparison results to reduce duplicate code.
-
-## 4. Settings: Making Model Editing a Real Manual Transaction
-
-### 4.1 Sole Submission Contract
-
-Model editing popup continues using manual save. Host exposes one complete Mutation, input containing at least:
+The popup keeps manual save. Host exposes one complete Mutation:
 
 ```ts
 interface SavePersonalModelDraftInput {
@@ -162,80 +148,56 @@ interface SavePersonalModelDraftInput {
 }
 ```
 
-Actual names can follow existing service naming, but semantics cannot be split. Host completes in the same transaction:
+Names may follow existing service naming; semantics must not split. In one transaction Host: validates
+Provider/Model membership, Builtin conflict, Model ID and Source Schema; on Personal rename atomically updates
+`modelIds` and `modelOrder`; moves the Personal `provider-model` Rule; saves the complete sparse Personal Model
+Config; persists and publishes the Registry revision; returns the observable new Host View/revision. The popup closes
+only on success; validation, persistence, Registry publish or revision-conflict failures keep Draft and popup with
+explicit errors; Renderer never compensates with two calls.
 
-1. Validate Provider/Model membership, Builtin conflict, Model ID, and Source Schema;
-2. On Personal Model rename, atomically update `modelIds` and `modelOrder`;
-3. Move corresponding Personal `provider-model` Rule;
-4. Save complete sparse Personal Model Config;
-5. Persist and publish Registry revision;
-6. Return observable new Host View/revision.
-
-Popup closes only after receiving success response. Validation, persistence, Registry publishing, or revision conflict failures retain Draft and popup, showing explicit errors;
-do not compensate-rollback via two calls in Renderer.
-
-### 4.2 Model ID Real-time Preview
-
-Host provides non-persistent, non-Registry mutation Preview:
+### 4.2 Model ID real-time Preview
 
 ```text
 Original Personal Rule + Local Draft
-              |
               +--> Move exact target to nextModelId in preview state
-              |
               v
 Parse Built-in Rules by nextModelId + Effective Provider api/baseURL
-              |
               v
 Overlay Personal Draft's explicitly present leaves
-              |
               v
 Return Effective Preview + validation issues
 ```
 
-Debounced Preview after modifying Model ID. Old responses must be discarded by request sequence or Draft revision, cannot override newer input. Preview
-does not modify Personal file, Provider membership, modelOrder, or formal Registry. Host must re-execute authoritative parsing and validation on save, cannot trust
-Renderer Preview.
+Preview is debounced after a Model ID edit; stale responses are discarded by request sequence or Draft revision.
+Preview never modifies the Personal file, Provider membership, modelOrder or the formal Registry, and does not accept
+Renderer API/Endpoint authority. Host re-parses and re-validates on save and never trusts Renderer Preview.
 
-### 4.3 Draft and Inheritance Facts Separation
+### 4.3 Draft and inheritance separation
 
-Renderer Draft no longer copies Effective values as Personal values. Each field retains at least:
+The Renderer Draft does not copy Effective values into Personal values. Each field retains personal / inherited /
+effective (`ModelFieldDraft<T> { personal: T | null | undefined; inherited: T | undefined; effective: T | undefined }`;
+the generic need not exist, per-field structures are fine). Four semantics:
 
-```ts
-interface ModelFieldDraft<T> {
-  personal: T | null | undefined;
-  inherited: T | undefined;
-  effective: T | undefined;
-}
-```
+| Status                          | Saved facts                              | UI                                                  |
+| ------------------------------- | ---------------------------------------- | --------------------------------------------------- |
+| Upstream has value, no Personal | No Personal written                      | Low-emphasis inherited value                        |
+| Upstream no value, no Personal  | No Personal written                      | "Not set" / dash                                    |
+| Personal explicit value         | Corresponding sparse leaves              | Normal emphasis, can restore inheritance            |
+| Personal explicit clear         | `null`, only for fields permitting clear | Explicit cleared state, not equal to not overridden |
 
-Mechanical establishment of this generic type is not required; can use existing structures per field. Four product semantics that must be maintained are:
+Numeric/text inputs use inherited values as placeholder; Boolean/Format use Toggle Chip/Selectable Tag, status
+distinguished by checkmark, dash, stroke and low-interference undo, never by color alone. PDF/Audio stay hidden but
+are preserved losslessly. `requiresMfjsToolSchema` is at the editor end.
 
-| Status                          | Saved Facts                                    | UI                                                                 |
-| ------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------ |
-| Upstream has value, no Personal | Do not write Personal                          | Low-emphasis display inherited value                               |
-| Upstream no value, no Personal  | Do not write Personal                          | "Not set" / dash                                                   |
-| Personal explicit value         | Write corresponding sparse leaves              | Normal emphasis, can restore inheritance                           |
-| Personal explicit clear         | Write `null`, only for fields permitting clear | Explicitly display cleared state, not equivalent to not overridden |
+### 4.4 JSON slots
 
-Numeric/text inputs use inherited values as placeholder; Boolean/Format use existing-style Toggle Chip/Selectable Tag, distinguishing status by checkmark, dash,
-stroke, and low-interference undo entry, cannot rely solely on color. PDF/Audio continues hidden but losslessly preserved. `requiresMfjsToolSchema` placed at editor end.
+Three independent JSON editors: `optionSpecs.reasoningLevel`, `optionSpecs.maxOutputTokens`, `reasoningMapping`.
+Each directly replaces its Personal slot; empty content restores inheritance; no per-key merge inside an editor.
+Save validates with the Provider authoritative Schema with at least formatting and field-path errors (row/column if
+the editor reliably provides them). UI never copies Effective JSON into the Personal text box; Effective results use a
+separate low-emphasis preview.
 
-### 4.4 JSON Slots
-
-Continue retaining three independent JSON editors:
-
-- `optionSpecs.reasoningLevel`;
-- `optionSpecs.maxOutputTokens`;
-- `reasoningMapping`.
-
-Each editor directly replaces its Personal slot, empty content restores inheritance, no per-key merging within editor. Save uses Provider authoritative Schema validation,
-providing at minimum formatting and field path errors; if selected editor can reliably provide row/column, show row/column. UI does not copy Effective JSON to Personal text box,
-Effective results use separate low-emphasis preview.
-
-## 5. Settings: Distinguishing Built-in Add vs. Custom Create
-
-Normal Provider Settings maintain two entries:
+## 5. Settings: Built-in add vs custom create
 
 ```text
 Add Supplier
@@ -254,266 +216,200 @@ Create Custom Provider
       └─ Model list and model config
 ```
 
-Normal Built-in Provider's API Schema, default Endpoint, and identity come from Built-in Config, not redundantly displayed as normal editable fields in main editing path.
-Delete always only deletes Personal Overlay; Built-in Config is never deleted. Personal-only Provider disappears naturally when deleted due to no Built-in base. Provider ID is read-only across all UIs.
+A normal Built-in Provider's API Schema, default Endpoint and identity come from Built-in Config and are not shown
+as editable fields on the main path. Delete always deletes only the Personal Overlay; Built-in Config is never
+deleted; a Personal-only Provider disappears when deleted. Provider ID is read-only in all UIs. The two editors may
+share model list, API Key and test components but must not re-expose complete fields by reusing
+`InlineEditableProviderCard`. Z.ai/BigModel Family keeps the fixed Family UI, outside both entries, with no Provider
+disable operation.
 
-Simplified editor and complete editor can share model list, API Key, and test components, but cannot re-expose complete fields by reusing `InlineEditableProviderCard`. Z.ai/BigModel Family keeps fixed Family UI, does not enter these two normal entries, and does not provide Provider disable operations.
-
-## 6. Adapter Compatibility Deletion and Naming Zero
+## 6. Adapter compatibility deletion and naming zero
 
 ### 6.1 Reasoning replay
 
-Canonical history replay does not need any `reasoningReplay` configuration. Final decision is complete deletion of
-`adapterCompatibility`, `reasoningReplay`, and synthetic empty-thinking projection:
+Canonical history replay needs no `reasoningReplay` configuration. `adapterCompatibility`, `reasoningReplay` and the
+synthetic empty-thinking projection are deleted entirely:
 
 ```text
-Canonical Message
-       |
-       v
-Adapter standard encoding
-       |
-       v
-Complete replay of real reasoning; no deletion, no synthetic empty thinking
+Canonical Message -> Adapter standard encoding -> Complete replay of real reasoning; no deletion, no synthetic empty thinking
 ```
 
-Model Config Schema, Overlay, Resolver, Registry, Runtime, Built-in Config, Personal Config, and test fixtures must not continue
-accepting or propagating Compatibility container. Unpublished historical formats do not add importer; encounter old fields by strict Schema rejection.
+Model Config Schema, Overlay, Resolver, Registry, Runtime, Built-in/Personal Config and test fixtures must not
+accept or propagate the Compatibility container. Unpublished historical formats get no importer; old fields are
+rejected by strict Schema.
 
-### 6.2 Adapter Execution Naming
+### 6.2 Adapter execution naming
 
-Current Adapter files actually carry AI SDK Model Execution assembly, no longer business Registry. Completion should:
-
-- Adapter execution files use accurate `model-execution.ts` / factory naming;
-- Delete "session registry" "provider registry cache" comments that no longer hold;
-- Retain genuinely Adapter-private transport/factory/cache, do not introduce new public abstractions by renaming;
-- Do not re-copy business Provider Config, Model Config as Adapter-queryable Registry.
+Adapter files carry AI SDK Model Execution assembly, not a business Registry: use accurate `model-execution.ts` /
+factory naming, delete "session registry" / "provider registry cache" comments that no longer hold, keep genuinely
+Adapter-private transport/factory/cache, introduce no new public abstraction by renaming, and never re-copy business
+Provider/Model Config as an Adapter-queryable Registry.
 
 ## 7. Impact Brief
 
-### 7.1 Functional Summary
+Capability: Provider Registry, Account Request Auth, Model Selection, Provider Settings. Change layer:
+`draft-default`, `validation`, `commit-effect`, `persistence`, `presentation`. Primary seeds:
+`ZhipuAccountAccessConfig`, `AccountProviderCredentialService`, `ForkModelRef`, `formatModelSelection`,
+`ProviderModelMetadataDialog`. Out of scope: Provider expansion, Telemetry refactor, Conversation recovery, Client
+Config public Service.
 
-| Field            | Conclusion                                                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Developer intent | Consolidate Provider Refactor decided but unimplemented public access, ModelSelection, and Settings transaction gaps                  |
-| Capability       | Provider Registry, Account Request Auth, Model Selection, Provider Settings                                                           |
-| Change layer     | `draft-default`, `validation`, `commit-effect`, `persistence`, `presentation`                                                         |
-| Operating mode   | planning / implementation handoff                                                                                                     |
-| Primary seeds    | `ZhipuAccountAccessConfig`, `AccountProviderCredentialService`, `ForkModelRef`, `formatModelSelection`, `ProviderModelMetadataDialog` |
-| Out of scope     | Provider expansion, Telemetry refactoring, Conversation recovery, Client Config public Service                                        |
+### 7.1 UI surface matrix
 
-### 7.2 UI Surface Matrix
+| Scenario                      | UI entry                                   | Draft/presentation owner                    | Default/inheritance source      | Validation and submission                              | Authoritative owner                | Mode boundary                   |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------- | ------------------------------- | ------------------------------------------------------ | ---------------------------------- | ------------------------------- |
+| Add normal Built-in Provider  | Provider Settings fixed operations         | Renderer selection state; no Provider Draft | Target Host Built-in Config     | Create Personal Overlay                                | Target Environment Host            | Local/Remote use their own Host |
+| Create Personal-only Provider | Custom creation interface                  | Renderer creation state                     | No default API Schema           | Immediately create incomplete Provider, then auto-save | Target Environment Host            | Same                            |
+| Edit Model                    | Larger manual-save popup                   | Renderer Local Draft                        | Host Effective Preview          | One atomic Model Mutation                              | Personal Config + Registry         | Desktop/Mobile same semantics   |
+| Model selection               | Conversation/Automation/Subagent/Repo Wiki | Each product's own Draft                    | Target Host Selection View      | Each commit sink                                       | Each product state/Worker Registry | Product lifecycles not unified  |
+| Account connection display    | Family/Usage/Entitlement UI                | Host projection state                       | Account Connection/Availability | Existing login/connection actions                      | Account Service                    | Does not read `accessId`        |
 
-| User Scenario                 | UI Entry                                   | Draft/Presentation owner                    | Default/Inheritance Source      | Validation and Submission                                    | Authoritative Owner                | Mode Boundary                      |
-| ----------------------------- | ------------------------------------------ | ------------------------------------------- | ------------------------------- | ------------------------------------------------------------ | ---------------------------------- | ---------------------------------- |
-| Add normal Built-in Provider  | Provider Settings fixed operations         | Renderer selection state; no Provider Draft | Target Host Built-in Config     | Create Personal Overlay                                      | Target Environment Host            | Local/Remote use respective Host   |
-| Create Personal-only Provider | Custom creation interface                  | Renderer creation state                     | No default API Schema           | Immediately create incomplete Provider, subsequent auto-save | Target Environment Host            | Above                              |
-| Edit Model                    | Larger manual-save popup                   | Renderer Local Draft                        | Host Effective Preview          | One atomic Model Mutation                                    | Personal Config + Registry         | Desktop/Mobile same semantics      |
-| Model selection               | Conversation/Automation/Subagent/Repo Wiki | Each product's own Draft                    | Target Host Selection View      | Each commit sink                                             | Each product state/Worker Registry | No unifying each product lifecycle |
-| Account connection display    | Family/Usage/Entitlement UI                | Host projection state                       | Account Connection/Availability | Existing login/connection actions                            | Account Service                    | Does not read `accessId`           |
+### 7.2 Hierarchy relations
 
-### 7.3 Hierarchy Relations
+- must-inspect: Account Connection -> Account Overlay -> Request Auth (resolve by current compatible connection
+  after deleting connection ID, fail-closed when missing).
+- must-inspect: Model editor -> Host Mutation -> Personal Config/Registry (step-by-step save drops Draft and gives
+  non-atomic state).
+- must-inspect: Fork/Protocol/Persistence -> ModelSelection (`ForkModelRef` and strings keep creating a second choice
+  representation).
+- should-inspect: Usage/Telemetry/Family UI -> Account status (inferred connection by `accessId` presence);
+  Automation/Subagent/Repo Wiki/Conversation pickers (shared Picker Value, state and submission targets stay
+  separate).
+- conditional: Standalone/Remote Host Request Auth (each Environment uses its own account service).
+- invariant-only: desktop continuous / mobile replayable (stream, snapshot, queue, recovery untouched); Off-Peak
+  (normal ModelSelection/Registry/ModelFactory and request-period auth).
 
-| Level          | Relation                                                  | Reason                                                                                                     |
-| -------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| must-inspect   | Account Connection -> Account Overlay -> Request Auth     | Must still resolve by current compatible connection after deleting connection ID, fail-closed when missing |
-| must-inspect   | Model editor -> Host Mutation -> Personal Config/Registry | Current step-by-step save drops Draft and produces non-atomic state                                        |
-| must-inspect   | Fork/Protocol/Persistence -> ModelSelection               | `ForkModelRef` and strings will continue creating second choice representation                             |
-| should-inspect | Usage/Telemetry/Family UI -> Account status               | Current partial display infers connection by `accessId` presence                                           |
-| should-inspect | Automation/Subagent/Repo Wiki/Conversation picker         | Shared Picker Value, but state and submission targets must continue separating                             |
-| conditional    | Standalone/Remote Host Request Auth                       | Each Environment must use its own account service                                                          |
-| invariant-only | desktop continuous / mobile replayable                    | This round does not change stream, snapshot, queue, or recovery semantics                                  |
-| invariant-only | Off-Peak                                                  | Continue using normal ModelSelection/Registry/ModelFactory and request-period auth                         |
+### 7.3 State owner and commit sink
 
-### 7.4 State Owner and Commit Sink
-
-| State/Fact                                  | Authoritative Owner                      | Mirror/Cache                   | Commit Sink                                       |
+| State/fact                                  | Authoritative owner                      | Mirror/cache                   | Commit sink                                       |
 | ------------------------------------------- | ---------------------------------------- | ------------------------------ | ------------------------------------------------- |
 | Built-in/Personal Provider and Model Config | Target Environment Host Provider Service | Renderer Host View             | Provider Config Repository + Registry publication |
 | Model editing Draft                         | Current popup Renderer                   | No persistent cache            | Single Host Model Mutation                        |
 | Current account connection and identity     | Account/Credential Services              | Account Provider snapshot      | Existing login, connection, logout flows          |
-| Request-period credentials                  | Account Request Auth Service             | Private Credential Store/cache | Each request attempt parsed, no Config written    |
+| Request-period credentials                  | Account Request Auth Service             | Private Credential Store/cache | Resolved per request attempt, no Config written   |
 | Future model selection                      | Each product structured `ModelSelection` | Picker Value display only      | Each product's existing submission entry          |
 | Current execution model                     | Agent Runtime Active Model               | No reverse editable mirror     | ModelFactory creation                             |
 
-### 7.5 Invariants to Maintain
+### 7.4 Invariants
 
-1. Account-type Provider Config does not save credentials or account identity; API Access can still directly save user-filled API Key;
-2. After switching/logging out of account, old Active Model can only use current compatible family/planKind connections, failing at network front otherwise;
-3. Local and Remote Environment each parse Provider Registry, account connections, and request credentials;
-4. `ModelSelection` only saves explicit choice intent, default options still resolved by ModelFactory;
-5. Model editing cancel does not write config, failure does not close popup, success publishes only one final revision;
-6. Built-in Models cannot be deleted, Provider IDs cannot be modified, Builtin Config is never deleted by Settings;
-7. UI hidden fields PDF/Audio and unedited Personal JSON slots are losslessly preserved;
-8. Does not change each model selection entry's state ownership, Queue, Recovery, Off-Peak admission, or Telemetry overall design;
-9. Does not restore ModelRef, ModelIdentity, public connection key, or second Registry;
-10. Does not move old Registry's config responsibility into new execution/factory abstractions by cleaning up old naming.
+1. Account-type Provider Config saves no credentials or account identity; API Access can still save a user-filled
+   API key directly.
+2. After account switch/logout an old Active Model uses only current compatible family/planKind connections, else
+   fails before the network.
+3. Local and Remote Environments each resolve Provider Registry, account connections and request credentials.
+4. `ModelSelection` saves only explicit choice intent; default options are still resolved by ModelFactory.
+5. Model editing cancel writes no config, failure keeps the popup, success publishes one final revision.
+6. Built-in Models cannot be deleted, Provider IDs cannot be modified, Built-in Config is never deleted by Settings.
+7. Hidden PDF/Audio and unedited Personal JSON slots are preserved losslessly.
+8. No change to each model selection entry's state ownership, Queue, Recovery, Off-Peak admission or Telemetry
+   design.
+9. No restored ModelRef, ModelIdentity, public connection key or second Registry.
+10. Cleaning old naming does not move the old Registry's config responsibility into new execution/factory
+    abstractions.
 
-### 7.6 Graph Drift Review and Sync Results
+Graph drift (Feature Graph declared Account Overlay publishing opaque `accessId`; Todo 05/21 held completion claims
+inconsistent with the code) was synchronized with this Todo and Todo 24: Design Tree Account Access, Request Auth,
+Model Selection, Settings and Registry docs; Feature Graph nodes and invariants; corrective notes or superseded links
+for Todo 05, 07, 12–14, 20, 21; Todo 00 roadmap. Synchronization never elevates implementation trade-offs into
+design.
 
-Pre-implementation Feature Graph still declares Account Overlay publishing opaque `accessId`, and Todo 05/21 also contains completion results inconsistent with current code.
-These graph/spec drifts have been synchronized with this Todo and Todo 24; review scope includes:
+## 8. Acceptance
 
-- Design Tree Account Access, Request Auth, Model Selection, Settings, and Registry documents;
-- Feature Graph Provider Registry, Model Selection, Off-Peak, and Settings nodes and invariants;
-- Corrective notes or superseded links for Todo 05, 07, 12–14, 20, 21;
-- Final completion results of Todo 00 roadmap.
+### 8.1 Config, Account, Request Auth
 
-Synchronization must not elevate implementation temporary trade-offs into design. Unless objectively unachievable, correctness conflicts, or new reliable facts arise, implementation must faithfully execute this Todo; normal implementation
-ambiguity decisions use minimal-impact, reversible solutions continuing without blocking goals, discussed after completion.
+- Zhipu Account Access Schema does not accept, serialize or require `accessId`.
+- Account Overlay publishes only enabled and Start account model members.
+- Individual/Start/Team each obtain correct credentials from the current account service.
+- Switching accounts under the same Family/Plan re-resolves old Model credentials by the current compatible
+  connection.
+- Credential refresh does not hot-change a Model's Endpoint, API type, Properties or Model Selection.
+- Credential Store/in-flight cache is not shared across accounts, Providers or Team scopes.
+- UI, Usage and Telemetry do not infer account connections from access strings.
+- Local, Remote, Standalone and Off-Peak use their own Environment account facts.
 
-## 8. Implementation Slices
+### 8.2 ModelSelection
 
-### Slice A: Failing Tests and Public Contracts
+- `modelSelectionSchema` fully accepts and preserves `reasoningLevel/maxOutputTokens`.
+- Fork/Side Chat/Before-input Fork produce no `variant` or Ref alias.
+- Picker Value does not override the caller's complete Selection options.
+- Legacy strings are parsed only at explicit importer/codec boundaries.
+- Conversation, Automation, Subagent, Repo Wiki comparison and submission semantics are unchanged.
+- Config default changes are not reverse-solidified into historical Selection.
 
-1. Write failing tests for Todo 24 Access contract, ModelSelection options fidelity, and atomic Model Mutation;
-2. Establish Settings Draft four-state, Model ID Preview, and Built-in simplified editor component/service contract tests;
-3. Supplement regression tests for Local/Remote Host authority, Standalone Request Auth, and Off-Peak invariants.
+### 8.3 Settings transaction and Preview
 
-### Slice B: ModelSelection Zero
+- Open, edit, cancel/X/Esc write no config.
+- Save produces one Host Mutation and one final Registry revision.
+- Rename updates Personal membership, modelOrder and exact Rule together.
+- Save failure, revision conflict and Registry publish failure keep popup and Draft.
+- Changing Model ID first moves the Preview Rule, then parses the new Built-in default; Personal explicit values stay.
+- A stale Preview response does not override the latest Model ID.
+- Four-state round-trip (upstream value, upstream no value, Personal override, explicit clear).
+- PDF/Audio and unedited JSON slots preserved losslessly.
+- Three JSON editors replace independently; empty content restores inheritance; invalid content blocks save.
+- `requiresMfjsToolSchema` is at the end.
 
-1. Change all `ForkModelRef` to `ModelSelection`, delete `variant` conversion;
-2. Protocol, persistence, and product states only save structured objects;
-3. Explicitly rename Picker/Legacy string helpers and restrict boundaries;
-4. Delete duplicate Parser/Formatter, do not add unified comparison helper.
+### 8.4 Provider Settings
 
-### Slice C: Access Contract
+- "Add Supplier" lists only un-added normal `standard-builtin` candidates and then shows the simplified API Key +
+  Model edit path.
+- "Create Custom Provider" creates an incomplete `standard-personal` Provider with the complete editor.
+- Deleting any Provider deletes only the Personal Overlay; Built-in Config unchanged.
+- Family UI, normal ordering, Provider ID, Built-in Model delete permissions and model enabled behavior are
+  unchanged.
+- Desktop/Web/Mobile, Zai Light/Zai Dark, keyboard, touch and Chinese/English regressions pass.
 
-Fully implemented and accepted by Todo 24; this Todo no longer maintains another Access implementation list.
-
-### Slice D: Model Editing Transaction and Preview
-
-1. Add one-time Host Preview and one-time Host Save Mutation;
-2. rename, membership, order, specific Rule, and Personal Config submitted in same transaction;
-3. Renderer popup waits for success before closing, conflicts/failures retain Draft;
-4. Model ID Preview debounced and stale responses rejected;
-5. Delete step-by-step helper and optimistic compensation logic after `rename()` then `save()`.
-
-### Slice E: Settings Semantics and Presentation
-
-1. Draft separates Personal values, Inherited Preview, and Effective Preview;
-2. Implement inheritance, not-set, explicit override, explicit clear four-state;
-3. Three JSON slots reuse authoritative Schema, add formatting and path errors;
-4. Normal Built-in Provider uses API Key + Model List simplified editor; Personal-only uses complete editor;
-5. `requiresMfjsToolSchema` moved to end, completing Light/Dark, Desktop/Mobile, keyboard, and Chinese/English checks.
-
-### Slice F: Compatibility, Naming, and Document Mechanical Zero
-
-1. Completely delete `adapterCompatibility`, `reasoningReplay`, and synthetic empty-thinking projection;
-2. Validate Adapter `model-execution.ts` and comments all use execution/factory naming, do not change transport/factory behavior;
-3. Execute mechanical residual search, delete dead helpers, test fixtures, and erroneous comments;
-4. Synchronize Design Tree, Feature Graph, Todo status, and superseded relations;
-5. Submit Conventional Commits per slice, do not compress all changes into one unreviewable commit.
-
-## 9. Testing and Acceptance
-
-### 9.1 Config, Account, and Request Auth
-
-- Zhipu Account Access Schema does not accept, serialize, or require `accessId`;
-- Account Overlay only publishes enabled and Start account model members;
-- Individual/Start/Team each can obtain correct credentials from current account service;
-- Switching accounts under same Family/Plan re-resolves old Model credentials by current compatible connection;
-- Account credential refresh does not hot-change Model's Endpoint, API type, Properties, or Model Selection;
-- Credential Store/in-flight cache does not cross-use between different accounts, Providers, Team scopes;
-- UI, Usage, Telemetry do not infer account connections by access strings;
-- Local, Remote, Standalone, and Off-Peak use their respective Environment account facts.
-
-### 9.2 ModelSelection
-
-- `modelSelectionSchema` fully accepts and preserves `reasoningLevel/maxOutputTokens`;
-- Fork/Side Chat/Before-input Fork no longer produces `variant` or Ref alias;
-- Picker Value does not override caller's complete Selection options;
-- Legacy strings parsed only at explicit importer/codec boundaries;
-- Conversation, Automation, Subagent, Repo Wiki comparison and submission semantics maintain original behavior;
-- Config default changes not reverse-solidified to historical Selection.
-
-### 9.3 Settings Transaction and Preview
-
-- Open, edit, cancel/X/Esc do not write config;
-- Save produces only one Host Mutation and one final Registry revision;
-- rename simultaneously updates Personal membership, modelOrder, and exact Rule;
-- Save failure, revision conflict, and Registry publishing failure all retain popup and Draft;
-- Modifying Model ID first moves Preview Rule, then parses new Built-in default, Personal explicit values retained;
-- Preview stale response does not override latest Model ID;
-- Upstream has value, upstream no value, Personal override, explicit clear four-state round-trip;
-- PDF/Audio and unedited JSON slots preserved losslessly;
-- Three JSON editors independently replace, empty content restores inheritance, invalid content prevents save;
-- `requiresMfjsToolSchema` at end.
-
-### 9.4 Provider Settings
-
-- "Add Supplier" lists only normal `standard-builtin` un-added candidates;
-- After adding, only shows simplified API Key + Model edit main path;
-- "Create Custom Provider" creates incomplete `standard-personal` Provider and displays complete editor;
-- Deleting any Provider only deletes Personal Overlay; Built-in Config unchanged;
-- Family UI, normal ordering, Provider ID, Built-in Model delete permissions, and model enabled behavior maintain original decisions;
-- Desktop/Web/Mobile, Zai Light/Zai Dark, keyboard, touch, and Chinese/English pass regression.
-
-### 9.5 Mechanical Zero
-
-At completion at minimum satisfy:
+### 8.5 Mechanical zero
 
 ```text
-Production public chain accessId                       = 0
-ForkModelRef / public isomorphic ModelRef alias     = 0
-reasoning identity variant                = 0
-Selection string serialization in current write paths      = 0
-Step-by-step submission of Model editing after rename then save      = 0
-adapterCompatibility / reasoningReplay         = 0
-Old Adapter Registry naming and erroneous comments          = 0
+Production public chain accessId                         = 0
+ForkModelRef / public isomorphic ModelRef alias          = 0
+reasoning identity variant                               = 0
+Selection string serialization in current write paths    = 0
+Step-by-step submission of Model editing (rename then save) = 0
+adapterCompatibility / reasoningReplay                   = 0
+Old Adapter Registry naming and erroneous comments       = 0
 ```
 
-Allowed search hits must be listed individually in completion records, proving belonging to third-party fields, explicit Legacy read-only boundaries, or historical document references; broad allowlists cannot cover
-production residues.
+Allowed search hits are listed individually in completion records (third-party fields, explicit Legacy read-only
+boundaries, historical doc references); broad allowlists may not cover production residues. Final execution: related
+Provider, Services, Shared, Core, Bootstrap, UI unit tests; `pnpm typecheck`; `pnpm lint`; `pnpm fmt:check`;
+affected Desktop E2E and Local/Remote Host Provider Settings/Selection regression; `pnpm knip` and targeted `rg`
+mechanical-zero checks; when necessary `pnpm test:unit:affected` and `pnpm verify:pre-push`.
 
-Final execution:
+## 9. Completion Definition
 
-- Related Provider, Services, Shared, Core, Bootstrap, UI unit tests;
-- `pnpm typecheck`;
-- `pnpm lint`;
-- `pnpm fmt:check`;
-- Affected Desktop E2E, and Local/Remote Host Provider Settings/Selection regression;
-- `pnpm knip` and targeted `rg` mechanical zero checks;
-- When necessary `pnpm test:unit:affected` and `pnpm verify:pre-push`.
+Marked Completed only when: G1–G9 code, tests and mechanical-zero gates are complete; `accessId` has not re-entered
+Provider Config, Model, Protocol, UI or the public Credential contract under new names; account switch, logout,
+credential refresh and Remote/Standalone requests have current-connection resolution and fail-closed-on-missing
+evidence; Fork, Picker, Protocol and Persistence have no second ModelSelection representation; Model editing save is
+one Host Mutation, failure keeps Draft, Preview persists nothing; the Built-in simplified editor and the Personal-only
+complete editor split by group; Design Tree, Feature Graph, roadmap and related old Todos match the implementation;
+required tests, typecheck, Lint, format check, affected E2E and residue checks pass.
 
-## 10. Completion Definition
+## 10. Implementation Record (2026-08-27)
 
-This Todo can only be marked "Completed" when all the following conditions are met:
+- ModelSelection uniformly preserves structured `providerId/modelId/options`; Fork, Side Chat, Automation, Subagent
+  and Persistence keep no Ref aliases or reasoning identity variants.
+- Model editing save is one Host Mutation with `basedOnRevision`; rename, membership, order and the exact Personal
+  Rule are atomic; Preview returns only inherited and Effective values.
+- Personal Model Draft is a truly sparse Overlay: untouched leaves not written, PDF/Audio and JSON slots lossless;
+  "restore all defaults" uses the new inheritance results of the current model ID as baseline.
+- Provider/Model settings simplification, ordering and popup interactions are complete; continuous Provider ordering
+  uses a UI optimistic projection, and an Environment owner change discards the old pending state (no second config
+  fact).
+- `adapterCompatibility`, `reasoningReplay`, synthetic empty-thinking and related fixtures/helpers are deleted from
+  the current production chain.
+- Access slice was completed by Todo 24, ZAPI retirement by Todo 25.
 
-1. G1–G9 code, tests, and mechanical zero gates all complete;
-2. `accessId` has not re-entered Provider Config, Model, Protocol, UI, or public Credential contract under new names;
-3. Account switching, logout, credential refresh, and Remote/Standalone requests all have current connection resolution and fail-closed-on-missing evidence;
-4. Fork, Picker, Protocol, and Persistence no longer have second ModelSelection representation;
-5. Model editing save is one Host Mutation, failure retains Draft, Preview produces no persistence;
-6. Built-in simplified editor and Personal-only complete editor分流 by group;
-7. Design Tree, Feature Graph, roadmap, and related old Todos synchronized to real implementation, no longer falsely claiming unmet items completed;
-8. Required tests, typecheck, Lint, format check, affected E2E, and mechanical residue checks pass;
-9. Conventional Commits submitted per reviewable slices, with self-choices and verification evidence preserved in implementation records.
+Follow-up from a later reverse review: Host Preview and atomic Model Draft save are complete per this Todo; stable
+group priority of Personal Match/Exact Rules and mechanical normalization of the Resolver and write-side three-segment
+order helpers are taken by [`Todo 28`](./todo-28-model-rule-precedence-and-order-canonicalization.md).
 
-## 11. Implementation Records (2026-08-27)
-
-- ModelSelection uniformly preserves structured `providerId/modelId/options`, Fork, Side Chat, Automation, Subagent, and
-  Persistence no longer maintain Ref aliases or reasoning identity variants;
-- Model editing save consolidated to one Host Mutation with `basedOnRevision`, rename, membership, order, and precise Personal Rule
-  atomically submitted; Preview only returns inherited values and Effective values, no persistence, does not accept Renderer API/Endpoint authority;
-- Personal Model Draft changed to truly sparse Overlay: untouched leaves not written, PDF/Audio and JSON slots preserved losslessly; "restore all defaults" takes
-  current model ID's new inheritance results as baseline;
-- Provider/Model settings page completes intended simplification, ordering, and popup interactions; Provider continuous ordering uses UI optimistic projection, Environment owner changes discard old Pending, not forming second config fact;
-- `adapterCompatibility`, `reasoningReplay`, synthetic empty-thinking, and related fixtures/helpers deleted from current production chain;
-- Access slice completed by Todo 24 per final decisions, ZAPI retirement by Todo 25.
-
-> Subsequent reverse review supplements: Host Preview and Model Draft atomic save itself completed per this Todo; Personal Match/Exact
-> Rule stable group priority, and Resolver and write-side three-segment order helper mechanical normalization, taken by
-> [`Todo 28`](./todo-28-model-rule-precedence-and-order-canonicalization.md).
-
-Verification evidence:
-
-- Root `pnpm typecheck` passed; root `pnpm lint` is 0 error (34 workspace-wide pre-existing warnings);
-- Model settings directed tests 235/235, UI/Services contract tests 47/47, CLI Provider/Adapter/Bootstrap directed tests
-  228/228 passed;
-- Root full unit 12,438/12,440 directly passed; only 2 failing Windows ZIP cases are host missing system `zip`, re-run with isolated compatible ZIP
-  command 17/17 passed;
-- This round's 216 modified files passed directed format check after `oxfmt` correction; root `fmt:check` still blocked by repository pre-existing binary files and Electron upstream
-  example HTML parse errors;
-- Root `knip` still reports workspace-wide pre-existing unused baseline; directed check reports no this-round new Access, Credential, or UI split symbols;
-- Production code mechanical search confirms `ForkModelRef`, `adapterCompatibility`, `reasoningReplay`,
-  `anthropic-empty-thinking`, and old Access Type all zero.
+Verification: root `pnpm typecheck` passed; root `pnpm lint` 0 errors (34 pre-existing warnings); model settings
+directed tests 235/235, UI/Services contract tests 47/47, CLI Provider/Adapter/Bootstrap directed tests 228/228;
+root full unit 12,438/12,440 (the 2 failures are Windows ZIP cases from a missing system `zip`, 17/17 on rerun with
+an isolated compatible command); 216 changed files passed directed format check after `oxfmt` (root `fmt:check` is
+still blocked by pre-existing binary files and Electron upstream example HTML parse errors); root `knip` reports only
+the pre-existing workspace-wide baseline with no new Access/Credential/UI-split symbols; production code search
+confirms `ForkModelRef`, `adapterCompatibility`, `reasoningReplay`, `anthropic-empty-thinking` and the old Access
+Type are all zero.
