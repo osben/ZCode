@@ -24,6 +24,12 @@ import {
 } from "@zcode/shared";
 import type { IServiceAccessor } from "@zcode/services";
 import {
+  appendTrustedHostKey,
+  defaultKnownHostsFiles,
+  type KnownHostsFiles,
+  type SSHHostKeyFailure,
+} from "@zcode/server/remote";
+import {
   createSourceServerTransportAdapter,
   type ServerReleaseAsset,
   type SourceServerFileTransfer,
@@ -159,6 +165,8 @@ export interface SourceServerConnectionManagerOptions {
     target: Exclude<RemoteTarget, { kind: "server" }>,
     options?: { metadataOnly?: boolean },
   ) => Promise<ServerReleaseAsset>;
+  /** known_hosts files the trust step appends to; tests inject a temp dir. */
+  knownHostsFiles?: KnownHostsFiles;
 }
 
 export interface ConnectSourceServerOptions {
@@ -207,6 +215,38 @@ function readErrorRetryable(error: unknown): boolean | undefined {
     return undefined;
   }
   return typeof error.retryable === "boolean" ? error.retryable : undefined;
+}
+
+function findHostKeyError(error: unknown): (Error & { hostKey: SSHHostKeyFailure }) | undefined {
+  // Transport and registry layers may wrap the backend error; follow the cause chain to the stamped original.
+  for (let current = error, depth = 0; current && depth < 5; depth += 1) {
+    if (typeof current !== "object") return undefined;
+    if ("hostKey" in current) return current as Error & { hostKey: SSHHostKeyFailure };
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+function readUnknownHostKey(error: unknown): SSHHostKeyFailure | undefined {
+  const hostKey = findHostKeyError(error)?.hostKey;
+  return hostKey?.kind === "unknown" ? hostKey : undefined;
+}
+
+/** Profile whose connect attempt refused an unknown host key; the trust step is keyed by it. */
+export function readHostKeyProfileId(error: unknown): string | undefined {
+  const stamped = findHostKeyError(error);
+  if (stamped?.hostKey.kind !== "unknown") return undefined;
+  const profileId = (stamped as { profileId?: unknown }).profileId;
+  return typeof profileId === "string" ? profileId : undefined;
+}
+
+function hostKeyTrustUnavailableError(): Error {
+  // The observed key lives only in this Host's memory; after a restart or a newer attempt the user must connect again
+  // and see the prompt for the key that is actually offered.
+  return Object.assign(new Error("No host key is waiting for trust; connect again"), {
+    code: "remote-host-key-unknown",
+    retryable: false,
+  });
 }
 
 function isAutomaticRecoveryUserActionCode(code: unknown): boolean {
@@ -327,6 +367,8 @@ export class SourceServerConnectionManager {
   private readonly now: () => number;
   private readonly compatibilityManifest: CompatibilityManifest;
 
+  // Unknown host keys refused by the last connect attempt of each profile, held until the user trusts or retries.
+  private readonly pendingHostKeys = new Map<string, SSHHostKeyFailure>();
   private readonly operationLogs = new SourceServerOperationLogs(() => this.now());
   public readonly onDidAppendOperationLog = this.operationLogs.onDidAppend;
   public getRecentOperationLogs(profile: Pick<ConnectionProfile, "profileId" | "sourceServerId">) {
@@ -339,6 +381,28 @@ export class SourceServerConnectionManager {
     this.connectServer = options.connectServer ?? connectServerRemoteOverDuplex;
     this.now = options.now ?? Date.now;
     this.compatibilityManifest = options.compatibilityManifest ?? ZCODE_COMPATIBILITY_MANIFEST;
+  }
+
+  /**
+   * Persists the unknown host key the user accepted for this profile. Only the exact key the last attempt observed can
+   * be trusted; the caller reconnects afterwards and the ordinary known_hosts check admits it.
+   */
+  public async trustHostKey(profileId: string, fingerprint: string): Promise<void> {
+    const pending = this.pendingHostKeys.get(profileId);
+    if (!pending || pending.fingerprint !== fingerprint) throw hostKeyTrustUnavailableError();
+    await appendTrustedHostKey(this.options.knownHostsFiles ?? defaultKnownHostsFiles(), pending);
+    if (this.pendingHostKeys.get(profileId) !== pending) return;
+    this.pendingHostKeys.delete(profileId);
+    const current = this.states.get(profileId);
+    if (current?.hostKeyPreview) {
+      const {
+        profileId: _profileId,
+        updatedAt: _updatedAt,
+        hostKeyPreview: _preview,
+        ...rest
+      } = current;
+      this.setState(profileId, rest);
+    }
   }
 
   public async connect(
@@ -774,6 +838,7 @@ export class SourceServerConnectionManager {
     }
     if (removedProfileId) {
       this.states.delete(removedProfileId);
+      this.pendingHostKeys.delete(removedProfileId);
       this.compatibilityByProfileId.delete(removedProfileId);
     }
   }
@@ -784,6 +849,7 @@ export class SourceServerConnectionManager {
     });
     for (const flight of this.updateFlights) flight.controller.abort(reason);
     this.updateFlights.clear();
+    this.pendingHostKeys.clear();
     // 更新的重握手可能尚无 online owner，不能只遍历 online 表来回收在途连接。
     for (const flight of this.connectFlights.values()) flight.controller.abort(reason);
     this.connectFlights.clear();
@@ -1153,6 +1219,7 @@ export class SourceServerConnectionManager {
         // 操作级 onLog 捕获本次日志及凭据；恢复不得持有旧闭包，下一次操作会重新建日志上下文。
         context: {},
       });
+      this.pendingHostKeys.delete(profile.profileId);
       this.setState(effectiveProfile.profileId, {
         state: "online",
         sourceServerId,
@@ -1183,11 +1250,24 @@ export class SourceServerConnectionManager {
         error && typeof error === "object" && "retryable" in error
           ? (error as { retryable?: unknown }).retryable
           : undefined;
+      const unknownHostKey = readUnknownHostKey(error);
+      if (unknownHostKey) {
+        this.pendingHostKeys.set(profile.profileId, unknownHostKey);
+        Object.assign(findHostKeyError(error) as object, { profileId: profile.profileId });
+      } else this.pendingHostKeys.delete(profile.profileId);
       this.setState(profile.profileId, {
         state: "failed",
         error: normalized.message,
         ...(errorCode ? { errorCode } : {}),
         ...(typeof retryable === "boolean" ? { retryable } : {}),
+        ...(unknownHostKey
+          ? {
+              hostKeyPreview: {
+                keyType: unknownHostKey.keyType,
+                fingerprint: unknownHostKey.fingerprint,
+              },
+            }
+          : {}),
       });
       throw error;
     } finally {

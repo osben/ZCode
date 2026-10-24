@@ -39,6 +39,7 @@ const messageIdByCode: Record<PublicZCodeErrorCode, string> = {
   "remote-connection-timeout": "remote.error.connectionTimeout",
   "remote-host-not-found": "remote.error.hostNotFound",
   "remote-host-key-changed": "remote.error.hostKeyChanged",
+  "remote-host-key-unknown": "remote.error.hostKeyUnknown",
   "remote-download-failed": "remote.error.downloadFailed",
   "remote-upload-failed": "remote.error.uploadFailed",
   "remote-preflight-failed": "remote.error.preflightFailed",

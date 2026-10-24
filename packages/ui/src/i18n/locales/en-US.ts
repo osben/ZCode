@@ -222,7 +222,9 @@ const enUS: Record<string, string> = {
     "The device did not respond in time. Check your connection and retry.",
   "remote.error.hostNotFound.reason": "Check the hostname or try an IP address.",
   "remote.error.hostKeyChanged.reason":
-    "The device identity differs from the saved record. Verify it with your administrator before updating your known hosts.",
+    'The device\'s SSH host key no longer matches your known_hosts file. The device may have been reinstalled, or someone may be intercepting the connection. Confirm the new key with the device administrator, remove the old entry with ssh-keygen -R HOST (for a non-default port: ssh-keygen -R "[HOST]:PORT"), then connect again.',
+  "remote.error.hostKeyUnknown.reason":
+    "This computer has not connected to this device before. Open the connection dialog to review the host key fingerprint and decide whether to trust it.",
   "remote.error.downloadFailed.reason":
     "The installation package could not be downloaded. Check your connection and retry.",
   "remote.error.uploadFailed.reason":
@@ -2253,6 +2255,7 @@ const enUS: Record<string, string> = {
   "remote.error.connectionTimeout": "Connection timed out",
   "remote.error.hostNotFound": "Host not found",
   "remote.error.hostKeyChanged": "Host identity has changed",
+  "remote.error.hostKeyUnknown": "Unrecognized host key",
   "remote.error.downloadFailed": "Download failed",
   "remote.error.uploadFailed": "Upload failed",
   "remote.error.preflightFailed": "Remote environment check failed",
@@ -2556,6 +2559,14 @@ const enUS: Record<string, string> = {
   "remote.installTarget": "Target account",
   "remote.installVersion": "Install version",
   "remote.installLocation": "Install location",
+  "remote.hostKeyTrustTitle": "Trust this device's host key?",
+  "remote.hostKeyTrustDescription":
+    "This is the first connection to this device from this computer. Compare the fingerprint with the one the device administrator gives you (ssh-keygen -lf on the device). Trusting adds the key to ~/.ssh/known_hosts.",
+  "remote.hostKeyType": "Key type",
+  "remote.hostKeyFingerprint": "Fingerprint",
+  "remote.hostKeyTrustConfirm": "Trust and connect",
+  "remote.hostKeyTrustRejected":
+    "Connection canceled: the host key was not trusted. Nothing was saved.",
   "remote.sourceServerBoundaryTitle": "Local offline, tasks keep running",
   "remote.sourceServerBoundaryDescription":
     "Remote tasks keep running, even when you close ZCode or put your computer to sleep.",

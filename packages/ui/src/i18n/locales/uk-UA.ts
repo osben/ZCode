@@ -8659,7 +8659,9 @@ const ukUA: Record<string, string> = {
     "Пристрій не відповів вчасно. Перевірте з'єднання та повторіть спробу.",
   "remote.error.hostNotFound.reason": "Перевірте ім'я хоста або спробуйте IP-адресу.",
   "remote.error.hostKeyChanged.reason":
-    "Ідентифікатор пристрою відрізняється від збереженого запису. Перевірте його з адміністратором, перш ніж оновлювати відомі хости.",
+    'SSH-ключ хоста пристрою більше не збігається з файлом known_hosts. Можливо, пристрій перевстановили, або хтось перехоплює з\'єднання. Підтвердьте новий ключ з адміністратором пристрою, видаліть старий запис командою ssh-keygen -R HOST (для нестандартного порту: ssh-keygen -R "[HOST]:PORT") і підключіться знову.',
+  "remote.error.hostKeyUnknown.reason":
+    "Цей комп'ютер ще не підключався до цього пристрою. Відкрийте діалог підключення, щоб перевірити відбиток ключа хоста й вирішити, чи довіряти йому.",
   "remote.error.downloadFailed.reason":
     "Не вдалося завантажити пакет встановлення. Перевірте з'єднання та повторіть спробу.",
   "remote.error.uploadFailed.reason":
@@ -8899,6 +8901,7 @@ const ukUA: Record<string, string> = {
   "remote.error.connectionTimeout": "Час очікування підключення вичерпано",
   "remote.error.hostNotFound": "Хост не знайдено",
   "remote.error.hostKeyChanged": "Ідентифікатор хоста змінився",
+  "remote.error.hostKeyUnknown": "Невідомий ключ хоста",
   "remote.error.downloadFailed": "Не вдалося завантажити",
   "remote.error.uploadFailed": "Не вдалося вивантажити",
   "remote.error.preflightFailed": "Не пройшла перевірка віддаленого середовища",
@@ -9030,6 +9033,14 @@ const ukUA: Record<string, string> = {
   "remote.installTarget": "Цільовий обліковий запис",
   "remote.installVersion": "Версія для встановлення",
   "remote.installLocation": "Місце встановлення",
+  "remote.hostKeyTrustTitle": "Довіряти ключу хоста цього пристрою?",
+  "remote.hostKeyTrustDescription":
+    "Це перше підключення до цього пристрою з цього комп'ютера. Порівняйте відбиток з тим, який надав адміністратор пристрою (ssh-keygen -lf на пристрої). Якщо довіритися, ключ буде додано до ~/.ssh/known_hosts.",
+  "remote.hostKeyType": "Тип ключа",
+  "remote.hostKeyFingerprint": "Відбиток",
+  "remote.hostKeyTrustConfirm": "Довіряти й підключитися",
+  "remote.hostKeyTrustRejected":
+    "Підключення скасовано: ключу хоста не довірено. Нічого не збережено.",
   "remote.sourceServerBoundaryTitle": "Локальний пристрій офлайн, завдання продовжують працювати",
   "remote.sourceServerBoundaryDescription":
     "Віддалені завдання продовжують працювати, навіть коли ви закриваєте ZCode або переводите комп'ютер у режим сну.",

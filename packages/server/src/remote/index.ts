@@ -7,6 +7,12 @@ export type {
 } from "./backend.js";
 export { createRemoteBackend } from "./create-backend.js";
 export {
+  appendTrustedHostKey,
+  defaultKnownHostsFiles,
+  type KnownHostsFiles,
+  type SSHHostKeyFailure,
+} from "./sshAuth.js";
+export {
   connectRemote,
   pickRemoteRuntimeEnv,
   type ConnectOptions,
