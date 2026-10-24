@@ -1,8 +1,6 @@
 # Services Upstream Sync, Part 5: leftovers after part 4 (decision and ledger)
 
-Parent: `specs/services-upstream-sync-part4.md`. Base `aac47556` (v3.15.1), target `0a1fc56d` (v3.16.1). Branch `claude/sync-services-5` from `origin/integration` (`72d16423`).
-
-This part was scoped by the coordinator as "one file at a time, compile and test each". This run did the investigation that decides each item and records it. No upstream code is ported in this part, for the reasons below. The intent is that the ledger is complete and the next port starts from verified facts.
+Parent spec: `specs/services-upstream-sync-part4.md`. Base `aac47556` (v3.15.1), target `0a1fc56d` (v3.16.1). This part is investigation and decisions only; no upstream code is ported here.
 
 ## Summary
 
@@ -44,8 +42,6 @@ Unchanged from part 4 section 7. The third argument feeds only `projectStorage.m
 
 Part 4 found that reading the provider access token on the restore path makes `does not send zai token to BigModel when migration token load races with provider switch` hang. The test holds the first `oauth:bigmodel:access_token` load and releases it only after `restoreCachedSession()` resolves.
 
-Analysis for this part:
-
 - The fork test is the spec. Restore must not wait on the provider token. The check cannot run in restore as an awaited read.
 - The provider token read already has an owner: the background BigModel migration path. Upstream's expiry check can coexist only if it runs after that load in the migration path, with that path remaining the single reader.
 - Not ported here. Porting it means adding a second reader or changing the migration ordering, which needs a design decision with the owner of that test.
@@ -73,10 +69,6 @@ Incognito, session deletion cascade, worktree identity, deep links, bots `/remot
 
 ## Verification
 
-- `pnpm typecheck`: passes (exit 0, no diagnostics).
-- No behavior changed, so no new tests were added. Existing bots and oauth tests were not rerun in this wave, per coordinator instruction (typecheck only).
+`pnpm typecheck` passed (exit 0, no diagnostics). No behavior changed, so no new tests were added; existing bots and oauth suites, lint/fmt beyond the commit hook, architecture check, vitest suites and CI were not run in this wave (coordinator instruction: typecheck only).
 
-## Verification log
-
-- `pnpm typecheck`: exit 0 on this branch.
-- Not run per coordinator instruction: lint/fmt beyond commit hook, architecture check, vitest suites, CI.
+Full history: `git show 01dd23cd:specs/services-upstream-sync-part5.md`

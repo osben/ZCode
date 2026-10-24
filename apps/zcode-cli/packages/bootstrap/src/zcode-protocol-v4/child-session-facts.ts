@@ -1,13 +1,7 @@
-// Bridge-level resolver for sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md §3).
-// The live sessions-index hook is synchronous, so store reads refresh a per-parent TTL cache in the
-// background. Live lifecycle state comes from the owner of each runtime: session records for ordinary
-// children and the V4 gateway's detached-child registry for subagents without bootstrap records.
-import type {
-  ChildSessionInfo,
-  SessionId,
-  SessionStorePort,
-  SessionTaskType,
-} from "@zcode/contracts";
+// Bridge-level resolver for sidebar child-conversation facts (spec: sidebar-child-conversation-counts.md
+// §3, §9). The sidebar lists side chats only. The live sessions-index hook is synchronous, so store
+// reads refresh a per-parent TTL cache in the background.
+import type { ChildSessionInfo, SessionId, SessionStorePort, SessionTaskType } from "@zcode/contracts";
 import type { SessionSummary } from "@zcode/shared/zcode-protocol-v4";
 import { SESSION_SUMMARY_CHILD_SESSIONS_MAX } from "@zcode/shared/zcode-protocol-v4";
 
@@ -15,10 +9,7 @@ import { SESSION_SUMMARY_CHILD_SESSIONS_MAX } from "@zcode/shared/zcode-protocol
  * Structural view of a live session record. The v4 directory must not import the legacy protocol
  * directory (v4-native-boundary), so the legacy registry entries are passed in by shape.
  */
-export interface ChildSessionRecordView {
-  app: { runtime: { hasResidencyBlockingWork(): boolean } };
-  activeAbortController?: AbortController;
-  residencyFinalizationCount?: number;
+interface ChildSessionRecordView {
   taskType?: SessionTaskType;
   parentSessionId?: string;
 }
@@ -29,25 +20,17 @@ interface ChildSessionFactsLogger {
   warn(message: string, data?: Record<string, unknown>): void;
 }
 
-export interface DetachedChildSessionFact {
-  parentSessionId: string;
-  sessionId: string;
-  running: boolean;
-}
-
 export interface ChildSessionFactsResolver {
   /** Register parents that may have children; cold seed and live discovery call this. */
   noteParents(parentKeys: Iterable<string>): void;
   /** Cold-path store reads for many parents (one query pair). */
   loadStoredFacts(
     parentIds: readonly SessionId[],
-  ): Promise<
-    [Map<string, { sideChats: number; subagents: number }>, Map<string, ChildSessionInfo[]>]
-  >;
+  ): Promise<[Map<string, { sideChats: number }>, Map<string, ChildSessionInfo[]>]>;
   /** Seed the live cache before loaded-session summaries overlay the cold index snapshot. */
   seed(
     parentIds: readonly SessionId[],
-    counts: Map<string, { sideChats: number; subagents: number }>,
+    counts: Map<string, { sideChats: number }>,
     children: Map<string, ChildSessionInfo[]>,
   ): void;
   /** Invalidate affected parents and refresh their store facts, respecting the TTL. */
@@ -57,91 +40,37 @@ export interface ChildSessionFactsResolver {
   /** Live-path summary fragment for one parent; empty object when no facts are known. */
   resolve(sessionId: string): {
     sideChatCount?: number;
-    subagentCount?: number;
-    runningSubagentCount?: number;
     childSessions?: SessionSummary["childSessions"];
   };
 }
 
-/** ChildSessionInfo → the wire summary shape; `running` comes from the live runtime owners. */
-export function toWireChildSession(
-  child: ChildSessionInfo,
-  running: boolean,
-  backgroundWorkId?: string,
-) {
+/** ChildSessionInfo → the wire summary shape. `running` stays on the wire for older UIs (§9.2). */
+export function toWireChildSession(child: ChildSessionInfo) {
   return {
     sessionId: child.id,
     title: child.title,
     taskType: child.taskType,
     lastActivityAt: child.lastActivityAt,
-    running,
-    // The wire schema requires min length 1; omit the key entirely when absent (§8.3).
-    ...(backgroundWorkId ? { backgroundWorkId } : {}),
+    running: false,
   };
-}
-
-/** Finished-but-resident children must not render the running spinner. */
-export function isRecordBusy(record: ChildSessionRecordView): boolean {
-  return (
-    record.activeAbortController !== undefined ||
-    (record.residencyFinalizationCount ?? 0) > 0 ||
-    record.app.runtime.hasResidencyBlockingWork()
-  );
 }
 
 export function createChildSessionFactsResolver(deps: {
   store: () => SessionStorePort | undefined;
   sessions: Map<string, ChildSessionRecordView>;
-  getDetachedChildren?: () => readonly DetachedChildSessionFact[];
-  /** Live cancellable subagent background works of a parent, keyed by child session id (§8.3). */
-  getBackgroundWorkIds?: (parentSessionId: string) => ReadonlyMap<string, string>;
   onRefresh?: (parentKeys: readonly string[]) => void;
   logger?: ChildSessionFactsLogger;
   now?: () => number;
 }): ChildSessionFactsResolver {
   const now = deps.now ?? (() => Date.now());
-  const counts = new Map<string, { sideChats: number; subagents: number }>();
+  const counts = new Map<string, { sideChats: number }>();
   const children = new Map<string, ChildSessionInfo[]>();
   const updatedAt = new Map<string, number>();
   const generation = new Map<string, number>();
   const seenParentIds = new Set<string>();
   const requestedParentIds = new Set<string>();
   const deferredRefreshes = new Map<string, ReturnType<typeof setTimeout>>();
-  const detachedTaskTypes = new Map<string, string | null>();
-  const detachedTaskTypeLookups = new Map<string, Promise<void>>();
-  const detachedTaskTypeRetryAt = new Map<string, number>();
   let refreshInFlight: Promise<void> | null = null;
-
-  const resolveDetachedTaskType = (sessionId: string, parentSessionId: string): string | null => {
-    if (detachedTaskTypes.has(sessionId)) return detachedTaskTypes.get(sessionId) ?? null;
-    const store = deps.store();
-    if (
-      !store ||
-      detachedTaskTypeLookups.has(sessionId) ||
-      (detachedTaskTypeRetryAt.get(sessionId) ?? 0) > now()
-    ) {
-      return null;
-    }
-    const lookup = store
-      .getSession(sessionId as SessionId)
-      .then((session) => {
-        detachedTaskTypes.set(sessionId, session?.taskType ?? null);
-        detachedTaskTypeRetryAt.delete(sessionId);
-        deps.onRefresh?.([parentSessionId]);
-      })
-      .catch((error: unknown) => {
-        detachedTaskTypeRetryAt.set(sessionId, now() + CHILD_SESSION_FACTS_TTL_MS);
-        deps.logger?.warn("detached child task type lookup failed", {
-          error: error instanceof Error ? error.message : String(error),
-          event: "zcode_protocol.v4.detached_child_task_type_failed",
-          module: "bootstrap.zcode_protocol",
-          sessionId,
-        });
-      })
-      .finally(() => detachedTaskTypeLookups.delete(sessionId));
-    detachedTaskTypeLookups.set(sessionId, lookup);
-    return null;
-  };
 
   const scheduleDeferredRefresh = (key: string, delayMs: number): void => {
     if (deferredRefreshes.has(key)) return;
@@ -153,44 +82,12 @@ export function createChildSessionFactsResolver(deps: {
     deferredRefreshes.set(key, timer);
   };
 
-  const discoverLiveParents = (): Map<string, number> => {
-    const busySubagents = new Map<string, number>();
-    const currentDetachedIds = new Set<string>();
+  const discoverLiveParents = (): void => {
     for (const record of deps.sessions.values()) {
-      if (
-        (record.taskType !== "subagent_child" && record.taskType !== "selection_side_chat") ||
-        !record.parentSessionId
-      ) {
-        continue;
-      }
-      const parentId = String(record.parentSessionId);
-      seenParentIds.add(parentId);
-      if (record.taskType === "subagent_child" && isRecordBusy(record)) {
-        busySubagents.set(parentId, (busySubagents.get(parentId) ?? 0) + 1);
+      if (record.taskType === "selection_side_chat" && record.parentSessionId) {
+        seenParentIds.add(String(record.parentSessionId));
       }
     }
-    for (const child of deps.getDetachedChildren?.() ?? []) {
-      if (!child.parentSessionId || !child.sessionId) continue;
-      currentDetachedIds.add(child.sessionId);
-      seenParentIds.add(child.parentSessionId);
-      const taskType = resolveDetachedTaskType(child.sessionId, child.parentSessionId);
-      if (taskType === "subagent_child" && child.running) {
-        busySubagents.set(
-          child.parentSessionId,
-          (busySubagents.get(child.parentSessionId) ?? 0) + 1,
-        );
-      }
-    }
-    for (const sessionId of detachedTaskTypes.keys()) {
-      if (!currentDetachedIds.has(sessionId)) {
-        detachedTaskTypes.delete(sessionId);
-        detachedTaskTypeRetryAt.delete(sessionId);
-      }
-    }
-    for (const sessionId of detachedTaskTypeRetryAt.keys()) {
-      if (!currentDetachedIds.has(sessionId)) detachedTaskTypeRetryAt.delete(sessionId);
-    }
-    return busySubagents;
   };
 
   const load = async (parentKeys: readonly string[]): Promise<void> => {
@@ -309,7 +206,7 @@ export function createChildSessionFactsResolver(deps: {
       }
     },
     resolve(sessionId) {
-      const liveSubagents = discoverLiveParents();
+      discoverLiveParents();
       const staleParents = [...seenParentIds].filter((key) => {
         const lastUpdatedAt = updatedAt.get(key);
         return lastUpdatedAt === undefined || now() - lastUpdatedAt > CHILD_SESSION_FACTS_TTL_MS;
@@ -319,34 +216,9 @@ export function createChildSessionFactsResolver(deps: {
       }
       const count = counts.get(sessionId);
       const childList = children.get(sessionId) ?? [];
-      const detachedById = new Map(
-        (deps.getDetachedChildren?.() ?? []).map((child) => [child.sessionId, child.running]),
-      );
-      const runningSubagentCount = liveSubagents.get(sessionId) ?? 0;
-      const backgroundWorkIds =
-        childList.length > 0 ? deps.getBackgroundWorkIds?.(sessionId) : undefined;
       return {
         ...(count?.sideChats ? { sideChatCount: count.sideChats } : {}),
-        ...(count?.subagents ? { subagentCount: count.subagents } : {}),
-        ...(runningSubagentCount > 0 ? { runningSubagentCount } : {}),
-        ...(childList.length > 0
-          ? {
-              childSessions: childList.map((child) => {
-                const childRecord =
-                  child.taskType === "subagent_child" ? deps.sessions.get(child.id) : undefined;
-                const running =
-                  child.taskType === "subagent_child" &&
-                  (childRecord !== undefined
-                    ? isRecordBusy(childRecord)
-                    : (detachedById.get(child.id) ?? false));
-                return toWireChildSession(
-                  child,
-                  running,
-                  running ? backgroundWorkIds?.get(child.id) : undefined,
-                );
-              }),
-            }
-          : {}),
+        ...(childList.length > 0 ? { childSessions: childList.map(toWireChildSession) } : {}),
       };
     },
   };

@@ -26,7 +26,6 @@ export {
 } from "@/project-sidebar/ProjectDirectoryProvider.js";
 export { ProjectComposerMenu } from "@/project-sidebar/ProjectComposerMenu.js";
 import { useProjectTaskNavigation } from "@/project-sidebar/useProjectTaskNavigation.js";
-import { useSidebarSubagentOpen } from "@/project-sidebar/useSidebarSubagentOpen.js";
 import { useProjectFileTree } from "@/project-sidebar/useProjectFileTree.js";
 import {
   selectProjectRows,
@@ -82,7 +81,6 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
   const remoteSync = useProjectRemoteSync(props, directory);
   const diagnostics = useProjectConnectionDiagnostics(directory, props);
   const onSelectTask = useProjectTaskNavigation(props, tree, remoteService);
-  const openSubagentSession = useSidebarSubagentOpen(onSelectTask, props.onOpenSubagentSession);
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
   const tabStore = useTabStoreApi();
   const setTheme = useZCodeStore((state) => state.setTheme);
@@ -119,7 +117,6 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
       mobileActiveTaskKey,
       onPin: pin,
       onOpenTaskFiles: openTaskFiles,
-      onOpenSubagentSession: openSubagentSession,
     }),
     [
       props.isWebRemoteControl,
@@ -128,7 +125,6 @@ export const ProjectSidebar = memo(function ProjectSidebar(props: ProjectSidebar
       mobileActiveTaskKey,
       pin,
       openTaskFiles,
-      openSubagentSession,
     ],
   );
   const msg = (id: string) => intl.formatMessage({ id: `project.${id}` });

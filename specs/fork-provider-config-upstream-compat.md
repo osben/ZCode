@@ -1,25 +1,24 @@
 # Fork-only model option fields in the shared provider_config.json
 
-## Background (confirmed)
+## Background
 
 - `~/.zcode/v2/provider_config.json` is shared with the upstream app. The upstream build pinned in
   `fork-upstream-base.json` (3.16.1, `0a1fc56d`) parses it with strict schemas and rejects the
   whole file on any unknown key. Every personal provider then disappears and every provider save
   throws (AGENTS.md "Shared Databases and Fork Divergence").
-- Fork commit `43f52e5d` added `optionSpecs.reasoningLevel.default` (`EnumOptionSpecConfig.default`).
-  Upstream's `completeEnumOptionSpecDataSchema` has no such key, so it is fork-only.
-- The fork's built-in catalog `config/provider/zcode-builtin.json` carries `default: "high"` for
-  two model rules (`gpt-5.6`, `gpt-6-{astra,sol,luna}`).
-- **Confirmed reachable write path (before this fix):** a built-in model in Settings, switched to
-  manual ("do not follow recommended") and saved. `resolveProviderModelDraftCommit`
-  (`ProviderModelMetadata.ts`) copies the inherited default into the effective option specs;
-  `materializeEditorManagedPersonalConfig` → `extractManualModelConfig` keeps it because the
-  manual schema reuses the full fork `reasoningLevel` schema; `setExact` → `toPersonalJSON` →
-  `encodeProviderConfigFile` writes it to disk. Commit `476a04e7` added a UI test that asserts
-  exactly this persistence.
+- `optionSpecs.reasoningLevel.default` (`EnumOptionSpecConfig.default`) is fork-only: upstream's
+  `completeEnumOptionSpecDataSchema` has no such key. The fork's built-in catalog
+  `config/provider/zcode-builtin.json` carries `default: "high"` for two model rules
+  (`gpt-5.6`, `gpt-6-{astra,sol,luna}`).
+- Reachable write path: a built-in model in Settings, switched to manual ("do not follow
+  recommended") and saved. `resolveProviderModelDraftCommit` (`ProviderModelMetadata.ts`) copies
+  the inherited default into the effective option specs; `materializeEditorManagedPersonalConfig`
+  → `extractManualModelConfig` keeps it because the manual schema reuses the full fork
+  `reasoningLevel` schema; `setExact` → `toPersonalJSON` → `encodeProviderConfigFile` writes it
+  to disk.
 - Why the value cannot simply be dropped: a manual rule replaces the editable leaves of the
   layers below it. `ModelConfigRules.resolve` calls `clearManualModelConfig` before overlaying the
-  manual rule, so without a fix a manual `gpt-5.6` would lose `"high"` and fall back to `"max"`.
+  manual rule, so a manual `gpt-5.6` would lose `"high"` and fall back to `"max"`.
 - The ACP pseudo-model's `default: "auto"` is derived (`acp-agent-derivation.ts`) and is not a
   personal write (see `specs/acp-agent-runtime.md`).
 

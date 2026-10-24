@@ -1,12 +1,12 @@
 # Execution worktree missing handling
 
-Status: implemented (2026-10-15; §3 amended same day: the health flag moved from a nested `executionWorktree.missing` extension to a top-level `executionWorktreeMissing` summary field — the nested wire schema is strict and frame validation fails closed, so a nested unknown key would drop whole frames on older clients).
+Status: implemented (2026-10-15).
 
 ## Problem
 
-A worktree session binds the agent's execution cwd to a linked worktree directory (`executionWorktree {path, branchName}` on createSession; persisted as `execution_directory`/`execution_branch` in session-store migration `0023`). The user can delete that directory out-of-band (manual `rm`, `git worktree prune` from a terminal, repo re-clone). Today nothing notices:
+A worktree session binds the agent's execution cwd to a linked worktree directory (`executionWorktree {path, branchName}` on createSession; persisted as `execution_directory`/`execution_branch` in session-store migration `0023`). The user can delete that directory out-of-band (manual `rm`, `git worktree prune` from a terminal, repo re-clone). Nothing must silently notice-and-ignore this:
 
-- `resumeFromStore` restores `workingDirectory = session.executionDirectory` (`apps/zcode-cli/packages/core/src/runtime/methods/resume.ts:125-134`) without an existence check — the resumed turn runs with a nonexistent cwd and fails with confusing tool errors.
+- `resumeFromStore` restores `workingDirectory = session.executionDirectory` (`apps/zcode-cli/packages/core/src/runtime/methods/resume.ts:125-134`) without an existence check — the resumed turn would run with a nonexistent cwd and fail with confusing tool errors.
 - The create path resolves the path without checking it (`apps/zcode-cli/packages/bootstrap/src/app/create-app.ts:172-178`) — a stale recovery path turns into the same silent dead cwd.
 - The sidebar renders the GitBranch badge purely from the presence of `task.executionWorktree` (`packages/ui/src/workspace-grouped-tasks/task-row.tsx:244,464`) — a deleted worktree still shows a healthy badge.
 
@@ -58,8 +58,6 @@ executionWorktreeMissing: z.boolean().optional(),
 - i18n: new key `taskList.worktreeTaskLabelMissing` in `en-US`, `zh-CN`, `uk-UA` (`packages/ui/src/i18n/locales/`).
 
 ## Why
-
-Every surveyed harness treats a vanished worktree as a first-class state, not a crash: PI-Desktop reconciles worktree rows at startup and marks them `Missing` (`crates/host-core/src/session_worktrees/lifecycle.rs:885`); Copilot surfaces `workspaceWorktreeMissing`/`checkoutHealth: missing` with a retry action; deepseek's `workingDirectory.ensure()` restores the original project when the directory disappeared. Our current behavior — silent dead cwd on resume, badge that lies — is the worst of the three.
 
 History survives worktree cleanup, so resume stays available. Filesystem work fails closed because redirecting an isolated session to the parent workspace could read or change unrelated files. New worktree preparation and activation also fail closed when the returned directory is absent or invalid.
 

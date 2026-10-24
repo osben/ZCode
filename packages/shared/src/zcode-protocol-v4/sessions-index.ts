@@ -68,9 +68,10 @@ export const sessionSummarySchema = z.object({
   // the row icons never lie when the list below is capped; absent when the CLI host predates the
   // feature or the session has no children.
   sideChatCount: z.number().int().nonnegative().optional(),
+  // Deprecated (§9: the sidebar lists side chats only). Current hosts never send the subagent
+  // counters, `running: true` or `backgroundWorkId`; older fork CLIs still may, so the schema keeps
+  // accepting them and the renderer mapping drops them.
   subagentCount: z.number().int().nonnegative().optional(),
-  // Children of the parent whose runtime is currently alive in this CLI process; 0/absent after a
-  // cold restart until a child re-runs.
   runningSubagentCount: z.number().int().nonnegative().optional(),
   childSessions: z
     .array(
@@ -80,7 +81,6 @@ export const sessionSummarySchema = z.object({
         taskType: z.enum(["selection_side_chat", "subagent_child"]),
         lastActivityAt: timestampSchema,
         running: z.boolean(),
-        // Parent background-work id while the child runs as cancellable background work (§8.3).
         backgroundWorkId: z.string().min(1).optional(),
       }),
     )

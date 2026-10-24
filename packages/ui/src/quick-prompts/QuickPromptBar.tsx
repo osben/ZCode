@@ -55,6 +55,8 @@ import { QuickPromptColorDot } from "@/quick-prompts/QuickPromptColorDot.js";
 import { useOptionalProjectDirectory } from "@/project-sidebar/index.js";
 
 const LONG_PRESS_MS = 500;
+// The composer dock floats over the scrolling transcript; an outline-only chip lets message text show through.
+const CHIP_FILL_CLASS = "bg-card hover:bg-card-selected aria-expanded:bg-card-selected";
 
 export interface QuickPromptBarProps {
   snapshot: QuickPromptSnapshot | null;
@@ -239,8 +241,8 @@ export function QuickPromptBar({
         data-prompt-id={prompt.promptId}
         className={
           isMobile
-            ? "min-h-9 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-3"
-            : "h-7 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-2.5"
+            ? `min-h-9 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-3 ${CHIP_FILL_CLASS}`
+            : `h-7 max-w-[12rem] shrink-0 gap-1.5 truncate rounded-full px-2.5 ${CHIP_FILL_CLASS}`
         }
         onMouseDown={(event) => {
           // Keeps the editor selection: the caret must not move when a chip is clicked.
@@ -367,7 +369,9 @@ export function QuickPromptBar({
               }
               disabled={createBlocked}
               className={
-                firstRun ? "h-7 shrink-0 rounded-full px-2.5" : "size-7 shrink-0 rounded-full p-0"
+                firstRun
+                  ? `h-7 shrink-0 rounded-full px-2.5 ${CHIP_FILL_CLASS}`
+                  : `size-7 shrink-0 rounded-full p-0 ${CHIP_FILL_CLASS}`
               }
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => setEditorTarget({ mode: "create", scope: defaultScope })}

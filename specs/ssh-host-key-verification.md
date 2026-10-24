@@ -1,6 +1,6 @@
 # SSH host key verification (ISSUE-055)
 
-Status: implemented on `claude/fix-issue-055-ssh-hostkey`. Upstream 3.16.2 accepts any host key; this is a fork addition.
+Status: implemented. Upstream 3.16.2 accepts any host key; this is a fork addition.
 
 ## Product rule
 

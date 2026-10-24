@@ -2,13 +2,12 @@
 
 Status: implemented (2026-10-15). Covers the sidebar task-row hover card (`TaskSidebarHoverCard`,
 `data-task-hover-card`). Supersedes the previous status/workspace/diff stacked layout.
-Regression 2026-10-22 (fixed): the grouped row hid its run-state dot on hover/focus, and the regular
-row replaced its run-state slot with the Pin action (`hidden` status span). Both are restored by
-the leading-slot rule below and acceptance #8-#9.
-Regression 2026-10-22 (fixed, ISSUE-049): the flat-row Tooltip was made constant-closed
-(`open={false}`) while silencing a Radix controlled/uncontrolled warning, which also silenced the
-hover card mounted inside it. The flat-row trigger rule below and acceptance #10-#11 restore the
-card without reopening the warning.
+
+Two fixed regressions (2026-10-22) shape the rules below and acceptance #8-#11: the grouped row hid
+its run-state dot on hover/focus and the regular row replaced its run-state slot with the Pin action
+(leading-slot rule); and the flat-row Tooltip was made constant-closed (`open={false}`) to silence a
+Radix controlled/uncontrolled warning, which also silenced the hover card mounted inside it
+(flat-row trigger rule, ISSUE-049).
 
 ## Contract
 

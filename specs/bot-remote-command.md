@@ -3,16 +3,14 @@
 A bound bot chat can ask the desktop for a web-remote control link with `/remote`. The desktop
 mints (or reuses) a window remote-control runtime and replies with a tappable URL that opens the
 existing web-remote UI served by the relay (`/remote/v4`). V1 is link-only; the QR image and the
-Telegram Mini App (V2) are follow-ups.
+Telegram Mini App (V2) are follow-ups. Linear: ZCO-7.
 
-Linear: ZCO-7. Baseline verified in code 2026-10-14.
+## Current state
 
-## Current state (verified)
-
-- Bot commands live in `packages/services/src/bots/commandParser.ts` (parse) and
-  `botsService.ts` (dispatch switch, `withAuthorizedContext` gate); menu order in
-  `commandOrder.ts`; policy shape `BotAllowedCommands` in `packages/shared/src/bots.ts`
-  (persisted in `bot-config.v3.json`, normalized by `normalizeBotCommandPolicy`).
+- Bot commands live in `packages/services/src/bots/commandParser.ts` (parse) and `botsService.ts`
+  (dispatch switch, `withAuthorizedContext` gate); menu order in `commandOrder.ts`; policy shape
+  `BotAllowedCommands` in `packages/shared/src/bots.ts` (persisted in `bot-config.v3.json`,
+  normalized by `normalizeBotCommandPolicy`).
 - The bot service runs inside the local window host process and reaches desktop main via a
   parentPort bridge (`botRemoteWorkspaceBridge.ts`): typed request/result messages routed by
   `desktopHostProcess.ts` to handlers injected from `packages/desktop/src/main/index.ts`
@@ -45,23 +43,23 @@ Linear: ZCO-7. Baseline verified in code 2026-10-14.
   uniformly supported by providers; a private-delivery design is deferred with V2).
 - In private chats the command goes through `withAuthorizedContext(message, "remote")`: bot
   enabled, user bound, workspace allowlist — identical to `/status` et al.
-- New policy key `remote?: boolean` on `BotAllowedCommands`, default `true`, additive in
+- Policy key `remote?: boolean` on `BotAllowedCommands`, default `true`, additive in
   `normalizeBotCommandPolicy` and `DEFAULT_BOT_COMMANDS`; old configs omit the key and get the
-  default. UI toggle list in `BotsDialog` gains the same key.
-- Rationale for default-on: a bound chat can already drive the workspace (send prompts, approve
+  default. UI toggle list in `BotsDialog` carries the same key.
+- Default-on rationale: a bound chat can already drive the workspace (send prompts, approve
   permissions); the link grants the same control surface, not more. The real risk is URL
   forwarding (bearer credential), covered below.
 
 ## Link lifetime and revocation
 
 - A minted URL is a bearer credential for the desktop's remote-control session. It remains usable
-  while the runtime is running and until pairing material is rotated — exactly the security
-  properties of the QR URL shown in the desktop UI today. The bot reply includes a short localized
+  while the runtime is running and until pairing material is rotated — the same security
+  properties as the QR URL shown in the desktop UI. The bot reply includes a short localized
   warning that the link grants full control and should not be forwarded.
 - Revocation in V1 is the existing desktop control: stopping remote control, or "refresh pairing"
   (rotates `deviceSid`/`passHash` and invalidates all previously minted URLs). No bot-side revoke
-  subcommand in V1 (the bot chat cannot tell which runtime a link belongs to once minted;
-  designing that is deferred with V2).
+  subcommand in V1 (the bot chat cannot tell which runtime a link belongs to once minted; deferred
+  with V2).
 - `/remote` never restarts a live runtime (that would drop an active phone session): if a runtime
   already serving the workspace exists, the handler re-mints a fresh URL from that runtime's
   current pairing material.
@@ -114,13 +112,13 @@ localized bot errors; the bridge request carries a 90 s timeout (relay QR-ready 
 
 ## Protocol and persistence impact
 
-- New additive parentPort pair in `packages/shared/src/validation.ts` + `channels.ts`:
+- Additive parentPort pair in `packages/shared/src/validation.ts` + `channels.ts`:
   `BotRemoteWorkspaceWebRemoteLinkRequest` (requestId, workspacePath, workspaceIdentity, optional
   resolved `target` for remote workspaces) / `...Result` (ok, url?, sessionId?, error?). Routed in
-  `desktopHostProcess.ts` to a new `handleBotRemoteWorkspaceWebRemoteLinkRequest` injected from
+  `desktopHostProcess.ts` to `handleBotRemoteWorkspaceWebRemoteLinkRequest` injected from
   `index.ts`.
-- `BotCommand` union gains `{ type: "remote" }`; `BOT_POLICY_COMMAND_ORDER`, help map,
-  Telegram `setMyCommands` maps, and i18n (`zh-CN` / `en-US` / `uk-UA`) gain `remote`.
+- `BotCommand` union gains `{ type: "remote" }`; `BOT_POLICY_COMMAND_ORDER`, help map, Telegram
+  `setMyCommands` maps, and i18n (`zh-CN` / `en-US` / `uk-UA`) gain `remote`.
 - Manager gains one read-only method (`findLinkForWorkspace`) for the reuse path; `start` is reused
   as-is. No zcode-protocol v4 wire changes, no new persisted bot state, no SQL.
 
@@ -144,8 +142,7 @@ localized bot errors; the bridge request carries a 90 s timeout (relay QR-ready 
 5. Group chat → localized private-chat-only reply before any authorization or minting; no runtime
    started. Unbound private chat, or `remote: false` in policy → existing localized denial replies;
    no runtime started.
-6. Feature disabled or relay unreachable → localized failure reply; no partial runtime left
-   behind.
+6. Feature disabled or relay unreachable → localized failure reply; no partial runtime left behind.
 7. Old `bot-config.v3.json` without `remote` key → command allowed (default), config round-trips
    without dropping other keys.
 8. Two `/remote` requests racing for the same workspace → one start, both replies carry the same

@@ -638,7 +638,7 @@ export class SqliteSessionStore
 
   async countChildSessions(input: {
     parentIds: readonly SessionId[];
-  }): Promise<Map<string, { sideChats: number; subagents: number }>> {
+  }): Promise<Map<string, { sideChats: number }>> {
     return sessionRepository.countChildSessions(this.db, input.parentIds);
   }
 
