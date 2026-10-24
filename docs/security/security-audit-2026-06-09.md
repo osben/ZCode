@@ -1,254 +1,165 @@
-# 安全审计报告（2026-06-09）
+# Security audit report (2026-06-09)
 
-## 审计范围
+Full history: `git show b8876e8b:docs/security/security-audit-2026-06-09.md`
 
-- 仓库：`/Users/dev/workspace/z-code`
-- 扫描对象：源码、配置、脚本、文档示例、当前 Git 跟踪文件、部分 Git 历史、生产依赖树。
-- 重点：AK/SK 泄漏、凭据存储、Electron/IPC 暴露、Web/远控接口、命令执行、日志脱敏、依赖漏洞。
-- 未做：真实渗透测试、运行时 CDP/抓包验证、第三方 relay 服务端代码审计。
+This is a point-in-time audit ledger. Findings, versions and file:line evidence are as of 2026-06-09; their
+current status was not re-verified during documentation compaction.
 
-## 执行命令
+## Scope
 
-- `rg` 规则扫描：AK/SK、OpenAI/GitHub/Google/AWS/Slack token、私钥块、危险 API、IPC、CORS、命令执行。
-- `git grep` 当前跟踪文件敏感模式扫描。
-- `git log -G` Git 历史敏感模式扫描。
-- `pnpm audit --prod --json` 生产依赖漏洞审计（已联网执行）。
+- Repository: `/Users/dev/workspace/z-code`
+- Scanned: source, config, scripts, documentation examples, currently tracked Git files, part of Git history, the production dependency tree.
+- Focus: AK/SK leakage, credential storage, Electron/IPC exposure, Web/remote-control interfaces, command execution, log redaction, dependency vulnerabilities.
+- Not done: real penetration testing, runtime CDP/packet-capture verification, code audit of the third-party relay server.
+
+## Commands run
+
+- `rg` rule scans: AK/SK, OpenAI/GitHub/Google/AWS/Slack tokens, private key blocks, dangerous APIs, IPC, CORS, command execution.
+- `git grep` sensitive-pattern scan of currently tracked files.
+- `git log -G` sensitive-pattern scan of Git history.
+- `pnpm audit --prod --json` production dependency audit (run online).
 - `pnpm lint`
 - `pnpm typecheck`
 
-## 总体结论
+## Overall conclusion
 
-当前跟踪文件中未发现真实高置信 AK/SK、私钥或云厂商长期密钥明文泄漏。发现的密钥样式命中主要是文档占位符、测试假值和脱敏测试样例。
+No high-confidence real AK/SK, private key or long-term cloud credential in plaintext was found in currently
+tracked files. The key-shaped hits are mainly documentation placeholders, test fake values and redaction test
+samples.
 
-需要优先处理的真实风险有四类：
+Four kinds of real risk need priority handling:
 
-1. 生产依赖存在 19 个 high、42 个 moderate、4 个 low 漏洞，集中在 `axios`、`protobufjs`、`basic-ftp`、`fast-uri`、`mermaid`、`dompurify`、`hono`。
-2. 发布脚本仍内置默认 Docker registry 用户名和默认密码 `123456`，属于可被误用的弱凭据路径。
-3. Web HTTP server 的 `/ws` 和 `/api/connect-remote` 没有鉴权，若绑定到非本机或被反代暴露，会直接暴露本地/远程 workspace 服务能力。
-4. 凭据加密 fallback secret 由 `platform + homedir + username` 推导，不能抵抗本机同用户或拿到配置文件后的离线解密。
+1. Production dependencies have 19 high, 42 moderate and 4 low vulnerabilities, concentrated in `axios`, `protobufjs`, `basic-ftp`, `fast-uri`, `mermaid`, `dompurify`, `hono`.
+2. A release script still embeds a default Docker registry username and the default password `123456`, a weak-credential path open to misuse.
+3. The Web HTTP server's `/ws` and `/api/connect-remote` have no authentication; if bound to a non-local address or exposed through a reverse proxy, they directly expose local/remote workspace service capability.
+4. The credential-encryption fallback secret is derived from `platform + homedir + username` and cannot resist offline decryption by the same local user or anyone who obtains the config files.
 
-## 发现详情
+## Findings
 
-### P0：生产依赖存在 high 级漏洞
+### P0: production dependencies have high-severity vulnerabilities
 
-证据：
+Evidence: `pnpm audit --prod --json` returned `critical=0`, `high=19`, `moderate=42`, `low=4`; 1246 production dependencies in total.
 
-- `pnpm audit --prod --json` 返回：`critical=0`、`high=19`、`moderate=42`、`low=4`。
-- 生产依赖总数：1246。
+| Module      | Version   | Path                                                                       | Risk summary                                                                                  | Suggested version        |
+| ----------- | --------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------ |
+| `axios`     | `1.13.6`  | `packages__desktop>@larksuiteoapi/node-sdk>axios`                          | Several prototype pollutions, proxy credential leak, request hijacking, ReDoS/DoS            | `>=1.16.0` or upstream upgrade |
+| `protobufjs` | `7.5.5`  | `packages__desktop>@larksuiteoapi/node-sdk>protobufjs`                     | Code-generation gadget after prototype pollution, recursive DoS, unsafe option path           | `>=7.5.8`                |
+| `basic-ftp` | `5.2.2`   | `apps__zcode-cli>proxy-agent>pac-proxy-agent>get-uri>basic-ftp`            | A malicious FTP server can trigger client memory/response-buffer DoS                          | `>=5.3.1`                |
+| `fast-uri`  | `3.1.0`   | `apps__zcode-cli__packages__adapters>@modelcontextprotocol/sdk>ajv>fast-uri` | percent-encoded authority/path confusion that may affect SSRF/path traversal decisions     | `>=3.1.2`                |
 
-高风险模块摘要：
+Other moderate/low highlights:
 
-| 模块 | 当前版本 | 路径 | 风险摘要 | 建议版本 |
-| --- | --- | --- | --- | --- |
-| `axios` | `1.13.6` | `packages__desktop>@larksuiteoapi/node-sdk>axios` | 多个 prototype pollution、代理凭据泄漏、请求劫持、ReDoS/DoS | `>=1.16.0` 或依赖方升级 |
-| `protobufjs` | `7.5.5` | `packages__desktop>@larksuiteoapi/node-sdk>protobufjs` | 原型污染后代码生成 gadget、递归 DoS、unsafe option path | `>=7.5.8` |
-| `basic-ftp` | `5.2.2` | `apps__zcode-cli>proxy-agent>pac-proxy-agent>get-uri>basic-ftp` | 恶意 FTP server 可触发客户端内存/响应缓冲 DoS | `>=5.3.1` |
-| `fast-uri` | `3.1.0` | `apps__zcode-cli__packages__adapters>@modelcontextprotocol/sdk>ajv>fast-uri` | percent-encoded authority/path 混淆，可能影响 SSRF/path traversal 判断 | `>=3.1.2` |
+- `mermaid@11.14.0`: CSS/HTML injection, Gantt DoS; path `packages__ui>@streamdown/mermaid>mermaid`; suggested `>=11.15.0`.
+- `dompurify@3.3.3`: several sanitizer bypasses; path `packages__ui>@streamdown/mermaid>mermaid>dompurify`; suggested `>=3.4.0`.
+- `hono@4.12.12`: JWT scheme, cookie/header, bodyLimit, JSX injection and other moderate/low issues; path `apps__zcode-cli__packages__debug>hono`; suggested `>=4.12.21`.
+- `electron@41.0.3`: low/moderate Electron advisories; path `packages__desktop>@arms/rum-electron>electron`; suggested `>=41.1.0`.
 
-其他 moderate/low 重点：
+Recommendations:
 
-- `mermaid@11.14.0`：CSS/HTML 注入、Gantt DoS，路径 `packages__ui>@streamdown/mermaid>mermaid`，建议 `>=11.15.0`。
-- `dompurify@3.3.3`：多项 sanitizer bypass，路径 `packages__ui>@streamdown/mermaid>mermaid>dompurify`，建议 `>=3.4.0`。
-- `hono@4.12.12`：JWT scheme、cookie/header、bodyLimit、JSX 注入等多项 moderate/low，路径 `apps__zcode-cli__packages__debug>hono`，建议 `>=4.12.21`。
-- `electron@41.0.3`：low/moderate Electron advisory，路径 `packages__desktop>@arms/rum-electron>electron`，建议 `>=41.1.0`。
+- First assess feasibility of one `pnpm update axios protobufjs basic-ftp fast-uri mermaid dompurify hono electron --latest -r`.
+- For transitive dependencies such as `@larksuiteoapi/node-sdk`, `@modelcontextprotocol/sdk`, `@streamdown/mermaid`, upgrade the direct dependency first; if not possible short-term, pin patched versions with pnpm `overrides` and run regression.
+- Until the Mermaid/DOMPurify fix, keep Mermaid rendering strictly sandboxed or disable untrusted diagram rendering.
 
-修复建议：
+### P1: Docker release script embeds default weak credentials
 
-- 优先跑一次 `pnpm update axios protobufjs basic-ftp fast-uri mermaid dompurify hono electron --latest -r` 的可行性评估。
-- 对 `@larksuiteoapi/node-sdk`、`@modelcontextprotocol/sdk`、`@streamdown/mermaid` 这类传递依赖，优先升级直接依赖；若短期不能升级，使用 pnpm `overrides` 锁定补丁版本并跑回归。
-- Mermaid/DOMPurify 修复前，保持 Mermaid 渲染严格 sandbox 或关闭不可信图表渲染。
+Evidence: the old single-version remote-control release script (since deleted; the historical conclusion is kept), `scripts/docker-build-and-push-web-remote-control-test.sh:6-8`.
 
-### P1：Docker 发布脚本内置默认弱凭据
+Status at audit: the default username was a personal email; the default password was `123456`; the script only printed a warning and still ran `docker login`.
 
-证据：
+Risk: if the registry still accepts that password anyone with the script can push images; even if invalid, it encourages CI/local misuse of weak credentials and sets the wrong expectation that the default password works.
 
-- 旧单版本远控发布脚本（已删除，保留本次审计的历史结论）
-- `scripts/docker-build-and-push-web-remote-control-test.sh:6-8`
+Recommendation: remove the default username and password and require `DOCKER_REGISTRY_USERNAME` and `DOCKER_REGISTRY_PASSWORD`; the default-password path should fail directly instead of continuing to login; rotate the registry account password and check recent push records.
 
-现状：
+### P1: Web HTTP server exposes unauthenticated RPC/remote-connection capability
 
-- 默认用户名为个人邮箱。
-- 默认密码为 `123456`。
-- 脚本只打印警告但仍继续 `docker login`。
+Evidence:
 
-风险：
+- `packages/server/src/http.ts:80-92`: `/ws` creates the local-service ChannelServer without authentication.
+- `packages/server/src/http.ts:95-114`: `/api/connect-remote` accepts remote connection parameters without authentication.
+- `packages/server/src/http.ts:159-188`: `/ws/remote/:id` fetches a connection by random id with no extra identity check.
+- `packages/server/src/entry-http.ts:6-7`: default port 3030, hostname not explicitly restricted.
 
-- 如果 registry 仍接受该密码，任何拿到脚本的人都可以推送镜像。
-- 即便密码已失效，也会鼓励 CI/本地误用弱凭据，并在日志中形成“默认密码可用”的错误预期。
+Risk: if the server is bound to a non-loopback address, exposed by container port mapping, an intranet reverse proxy or a debug environment, an attacker can connect to the RPC service and further reach file/system/terminal/git capability; `/api/connect-remote` can be abused to launch SSH/WSL/Docker connection attempts, forming a lateral-probing or credential-exposure surface.
 
-建议：
+Recommendation: `createHttpServer` should explicitly bind `127.0.0.1` by default; introduce a local random bearer token or origin-bound session token that `/ws`, `/api/connect-remote` and `/ws/remote/:id` must all validate; if Web mode is only for local development, state "must not be exposed to the public internet" in startup logs and docs and disable the unauthenticated entries in production builds.
 
-- 删除默认用户名和默认密码，要求 `DOCKER_REGISTRY_USERNAME` 和 `DOCKER_REGISTRY_PASSWORD` 必填。
-- 默认密码路径应直接失败，不允许继续 login。
-- 轮换相关 registry 账号密码，并检查镜像仓库最近推送记录。
+### P1: the credential-encryption fallback secret is derivable
 
-### P1：Web HTTP server 暴露未鉴权 RPC/远程连接能力
+Evidence: `packages/services/src/credential/providers/credentialCipherProvider.ts:23-37`; `apps/zcode-cli/packages/adapters/src/auth/credential-cipher.ts:87-100`.
 
-证据：
+Status at audit: AES-256-GCM with a random IV (a reasonable algorithm choice); without `ZCODE_CREDENTIAL_SECRET` the key is derived from `platform + homedir + username`.
 
-- `packages/server/src/http.ts:80-92`：`/ws` 建立本地服务 ChannelServer，无鉴权。
-- `packages/server/src/http.ts:95-114`：`/api/connect-remote` 接收远程连接参数，无鉴权。
-- `packages/server/src/http.ts:159-188`：`/ws/remote/:id` 用随机 id 取连接，无额外身份校验。
-- `packages/server/src/entry-http.ts:6-7`：默认端口 3030，未显式限制 hostname。
+Risk: the same local user, a local malicious process that obtains the config directory, or an environment that leaks the home path/username can derive the key offline; this is not the protection level of the OS keychain / Electron `safeStorage`.
 
-风险：
+Recommendation: Desktop should migrate to Electron `safeStorage` or system-keychain-managed keys first; the CLI/host fallback should at least generate a one-time random master key protected by OS permissions instead of deriving from a predictable string; migrate old `enc:v1` credentials to the new format on read.
 
-- 若该 server 被绑定到非 loopback、容器端口映射、内网反代或调试环境暴露，攻击者可连接 RPC 服务，进一步访问 file/system/terminal/git 等服务能力。
-- `/api/connect-remote` 可被滥用发起 SSH/WSL/Docker 连接尝试，形成横向探测或凭据暴露面。
+### P2: Electron `openExternal` has an unvalidated IPC entry
 
-建议：
+Evidence: `packages/desktop/src/preload/index.ts:309`; `packages/desktop/src/main/desktopMainIpcRemote.ts:90-92`.
 
-- `createHttpServer` 默认显式绑定 `127.0.0.1`。
-- 引入本地随机 bearer token 或 origin-bound session token；`/ws`、`/api/connect-remote`、`/ws/remote/:id` 都必须校验。
-- 如果 Web 模式只用于本机开发，应在启动日志和文档中标明“不得公网暴露”，并在生产构建中禁用未鉴权入口。
+Status at audit: the Renderer can send an arbitrary string to main through `window.zcode.openExternal(url)`; main calls `shell.openExternal(url)` directly with no protocol allowlist; another webview popup path already validates with `isAllowedEmbeddedBrowserNewWindowUrl`, showing an adjacent protection pattern exists.
 
-### P1：凭据加密 fallback secret 可推导
+Risk: if renderer XSS, malicious markdown/link handling or a supply-chain script can call the bridge, an unexpected protocol handler may be triggered; the impact is limited by Electron/OS protocol policy but main should hold a last allowlist.
 
-证据：
+Recommendation: implement a unified `openExternalSafe(url)` in main that allows only `http:`/`https:` (and project-required custom deep links if needed); log rejections at warn without the full sensitive URL query.
 
-- `packages/services/src/credential/providers/credentialCipherProvider.ts:23-37`
-- `apps/zcode-cli/packages/adapters/src/auth/credential-cipher.ts:87-100`
+### P2: the Web remote-control QR URL carries `passHash`
 
-现状：
+Evidence: `packages/shared/src/web-remote-control.ts:254-283`; `packages/desktop/src/main/webRemoteControlRelayAuthProvider.ts:17-22`.
 
-- AES-256-GCM 使用随机 IV，算法选择合理。
-- 如果未设置 `ZCODE_CREDENTIAL_SECRET`，密钥由 `platform + homedir + username` 推导。
+Status at audit: `passHash = sha256(password)`, the QR parameter is named `hash`; later authentication proof uses `HMAC-SHA256(passHash, nonce|role|deviceSid)`.
 
-风险：
+Risk: `passHash` is effectively a bearer-equivalent secret, not an unusable ordinary hash; QR screenshots, browser history, proxy logs and Referer leaks can give an attacker a reusable pairing credential. The existing `resetPairing`/`leaked-qr` semantics show leakage was considered, but the URL query still widens the leak surface.
 
-- 本机同用户、拿到配置目录的本地恶意进程、或泄露了 home path/username 的环境，都可能离线推导密钥。
-- 这不等价于 OS keychain / Electron `safeStorage` 的保护级别。
+Recommendation: replace the long-term `passHash` in the QR with a short-lived one-time pairing token, with the relay/device negotiating or issuing a persistent credential after successful pairing; give the QR an expiry, with the relay enforcing `t` and single consumption; the mobile side clears the `hash` parameter from the address bar right after entering.
 
-建议：
+### P2: debug Hono server enables global CORS
 
-- Desktop 侧优先迁移到 Electron `safeStorage` 或系统钥匙串托管密钥。
-- CLI/host fallback 至少生成一次性随机 master key，单独以 OS 权限保护，避免由可预测字符串派生。
-- 对旧 `enc:v1` 凭据做读时迁移到新版本格式。
+Evidence: `apps/zcode-cli/packages/debug/server/index.ts:29-31`, `:107-119`.
 
-### P2：Electron `openExternal` 存在未校验 IPC 入口
+Status at audit: default host is `127.0.0.1` (a good risk-reducing design); `app.use("*", cors())` opens cross-origin access for all debug APIs.
 
-证据：
+Risk: if the user exposes the debug server via `host=0.0.0.0` or a reverse proxy, any web page can read traces/network capture; the debug API contains sensitive debug assets such as trace, network requests and CA certificates.
 
-- `packages/desktop/src/preload/index.ts:309`
-- `packages/desktop/src/main/desktopMainIpcRemote.ts:90-92`
+Recommendation: CORS should allow only the local UI origin by default and require an explicit token when exposed beyond loopback; add a local token or a startup-time random secret to sensitive endpoints such as `/api/network/ca.pem`.
 
-现状：
+### P3: the local `.env` contains a real OpenAI API Key but is not tracked by Git
 
-- Renderer 可通过 `window.zcode.openExternal(url)` 发送任意字符串到 main。
-- main 直接 `shell.openExternal(url)`，没有协议 allowlist。
-- 另一个 webview popup 路径已有 `isAllowedEmbeddedBrowserNewWindowUrl` 校验，说明项目已有相邻防护模式。
+Evidence: `.gitignore` ignores `.env`; `git ls-files` does not contain `.env`; the local `.env` has an `OPENAI_API_KEY` of length 56 (the raw value is not recorded).
 
-风险：
+Risk: not committed, but a real key exists in the working directory; later copying, packaging, log output or a manual commit can still leak it.
 
-- 如果 renderer XSS、恶意 markdown/link 处理或供应链脚本能调用 bridge，可能触发非预期协议处理器。
-- 影响受 Electron/OS 协议处理策略限制，但应在 main 进程做最后一道 allowlist。
+Recommendation: confirm whether the key is still needed, delete it or move it to system credential storage if not; rotate it if it was used in tests or may have been exposed to terminals/logs; keep `.env` ignored; a new `.env.example` must contain only placeholders.
 
-建议：
+### P3: Git history once committed `.env.production` with placeholder OSS fields
 
-- 在 main 进程统一实现 `openExternalSafe(url)`，只允许 `http:`/`https:`，必要时允许项目明确需要的自定义 deep link。
-- 对拒绝项打 warn 日志，但不要记录完整敏感 URL query。
+Evidence: `.env.production` now contains only production link constants and the public OAuth client id and no longer stores the current product environment selection; `git log -- .env .env.production .env.local .env.e2e.local` shows 5 related history entries; historical commit `60345957e`'s `.env.production` once contained `OSS_ACCESS_KEY_ID` and `OSS_ACCESS_KEY_SECRET`, both of length 7 with masked forms `yo***ak` / `yo***sk`, judged to be placeholders rather than real AK/SK.
 
-### P2：Web 远控二维码 URL 携带 `passHash`
+Risk: no real OSS AK/SK found, but env files once entered version history, showing the process once allowed sensitive config into Git.
 
-证据：
+Recommendation: if it cannot be confirmed that these values are absolutely placeholders, treat them as leaked and rotate the OSS credentials; add secret scanning to pre-commit/CI, such as gitleaks or trufflehog.
 
-- `packages/shared/src/web-remote-control.ts:254-283`
-- `packages/desktop/src/main/webRemoteControlRelayAuthProvider.ts:17-22`
+## Confirmed positive controls
 
-现状：
+- `.gitignore` ignores `.env`, `.env.local`, `.env.*.local`.
+- Log export has sensitive-field redaction covering token, authorization, password, api key, URL query and more, with UTF-16-related bugfix comments and tests.
+- The Electron main window enables `contextIsolation: true`, `nodeIntegration: false`.
+- The webview popup path already has a URL allowlist and window-open deny policy.
+- Remote SSH passwords/private-key passphrases are stored through the credential service and not written directly into workspace history.
 
-- `passHash = sha256(password)`，二维码参数名为 `hash`。
-- 后续鉴权 proof 使用 `HMAC-SHA256(passHash, nonce|role|deviceSid)`。
+## Verification results at audit
 
-风险：
+- `pnpm lint`: passed, 0 errors, 74 warnings (all pre-existing unused variable/import warnings).
+- `pnpm typecheck`: passed.
+- `pnpm audit --prod --json`: failed with exit code 1 because vulnerabilities exist; the online audit returned the vulnerability list.
+- `git status --short`: clean before the audit; this report file was the only addition.
 
-- `passHash` 实际是 bearer-equivalent secret，而不是不可用的普通 hash；二维码截图、浏览器历史、代理日志、Referer 泄漏都可能让攻击者获得可复用配对凭据。
-- 当前已有 `resetPairing`/`leaked-qr` 语义，说明泄露场景被考虑过，但 URL query 仍扩大泄漏面。
+## Suggested fix priority (open items)
 
-建议：
-
-- 把二维码中的长期 `passHash` 改为短期一次性 pairing token，成功配对后由 relay/device 协商或下发持久凭据。
-- 设置二维码过期时间，relay 强制校验 `t` 和单次消费。
-- 移动端进入后立刻从地址栏清理 `hash` 参数。
-
-### P2：调试 Hono server 全局 CORS
-
-证据：
-
-- `apps/zcode-cli/packages/debug/server/index.ts:29-31`
-- `apps/zcode-cli/packages/debug/server/index.ts:107-119`
-
-现状：
-
-- 默认 host 是 `127.0.0.1`，这是降低风险的好设计。
-- `app.use("*", cors())` 对全部调试 API 开启跨源访问。
-
-风险：
-
-- 如果用户通过 `host=0.0.0.0` 或反代暴露调试 server，任意网页可读取 traces/network capture 信息。
-- debug API 包含 trace、network request、CA certificate 等敏感调试资产。
-
-建议：
-
-- CORS 默认只允许本机 UI origin；暴露到非 loopback 时要求显式 token。
-- 对 `/api/network/ca.pem` 这类敏感端点增加本地 token 或启动期随机 secret。
-
-### P3：当前本地 `.env` 含真实 OpenAI API Key，但未被 Git 跟踪
-
-证据：
-
-- `.gitignore` 已忽略 `.env`。
-- `git ls-files` 未包含 `.env`。
-- 本地 `.env` 中存在 `OPENAI_API_KEY`，长度 56。报告不记录原值。
-
-风险：
-
-- 当前未入库，但本地工作区存在真实密钥；后续复制、打包、日志输出或手动提交仍可能泄漏。
-
-建议：
-
-- 确认该 key 是否仍需要；不需要则立即删除或迁移到系统凭据存储。
-- 若 key 曾用于测试或可能被终端/日志暴露，建议轮换。
-- 保持 `.env` 被忽略；新增 `.env.example` 时只写占位符。
-
-### P3：Git 历史中曾提交 `.env.production` 占位 OSS 字段
-
-证据：
-
-- `.env.production` 当前只包含生产链接常量和公开 OAuth client id，不再保存当前产品环境选择。
-- `git log -- .env .env.production .env.local .env.e2e.local` 显示 5 次相关历史。
-- 历史提交 `60345957e` 的 `.env.production` 曾包含 `OSS_ACCESS_KEY_ID` 和 `OSS_ACCESS_KEY_SECRET`，长度均为 7，掩码形态分别为 `yo***ak` / `yo***sk`，判断更像占位值而非真实 AK/SK。
-
-风险：
-
-- 当前未发现真实 OSS AK/SK，但环境文件曾被纳入版本历史，说明流程上曾允许敏感配置进入 Git。
-
-建议：
-
-- 若无法确认这些值绝对是占位符，仍按泄漏处理并轮换相关 OSS 凭据。
-- 加入 secret scanning pre-commit/CI，例如 gitleaks 或 trufflehog。
-
-## 已确认的正向控制
-
-- `.gitignore` 已忽略 `.env`、`.env.local`、`.env.*.local`。
-- 日志导出存在敏感字段脱敏逻辑，覆盖 token、authorization、password、api key、URL query 等，并有 UTF-16 相关 bugfix 注释和测试。
-- Electron 主窗口开启 `contextIsolation: true`、`nodeIntegration: false`。
-- webview popup 路径已有 URL allowlist 和 window open deny 策略。
-- 远程 SSH 密码/私钥 passphrase 通过 credential service 保存，不直接写入 workspace history。
-
-## 验证结果
-
-- `pnpm lint`：通过，0 error，74 warning（均为既有未使用变量/导入等 lint warning）。
-- `pnpm typecheck`：通过。
-- `pnpm audit --prod --json`：失败退出码 1，原因是存在漏洞；联网审计成功返回漏洞清单。
-- `git status --short`：审计前干净；本报告文件为本次新增。
-
-## 建议修复优先级
-
-1. 依赖漏洞：优先处理 `axios`、`protobufjs`、`basic-ftp`、`fast-uri`、`mermaid`/`dompurify`。
-2. 删除 Docker 发布脚本默认弱凭据，并轮换相关 registry 账号。
-3. 给 `packages/server` HTTP/WS 入口加本地绑定和鉴权。
-4. 改造 credential master key：从可推导 fallback 迁移到系统钥匙串或随机 master key。
-5. main 进程统一校验 `openExternal` URL 协议。
-6. Web 远控二维码改短期一次性 token，并清理 URL query。
-7. CI 加 secret scanning，阻止 `.env*` 和高置信密钥进入仓库。
+1. Dependency vulnerabilities: handle `axios`, `protobufjs`, `basic-ftp`, `fast-uri`, `mermaid`/`dompurify` first.
+2. Remove the default weak credentials of the Docker release script and rotate the registry account.
+3. Add local binding and authentication to the `packages/server` HTTP/WS entries.
+4. Rework the credential master key: migrate from the derivable fallback to the system keychain or a random master key.
+5. Have main uniformly validate the `openExternal` URL protocol.
+6. Change the Web remote-control QR to a short-lived one-time token and clear the URL query.
+7. Add secret scanning to CI to stop `.env*` and high-confidence keys from entering the repository.

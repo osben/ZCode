@@ -1,56 +1,50 @@
-# Deep Link 与项目配置信任边界
+# Deep Link and project config trust boundary
 
-> 状态：Implemented（2026-08-06）
+> Status: Implemented (2026-08-06)
 >
-> 关联规格：`docs/specs/workspace-hook-trust.md`
+> Related spec: `docs/specs/workspace-hook-trust.md`
 
-## 背景
+## Background
 
-ZCode Desktop 支持 `zcode://workspace/open?path=...` 打开本地工作区，也会在项目发现范围内读取
-`zcode.json`、`.zcode/config.json` 的 Hook 声明，以及 `.zcode/agents/*.md` 的 subagent profile。
-外部 deep link、repository 文件和远端 workspace 都不属于用户级可信配置：确认“打开目录”不等于确认
-“执行目录中的代码”。
+ZCode Desktop supports `zcode://workspace/open?path=...` to open a local workspace, and within the project
+discovery scope also reads the Hook declarations of `zcode.json` and `.zcode/config.json` and the subagent
+profiles of `.zcode/agents/*.md`. External deep links, repository files and remote workspaces are not
+user-level trusted configuration: confirming "open this directory" does not mean confirming "execute the code
+in this directory".
 
-## 安全边界
+## Security boundary
 
-- Windows `zcode://` 协议命令必须将外部 URL 放在 `--` 之后：生产态为
-  `"<ZCode.exe>" "--" "%1"`，开发态为 `"<electron.exe>" "<entry>" "--" "%1"`。
-  `registerDeepLinkProtocol` 是注册 owner；每次正常启动都覆盖旧注册，避免保留不安全模板。
-- Windows 打包产物在签名前关闭 `enableNodeCliInspectArguments`，使旧注册尚未更新时的
-  `--inspect` / `--inspect-brk` 也不能启动主进程调试器。该设置不修改未打包的开发 Electron，
-  也不关闭 Agent 启动所需的 `runAsNode`。
-- 参数隔离必须发生在 Electron 原生启动解析之前。应用 JavaScript 中的 URL 校验和单实例锁
-  不能替代这一边界；OAuth、支付、workspace、share 回调仍保留原有路由与校验。
-- `zcode://workspace/open` 是外部输入，不能等价于用户在应用内选择目录。
-- deep link 传入的 workspace path 必须在任何 filesystem probe 前拒绝 UNC / 网络路径。
-- deep link 打开本地目录前必须有用户确认；用户取消时不得缓存或投递 workspace path。
-- deep-link 确认只授权打开路径，不建立 Workspace Hook Trust。
-- `zcode://task/new`（见 `specs/deeplink-new-task.md`）是同级别的外部输入：必须复用上述确认流程并在确认中展示任务文本预览；
-  只填充新草稿，永不自动发送；`promptFile` 由 main 读取，`realpath` 后必须位于项目目录内，拒绝 UNC、符号链接逃逸、
-  超限与非 UTF-8 文件；日志不得记录任务文本或文件内容。
-- 项目级 `zcode.json` 与 `.zcode/config.json` Hook 声明视为未信任代码，默认不能进入可执行路径。
-- discovery 只生成 immutable `WorkspaceHookBundleSnapshot`；Runtime admission 必须在 Hook lifecycle 和进程启动前完成。
-- 持久 Trust 只按 `workspaceIdentity + hookDeclarationDigest` 命中；bundle digest 用于保证审核和执行快照一致。
-- Trust 只能由受信任 Host 的 `设置 → 钩子 → 工作区` 审核，或显式 `zcode hooks trust` 命令建立；repository、环境变量和普通 permission answer 都不能授权。
-- managed `deny` 高于 persistent Trust，并在下一次 dispatch gate 生效。
-- 用户级 Hook 与已启用插件 Hook 继续按各自既有可信来源规则运行。
-- 项目级 `.zcode/agents/*.md` 不得通过 frontmatter 改写 child runtime 权限模式；`permissionMode` 只对用户级或受信插件 profile 生效。
+- The Windows `zcode://` protocol command must put the external URL after `--`: in production `"<ZCode.exe>" "--" "%1"`, in development `"<electron.exe>" "<entry>" "--" "%1"`. `registerDeepLinkProtocol` is the registration owner; every normal startup overwrites the old registration so no unsafe template is kept.
+- Windows packaged artifacts disable `enableNodeCliInspectArguments` before signing, so even when the old registration is not yet updated `--inspect` / `--inspect-brk` cannot start the main-process debugger. This setting does not modify the unpackaged dev Electron and does not disable the `runAsNode` that Agent startup needs.
+- Argument isolation must happen before Electron's native startup parsing. URL validation and the single-instance lock in application JavaScript cannot replace this boundary; the OAuth, payment, workspace and share callbacks keep their original routing and validation.
+- `zcode://workspace/open` is external input and is not equivalent to the user choosing a directory inside the app.
+- The workspace path passed by a deep link must reject UNC / network paths before any filesystem probe.
+- Opening a local directory from a deep link requires user confirmation first; when the user cancels, the workspace path must not be cached or delivered.
+- The deep-link confirmation authorizes only opening the path and does not establish Workspace Hook Trust.
+- `zcode://task/new` (see `specs/deeplink-new-task.md`) is external input of the same level: it must reuse the confirmation flow above and show a task text preview in the confirmation; it only fills a new draft and never sends automatically; `promptFile` is read by main, must lie inside the project directory after `realpath`, and rejects UNC, symlink escape, oversize and non-UTF-8 files; logs must not record the task text or file content.
+- Project-level `zcode.json` and `.zcode/config.json` Hook declarations are treated as untrusted code and cannot enter an executable path by default.
+- Discovery only produces an immutable `WorkspaceHookBundleSnapshot`; Runtime admission must complete before the Hook lifecycle and process start.
+- Persistent Trust matches only by `workspaceIdentity + hookDeclarationDigest`; the bundle digest ensures the reviewed and the executed snapshots are consistent.
+- Trust can be established only by review in a trusted Host's `设置 → 钩子 → 工作区` (Settings > Hooks > Workspace) or by an explicit `zcode hooks trust` command; a repository, environment variable or ordinary permission answer cannot authorize it.
+- managed `deny` outranks persistent Trust and takes effect at the next dispatch gate.
+- User-level Hooks and enabled-plugin Hooks keep running under their respective existing trusted-source rules.
+- Project-level `.zcode/agents/*.md` must not rewrite the child runtime permission mode through frontmatter; `permissionMode` takes effect only for user-level or trusted-plugin profiles.
 
-## Rollout 与回滚
+## Rollout and rollback
 
 ```text
-外部 URL → Windows 协议注册 owner 写入的 exe [entry] -- URL
-         → Electron 将 -- 后的内容作为数据 → 既有 Deep Link 路由与确认
-旧注册 → 新 Windows 产物的 Inspector fuse 拒绝调试参数 → 正常启动后重写安全注册
+external URL → exe [entry] -- URL written by the Windows protocol registration owner
+             → Electron treats what follows -- as data → existing Deep Link routing and confirmation
+old registration → the new Windows artifact's Inspector fuse rejects debug args → safe registration rewritten after a normal start
 ```
 
 ```text
 trusted embedder / Host
   ├─ workspaceHookTrustEnabled = false
   │    -> project Hook hard block
-  │    -> 不读取 Trust store
-  │    -> 不创建 review request
-  │    -> 保留磁盘上的 Trust records
+  │    -> Trust store not read
+  │    -> no review request created
+  │    -> Trust records on disk kept
   └─ workspaceHookTrustEnabled = true
        -> discovery snapshot
        -> managed policy
@@ -58,30 +52,31 @@ trusted embedder / Host
        -> pending review or admitted dispatch
 ```
 
-`ZCodeAppOptions.workspaceHookTrustEnabled` 是 trusted bootstrap 输入，不从 workspace/project 配置或环境变量解析。
-通用 App 工厂默认关闭；ZCode Protocol 的 Desktop/Web/Mobile workspace Host 在受信边界显式开启。出现安全问题时，
-Host 可关闭该字段恢复 hard block，不删除用户记录。该 flag 只决定是否进入 Trust admission，绝不代表自动信任。
+`ZCodeAppOptions.workspaceHookTrustEnabled` is a trusted bootstrap input and is not parsed from
+workspace/project config or environment variables. The generic App factory defaults it to off; the Desktop/
+Web/Mobile workspace Hosts of the ZCode Protocol turn it on explicitly at the trusted boundary. On a security
+issue the Host can turn this field off to restore the hard block without deleting user records. This flag only
+decides whether Trust admission is entered and never means automatic trust.
 
-## 观测与隐私
+## Observability and privacy
 
-Workspace Hook Trust 通过现有 Logger Port 记录低频结构化事件，包括 review created、trust selected、
-timeout、superseded、snapshot mismatch、policy block、Trust store failure 和 toggle/rebuild failure。
-日志只包含稳定 reason code、generation、workspace identity 的 SHA-256 摘要，以及 bundle/declaration digest 的短摘要；
-不得记录命令原文、脚本内容、source path、Trust payload 或 interaction response body。
+Workspace Hook Trust records low-frequency structured events through the existing Logger Port, including
+review created, trust selected, timeout, superseded, snapshot mismatch, policy block, Trust store failure and
+toggle/rebuild failure. Logs contain only stable reason codes, generation, the SHA-256 digest of the workspace
+identity and short digests of the bundle/declaration digest; they must not record command text, script
+content, source path, Trust payload or interaction response body.
 
-## 验证要点
+## Verification points
 
-- Windows 生产态和开发态注册均将 `--` 放在 URL 前，重复注册仍保持安全模板；macOS/Linux
-  注册行为保持不变，注册失败仍记录原有警告。
-- 加入 `--` 后，OAuth、支付、workspace、share URL 在冷启动参数解析及单实例投递中保持不变。
-- 真实 Electron 启动时，`--` 后的 `--inspect`、`--inspect-brk`、`--remote-debugging-port`
-  不得开启调试器；Windows 发布包还须核验 Inspector fuse 已关闭，覆盖旧注册升级场景。
-- Windows 发布验收覆盖新安装、旧注册升级、冷启动和已有实例，以及浏览器实际打开协议的路径。
-- UNC deep link 不调用 filesystem stat，也不投递 `OpenWorkspacePath`。
-- 用户取消 deep link 确认时，不打开目录。
-- 用户确认本地目录后，未 Trust 的 project Hook 仍不能执行。
-- flag 关闭时，即使 Trust store 已存在 exact record，也返回 `workspace_hooks_feature_disabled`，不读取记录、不发 review。
-- flag 开启时，只有 exact declaration digest 命中才执行；配置变化后受影响声明重新审核。
-- managed deny 能覆盖已有 record，并阻止后续 dispatch。
-- stale task/run/remoteSession/generation/snapshot response 在 store mutation 前拒绝。
-- 用户级 Hook、插件 Hook 和项目 subagent 权限边界不受此 rollout gate 扩权。
+- Both the Windows production and development registrations put `--` before the URL, and repeated registration keeps the safe template; macOS/Linux registration behavior is unchanged and a registration failure still logs the original warning.
+- With `--` added, OAuth, payment, workspace and share URLs stay unchanged in cold-start argument parsing and single-instance delivery.
+- On a real Electron start, `--inspect`, `--inspect-brk` and `--remote-debugging-port` after `--` must not open a debugger; the Windows release package must also verify that the Inspector fuse is off, covering the old-registration upgrade scenario.
+- Windows release acceptance covers fresh install, old-registration upgrade, cold start and an existing instance, and the path where the browser actually opens the protocol.
+- A UNC deep link does no filesystem stat and delivers no `OpenWorkspacePath`.
+- When the user cancels the deep link confirmation, the directory is not opened.
+- After the user confirms a local directory, untrusted project Hooks still cannot execute.
+- With the flag off, even when the Trust store already has an exact record, `workspace_hooks_feature_disabled` is returned, no record is read and no review is sent.
+- With the flag on, execution happens only when the exact declaration digest matches; after a config change the affected declarations are reviewed again.
+- managed deny can override an existing record and blocks later dispatch.
+- A stale task/run/remoteSession/generation/snapshot response is rejected before store mutation.
+- User-level Hooks, plugin Hooks and the project subagent permission boundary are not widened by this rollout gate.

@@ -1,106 +1,116 @@
 # Remote Provider Provisioning
 
-## 状态
+## Status
 
-当前实现规范。此能力只表示一次由 Desktop 发起的 Local Environment → Remote Environment
-配置 Provisioning，不改变远程 Workspace 的 Provider/Model 权威边界，也不恢复历史
-`workspace/updateProviderRegistry` 快照同步。Desktop 模型配置页始终绑定 Local Environment，
-不提供远程配置编辑或手动同步入口。
+Current implementation spec. This capability means only one Desktop-initiated Local Environment -> Remote
+Environment configuration Provisioning. It does not change the Provider/Model authority boundary of remote
+Workspaces and does not restore the historical `workspace/updateProviderRegistry` snapshot sync. The Desktop
+model settings page is always bound to the Local Environment and offers no remote config editing or manual
+sync entry.
 
-## 目标
+## Goal
 
-在 Remote Environment 上线，以及本地模型配置、默认模型、账号状态或允许同步的凭据成功
-保存后，把 Local Environment 的最新完整快照自动复制到每个在线 Remote Environment。此
-v0 能力不提供远程配置管理 UI；本地 Environment 是编辑权威，远端只保存可丢弃的执行镜像。
+When a Remote Environment comes online, and after local model config, default model, account state or
+syncable credentials are saved successfully, the Local Environment's latest complete snapshot is copied
+automatically to every online Remote Environment. This v0 capability provides no remote config management UI;
+the Local Environment is the edit authority and the remote keeps only a disposable execution mirror.
 
-## 不变量
+## Invariants
 
-- 远端正式 `provider_config.json`、`model-selection.json`、`setting.json` 和 Credential Store
-  仍是远端 Environment 的事实源。
-- Provisioning 只写目标 Environment 的正式 Store，完成后由目标 Environment 自己重建
-  Provider Config、Account Source 和 Registry。
-- 不向 Remote Worker 注入完整 Registry、Runtime Model、API Key 快照或动态 Header。
-- 不使用跨 Environment 的 `provider/updateAccountConfig`；该协议仍只属于远端 Host → 远端
-  Worker 的进程内同步。
-- Provisioning 不经过 relay，不在 Desktop Main、Renderer 或远端任务状态中持久化 Secret。
-- 本地 allowlist 凭据删除会在下一次同步中删除远端同名凭据；非 allowlist 凭据不受影响。
-- Desktop `continuous`、Mobile `replayable` 任务流和现有 workspace identity 路由保持不变。
+- The remote formal `provider_config.json`, `model-selection.json`, `setting.json` and Credential Store remain the fact sources of the remote Environment.
+- Provisioning writes only the target Environment's formal Stores; afterwards the target Environment rebuilds Provider Config, Account Source and Registry itself.
+- No complete Registry, Runtime Model, API Key snapshot or dynamic headers are injected into the Remote Worker.
+- The cross-Environment `provider/updateAccountConfig` is not used; that protocol still belongs only to the in-process sync of remote Host -> remote Worker.
+- Provisioning does not go through the relay and persists no Secret in Desktop Main, Renderer or remote task state.
+- Deleting a local allowlist credential deletes the same-named remote credential at the next sync; non-allowlist credentials are unaffected.
+- Desktop `continuous`, Mobile `replayable` task streams and the existing workspace identity routing are unchanged.
 
-## 触发与范围
+## Trigger and scope
 
-### 自动触发
+### Automatic triggers
 
-只对 SSH、WSL、Docker、Server remote 执行，并由成功持久化或 Environment 生命周期触发：
+Runs only for SSH, WSL, Docker and Server remote, triggered by a successful persist or an Environment
+lifecycle event:
 
-- 某个 Remote Environment 从零个在线连接变为至少一个在线连接；
-- Personal Provider Config 保存成功；
-- Configured Default 保存或清除成功；
-- Provisioning Envelope 允许的账号窄设置保存成功；
-- allowlist credential 保存或删除成功。
+- a Remote Environment goes from zero online connections to at least one;
+- Personal Provider Config saved successfully;
+- Configured Default saved or cleared successfully;
+- an account narrow setting allowed by the Provisioning Envelope saved successfully;
+- an allowlist credential saved or deleted successfully.
 
-每次同步都以本地最新完整快照覆盖远端对应镜像，不检查远端是否已有配置，也不比较两端
-是否相同。本地 Personal Config 为空时同样写入空值；allowlist 凭据采用 replace 语义。同步
-首次连接时，只有 `applied` / `already-applied` 才能发布 Remote Workspace ready；首次返回
-`failed`、`rollback_failed` 或 `unsupported` 时沿正式连接失败通道结束请求。已经发布的
-Workspace 后续同步失败不拆除连接，只留下不含 Secret 的结构化 warning，并等待下一次真实
-触发重新读取最新快照。
+Every sync overwrites the corresponding remote mirror with the latest complete local snapshot, without
+checking whether the remote already has config or comparing the two sides. An empty local Personal Config is
+written as empty as well; allowlist credentials use replace semantics. On the first-connection sync only
+`applied` / `already-applied` may publish Remote Workspace ready; a first result of `failed`,
+`rollback_failed` or `unsupported` ends the request through the formal connection-failure channel. A later
+sync failure of an already published Workspace does not tear down the connection; it only leaves a
+Secret-free structured warning and waits for the next real trigger to read the latest snapshot again.
 
-R3 Source Server 自动重连换代 `remoteSessionId` 时（`desktopRemoteSessions.ts handleReconnected`），
-Desktop Main 先 dispose 绑定旧 session 的登记，再以新 `remoteSessionId` 重新登记同一 Environment key，
-等价于该 Environment 重新上线：触发一次 `environment-online` 整份重下发，补齐离线期间的本地配置变更。
-重连不是发布屏障，失败只记录结构化 warning，不拆除已恢复的 Workspace。
+When an R3 Source Server auto-reconnect changes the `remoteSessionId` generation
+(`desktopRemoteSessions.ts handleReconnected`), Desktop Main first disposes the registration bound to the old
+session and re-registers the same Environment key with the new `remoteSessionId`, equivalent to the
+Environment coming back online: it triggers one `environment-online` full redelivery, filling in local config
+changes made while offline. A reconnect is not a publish barrier; a failure only logs a structured warning
+and does not tear down the restored Workspace.
 
-### Environment 级协调
+### Environment-level coordination
 
-Workspace 不是同步单位。同一 Remote Environment 的多个 Workspace、多个窗口共用 Desktop
-Main 中的一条同步 lane：
+A Workspace is not a sync unit. Several Workspaces and windows of the same Remote Environment share one sync
+lane in Desktop Main:
 
 ```text
 Workspace A ─┐
-Workspace B ─┼─> Remote Environment key ─> single-flight lane ─> 一个在线 Host 执行
+Workspace B ─┼─> Remote Environment key ─> single-flight lane ─> executed by one online Host
 Workspace C ─┘
 ```
 
-Main 只保存 Environment key、Host registration、trigger、generation 和请求关联信息，不读取
-或转发配置与 Secret。被选中的 Window Host 在执行时重新读取最新 Local Source，并调用该
-Environment 的 Remote Target。同步期间发生的新触发只推进 generation；当前轮结束后再读取
-一次最新快照形成尾随同步，不为每个事件排队，也不使用固定延迟。
+Main keeps only the Environment key, Host registration, trigger, generation and request correlation, and
+neither reads nor forwards config or Secrets. The selected Window Host re-reads the latest Local Source at
+execution time and calls that Environment's Remote Target. New triggers during a sync only advance the
+generation; after the current round ends the latest snapshot is read once more for a trailing sync; there is
+no queue per event and no fixed delay.
 
-### 物理连接关闭与同步请求收口
+### Physical connection close and sync request closure
 
-Window Host 的 `ServerRemoteConnection` 同时拥有 transport、`SocketProtocol` 和
-`ChannelClient` 的生命周期。显式断开、socket close/error 或握手失败时必须幂等释放该连接的
-RPC 客户端与协议；未完成及等待 Initialize 的请求以 `ConnectionClosed` 拒绝，迟到响应不能
-重新完成旧请求。连接关闭事件仍按既有 Source 生命周期通知上层。
-`connectOnce` 在写入在线表前持有连接所有权；包括握手记录落盘失败、版本解析抛错在内的
-全部失败出口，统一释放未发布连接一次。发布成功后由在线表接管，迟到的旧连接关闭不影响新连接。
+The Window Host's `ServerRemoteConnection` owns the lifecycle of the transport, `SocketProtocol` and
+`ChannelClient`. On explicit disconnect, socket close/error or handshake failure it must idempotently release
+that connection's RPC client and protocol; unfinished requests and those waiting for Initialize are rejected
+with `ConnectionClosed`, and a late response cannot complete an old request again. Connection-close events
+still notify the upper layer per the existing Source lifecycle. `connectOnce` holds connection ownership
+before writing the online table; every failure exit, including a handshake record persist failure or a
+version-parse throw, releases the unpublished connection exactly once. After a successful publish the online
+table takes over, and a late close of an old connection does not affect the new one.
 
 ```text
-Provider apply 尚未返回 -> Source 断开 -> 旧 ChannelClient.dispose
-                                      -> Host 返回同步失败 -> 旧 lane 收口
-新 Source 连接 -> 同一 Environment 读取最新配置 -> 同步成功 -> Renderer attachment ready
+Provider apply not yet returned -> Source disconnects -> old ChannelClient.dispose
+                                      -> Host returns sync failure -> old lane closes
+new Source connection -> same Environment reads latest config -> sync succeeds -> Renderer attachment ready
 ```
 
-远端配置文件已更新不等于整个 apply RPC 已结束；用户此时断开仍须满足上述契约。
-不得跳过首次同步屏障，也不得通过 UI 延时、清空同步队列或额外重试规避悬挂请求。
-WebSocket Server 与 SSH/WSL/Docker 共用的 Duplex 连接遵循同一规则；手机 relay 断线和
-replayable attachment 恢复不代表物理 Source 终结，不触发此清理。不修改 workspace identity、
-session 路由、desktop-continuous/web-remote-replayable 语义或持久化格式，无数据迁移。
+The remote config file already updated does not mean the whole apply RPC has ended; a disconnect at that
+moment must still satisfy the contract above. The first-sync barrier must not be skipped, and a hanging
+request must not be sidestepped by UI delays, clearing the sync queue or extra retries. The WebSocket Server
+and the Duplex connection shared by SSH/WSL/Docker follow the same rule; a mobile relay disconnect and
+replayable attachment recovery do not mean the physical Source ended and trigger no such cleanup. No change
+to workspace identity, session routing, desktop-continuous/web-remote-replayable semantics or the persisted
+format; no data migration.
 
-回归覆盖：`serverRemoteConnectionLifecycle.test.ts` 以真实网络请求覆盖断开时未返回的 RPC、
-新连接的 Environment 同步、迟到响应与重复释放；`r3-provisioning-gui` 保留删除后立即断开、
-离线修改、组头重连、最新配置同步和继续对话的 GUI 断言。
+Regression coverage: `serverRemoteConnectionLifecycle.test.ts` uses real network requests to cover an RPC not
+returned at disconnect, the new connection's Environment sync, late responses and duplicate release;
+`r3-provisioning-gui` keeps the GUI assertions of disconnecting right after deletion, offline modification,
+group-header reconnect, latest-config sync and continuing the conversation.
 
-### Desktop 模型配置页
+### Desktop model settings page
 
-无论当前激活的是本地还是远程 Workspace，模型配置页都通过 Local Environment 的
-`IProviderSettingsService` 读取和写入本地 Provider/Model 配置。页面不读取远端 Provider
-Settings，也不显示 Local → Remote 手动同步按钮。远端配置的修改只能由远端 Environment
-自身的管理入口完成；首次连接自动 Provisioning 仍遵循上面的条件与失败语义。
+Whether the active workspace is local or remote, the model settings page reads and writes the local
+Provider/Model config through the Local Environment's `IProviderSettingsService`. The page does not read the
+remote Provider Settings and shows no Local -> Remote manual sync button. Remote config can be changed only
+from the remote Environment's own management entry; first-connection automatic Provisioning still follows the
+conditions and failure semantics above.
 
-页面中的模型连通性测试同样属于 Local Environment。激活远程 Workspace 时，测试必须选择本地
-workspace 作为 Agent cwd；没有可用本地 workspace 时返回不可用结果，不能把远程
-`workspacePath`/`workspaceIdentity` 发送给 Local Host。
+The model connectivity test on the page also belongs to the Local Environment. With a remote Workspace
+active, the test must pick a local workspace as the Agent cwd; with no usable local workspace it returns an
+unavailable result and must not send the remote `workspacePath`/`workspaceIdentity` to the Local Host.
 
 ```text
 SettingsPage
@@ -108,141 +118,159 @@ SettingsPage
        └─ ServiceProvider(localHostServices)
             └─ Local IProviderSettingsService
 
-Active workspace (local / remote) ──仅决定工作区上下文，不改变模型配置数据源
+Active workspace (local / remote) ── decides only the workspace context, never the model config data source
 ```
 
-### 校验边界
+### Validation boundary
 
-同步必须拒绝损坏的 JSON、未知的 Envelope 结构、allowlist 凭据的格式错误、凭据解密失败和
-配置读取期间的事实变化；这些错误不能通过跳过字段或部分写入来掩盖。Personal Provider 的
-运行时字段（例如 `api.baseURL`）允许以字符串暂存（包括尚未完成的值）进入 Personal Layer，但无效的 Provider
-必须在 Registry 完整性校验时 fail-closed，不得阻断同一文件中其它合法 Provider 的同步或进入
-可执行 Registry。非 allowlist 的 Credential 记录不属于同步事实，即使其值损坏也不应阻断
-allowlist 凭据的读取；allowlist 条目本身仍必须是字符串且能够用 Source cipher 解密。
+Sync must reject corrupt JSON, unknown Envelope structure, malformed allowlist credentials, credential
+decryption failures and fact changes during config reading; these errors must not be masked by skipping
+fields or partial writes. Runtime fields of a Personal Provider (such as `api.baseURL`) may enter the Personal
+Layer as strings (including unfinished values), but an invalid Provider must fail closed at Registry
+integrity validation, must not block the sync of other valid Providers in the same file and must not enter
+the executable Registry. Non-allowlist Credential records are not sync facts, so even a corrupt value there
+must not block reading the allowlist credentials; an allowlist entry itself must still be a string and
+decryptable with the Source cipher.
 
-同步仍然是完整 Personal Layer 的原子替换，不静默丢弃或部分覆盖 Provider；无效 Provider
-保留在目标 Personal Config 中，并通过目标 Environment 的 Provider Settings 完整性问题呈现。
-Configured Default 是新会话的初始偏好，不是配置复制的成功条件。同步必须原样保留它；
-Provider/Model 不存在、reasoning 缺失或失效时，由目标 Host 现有的
-`resolveInitialModelSelection` 选择可用的 Registry 推荐。没有可用模型时保持无推荐，不能伪造
-可执行模型。不得为此回滚已完整写入的配置，也不得清除、改写持久化默认或已有会话的选择。
+The sync is still an atomic replacement of the whole Personal Layer and never silently drops or partially
+overwrites a Provider; an invalid Provider stays in the target Personal Config and surfaces through the
+target Environment's Provider Settings integrity issues. The Configured Default is an initial preference for
+new sessions, not a success condition of config copying. Sync must keep it as is; when the Provider/Model is
+missing or reasoning is absent or invalid, the target Host's existing `resolveInitialModelSelection` picks an
+available Registry recommendation. With no usable model it stays without recommendation and never fabricates
+an executable model. The fully written config must not be rolled back for this, and the persisted default or
+the selection of existing sessions must not be cleared or rewritten.
 
 ```text
-原行为：完整写入 → 校验默认偏好失败 → 整体回滚 → 拒绝工作区连接
-现行为：完整写入 → 刷新成功 → 开放工作区 → Host 解析默认偏好或 Registry 推荐
-实际 IO / 刷新失败 → 原事务回滚 → 拒绝首次连接
+Old behavior: full write -> default preference validation fails -> whole rollback -> workspace connection rejected
+New behavior: full write -> refresh succeeds -> open workspace -> Host resolves the default preference or a Registry recommendation
+Actual IO / refresh failure -> original transaction rolls back -> first connection rejected
 ```
 
-此调整只改变 Provisioning 对默认偏好的处理；Target 仍拥有事务和 Registry，Main 仍只调度。
-不增加重试、超时放行或第二份状态。Desktop `desktop-continuous` 和手机
-`web-remote-replayable` 继续通过同一个已就绪 Host 的可信 attachment 访问服务，stream、
-snapshot、queue、owner/lease 和 `workspaceIdentity` 边界不变。
+This adjustment changes only Provisioning's handling of the default preference; the Target still owns the
+transaction and the Registry, and Main still only schedules. No retry, timeout pass-through or second state
+copy is added. Desktop `desktop-continuous` and mobile `web-remote-replayable` keep accessing services
+through the trusted attachment of the same ready Host, and the stream, snapshot, queue, owner/lease and
+`workspaceIdentity` boundaries are unchanged.
 
-## 同步数据
+## Sync data
 
-### 配置
+### Config
 
-同步 Personal Layer：
+Syncs the Personal Layer:
 
-- `providers`；
-- `modelConfigRules`；
-- `providerOrder`；
-- `model-selection.json` 中的 Configured Default。
+- `providers`;
+- `modelConfigRules`;
+- `providerOrder`;
+- the Configured Default in `model-selection.json`.
 
-不复制 ZCode Built-in Provider/Model Release。远端继续使用自己的 Built-in Release；两端
-候选集差异可能使默认偏好不可用，按上面的 Host 推荐规则处理，不把它当成配置复制失败。
+ZCode Built-in Provider/Model Releases are not copied. The remote keeps using its own Built-in Release; a
+difference in candidate sets may make the default preference unavailable, handled by the Host
+recommendation rule above and not treated as a config copy failure.
 
-### 账号连接状态
+### Account connection state
 
-只同步账号解析需要的窄字段：
+Only the narrow fields needed for account resolution are synced:
 
-- `providerFamilyDomain`；
-- `providerFamilyConnectionSelections`。
+- `providerFamilyDomain`;
+- `providerFamilyConnectionSelections`.
 
-不复制整个 `setting.json`，避免覆盖远端代理、数据目录、locale、窗口和任务设置。
+The whole `setting.json` is not copied, to avoid overwriting the remote's proxy, data directory, locale,
+window and task settings.
 
-### 凭据
+### Credentials
 
-同步范围由版本化 allowlist 定义：
+The sync scope is defined by a versioned allowlist:
 
-- `oauth:active_provider`；
-- `oauth:zai:*`、`oauth:bigmodel:*` 的 access token、refresh token、user info；
-- `zcodejwttoken`。
+- `oauth:active_provider`;
+- the access token, refresh token and user info of `oauth:zai:*` and `oauth:bigmodel:*`;
+- `zcodejwttoken`.
 
-OAuth → Project Token 迁移后，`account-provider:*:api-key` 不再属于同步 allowlist。
-Source 不解密或发送旧账号 Key；Target 不读取、覆盖或删除已有旧/手工 Key。
-新 Source 固定输出 `schemaVersion=2`，表达只替换 OAuth allowlist 的语义；新 Target 接受 v1/v2，v1 旧 `account-provider` 条目校验后忽略，结果数量仅统计实际同步的 OAuth 条目。v2 不允许账号 Key 条目。
-旧 Target 仅接受 v1，会在事务和任何 Store 写入之前拒绝 v2。Host 按现有同步失败语义报告失败，不把信封降级为 v1，也不透传旧 Key；远端已有 OAuth、Key 和配置保持不动，升级 Target 后才能同步。磁盘幂等状态版本不变。
+After the OAuth -> Project Token migration, `account-provider:*:api-key` is no longer in the sync allowlist.
+The Source neither decrypts nor sends the old account Key; the Target neither reads, overwrites nor deletes
+existing old/manual Keys. A new Source always emits `schemaVersion=2`, expressing the semantics of replacing
+only the OAuth allowlist; a new Target accepts v1/v2, ignores old `account-provider` entries of v1 after
+validation, and counts only actually synced OAuth entries in the result. v2 allows no account Key entries. An
+old Target accepts only v1 and rejects v2 before the transaction and any Store write. The Host reports a
+failure under existing sync failure semantics, does not downgrade the envelope to v1 and does not pass the old
+Key through; the remote's existing OAuth, Keys and config stay untouched until the Target is upgraded. The
+on-disk idempotency state version is unchanged.
 
 ```text
-新 Source v2 → 旧 Target v1 校验拒绝 → 零写入，保留旧凭据
-新 Source v2 → 新 Target → 仅替换 OAuth allowlist
-旧 Source v1 → 新 Target → 忽略历史账号 Key，保留目标已有值
+new Source v2 -> old Target v1 validation rejects -> zero writes, old credentials kept
+new Source v2 -> new Target -> replaces only the OAuth allowlist
+old Source v1 -> new Target -> ignores historical account Keys, keeps the target's existing values
 ```
 
-目标 Host 用同步的登录态和自己的 Key ID 缓存换 Token；短期 Token 和 ID 缓存不跨 Environment 传输。
-显式手工 Provider 的 Key 仍随 Personal Config 同步。此变更不修改现有同步 lane、事务回滚或 desktop continuous/mobile replayable 边界。
+The target Host exchanges for a Token using the synced login state and its own Key ID cache; short-lived
+Tokens and the ID cache are not transferred across Environments. The Key of an explicit manual Provider is
+still synced with the Personal Config. This does not change the existing sync lane, transaction rollback or
+the desktop continuous / mobile replayable boundaries.
 
-不导出 SSH 密码/私钥、Bot 凭据、MCP OAuth token、插件 Secret 或其它通用 Credential key。
+SSH passwords/private keys, Bot credentials, MCP OAuth tokens, plugin Secrets and other generic Credential
+keys are not exported.
 
-本地和远端的 Credential cipher 可能不同，禁止直接复制 `credentials.json` 密文。Source 端
-通过 Credential Service 解密 allowlist 值，目标端通过自己的 Credential Store 重新加密落盘。
-Result 与日志只记录数量、状态和非 Secret 标识，不返回或打印凭据值。
+The local and remote Credential ciphers may differ, so copying `credentials.json` ciphertext directly is
+forbidden. The Source decrypts allowlist values through the Credential Service and the target re-encrypts to
+disk through its own Credential Store. Results and logs record only counts, status and non-Secret
+identifiers, and never return or print credential values.
 
-## 事务与回滚
+## Transaction and rollback
 
-Provisioning Envelope 包含：
+The Provisioning Envelope contains:
 
-- `schemaVersion`；
-- `syncId`；
-- source config/model/settings revision（仅用于 Source 读取一致性校验）；
-- 目标端不做跨 Environment 的冲突 revision 判断；
-- Personal Layer、Configured Default、账号窄设置和 allowlist 凭据。
+- `schemaVersion`;
+- `syncId`;
+- source config/model/settings revision (used only for the Source's read-consistency check);
+- no cross-Environment conflict revision judgment on the target side;
+- the Personal Layer, Configured Default, account narrow settings and allowlist credentials.
 
-目标端先校验整个 Envelope，再按以下顺序写入：
+The target validates the whole Envelope first, then writes in this order:
 
-1. 账号窄设置；
-2. 凭据（目标端重新加密）；
-3. `provider_config.json`；
-4. `model-selection.json`。
+1. account narrow settings;
+2. credentials (re-encrypted on the target);
+3. `provider_config.json`;
+4. `model-selection.json`.
 
-每个正式文件使用现有原子写和锁。目标端在事务内暂存每个 domain 的旧值/新值，任一步骤
-失败时按记录反向恢复所有已写入 domain；恢复失败必须返回 `rollback_failed`，禁止报告成功。
-回滚后会刷新目标内存中的 Account Source/Registry，使恢复后的事实立即生效，但不会产生
-成功 Provisioning 结果。成功后目标端主动刷新 Account Source/Registry，
-再由现有远端 Host → Worker account overlay 链路同步到 Agent Worker。
+Each formal file uses the existing atomic write and lock. Inside the transaction the target stages the old and
+new value of every domain; when any step fails, all domains already written are restored in reverse order of
+the record; a restore failure must return `rollback_failed` and must never report success. After rollback the
+target's in-memory Account Source/Registry is refreshed so the restored facts take effect at once, but no
+successful Provisioning result is produced. After success the target actively refreshes the Account
+Source/Registry, and the existing remote Host -> Worker account overlay chain then syncs to the Agent Worker.
 
-运行中的 Active Model 继续遵守“创建时冻结”语义；Provisioning 影响后续新建 Model/Session，
-不静默改写正在执行的请求。
+A running Active Model keeps the "frozen at creation" semantics; Provisioning affects subsequently created
+Models/Sessions and never silently rewrites an in-flight request.
 
-## 进程边界
+## Process boundary
 
 ```text
-Desktop Main: Environment Coordinator（仅调度元数据）
-  └─ 选择该 Environment 的一个在线 Window Host
+Desktop Main: Environment Coordinator (scheduling metadata only)
+  └─ picks one online Window Host of that Environment
        ↓
 Window Host
-  ├─ 重新读取 Local Provider Provisioning Source
-  └─ Remote Target RPC（SSH/WSL/Docker/Server）
+  ├─ re-reads the Local Provider Provisioning Source
+  └─ Remote Target RPC (SSH/WSL/Docker/Server)
        ↓
 Remote zcode-server
-  ├─ Target Store 写入与回滚
+  ├─ Target Store writes and rollback
   ├─ Remote ProviderRuntime refresh
   └─ Remote Host → Worker Account Config sync
 ```
 
-Remote Target RPC 不复用 Renderer 的 `IProviderSettingsService` 写接口，避免把“跨 Environment
-复制”和“远端本地编辑”混成一条无幂等、无回滚的路径。
+The Remote Target RPC does not reuse the Renderer's `IProviderSettingsService` write interface, so
+"cross-Environment copy" and "remote local edit" are not mixed into one path without idempotency or rollback.
 
-### Worker Registry 刷新屏障
+### Worker Registry refresh barrier
 
-Provisioning 写入目标 Environment 的 Personal Config 后，存量 Agent Worker 可能仍持有写入前
-的进程内 Registry。远端 Host 在会话创建、模型切换和输入执行前，必须通过内部
-`provider/refreshRegistry` 请求让目标 Worker 从自己的正式 Config Store 读取并刷新 Registry；该
-请求不携带 Desktop Registry、凭据或模型配置快照。刷新和待执行的 Selection 校验必须在输入
-ACK 之前完成；刷新失败或 Selection 不可用时拒绝本次输入并保留用户草稿，不能先 ACK 再让后台
-turn 静默失败。
-V4 `switchModelConfig` 与输入命令共用该刷新屏障：刷新成功后才发送模型切换命令。
+After Provisioning writes the target Environment's Personal Config, an existing Agent Worker may still hold
+the in-process Registry from before the write. Before session creation, model switch and input execution, the
+remote Host must have the target Worker read from its own formal Config Store and refresh the Registry
+through the internal `provider/refreshRegistry` request; the request carries no Desktop Registry, credentials
+or model config snapshot. The refresh and the pending Selection validation must complete before the input
+ACK; a refresh failure or an unavailable Selection rejects this input and keeps the user draft, and must not
+ACK first and let a background turn fail silently. V4 `switchModelConfig` and the input command share this
+refresh barrier: the model switch command is sent only after the refresh succeeds.
 
 ```text
 Host execution admission
@@ -252,90 +280,65 @@ Host execution admission
   -> ACK + turn execution
 ```
 
-该屏障不重启 Worker、不改变运行中 Active Model 的创建时冻结语义，也不改变 Desktop
-`continuous` 与 Mobile `replayable` 的传输边界。
+This barrier does not restart the Worker, does not change the creation-time freezing of a running Active
+Model and does not change the Desktop `continuous` or Mobile `replayable` transport boundaries.
 
-## 兼容与失败语义
+## Compatibility and failure semantics
 
-- Result 与 Host execution result 增加可选 `errorCode`，只接受固定枚举：
-  `source-read-failed`（本地快照读取）、`target-call-failed`（远端调用抛错，含校验/预读/RPC）、
-  `target-write-failed`（目标 Store 写入）、`target-refresh-failed`（账号/Registry 刷新）、
-  `target-commit-failed`（幂等记录写入）、`target-apply-failed`（旧目标只返回失败状态）、
-  `capability-unavailable`、`session-unavailable`、`host-execution-failed`。
-  `rollback_failed` 仍单独表达回滚失败，不覆盖原失败阶段。错误码不包含路径、凭据或远端自由文本。
-- 新 Host 对旧 Target 缺失或未知的错误码使用 `target-apply-failed`；旧结果仍可读取。
-  不改变 Envelope 版本、成功状态或幂等文件版本，也不推断无法确认的底层故障。
-  默认偏好修复需要同时发布远端 server bundle；仅更新 Host 时，旧 Target 仍执行原有严格校验。
-- 首次同步失败在 reject 前记录 Environment、trigger、status、errorCode、耗时；连接面板和反馈
-  同时收到带安全错误码的失败行。已有连接的后续失败仍只记录 warning。原始 `errorMessage` /
-  `error` 不直接转抄到 Main 日志或 Renderer。
-
-- 首次连接的旧远端不支持 Provisioning capability 时返回 `unsupported`，不发送 Secret，也不发布 Remote Workspace ready。
-- HTTP `zcode-server` 只有在配置 `ZCODE_SERVER_AUTH_TOKEN` 后才开放受信 Desktop Host 的
-  Provisioning target；未配置认证时保持“不支持”，避免把跨 Environment 凭据写入口暴露给匿名连接。
-- R3 Source Server Core（`packages/zcode-server-cli`，`serviceAuthorityMode: "standalone-server"`）
-  **始终**注册 Provisioning target：R3 ingress token（`<serverRoot>/run/ingress-token`，0600）常在，
-  不存在上一条那种“未配置鉴权则不支持”的分支。隔离在 `clientMode` 层完成：`/ws/host` 的
-  `desktop-continuous` 连接（capability ticket + ingress token）拿到真实 `IProviderProvisioningTargetService`；
-  `/ws` 的 `web-remote-replayable` 连接在 `exposeWebSocket` 中被 override 为抛错 stub
-  （“Provider Provisioning 仅支持受信 Desktop Host”），Window Host 的手机 allowlist 也不含该 channel。
-  旧版 daemon（无 target）不会在 R3 主链上收到 Envelope：`ZCODE_MIN_COMPATIBLE_VERSION` 默认等于
-  产品版本，R3 兼容门在握手阶段就判定“需升级”并先执行远端更新，更新后的 Core 才进入首连 Provisioning。
-  Core 使用的 ZCode Built-in Provider Config 由构建期 define 按内容 hash 物化到
-  `~/.zcode/server/config/provider/zcode-builtin-<sha256>.json`（不写进不可变 release 目录）。
-  R3 侧接线见 [r3-source-server-remote-architecture.md §8.3](../architecture/r3-source-server-remote-architecture.md)。
+- The Result and Host execution result gain an optional `errorCode` accepting only a fixed enum: `source-read-failed` (local snapshot read), `target-call-failed` (remote call threw, including validation/pre-read/RPC), `target-write-failed` (target Store write), `target-refresh-failed` (account/Registry refresh), `target-commit-failed` (idempotency record write), `target-apply-failed` (an old target returned only a failed status), `capability-unavailable`, `session-unavailable`, `host-execution-failed`. `rollback_failed` still expresses a rollback failure on its own and does not override the original failing stage. Error codes contain no path, credential or remote free text.
+- A new Host uses `target-apply-failed` for a missing or unknown error code from an old Target; old results are still readable. The Envelope version, success status and idempotency file version are unchanged, and unconfirmable underlying faults are not inferred. The default-preference fix requires publishing the remote server bundle together; with only the Host updated, an old Target still runs the original strict validation.
+- A first-sync failure records the Environment, trigger, status, errorCode and duration before rejecting; the connection panel and feedback both receive a failure line carrying the safe error code. Later failures of an existing connection still record only a warning. The raw `errorMessage` / `error` is not copied directly to Main logs or the Renderer.
+- A legacy remote on first connection that does not support the Provisioning capability returns `unsupported`, sends no Secret and does not publish Remote Workspace ready.
+- The HTTP `zcode-server` opens the trusted Desktop Host's Provisioning target only after `ZCODE_SERVER_AUTH_TOKEN` is configured; without authentication it stays "unsupported", so the cross-Environment credential write entry is not exposed to anonymous connections.
+- The R3 Source Server Core (`packages/zcode-server-cli`, `serviceAuthorityMode: "standalone-server"`) **always** registers the Provisioning target: the R3 ingress token (`<serverRoot>/run/ingress-token`, 0600) always exists, so the "unsupported when authentication is unconfigured" branch above does not apply. Isolation is done at the `clientMode` layer: a `desktop-continuous` connection on `/ws/host` (capability ticket + ingress token) gets the real `IProviderProvisioningTargetService`; a `web-remote-replayable` connection on `/ws` is overridden in `exposeWebSocket` by a throwing stub ("Provider Provisioning 仅支持受信 Desktop Host" - supported only for a trusted Desktop Host), and the Window Host's mobile allowlist does not contain this channel. An old-version daemon (no target) never receives an Envelope on the R3 main chain: `ZCODE_MIN_COMPATIBLE_VERSION` defaults to the product version, the R3 compatibility gate decides "upgrade needed" at handshake and runs the remote update first, and the updated Core enters the first-connection Provisioning. The ZCode Built-in Provider Config used by the Core is materialized by a build-time define by content hash at `~/.zcode/server/config/provider/zcode-builtin-<sha256>.json` (not written into the immutable release directory). The R3-side wiring is in [r3-source-server-remote-architecture.md §8.3](../architecture/r3-source-server-remote-architecture.md).
 
   ```text
-  zcode-server-cli Core（standalone-server，target 常驻）
-    ├─ /ws/host  desktop-continuous ──► IProviderProvisioningTargetService（真实实现）
-    └─ /ws       web-remote-replayable ─► { apply: () => throw }（stub；手机 allowlist 亦不含该 channel）
+  zcode-server-cli Core (standalone-server, target always present)
+    ├─ /ws/host  desktop-continuous ──► IProviderProvisioningTargetService (real implementation)
+    └─ /ws       web-remote-replayable ─► { apply: () => throw }  (stub; the mobile allowlist does not contain this channel either)
   ```
 
-- Remote Workspace 已连接后的自动同步失败只记录结构化 warning，不拆除现有连接，也不改变本地保存成功反馈；本轮不新增 Environment 错误状态、协议、Banner 或设置页入口。这是远程配置独立管理上线前的临时过渡语义。
-- 网络断开导致结果未知时，以 `syncId` 重试；目标端重复收到任意已完成 `syncId` 时返回之前结果，
-  不会因后续同步覆盖幂等记录而重新应用旧 Envelope。
-- Environment 离线时保留一次待同步意图，重新上线后读取最新本地状态执行；普通失败不循环
-  重试，等待下一次真实触发。
+- An automatic sync failure after the Remote Workspace is connected only records a structured warning, does not tear down the existing connection and does not change the local save-success feedback; this round adds no Environment error state, protocol, banner or settings-page entry. This is a transitional semantics until independent remote config management goes live.
+- When a network drop makes the result unknown, retry with the same `syncId`; when the target receives any already completed `syncId` again it returns the previous result and does not re-apply an old Envelope because later syncs overwrote the idempotency record.
+- While the Environment is offline one pending sync intent is kept and executed with the latest local state after it comes back online; ordinary failures do not loop-retry and wait for the next real trigger.
 
-## Desktop 附着 Source 的连接初始化与反向资源通道
+## Connection initialization of Desktop-attached Sources and the reverse resource channel
 
-SSH / WSL / Docker 经 SourceServerConnectionManager 建立的每一代物理 RPC 连接，
-在发布 online、允许 logical workspace attachment 之前，先下发 Desktop 当前
-`dynamicWorkflowMode`。自动重连同样读取最新模式；模式同步不支持或失败只记录告警，
-沿用既有旧版本兼容行为。独立 `kind: "server"` 保持自己的设置权威，不下发此模式。
+For every generation of physical RPC connection that SSH / WSL / Docker establish through
+SourceServerConnectionManager, before publishing online and allowing logical workspace attachment, the
+Desktop's current `dynamicWorkflowMode` is delivered first. Automatic reconnects also read the latest mode; a
+mode sync that is unsupported or fails only logs a warning and keeps the existing old-version compatibility
+behavior. A standalone `kind: "server"` keeps its own settings authority and does not receive this mode.
 
-群话题资源与 channel reply 的反向 RPC channel 由物理连接拥有，同一个 Source 的
-多个 logical workspace 共用这一 channel。每次请求先经 registry 验证
-`remoteSessionId + workspaceIdentity + workspacePath` 仍属于当前在线 attachment，
-再核对其 Agent service 是该物理连接的代理实例；不能以 logical ServiceCollection
-对象同一作为物理身份，也不能仅按工作区路径放行。socket 关闭、建连失败或物理
-连接 dispose 均释放反向 channel 及在途读取；logical tab 关闭不关闭其他 tab 共用
-的物理连接。新物理连接创建自己的 channel，旧代请求不得借用新代权限。
+The reverse RPC channel for group-topic resources and channel reply is owned by the physical connection, and
+the several logical workspaces of one Source share it. Every request is first validated through the registry
+that `remoteSessionId + workspaceIdentity + workspacePath` still belongs to a currently online attachment,
+then checked that its Agent service is the proxy instance of that physical connection; the logical
+ServiceCollection object being the same cannot serve as physical identity, and a request must not pass by
+workspace path alone. Socket close, connection failure or physical connection dispose all release the reverse
+channel and in-flight reads; closing a logical tab does not close the physical connection shared by other
+tabs. A new physical connection creates its own channel, and an old-generation request must not borrow the new
+generation's permissions.
 
 ```text
-物理 RPC 建立 → 注册反向 channel → 下发 Desktop workflow mode → Manager 发布 online
-                         │                                  └→ 多 logical attachment
-物理关闭/释放 ────────────┴→ 取消旧代资源请求；重连从 RPC 建立重新执行
+physical RPC established → register reverse channel → deliver Desktop workflow mode → Manager publishes online
+                         │                                  └→ multiple logical attachments
+physical close/release ────┴→ cancel old-generation resource requests; reconnect re-executes from RPC establishment
 ```
 
-该接缝只管理已鉴权物理连接与反向路由，不增加 runtime、accepted input queue 或
-业务状态。桌面 continuous 和手机经 shared-host 的 replayable 边界保持各自可信
-attachment 的 clientMode。
+This seam manages only the authenticated physical connection and reverse routing and adds no runtime,
+accepted input queue or business state. The desktop continuous and the mobile shared-host replayable
+boundaries keep their respective trusted attachment's clientMode.
 
-Source Server 内部 peer 路由使用 canonical workspace identity；反向 RPC 返回 Desktop
-前通过同一个 workspace identity mapper 转回 stable identity，响应再映射回 canonical。
-Desktop registry 的权限校验继续使用 stable identity，不能将内部 identity 泄漏为另一份
-attachment 身份，也不能为绕过校验而降低到仅比较 workspacePath。
+Source Server internal peer routing uses the canonical workspace identity; before a reverse RPC returns to
+Desktop it is mapped back to the stable identity through the same workspace identity mapper, and responses are
+mapped to canonical again. The Desktop registry's permission check keeps using the stable identity; the
+internal identity must not leak as a second attachment identity, and the check must not be lowered to
+comparing only workspacePath to get around validation.
 
-## 默认偏好与首次失败诊断回归
+## Default-preference and first-failure diagnostic regression
 
-- `R3A-PRV-05` 的真实 Store 回归必须验证删除 Provider 后完整替换、保留失效默认、空 Registry 返回无推荐；`R3A-PRV-11` 必须验证无效 Provider 留在 Personal Layer 但不可执行、失效默认原样落盘且 Host 推荐合法模型。两项均不得继续断言“默认不可用则回滚”；真实写入、刷新和提交失败仍按 `R3A-PRV-08` 验证回滚。
-- 聚焦测试覆盖缺失/失效 reasoning、缺失 Provider/Model、空 Registry、合法默认、写入/刷新/
-  幂等提交失败与回滚，以及旧结果和未知错误码的安全处理。
-- `SSH-P0-CONN-08` 通过真实 Electron → SSH → 远端 Target 验证：损坏本地同步凭据时错误和
-  连接日志都显示 `source-read-failed`；恢复凭据后，保留失效默认也能进入远端目录和工作区。
-  用例使用既有无账号启动 fixture，避免无关的假 OAuth 触发登录过期弹窗。
-- 2026-10-09：macOS Desktop → 隔离 Ubuntu 22.04 aarch64 SSH E2E 通过，artifact
-  `desktop-e2e-20261009032604472-p1453-8bb89553244ba5cc`。用例保持 pending，未进行人工晋升。
-  Windows/WSL、其它远端系统与手机端 UI 未实测；未取得原反馈用户的现场输入，不据此宣称复现了
-  每位用户的历史事故。回滚可还原本次提交，无持久化格式迁移。
+- The real-Store regression of `R3A-PRV-05` must verify full replacement after deleting a Provider, keeping the invalid default, and an empty Registry returning no recommendation; `R3A-PRV-11` must verify an invalid Provider stays in the Personal Layer but is not executable, the invalid default is persisted as is and the Host recommends a legal model. Neither may keep asserting "roll back if the default is unavailable"; real write, refresh and commit failures are still verified for rollback by `R3A-PRV-08`.
+- Focused tests cover missing/invalid reasoning, missing Provider/Model, an empty Registry, a valid default, write/refresh/idempotent-commit failures and rollback, and safe handling of old results and unknown error codes.
+- `SSH-P0-CONN-08` verifies through real Electron -> SSH -> remote Target: with a corrupted local sync credential both the error and the connection log show `source-read-failed`; after restoring the credential, even with the invalid default kept, the remote directory and workspace can be entered. The case uses the existing no-account startup fixture so an unrelated fake OAuth does not trigger a login-expired dialog.
+- 2026-10-09: macOS Desktop -> isolated Ubuntu 22.04 aarch64 SSH E2E passed, artifact `desktop-e2e-20261009032604472-p1453-8bb89553244ba5cc`. The case stays pending, not manually promoted. Windows/WSL, other remote systems and mobile UI were not tested; no on-site input from the original feedback user was obtained, so reproducing every user's historical incident is not claimed. Rollback reverts this commit; no persisted format migration.

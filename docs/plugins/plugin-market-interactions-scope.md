@@ -1,162 +1,221 @@
-# 插件市场交互调整：实施范围
+# Plugin marketplace interaction changes: implementation scope
 
-## 基线与原型
+## Baseline and prototype
 
-- 实施基线：staging `6295a71ff38a242af5704061fea6b3947ce7241b`。
-- 交互参考：`feat/side-pane-plugins-and-file-manager`，提交 `eb137c6fae42e727f139a7568a67df782446b345`。
-- 产品依据：《插件市场 & Side Pane 交互调整》2026-10-09 修订，第 4–7 节。
-- 本文件记录已确认的范围和实现约束，执行证据见验证矩阵。
+- Implementation baseline: staging `6295a71ff38a242af5704061fea6b3947ce7241b`.
+- Interaction reference: `feat/side-pane-plugins-and-file-manager`, commit `eb137c6fae42e727f139a7568a67df782446b345`.
+- Product basis: "Plugin Marketplace & Side Pane interaction changes", revision 2026-10-09, sections 4-7.
+- This file records the confirmed scope and implementation constraints; execution evidence is in the verification matrix.
 
-## 2026-10-11 范围修订
+## 2026-10-11 scope revision
 
-用户明确要求“插件管理还是要支持按照项目管理的”。此要求优先于 PRD 中取消项目管理维度的描述。
+The user explicitly required that plugin management still support per-project management. This overrides
+the PRD text that removed the project dimension.
 
-- 插件管理保留全局 / 具体项目切换。全局安装与按项目管理同时成立。
-- 全局设置提供默认启用状态与配置；项目可以覆盖启用状态与配置，并恢复继承全局设置。
-- 项目内的暂停 / 启用只修改当前项目，不修改全局或其他项目；界面明确展示操作范围和配置来源。
-- 卸载仍是删除全局安装，确认时说明对其他项目的影响，不能把项目暂停表达为卸载。
-- 从项目进入市场时，卡片展示该项目的生效状态，暂停 / 启用写入该项目覆盖；无项目上下文时修改全局默认。
-- 插件管理嵌入市场内部，复用现有插件列表与配置能力；市场内不展开独立的 MCP / Skill 设置标签。首次默认全局，往返保留选中的项目和浏览条件。
+- Plugin management keeps the global / specific-project switch. Global install and per-project management both hold.
+- Global settings provide the default enabled state and configuration; a project may override enabled state and configuration and restore inheritance from global.
+- Pause / enable inside a project changes only the current project, never global or other projects; the UI shows the operation scope and the configuration source.
+- Uninstall remains deleting the global install; the confirmation explains the impact on other projects, and a project pause is never presented as uninstall.
+- Entering the marketplace from a project, cards show that project's effective state and pause / enable writes that project's override; without project context the global default is changed.
+- Plugin management is embedded in the marketplace, reusing the existing plugin list and configuration; the marketplace has no separate MCP / Skill settings tabs. Default is global on first entry; round trips keep the selected project and browse conditions.
 
-## 社区插件：收录、发布与展示
+## Community plugins: intake, publishing and display
 
-社区分段接真实目录数据；仅在没有社区条目时显示空态。分类在插件收录时完成，并贯穿目录发布、CLI 查询和客户端展示。
+The community segment uses real catalog data; the empty state shows only when there are no community
+entries. Classification happens at plugin intake and flows through catalog publishing, CLI queries and
+client display.
 
-### 分类语义
+### Classification semantics
 
-- 官方市场是分发渠道，继续使用 `zcode-plugins-official`，其中同时收录官方插件和社区插件。
-- 官方 / 社区表示插件的维护归属。外部团队、合作方和社区维护的插件归入社区；使用第三方服务的官方维护插件仍属于官方，不能根据服务品牌或作者字符串自动判定。
-- `category` 继续表示用途分类，例如开发工具、生产力；UI 能力是另一独立维度，不占用用途分类或维护归属字段。
-- 个人分段继续表示用户自行添加的市场和本地来源。个人来源声明自己属于官方或社区，不会使其进入 ZCode 的公开 / 社区分段。
+- The official marketplace is a distribution channel, stays `zcode-plugins-official`, and lists both official and community plugins.
+- Official / community denotes maintenance ownership. Plugins maintained by external teams, partners and the community are community; an official-maintained plugin using a third-party service stays official. Ownership is never inferred from service brand or an author string.
+- `category` stays the purpose category (for example developer tools, productivity); UI capability is a separate dimension and does not occupy the purpose-category or ownership fields.
+- The personal segment stays for user-added marketplaces and local sources. A personal source declaring itself official or community does not put it into ZCode's public / community segments.
 
-### 插件仓库改动
+### Plugin repository changes
 
-1. `zcode-plugins` 中，官方维护插件保留在 `plugins/<name>`，新增外部插件收录到 `external_plugins/<name>`。目录归属是收录分类的唯一真源，不再维护第二份手工分类名单。
-2. 外部提交新增插件时必须采用外部目录；对已有官方插件的修复不改变插件归属。更新贡献指南、提交模板和现有外部 PR 接收校验，在收录阶段检查目录、注册条目和用途分类。
-3. 校验器、打包器、增量发布及相关测试覆盖两个插件根目录，继续拒绝路径穿越、符号链接和未登记目录。沿用现有审核与发布链路。
-4. 发布器从目录归属生成每个条目的 `publisherType: "official" | "community"`，随后将 `source` 转为 CDN ZIP 地址。客户端消费发布后的字段，不依赖已被改写的源码目录路径。
-5. 历史条目按维护来源逐项核对，确认属于外部维护的插件迁入外部目录。保留插件名、市场 ID、版本和产物路径；只有内容变化时才按现有规则升级插件版本。目录迁移验证 ZIP 内容及 sha256 不变，避免破坏现有安装、更新和项目配置。
+1. In `zcode-plugins`, officially maintained plugins stay in `plugins/<name>`; newly accepted external plugins go to `external_plugins/<name>`. Directory placement is the single source of truth for intake classification; no second hand-maintained list.
+2. A new plugin submitted externally must use the external directory; fixes to an existing official plugin do not change its ownership. The contribution guide, submission template and existing external-PR intake validation check the directory, registry entry and purpose category at intake.
+3. Validator, packager, incremental publishing and related tests cover both plugin roots and keep rejecting path traversal, symlinks and unregistered directories. The existing review and publishing chain is reused.
+4. The publisher generates each entry's `publisherType: "official" | "community"` from directory placement, then converts `source` to the CDN ZIP address. The client consumes the published field and does not depend on the rewritten source directory path.
+5. Historical entries are checked one by one by maintenance source, and externally maintained ones move into the external directory. Plugin name, marketplace ID, version and artifact path are kept; the plugin version is bumped by the existing rules only when content changes. The directory migration verifies ZIP content and sha256 are unchanged so existing installs, updates and project configs do not break.
 
-### 客户端改动
+### Client changes
 
-- 在现有 Store Listing 类型、运行时 schema、目录解析和插件查询中贯通可选 `publisherType` 字段，不修改 `source` 的安装语义。
-- 公开 = 官方市场中官方维护的插件；社区 = 官方市场中社区维护的插件；个人 = 用户自行添加的来源。
-- 分类查询、精选、UI 插件专区和搜索都先限定当前分段，避免同一条目跨分段重复展示。
-- UI 插件专区按条目的 `ui` 组件类型归组；内置 UI 插件（Word、PDF、PPT、表格）卸载后的可恢复条目没有运行时信息，组件类型由内置定义随官方目录与可恢复列表下发，仍留在专区而不掉进分类分组。
-- 兼容旧目录：官方市场缺少归属字段时暂保留原有公开展示；内置插件明确属于官方。新发布目录必须生成完整字段，历史条目核对后随目录刷新进入正确分段。
-- 不迁移用户安装目录、插件 ID 或全局 / 项目配置，不把插件归属当作执行权限或可信度等级。
+- The optional `publisherType` field flows through the existing Store Listing type, runtime schema, catalog parsing and plugin queries, without changing the install semantics of `source`.
+- Public = officially maintained plugins in the official marketplace; community = community-maintained plugins in the official marketplace; personal = user-added sources.
+- Category queries, featured lists, the UI plugin zone and search first restrict to the current segment, so one entry never shows in several segments.
+- The UI plugin zone groups entries by their `ui` component type. Recoverable entries of uninstalled built-in UI plugins (Word, PDF, PPT, spreadsheets) have no runtime information; their component type is delivered by the built-in definition with the official catalog and recoverable list, so they stay in the zone instead of falling into category groups.
+- Old-catalog compatibility: when the official marketplace lacks the ownership field, original public display is kept for now; built-in plugins are explicitly official. Newly published catalogs must generate the complete field; historical entries enter the right segment after being checked and refreshed with the catalog.
+- No migration of user install directories, plugin IDs or global / project configs; plugin ownership is never treated as an execution permission or trust level.
 
 ```mermaid
 flowchart LR
-  A[外部插件提交] --> B[收录到 external_plugins 并填写用途分类]
-  B --> C[既有审核与静态校验]
-  C --> D[发布目录：publisherType 为 community]
-  D --> E[CLI 解析与共享协议]
-  E --> F[市场社区分段及其搜索]
+  A[External plugin submission] --> B[Accept into external_plugins and set purpose category]
+  B --> C[Existing review and static validation]
+  C --> D[Published catalog: publisherType community]
+  D --> E[CLI parsing and shared protocol]
+  E --> F[Marketplace community segment and its search]
 ```
 
-## 市场调整与验收
+## Marketplace changes and acceptance
 
-| 调整         | 验收要求                                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| 来源与搜索   | 默认公开；公开、社区、个人始终可切换；搜索限定当前来源，保留现有中文拼音匹配能力。                                        |
-| 社区入口     | 按目录维护归属展示真实社区插件；无条目时显示“暂无社区插件”，加载失败不伪装成空态。                                        |
-| 插件管理     | 顶部统一“插件管理”入口；保留全局 / 项目管理切换、项目级启停与配置覆盖；可返回“浏览全部插件”。                             |
-| 管理动作     | 更多菜单仅暂停/启用、卸载；已有升级能力保留为独立操作；保留卸载确认与失败反馈。                                           |
-| 安装         | 复用现有用户级安装、内置恢复、安装后技能刷新，不另建安装状态。                                                            |
-| UI 插件卡片  | 整行进入详情；仅会话右侧市场多一个「打开」，暂停态显示「启用」并先启用再打开；未安装可直接安装。                          |
-| 应用插件分组 | 与其他分类共用组内展开/收起，默认全部展开；超过 6 个可收起到前 6 个，不进入独立列表。搜索及清空搜索保留各来源的手动选择。 |
-| UI 插件详情  | 复用普通详情布局，展示可放大效果图、界面能力与信息。                                                                      |
-| 市场复用     | 主区域与 Side Pane 入口复用同一组件，市场内切换浏览 / 详情 / 管理；入口可抑制设置页面包屑。                               |
+| Change                | Acceptance                                                                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source and search     | Default public; public, community and personal always switchable; search is limited to the current source and keeps the existing Chinese pinyin matching.          |
+| Community entry       | Shows real community plugins by catalog ownership; with no entries shows "暂无社区插件" (no community plugins yet); a load failure is not disguised as the empty state. |
+| Plugin management     | One top-level "Plugin management" entry; keeps the global / project switch, per-project enable/disable and config override; can return to "Browse all plugins".    |
+| Management actions    | The more-menu has only pause/enable and uninstall; the existing upgrade stays a separate action; uninstall confirmation and failure feedback are kept.            |
+| Install               | Reuses existing user-level install, built-in restore and post-install skill refresh; no separate install state.                                                     |
+| UI plugin cards       | The whole row opens details; only the session right-side marketplace has an extra "打开" (Open); a paused plugin shows "启用" (Enable) and enables before opening; uninstalled ones can be installed directly. |
+| App plugin group      | Shares in-group expand/collapse with other categories, all expanded by default; above 6 it can collapse to the first 6, never into a separate list. Search and clearing search keep each source's manual selection. |
+| UI plugin details     | Reuses the ordinary detail layout, showing an enlargeable preview image, UI capabilities and info.                                                                  |
+| Marketplace reuse     | The main area and the Side Pane entry reuse one component, switching browse / details / management inside the marketplace; the entry can suppress the settings-page breadcrumb. |
 
-文件管理器、通用标签页多开/排序/最近关闭不属于本次市场实现范围。
+The file manager and generic tab multi-open/ordering/recently-closed are outside this marketplace work.
 
-## 已核实的差异
+## Verified differences
 
-1. 原型 `useUiPluginInstall.ts` 使用 localStorage 模拟启用、暂停和移除；`DEMO_PLUGINS` 与演示页面不是可安装的真实插件包。不能以该状态报告真实安装成功。
-2. 当前 `PluginStorePage.handleInstall` 已以 `user` scope 安装。管理页的 workspace/user 还承担配置覆盖与恢复继承语义，不能把删除安装范围分组等同于删除项目配置能力。
-3. 原型市场同时依赖 Side Pane 的演示页面回调。直接搬运会把文件导航、演示资源和标签页改造一起带入。
-4. 现有插件更新、孤立安装、内置恢复、市场刷新错误与卸载确认必须继续可用。
+1. The prototype's `useUiPluginInstall.ts` simulates enable, pause and remove with localStorage; `DEMO_PLUGINS` and demo pages are not installable real plugin packages. That state must not be reported as real install success.
+2. The current `PluginStorePage.handleInstall` already installs with `user` scope. The management page's workspace/user also carries config-override and restore-inheritance semantics, so removing install-scope grouping is not the same as removing project config capability.
+3. The prototype marketplace depends on Side Pane demo-page callbacks. Moving it verbatim would drag in file navigation, demo resources and tab rework.
+4. Existing plugin update, orphaned install, built-in restore, marketplace refresh errors and uninstall confirmation must keep working.
 
-## 已确认的 UI 接入边界
+## Confirmed UI integration boundary
 
-仓库已有真实 Plugin UI 面板、`plugins/listUiSurfaces` 和沙箱运行链路。本次复用已有能力，补充目录 UI 能力标识与市场打开入口；多个 surface 时提供选择。独立推荐名单只包含已核实的真实插件，没有有效条目时使用空态，不导入原型演示状态。
+The repository already has real Plugin UI panels, `plugins/listUiSurfaces` and the sandbox runtime chain.
+This work reuses them and adds the catalog UI capability flag and marketplace open entry; with several
+surfaces a choice is offered. The independent recommended list contains only verified real plugins; with no
+valid entry it shows the empty state; prototype demo state is not imported.
 
-发布器从清单合法的 `ui.surfaces` 生成目录 `componentTypes` 中的 `ui` 能力；CLI 将目录能力投影到未安装条目，将实际解析结果投影到已安装条目，并在插件详情协议中保留 surface 摘要。禁用不移除能力分类，运行入口仍仅允许当前项目已启用的 surface。归属、用途和 UI 能力互相独立。
+The publisher generates the `ui` capability in the catalog `componentTypes` from valid manifest
+`ui.surfaces`; the CLI projects catalog capability onto uninstalled entries and the actual resolved result
+onto installed entries, and keeps a surface summary in the plugin details protocol. Disabling does not remove
+the capability category; the run entry only allows surfaces enabled in the current project. Ownership,
+purpose and UI capability are independent.
 
-打开 UI 只在会话右侧的插件市场提供：卡片、详情与管理页行的「打开 / 启用」按钮；主导航市场整行进入详情，详情主按钮为「立即试用」。桌面本地在现有会话可用时打开 UI；手机、Web 和远程可浏览、安装和管理，打开 UI 时提示暂不支持。脱离对话启动、新建会话、草稿提升和旧会话热加载留给后续任务，本轮不补这些流程。
+Opening a UI is offered only in the session right-side marketplace: the "Open / Enable" button on cards,
+details and management rows; in the main-navigation marketplace the whole row opens details and the detail
+primary button is "立即试用" (Try now). Desktop local opens the UI in the existing session when available;
+mobile, Web and remote can browse, install and manage, and opening a UI shows a not-yet-supported hint.
+Launching without a conversation, new session, draft promotion and hot-loading into old sessions are left for
+later and not covered here.
 
-查询视图按主机、工作区身份和配置范围隔离，复用现有管理 store 的读写逻辑。成功变更后刷新受影响视图和 UI surface 列表，丢弃旧目标迟到响应，避免主区域、Side Pane 和项目切换串状态。
+Query views are isolated by host, workspace identity and config scope and reuse the existing management
+store's read/write logic. After a successful change the affected views and the UI surface list are refreshed
+and late responses from an old target are dropped, so the main area, Side Pane and project switching never
+cross state.
 
-全局设置投影与市场独立投影共用非阻塞变更通知；次要视图查询失败或迟迟不返回，不影响已成功写入的完成状态。通知记录操作发起时的主机、工作区和写入范围：用户级变更刷新同主机项目，项目级变更只刷新该项目的生效配置；远程同步不要求先打开全局设置。同一服务、身份和配置范围的在途查询共用结果；变更前开始的查询不能满足变更后刷新。Source 用户设置与该 Source 的项目投影使用统一主机判定，各视图分别检查目标是否仍有效并保留自己的操作错误。UI surface 订阅复用相同的主机与项目范围，不刷新无关工作区；远程同步先完成必要能力刷新，再通知派生视图。安装与内置恢复只有成功后才失效草稿并刷新技能，诊断式失败也必须显示为错误。主导航市场不提供打开 UI，管理页的“浏览全部插件”仍在市场内部切换。
+The global settings projection and the marketplace's independent projection share a non-blocking change
+notification; a failing or never-returning secondary view query does not affect the completion state of an
+already successful write. The notification records the host, workspace and write scope at operation start:
+a user-level change refreshes projects on the same host, a project-level change refreshes only that
+project's effective config; remote sync does not require opening global settings first. In-flight queries of
+the same service, identity and config scope share a result; a query started before a change cannot satisfy
+the post-change refresh. Source user settings and that Source's project projection use one host decision;
+each view checks whether its target is still valid and keeps its own operation errors. UI surface
+subscriptions reuse the same host and project scope and do not refresh unrelated workspaces; remote sync
+finishes the necessary capability refresh before notifying derived views. Install and built-in restore
+invalidate the draft and refresh skills only on success, and diagnostic-style failures must be shown as
+errors. The main-navigation marketplace offers no open-UI; the management page's "Browse all plugins" still
+switches inside the marketplace.
 
 ```mermaid
 flowchart LR
-  W[CLI 写入成功] --> R[当前视图刷新]
-  R --> N[发布范围内失效信号]
-  N --> D[结束操作并释放忙碌态]
-  N -.后台刷新.-> V[相关设置与 UI surface 投影]
-  V --> E[各自处理结果或错误]
-  S[远程同步成功] --> C[刷新草稿及技能、命令、MCP]
+  W[CLI write succeeded] --> R[Refresh current view]
+  R --> N[Invalidation signal within published scope]
+  N --> D[Finish operation and release busy state]
+  N -.background refresh.-> V[Related settings and UI surface projections]
+  V --> E[Each handles its result or error]
+  S[Remote sync succeeded] --> C[Refresh drafts and skills, commands, MCP]
   C --> N
 ```
 
-已安装 UI 卡片与管理页行整行进入详情，不再提供独立“详情”按钮；查看详情不触发启用或打开，桌面、Web 和远程均可使用。默认推荐名单仍独立于安装清单，空态保留“查看所有插件”入口。
+Installed UI cards and management rows open details with the whole row and have no separate "details"
+button; viewing details does not trigger enable or open, on desktop, Web and remote alike. The default
+recommended list stays independent of the install list, and the empty state keeps a "查看所有插件" (View all
+plugins) entry.
 
-## 状态归属
+## State ownership
 
 ```mermaid
 flowchart LR
-  A[市场或管理入口] --> B[现有插件管理命令]
-  B --> C[用户级安装与默认配置]
-  B --> P[当前项目启用与配置覆盖]
-  C --> D[项目生效配置：覆盖或继承]
+  A[Marketplace or management entry] --> B[Existing plugin management commands]
+  B --> C[User-level install and default config]
+  B --> P[Current project enable and config override]
+  C --> D[Project effective config: override or inherit]
   P --> D
-  D --> E[当前项目会话可用能力]
-  E --> F[现有 Plugin UI 会话视图]
+  D --> E[Capabilities available to current project sessions]
+  E --> F[Existing Plugin UI session view]
 ```
 
-关闭视图不卸载插件。安装状态不归组件或 localStorage 独立管理。本次市场布局不改变桌面 continuous 或手机 replayable 的消息交付边界。
+Closing a view does not uninstall the plugin. Install state is not managed independently by components or
+localStorage. This marketplace layout does not change desktop continuous or mobile replayable message
+delivery boundaries.
 
-## 实施验证
+## Implementation verification
 
-- 先更新来源隔离、社区空态、管理往返及菜单行为测试，再修改实现。
-- 插件仓库覆盖外部目录收录、目录与条目一致性、必填用途分类、非法路径拒绝、发布归属字段保留，以及历史目录迁移后的产物与安装标识稳定性。
-- 客户端覆盖官方 / 社区 / 个人分段互斥、同一用途分类下不同维护归属、个人市场自声明不越界、旧目录兼容，以及目录刷新后的重新分类。
-- 维护现有插件生命周期 E2E：安装、管理、暂停/启用、更新、卸载及失败场景。
-- 验证项目 A 的暂停与配置不影响项目 B 或全局默认值；恢复继承后使用全局配置；项目切换不串状态；全局卸载明确提示影响范围。
-- 验证桌面与手机宽度、Zai Light/Dark、中英文；保留键盘焦点与可访问名称。
-- 执行架构检查、typecheck、lint、相关单测与交互 E2E。未执行项如实记录。
+- Update source-isolation, community empty-state, management round-trip and menu-behavior tests first, then the implementation.
+- The plugin repository covers external-directory intake, catalog/entry consistency, required purpose category, illegal path rejection, publishing ownership field retention, and artifact and install-identity stability after historical catalog migration.
+- The client covers mutually exclusive official / community / personal segments, different ownership under one purpose category, personal-market self-declaration not crossing segments, old-catalog compatibility, and reclassification after catalog refresh.
+- Maintain the existing plugin lifecycle E2E: install, manage, pause/enable, update, uninstall and failure scenarios.
+- Verify project A's pause and config do not affect project B or global defaults; after restoring inheritance the global config is used; project switching never crosses state; global uninstall clearly states its scope of impact.
+- Verify desktop and phone widths, Zai Light/Dark, Chinese and English; keep keyboard focus and accessible names.
+- Run architecture check, typecheck, lint, related unit tests and interaction E2E. Unrun items are recorded as such.
 
-## 实施顺序与当前状态
+## Delivery order and current state
 
-先交付客户端对可选归属字段的兼容读取，再交付插件仓库收录分类、存量迁移与发布字段，两侧分别留测试及提交。插件仓库另建隔离 worktree，保留原 checkout 的已有改动。同步更新客户端领域词汇表和插件仓库贡献 / 分发文档。
+The client's compatible read of the optional ownership field ships first, then the plugin repository's intake
+classification, existing-entry migration and published field; each side keeps its own tests and commits. The
+plugin repository uses a separate isolated worktree, preserving existing changes in the original checkout.
+The client domain vocabulary and the plugin repository's contribution / distribution docs are updated too.
 
-已实现收录分类、发布元数据、客户端三分段与 UI 能力识别、市场内管理和 Side Pane 入口。客户端与插件仓库均使用独立 worktree，基线通过新鲜度检查。真实桌面安装、UI 沙箱、项目隔离、恢复继承和卸载通过 Electron E2E；浏览器矩阵覆盖宽窄视口、中英文与明暗主题。存量外部目录迁移保持安装 ID 与 27 个 ZIP 产物不变。目录尚未发布，默认 UI 推荐名单为空；真实手机远控及 Windows/Linux Electron 尚未验证。完整执行记录见 [验证矩阵](../testing/plugin-management-lifecycle-e2e-coverage-matrix.md)。
+Implemented: intake classification, publishing metadata, the client's three segments and UI capability
+recognition, in-marketplace management and the Side Pane entry. Real desktop install, UI sandbox, project
+isolation, restore inheritance and uninstall pass in Electron E2E; the browser matrix covers wide and narrow
+viewports, Chinese and English, light and dark. The existing external-directory migration keeps install IDs
+and the 27 ZIP artifacts unchanged. The catalog is not yet published, so the default UI recommended list is
+empty; real mobile remote control and Windows/Linux Electron are unverified. Full execution record:
+[verification matrix](../testing/plugin-management-lifecycle-e2e-coverage-matrix.md).
 
-## 影响面核对
+## Impact review
 
-本轮属于 presentation、option-source、validation、commit-effect 与目录发布持久化变更。未改变对话恢复、队列与消息交付。工作树没有代码图索引，按实际导入、调用方和协议字段核对；不宣称已执行 Codegraph 深度扫描。
+This work is a presentation, option-source, validation, commit-effect and catalog-publishing persistence
+change. It does not change conversation recovery, queues or message delivery. The worktree has no code-graph
+index, so imports, callers and protocol fields were checked directly; no Codegraph deep scan is claimed.
 
-| 入口                         | 共享实现与展示状态                                            | 权威与提交路径                                         | 必须保持的隔离                                            |
-| ---------------------------- | ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------- |
-| 工作区主市场、Side Pane 市场 | PluginStorePage / ListView / Card；各视图查询、搜索与来源独立 | IPluginManagementService → CLI 安装目录与配置文件      | 工作区身份、主机、项目 / 全局配置；成功写入后刷新投影     |
-| 市场内管理、设置管理         | PluginsSection；首次全局，项目选择与配置恢复沿用现有能力      | setPluginEnabled / configurePlugin / resetPluginConfig | 项目覆盖不修改全局；卸载明确为用户级全局动作              |
-| UI 卡片、详情、推荐入口      | 有效清单能力；推荐名单独立；打开复用插件沙箱                  | listUiSurfaces → 原有会话的 UI runtime                 | 桌面本地才打开；旧会话 / 已卸载视图的迟到响应不打开新目标 |
-| 外部收录、发布目录           | 外部目录与必填用途分类；发布生成归属与能力                    | 插件仓库 validate / sync_external_prs / build_dist     | 来源归属与用途、UI 能力分离；迁移不改安装 ID 与 ZIP 内容  |
+| Entry                                     | Shared implementation and display state                                              | Authority and commit path                                   | Isolation to preserve                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Workspace main marketplace, Side Pane marketplace | PluginStorePage / ListView / Card; each view has independent query, search and source | IPluginManagementService -> CLI install directory and config files | Workspace identity, host, project / global config; refresh projections after a successful write |
+| In-marketplace management, settings management | PluginsSection; global first, project selection and config restore reuse existing capability | setPluginEnabled / configurePlugin / resetPluginConfig | Project override never changes global; uninstall is explicitly a user-level global action |
+| UI cards, details, recommended entry      | Valid manifest capability; recommended list independent; open reuses the plugin sandbox | listUiSurfaces -> the existing session's UI runtime         | Open only on desktop local; late responses from an old session / uninstalled view never open a new target |
+| External intake, published catalog        | External directory and required purpose category; publishing generates ownership and capability | Plugin repository validate / sync_external_prs / build_dist | Ownership, purpose and UI capability separate; migration never changes install IDs or ZIP content |
 
-必须检查的邻接能力是安装后的技能刷新、普通插件试用、内置恢复、孤立插件更新门禁、深链路跳转和标签标题 / 搜索。会话 frozen capability、desktop continuous、手机 replayable 与原有沙箱权限作为不变量保留。个人源不能通过自报归属进入公共或社区分段。
+Adjacent capabilities that must be checked: post-install skill refresh, ordinary plugin trial, built-in
+restore, orphaned-plugin update gate, deep-link jump, tab title / search. Session frozen capability, desktop
+continuous, mobile replayable and the existing sandbox permissions are kept as invariants. A personal source
+cannot enter the public or community segment by self-declared ownership.
 
-静态图漂移：既有分类排序节点仍有旧模式名与已安装条描述；本次登记市场与 UI 能力关系，旧模式命名不在本轮改动范围。现有界面状态由 CLI 配置和目录投影，组件不另存安装状态。
+Static graph drift: the existing category-sort node still has old mode names and an installed-bar
+description; this work registers the marketplace and UI capability relation, and the old mode naming is out
+of scope. Existing UI state is projected from CLI config and the catalog; components store no install state
+of their own.
 
-用例交接：来源与交互单测、Side Pane 浏览器回归、PLM-LC-001/002 与新增 PLM-UI-001；后者覆盖真实安装、MCP 资源与沙箱、项目隔离、恢复继承及卸载。完整执行结果以验证矩阵为准，pending 用例不自动晋级。
+Case handoff: source and interaction unit tests, Side Pane browser regression, PLM-LC-001/002 and the new
+PLM-UI-001 (real install, MCP resources and sandbox, project isolation, restore inheritance, uninstall). Full
+execution results follow the verification matrix; pending cases are not auto-promoted.
 
-CLI 两个上游存量大文件原本即超过 800 行；此次仅增加目录字段与能力投影，按 CLI 规则将精确路径登记为行数告警，其他检查保持严格。
+Two large upstream-inherited CLI files already exceeded 800 lines; this work only adds catalog fields and
+capability projection, so per the CLI rule their exact paths are registered as line-count warnings and all
+other checks stay strict.
 
-## Side Pane 服务端推荐配置
+<a id="side-pane-服务端推荐配置"></a>
 
-默认 UI 推荐由 `GET /api/v1/client/configs` 的 `data.configs.uiPluginRecommendations`
-下发，替代客户端静态名单。Nacos `client_config.yaml` 的 `configs` 增加如下条目：
+## Side Pane server-side recommendation config
+
+The default UI recommendations are delivered by `data.configs.uiPluginRecommendations` of
+`GET /api/v1/client/configs`, replacing the client's static list. Nacos `client_config.yaml` adds this entry
+under `configs`:
 
 ```yaml
 - key: uiPluginRecommendations
@@ -165,59 +224,68 @@ CLI 两个上游存量大文件原本即超过 800 行；此次仅增加目录�
       surfaceId: panel
 ```
 
-名单只控制曝光，不自动安装或启用插件，也不提供资源地址。Side Pane 启动页和加号菜单
-按完整 `pluginId` 关联市场目录，推荐身份为 `pluginId` 与 `surfaceId`，按配置顺序展示并去重。
-未安装和禁用条目仍展示；未知插件或不同来源不展示。按钮行为见下节。
-配置和完整市场目录加载期间显示骨架占位，不提前显示“暂无”。两者完成后，缺失、空或格式无效的名单显示空态；请求失败结束加载，不使用硬编码推荐。
-草稿无入口；Web、手机和远程沿用原打开能力提示。
+The list only controls exposure; it never auto-installs or enables a plugin and supplies no resource
+address. The Side Pane start page and the plus menu associate with the marketplace catalog by full
+`pluginId`; recommendation identity is `pluginId` plus `surfaceId`, shown in config order and deduplicated.
+Uninstalled and disabled entries still show; unknown plugins or different sources do not. Button behavior is
+in the next subsection. While the config and the full marketplace catalog load, a skeleton placeholder shows
+and "none" is not shown early. After both finish, a missing, empty or malformed list shows the empty state; a
+failed request ends loading and no hardcoded recommendations are used. Drafts have no entry; Web, mobile and
+remote keep the original open-capability hint.
 
 ```mermaid
 flowchart LR
-  N[Nacos 配置] --> A[client/configs]
-  A --> C[Host ClientConfigService 缓存和请求合并]
-  C --> H[推荐 hook 展示投影]
-  W[完整市场目录] --> I[按完整插件 ID 关联展示信息]
+  N[Nacos config] --> A[client/configs]
+  A --> C[Host ClientConfigService cache and request coalescing]
+  C --> H[Recommendation hook display projection]
+  W[Full marketplace catalog] --> I[Associate display info by full plugin ID]
   H --> I
-  I --> S[Side Pane 启动页与加号菜单]
+  I --> S[Side Pane start page and plus menu]
 ```
 
-缓存唯一 owner 为既有 `ClientConfigService`，复用一小时 TTL，不增加轮询或独立缓存。
-挂载入口时读取；服务切换或卸载后丢弃旧请求结果。配置变更在下一次有效读取后展示，
-重启可清空进程缓存。推荐读取不改变会话、队列或 UI runtime 的所有权。
+The sole cache owner is the existing `ClientConfigService`, reusing its one-hour TTL; no polling or separate
+cache is added. It is read when the entry mounts; results of an old request are dropped after a service
+switch or unmount. A config change shows after the next effective read, and a restart clears the process
+cache. Reading recommendations does not change ownership of the session, queue or UI runtime.
 
-验收：配置解析隔离坏字段；重复和未知条目不曝光；请求迟到不跨服务展示；
-浏览器真实请求配置后，启动页与菜单一致，鼠标和键盘打开保持原会话参数；
-缺失、空名单和请求失败隐藏推荐。覆盖宽窄视口、双主题和中英文。
+Acceptance: config parsing isolates bad fields; duplicate and unknown entries are not exposed; late requests
+never display across services; after the browser really requests the config, the start page and menu are
+consistent, and mouse and keyboard opening keep the original session parameters; a missing config, an empty
+list and a failed request hide recommendations. Covers wide and narrow viewports, both themes, Chinese and
+English.
 
-### 推荐区的安装与启用
+### Install and enable in the recommendation area
 
-推荐曝光改为服务端名单与市场完整目录匹配，不再与可用面板列表取交集。
-未安装和未启用的官方插件也显示；名称和描述来自市场目录，已安装面板标题优先。
-名单按配置顺序展示，按完整插件 ID 与面板 ID 去重；目录不存在的条目不展示。
+Recommendation exposure matches the server list against the full marketplace catalog instead of
+intersecting with the available panel list. Uninstalled and not-enabled official plugins also show; name and
+description come from the marketplace catalog, with the installed panel title taking precedence. The list
+shows in config order, deduplicated by full plugin ID and panel ID; entries absent from the catalog are not
+shown.
 
-- 未安装：显示“安装”，复用用户级安装；可恢复内置插件复用恢复操作。
-- 已安装但当前项目未启用：显示“启用”，写入当前工作区覆盖。
-- 已安装且启用：显示“打开”；点击时重新查询真实面板，不能用配置构造资源地址。
-- 安装、启用成功只刷新状态，不自动打开；用户再次点击才打开。失败保留原状态并提示，允许重试。
-- 推荐区与市场共用按插件判定的操作状态：安装或恢复 A 时，B 仍可提交安装，已启用的 C 仍可点击打开；只禁止同一插件重复操作，同插件的多个 surface 共用进度。
-- 忙碌态读取既有插件管理 store，不在推荐 hook 中另建全局操作锁。排队中的安装沿用市场的“安装中”展示；不同插件的安装仍按提交顺序串行执行，本期不提供取消安装。
-- 安装进行中可打开任意插件详情（包括正在安装的插件）；组件区读 `plugins/describe`，不等待安装完成。
-- 安装进行中新建右侧标签页，推荐区按 `plugins/list`、`plugins/overview` 加载，不等待安装完成，不停在骨架屏。
-- 卡片“更新”、详情“恢复用户默认”同样按插件判定忙碌，只禁用自身操作中的插件；同插件保存配置期间也视为忙碌。
-- 切换工作区、服务或会话后，旧操作不能触发新目标的动作或错误提示，也不能清理新目标的忙碌态。
-- 草稿仍不展示。手机/Web/远程可安装或启用，打开仍遵守原有平台能力限制。
+- Uninstalled: shows "安装" (Install), reusing user-level install; recoverable built-in plugins reuse the restore action.
+- Installed but not enabled in the current project: shows "启用" (Enable), writing a current-workspace override.
+- Installed and enabled: shows "打开" (Open); on click the real panel is queried again, and resource addresses are never built from config.
+- Install or enable success only refreshes state and never opens automatically; the user clicks again to open. Failure keeps the original state, shows a hint and allows retry.
+- The recommendation area and the marketplace share per-plugin busy state: while A is installing or restoring, B can still submit an install and an already-enabled C can still be opened; only repeated operations on the same plugin are blocked, and multiple surfaces of one plugin share progress.
+- Busy state is read from the existing plugin management store; the recommendation hook creates no global operation lock. A queued install keeps the marketplace's "installing" display; installs of different plugins still run serially in submission order, and cancelling an install is not offered in this phase.
+- During an install, details of any plugin (including the one installing) can be opened; the component area reads `plugins/describe` and does not wait for the install to finish.
+- Creating a right-side tab during an install loads the recommendation area through `plugins/list` and `plugins/overview`, does not wait for the install and does not stay on the skeleton.
+- The card "Update" and the detail "Restore user default" are likewise busy per plugin, disabling only the plugin being operated; saving configuration for the same plugin also counts as busy.
+- After switching workspace, service or session, an old operation must not trigger actions or error hints of the new target, nor clear the new target's busy state.
+- Drafts still show nothing. Mobile/Web/remote can install or enable; opening still follows the original platform capability limits.
 
 ```mermaid
 stateDiagram-v2
-  未安装 --> 安装中: 点击安装
-  安装中 --> 未安装: 失败
-  安装中 --> 已安装: 成功并刷新
-  已安装 --> 启用中: 未启用时点击启用
-  启用中 --> 已安装: 失败
-  启用中 --> 可打开: 成功并刷新
-  已安装 --> 可打开: 已启用
-  可打开 --> 面板: 再次点击打开并查询真实面板
+  Uninstalled --> Installing: click Install
+  Installing --> Uninstalled: failure
+  Installing --> Installed: success and refresh
+  Installed --> Enabling: click Enable when not enabled
+  Enabling --> Installed: failure
+  Enabling --> Openable: success and refresh
+  Installed --> Openable: already enabled
+  Openable --> Panel: click again to open and query the real panel
 ```
 
-验收增加：未安装/禁用仍曝光；安装 user 与启用 workspace 参数；成功不自动打开；
-失败可重试；快速重复点击只写一次；目标切换后旧结果不打开或提示。
+Additional acceptance: uninstalled/disabled entries still show; install uses the user scope and enable uses
+the workspace scope; success does not auto-open; failure can be retried; rapid repeated clicks write once;
+after a target switch an old result neither opens nor shows a hint.
