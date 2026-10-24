@@ -712,7 +712,9 @@ export function PermissionDialog({
         setSelectedIndex(feedbackIndex);
         return;
       }
-      if (event.key === "1" || event.key === "2" || event.key === "3") {
+      // Every row renders "{index + 1}.", so each digit must reach the row it labels. A fixed
+      // 1-3 map left the Deny row ("4.") unbound, and 4 + Enter approved the preselected Allow.
+      if (/^[1-9]$/.test(event.key)) {
         const shortcutIndex = Number(event.key) - 1;
         const shortcutOption = orderedOptions[shortcutIndex];
         if (!shortcutOption) {
