@@ -139,7 +139,7 @@ position reuse the SRM10 regression.
   `output.command` as a description (that field may hold the full prompt); the old field is used only to
   recognize and compress the standard success text exactly. The display projection only removes the
   duplication already shown by the separate `command` field: `Successfully stopped task: <taskId>
-  (<command>)` shows in the UI "结果" (result) as `Successfully stopped task: <taskId>`. For historical
+(<command>)` shows in the UI "结果" (result) as `Successfully stopped task: <taskId>`. For historical
   results without display the UI does an exact match of the same template only; any custom result text is
   kept verbatim.
 - `TaskStop` stays compatible with old structured objects, JSON strings and `rawOutput`. A historical

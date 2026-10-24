@@ -36,7 +36,7 @@ After create-and-switch (RPC `git.createBranchAndSwitch` ok, repo state correct)
 
 ## Fix direction and outcome
 
-Proposed: invalidate the list after create-and-switch (`setBranchesResult(null)` plus reset `branchListFailed`), or mirror the hook strategy (reset when `gitSummary.branchName`/`headRefType` change while the popover is closed, without issuing RPC from the reset). 
+Proposed: invalidate the list after create-and-switch (`setBranchesResult(null)` plus reset `branchListFailed`), or mirror the hook strategy (reset when `gitSummary.branchName`/`headRefType` change while the popover is closed, without issuing RPC from the reset).
 
 ## Test (superseded)
 

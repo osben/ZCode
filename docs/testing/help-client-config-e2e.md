@@ -11,22 +11,22 @@ runs the English UI assertions, and restores the original setting at the end. Ot
 Chinese system, the existing Help/feedback entries would be misjudged as missing. No change to the
 product language mechanism is needed.
 
-| Item | Decision |
-| --- | --- |
-| Purpose / mode | Verify the client/configs migration, implementation-handoff |
-| Layers | option-source, validation, commit-effect, persistence |
+| Item                  | Decision                                                                                              |
+| --------------------- | ----------------------------------------------------------------------------------------------------- |
+| Purpose / mode        | Verify the client/configs migration, implementation-handoff                                           |
+| Layers                | option-source, validation, commit-effect, persistence                                                 |
 | Established semantics | Follows settings-community-link-config.md and the migration rules confirmed by the user for this task |
-| Out of scope | Ticket submission, Agent/session, owner, continuous/replayable, server changes |
+| Out of scope          | Ticket submission, Agent/session, owner, continuous/replayable, server changes                        |
 
 ## UI Surface Matrix
 
-| Scenario / entry | Shared implementation / owner | Default and validation | Commit target | Mode difference / isolation |
-| --- | --- | --- | --- | --- |
-| Question-mark menu community | WorkspaceHelpMenuButton -> platform -> desktopHelpConfig | current-language remote -> built-in | shell.openExternal | Desktop / Web platforms open separately; sessions untouched |
-| Native menu / command palette feedback | desktopCommandHandlers -> helpAppConfig | false -> built-in dialog; true -> remote or built-in address | OpenFeedbackDialog / shell | Web platform always opens the address |
-| Windows caption / command candidate community visibility | canOpenCommunity | false when the same language has no remote and no default | read-only | Display state is not treated as an opened link |
-| Question-mark menu issue report | helpMenuActions / feedbackStore | does not read the feedback switch | built-in Dialog | independent of the platform feedback mode |
-| Browser config read | resolveWebHelpConfig / readHelpConfig | envelope, same-language default | fetch + in-memory Map | Web omits platform; no remote-control Host additions |
+| Scenario / entry                                         | Shared implementation / owner                            | Default and validation                                       | Commit target              | Mode difference / isolation                                 |
+| -------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ | -------------------------- | ----------------------------------------------------------- |
+| Question-mark menu community                             | WorkspaceHelpMenuButton -> platform -> desktopHelpConfig | current-language remote -> built-in                          | shell.openExternal         | Desktop / Web platforms open separately; sessions untouched |
+| Native menu / command palette feedback                   | desktopCommandHandlers -> helpAppConfig                  | false -> built-in dialog; true -> remote or built-in address | OpenFeedbackDialog / shell | Web platform always opens the address                       |
+| Windows caption / command candidate community visibility | canOpenCommunity                                         | false when the same language has no remote and no default    | read-only                  | Display state is not treated as an opened link              |
+| Question-mark menu issue report                          | helpMenuActions / feedbackStore                          | does not read the feedback switch                            | built-in Dialog            | independent of the platform feedback mode                   |
+| Browser config read                                      | resolveWebHelpConfig / readHelpConfig                    | envelope, same-language default                              | fetch + in-memory Map      | Web omits platform; no remote-control Host additions        |
 
 ## Shared and Divergent Behavior / State Owners
 
@@ -76,13 +76,13 @@ full mobile remote-control acceptance.
 
 ## Accepted Cases / Coverage Matrix
 
-| ID | Setup | Action | Must assert | Evidence layer |
-| --- | --- | --- | --- | --- |
-| HC-01 | Local HTTP fixture with full zh/en config | Click community in the real question-mark menu; call zh/en availability and click again | Correct-language external link, actual request path/params/count; repeated reads hit memory | UI + network |
-| HC-02 | Remote has only zh; fixture provides English built-in defaults | English platform community action | Uses the English default; never enters the Chinese remote | runtime + filesystem |
-| HC-03 | Remote false, local true; another endpoint remote true | Platform feedback action | false shows the real built-in Dialog and does not call the external link; true opens the remote address | UI + runtime |
-| HC-04 | 503 / business error / invalid JSON | Platform availability and community; recover with a success response from the same endpoint | Default stays available, failure is not cached, new address after recovery; with no value the platform is unavailable | HTTP + runtime |
-| HC-05 | Chromium narrow screen loads the real Web resolver bundle, mutable HTTP fixture | zh/en, concurrency, reload the browser page | Same-language result, no platform, requests coalesced; reload re-requests instead of using the HTTP cache | browser + HTTP |
+| ID    | Setup                                                                           | Action                                                                                      | Must assert                                                                                                           | Evidence layer       |
+| ----- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| HC-01 | Local HTTP fixture with full zh/en config                                       | Click community in the real question-mark menu; call zh/en availability and click again     | Correct-language external link, actual request path/params/count; repeated reads hit memory                           | UI + network         |
+| HC-02 | Remote has only zh; fixture provides English built-in defaults                  | English platform community action                                                           | Uses the English default; never enters the Chinese remote                                                             | runtime + filesystem |
+| HC-03 | Remote false, local true; another endpoint remote true                          | Platform feedback action                                                                    | false shows the real built-in Dialog and does not call the external link; true opens the remote address               | UI + runtime         |
+| HC-04 | 503 / business error / invalid JSON                                             | Platform availability and community; recover with a success response from the same endpoint | Default stays available, failure is not cached, new address after recovery; with no value the platform is unavailable | HTTP + runtime       |
+| HC-05 | Chromium narrow screen loads the real Web resolver bundle, mutable HTTP fixture | zh/en, concurrency, reload the browser page                                                 | Same-language result, no platform, requests coalesced; reload re-requests instead of using the HTTP cache             | browser + HTTP       |
 
 ## E2E Handoff Notes
 

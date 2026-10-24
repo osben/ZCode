@@ -35,15 +35,15 @@ Output a concept map recording where each concept comes from and why it relates 
 
 Collect only dimensions that change the product result or an assertion. Common dimensions:
 
-| Type                  | Examples                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| Product state         | `session.phase`, `queue.length`, `queue.autoDrain`, `goal`, `compact.origin`         |
-| Input event           | send text, `/goal`, `/compact`, stop, edit, fork, queue send-now                     |
-| Target object         | latest turn, old turn, assistant message, user query, queue item                     |
-| Entry surface         | composer, turn actions, queue actions, toolbar, goal control                         |
-| Run shape             | text streaming, tool call, compact pending, goal verification                        |
+| Type                      | Examples                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------- |
+| Product state             | `session.phase`, `queue.length`, `queue.autoDrain`, `goal`, `compact.origin`     |
+| Input event               | send text, `/goal`, `/compact`, stop, edit, fork, queue send-now                 |
+| Target object             | latest turn, old turn, assistant message, user query, queue item                 |
+| Entry surface             | composer, turn actions, queue actions, toolbar, goal control                     |
+| Run shape                 | text streaming, tool call, compact pending, goal verification                    |
 | Configuration/environment | model/provider/thought, desktop continuous, web remote replayable, Docker replay |
-| Evidence layer        | UI, runtime/store, protocol, network/SSE, files, logs                                |
+| Evidence layer            | UI, runtime/store, protocol, network/SSE, files, logs                            |
 
 If a dimension is fully absorbed by an invariant, do not permute it fully, but record the pruning reason and a representative case.
 
@@ -57,13 +57,13 @@ state -> candidate -> guard -> effect -> case
 
 First take the Cartesian product of the relevant dimensions, then prune by guards and invariants. Every candidate combination must fall into one state:
 
-| State           | Meaning                                                             |
-| --------------- | ------------------------------------------------------------------- |
-| `accepted`      | Product semantics are clear, setup/action/assert can be written     |
-| `undefined`     | Can really happen but the product semantics are not confirmed       |
-| `pruned`        | Explicitly cut by a guard or invariant                              |
+| State           | Meaning                                                                            |
+| --------------- | ---------------------------------------------------------------------------------- |
+| `accepted`      | Product semantics are clear, setup/action/assert can be written                    |
+| `undefined`     | Can really happen but the product semantics are not confirmed                      |
+| `pruned`        | Explicitly cut by a guard or invariant                                             |
 | `ignored`       | Exists but is not covered by the current version; the scope reason must be written |
-| `bug-candidate` | The current implementation seems to violate a confirmed protocol    |
+| `bug-candidate` | The current implementation seems to violate a confirmed protocol                   |
 
 The Agent takes only a small batch of questions to the user at a time, to avoid dropping a huge matrix at once. Questions include candidate answers and the impact area, and documents are written back after the user answers.
 

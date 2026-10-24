@@ -26,12 +26,12 @@ the same actions:
 
 ## Current Capability Matrix
 
-| Resource  | Refresh                 | Import      | Export      | New         |
-| --------- | ----------------------- | ----------- | ----------- | ----------- |
-| Memory    | implemented             | placeholder | placeholder | placeholder |
-| Subagents | existing data refresh   | placeholder | placeholder | implemented |
-| Plugins   | existing reload entry   | placeholder | placeholder | implemented |
-| MCPs      | implemented             | implemented | placeholder | implemented |
-| Skills    | existing data refresh   | implemented | placeholder | implemented |
-| Commands  | existing data refresh   | implemented | placeholder | implemented |
-| Hooks     | existing reload entry   | placeholder | placeholder | implemented |
+| Resource  | Refresh               | Import      | Export      | New         |
+| --------- | --------------------- | ----------- | ----------- | ----------- |
+| Memory    | implemented           | placeholder | placeholder | placeholder |
+| Subagents | existing data refresh | placeholder | placeholder | implemented |
+| Plugins   | existing reload entry | placeholder | placeholder | implemented |
+| MCPs      | implemented           | implemented | placeholder | implemented |
+| Skills    | existing data refresh | implemented | placeholder | implemented |
+| Commands  | existing data refresh | implemented | placeholder | implemented |
+| Hooks     | existing reload entry | placeholder | placeholder | implemented |

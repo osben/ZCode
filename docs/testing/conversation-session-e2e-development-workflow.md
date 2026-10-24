@@ -168,12 +168,12 @@ A pure composer, native picker or other formal case that triggers no provider re
 
 Recording may capture everything; when turning it into a fixture, only necessary requests enter the contract.
 
-| Class       | Meaning                                                                                 | Handling                                                |
-| ----------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `main`      | Requests the case's core assertions depend on, e.g. edit rerun, compact summary, goal verifier | Put into the case-local fixture                    |
-| `common`    | Auxiliary requests stably needed by several cases, e.g. title generation                | Put into the common fixture                             |
-| `ignore`    | Requests that appear in the capture but are not part of the test contract               | Not in the case-local fixture; explain in the manifest if needed |
-| `synthetic` | Timing/faults that real capture cannot stabilize or construct, e.g. slow stream, broken stream, 429 | Put into the case-local fixture and write `syntheticReason` |
+| Class       | Meaning                                                                                             | Handling                                                         |
+| ----------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `main`      | Requests the case's core assertions depend on, e.g. edit rerun, compact summary, goal verifier      | Put into the case-local fixture                                  |
+| `common`    | Auxiliary requests stably needed by several cases, e.g. title generation                            | Put into the common fixture                                      |
+| `ignore`    | Requests that appear in the capture but are not part of the test contract                           | Not in the case-local fixture; explain in the manifest if needed |
+| `synthetic` | Timing/faults that real capture cannot stabilize or construct, e.g. slow stream, broken stream, 429 | Put into the case-local fixture and write `syntheticReason`      |
 
 Tools can suggest classification automatically from markers, paths, prompt content and request order, but product semantics are reviewed by the developer.
 
@@ -181,12 +181,12 @@ Tools can suggest classification automatically from markers, paths, prompt conte
 
 Different cases use different replay policies, so not every test is slowed by slow streams and performance cases are not washed out by one-shot body replay.
 
-| Policy              | Applicable scenario                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------ |
-| `fast-text`         | Ordinary functional assertions; a fast return suffices                                           |
-| `controlled-stream` | Cases such as stop, queue, interrupted that need a stable streaming window                       |
+| Policy              | Applicable scenario                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `fast-text`         | Ordinary functional assertions; a fast return suffices                                                                 |
+| `controlled-stream` | Cases such as stop, queue, interrupted that need a stable streaming window                                             |
 | `recorded-stream`   | Performance, Markdown rendering and stream-rhythm cases that must keep real `responseEvents` / `responseChunkTimeline` |
-| `fault-stream`      | Fault injection such as broken stream, half packet, socket destroy                               |
+| `fault-stream`      | Fault injection such as broken stream, half packet, socket destroy                                                     |
 
 Synthetic controlled/fault streams must state the reason. Typical example: the real model is too fast to cover the stop window stably.
 

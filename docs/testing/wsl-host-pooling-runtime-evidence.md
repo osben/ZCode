@@ -31,11 +31,10 @@ Covered: release during connection establishment, Host shutdown phase, window-le
 The desktop app was started from the current branch and the preload bridge was called through the dev-mode fixed CDP port `9229`:
 
 ```js
-window.zcode.connectRemote(
-  { kind: "wsl", distro: "Ubuntu" },
-  requestId,
-  { workspacePath, workspaceIdentity },
-);
+window.zcode.connectRemote({ kind: "wsl", distro: "Ubuntu" }, requestId, {
+  workspacePath,
+  workspaceIdentity,
+});
 ```
 
 Process sampling:
@@ -51,10 +50,10 @@ wsl.exe -d Ubuntu -- bash -lc "ps -eo pid,ppid,rss,lstart,args"
 
 First connection succeeded, logical session `80b8b530-d2ca-447a-9966-9d3472f76dae`:
 
-| Layer | PID | RSS | Start time | Note |
-| --- | ---: | ---: | --- | --- |
-| Windows remote UtilityProcess Host | 24868 | not sampled separately | 17:26:13 | Created by the first WSL workspace |
-| WSL `zcode-server` | 1083 | 192188 KiB | 17:26:24 | The only server |
+| Layer                              |   PID |                    RSS | Start time | Note                               |
+| ---------------------------------- | ----: | ---------------------: | ---------- | ---------------------------------- |
+| Windows remote UtilityProcess Host | 24868 | not sampled separately | 17:26:13   | Created by the first WSL workspace |
+| WSL `zcode-server`                 |  1083 |             192188 KiB | 17:26:24   | The only server                    |
 
 ### Two workspaces
 
@@ -75,11 +74,11 @@ remoteSessionId:
   0e03e8c0-213f-4966-a119-0a4ebfcf6808
 ```
 
-| Layer | PID | PPID | RSS | Count |
-| --- | ---: | ---: | ---: | ---: |
-| Windows remote UtilityProcess Host | 24708 | 3596 | not sampled separately | 1 |
-| Windows `wsl.exe` launcher | 26684 | 24708 | not sampled separately | 1 launcher chain |
-| WSL `zcode-server` | 1106 | 1105 | 198232 KiB | 1 |
+| Layer                              |   PID |  PPID |                    RSS |            Count |
+| ---------------------------------- | ----: | ----: | ---------------------: | ---------------: |
+| Windows remote UtilityProcess Host | 24708 |  3596 | not sampled separately |                1 |
+| Windows `wsl.exe` launcher         | 26684 | 24708 | not sampled separately | 1 launcher chain |
+| WSL `zcode-server`                 |  1106 |  1105 |             198232 KiB |                1 |
 
 After releasing logical sessions 4 and 5 and keeping three workspaces, the Host PID is still `24708`, the server PID still `1106`, the server count still `1`; RSS was `167216 KiB`.
 
@@ -106,10 +105,10 @@ Command sampling and the WSL start itself add a few seconds of scheduling overhe
 
 After reconnecting one workspace:
 
-| Resource | PID before exit | About 4.0s after normal close |
-| --- | ---: | --- |
-| Windows remote Host | 25468 | absent |
-| WSL `zcode-server` | 1122 | count 0 |
+| Resource            | PID before exit | About 4.0s after normal close |
+| ------------------- | --------------: | ----------------------------- |
+| Windows remote Host |           25468 | absent                        |
+| WSL `zcode-server`  |            1122 | count 0                       |
 
 After the main window called `CloseMainWindow()` the main process exited in `741ms`; from the close request to the final PID check was `4024ms`. A second round repeated the close with three workspace owners still held: main exited in `396ms` and at the `3641ms` check Host PID `24708` and server PID `1106` were also gone.
 

@@ -15,12 +15,12 @@ user prompt / Stop / output-path click
 
 Impact is limited to: Bash handler, execution adapter, tool result/progress projection, Execute renderer, TaskOutput/TaskStop. Adjacent Hook cases verify that the shared pipe collector did not regress. No new product state or feature-graph node is added.
 
-| Entry                          | Authoritative state     | Required result                                                |
-| ------------------------------ | ----------------------- | -------------------------------------------------------------- |
-| Foreground Bash / subagent Bash | CLI execution           | Raw file, summary, running progress, result after stop         |
-| Explicit/timeout background Bash | CLI background registry | File keeps growing, TaskOutput, single notification            |
-| Output-file link               | Desktop code viewer     | Opens the real output path, runs no extra Bash                 |
-| Hook                           | Generic execution pipe  | stdin and stdout/stderr still delivered through the collector  |
+| Entry                            | Authoritative state     | Required result                                               |
+| -------------------------------- | ----------------------- | ------------------------------------------------------------- |
+| Foreground Bash / subagent Bash  | CLI execution           | Raw file, summary, running progress, result after stop        |
+| Explicit/timeout background Bash | CLI background registry | File keeps growing, TaskOutput, single notification           |
+| Output-file link                 | Desktop code viewer     | Opens the real output path, runs no extra Bash                |
+| Hook                             | Generic execution pipe  | stdin and stdout/stderr still delivered through the collector |
 
 Measurement uses the four-domain report with `ZCODE_E2E_COVERAGE=1`; every report must be `complete=true`. Domains are counted separately (percentages are not merged); case pass rate and code hit rate are listed separately. The changed-line basis is **Istanbul statement start lines ∩ added/modified diff lines**; types, import/export, comments, blank lines and deleted lines are excluded. Multiple runs in one domain are unioned by source position, never by statement ID. CLI dist JS is first compared byte-for-byte (minus `sourceMappingURL`) with a fresh build from the same tsconfig, and the source map then maps back to original TypeScript. Code outside the collected source range is listed separately, not guessed as zero or covered.
 
@@ -28,15 +28,15 @@ Measurement uses the four-domain report with `ZCODE_E2E_COVERAGE=1`; every repor
 
 All come from the existing Bash spec and confirmed behavior. Each scenario checks real file/process facts and the provider-visible result; UI scenarios also check the DOM. They use case-local replay fixtures and file barriers. New specs were verified in `manual-review/pending` first; after the 2026-09-08 user review the Bash output spec and the two Terminal specs were promoted (promotion is not adding them to a Docker preset).
 
-| ID    | Setup / Action                                                                                                                                      | Assertions                                                                                                                                                                                                                                         | Status   |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| BDO01 | Script at a Chinese path with spaces; stdout/stderr without newline; small output and empty output / non-zero exit                                  | Both streams merged, encoding intact, exit code not lost, small output file cleaned up                                                                                                                                                             | accepted |
-| BDO02 | Normal foreground output over 64 MiB                                                                                                                | Full file kept, 30000-byte head summary, complete tail; foreground shows body only, no hint or file entry                                                                                                                                          | accepted |
-| BDO03 | Two independent sessions' foreground Bash each produce multi-line output over 4 KiB; finish one, then advance the other                              | Expanded preview bounded, the other task keeps updating, collapsed shows no output, no preview left in terminal state                                                                                                                              | accepted |
-| BDO04 | Background Bash with segmented output; TaskOutput twice while running, then query after natural exit                                                 | While running: head read, repeatable same prefix; terminal: tail read; file not truncated                                                                                                                                                          | accepted |
-| BDO05 | Foreground/background each really write exactly 5 GiB, cross a check cycle, then write 1 byte                                                       | Equal to threshold stays running; strictly greater makes the watchdog terminate; the real producer exits, result keeps the output-limit diagnostic; background notifies once; the structured 137 assignment is verified separately by execution-layer tests | accepted |
-| BDO06 | Ordinary Bash deletes its own output file while running then exits; output path is a directory at preparation                                        | Read failure has a clear diagnostic; open failure visible; next Bash runs normally                                                                                                                                                                 | accepted |
-| BDO07 | One foreground Bash writes three newline-free chunks to stdout/stderr through a file barrier; expanded state updates for the first two, collapsed while the third is produced, then expanded again | Each chunk updates the file and the expanded preview first; the producer is still alive, the tool still `in_progress`, no final `tool_result`; the process exits only on the last release; result contains all three chunks and progress disappears | accepted |
+| ID    | Setup / Action                                                                                                                                                                                     | Assertions                                                                                                                                                                                                                                                  | Status   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| BDO01 | Script at a Chinese path with spaces; stdout/stderr without newline; small output and empty output / non-zero exit                                                                                 | Both streams merged, encoding intact, exit code not lost, small output file cleaned up                                                                                                                                                                      | accepted |
+| BDO02 | Normal foreground output over 64 MiB                                                                                                                                                               | Full file kept, 30000-byte head summary, complete tail; foreground shows body only, no hint or file entry                                                                                                                                                   | accepted |
+| BDO03 | Two independent sessions' foreground Bash each produce multi-line output over 4 KiB; finish one, then advance the other                                                                            | Expanded preview bounded, the other task keeps updating, collapsed shows no output, no preview left in terminal state                                                                                                                                       | accepted |
+| BDO04 | Background Bash with segmented output; TaskOutput twice while running, then query after natural exit                                                                                               | While running: head read, repeatable same prefix; terminal: tail read; file not truncated                                                                                                                                                                   | accepted |
+| BDO05 | Foreground/background each really write exactly 5 GiB, cross a check cycle, then write 1 byte                                                                                                      | Equal to threshold stays running; strictly greater makes the watchdog terminate; the real producer exits, result keeps the output-limit diagnostic; background notifies once; the structured 137 assignment is verified separately by execution-layer tests | accepted |
+| BDO06 | Ordinary Bash deletes its own output file while running then exits; output path is a directory at preparation                                                                                      | Read failure has a clear diagnostic; open failure visible; next Bash runs normally                                                                                                                                                                          | accepted |
+| BDO07 | One foreground Bash writes three newline-free chunks to stdout/stderr through a file barrier; expanded state updates for the first two, collapsed while the third is produced, then expanded again | Each chunk updates the file and the expanded preview first; the producer is still alive, the tool still `in_progress`, no final `tool_result`; the process exits only on the last release; result contains all three chunks and progress disappears         | accepted |
 
 ### BDO07 live refresh sequence
 
@@ -73,12 +73,12 @@ Execution notes:
 
 The 2026-09-08 runs used the then "collapsed-state preview" display contract. Since 2026-09-09 output shows only when expanded (see below); the old "collapsed preview" results are not acceptance evidence for the new contract.
 
-| Acceptance set                                           | Cases | Result    | Artifact run ID                    |
-| -------------------------------------------------------- | ----- | --------- | ---------------------------------- |
-| Existing `conversation-session-background.test.ts`      | 25    | 25 pass   | `bash-coverage-baseline-20260908`  |
-| New BDO01-BDO06 (foreground and background limit one each) | 7   | 7 pass    | `bash-output-final-20260908`       |
-| Terminal expanded result, single Bash Stop               | 2     | 2 pass    | same                               |
-| V4 Bash background-panel cancel                          | 1     | 1 pass    | same                               |
+| Acceptance set                                             | Cases | Result  | Artifact run ID                   |
+| ---------------------------------------------------------- | ----- | ------- | --------------------------------- |
+| Existing `conversation-session-background.test.ts`         | 25    | 25 pass | `bash-coverage-baseline-20260908` |
+| New BDO01-BDO06 (foreground and background limit one each) | 7     | 7 pass  | `bash-output-final-20260908`      |
+| Terminal expanded result, single Bash Stop                 | 2     | 2 pass  | same                              |
+| V4 Bash background-panel cancel                            | 1     | 1 pass  | same                              |
 
 Both acceptance runs exited normally and all four domains had `coverage/summary.json` `complete=true`. 35 cases pass, 7 of them new; an outdated assertion in the existing Terminal Stop case that still waited for a single-tool parent group was corrected. Production source was not modified. The new BDO spec and the verified Terminal spec moved to the formal directory with user authorization, keeping case-local fixtures.
 
@@ -86,12 +86,12 @@ Promotion re-verification: isolated replay `bash-formal-isolated-r4-20260908` an
 
 ### Production changed-line coverage (commit `9c99f9623c`)
 
-| Domain                                   | Baseline        | Final               |
-| ---------------------------------------- | --------------- | ------------------- |
+| Domain                                                            | Baseline        | Final               |
+| ----------------------------------------------------------------- | --------------- | ------------------- |
 | CLI (incl. shared execution branches and old-protocol validation) | 204/268, 76.12% | **212/268, 79.10%** |
-| Renderer                                 | 13/14, 92.86%   | **14/14, 100%**     |
-| Host                                     | 3/7, 42.86%     | 3/7, 42.86%         |
-| Main                                     | 3/7, 42.86%     | 3/7, 42.86%         |
+| Renderer                                                          | 13/14, 92.86%   | **14/14, 100%**     |
+| Host                                                              | 3/7, 42.86%     | 3/7, 42.86%         |
+| Main                                                              | 3/7, 42.86%     | 3/7, 42.86%         |
 
 Core files: `bash-file-output.ts` 80/83, `bash-output-preview.ts` 14/14, `bash-progress-poller.ts` 23/23; together **117/120, 97.50%**. These are changed-line hit rates under the stated basis, **not repository, branch or cross-platform coverage**. Edits to type fields, object properties and JSX attributes may have no new statement start line; their semantics are verified by product assertions. Host/Main misses are four old-protocol result-validation lines.
 
@@ -104,16 +104,16 @@ Machine-readable stats and the recompute script are in the final artifact:
 
 Adapter files are under `apps/zcode-cli/packages/adapters/src/exec/`; line numbers refer to the target commit.
 
-| File                                  | Unhit lines                                                                  | Reason / evidence boundary                                                                                                        |
-| ------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `bash-file-output.ts`                 | 60, 194, 197                                                                 | Owned-file deletion on cancel-after-prepare / spawn failure; disk-capacity/inode exhaustion diagnostics. The host filesystem is not exhausted to raise coverage |
-| `node-execution-adapter-lifecycle.ts` | 40, 62                                                                       | Standalone `start()` API; the ordinary Bash product entry uses foreground execution and the commit-background path               |
-| `node-execution-adapter-process.ts`   | 127-130, 132, 134, 136-137                                                   | Windows taskkill; macOS E2E cannot claim it                                                                                       |
-| same                                  | 184, 188-193, 209-210, 213-215, 217, 229, 231-233, 235-236                   | Retained generic pipe, stdin, drain paths that ordinary Bash now bypasses                                                         |
-| `node-execution-adapter-run.ts`       | 192, 314                                                                     | Cancel window after open completes, spawn error; supplemented by execution-layer deterministic tests                              |
-| same                                  | 278-280, 284-287, 298, 300, 306, 312                                         | Generic pipe progress / drain / collector close                                                                                   |
-| `output-collector.ts`                 | 81-83, 88, 133, 141, 171                                                     | Retained generic collector branches; ordinary Bash no longer creates a collector                                                  |
-| `packages/shared/src/zcode-protocol/index.ts` | 141, 144-146                                                         | Old-protocol result validation; the V4 Desktop entry does not trigger it. Unhit in CLI/Host/Main                                  |
+| File                                          | Unhit lines                                                | Reason / evidence boundary                                                                                                                                      |
+| --------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bash-file-output.ts`                         | 60, 194, 197                                               | Owned-file deletion on cancel-after-prepare / spawn failure; disk-capacity/inode exhaustion diagnostics. The host filesystem is not exhausted to raise coverage |
+| `node-execution-adapter-lifecycle.ts`         | 40, 62                                                     | Standalone `start()` API; the ordinary Bash product entry uses foreground execution and the commit-background path                                              |
+| `node-execution-adapter-process.ts`           | 127-130, 132, 134, 136-137                                 | Windows taskkill; macOS E2E cannot claim it                                                                                                                     |
+| same                                          | 184, 188-193, 209-210, 213-215, 217, 229, 231-233, 235-236 | Retained generic pipe, stdin, drain paths that ordinary Bash now bypasses                                                                                       |
+| `node-execution-adapter-run.ts`               | 192, 314                                                   | Cancel window after open completes, spawn error; supplemented by execution-layer deterministic tests                                                            |
+| same                                          | 278-280, 284-287, 298, 300, 306, 312                       | Generic pipe progress / drain / collector close                                                                                                                 |
+| `output-collector.ts`                         | 81-83, 88, 133, 141, 171                                   | Retained generic collector branches; ordinary Bash no longer creates a collector                                                                                |
+| `packages/shared/src/zcode-protocol/index.ts` | 141, 144-146                                               | Old-protocol result validation; the V4 Desktop entry does not trigger it. Unhit in CLI/Host/Main                                                                |
 
 The existing `HK-LC-01`, chosen only for the shared pipe, completed its stdin/output and provider-visible Hook context assertions in `bash-output-compat-r5-20260908`, then failed because the UI shows `Hooks` in English while the old test hard-codes `钩子`. It is not counted as passed and is **not merged into the acceptance coverage above**. Counting only the extra hits from that trace, CLI would be 231/268 (86.19%); this number only locates remaining branches and does not replace passing E2E evidence. The unrelated Hook i18n assertion is not modified here.
 

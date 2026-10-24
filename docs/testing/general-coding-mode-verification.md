@@ -2,25 +2,25 @@
 
 ## Feature Summary
 
-| Field | Value |
-| --- | --- |
-| Developer intent / capability | M1: presentation differences and panel retention between general and coding mode |
-| Change layer | presentation, option-source, draft-default, validation, persistence |
-| Operating mode | implementation-handoff; closing verification added against the confirmed product semantics |
-| Primary seeds | `createZCodeStore`, `useIsGeneralMode`, `useAppPanels`, `ToolCallBlockComponent`, `ConversationRowView` |
-| Out of scope | Model prompts, artifact management, unified file preview, settings button displacement, changing continuous/replayable protocols |
+| Field                         | Value                                                                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Developer intent / capability | M1: presentation differences and panel retention between general and coding mode                                                 |
+| Change layer                  | presentation, option-source, draft-default, validation, persistence                                                              |
+| Operating mode                | implementation-handoff; closing verification added against the confirmed product semantics                                       |
+| Primary seeds                 | `createZCodeStore`, `useIsGeneralMode`, `useAppPanels`, `ToolCallBlockComponent`, `ConversationRowView`                          |
+| Out of scope                  | Model prompts, artifact management, unified file preview, settings button displacement, changing continuous/replayable protocols |
 
 ## UI Surface Matrix
 
-| User scenario / UI entry | Shared implementation | Display/authority owner, default and landing | Validation / commit action | Mode boundary / isolation invariant |
-| --- | --- | --- | --- | --- |
-| Appearance setting / avatar menu switch | `settingsCodePreview` / `WorkspaceSidebarFooter` | ZCodeStore; default coding; localStorage | setInterfaceMode / existing broadcast | Shared by Desktop/Web; does not change task mode, model or permissions |
-| View commands and file changes | the four `ToolCallBlocks` renderers | Original tool nodes; display derived only | canToggle/forceOpen, title and detail filtering | Raw results not deleted; file clicks still use the existing preview |
-| Thinking / final answer | `ConversationRowView` / `MessageResponse` | Original row; code preview preference | Thinking source display, forceCodeWrap | Applied while streaming and when complete; never written back to the source |
-| Status Git area / turn summary | `conversationStatusPanelModel` / `ConversationTurnGroup` | Original Git and task projection | Hide Git model / summary | Does not stop Git queries or rewrite the repo |
-| New review/terminal | `AnimatedSidePanePanel` / quickPick / Terminal | useAppPanels; existing tabs and terminal state | Filter options, block creation | Already-open items kept; existing close still works |
-| Open externally | `WorkspaceEditorButtonGroup` / openWithEditors | Installed programs / existing selected preference | Filtered to file manager | Does not override the saved editor preference |
-| Dev settings isolation | SettingService | Explicit home override / fallback to original environment | Existing get/update | Compatible with the original path when no override is configured |
+| User scenario / UI entry                | Shared implementation                                    | Display/authority owner, default and landing              | Validation / commit action                      | Mode boundary / isolation invariant                                         |
+| --------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
+| Appearance setting / avatar menu switch | `settingsCodePreview` / `WorkspaceSidebarFooter`         | ZCodeStore; default coding; localStorage                  | setInterfaceMode / existing broadcast           | Shared by Desktop/Web; does not change task mode, model or permissions      |
+| View commands and file changes          | the four `ToolCallBlocks` renderers                      | Original tool nodes; display derived only                 | canToggle/forceOpen, title and detail filtering | Raw results not deleted; file clicks still use the existing preview         |
+| Thinking / final answer                 | `ConversationRowView` / `MessageResponse`                | Original row; code preview preference                     | Thinking source display, forceCodeWrap          | Applied while streaming and when complete; never written back to the source |
+| Status Git area / turn summary          | `conversationStatusPanelModel` / `ConversationTurnGroup` | Original Git and task projection                          | Hide Git model / summary                        | Does not stop Git queries or rewrite the repo                               |
+| New review/terminal                     | `AnimatedSidePanePanel` / quickPick / Terminal           | useAppPanels; existing tabs and terminal state            | Filter options, block creation                  | Already-open items kept; existing close still works                         |
+| Open externally                         | `WorkspaceEditorButtonGroup` / openWithEditors           | Installed programs / existing selected preference         | Filtered to file manager                        | Does not override the saved editor preference                               |
+| Dev settings isolation                  | SettingService                                           | Explicit home override / fallback to original environment | Existing get/update                             | Compatible with the original path when no override is configured            |
 
 ## Shared and divergent behavior
 
@@ -28,14 +28,14 @@ Shared components read the same mode preference. Candidate filtering and display
 
 ## Feature relationships
 
-| Rank | From -> Semantic edge -> To | Reason and evidence |
-| --- | --- | --- |
-| must-inspect | Preference -> projects-to -> conversation/settings/panel entries | All `useIsGeneralMode` callers and `createQuickPickCommands` |
-| must-inspect | Mode switch -> must-not-mutate -> already-open panel state | `useAppPanels` returns raw `sidePaneState` / `isTerminalOpen` |
-| should-inspect | Mode -> projects-to -> code wrapping, Git area | `MessageResponse`, `conversationStatusPanelModel` |
-| conditional | Dev environment -> persists-to -> separate settings directory | `SettingService.resolveUserHomeDir` |
-| invariant-only | UI preference -> must-remain-isolated-from -> Agent / remote stream | shared protocol, runtime and relay unchanged |
-| evidence-only | Unit tests / pending UI E2E -> covered-by -> cases below | Unit tests are not remote-control end-to-end proof |
+| Rank           | From -> Semantic edge -> To                                         | Reason and evidence                                           |
+| -------------- | ------------------------------------------------------------------- | ------------------------------------------------------------- |
+| must-inspect   | Preference -> projects-to -> conversation/settings/panel entries    | All `useIsGeneralMode` callers and `createQuickPickCommands`  |
+| must-inspect   | Mode switch -> must-not-mutate -> already-open panel state          | `useAppPanels` returns raw `sidePaneState` / `isTerminalOpen` |
+| should-inspect | Mode -> projects-to -> code wrapping, Git area                      | `MessageResponse`, `conversationStatusPanelModel`             |
+| conditional    | Dev environment -> persists-to -> separate settings directory       | `SettingService.resolveUserHomeDir`                           |
+| invariant-only | UI preference -> must-remain-isolated-from -> Agent / remote stream | shared protocol, runtime and relay unchanged                  |
+| evidence-only  | Unit tests / pending UI E2E -> covered-by -> cases below            | Unit tests are not remote-control end-to-end proof            |
 
 ## State owners and commit sinks
 
@@ -63,15 +63,15 @@ The existing semantic graph has no interface mode; capability, preference owner 
 
 ## Accepted cases / coverage matrix
 
-| ID | Setup | Action | Assertions / non-UI evidence | Entry and status |
-| --- | --- | --- | --- | --- |
-| MODE-01 | No value / old value / invalid value | Initialize and switch | Default/compat normalization correct, preference saved, broadcast without echo | unit passed |
-| MODE-02 | coding, bottom terminal and git/terminal tabs open | coding -> general -> coding | Same tab id, active item and collapsed state kept; close still works; creation controlled | hook passed; Electron 2/2 passed |
-| MODE-03 | general, empty side panel | View start page / add / command menu | No review/terminal, new button hidden, browser entry kept | unit passed; Electron 2/2 passed |
-| MODE-04 | Execute/modify tool, running/done/failed | Switch mode | Detail visibility changes, failed status kept, raw nodes unmodified | unit passed |
-| MODE-05 | Thinking source wiring, reply with code | Project and switch back | Thinking restores raw wiring; reply wrapping does not override the saved preference | unit passed |
-| MODE-06 | Git status and installed editors | Switch mode | Git area hidden, file manager kept | unit passed |
-| MODE-07 | Explicit Dev home / normal home | Update settings | Writes only the target settings path, does not pollute the real home | service unit passed |
+| ID      | Setup                                              | Action                               | Assertions / non-UI evidence                                                              | Entry and status                 |
+| ------- | -------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------- | -------------------------------- |
+| MODE-01 | No value / old value / invalid value               | Initialize and switch                | Default/compat normalization correct, preference saved, broadcast without echo            | unit passed                      |
+| MODE-02 | coding, bottom terminal and git/terminal tabs open | coding -> general -> coding          | Same tab id, active item and collapsed state kept; close still works; creation controlled | hook passed; Electron 2/2 passed |
+| MODE-03 | general, empty side panel                          | View start page / add / command menu | No review/terminal, new button hidden, browser entry kept                                 | unit passed; Electron 2/2 passed |
+| MODE-04 | Execute/modify tool, running/done/failed           | Switch mode                          | Detail visibility changes, failed status kept, raw nodes unmodified                       | unit passed                      |
+| MODE-05 | Thinking source wiring, reply with code            | Project and switch back              | Thinking restores raw wiring; reply wrapping does not override the saved preference       | unit passed                      |
+| MODE-06 | Git status and installed editors                   | Switch mode                          | Git area hidden, file manager kept                                                        | unit passed                      |
+| MODE-07 | Explicit Dev home / normal home                    | Update settings                      | Writes only the target settings path, does not pollute the real home                      | service unit passed              |
 
 ## Planning and E2E handoff notes
 

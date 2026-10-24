@@ -8,15 +8,15 @@
 
 ## Summary
 
-| Field | Conclusion |
-| --- | --- |
-| Change level | presentation, validation, commit-effect |
-| Input | `::code-comment{...}` in a persisted Assistant text row |
-| Output | Projected body text + a turn-local group of single-line code review cards |
-| Click effect | Directly opens a workspace-scoped `code-review` CodeViewer, locates the line and shows the read-only model comment in the existing comment style; the file need not be in a Git change |
-| Rollout owner | Renderer Root capability `assistantCodeCommentCardsEnabled`, default `false`; the Desktop and mobile `/remote` workspace bridges set it to `true` explicitly |
-| Recovery | Deterministically rebuilt from the raw row text; no independent card state is persisted |
-| Out of scope | File existence check at card generation, the Assistant Preview Cards 15->10 quota, Composer code-comment drafts, Git diff and historical diff snapshots |
+| Field         | Conclusion                                                                                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Change level  | presentation, validation, commit-effect                                                                                                                                                |
+| Input         | `::code-comment{...}` in a persisted Assistant text row                                                                                                                                |
+| Output        | Projected body text + a turn-local group of single-line code review cards                                                                                                              |
+| Click effect  | Directly opens a workspace-scoped `code-review` CodeViewer, locates the line and shows the read-only model comment in the existing comment style; the file need not be in a Git change |
+| Rollout owner | Renderer Root capability `assistantCodeCommentCardsEnabled`, default `false`; the Desktop and mobile `/remote` workspace bridges set it to `true` explicitly                           |
+| Recovery      | Deterministically rebuilt from the raw row text; no independent card state is persisted                                                                                                |
+| Out of scope  | File existence check at card generation, the Assistant Preview Cards 15->10 quota, Composer code-comment drafts, Git diff and historical diff snapshots                                |
 
 ## Directive contract
 
@@ -57,10 +57,10 @@ raw assistant text rows
 
 ## Rollout semantics
 
-| Switch | Body | Cards | Reason |
-| --- | --- | --- | --- |
-| `false` (default) | Keep the current raw directive | Not shown | Compatible with already-started Desktop Agents that may still emit directives; comments are not silently dropped |
-| `true` | Hide complete valid directives; no flash of half-streamed ones | Shown | Rollout users get the structured review experience |
+| Switch            | Body                                                           | Cards     | Reason                                                                                                           |
+| ----------------- | -------------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------- |
+| `false` (default) | Keep the current raw directive                                 | Not shown | Compatible with already-started Desktop Agents that may still emit directives; comments are not silently dropped |
+| `true`            | Hide complete valid directives; no flash of half-streamed ones | Shown     | Rollout users get the structured review experience                                                               |
 
 If "never show the raw directive even when off" is required later, the same capability switch must also control the directive output requirement in the Desktop context; hiding it only in the Renderer without controlling Agent output is unsafe.
 
@@ -132,36 +132,36 @@ card click
 
 ## UI surface matrix
 
-| Scenario | UI entry | Display owner | Gating | Click/commit | Authoritative state | Mode boundary | Must isolate |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Assistant body | `AssistantTextRowView` / `MessageResponse` | Pure projection of the raw row | feature flag + directive validity | none | session row text | desktop continuous and mobile replayable rebuild with the same rule | Does not modify row/snapshot |
-| Review cards | `AssistantCodeCommentCards` | turn-local derived model | latest terminal row (complete / interrupted), 50-item cap | Opens `CodeReviewCodeViewerSource` | no independent persistence | Mobile uses the existing side-pane overlay | Takes no file-preview quota, writes no Composer store |
-| Read-only Code Review | `PreviewPane` / `CodeViewer` / `CommentAnnotation` | source.review + workspace file content | workspace scope + file read; line range decided by actual content | Reuses the code-viewer tab, updates the anchor and scrolls | workspace-scoped File Service | local/remote service injection differs, UI semantics are the same | No Git read/write, no Composer comment, no workspace switch |
+| Scenario              | UI entry                                           | Display owner                          | Gating                                                            | Click/commit                                               | Authoritative state           | Mode boundary                                                       | Must isolate                                                |
+| --------------------- | -------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Assistant body        | `AssistantTextRowView` / `MessageResponse`         | Pure projection of the raw row         | feature flag + directive validity                                 | none                                                       | session row text              | desktop continuous and mobile replayable rebuild with the same rule | Does not modify row/snapshot                                |
+| Review cards          | `AssistantCodeCommentCards`                        | turn-local derived model               | latest terminal row (complete / interrupted), 50-item cap         | Opens `CodeReviewCodeViewerSource`                         | no independent persistence    | Mobile uses the existing side-pane overlay                          | Takes no file-preview quota, writes no Composer store       |
+| Read-only Code Review | `PreviewPane` / `CodeViewer` / `CommentAnnotation` | source.review + workspace file content | workspace scope + file read; line range decided by actual content | Reuses the code-viewer tab, updates the anchor and scrolls | workspace-scoped File Service | local/remote service injection differs, UI semantics are the same   | No Git read/write, no Composer comment, no workspace switch |
 
 ## Impact brief
 
-| Rank | Relationship | Conclusion |
-| --- | --- | --- |
-| must-inspect | raw Assistant rows -> Markdown projection | Directive removal must not break GFM, streaming tolerance, copy and search |
-| must-inspect | turn projection -> code-comment cards | Shown on the latest terminal row; streaming hides only the unclosed tail; cold resume rebuilds deterministically |
-| must-inspect | card click -> Code Review source | Source key, workspace service, read-only comment adaptation and line location are one navigation transaction |
-| should-inspect | Desktop context prompt | While the rollout is off the Agent may still emit directives, which must not be silently removed |
-| conditional | remote/mobile | Reuses workspace-scoped File Service and the existing code-viewer overlay; replayable recovery unchanged |
-| invariant-only | Composer code comments | The store/event for user code comments attached to the Agent is neither reused nor modified |
-| invariant-only | Assistant Preview Cards | No fileChanges/stat calls, no shared 15->10 quota; code-comment reads the target file only after a click |
+| Rank           | Relationship                              | Conclusion                                                                                                       |
+| -------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| must-inspect   | raw Assistant rows -> Markdown projection | Directive removal must not break GFM, streaming tolerance, copy and search                                       |
+| must-inspect   | turn projection -> code-comment cards     | Shown on the latest terminal row; streaming hides only the unclosed tail; cold resume rebuilds deterministically |
+| must-inspect   | card click -> Code Review source          | Source key, workspace service, read-only comment adaptation and line location are one navigation transaction     |
+| should-inspect | Desktop context prompt                    | While the rollout is off the Agent may still emit directives, which must not be silently removed                 |
+| conditional    | remote/mobile                             | Reuses workspace-scoped File Service and the existing code-viewer overlay; replayable recovery unchanged         |
+| invariant-only | Composer code comments                    | The store/event for user code comments attached to the Agent is neither reused nor modified                      |
+| invariant-only | Assistant Preview Cards                   | No fileChanges/stat calls, no shared 15->10 quota; code-comment reads the target file only after a click         |
 
 The tooling environment has no codegraph; impact analysis used feature-graph declarations, exact source callers and focused tests as evidence; after implementation the graph code seeds are updated and the full graph validation runs.
 
 ## Cases and pruning
 
-| ID | Setup | Action | Assertions | Status |
-| --- | --- | --- | --- | --- |
-| ACC01 | Rollout on, complete turn with two valid directives | Render and drag-select card text | Body has no raw syntax; cards in forward order as single lines with priority/title/path/range, body not shown; text selectable and selection does not navigate | accepted |
-| ACC02 | Target file and valid line range exist in the workspace | Click a card | Opens the `code-review` CodeViewer, highlights and scrolls to the range; body shown read-only in the existing comment style; no add/delete interaction and no Composer store write | accepted |
-| ACC03 | Rollout off | Render the same text | No cards; the raw directive stays as today | accepted |
-| ACC04 | streaming half directive, closed directive, complete, interrupted, failed | Advance state | A half-streamed directive does not flash; no card during streaming; cards only on complete/interrupted; failed whole turn and invalid terminal states restore the body | accepted |
-| ACC05 | Persisted historical turn | cold resume / virtual row remount | Same body and cards rebuilt from the row text, no new RPC | accepted |
-| ACC06 | File with no Git change, no line number, out-of-range line, missing file, or several comments on one file | Click | Git state does not affect opening; without a line number or out of range the read-only comment shows at the top, with a notice for out of range; a missing file shows the read error; the same file reuses the code-review tab and updates the anchor, no workspace switch | accepted |
+| ID    | Setup                                                                                                                                                                            | Action                              | Assertions                                                                                                                                                                                                                                                                    | Status   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| ACC01 | Rollout on, complete turn with two valid directives                                                                                                                              | Render and drag-select card text    | Body has no raw syntax; cards in forward order as single lines with priority/title/path/range, body not shown; text selectable and selection does not navigate                                                                                                                | accepted |
+| ACC02 | Target file and valid line range exist in the workspace                                                                                                                          | Click a card                        | Opens the `code-review` CodeViewer, highlights and scrolls to the range; body shown read-only in the existing comment style; no add/delete interaction and no Composer store write                                                                                            | accepted |
+| ACC03 | Rollout off                                                                                                                                                                      | Render the same text                | No cards; the raw directive stays as today                                                                                                                                                                                                                                    | accepted |
+| ACC04 | streaming half directive, closed directive, complete, interrupted, failed                                                                                                        | Advance state                       | A half-streamed directive does not flash; no card during streaming; cards only on complete/interrupted; failed whole turn and invalid terminal states restore the body                                                                                                        | accepted |
+| ACC05 | Persisted historical turn                                                                                                                                                        | cold resume / virtual row remount   | Same body and cards rebuilt from the row text, no new RPC                                                                                                                                                                                                                     | accepted |
+| ACC06 | File with no Git change, no line number, out-of-range line, missing file, or several comments on one file                                                                        | Click                               | Git state does not affect opening; without a line number or out of range the read-only comment shows at the top, with a notice for out of range; a missing file shows the read error; the same file reuses the code-review tab and updates the anchor, no workspace switch    | accepted |
 | ACC07 | Desktop Host persisted a terminal turn with valid directives; mobile hydrates through the external relay or token/WebSocket `/remote` bridge and switches local/remote workspace | View the same turn and click a card | Both mobile bridge Roots enable the capability; body does not leak raw directives, cards match Desktop deterministically; after a workspace switch the capability stays on and navigation keeps `workspaceIdentity` / `remoteSessionId`; the plain Web Server entry stays off | accepted |
 
 Pruning: the first version has no Git diff or historical diff snapshot; desktop/web/mobile is not crossed with all priority/path/source permutations; Windows/UNC paths are covered by focused tests, and Desktop local is the representative first-batch window E2E. The E2E fixture only needs real existing/missing workspace code files, requires no Git change, and does not fake the file existence check at card generation.

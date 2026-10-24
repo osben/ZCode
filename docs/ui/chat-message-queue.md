@@ -18,13 +18,13 @@ While running, both an ordinary `sendText` and `sendGoalCommand` are admitted by
 
 ## Operations
 
-| User action | V4 command | Authoritative result |
-| -------- | ------------------ | ---------------------------------------------------------------------------- |
-| Delete | `deleteQueueItem` | projection removes the queue item |
-| Withdraw to edit | `deleteQueueItem` | after projection removes it, the composer draft is restored on the initiating side only |
-| Send now | `sendQueuedNow` | CLI preempts the current turn (`preserveQueueAutoDrainOnCancel`, no queue hold written); the sent item runs first and the remaining queue continues in order |
-| Reorder | `reorderQueueItem` | projection returns the new order |
-| Auto-drain | `setAutoDrain` | snapshot updates the auto-drain state |
+| User action      | V4 command         | Authoritative result                                                                                                                                         |
+| ---------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Delete           | `deleteQueueItem`  | projection removes the queue item                                                                                                                            |
+| Withdraw to edit | `deleteQueueItem`  | after projection removes it, the composer draft is restored on the initiating side only                                                                      |
+| Send now         | `sendQueuedNow`    | CLI preempts the current turn (`preserveQueueAutoDrainOnCancel`, no queue hold written); the sent item runs first and the remaining queue continues in order |
+| Reorder          | `reorderQueueItem` | projection returns the new order                                                                                                                             |
+| Auto-drain       | `setAutoDrain`     | snapshot updates the auto-drain state                                                                                                                        |
 
 Queue item commands (send now, delete, withdraw to edit, reorder) that hit `stale / proto.staleRevision` resend once using only the ACK's `revisionAtDecision`; if still unsuccessful, send-now and withdraw-to-edit show a retryable hint and the queue item keeps its original text (`specs/queue-command-stale-revision.md`, ISSUE-072).
 

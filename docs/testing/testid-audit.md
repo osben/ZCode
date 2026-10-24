@@ -15,25 +15,25 @@ Scope at audit time: `packages/ui/src/**/*.tsx`, excluding `components/ui/`. Sin
 
 Components missing a testid:
 
-| Component file           | Missing testid                | Note                                                                                 |
-| ------------------------ | ----------------------------- | ------------------------------------------------------------------------------------ |
-| `SettingsPage.tsx`       | `TID_SETTINGS_BACK_BUTTON`    | Defined in `test-ids.ts` but not applied to the back button                          |
-| `PermissionDialog.tsx`   | container testid              | The permission confirmation dialog has none, so E2E cannot locate it                 |
-| `ChatPlan.tsx`           | container testid              | Plan panel                                                                           |
-| `ChatErrorBanner.tsx`    | container testid              | Error banner                                                                         |
-| `ChatInputToolbar.tsx`   | container testid              | Bottom config toolbar (model/mode/thought selectors)                                 |
-| `DebugInfoBar.tsx`       | container testid              | Debug info bar                                                                       |
-| `NewTaskButtonGroup.tsx` | dropdown trigger button       | The provider-switch arrow has none; only the main button has `TID_TASK_NEW_BUTTON`   |
-| `WorkspaceSidebar.tsx`   | empty-state testid            | Empty-state hint div                                                                 |
+| Component file           | Missing testid             | Note                                                                               |
+| ------------------------ | -------------------------- | ---------------------------------------------------------------------------------- |
+| `SettingsPage.tsx`       | `TID_SETTINGS_BACK_BUTTON` | Defined in `test-ids.ts` but not applied to the back button                        |
+| `PermissionDialog.tsx`   | container testid           | The permission confirmation dialog has none, so E2E cannot locate it               |
+| `ChatPlan.tsx`           | container testid           | Plan panel                                                                         |
+| `ChatErrorBanner.tsx`    | container testid           | Error banner                                                                       |
+| `ChatInputToolbar.tsx`   | container testid           | Bottom config toolbar (model/mode/thought selectors)                               |
+| `DebugInfoBar.tsx`       | container testid           | Debug info bar                                                                     |
+| `NewTaskButtonGroup.tsx` | dropdown trigger button    | The provider-switch arrow has none; only the main button has `TID_TASK_NEW_BUTTON` |
+| `WorkspaceSidebar.tsx`   | empty-state testid         | Empty-state hint div                                                               |
 
 Defined but unused testids:
 
-| Constant                  | Problem                                                                                |
-| ------------------------- | -------------------------------------------------------------------------------------- |
-| `TID_PREVIEW_PREV_BUTTON` | `PreviewPane` loads by auto-scroll and has no "previous segment" button                |
-| `TID_PREVIEW_NEXT_BUTTON` | Same                                                                                   |
-| `TID_WORKSPACE_PATH`      | Not used by any component                                                              |
-| `TID_LOCALE_TOGGLE`       | `LocaleSwitcher.tsx` does not use it                                                   |
+| Constant                  | Problem                                                                 |
+| ------------------------- | ----------------------------------------------------------------------- |
+| `TID_PREVIEW_PREV_BUTTON` | `PreviewPane` loads by auto-scroll and has no "previous segment" button |
+| `TID_PREVIEW_NEXT_BUTTON` | Same                                                                    |
+| `TID_WORKSPACE_PATH`      | Not used by any component                                               |
+| `TID_LOCALE_TOGGLE`       | `LocaleSwitcher.tsx` does not use it                                    |
 
 Well covered at audit time: `WelcomeScreen.tsx`, `Terminal.tsx`, `SSHDialog.tsx`, `FileTree.tsx`, `EmbeddedBrowserPane.tsx`, `TaskList.tsx`, `ChatView.tsx`, `App.tsx` (complete); `PreviewPane.tsx`, `NewTaskButtonGroup.tsx`, `ChatMessage.tsx`, `WorkspaceSidebar.tsx`, `SettingsPage.tsx` (partial).
 
@@ -46,12 +46,14 @@ Well covered at audit time: `WelcomeScreen.tsx`, `Terminal.tsx`, `SSHDialog.tsx`
 ## Fix template
 
 1. Add the constant in `test-ids.ts` with a doc comment:
+
    ```ts
    /** PermissionDialog permission confirmation container */
    export const TID_PERMISSION_DIALOG = "permission-dialog";
    ```
 
 2. Add `data-testid` on the component root:
+
    ```tsx
    import { TID_PERMISSION_DIALOG } from "@zcode/shared/test-ids";
 

@@ -40,12 +40,12 @@ remote / Web / mobile -> original projectService.readDirectory(hostId) -> same d
 
 ## Acceptance Cases (accepted / pending)
 
-| Case  | Action and assertion |
-| ----- | -------------------- |
-| NDP01 | Desktop local: click add, select two real directories at once; native args include multi-select, no in-app directory browser; after save, re-edit still has two directories |
-| NDP02 | Append a multi-select result containing an existing directory: only new ones are appended and the original primary is kept; cancel changes nothing; cancelling the edit does not save |
+| Case  | Action and assertion                                                                                                                                                                                               |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| NDP01 | Desktop local: click add, select two real directories at once; native args include multi-select, no in-app directory browser; after save, re-edit still has two directories                                        |
+| NDP02 | Append a multi-select result containing an existing directory: only new ones are appended and the original primary is kept; cancel changes nothing; cancelling the edit does not save                              |
 | NDP03 | In-flight native selection blocks save/close; after failure the draft is kept and retryable; a remote Host browses via the Host even with native capability; Web/mobile without native capability can still browse |
-| NDP04 | Old single-select still returns one path or null; multi-select cancel returns []; light/dark editor usable |
+| NDP04 | Old single-select still returns one path or null; multi-select cancel returns []; light/dark editor usable                                                                                                         |
 
 Electron interaction candidate:
 `packages/desktop/test/e2e/ui-shell/manual-review/pending/project-native-directory-picker.test.ts`. The mock

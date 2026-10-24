@@ -98,14 +98,14 @@ switch parent task
 
 ## State Ownership
 
-| State | Authoritative source | Lifecycle |
-| --- | --- | --- |
-| Plan body and streaming state | `ToolCallRow` of the parent conversation projection | Follows the parent session |
-| Plan directory | Terminal-state `ExitPlanMode` query of the CLI's current valid projection | Follows the parent branch; refreshed after edit/retry pruning |
-| plan detail tab and active item | renderer workspace Side Pane memory | Current window; not persisted |
-| Tab stable identity | `workspaceIdentity?.trim() \|\| workspacePath` + parent session + tool call | Current window |
-| Latest non-empty plan body | Local display fallback of the plan detail component | While the tab is mounted |
-| Tab visible scope | `rootSessionId ?? parentSessionId`; selection side chat uses the root task ID | Current window |
+| State                           | Authoritative source                                                          | Lifecycle                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Plan body and streaming state   | `ToolCallRow` of the parent conversation projection                           | Follows the parent session                                    |
+| Plan directory                  | Terminal-state `ExitPlanMode` query of the CLI's current valid projection     | Follows the parent branch; refreshed after edit/retry pruning |
+| plan detail tab and active item | renderer workspace Side Pane memory                                           | Current window; not persisted                                 |
+| Tab stable identity             | `workspaceIdentity?.trim() \|\| workspacePath` + parent session + tool call   | Current window                                                |
+| Latest non-empty plan body      | Local display fallback of the plan detail component                           | While the tab is mounted                                      |
+| Tab visible scope               | `rootSessionId ?? parentSessionId`; selection side chat uses the root task ID | Current window                                                |
 
 ## Interaction and Accessibility
 
@@ -128,19 +128,19 @@ switch parent task
 
 ## Cases and Pruning
 
-| Case | Scenario | Expected | Decision |
-| --- | --- | --- | --- |
-| S06 | Complete `ExitPlanMode` plan | Card compactly shows "计划" and Copy, no line count; card/bottom "查看完整计划" capsule opens the same detail tab; no feedback buttons | accepted |
-| S07 | `plan` parameter streams in | Card shows from the first parsable fragment, no streaming counter animation; an already open detail grows in sync and matches at terminal state | accepted |
-| S08 | Several historical plans under one parent task | Each `toolCallId` is its own tab; repeated clicks on a plan reuse; hide/restore on task switch without crossing workspace | accepted |
-| S09 | Electron, desktop Web, mobile Web, dark/light, zh/en | Shared card and Side Pane semantics; mobile reuses the existing replayable projection and drawer, no new runtime | accepted |
-| S10 | Ordinary assistant reply and `ExitPlanMode` persisted, then restart | canonical `assistant_response` still restores by UI/transcript visibility semantics; the plan tool row keeps the full `plan` and shows as read-only interrupted history | accepted |
-| S11 | A turn has assistant body and `ExitPlanMode` | Turn-tail copy is all assistant body plus appended full plan Markdown; unaffected by card clipping, no other tool results mixed in | accepted |
-| S12 | Assistant, tool or reasoning output follows the plan | The plan card stays at the original `ExitPlanMode` row; the "已工作" expanded order equals the CLI row total order, not pinned to the turn bottom | accepted |
-| S13 | Several finished plans in the current valid branch | The top-right "计划" lists all plans newest first; title from the Markdown H1/first non-empty line; click opens the matching Side Pane | accepted |
-| S14 | Plan streaming/awaiting approval, then terminal; or edit/retry pruning | Non-terminal not in the summary; appears after terminal; removed from the directory after `row.removed`; a late query does not restore an old plan | accepted |
-| S15 | Cold restore, desktop continuous, mobile remote replayable | Reuse the same CLI full-projection query and shared-host attachment; return the same valid set, no new runtime, owner, queue or replay branch | accepted |
-| S16 | `/btw` or `/side` child session enables plan mode and opens the full plan | Side Pane shows the child session's full plan; the tab is visible under the root task and hides/restores on root-task switch; no new session or runtime | accepted |
+| Case | Scenario                                                                  | Expected                                                                                                                                                                | Decision |
+| ---- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| S06  | Complete `ExitPlanMode` plan                                              | Card compactly shows "计划" and Copy, no line count; card/bottom "查看完整计划" capsule opens the same detail tab; no feedback buttons                                  | accepted |
+| S07  | `plan` parameter streams in                                               | Card shows from the first parsable fragment, no streaming counter animation; an already open detail grows in sync and matches at terminal state                         | accepted |
+| S08  | Several historical plans under one parent task                            | Each `toolCallId` is its own tab; repeated clicks on a plan reuse; hide/restore on task switch without crossing workspace                                               | accepted |
+| S09  | Electron, desktop Web, mobile Web, dark/light, zh/en                      | Shared card and Side Pane semantics; mobile reuses the existing replayable projection and drawer, no new runtime                                                        | accepted |
+| S10  | Ordinary assistant reply and `ExitPlanMode` persisted, then restart       | canonical `assistant_response` still restores by UI/transcript visibility semantics; the plan tool row keeps the full `plan` and shows as read-only interrupted history | accepted |
+| S11  | A turn has assistant body and `ExitPlanMode`                              | Turn-tail copy is all assistant body plus appended full plan Markdown; unaffected by card clipping, no other tool results mixed in                                      | accepted |
+| S12  | Assistant, tool or reasoning output follows the plan                      | The plan card stays at the original `ExitPlanMode` row; the "已工作" expanded order equals the CLI row total order, not pinned to the turn bottom                       | accepted |
+| S13  | Several finished plans in the current valid branch                        | The top-right "计划" lists all plans newest first; title from the Markdown H1/first non-empty line; click opens the matching Side Pane                                  | accepted |
+| S14  | Plan streaming/awaiting approval, then terminal; or edit/retry pruning    | Non-terminal not in the summary; appears after terminal; removed from the directory after `row.removed`; a late query does not restore an old plan                      | accepted |
+| S15  | Cold restore, desktop continuous, mobile remote replayable                | Reuse the same CLI full-projection query and shared-host attachment; return the same valid set, no new runtime, owner, queue or replay branch                           | accepted |
+| S16  | `/btw` or `/side` child session enables plan mode and opens the full plan | Side Pane shows the child session's full plan; the tab is visible under the root task and hides/restores on root-task switch; no new session or runtime                 | accepted |
 
 Pruning: do not Cartesian-multiply `model x permission mode x goal x fork x queue` with the plan detail,
 since detail and directory only read the existing projection and send no session command.

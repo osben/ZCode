@@ -4,10 +4,10 @@
 
 This section is the integrated acceptance scope; it does not override or rewrite the historical run records below.
 
-| Case | Source and action | Acceptance and limits |
-| --- | --- | --- |
-| AUTH-05 | d17cb6a800; formal `oauth-login-failure-cancel.test.ts`, delivers an invalid state through the preload callback | After the real Host rejects the callback the UI shows only the failure block; after cancel it returns to the provider list and the login entry does not close. Keeps the upstream formal case identity; not promoted by this round on its own |
-| AUTH-06 | a172e9c398 / 71a195b6be / f26d4e75fb; pending `access-token-401-auto-logout.test.ts` | A case-local HTTP pauses the real Host userinfo, then returns 401; the current OAuth is cleared, Bot credentials kept, the expiry prompt shown once, and the existing RelaunchApp is confirmed as issued. The IPC truncates the actual restart; this does not pose as a verified real restart |
+| Case    | Source and action                                                                                               | Acceptance and limits                                                                                                                                                                                                                                                                         |
+| ------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AUTH-05 | d17cb6a800; formal `oauth-login-failure-cancel.test.ts`, delivers an invalid state through the preload callback | After the real Host rejects the callback the UI shows only the failure block; after cancel it returns to the provider list and the login entry does not close. Keeps the upstream formal case identity; not promoted by this round on its own                                                 |
+| AUTH-06 | a172e9c398 / 71a195b6be / f26d4e75fb; pending `access-token-401-auto-logout.test.ts`                            | A case-local HTTP pauses the real Host userinfo, then returns 401; the current OAuth is cleared, Bot credentials kept, the expiry prompt shown once, and the existing RelaunchApp is confirmed as issued. The IPC truncates the actual restart; this does not pose as a verified real restart |
 
 Both cases produce no model request; the manifest declares `providerRequestPolicy=none`. The business token/JWT of AUTH-06 are synthetic credentials with different values, and other control-plane HTTP returns 200, so the original JWT-invalidation path cannot mask the new access-token classification. The mock only counts whether the synthetic token was hit and never outputs credentials in artifacts. Service-layer controlled-timing tests own late 401, refresh write-back, duplicate candidates and accountIdentity protection; the Electron case does not claim those micro races. AUTH-06 stays pending; local Pro verification is not mobile shared-host / all-platform Windows verification; no new Host and no change of the continuous/replayable path.
 
@@ -41,12 +41,12 @@ Regression requirements: unit tests cover default empty credentials, Windows / P
 
 ### Case definition
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/oauth-credential-recovery.test.ts` |
+| Field            | Content                                                                               |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| Spec             | `packages/desktop/test/e2e/oauth-credential-recovery.test.ts`                         |
 | Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/oauth-credential-recovery.json` |
-| Provider fixture | none, `providerRequestPolicy: "none"` |
-| Status | promoted, formal-path cold-start case |
+| Provider fixture | none, `providerRequestPolicy: "none"`                                                 |
+| Status           | promoted, formal-path cold-start case                                                 |
 
 ### Scenario
 
@@ -70,12 +70,12 @@ Limit: AUTH-01 currently covers only the desktop local host; OAuth corruption re
 
 ### Verification items
 
-| ID | Item | Why it is valid | Assertion location |
-| --- | --- | --- | --- |
-| AUTH-01-A | Z.ai login entry visible | Proves `oauthService.getProviders()` did not make the entry unavailable because of corrupted credentials | `waitForTestIdByDom(testId(TID_OAUTH_LOGIN_BUTTON, "zai"))` |
-| AUTH-01-B | BigModel login entry visible | Proves the multi-provider login list still shows fully | `waitForTestIdByDom(TID_OAUTH_LOGIN_BUTTON)` |
-| AUTH-01-C | No OAuth error prompt on the login page | Proves corrupted credentials are handled as a recoverable login state without exposing the low-level decrypt error | `expectNoOAuthErrorAlert()` |
-| AUTH-01-D | OAuth-related corrupted credentials cleaned | Proves the next start does not stay stuck on the same invalid login state | `waitForCorruptOAuthCredentialsCleanup()` |
+| ID        | Item                                        | Why it is valid                                                                                                    | Assertion location                                          |
+| --------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| AUTH-01-A | Z.ai login entry visible                    | Proves `oauthService.getProviders()` did not make the entry unavailable because of corrupted credentials           | `waitForTestIdByDom(testId(TID_OAUTH_LOGIN_BUTTON, "zai"))` |
+| AUTH-01-B | BigModel login entry visible                | Proves the multi-provider login list still shows fully                                                             | `waitForTestIdByDom(TID_OAUTH_LOGIN_BUTTON)`                |
+| AUTH-01-C | No OAuth error prompt on the login page     | Proves corrupted credentials are handled as a recoverable login state without exposing the low-level decrypt error | `expectNoOAuthErrorAlert()`                                 |
+| AUTH-01-D | OAuth-related corrupted credentials cleaned | Proves the next start does not stay stuck on the same invalid login state                                          | `waitForCorruptOAuthCredentialsCleanup()`                   |
 
 ### Fixture contract
 
@@ -99,12 +99,12 @@ The spec lives at the formal path `packages/desktop/test/e2e/oauth-credential-re
 
 ### Case definition
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/provider-readiness-agent-startup.test.ts` |
+| Field            | Content                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| Spec             | `packages/desktop/test/e2e/provider-readiness-agent-startup.test.ts`                         |
 | Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/provider-readiness-agent-startup.json` |
-| Provider fixture | none, `providerRequestPolicy: "none"` |
-| Status | promoted, formal-path cold-start case |
+| Provider fixture | none, `providerRequestPolicy: "none"`                                                        |
+| Status           | promoted, formal-path cold-start case                                                        |
 
 ### Scenario
 
@@ -114,16 +114,16 @@ This case verifies only local structural readiness, the process start boundary a
 
 ### Verification items
 
-| ID | Item | Why it is valid |
-| --- | --- | --- |
-| AUTH-02-A | Login/provider entry available when unconfigured | `waitForTestIdByDom(TID_LOGIN_USE_API_KEY_BUTTON)` |
-| AUTH-02-B | After skipping, the draft home shows the missing-model banner | `TID_CHAT_ERROR_BANNER` echoes "no model available" |
-| AUTH-02-C | Send button disabled by UI admission when unconfigured | After typing the button stays disabled, composer text kept, pending command ledger empty |
-| AUTH-02-D | History visible and readable when unconfigured | The seeded interactive CLI session's sidebar row, user body and assistant body are visible, proving the real sessions-index/conversation topic works |
-| AUTH-02-E | No deferred draft/retry when unconfigured | service/UI focused tests assert `provider_not_ready` stays idle and projects the banner |
+| ID        | Item                                                                 | Why it is valid                                                                                                                                                                                                            |
+| --------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AUTH-02-A | Login/provider entry available when unconfigured                     | `waitForTestIdByDom(TID_LOGIN_USE_API_KEY_BUTTON)`                                                                                                                                                                         |
+| AUTH-02-B | After skipping, the draft home shows the missing-model banner        | `TID_CHAT_ERROR_BANNER` echoes "no model available"                                                                                                                                                                        |
+| AUTH-02-C | Send button disabled by UI admission when unconfigured               | After typing the button stays disabled, composer text kept, pending command ledger empty                                                                                                                                   |
+| AUTH-02-D | History visible and readable when unconfigured                       | The seeded interactive CLI session's sidebar row, user body and assistant body are visible, proving the real sessions-index/conversation topic works                                                                       |
+| AUTH-02-E | No deferred draft/retry when unconfigured                            | service/UI focused tests assert `provider_not_ready` stays idle and projects the banner                                                                                                                                    |
 | AUTH-02-F | Read-only Agent count of the target workspace is 1 when unconfigured | The resource-manager snapshot asserts 1 by the `ZCodeProject` workspace tag; the system conversation sibling is not counted; only sessions-index/history reads are allowed and no session create/model command is produced |
-| AUTH-02-G | After saving a provider the sole target-workspace Agent is reused | Agent rows of the same workspace stay at 1 and a second assertion after a stable window is still 1; read -> write does not start a duplicate |
-| AUTH-02-H | After configuration model hydrated, draft kept and sendable again | The model trigger points to the new Personal Provider instance with a non-empty model; banner gone, original text kept, send button enabled |
+| AUTH-02-G | After saving a provider the sole target-workspace Agent is reused    | Agent rows of the same workspace stay at 1 and a second assertion after a stable window is still 1; read -> write does not start a duplicate                                                                               |
+| AUTH-02-H | After configuration model hydrated, draft kept and sendable again    | The model trigger points to the new Personal Provider instance with a non-empty model; banner gone, original text kept, send button enabled                                                                                |
 
 ### Fixture contract
 
@@ -143,12 +143,12 @@ Isolated Electron automatic recheck (2026-10-12): 1 case passed; it confirms tha
 
 ### Case definition
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/manual-review/pending/jwt-expiry-reauthentication.test.ts` |
-| Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/jwt-expiry-reauthentication.json` |
-| Provider fixture | none, `providerRequestPolicy: "none"` |
-| Status | candidate case, awaiting human confirmation of the expiry prompt and re-login entry before promotion |
+| Field            | Content                                                                                              |
+| ---------------- | ---------------------------------------------------------------------------------------------------- |
+| Spec             | `packages/desktop/test/e2e/manual-review/pending/jwt-expiry-reauthentication.test.ts`                |
+| Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/jwt-expiry-reauthentication.json`              |
+| Provider fixture | none, `providerRequestPolicy: "none"`                                                                |
+| Status           | candidate case, awaiting human confirmation of the expiry prompt and re-login entry before promotion |
 
 ### Scenario
 
@@ -181,13 +181,13 @@ Welcome shows the Z.ai + BigModel login entries
 
 ### Verification items
 
-| ID | Item | Why it is valid |
-| --- | --- | --- |
-| AUTH-03-A | Expiry prompt title and description visible | Proves the structured `reauthentication-required` reached the renderer instead of restoring a fake login state |
-| AUTH-03-B | Authentication credentials cleaned before the prompt is confirmed | Proves the AlertDialog is not the blocking point for cleaning authentication facts |
-| AUTH-03-C | Clicking "重新登录" enters Welcome | Proves the user can get from the expired state back to the existing login flow, not a dead state with no exit / no re-login |
-| AUTH-03-D | Z.ai and BigModel login entries visible | Proves the re-authentication page has full provider choice |
-| AUTH-03-E | No active-logout confirmation shown | Proves expiry recovery did not go through the "confirm disconnect" or running-session second-confirmation flow |
+| ID        | Item                                                              | Why it is valid                                                                                                             |
+| --------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| AUTH-03-A | Expiry prompt title and description visible                       | Proves the structured `reauthentication-required` reached the renderer instead of restoring a fake login state              |
+| AUTH-03-B | Authentication credentials cleaned before the prompt is confirmed | Proves the AlertDialog is not the blocking point for cleaning authentication facts                                          |
+| AUTH-03-C | Clicking "重新登录" enters Welcome                                | Proves the user can get from the expired state back to the existing login flow, not a dead state with no exit / no re-login |
+| AUTH-03-D | Z.ai and BigModel login entries visible                           | Proves the re-authentication page has full provider choice                                                                  |
+| AUTH-03-E | No active-logout confirmation shown                               | Proves expiry recovery did not go through the "confirm disconnect" or running-session second-confirmation flow              |
 
 ### Fixture contract
 
@@ -211,12 +211,12 @@ The shared JWT and the business access_token use the same expiry prompt entry; c
 
 ### Case definition
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/manual-review/pending/jwt-401-auto-logout.test.ts` |
-| Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/jwt-401-auto-logout.json` |
-| Provider fixture | none, `providerRequestPolicy: "none"` |
-| Status | candidate case, awaiting human confirmation of the 401 trigger prompt, credential cleanup and restart action before promotion |
+| Field            | Content                                                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Spec             | `packages/desktop/test/e2e/manual-review/pending/jwt-401-auto-logout.test.ts`                                                 |
+| Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/jwt-401-auto-logout.json`                                               |
+| Provider fixture | none, `providerRequestPolicy: "none"`                                                                                         |
+| Status           | candidate case, awaiting human confirmation of the 401 trigger prompt, credential cleanup and restart action before promotion |
 
 ### Scenario (historical restart variant)
 
@@ -249,11 +249,11 @@ user confirms -> DesktopCommandIds.RelaunchApp
 
 ### Verification items
 
-| ID | Item | Why it is valid |
-| --- | --- | --- |
-| AUTH-JWT-401-A | A running 401 shows the login-expired prompt | Proves the request-exit observation and the Host broadcast chain actually work |
-| AUTH-JWT-401-B | OAuth/JWT credentials cleaned before confirmation | Proves the prompt does not block cleaning authentication facts |
-| AUTH-JWT-401-C | `RelaunchApp` called after confirmation | Proves the prompt action reuses the existing restart flow |
+| ID             | Item                                                          | Why it is valid                                                                                |
+| -------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| AUTH-JWT-401-A | A running 401 shows the login-expired prompt                  | Proves the request-exit observation and the Host broadcast chain actually work                 |
+| AUTH-JWT-401-B | OAuth/JWT credentials cleaned before confirmation             | Proves the prompt does not block cleaning authentication facts                                 |
+| AUTH-JWT-401-C | `RelaunchApp` called after confirmation                       | Proves the prompt action reuses the existing restart flow                                      |
 | AUTH-JWT-401-D | Plain 401 mock does not depend on a dedicated response header | Proves compatibility with a server that currently has no `X-ZCode-JWT-Invalid` response header |
 
 ### Fixture contract
@@ -267,12 +267,12 @@ user confirms -> DesktopCommandIds.RelaunchApp
 
 ### Case definition
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/subagent-coding-plan-login-catalog-stale.test.ts` |
-| Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/subagent-coding-plan-login-catalog-stale.json` |
+| Field            | Content                                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Spec             | `packages/desktop/test/e2e/subagent-coding-plan-login-catalog-stale.test.ts`                                                |
+| Fixture manifest | `packages/desktop/test/e2e/fixtures/cases/auth-config/subagent-coding-plan-login-catalog-stale.json`                        |
 | Provider fixture | No model request; OAuth, `release/latest`, `client/configs`, plan and API key endpoints are fixed by a case-local HTTP mock |
-| Status | Promoted; formal-path post-login UI usability and current Environment Model Selection readiness case |
+| Status           | Promoted; formal-path post-login UI usability and current Environment Model Selection readiness case                        |
 
 ### Scenario
 

@@ -23,5 +23,6 @@ current task's assistant message `toolCalls` and does not consume Git Pane, Git 
 ## Activity Merging
 
 The same file shows one box per turn and the event stream stays in the detail area. State priority:
+
 1. deleted, 2. created, 3. modified, 4. viewed. Created then modified still shows green and accumulates diff;
-viewed then modified shows in the change color and keeps views.
+   viewed then modified shows in the change color and keeps views.

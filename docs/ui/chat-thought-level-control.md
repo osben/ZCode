@@ -23,17 +23,17 @@ The thought level control in the composer toolbar shows the current thinking lev
 
 The model config provides the selectable levels and their order. The control only projects for display and never re-sorts by value or name; the dropdown, click cycle and `Ctrl+T` use the same configured order, and the last item cycles to the first. The config declares levels from low to high, with minimal before low and ultra after max; "on" is a switch semantic and is not fixed between high and extra high.
 
-| Raw value | Chinese | English |
-| ------------------------------------------------------------------ | ---- | ---------- |
-| disabled / false / no / none / nothink / no-think / no_think / off | 关闭 | Off |
-| enable / enabled / on / true | 开启 | On |
-| minimal | 极低 | Minimal |
-| low | 低 | Low |
-| medium | 中 | Medium |
-| high | 高 | High |
-| xhigh / extra-high / extra_high | 极高 | Extra high |
-| max | 最高 | Max |
-| ultra | 极致 | Ultra |
+| Raw value                                                          | Chinese | English    |
+| ------------------------------------------------------------------ | ------- | ---------- |
+| disabled / false / no / none / nothink / no-think / no_think / off | 关闭    | Off        |
+| enable / enabled / on / true                                       | 开启    | On         |
+| minimal                                                            | 极低    | Minimal    |
+| low                                                                | 低      | Low        |
+| medium                                                             | 中      | Medium     |
+| high                                                               | 高      | High       |
+| xhigh / extra-high / extra_high                                    | 极高    | Extra high |
+| max                                                                | 最高    | Max        |
+| ultra                                                              | 极致    | Ultra      |
 
 Text matching trims the value and lowercases it; selection and submission keep the raw value and same-name options are not merged. extra-high / extra_high are reserved aliases and no other spellings are added.
 

@@ -2,15 +2,15 @@
 
 ## Feature Summary
 
-| Field                | Value                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Developer intent     | List every factor related to model providers, model selection, thinking depth, model capability, request projection and model-related product features, and give later Cartesian products, pruning and test generation a stable input.                                                                                                                                                                                  |
-| Capability           | Model selection / Provider Registry / Model Runtime / Model Request Projection                                                                                                                                                                                                                                                                                                                                         |
-| Change layer         | option-source, draft-default, validation, commit-effect, persistence, recovery; presentation only as a low-weight cross dimension                                                                                                                                                                                                                                                                                      |
-| Operating mode       | planning                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Primary catalog      | [model-selection-regression-factor-catalog.yaml](./model-selection-regression-factor-catalog.yaml); implicit decisions in the [backlog](./model-selection-regression-decision-backlog.yaml), with a directly fillable [decision questionnaire](./model-selection-regression-decision-questionnaire.md)                                                                                                                 |
-| Current product code | [ModelSelection](../../packages/shared/src/model-selection.ts), [Provider Resolver](../../packages/provider/src/resolver.ts), [V4 model command handler](../../apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/model-config.ts)                                                                                                                                                                |
-| Out of scope         | No product code this round, no direct generation of formal E2E, no treating undefined or bug-candidate as accepted assertions, no unconstrained full permutation of all literal model IDs.                                                                                                                                                                                                                              |
+| Field                | Value                                                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Developer intent     | List every factor related to model providers, model selection, thinking depth, model capability, request projection and model-related product features, and give later Cartesian products, pruning and test generation a stable input.                                                                 |
+| Capability           | Model selection / Provider Registry / Model Runtime / Model Request Projection                                                                                                                                                                                                                         |
+| Change layer         | option-source, draft-default, validation, commit-effect, persistence, recovery; presentation only as a low-weight cross dimension                                                                                                                                                                      |
+| Operating mode       | planning                                                                                                                                                                                                                                                                                               |
+| Primary catalog      | [model-selection-regression-factor-catalog.yaml](./model-selection-regression-factor-catalog.yaml); implicit decisions in the [backlog](./model-selection-regression-decision-backlog.yaml), with a directly fillable [decision questionnaire](./model-selection-regression-decision-questionnaire.md) |
+| Current product code | [ModelSelection](../../packages/shared/src/model-selection.ts), [Provider Resolver](../../packages/provider/src/resolver.ts), [V4 model command handler](../../apps/zcode-cli/packages/bootstrap/src/zcode-protocol-v4/commands/handlers/model-config.ts)                                              |
+| Out of scope         | No product code this round, no direct generation of formal E2E, no treating undefined or bug-candidate as accepted assertions, no unconstrained full permutation of all literal model IDs.                                                                                                             |
 
 ## 1. Semantic Layers
 
@@ -51,44 +51,44 @@ A model ID is an opaque value. The display form may be encoded as `providerId/mo
 
 ## 2. UI Surface Matrix
 
-| User scenario      | Entry                           | Draft/display owner        | Default/inherit                      | Validation                       | Commit sink                           | Authority                          | Must isolate                              |
-| ------------------ | ------------------------------- | -------------------------- | ------------------------------------ | -------------------------------- | ------------------------------------- | ---------------------------------- | ----------------------------------------- |
-| New conversation   | V4 composer toolbar             | renderer draft             | Recent -> Host preferred -> fallback | target Host Registry             | `createSession.config` / `firstInput` | Session runtime + Snapshot         | Existing Sessions unchanged               |
-| Switch model in existing conversation | V4 composer toolbar | Conversation Snapshot      | current Session config               | CAS, target model capability     | `switchModelConfig`                   | CLI session runtime                | Other Sessions unchanged                  |
-| Historical task restore | Session/task switch        | Snapshot hydrator          | persisted Session config             | cold-resume + Registry           | resume path                           | Session timeline                   | Task index is not authority               |
-| Automation edit    | `AutomationEditView`            | automation form draft      | inherit or automation record         | automation model options         | automation save                       | automation record/run snapshot     | Chat Session unchanged                    |
-| Automation run     | scheduler / manual dispatch     | run snapshot               | saved selection                      | run-time Registry/auth           | dispatch                              | automation execution               | Does not re-read the Chat Draft           |
-| Off-Peak edit      | `OffPeakEditView`               | Off-Peak form              | task record                          | hidden exact model + entitlement | offpeak save                          | Off-Peak task record               | Does not write Recent/default             |
-| Off-Peak execution | scheduler                       | task/run record            | persisted selection                  | ticket, JWT, Team scope          | task dispatch                         | Off-Peak runtime                   | Does not create an ordinary Chat runtime  |
-| User Subagent      | `SubagentsSection`              | profile/Markdown           | parent inherit                       | child profile + Registry         | Markdown save / child create          | child runtime/timeline             | readonly child has no picker              |
-| Built-in Subagent  | Built-in model control          | built-in override          | built-in profile                     | Registry                         | built-in override save                | child runtime                      | Does not pollute the parent timeline      |
-| Provider settings  | provider settings section       | settings form              | source overlay                       | schema/complete/revision         | Provider facade                       | personal/account config + Registry | Does not create a runtime model directly  |
-| Initial selection at login | login/welcome           | login form                 | family/provider first model          | key/OAuth/entitlement            | account connection                    | account settings                   | Does not bypass the Provider Registry     |
-| Bot                | Bot `/model`                    | bot config                 | bot default                          | model selection view             | bot service                           | bot config/request                 | Assumes no Chat toolbar state             |
-| Official MCP       | official MCP credentials        | account/family selection   | active plan provider                 | coding plan access               | credentials service                   | auth context                       | MCP provider facts are not Registry owner |
-| Git commit message | git generator                   | request-local              | current/explicit model               | output budget 256                | generateText                          | commit result provenance           | Main session thought unchanged            |
-| Title/Goal title   | sidecar                         | request-local              | configured title model/current model | JSON/no tools                    | sidecar request                       | title provenance                   | Reasoning forced off                      |
-| Goal verifier      | runtime verifier                | start-time snapshot        | Session model                        | verifier policy                  | verifier request                      | goal execution                     | Does not follow mid-run model switches    |
-| Compact            | compact runtime                 | request-local              | current model                        | context/output budget            | compact request                       | compact timeline                   | Creates no ordinary user row              |
-| Project memory     | memory helpers                  | request-local              | current model                        | memory policy                    | generateText                          | memory result                      | Creates no extra product turn             |
-| Connectivity       | provider/model test             | request-local              | explicit model                       | credentials/provider facts       | connectivity service                  | result only                        | Session model unchanged                   |
-| CLI/TUI            | `/model`, `/effort`, `/variant` | CLI config                 | CLI current config                   | runtime validation               | CLI command                           | CLI runtime                        | Verified separately from the UI display   |
+| User scenario                         | Entry                           | Draft/display owner      | Default/inherit                      | Validation                       | Commit sink                           | Authority                          | Must isolate                              |
+| ------------------------------------- | ------------------------------- | ------------------------ | ------------------------------------ | -------------------------------- | ------------------------------------- | ---------------------------------- | ----------------------------------------- |
+| New conversation                      | V4 composer toolbar             | renderer draft           | Recent -> Host preferred -> fallback | target Host Registry             | `createSession.config` / `firstInput` | Session runtime + Snapshot         | Existing Sessions unchanged               |
+| Switch model in existing conversation | V4 composer toolbar             | Conversation Snapshot    | current Session config               | CAS, target model capability     | `switchModelConfig`                   | CLI session runtime                | Other Sessions unchanged                  |
+| Historical task restore               | Session/task switch             | Snapshot hydrator        | persisted Session config             | cold-resume + Registry           | resume path                           | Session timeline                   | Task index is not authority               |
+| Automation edit                       | `AutomationEditView`            | automation form draft    | inherit or automation record         | automation model options         | automation save                       | automation record/run snapshot     | Chat Session unchanged                    |
+| Automation run                        | scheduler / manual dispatch     | run snapshot             | saved selection                      | run-time Registry/auth           | dispatch                              | automation execution               | Does not re-read the Chat Draft           |
+| Off-Peak edit                         | `OffPeakEditView`               | Off-Peak form            | task record                          | hidden exact model + entitlement | offpeak save                          | Off-Peak task record               | Does not write Recent/default             |
+| Off-Peak execution                    | scheduler                       | task/run record          | persisted selection                  | ticket, JWT, Team scope          | task dispatch                         | Off-Peak runtime                   | Does not create an ordinary Chat runtime  |
+| User Subagent                         | `SubagentsSection`              | profile/Markdown         | parent inherit                       | child profile + Registry         | Markdown save / child create          | child runtime/timeline             | readonly child has no picker              |
+| Built-in Subagent                     | Built-in model control          | built-in override        | built-in profile                     | Registry                         | built-in override save                | child runtime                      | Does not pollute the parent timeline      |
+| Provider settings                     | provider settings section       | settings form            | source overlay                       | schema/complete/revision         | Provider facade                       | personal/account config + Registry | Does not create a runtime model directly  |
+| Initial selection at login            | login/welcome                   | login form               | family/provider first model          | key/OAuth/entitlement            | account connection                    | account settings                   | Does not bypass the Provider Registry     |
+| Bot                                   | Bot `/model`                    | bot config               | bot default                          | model selection view             | bot service                           | bot config/request                 | Assumes no Chat toolbar state             |
+| Official MCP                          | official MCP credentials        | account/family selection | active plan provider                 | coding plan access               | credentials service                   | auth context                       | MCP provider facts are not Registry owner |
+| Git commit message                    | git generator                   | request-local            | current/explicit model               | output budget 256                | generateText                          | commit result provenance           | Main session thought unchanged            |
+| Title/Goal title                      | sidecar                         | request-local            | configured title model/current model | JSON/no tools                    | sidecar request                       | title provenance                   | Reasoning forced off                      |
+| Goal verifier                         | runtime verifier                | start-time snapshot      | Session model                        | verifier policy                  | verifier request                      | goal execution                     | Does not follow mid-run model switches    |
+| Compact                               | compact runtime                 | request-local            | current model                        | context/output budget            | compact request                       | compact timeline                   | Creates no ordinary user row              |
+| Project memory                        | memory helpers                  | request-local            | current model                        | memory policy                    | generateText                          | memory result                      | Creates no extra product turn             |
+| Connectivity                          | provider/model test             | request-local            | explicit model                       | credentials/provider facts       | connectivity service                  | result only                        | Session model unchanged                   |
+| CLI/TUI                               | `/model`, `/effort`, `/variant` | CLI config               | CLI current config                   | runtime validation               | CLI command                           | CLI runtime                        | Verified separately from the UI display   |
 
 Shared UI does not mean shared behavior. `ModelConfigSelect`, `buildModelSelectGroups` and `useModelSelectionView` share only the candidate source or display conventions; each surface's draft, default, commit and persistence must be asserted independently.
 
 ## 3. State Owners, Validation Points and Persistence
 
-| State/fact           | Authority                         | Mirrors/cache                   | Validation/commit                            | Persistence                                      |
-| -------------------- | --------------------------------- | ------------------------------- | -------------------------------------------- | ------------------------------------------------ |
-| Provider/Model facts | target Host Provider Registry     | Settings/Selection facade       | `ProviderConfigResolver`, `validateComplete` | Built-in/Account/Personal config                 |
-| User selection       | surface-local draft or product record | toolbar, form, recent       | target Worker Registry + ModelFactory        | Session/Automation/Subagent/Off-Peak record      |
-| Active Model         | CLI runtime                       | Snapshot, usage, provenance     | ModelFactory, Adapter capability checks      | session model timeline / message provenance      |
-| Session config       | CLI Session runtime               | Conversation Snapshot, Renderer | V4 command barrier/CAS                       | Session persistence                              |
-| Queue Submission     | CLI CommandInbox/FIFO             | renderer optimistic journal     | admission/queue guard                        | queue facts/discard ledger                       |
-| Recent selection     | workspace-keyed renderer storage  | draft initializer               | selectable check                             | workspaceKey: identity trim, otherwise path      |
-| Plan/entitlement     | Account/plan services             | provider UI badges/usage        | account/provider access resolution           | account settings/usage data                      |
-| Request auth         | execution service/provider access | request-local only              | fail before network                          | Dynamic credentials are not persisted            |
-| Delivery profile     | trusted Host attachment           | connection subscription         | host injection                               | Not chosen by the renderer                       |
+| State/fact           | Authority                             | Mirrors/cache                   | Validation/commit                            | Persistence                                 |
+| -------------------- | ------------------------------------- | ------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| Provider/Model facts | target Host Provider Registry         | Settings/Selection facade       | `ProviderConfigResolver`, `validateComplete` | Built-in/Account/Personal config            |
+| User selection       | surface-local draft or product record | toolbar, form, recent           | target Worker Registry + ModelFactory        | Session/Automation/Subagent/Off-Peak record |
+| Active Model         | CLI runtime                           | Snapshot, usage, provenance     | ModelFactory, Adapter capability checks      | session model timeline / message provenance |
+| Session config       | CLI Session runtime                   | Conversation Snapshot, Renderer | V4 command barrier/CAS                       | Session persistence                         |
+| Queue Submission     | CLI CommandInbox/FIFO                 | renderer optimistic journal     | admission/queue guard                        | queue facts/discard ledger                  |
+| Recent selection     | workspace-keyed renderer storage      | draft initializer               | selectable check                             | workspaceKey: identity trim, otherwise path |
+| Plan/entitlement     | Account/plan services                 | provider UI badges/usage        | account/provider access resolution           | account settings/usage data                 |
+| Request auth         | execution service/provider access     | request-local only              | fail before network                          | Dynamic credentials are not persisted       |
+| Delivery profile     | trusted Host attachment               | connection subscription         | host injection                               | Not chosen by the renderer                  |
 
 ## 4. Delivery Boundary
 
@@ -151,42 +151,42 @@ Generation rules:
 
 The YAML already holds the complete seed cases. The main line to land first:
 
-| Case             | Scenario                                          | Evidence focus                            |
-| ---------------- | ------------------------------------------------- | ----------------------------------------- |
-| MSR-REG-001      | Personal custom Provider selected and first send  | UI, Registry, real request body, persistence |
-| MSR-REG-002      | Same-named models under two Providers             | full provider/model identity              |
-| MSR-REG-003      | Remote Registry loading does not fall back to local | target Host authority                   |
-| MSR-REG-004      | Built-in/Account revision mismatch                | atomic Registry publish                   |
-| MSR-AUTH-002     | entitlement loading keeps the saved selection     | plan gating                               |
-| MSR-REASON-001   | GLM-5.2 max/high/nothink                          | reasoning wire mapping                    |
-| MSR-REASON-002   | Qwen/Kimi/MiMo toggle                             | extra-body minimal projection             |
-| MSR-REASON-003   | Anthropic fixed/adaptive budget                   | max output and thinking budget            |
-| MSR-REQ-001      | modality/tool/structured output                   | adapter preflight + request body          |
-| MSR-DRAFT-002    | First send after a draft model switch             | createSession/firstInput freeze           |
-| MSR-SESSION-002  | noop/stale/duplicate/failed switch                | protocol ACK/CAS                          |
-| MSR-SESSION-003  | switch barrier races with send                    | command ordering                          |
-| MSR-SESSION-004  | provider.notInRegistry one refresh/retry          | remote identity                           |
-| MSR-SESSION-005  | model switch during streaming                     | in-flight model immutability              |
-| MSR-QUEUE-002    | Desktop + mobile busy input share one FIFO        | CommandInbox + delivery                   |
-| MSR-RECOVERY-001 | Anthropic unsigned reasoning repair               | canonical history immutability            |
-| MSR-RECOVERY-002 | empty completion retry                            | exactly-once output                       |
-| MSR-REMOTE-001   | remote workspace identity isolation               | workspaceKey + reconnect                  |
-| MSR-SURFACE-001  | Automation runs after save                        | record/run snapshot                       |
-| MSR-SURFACE-002  | Subagent inherited/explicit model                 | child authority/provenance                |
-| MSR-OFF-001      | hidden Off-Peak provider internal execution       | hidden Registry + ticket                  |
-| MSR-SIDE-001     | title forces no reasoning                         | sidecar projection                        |
-| MSR-SIDE-002     | Git commit explicit thought semantics             | querySource-specific behavior             |
+| Case             | Scenario                                            | Evidence focus                               |
+| ---------------- | --------------------------------------------------- | -------------------------------------------- |
+| MSR-REG-001      | Personal custom Provider selected and first send    | UI, Registry, real request body, persistence |
+| MSR-REG-002      | Same-named models under two Providers               | full provider/model identity                 |
+| MSR-REG-003      | Remote Registry loading does not fall back to local | target Host authority                        |
+| MSR-REG-004      | Built-in/Account revision mismatch                  | atomic Registry publish                      |
+| MSR-AUTH-002     | entitlement loading keeps the saved selection       | plan gating                                  |
+| MSR-REASON-001   | GLM-5.2 max/high/nothink                            | reasoning wire mapping                       |
+| MSR-REASON-002   | Qwen/Kimi/MiMo toggle                               | extra-body minimal projection                |
+| MSR-REASON-003   | Anthropic fixed/adaptive budget                     | max output and thinking budget               |
+| MSR-REQ-001      | modality/tool/structured output                     | adapter preflight + request body             |
+| MSR-DRAFT-002    | First send after a draft model switch               | createSession/firstInput freeze              |
+| MSR-SESSION-002  | noop/stale/duplicate/failed switch                  | protocol ACK/CAS                             |
+| MSR-SESSION-003  | switch barrier races with send                      | command ordering                             |
+| MSR-SESSION-004  | provider.notInRegistry one refresh/retry            | remote identity                              |
+| MSR-SESSION-005  | model switch during streaming                       | in-flight model immutability                 |
+| MSR-QUEUE-002    | Desktop + mobile busy input share one FIFO          | CommandInbox + delivery                      |
+| MSR-RECOVERY-001 | Anthropic unsigned reasoning repair                 | canonical history immutability               |
+| MSR-RECOVERY-002 | empty completion retry                              | exactly-once output                          |
+| MSR-REMOTE-001   | remote workspace identity isolation                 | workspaceKey + reconnect                     |
+| MSR-SURFACE-001  | Automation runs after save                          | record/run snapshot                          |
+| MSR-SURFACE-002  | Subagent inherited/explicit model                   | child authority/provenance                   |
+| MSR-OFF-001      | hidden Off-Peak provider internal execution         | hidden Registry + ticket                     |
+| MSR-SIDE-001     | title forces no reasoning                           | sidecar projection                           |
+| MSR-SIDE-002     | Git commit explicit thought semantics               | querySource-specific behavior                |
 
 ## 7. Implicit Decision Audit Result
 
 An earlier version listed only 3 hard blockers, which over-compressed the scope. The separately maintained decision backlog now has 114 items, but they do not all need a product ruling one by one:
 
-| Category               | Count   | Meaning                                                       | Next step                          |
-| ---------------------- | ------- | ------------------------------------------------------------- | ---------------------------------- |
-| `undefined`            | 64      | Real product behavior is undefined, must be ruled first       | Rule on 3-7 per round              |
-| `contract-conflict`    | 12      | New/old specs, implementation and existing cases contradict each other | Fix the authoritative reading first, then update docs/tests |
-| `resolved-needs-proof` | 38      | Strong design or implementation leaning exists; do not ask product again | Prove with unit/integration/E2E/logs |
-| **Total**              | **114** |                                                               |                                    |
+| Category               | Count   | Meaning                                                                  | Next step                                                   |
+| ---------------------- | ------- | ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `undefined`            | 64      | Real product behavior is undefined, must be ruled first                  | Rule on 3-7 per round                                       |
+| `contract-conflict`    | 12      | New/old specs, implementation and existing cases contradict each other   | Fix the authoritative reading first, then update docs/tests |
+| `resolved-needs-proof` | 38      | Strong design or implementation leaning exists; do not ask product again | Prove with unit/integration/E2E/logs                        |
+| **Total**              | **114** |                                                                          |                                                             |
 
 ### 7.1 The 12 contract conflicts to converge first
 

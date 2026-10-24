@@ -15,15 +15,15 @@ Direct-chat sending keeps open_id and does not switch to chat_id on failure; gro
 
 ## Live results
 
-| Check | Result |
-| --- | --- |
-| CUA60ROUND long task | 60 serial tool calls, each waiting 20 s and computing a checksum; all 60 start and completion markers present |
-| Long task actual duration | Model trace 04:35:21.232Z to 05:02:31.568Z, 27 min 10 s; the model estimate on the card is not a timing basis |
-| Long task Feishu final state | After unlock, Computer Use confirmed the round-60 result, CUA60ROUNDDONE and Completed all visible |
-| Latest build regression | Old process exited normally, dev build containing 8e7fe75d0f rebuilt and started; CUAFIX1405 six-round computation fully done, desktop shows Worked for 1m 14s |
-| Protocol runtime | CLI log confirms 6 scheduled events carrying assistantMessageId; the new process log has 0 invalid-session-event drop warnings |
-| Follow-up message | Feishu and desktop both show CUAFIXFOLLOWUPOK, Completed on Feishu |
-| Connection status | Bots -> Ryan Bob shows Feishu WebSocket is running / Connected, no delivery error prompt |
+| Check                        | Result                                                                                                                                                         |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CUA60ROUND long task         | 60 serial tool calls, each waiting 20 s and computing a checksum; all 60 start and completion markers present                                                  |
+| Long task actual duration    | Model trace 04:35:21.232Z to 05:02:31.568Z, 27 min 10 s; the model estimate on the card is not a timing basis                                                  |
+| Long task Feishu final state | After unlock, Computer Use confirmed the round-60 result, CUA60ROUNDDONE and Completed all visible                                                             |
+| Latest build regression      | Old process exited normally, dev build containing 8e7fe75d0f rebuilt and started; CUAFIX1405 six-round computation fully done, desktop shows Worked for 1m 14s |
+| Protocol runtime             | CLI log confirms 6 scheduled events carrying assistantMessageId; the new process log has 0 invalid-session-event drop warnings                                 |
+| Follow-up message            | Feishu and desktop both show CUAFIXFOLLOWUPOK, Completed on Feishu                                                                                             |
+| Connection status            | Bots -> Ryan Bob shows Feishu WebSocket is running / Connected, no delivery error prompt                                                                       |
 
 Long-task session: `sess_59ef620c-a6c3-4503-a777-ab8395e780aa`. Post-fix regression session: `sess_f5109c02-ffb1-41df-bf0f-b208f9e1c9ef`.
 

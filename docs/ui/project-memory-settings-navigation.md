@@ -114,15 +114,15 @@ localStorage, Host, Runtime or the catalog service.
 
 ## Acceptance Cases
 
-| ID | Setup | Action | Assertions |
-| --- | --- | --- | --- |
-| PMN01 | Desktop, Memory on, two projects | catalog ready | Switch on top; Scope defaults to the first item with no User; the toolbar shows the count; the current Workspace's files show directly below |
-| PMN02 | Scope menu has several Workspaces | Switch Workspace | The file list is replaced with the target Workspace content, no project list or breadcrumb appears |
-| PMN03 | Current Workspace file list | View and use a file row | File-type icon, name, update time and the right editor segmented menu are correct; the main button opens the real path, the down arrow selects another editor |
-| PMN04 | Non-first Workspace selected | Explicit refresh | Selection kept if the Workspace still exists; the new first item selected if it disappeared |
-| PMN05 | catalog loading, empty or error | Load, retry | loading/empty use the unified transparent dashed container; errors keep clear feedback and an explicit refresh entry |
-| PMN06 | Web Remote / Mobile | Open Memory | Only the switch and the local-view hint show; the catalog gets zero calls |
-| PMN07 | File list exceeds the viewport | Scroll | Only the Settings main content area scrolls vertically |
+| ID    | Setup                             | Action                  | Assertions                                                                                                                                                    |
+| ----- | --------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PMN01 | Desktop, Memory on, two projects  | catalog ready           | Switch on top; Scope defaults to the first item with no User; the toolbar shows the count; the current Workspace's files show directly below                  |
+| PMN02 | Scope menu has several Workspaces | Switch Workspace        | The file list is replaced with the target Workspace content, no project list or breadcrumb appears                                                            |
+| PMN03 | Current Workspace file list       | View and use a file row | File-type icon, name, update time and the right editor segmented menu are correct; the main button opens the real path, the down arrow selects another editor |
+| PMN04 | Non-first Workspace selected      | Explicit refresh        | Selection kept if the Workspace still exists; the new first item selected if it disappeared                                                                   |
+| PMN05 | catalog loading, empty or error   | Load, retry             | loading/empty use the unified transparent dashed container; errors keep clear feedback and an explicit refresh entry                                          |
+| PMN06 | Web Remote / Mobile               | Open Memory             | Only the switch and the local-view hint show; the catalog gets zero calls                                                                                     |
+| PMN07 | File list exceeds the viewport    | Scroll                  | Only the Settings main content area scrolls vertically                                                                                                        |
 
 ## Pruning
 

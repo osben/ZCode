@@ -40,13 +40,13 @@ The V4 timeline maintains an explicit bottom-pinning state machine:
 within the same frame: user scroll intent > explicit positioning action > content/measurement/collapse layout change
 ```
 
-| Event source | When FOLLOWING | When DETACHED |
-| ----------------------------------------------- | --------------------- | ------------------------- |
-| wheel/touch/keyboard/scrollbar upward leaving the bottom | immediately becomes DETACHED | stays DETACHED |
-| user scrolls back near the bottom | stays FOLLOWING | becomes FOLLOWING |
-| clicks "back to bottom" or submits a new prompt that starts at once | stays FOLLOWING and sticks to bottom | becomes FOLLOWING and sticks to bottom |
-| live delta, terminal collapse, virtualizer measurement compensation | stays FOLLOWING and sticks to bottom | stays DETACHED, does not take scroll ownership |
-| find, turn navigation, fork anchor positioning | becomes DETACHED first, then positions | stays DETACHED |
+| Event source                                                        | When FOLLOWING                         | When DETACHED                                  |
+| ------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------------- |
+| wheel/touch/keyboard/scrollbar upward leaving the bottom            | immediately becomes DETACHED           | stays DETACHED                                 |
+| user scrolls back near the bottom                                   | stays FOLLOWING                        | becomes FOLLOWING                              |
+| clicks "back to bottom" or submits a new prompt that starts at once | stays FOLLOWING and sticks to bottom   | becomes FOLLOWING and sticks to bottom         |
+| live delta, terminal collapse, virtualizer measurement compensation | stays FOLLOWING and sticks to bottom   | stays DETACHED, does not take scroll ownership |
+| find, turn navigation, fork anchor positioning                      | becomes DETACHED first, then positions | stays DETACHED                                 |
 
 ## Implementation boundary
 

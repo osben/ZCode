@@ -219,31 +219,31 @@ feature-scoped token family:
 
 ### Specialized color tokens
 
-| Token                             | Purpose                                                    |
-| --------------------------------- | ---------------------------------------------------------- |
-| `--color-markdown-inline-code`    | Markdown inline code background, following the tag / label capsule level           |
-| `--color-popover-header`          | Popover header                                             |
-| `--color-tab`                     | Default tab background                                               |
-| `--color-tab-active`              | Active tab                                               |
-| `--color-tab-border`              | Tab divider                                                 |
+| Token                             | Purpose                                                                                              |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `--color-markdown-inline-code`    | Markdown inline code background, following the tag / label capsule level                             |
+| `--color-popover-header`          | Popover header                                                                                       |
+| `--color-tab`                     | Default tab background                                                                               |
+| `--color-tab-active`              | Active tab                                                                                           |
+| `--color-tab-border`              | Tab divider                                                                                          |
 | `--color-feedback-privacy-hint`   | Feedback screenshot privacy hint text and exclamation icon; on its own line, in the helper-text size |
-| `--color-git-none`                | Git no-change state, using the normal file name color                         |
-| `--color-git-modified`            | Git modified: a tracked file has uncommitted changes                   |
-| `--color-git-added`               | Git added: a new file is in the work tree / index               |
-| `--color-git-deleted`             | Git deleted: a tracked file was deleted                          |
-| `--color-git-renamed`             | Git renamed: a tracked file was moved or renamed                    |
-| `--color-git-untracked`           | Git untracked: a new file Git does not track yet                   |
-| `--color-git-ignored`             | Git ignored: inherits the weakened text level                              |
-| `--color-git-descendant`          | Git descendant: a descendant of the directory contains changes                       |
-| `--color-file-node`               | File mention node background                                     |
-| `--color-file-node-hover`         | File mention node hover background                               |
-| `--color-file-node-foreground`    | File mention node text / icon                              |
-| `--color-skill-node`              | Skill mention node background                                    |
-| `--color-skill-node-hover`        | Skill mention node hover background                              |
-| `--color-skill-node-foreground`   | Skill mention node text / icon                             |
-| `--color-command-node`            | Command mention node background                                  |
-| `--color-command-node-hover`      | Command mention node hover background                            |
-| `--color-command-node-foreground` | Command mention node text / icon                           |
+| `--color-git-none`                | Git no-change state, using the normal file name color                                                |
+| `--color-git-modified`            | Git modified: a tracked file has uncommitted changes                                                 |
+| `--color-git-added`               | Git added: a new file is in the work tree / index                                                    |
+| `--color-git-deleted`             | Git deleted: a tracked file was deleted                                                              |
+| `--color-git-renamed`             | Git renamed: a tracked file was moved or renamed                                                     |
+| `--color-git-untracked`           | Git untracked: a new file Git does not track yet                                                     |
+| `--color-git-ignored`             | Git ignored: inherits the weakened text level                                                        |
+| `--color-git-descendant`          | Git descendant: a descendant of the directory contains changes                                       |
+| `--color-file-node`               | File mention node background                                                                         |
+| `--color-file-node-hover`         | File mention node hover background                                                                   |
+| `--color-file-node-foreground`    | File mention node text / icon                                                                        |
+| `--color-skill-node`              | Skill mention node background                                                                        |
+| `--color-skill-node-hover`        | Skill mention node hover background                                                                  |
+| `--color-skill-node-foreground`   | Skill mention node text / icon                                                                       |
+| `--color-command-node`            | Command mention node background                                                                      |
+| `--color-command-node-hover`      | Command mention node hover background                                                                |
+| `--color-command-node-foreground` | Command mention node text / icon                                                                     |
 
 Git file statuses must use `text-git-*` / `bg-git-*`, rather than borrowing diff or warning tokens.
 Mention tokens belong to prompt-editor and UserPrompt mention nodes; their background, hover,

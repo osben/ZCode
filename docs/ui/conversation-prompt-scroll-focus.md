@@ -2,37 +2,37 @@
 
 ## Feature Summary
 
-| Field                 | Value                                                                                                   |
-| --------------------- | ------------------------------------------------------------------------------------------------------- |
-| Change                | When the user submits a new prompt while reading earlier content, only the immediate-send path runs the existing "scroll to bottom" action once                         |
-| User-visible surfaces | V4 conversation composer, queue item "立即发送" (send now), desktop/Web/mobile shared UI                           |
-| Existing docs         | `docs/conversation-session-case-catalog.md`、`docs/testing/conversation-session-e2e-coverage-matrix.md` |
-| Existing code owners  | `ConversationTimeline` owns renderer-local scroll state; `SessionPane` orchestrates composer/queue commands          |
-| Out of scope          | Permanent forced pinning, protocol/CLI queue changes, cross-renderer scroll position sync, edit/retry/automatic drain                      |
+| Field                 | Value                                                                                                                                           |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Change                | When the user submits a new prompt while reading earlier content, only the immediate-send path runs the existing "scroll to bottom" action once |
+| User-visible surfaces | V4 conversation composer, queue item "立即发送" (send now), desktop/Web/mobile shared UI                                                        |
+| Existing docs         | `docs/conversation-session-case-catalog.md`、`docs/testing/conversation-session-e2e-coverage-matrix.md`                                         |
+| Existing code owners  | `ConversationTimeline` owns renderer-local scroll state; `SessionPane` orchestrates composer/queue commands                                     |
+| Out of scope          | Permanent forced pinning, protocol/CLI queue changes, cross-renderer scroll position sync, edit/retry/automatic drain                           |
 
 ## Clarification Log
 
-| Round | Question                                    | User answer                                  | Boundary fixed              | Follow-up needed |
-| ----- | ------------------------------------------- | -------------------------------------------- | --------------------------- | ---------------- |
+| Round | Question                                               | User answer                                                                   | Boundary fixed                              | Follow-up needed |
+| ----- | ------------------------------------------------------ | ----------------------------------------------------------------------------- | ------------------------------------------- | ---------------- |
 | 1     | Do plain send, enqueue and queue send-now all trigger? | Enqueueing a message does not trigger; clicking send-now on a queue item does | send-now and enqueue are decided separately | no               |
 
 ## Boundary Decisions
 
-| Boundary | Decision                          | Includes                                         | Excludes / prunes                   | Source                               |
-| -------- | --------------------------------- | ------------------------------------------------ | ----------------------------------- | ------------------------------------ |
-| Trigger  | Reuse the existing instant "scroll to bottom" action | composer direct send accepted; queue item send-now click | enqueue only, automatic drain, edit, retry | user                                 |
-| Lifetime | Restore `following=true` once       | This scroll to the bottom and the existing natural following afterwards                   | Permanent bottom lock; continuing to force-scroll after the user scrolls up        | user + existing scroll state machine |
-| Failure  | A failed composer send does not change the reading position   | accepted/no-throw send                           | rejected/throw                      | existing ACK boundary                |
-| Client   | shared renderer semantics              | desktop continuous, plain Web, mobile remote UI   | Cross-device scroll position sync                  | architecture invariant               |
+| Boundary | Decision                                                    | Includes                                                                | Excludes / prunes                                                           | Source                               |
+| -------- | ----------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------ |
+| Trigger  | Reuse the existing instant "scroll to bottom" action        | composer direct send accepted; queue item send-now click                | enqueue only, automatic drain, edit, retry                                  | user                                 |
+| Lifetime | Restore `following=true` once                               | This scroll to the bottom and the existing natural following afterwards | Permanent bottom lock; continuing to force-scroll after the user scrolls up | user + existing scroll state machine |
+| Failure  | A failed composer send does not change the reading position | accepted/no-throw send                                                  | rejected/throw                                                              | existing ACK boundary                |
+| Client   | shared renderer semantics                                   | desktop continuous, plain Web, mobile remote UI                         | Cross-device scroll position sync                                           | architecture invariant               |
 
 ## Domain Scope
 
-| Domain                | Include?      | Why it can change behavior                                      | Primary sources                       |
-| --------------------- | ------------- | --------------------------------------------------------------- | ------------------------------------- |
-| Conversation/session  | yes           | `inputRouting.mode` distinguishes start-now from enqueue                   | conversation protocol declaration     |
+| Domain                | Include?      | Why it can change behavior                                                                | Primary sources                       |
+| --------------------- | ------------- | ----------------------------------------------------------------------------------------- | ------------------------------------- |
+| Conversation/session  | yes           | `inputRouting.mode` distinguishes start-now from enqueue                                  | conversation protocol declaration     |
 | Renderer scroll state | yes           | `followingRef`, scroll memory and the bottom action determine the user's reading position | `ConversationTimeline.tsx`、SRM cases |
-| Mobile replayable     | boundary only | Shared UI, but the recovery protocol must not own scroll state                             | message flow architecture             |
-| Protocol/CLI          | no            | No new command/result or queue state                             | renderer-local invariant              |
+| Mobile replayable     | boundary only | Shared UI, but the recovery protocol must not own scroll state                            | message flow architecture             |
+| Protocol/CLI          | no            | No new command/result or queue state                                                      | renderer-local invariant              |
 
 ## Concept Map And State Owners
 
@@ -46,12 +46,12 @@ scrollToBottom(): following=true -> instant bottom -> existing content-follow be
 user scrolls up: following=false -> hold reading position
 ```
 
-| State / fact              | Authority                                                  | Evidence                             |
-| ------------------------- | ---------------------------------------------------------- | ------------------------------------ |
-| start-now vs enqueue      | current V4 `snapshot.inputRouting.mode` + held disposition | focused policy unit test             |
-| queue send-now click      | `ConversationQueuePanel` user action                       | SessionPane component test           |
-| scroll position/following | `ConversationTimeline` component instance                  | timeline action-ref unit test         |
-| conversation/queue truth  | CLI projection                                             | unchanged                            |
+| State / fact              | Authority                                                  | Evidence                      |
+| ------------------------- | ---------------------------------------------------------- | ----------------------------- |
+| start-now vs enqueue      | current V4 `snapshot.inputRouting.mode` + held disposition | focused policy unit test      |
+| queue send-now click      | `ConversationQueuePanel` user action                       | SessionPane component test    |
+| scroll position/following | `ConversationTimeline` component instance                  | timeline action-ref unit test |
+| conversation/queue truth  | CLI projection                                             | unchanged                     |
 
 ## Dimensions And Candidate Combinations
 

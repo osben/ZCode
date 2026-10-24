@@ -61,15 +61,15 @@ Conclusions of the three grilling rounds on 2026-09-07 and the follow-up confirm
 
 ## 2. Feature Summary and Scope Discovery
 
-| Field                | Content                                                                                           |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| Operating mode       | implementation-handoff: deliver an implementable plan and accepted cases, historical planning phase; the current implementation list is maintained by the harness inventory and the coverage matrix |
-| Change layers        | presentation, option-source, draft-default, validation, commit-effect, persistence, recovery      |
-| Main domains         | connection/deployment/identity; Provider config and execution; workspace/conversation/settings; cross-client recovery |
-| Must inspect         | first-connect barrier, reconnect generation swap, full-forward RPC, Source write routing, old config and identity migration, actual build identity |
-| Conditional inspect  | SSH platform capability, Docker/WSL, browser relay, model account and real requests, old-version run and rollback |
-| Invariant inspect    | local flow, single Window Host, single CLI queue, continuous/replayable, isolation between Sources, no secrets in logs |
-| Product scope not extended | remote cron automation, new Direct URL product entry, R4 full key cleaning, automatic resume after a crash, arbitrary multi-window role switching |
+| Field                      | Content                                                                                                                                                                                             |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operating mode             | implementation-handoff: deliver an implementable plan and accepted cases, historical planning phase; the current implementation list is maintained by the harness inventory and the coverage matrix |
+| Change layers              | presentation, option-source, draft-default, validation, commit-effect, persistence, recovery                                                                                                        |
+| Main domains               | connection/deployment/identity; Provider config and execution; workspace/conversation/settings; cross-client recovery                                                                               |
+| Must inspect               | first-connect barrier, reconnect generation swap, full-forward RPC, Source write routing, old config and identity migration, actual build identity                                                  |
+| Conditional inspect        | SSH platform capability, Docker/WSL, browser relay, model account and real requests, old-version run and rollback                                                                                   |
+| Invariant inspect          | local flow, single Window Host, single CLI queue, continuous/replayable, isolation between Sources, no secrets in logs                                                                              |
+| Product scope not extended | remote cron automation, new Direct URL product entry, R4 full key cleaning, automatic resume after a crash, arbitrary multi-window role switching                                                   |
 
 The first implementation gate must generate `change-map.json`: scan the R3 main line, merge
 increments and later fixes separately, recording files/symbols, named semantic relations,
@@ -81,17 +81,17 @@ into remote cases.
 
 ### UI Surface Matrix
 
-| Scenario / UI entry                                            | Shared implementation / display draft owner         | Default / validation                                           | Commit action / authority                                   | Mode and isolation                                                    |
-| -------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------- |
-| Add SSH / device connection wizard                             | SSHDialog, Host connection manager                  | target, install confirmation, version gate, first-connect Provisioning | Connection Manager -> Transport -> Source daemon -> attachment | Credentials do not enter tabs; no install before confirmation; local download must be chosen explicitly and asserted |
-| Device settings page / sidebar / device picker                 | Controller projection, Source rows                  | Source online, operation state, identity                       | RemoteWorkspaceController -> management/profile service     | The three entries share intent; offline does not fall back to local   |
-| Project and history-purpose isolation                          | Root history, open membership, TabStore             | Source/realpath/purpose, existing attachment                   | Source backing workspace, logical session, persistent open set | Local/remote same path, two Sources, project/chat isolated from each other |
-| Model settings page                                            | SettingsPage -> Local ServiceProvider               | local Provider draft, Configured Default; local connectivity cwd | Local ProviderSettings -> successful save -> Provisioning source | Activating a remote tab still edits local; no remote edit / manual sync entry appears |
-| Conversation model selection / no-model banner                 | useModelSelectionView, pane draft                   | target Host Registry / selection validation                    | target ModelSelection, CLI creates the Model                | remote-waiting does not fall back to local candidates; old-generation replies discarded |
-| Skills/MCP/Plugins/Hooks/Subagents/Memory/Output/Settings-sync | hooks/attachment of Source scope and workspace scope | online, user/project scope, target projection consistent       | chosen Source formal config / workspace files               | Localizing the model page must not skew these settings; phone does not open Source management |
-| Files/terminal/Git/media                                       | full-forward RemoteWorkspaceRpcContract             | scope, path execution, media authorization                     | remote services / filesystem / PTY / repo                   | Real remote IO; client-local capabilities go through the platform seam |
-| Conversation area / task list / pending interaction            | V4 pane, Controller index projection                | task address, owner/lease, CLI admission                       | remote CLI / Session / task index                           | Local/remote tasks do not mix; rejection, ACK, queue have a unique destination |
-| Phone /remote                                                  | browser projection, trusted attachment              | existing Host/session, trusted clientMode                      | existing CLI, same CommandInbox                             | replayable independent subscription; no SSH/Host/Agent created; desktop continuous unaffected |
+| Scenario / UI entry                                            | Shared implementation / display draft owner          | Default / validation                                                   | Commit action / authority                                        | Mode and isolation                                                                                                   |
+| -------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Add SSH / device connection wizard                             | SSHDialog, Host connection manager                   | target, install confirmation, version gate, first-connect Provisioning | Connection Manager -> Transport -> Source daemon -> attachment   | Credentials do not enter tabs; no install before confirmation; local download must be chosen explicitly and asserted |
+| Device settings page / sidebar / device picker                 | Controller projection, Source rows                   | Source online, operation state, identity                               | RemoteWorkspaceController -> management/profile service          | The three entries share intent; offline does not fall back to local                                                  |
+| Project and history-purpose isolation                          | Root history, open membership, TabStore              | Source/realpath/purpose, existing attachment                           | Source backing workspace, logical session, persistent open set   | Local/remote same path, two Sources, project/chat isolated from each other                                           |
+| Model settings page                                            | SettingsPage -> Local ServiceProvider                | local Provider draft, Configured Default; local connectivity cwd       | Local ProviderSettings -> successful save -> Provisioning source | Activating a remote tab still edits local; no remote edit / manual sync entry appears                                |
+| Conversation model selection / no-model banner                 | useModelSelectionView, pane draft                    | target Host Registry / selection validation                            | target ModelSelection, CLI creates the Model                     | remote-waiting does not fall back to local candidates; old-generation replies discarded                              |
+| Skills/MCP/Plugins/Hooks/Subagents/Memory/Output/Settings-sync | hooks/attachment of Source scope and workspace scope | online, user/project scope, target projection consistent               | chosen Source formal config / workspace files                    | Localizing the model page must not skew these settings; phone does not open Source management                        |
+| Files/terminal/Git/media                                       | full-forward RemoteWorkspaceRpcContract              | scope, path execution, media authorization                             | remote services / filesystem / PTY / repo                        | Real remote IO; client-local capabilities go through the platform seam                                               |
+| Conversation area / task list / pending interaction            | V4 pane, Controller index projection                 | task address, owner/lease, CLI admission                               | remote CLI / Session / task index                                | Local/remote tasks do not mix; rejection, ACK, queue have a unique destination                                       |
+| Phone /remote                                                  | browser projection, trusted attachment               | existing Host/session, trusted clientMode                              | existing CLI, same CommandInbox                                  | replayable independent subscription; no SSH/Host/Agent created; desktop continuous unaffected                        |
 
 ### Shared And Divergent Behavior / State Owners And Commit Sinks
 
@@ -137,17 +137,17 @@ There was no callable codegraph this time; git diff, exact rg, source and test t
 semantic hops were used. It must not be claimed that codegraph or tests were run. The seeds for a
 later indexed recheck:
 
-| Rank           | Seed / current direct path                                                                              | Relationship and proof task                                          |
-| -------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| must-inspect   | desktopRemoteSessions -> ProviderProvisioningEnvironmentCoordinator -> remoteProviderProvisioningService | first-connect ready, reconnect generation swap, single-flight, old Host deregistration |
-| must-inspect   | ProviderSettings/credentials save -> node.ts source trigger -> providerProvisioningSource/Target        | latest snapshot, transaction/rollback, idempotency, allowlist deletion |
-| must-inspect   | SettingsPage -> Local ProviderSettings; useModelSelectionView -> remote facade -> turn-model            | edit authority separated from execution authority; current/next Model config |
-| must-inspect   | sourceServerReleaseResolver -> sourceServerConnectionManager -> transportAdapter -> CLI release runtime | same-version SHA change, real install matches the active process     |
-| must-inspect   | useRemoteWorkspaceHistory -> Controller/Registry -> renderer port bridge                                | keep failed history, explicit disconnect, old replies, open membership |
-| must-inspect   | sourceSettingsServiceCollection -> Source hooks such as SubagentsSection                                | user scope without a project and the model-selection seam; an unavailable proxy is only a risk candidate and must really run |
-| should-inspect | remoteWorkspaceRpcContract -> full-forward services -> mediaPreview/file/Git/terminal                   | new channel set and Source authority; the contract is still v1 and the compatibility gate should reject old ends before dispatch |
-| invariant-only | windowHostAttachmentRpcPolicy, Core http.ts, task realtime / CommandInbox                               | phone has no provisioning/terminal/management; desktop siblings keep working |
-| evidence-only  | SSH P0 formal/pending specs, CLI verify-remote-ssh                                                      | reuse the harness and fixtures; an existing spec or old artifact does not mean the current pass |
+| Rank           | Seed / current direct path                                                                               | Relationship and proof task                                                                                                      |
+| -------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| must-inspect   | desktopRemoteSessions -> ProviderProvisioningEnvironmentCoordinator -> remoteProviderProvisioningService | first-connect ready, reconnect generation swap, single-flight, old Host deregistration                                           |
+| must-inspect   | ProviderSettings/credentials save -> node.ts source trigger -> providerProvisioningSource/Target         | latest snapshot, transaction/rollback, idempotency, allowlist deletion                                                           |
+| must-inspect   | SettingsPage -> Local ProviderSettings; useModelSelectionView -> remote facade -> turn-model             | edit authority separated from execution authority; current/next Model config                                                     |
+| must-inspect   | sourceServerReleaseResolver -> sourceServerConnectionManager -> transportAdapter -> CLI release runtime  | same-version SHA change, real install matches the active process                                                                 |
+| must-inspect   | useRemoteWorkspaceHistory -> Controller/Registry -> renderer port bridge                                 | keep failed history, explicit disconnect, old replies, open membership                                                           |
+| must-inspect   | sourceSettingsServiceCollection -> Source hooks such as SubagentsSection                                 | user scope without a project and the model-selection seam; an unavailable proxy is only a risk candidate and must really run     |
+| should-inspect | remoteWorkspaceRpcContract -> full-forward services -> mediaPreview/file/Git/terminal                    | new channel set and Source authority; the contract is still v1 and the compatibility gate should reject old ends before dispatch |
+| invariant-only | windowHostAttachmentRpcPolicy, Core http.ts, task realtime / CommandInbox                                | phone has no provisioning/terminal/management; desktop siblings keep working                                                     |
+| evidence-only  | SSH P0 formal/pending specs, CLI verify-remote-ssh                                                       | reuse the harness and fixtures; an existing spec or old artifact does not mean the current pass                                  |
 
 ### Graph Drift Candidates / Graph Delta
 
@@ -166,15 +166,15 @@ undefined area.
 
 ## 3. Environments, Materials and Isolation
 
-| Environment | Purpose this round                                                          | Realism / acceptance boundary                                                                                     |
-| ----------- | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| E-SSH       | Current macOS Desktop -> Linux x64 SSH of linux-amd64-dev                   | Password, real sshd, archive, Server/Agent, dev entry; measured that the alias points to SSH exposed by local Docker, so cross-machine WAN verification cannot be claimed |
-| E-ISO-A/B   | New independent SSH containers, two independent Sources, same absolute project path | Config deletion/corruption, version switching, kill Core/Agent, quota/permission/network faults; rebuildable each round |
-| E-SVC       | Independent target with a usable user service manager                       | systemd success, recovery from a missing bus environment, real registration failure; current E-SSH only has detached capability |
-| E-DKR       | Desktop Docker transport -> independent Linux container                     | A true Docker proxy-stdio representative; "SSH into a Docker container" does not substitute                       |
-| E-MOB       | Mobile-viewport browser + local web + external relay with an explicitly matching environment + existing SSH scope | Real pairing/attachment/recovery; browser automation is not iOS/Android real-device evidence |
-| E-WSL       | Windows Desktop + WSL2                                                      | Platform execution package prepared, BLOCKED without Windows; the cross-transport release gate is not lowered     |
-| E-OLD       | Authenticated old Desktop / Server / data fixtures                          | The three record version, source, SHA, schema and runnability separately                                           |
+| Environment | Purpose this round                                                                                                | Realism / acceptance boundary                                                                                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E-SSH       | Current macOS Desktop -> Linux x64 SSH of linux-amd64-dev                                                         | Password, real sshd, archive, Server/Agent, dev entry; measured that the alias points to SSH exposed by local Docker, so cross-machine WAN verification cannot be claimed |
+| E-ISO-A/B   | New independent SSH containers, two independent Sources, same absolute project path                               | Config deletion/corruption, version switching, kill Core/Agent, quota/permission/network faults; rebuildable each round                                                   |
+| E-SVC       | Independent target with a usable user service manager                                                             | systemd success, recovery from a missing bus environment, real registration failure; current E-SSH only has detached capability                                           |
+| E-DKR       | Desktop Docker transport -> independent Linux container                                                           | A true Docker proxy-stdio representative; "SSH into a Docker container" does not substitute                                                                               |
+| E-MOB       | Mobile-viewport browser + local web + external relay with an explicitly matching environment + existing SSH scope | Real pairing/attachment/recovery; browser automation is not iOS/Android real-device evidence                                                                              |
+| E-WSL       | Windows Desktop + WSL2                                                                                            | Platform execution package prepared, BLOCKED without Windows; the cross-transport release gate is not lowered                                                             |
+| E-OLD       | Authenticated old Desktop / Server / data fixtures                                                                | The three record version, source, SHA, schema and runnability separately                                                                                                  |
 
 Isolation requirements:
 
@@ -244,13 +244,13 @@ digests of the build receipt match.
 implement and this document does not fake runnable pnpm scripts. At least five capabilities are
 needed:
 
-| Work package                      | Reuse                                                 | Capability to add / proof of completion                                                                                     |
-| --------------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| H1 run manifest and resource management | WDIO runId, SSH helper, CLI verifier            | standard alias resolution, exclusive target, capability probing, build receipt, account category and request records; explicit BLOCKED when materials are missing |
-| H2 product connection and lifecycle | SSH dialog, cold reconnect pending                  | explicit choice of local download, R3 Supervisor/Core PID identity, disconnect proxy, cross-window/project control; no direct injection of a "connected" state |
-| H3 sync and model oracle          | case-local replay, SSH reverse tunnel                 | remote Store digest / Registry readiness, actual provider/model/body, syncId/generation; barrier controls flow and sync, unmatched fails closed |
-| H4 Mobile/live orchestration      | dev:web-remote-control, existing attachment contract  | mobile browser pairing, real relay, independent disconnect; actual model requests including auxiliary/retries all recorded, no artificial consumption cap, auth values not in records |
-| H5 recording and audit            | reporter, Electron window recorder, failure artifacts | success-representative recordings / key screenshots, remote log windows, per-step JSONL, first-failure retention, before/after data reconciliation, cleanup audit, HTML/Markdown summary |
+| Work package                            | Reuse                                                 | Capability to add / proof of completion                                                                                                                                                  |
+| --------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1 run manifest and resource management | WDIO runId, SSH helper, CLI verifier                  | standard alias resolution, exclusive target, capability probing, build receipt, account category and request records; explicit BLOCKED when materials are missing                        |
+| H2 product connection and lifecycle     | SSH dialog, cold reconnect pending                    | explicit choice of local download, R3 Supervisor/Core PID identity, disconnect proxy, cross-window/project control; no direct injection of a "connected" state                           |
+| H3 sync and model oracle                | case-local replay, SSH reverse tunnel                 | remote Store digest / Registry readiness, actual provider/model/body, syncId/generation; barrier controls flow and sync, unmatched fails closed                                          |
+| H4 Mobile/live orchestration            | dev:web-remote-control, existing attachment contract  | mobile browser pairing, real relay, independent disconnect; actual model requests including auxiliary/retries all recorded, no artificial consumption cap, auth values not in records    |
+| H5 recording and audit                  | reporter, Electron window recorder, failure artifacts | success-representative recordings / key screenshots, remote log windows, per-step JSONL, first-failure retention, before/after data reconciliation, cleanup audit, HTML/Markdown summary |
 
 H3 sends remote model requests to the controlled response service through a real SSH reverse tunnel;
 the control SSH connection and the model replay tunnel are separate. Disconnecting the UI SSH must
@@ -312,11 +312,11 @@ Full setup/action/assertion and evidence are in the [matrix](r3-remote-automatio
 Coverage is not a count of spec files: each accepted behavior needs an independent case ID,
 expectation and evidence, even if it shares one expensive environment start.
 
-| Tier  | Content                                                                                   | Purpose                                                  |
-| ----- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Tier  | Content                                                                                                                                          | Purpose                                                                                                  |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
 | smoke | materials/artifact gate, install/first connect, one remote file and terminal operation, sync/first send, multi-workspace isolation, one recovery | Quickly locate main-chain blockers; duration published after measurement, no minutes promised in advance |
-| full  | all accepted function/fault/migration cases, affected unit/contract, representative Docker/Mobile/live, development start path | Run by package, resumable scheduling; a package's smoke is not full |
-| soak  | 50 disconnect-recoveries + 2-hour Desktop/Mobile concurrency, process/connection/subscription/fd/memory trends, production log volume | First full acceptance and major lifecycle changes; models use replay |
+| full  | all accepted function/fault/migration cases, affected unit/contract, representative Docker/Mobile/live, development start path                   | Run by package, resumable scheduling; a package's smoke is not full                                      |
+| soak  | 50 disconnect-recoveries + 2-hour Desktop/Mobile concurrency, process/connection/subscription/fd/memory trends, production log volume            | First full acceptance and major lifecycle changes; models use replay                                     |
 
 High-risk dimensions: first connect / reconnect, second save while a sync is in flight,
 empty/invalid/old config, old/new Model, same/different Environment key, same path different Source,
@@ -328,7 +328,7 @@ GUI, without copying every database permutation into Electron.
 ## 7. Acceptance and Failure Handling
 
 - Status is recorded separately as `planned / running / PASS / FAIL / BLOCKED_ENVIRONMENT /
-  BLOCKED_ACCOUNT / BLOCKED_DEPENDENCY / NOT_RUN / PRUNED / UNDEFINED`; product coverage and
+BLOCKED_ACCOUNT / BLOCKED_DEPENDENCY / NOT_RUN / PRUNED / UNDEFINED`; product coverage and
   execution result are two fields. Unimplemented, missing environment and skip are never counted as
   PASS.
 - P0: main chain unusable, data loss / Source mixing, secret leak, phone starting its own runtime.
@@ -422,11 +422,11 @@ run/
 
 ### Planning Handoff / Open Items
 
-| Artifact/question                                  | Destination / handling                                    |
-| -------------------------------------------------- | --------------------------------------------------------- |
-| Spec and test strategy                             | This document; semantic consensus confirmed               |
-| accepted/undefined/pruned and implementation status | Dedicated matrix; index added to the main catalog/coverage matrix |
-| Usable accounts, quota, environments, old packages | Readiness record; existing metadata does not mean online usability |
-| Exact original historical baseline                 | Authenticate existing old packages or rebuild the specified commit; do not guess the commit corresponding to a version |
-| General auto-reconnect roles across multiple windows, all-empty-workspace idle TTL | Stay UNDEFINED; the concrete lane / RCONV-16 contract is accepted normally |
-| Test implementation                                | H1-H5 and the matrix package by package; currently none newly implemented or run |
+| Artifact/question                                                                  | Destination / handling                                                                                                 |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Spec and test strategy                                                             | This document; semantic consensus confirmed                                                                            |
+| accepted/undefined/pruned and implementation status                                | Dedicated matrix; index added to the main catalog/coverage matrix                                                      |
+| Usable accounts, quota, environments, old packages                                 | Readiness record; existing metadata does not mean online usability                                                     |
+| Exact original historical baseline                                                 | Authenticate existing old packages or rebuild the specified commit; do not guess the commit corresponding to a version |
+| General auto-reconnect roles across multiple windows, all-empty-workspace idle TTL | Stay UNDEFINED; the concrete lane / RCONV-16 contract is accepted normally                                             |
+| Test implementation                                                                | H1-H5 and the matrix package by package; currently none newly implemented or run                                       |

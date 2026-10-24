@@ -42,18 +42,18 @@ three: the model provider actually in use belongs to the matching Plan provider;
 connection mode in Settings is the same mode; and the entitlement for that connection mode has displayable
 benefits.
 
-| Model provider in use         | Current connection mode | Entitlement state | Context hover shows              |
-| ----------------------------- | ----------------------- | ----------------- | -------------------------------- |
-| API Key provider              | any                     | any               | neither balance nor quota        |
-| Custom provider               | any                     | any               | neither balance nor quota        |
-| Personal Coding Plan provider | Personal Coding Plan    | personal benefit  | Remaining quota (剩余额度)       |
-| Personal Coding Plan provider | Personal Coding Plan    | no personal       | nothing                          |
-| BigModel Coding Plan provider | Team Coding Plan        | that team benefit | Remaining quota (剩余额度)       |
-| BigModel Coding Plan provider | Team Coding Plan        | no team benefit   | nothing                          |
-| Start Plan provider           | Start Plan              | Start benefit     | Today's balance (今日余额)       |
-| Start Plan provider           | Start Plan              | no Start benefit  | nothing                          |
-| Coding Plan provider          | API Key / Start Plan    | any               | nothing                          |
-| Start Plan provider           | API Key / Coding Plan   | any               | nothing                          |
+| Model provider in use         | Current connection mode | Entitlement state | Context hover shows        |
+| ----------------------------- | ----------------------- | ----------------- | -------------------------- |
+| API Key provider              | any                     | any               | neither balance nor quota  |
+| Custom provider               | any                     | any               | neither balance nor quota  |
+| Personal Coding Plan provider | Personal Coding Plan    | personal benefit  | Remaining quota (剩余额度) |
+| Personal Coding Plan provider | Personal Coding Plan    | no personal       | nothing                    |
+| BigModel Coding Plan provider | Team Coding Plan        | that team benefit | Remaining quota (剩余额度) |
+| BigModel Coding Plan provider | Team Coding Plan        | no team benefit   | nothing                    |
+| Start Plan provider           | Start Plan              | Start benefit     | Today's balance (今日余额) |
+| Start Plan provider           | Start Plan              | no Start benefit  | nothing                    |
+| Coding Plan provider          | API Key / Start Plan    | any               | nothing                    |
+| Start Plan provider           | API Key / Coding Plan   | any               | nothing                    |
 
 Implementation principles:
 

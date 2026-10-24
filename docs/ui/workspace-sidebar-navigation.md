@@ -51,17 +51,17 @@ Projects stay in a flat list; identity, ordering and path isolation follow `work
 
 ## Workspace Task Pagination Acceptance
 
-| Case      | Setup                          | Action                         | Assertion                                                    | Status   |
-| --------- | ------------------------------ | ------------------------------ | ------------------------------------------------------------ | -------- |
-| `WSTP-01` | workspace has 0-5 ordinary tasks | Expand the workspace         | All existing tasks shown, no "Show more"                     | accepted |
-| `WSTP-02` | workspace has 6 ordinary tasks | Expand, click "Show more" once | Visible count goes 5 to 6, entry disappears                  | accepted |
-| `WSTP-03` | workspace has 12 ordinary tasks | Click "Show more" repeatedly  | Visible count goes `5 -> 10 -> 12`, entry disappears at end | accepted |
-| `WSTP-04` | workspaces A/B both exceed 5   | Click "Show more" in A only    | A grows by 5, B stays at the default 5                       | accepted |
-| `WSTP-05` | workspace shows more than 5    | Collapse by any path, re-expand | Back to the default 5                                       | accepted |
-| `WSDR-01` | workspaces A and B expanded    | Start dragging A               | Only A collapses temporarily; B stays expanded; overlay has no tasks | accepted |
-| `WSDR-02` | workspace A expanded           | Drag A, then drop              | Order committed; A re-expands; expansion preference not rewritten | accepted |
-| `WSDR-03` | workspace A expanded           | Drag A, then cancel            | Order unchanged; A re-expands                                | accepted |
-| `WSDR-04` | workspace A was collapsed      | Drag A and finish              | A stays collapsed throughout                                 | accepted |
+| Case      | Setup                            | Action                          | Assertion                                                            | Status   |
+| --------- | -------------------------------- | ------------------------------- | -------------------------------------------------------------------- | -------- |
+| `WSTP-01` | workspace has 0-5 ordinary tasks | Expand the workspace            | All existing tasks shown, no "Show more"                             | accepted |
+| `WSTP-02` | workspace has 6 ordinary tasks   | Expand, click "Show more" once  | Visible count goes 5 to 6, entry disappears                          | accepted |
+| `WSTP-03` | workspace has 12 ordinary tasks  | Click "Show more" repeatedly    | Visible count goes `5 -> 10 -> 12`, entry disappears at end          | accepted |
+| `WSTP-04` | workspaces A/B both exceed 5     | Click "Show more" in A only     | A grows by 5, B stays at the default 5                               | accepted |
+| `WSTP-05` | workspace shows more than 5      | Collapse by any path, re-expand | Back to the default 5                                                | accepted |
+| `WSDR-01` | workspaces A and B expanded      | Start dragging A                | Only A collapses temporarily; B stays expanded; overlay has no tasks | accepted |
+| `WSDR-02` | workspace A expanded             | Drag A, then drop               | Order committed; A re-expands; expansion preference not rewritten    | accepted |
+| `WSDR-03` | workspace A expanded             | Drag A, then cancel             | Order unchanged; A re-expands                                        | accepted |
+| `WSDR-04` | workspace A was collapsed        | Drag A and finish               | A stays collapsed throughout                                         | accepted |
 
 Timeline, pinned, archived, grouped and the Web remote-control independent task index do not reuse this pagination state; they are pruned from scope. This pagination/drag work does not change the conversation, desktop continuous or mobile replayable data flows.
 
@@ -85,10 +85,10 @@ Timeline, pinned, archived, grouped and the Web remote-control independent task 
 - Deleting a task (`removeTaskState`) clears its entries; the cursor lands on the first retained entry after the pre-delete position (same as the old behavior).
 - On in-app delete or archive, `removeTaskState` remains the owner of immediate clearing and clears entries by full identity (`workspaceIdentity?.trim() || workspacePath` + `taskId`); replay clears lazily, only when it meets a confirmed-deleted entry. Entries with the same `taskId` in different workspaces do not affect each other.
 
-| Case         | Precondition                                                                                                          | Action              | Expected                                                  |
-| ------------ | --------------------------------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------- |
-| `NAV-033-01` | Stack `[Auto, PS, A(stale), B, C]`, cursor on PS                                                                      | Forward             | Navigate to B; A cleared; cursor on B                     |
-| `NAV-033-02` | Stack `[A(stale), B]`, cursor on B                                                                                    | Back                | A cleared; no target; cursor stays on B, no navigation    |
-| `NAV-033-03` | Stack `[A, A, X, A, Y, Z]`, cursor on the 4th A                                                                       | Delete task A       | Cursor on Y (first retained entry after the pre-delete position) |
-| `NAV-033-04` | Stack `[PS, A, B, C]`, A/B/C absent from the visible list and query cache but alive in the project tree (no tombstone) | Back 3 times in a row | Go to B, A, PS in turn; no history entries cleared      |
-| `NAV-033-05` | Same as NAV-033-04, but project tree `deletedTasks` contains A                                                        | Back from C         | All entries of A cleared; go to B, then PS                |
+| Case         | Precondition                                                                                                           | Action                | Expected                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------- | --------------------- | ---------------------------------------------------------------- |
+| `NAV-033-01` | Stack `[Auto, PS, A(stale), B, C]`, cursor on PS                                                                       | Forward               | Navigate to B; A cleared; cursor on B                            |
+| `NAV-033-02` | Stack `[A(stale), B]`, cursor on B                                                                                     | Back                  | A cleared; no target; cursor stays on B, no navigation           |
+| `NAV-033-03` | Stack `[A, A, X, A, Y, Z]`, cursor on the 4th A                                                                        | Delete task A         | Cursor on Y (first retained entry after the pre-delete position) |
+| `NAV-033-04` | Stack `[PS, A, B, C]`, A/B/C absent from the visible list and query cache but alive in the project tree (no tombstone) | Back 3 times in a row | Go to B, A, PS in turn; no history entries cleared               |
+| `NAV-033-05` | Same as NAV-033-04, but project tree `deletedTasks` contains A                                                         | Back from C           | All entries of A cleared; go to B, then PS                       |

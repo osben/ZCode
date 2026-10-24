@@ -5,12 +5,12 @@ identity.
 
 ## Summary
 
-| Field | Content |
-| --- | --- |
-| Behavior | The first terminal tab does not show `1`; later tabs start at `2`; closing or a PTY exit closes the matching tab in sync |
-| User-visible place | The tab strip of the bottom Terminal panel |
-| State owner | `Terminal` renderer-local state; PTY lifecycle is managed by each `TerminalSession` |
-| Out of scope | The right side pane Terminal tab, chat session/task realtime, protocol and Host/Agent runtime |
+| Field              | Content                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| Behavior           | The first terminal tab does not show `1`; later tabs start at `2`; closing or a PTY exit closes the matching tab in sync |
+| User-visible place | The tab strip of the bottom Terminal panel                                                                               |
+| State owner        | `Terminal` renderer-local state; PTY lifecycle is managed by each `TerminalSession`                                      |
+| Out of scope       | The right side pane Terminal tab, chat session/task realtime, protocol and Host/Agent runtime                            |
 
 ## Product Behavior
 
@@ -89,39 +89,39 @@ exit does not steal focus; a start failure keeps the error and does not auto-clo
 
 ## Domain Scope and Cross-Cutting Risks
 
-| Domain | Included | Decision |
-| --- | --- | --- |
-| File/Git/Terminal UI | Yes | Changes renderer-local naming, closing and number allocation of the bottom Terminal tabs |
-| UI shell / responsive | Yes | Desktop and mobile Web share the `Terminal` component with the same behavior and no per-platform branch |
+| Domain                              | Included       | Decision                                                                                                                              |
+| ----------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| File/Git/Terminal UI                | Yes            | Changes renderer-local naming, closing and number allocation of the bottom Terminal tabs                                              |
+| UI shell / responsive               | Yes            | Desktop and mobile Web share the `Terminal` component with the same behavior and no per-platform branch                               |
 | Workspace identity / remote runtime | Representative | Non-empty workspace identity is used for isolation first, else workspace path; `workspacePath` is still only for cwd and name display |
-| Mobile replayable / conversation | Pruned | No change to session/task stream, snapshot, queue, protocol or delivery kind |
-| Right side pane Terminal | Pruned | Has its own tab model, unchanged |
+| Mobile replayable / conversation    | Pruned         | No change to session/task stream, snapshot, queue, protocol or delivery kind                                                          |
+| Right side pane Terminal            | Pruned         | Has its own tab model, unchanged                                                                                                      |
 
 ## Concepts and State Owners
 
-| Concept | Authoritative state / code entry | Observable evidence |
-| --- | --- | --- |
-| workspace terminal registry | renderer state in `packages/ui/src/Terminal.tsx` | The current workspace's tab strip |
-| session number and smallest available number | `packages/ui/src/terminal/terminalPanelState.ts` | Tab title and pure-state unit tests |
-| PTY lifecycle | `packages/ui/src/terminal/TerminalSession.tsx` | Component unmounts after multi-tab close; stays mounted after a single-tab collapse |
-| Panel switch | `isTerminalOpen` in `packages/ui/src/hooks/useAppPanels.ts` | Terminal panel visibility |
+| Concept                                      | Authoritative state / code entry                            | Observable evidence                                                                 |
+| -------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| workspace terminal registry                  | renderer state in `packages/ui/src/Terminal.tsx`            | The current workspace's tab strip                                                   |
+| session number and smallest available number | `packages/ui/src/terminal/terminalPanelState.ts`            | Tab title and pure-state unit tests                                                 |
+| PTY lifecycle                                | `packages/ui/src/terminal/TerminalSession.tsx`              | Component unmounts after multi-tab close; stays mounted after a single-tab collapse |
+| Panel switch                                 | `isTerminalOpen` in `packages/ui/src/hooks/useAppPanels.ts` | Terminal panel visibility                                                           |
 
 ## State Combinations
 
-| Case ID | Tab state | User action | Expected effect | Class |
-| --- | --- | --- | --- | --- |
-| TERM-TAB-01 | First created, only number `1` | Look at tab title | Shows workspace name, not `1` | accepted |
-| TERM-TAB-02 | Number `1` exists | New tab | New tab shows `workspace 2`; first tab name unchanged | accepted |
-| TERM-TAB-03 | Numbers `1`, `2` exist | Close `2`, then new | New tab reuses number `2` | accepted |
-| TERM-TAB-04 | Numbers `1`, `2` exist | Close `1` | Number `2` keeps its name, not renamed to the base name | accepted |
-| TERM-TAB-05 | Single tab | Click tab close button | Collapses the whole Terminal panel, session kept alive | accepted |
-| TERM-TAB-06 | More than one tab | Close any tab | Releases only the target session; if the active tab is closed, an adjacent tab is chosen | accepted |
-| TERM-TAB-07 | Multi-tab, background PTY alive | Background PTY exit | Removes the exited tab, active tab and focus unchanged | accepted |
-| TERM-TAB-08 | Multi-tab, active PTY alive | Active PTY exit | Removes the exited tab, activates an adjacent tab | accepted |
-| TERM-TAB-09 | Current workspace single tab | PTY exit then reopen panel | Panel closes first; reopening creates a brand-new base-name tab | accepted |
-| TERM-TAB-10 | Hidden workspace single tab | Hidden PTY exit | Cleans only the hidden workspace, current panel not closed | accepted |
-| TERM-TAB-11 | Shell alive | Subcommand returns non-zero | No PTY exit, tab kept | pruned |
-| TERM-TAB-12 | terminal create fails | Promise reject | Tab keeps the start error, not auto-closed | accepted |
+| Case ID     | Tab state                       | User action                 | Expected effect                                                                          | Class    |
+| ----------- | ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------- | -------- |
+| TERM-TAB-01 | First created, only number `1`  | Look at tab title           | Shows workspace name, not `1`                                                            | accepted |
+| TERM-TAB-02 | Number `1` exists               | New tab                     | New tab shows `workspace 2`; first tab name unchanged                                    | accepted |
+| TERM-TAB-03 | Numbers `1`, `2` exist          | Close `2`, then new         | New tab reuses number `2`                                                                | accepted |
+| TERM-TAB-04 | Numbers `1`, `2` exist          | Close `1`                   | Number `2` keeps its name, not renamed to the base name                                  | accepted |
+| TERM-TAB-05 | Single tab                      | Click tab close button      | Collapses the whole Terminal panel, session kept alive                                   | accepted |
+| TERM-TAB-06 | More than one tab               | Close any tab               | Releases only the target session; if the active tab is closed, an adjacent tab is chosen | accepted |
+| TERM-TAB-07 | Multi-tab, background PTY alive | Background PTY exit         | Removes the exited tab, active tab and focus unchanged                                   | accepted |
+| TERM-TAB-08 | Multi-tab, active PTY alive     | Active PTY exit             | Removes the exited tab, activates an adjacent tab                                        | accepted |
+| TERM-TAB-09 | Current workspace single tab    | PTY exit then reopen panel  | Panel closes first; reopening creates a brand-new base-name tab                          | accepted |
+| TERM-TAB-10 | Hidden workspace single tab     | Hidden PTY exit             | Cleans only the hidden workspace, current panel not closed                               | accepted |
+| TERM-TAB-11 | Shell alive                     | Subcommand returns non-zero | No PTY exit, tab kept                                                                    | pruned   |
+| TERM-TAB-12 | terminal create fails           | Promise reject              | Tab keeps the start error, not auto-closed                                               | accepted |
 
 Pruning: theme, locale and desktop/mobile viewport do not change the naming and closing state machine; only
 representative assertions of the shared component are kept. No protocol, provider fixture, network timing
@@ -129,14 +129,14 @@ or Docker isolation is needed.
 
 ## Coverage Plan
 
-| Case | Setup / action / assertion | Evidence layer | Status |
-| --- | --- | --- | --- |
-| TERM-TAB-01/02/03/04 | Build workspace terminal state, create/close, assert stable numbering and titles | renderer state + UI label helper | covered unit + runtime CDP |
-| TERM-TAB-05 | Close a single session, assert the close-panel intent is returned and the session is not deleted | renderer state + panel callback | covered unit + runtime CDP |
-| TERM-TAB-06 | Close in multi-session, assert target deleted and fallback active session correct | renderer state | covered unit + runtime CDP |
-| TERM-TAB-07/08 | PTY exit in multi-session, assert background/active tab deletion and active fallback | renderer state + exit event | covered unit + runtime CDP |
-| TERM-TAB-09/10 | Last PTY exit of current/hidden workspace, assert panel-close boundary and lazy rebuild | renderer state + panel callback | covered unit + runtime CDP |
-| TERM-TAB-11/12 | Subcommand failure produces no exit; create reject keeps the error tab | terminal service/event contract | covered by invariant |
+| Case                 | Setup / action / assertion                                                                       | Evidence layer                   | Status                     |
+| -------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------- | -------------------------- |
+| TERM-TAB-01/02/03/04 | Build workspace terminal state, create/close, assert stable numbering and titles                 | renderer state + UI label helper | covered unit + runtime CDP |
+| TERM-TAB-05          | Close a single session, assert the close-panel intent is returned and the session is not deleted | renderer state + panel callback  | covered unit + runtime CDP |
+| TERM-TAB-06          | Close in multi-session, assert target deleted and fallback active session correct                | renderer state                   | covered unit + runtime CDP |
+| TERM-TAB-07/08       | PTY exit in multi-session, assert background/active tab deletion and active fallback             | renderer state + exit event      | covered unit + runtime CDP |
+| TERM-TAB-09/10       | Last PTY exit of current/hidden workspace, assert panel-close boundary and lazy rebuild          | renderer state + panel callback  | covered unit + runtime CDP |
+| TERM-TAB-11/12       | Subcommand failure produces no exit; create reject keeps the error tab                           | terminal service/event contract  | covered by invariant       |
 
 E2E handoff: this change sends no provider request and needs no replay/file fixture; a later desktop E2E
 should assert tab title, close button, panel visibility and whether the PTY DOM stays alive, and keep the

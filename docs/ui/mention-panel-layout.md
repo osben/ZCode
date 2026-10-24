@@ -10,11 +10,11 @@
 
 The Composer has `@`, `/` and `$` as three main discovery entries:
 
-| Main entry | Main group order | Semantics |
-| --- | --- | --- |
-| `@` | 1. Plugins; 2. Files; 3. Conversations | Reference the context the current task needs. The file group contains both files and folders; conversations stay on the current workspace's sessions-index. |
-| `/` | 1. Commands; 2. Skills; 3. Subagent | Choose the command or capability to run. |
-| `$` | Skills | Choose a skill directly. |
+| Main entry | Main group order                       | Semantics                                                                                                                                                   |
+| ---------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@`        | 1. Plugins; 2. Files; 3. Conversations | Reference the context the current task needs. The file group contains both files and folders; conversations stay on the current workspace's sessions-index. |
+| `/`        | 1. Commands; 2. Skills; 3. Subagent    | Choose the command or capability to run.                                                                                                                    |
+| `$`        | Skills                                 | Choose a skill directly.                                                                                                                                    |
 
 Old capabilities are kept:
 
@@ -53,15 +53,15 @@ Composer
 The discovery entry decides only "from which panel to find the candidate" and must not change the stable
 carrier after sending:
 
-| Candidate | Discovery entry | Canonical carrier after selection |
-| --- | --- | --- |
-| Plugin | `@` | `[@Plugin](plugin://stable-id)` |
-| File / folder | `@` | existing file/directory Markdown link |
-| Conversation | `@` or compat `#` | existing `[#Title](#sess_id)` / `#sess_id` |
-| Whiteboard | `@` | existing whiteboard mention |
-| Command | `/` | `/command` |
-| Skill | `/` or compat `$` / `¥` / `￥` | existing `$skill` or a path-carrying Skill Markdown link |
-| Subagent | `/` | existing `@agent-name` |
+| Candidate     | Discovery entry                | Canonical carrier after selection                        |
+| ------------- | ------------------------------ | -------------------------------------------------------- |
+| Plugin        | `@`                            | `[@Plugin](plugin://stable-id)`                          |
+| File / folder | `@`                            | existing file/directory Markdown link                    |
+| Conversation  | `@` or compat `#`              | existing `[#Title](#sess_id)` / `#sess_id`               |
+| Whiteboard    | `@`                            | existing whiteboard mention                              |
+| Command       | `/`                            | `/command`                                               |
+| Skill         | `/` or compat `$` / `¥` / `￥` | existing `$skill` or a path-carrying Skill Markdown link |
+| Subagent      | `/`                            | existing `@agent-name`                                   |
 
 So adding "conversations" to `@` adds no session-reference protocol, and putting Skill and Subagent under `/`
 does not serialize them as slash commands. Send, edit, queue, retry, fork and cold resume keep consuming the
@@ -69,12 +69,12 @@ original canonical text.
 
 ## UI Surface Matrix
 
-| User scenario | UI entry | Candidate source | Local state | Commit result | Mode boundary | Must isolate |
-| --- | --- | --- | --- | --- | --- | --- |
-| Reference Plugin / file / conversation / Whiteboard | `@` panel of `MentionPlugin` | plugin reference catalog, file provider, sessions-index, whiteboard provider | Lexical active trigger + selected index | Insert the matching original canonical Markdown | Desktop/Web/Mobile shared; remote uses the target workspace services | No change to Plugin catalog freeze, file path semantics or session catalog authority |
-| Choose command / Skill / Subagent | `/` panel of `SlashCommandPlugin` | CLI command catalog, Skills, Subagents | Lexical active trigger + selected index | Insert `/command`, Skill mention, `@agent` respectively | workspace identity isolation unchanged | Do not mistake Skill/Subagent for a command to run |
-| Use compat entries | `#`, `$`, `¥`, `￥` | sessions/skills provider; only `#` aggregates the workspace sessions-index of the same authority | original trigger state | original canonical Markdown | `#` does not cross Agent Hosts; other triggers as today | A `#` widening must not change the `@` conversation scope nor break old drafts |
-| Discover entries from the input `+` menu | `ChatPromptActionMenu` | static entries | no persisted state | Insert the `@`, `/` or `$` trigger character | each end only adapts layout | Do not expose `#` again, but do not affect manually typed `#` |
+| User scenario                                       | UI entry                          | Candidate source                                                                                 | Local state                             | Commit result                                           | Mode boundary                                                        | Must isolate                                                                         |
+| --------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Reference Plugin / file / conversation / Whiteboard | `@` panel of `MentionPlugin`      | plugin reference catalog, file provider, sessions-index, whiteboard provider                     | Lexical active trigger + selected index | Insert the matching original canonical Markdown         | Desktop/Web/Mobile shared; remote uses the target workspace services | No change to Plugin catalog freeze, file path semantics or session catalog authority |
+| Choose command / Skill / Subagent                   | `/` panel of `SlashCommandPlugin` | CLI command catalog, Skills, Subagents                                                           | Lexical active trigger + selected index | Insert `/command`, Skill mention, `@agent` respectively | workspace identity isolation unchanged                               | Do not mistake Skill/Subagent for a command to run                                   |
+| Use compat entries                                  | `#`, `$`, `¥`, `￥`               | sessions/skills provider; only `#` aggregates the workspace sessions-index of the same authority | original trigger state                  | original canonical Markdown                             | `#` does not cross Agent Hosts; other triggers as today              | A `#` widening must not change the `@` conversation scope nor break old drafts       |
+| Discover entries from the input `+` menu            | `ChatPromptActionMenu`            | static entries                                                                                   | no persisted state                      | Insert the `@`, `/` or `$` trigger character            | each end only adapts layout                                          | Do not expose `#` again, but do not affect manually typed `#`                        |
 
 ## Shared and Different Behavior
 

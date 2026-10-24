@@ -210,12 +210,12 @@ back to the first selectable node.
 - Left navigation: width narrowed from `280px` to `224px` with unified group/item spacing; group titles are
   inline titles in `text-ui-base + font-semibold`; nodes use a "border selected state" instead of a pure
   background one: selected `border-primary + text-foreground`, unselected `border-transparent +
-  hover:border-border-hover/60`. A provider icon is added at the node's left: preset providers use the OAuth
+hover:border-border-hover/60`. A provider icon is added at the node's left: preset providers use the OAuth
   provider logo (`Z.AI` / `BigModel`), custom providers the generic `Package` icon, and add provider keeps the
   `Plus` icon in `text-primary` for discoverability. The right status dot is a `CircleIcon`, blue
   (`text-sky-500`) when available and gray (`text-gray-400`) otherwise.
 - Right detail: cards unified as `rounded-2xl + border + bg-background/50` panels; title weight stays
   `font-semibold` with size narrowed from `text-lg` to `text-ui-lg`; field labels unified as `text-ui-base
-  font-medium text-foreground-subtle`; inputs and read-only displays unified as `rounded-lg + bg-input`,
+font-medium text-foreground-subtle`; inputs and read-only displays unified as `rounded-lg + bg-input`,
   consistent with other settings forms; the model list "add model" button is a `secondary` button with hover
   background; placeholder card body text unified as `text-ui-base text-foreground-subtle`.

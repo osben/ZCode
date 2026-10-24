@@ -51,16 +51,16 @@ The value is a JSON array; each rule describes one fault equivalence class:
 ]
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Stable case id or fixture id; must be non-empty |
-| `code` | Node-style error code, such as `ENOSPC`, `EACCES`, `EPERM` |
-| `operations` | Matching fs / storage operations: `mkdir`, `writeFile`, `appendFile`, `rename`, `rm`, `sqliteOpen`, `sqliteRun`, `any` |
-| `pathIncludes` | Path contains match; paths normalize `\` to `/` |
-| `pathEndsWith` | Path suffix match |
-| `pathRegex` | Regex match on the normalized path |
-| `maxMatches` | Maximum number of hits; default `1`; `0` means unlimited |
-| `message` | Readable description of the injected error |
+| Field          | Meaning                                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `id`           | Stable case id or fixture id; must be non-empty                                                                        |
+| `code`         | Node-style error code, such as `ENOSPC`, `EACCES`, `EPERM`                                                             |
+| `operations`   | Matching fs / storage operations: `mkdir`, `writeFile`, `appendFile`, `rename`, `rm`, `sqliteOpen`, `sqliteRun`, `any` |
+| `pathIncludes` | Path contains match; paths normalize `\` to `/`                                                                        |
+| `pathEndsWith` | Path suffix match                                                                                                      |
+| `pathRegex`    | Regex match on the normalized path                                                                                     |
+| `maxMatches`   | Maximum number of hits; default `1`; `0` means unlimited                                                               |
+| `message`      | Readable description of the injected error                                                                             |
 
 Matching rules:
 
@@ -88,13 +88,13 @@ The product layer can then handle real error codes while the E2E artifact can lo
 
 Every storage-fault E2E keeps at least:
 
-| Layer | Evidence |
-| --- | --- |
-| UI | User-visible error, button state, whether queue/runtime match product expectation |
-| Runtime | `activeInputId`, queue, session status, compact marker |
-| Files | Whether the target file is missing, partially written, corrupted or recovered |
-| Log | Error code and recovery log for the same `sessionId` / `inputId` |
-| Fault artifact | Matched `id`, `operation`, `path`, `code`, hit count |
+| Layer          | Evidence                                                                          |
+| -------------- | --------------------------------------------------------------------------------- |
+| UI             | User-visible error, button state, whether queue/runtime match product expectation |
+| Runtime        | `activeInputId`, queue, session status, compact marker                            |
+| Files          | Whether the target file is missing, partially written, corrupted or recovered     |
+| Log            | Error code and recovery log for the same `sessionId` / `inputId`                  |
+| Fault artifact | Matched `id`, `operation`, `path`, `code`, hit count                              |
 
 ## Current state
 

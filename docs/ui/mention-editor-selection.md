@@ -41,13 +41,13 @@ Lexical state
 
 ## Accepted Cases
 
-| ID | Setup/action | Must assert |
-| --- | --- | --- |
+| ID      | Setup/action                                                                            | Must assert                                                                             |
+| ------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | MSEL-01 | Plain text; leading/middle/trailing/only/adjacent mention; real platform select-all key | DOM selection is non-collapsed and complete; replacing after select-all leaves no token |
-| MSEL-02 | Delete after select-all, undo | Editor is cleared; undo restores canonical and labels |
-| MSEL-03 | Forward/backward partial selection, copy and cut | Plain text is cut accurately, mention output is atomic, cut range equals output |
-| MSEL-04 | Old JSON, multi-paragraph, Unicode, icon failure | Display length is right, canonical is not lost, icon update keeps the text node |
-| MSEL-05 | Typing after prefill and Option+ArrowRight | Label is kept, body text appends normally |
+| MSEL-02 | Delete after select-all, undo                                                           | Editor is cleared; undo restores canonical and labels                                   |
+| MSEL-03 | Forward/backward partial selection, copy and cut                                        | Plain text is cut accurately, mention output is atomic, cut range equals output         |
+| MSEL-04 | Old JSON, multi-paragraph, Unicode, icon failure                                        | Display length is right, canonical is not lost, icon update keeps the text node         |
+| MSEL-05 | Typing after prefill and Option+ArrowRight                                              | Label is kept, body text appends normally                                               |
 
 Extend the existing chat-input-mention-navigation E2E first. Unit tests verify serialization and
 clipboard commands; a real browser verifies native selection and editing; `dispatchCommand` returning

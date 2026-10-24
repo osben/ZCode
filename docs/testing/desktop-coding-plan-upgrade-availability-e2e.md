@@ -17,11 +17,11 @@ worker spec -> reset(scenario, marketingTouch) -> same mock origin
 
 ## Case: BigModel personal plans all sold out
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/coding-plan-upgrade-personal-sold-out.test.ts` |
-| Data source | `BigModel Coding Plan E2E mock server` |
-| Status | verified |
+| Field       | Content                                                                   |
+| ----------- | ------------------------------------------------------------------------- |
+| Spec        | `packages/desktop/test/e2e/coding-plan-upgrade-personal-sold-out.test.ts` |
+| Data source | `BigModel Coding Plan E2E mock server`                                    |
+| Status      | verified                                                                  |
 
 ### Setup
 
@@ -47,11 +47,11 @@ The brand entry no longer offers the old API Key connection mode, so the removed
 
 ## Case: BigModel personal plan API system busy
 
-| Field | Content |
-| --- | --- |
-| Spec | `packages/desktop/test/e2e/coding-plan-upgrade-personal-system-busy.test.ts` |
-| Data source | `BigModel Coding Plan E2E mock server` |
-| Status | verified |
+| Field       | Content                                                                      |
+| ----------- | ---------------------------------------------------------------------------- |
+| Spec        | `packages/desktop/test/e2e/coding-plan-upgrade-personal-system-busy.test.ts` |
+| Data source | `BigModel Coding Plan E2E mock server`                                       |
+| Status      | verified                                                                     |
 
 ### Setup
 

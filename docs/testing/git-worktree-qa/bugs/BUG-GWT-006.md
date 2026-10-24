@@ -33,6 +33,7 @@
 2. `GitActionMenu.tsx:1209-1230`: the only way to show the error in the catch is `setCommitError(...pushAfterCommitFailed...)`; the failure branch has no toast. `commitError` renders ONLY inside `GitCommitDialog` (`GitActionMenu.tsx:543`), so it is visible only while `commitDialogOpen === true`.
 3. `GitActionMenu.tsx:1370-1374`: the dialog's `onOpenChange(false)` calls `closeCommitDialog()` (`:906-914`), which unconditionally resets all dialog state (`commitError`, `commitDialogState`) without checking `mutationPending`. The dialog can be dismissed at any time between choosing the action and the async operation finishing.
 4. Result: push reject -> catch -> `setCommitError` into a closed dialog -> invisible error, no toast. Reproduced by a component test on the same code path (dismiss via `onOpenChange(false)` during a pending push): after reject the dialog is closed, no error text in the DOM, `toast` not called, `commit` called once.
+
 - Hypothesis (unverified): the exact trigger for closing the dialog at cmdk item selection in production (Radix pointer/focus interaction of cmdk inside a modal Dialog in Electron). In jsdom a click on the item does not close the dialog. Not essential: any dismiss in the pending window loses the error.
 
 ## Proposed fix

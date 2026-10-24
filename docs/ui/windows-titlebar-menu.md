@@ -44,13 +44,13 @@ The system window shape is decided by Windows/DWM; the renderer owns only the wo
 must not be merged by `isWindowsDesktop` alone, or Windows 10 vs 11 and normal vs maximized windows would
 contaminate each other.
 
-| System and window state | System window shape | Workspace content panel |
-| --- | --- | --- |
-| Windows 11 normal window | DWM native rounded corners | Keep rounded corners and the full weak border |
-| Windows 11 maximized | DWM outer edge is square | Panel switches to square corners; remove the top, right and bottom borders against the window edge, keep only the left separator |
-| Windows 10 normal/maximized | System native square corners | Only the two right corners against the system edge become square; keep the existing full weak border and inner left rounded corners |
-| Windows capability unknown / IPC failure | Not yet confirmed | Keep the pre-change rounded corners and full weak border; do not misjudge unknown as Windows 10 |
-| macOS, Linux, Web, mobile Web | Not part of this feature | Keep existing styles and responsive overrides |
+| System and window state                  | System window shape          | Workspace content panel                                                                                                             |
+| ---------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Windows 11 normal window                 | DWM native rounded corners   | Keep rounded corners and the full weak border                                                                                       |
+| Windows 11 maximized                     | DWM outer edge is square     | Panel switches to square corners; remove the top, right and bottom borders against the window edge, keep only the left separator    |
+| Windows 10 normal/maximized              | System native square corners | Only the two right corners against the system edge become square; keep the existing full weak border and inner left rounded corners |
+| Windows capability unknown / IPC failure | Not yet confirmed            | Keep the pre-change rounded corners and full weak border; do not misjudge unknown as Windows 10                                     |
+| macOS, Linux, Web, mobile Web            | Not part of this feature     | Keep existing styles and responsive overrides                                                                                       |
 
 Windows build `>= 22000` is the Windows 11 native-rounded-corner boundary. Build and maximized state are
 read by the Electron main process and injected into the UI through preload and `IPlatformService`; the UI

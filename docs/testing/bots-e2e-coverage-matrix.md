@@ -2,39 +2,39 @@
 
 Sources: [Bots E2E Case Catalog](../bots-e2e-case-catalog.md), [Bots](../bots.md) and [Bot Channel Runtime Split](../bot-channel-runtime-split.md).
 
-Full history (per-run ids, logs, intermediate failures): `git show 6c0f4203:docs/testing/bots-e2e-coverage-matrix.md`.
+Full history (per-run ids, logs, intermediate failures): `git show 45f808f7:docs/testing/bots-e2e-coverage-matrix.md`.
 
 Evidence vocabulary used below: service synthetic, real Host/CLI, Desktop DOM, mobile replayable, live tenant. They are never substituted for one another. Platform HTTP and model calls in E2E are isolated stand-ins unless a live run says otherwise. A narrow Desktop viewport is not mobile remote validation. The Desktop `bot-channel-continuous` and mobile `web-remote-replayable` delivery boundaries, owner routing and queue admission are unchanged by everything recorded here unless stated.
 
 ## State dimensions
 
-| Dimension          | Equivalence classes                                      | Handling                                                                                                                  |
-| ------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Provider           | Feishu, Lark, Telegram/Weixin                            | Feishu represents the shared card implementation; Lark domain handled separately; non-card providers pruned               |
-| Reply lifecycle    | create, running update, terminal update                  | BOT-E2E-SC-01 asserts all explicitly                                                                                      |
-| Stream block       | message, tool start/update, terminal                     | BOT-E2E-SC-01 uses a controlled stream                                                                                    |
-| Locale             | zh-CN, en-US                                             | SC-01 covers zh-CN; en-US is kept by provider/service unit contracts, pairwise later                                      |
-| Delivery kind      | bot-channel-continuous, web-remote-replayable            | Only the former is accepted; the latter is pruned by architecture invariant                                               |
-| Runtime authority  | local host, attached remote host, competing local hosts  | SC-01 covers local; the rest go to the RT cases                                                                           |
-| Evidence           | service action, subscription, provider HTTP, card JSON   | SC-01 proves all four layers jointly                                                                                      |
-| Automation origin  | Feishu, Weixin, ordinary UI                              | CR-01 formal E2E covers Feishu; Weixin is covered by the shared protocol and provider service integration test; ordinary UI asserts no delivery target |
-| Automation result  | complete, error, Bot unavailable                         | CR-01 covers terminal push-back and best-effort degradation                                                               |
-| Persistence        | same process after create, repository reopened           | CR-01 must prove the original conversation target is still readable after restart                                         |
-| Connection failure | unbound, bound                                           | CF-01 covers the bound conflict state; unbound is covered by component tests and pruned from Desktop E2E                  |
+| Dimension          | Equivalence classes                                     | Handling                                                                                                                                               |
+| ------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Provider           | Feishu, Lark, Telegram/Weixin                           | Feishu represents the shared card implementation; Lark domain handled separately; non-card providers pruned                                            |
+| Reply lifecycle    | create, running update, terminal update                 | BOT-E2E-SC-01 asserts all explicitly                                                                                                                   |
+| Stream block       | message, tool start/update, terminal                    | BOT-E2E-SC-01 uses a controlled stream                                                                                                                 |
+| Locale             | zh-CN, en-US                                            | SC-01 covers zh-CN; en-US is kept by provider/service unit contracts, pairwise later                                                                   |
+| Delivery kind      | bot-channel-continuous, web-remote-replayable           | Only the former is accepted; the latter is pruned by architecture invariant                                                                            |
+| Runtime authority  | local host, attached remote host, competing local hosts | SC-01 covers local; the rest go to the RT cases                                                                                                        |
+| Evidence           | service action, subscription, provider HTTP, card JSON  | SC-01 proves all four layers jointly                                                                                                                   |
+| Automation origin  | Feishu, Weixin, ordinary UI                             | CR-01 formal E2E covers Feishu; Weixin is covered by the shared protocol and provider service integration test; ordinary UI asserts no delivery target |
+| Automation result  | complete, error, Bot unavailable                        | CR-01 covers terminal push-back and best-effort degradation                                                                                            |
+| Persistence        | same process after create, repository reopened          | CR-01 must prove the original conversation target is still readable after restart                                                                      |
+| Connection failure | unbound, bound                                          | CF-01 covers the bound conflict state; unbound is covered by component tests and pruned from Desktop E2E                                               |
 
 ## Formal cases
 
-| Case ID       | Priority | Status | Spec                                                                     | Timing             | Setup / Action / Assertion                                                                                                                                                    |
-| ------------- | -------- | ------ | ------------------------------------------------------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BOT-E2E-SC-01 | P0       | formal | `packages/desktop/test/e2e/bots/feishu-streaming-card-lifecycle.test.ts` | controlled-stream  | Feishu callback creates a task; inject staged stream; assert single card, timeline, collapse, Typing and continuous subscription                                              |
-| BOT-E2E-AQ-01 | P1       | formal | `packages/desktop/test/e2e/bots/feishu-provider-interactions.test.ts`    | controlled-stream  | Pending elicitation; multi-select/custom callback; same message_id updated in place and protocol response submitted                                                           |
-| BOT-E2E-IL-01 | P0       | formal | `packages/desktop/test/e2e/bots/feishu-provider-interactions.test.ts`    | controlled-stream  | Main card sealed before blocking; interaction card advances and keeps its terminal state; later Agent output starts a new streaming card                                       |
-| BOT-E2E-RT-01 | P1       | formal | `packages/desktop/test/e2e/bots/bot-runtime-authority.test.ts`           | controlled-process | Owner holds the lock; contender rejected; takeover after owner releases                                                                                                       |
-| BOT-E2E-RT-02 | P0       | formal | `packages/desktop/test/e2e/bots/bot-runtime-authority.test.ts`           | fast-process       | Attached remote host; runtime stays idle; no provider network request                                                                                                         |
-| BOT-E2E-PV-01 | P1       | formal | `packages/desktop/test/e2e/bots/feishu-provider-interactions.test.ts`    | fast-text          | Same callback for Feishu/Lark; assert each OpenAPI origin                                                                                                                     |
-| BOT-E2E-RW-01 | P0       | formal | `packages/desktop/test/e2e/bots/bot-remote-disconnected.test.ts`         | controlled-stream  | Remote workspace disconnected; ordinary message rejected; no reconnect, no remote service resolution, no local execution                                                      |
+| Case ID       | Priority | Status | Spec                                                                     | Timing             | Setup / Action / Assertion                                                                                                                                                           |
+| ------------- | -------- | ------ | ------------------------------------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| BOT-E2E-SC-01 | P0       | formal | `packages/desktop/test/e2e/bots/feishu-streaming-card-lifecycle.test.ts` | controlled-stream  | Feishu callback creates a task; inject staged stream; assert single card, timeline, collapse, Typing and continuous subscription                                                     |
+| BOT-E2E-AQ-01 | P1       | formal | `packages/desktop/test/e2e/bots/feishu-provider-interactions.test.ts`    | controlled-stream  | Pending elicitation; multi-select/custom callback; same message_id updated in place and protocol response submitted                                                                  |
+| BOT-E2E-IL-01 | P0       | formal | `packages/desktop/test/e2e/bots/feishu-provider-interactions.test.ts`    | controlled-stream  | Main card sealed before blocking; interaction card advances and keeps its terminal state; later Agent output starts a new streaming card                                             |
+| BOT-E2E-RT-01 | P1       | formal | `packages/desktop/test/e2e/bots/bot-runtime-authority.test.ts`           | controlled-process | Owner holds the lock; contender rejected; takeover after owner releases                                                                                                              |
+| BOT-E2E-RT-02 | P0       | formal | `packages/desktop/test/e2e/bots/bot-runtime-authority.test.ts`           | fast-process       | Attached remote host; runtime stays idle; no provider network request                                                                                                                |
+| BOT-E2E-PV-01 | P1       | formal | `packages/desktop/test/e2e/bots/feishu-provider-interactions.test.ts`    | fast-text          | Same callback for Feishu/Lark; assert each OpenAPI origin                                                                                                                            |
+| BOT-E2E-RW-01 | P0       | formal | `packages/desktop/test/e2e/bots/bot-remote-disconnected.test.ts`         | controlled-stream  | Remote workspace disconnected; ordinary message rejected; no reconnect, no remote service resolution, no local execution                                                             |
 | BOT-E2E-CR-01 | P0       | formal | `packages/desktop/test/e2e/bots/bot-automation-result-delivery.test.ts`  | controlled-stream  | Feishu creates an automation; repo reopened; subscribe before dispatch; complete/error push-back; invalid Bot degrades; Weixin provider outbound covered by service integration test |
-| BOT-E2E-CF-01 | P0       | formal | `packages/desktop/test/e2e/bots/feishu-runtime-error-ui.test.ts`         | controlled-process | Bound Feishu missing credential; enable runtime; reopen the bot dialog and assert binding kept, connection interrupted, error detail shown                                   |
+| BOT-E2E-CF-01 | P0       | formal | `packages/desktop/test/e2e/bots/feishu-runtime-error-ui.test.ts`         | controlled-process | Bound Feishu missing credential; enable runtime; reopen the bot dialog and assert binding kept, connection interrupted, error detail shown                                           |
 
 ## Fixture contract
 
@@ -78,12 +78,12 @@ Evidence vocabulary used below: service synthetic, real Host/CLI, Desktop DOM, m
 
 ## Group collaboration (GR)
 
-| Case          | Status                      | Required evidence                                                                            |
-| ------------- | --------------------------- | -------------------------------------------------------------------------------------------- |
-| BOT-E2E-GR-01 | pending                     | Group activation, owner checks, private/group state and canonical source                     |
-| BOT-E2E-GR-02 | pending (see open issue 1)  | Real CLI FIFO and CAS cancellation; desktop/mobile projection                                |
-| BOT-E2E-GR-03 | pending                     | Saved segmented results, uncertainty and authorization revalidation                          |
-| BOT-E2E-GR-04 | pending (see open issue 1)  | Actual task-pane DOM, localized source labels and saved-result retry                         |
+| Case          | Status                     | Required evidence                                                        |
+| ------------- | -------------------------- | ------------------------------------------------------------------------ |
+| BOT-E2E-GR-01 | pending                    | Group activation, owner checks, private/group state and canonical source |
+| BOT-E2E-GR-02 | pending (see open issue 1) | Real CLI FIFO and CAS cancellation; desktop/mobile projection            |
+| BOT-E2E-GR-03 | pending                    | Saved segmented results, uncertainty and authorization revalidation      |
+| BOT-E2E-GR-04 | pending (see open issue 1) | Actual task-pane DOM, localized source labels and saved-result retry     |
 
 GR cases stay pending manual review; automated evidence is recorded without promotion.
 
@@ -114,12 +114,12 @@ GR runtime `/mode yolo` returns `Mode option not found.`, and the new session's 
 
 ## Topic collaboration (TP)
 
-| Case          | Status  | Evidence boundary                                                                                                                                                    |
-| ------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| BOT-E2E-TP-01 | pending | `bots/manual-review/pending/feishu-topic-runtime.test.ts`; real Host/CLI and DOM, synthetic topic batch/materials; reuses the group-runtime controlled-stream fixture |
-| BOT-E2E-TP-02 | pending | partial native verification: ordinary/dedicated routing, incremental history, long-background summary; remaining native cases below                                  |
-| BOT-E2E-TP-03 | pending | `bots/manual-review/pending/feishu-topic-interactions.test.ts`; service to provider HTTP deterministic regression (see below)                                         |
-| BOT-E2E-TP-04 / TP-05 / TP-06 | formal | `conversation-session/conversation-session-bot-topic-worker.test.ts` (see below)                                                                            |
+| Case                          | Status  | Evidence boundary                                                                                                                                                     |
+| ----------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BOT-E2E-TP-01                 | pending | `bots/manual-review/pending/feishu-topic-runtime.test.ts`; real Host/CLI and DOM, synthetic topic batch/materials; reuses the group-runtime controlled-stream fixture |
+| BOT-E2E-TP-02                 | pending | partial native verification: ordinary/dedicated routing, incremental history, long-background summary; remaining native cases below                                   |
+| BOT-E2E-TP-03                 | pending | `bots/manual-review/pending/feishu-topic-interactions.test.ts`; service to provider HTTP deterministic regression (see below)                                         |
+| BOT-E2E-TP-04 / TP-05 / TP-06 | formal  | `conversation-session/conversation-session-bot-topic-worker.test.ts` (see below)                                                                                      |
 
 Provider/service/Agent unit tests cover topic isolation, owner opt-in, message boundaries, bounded summary and native API payloads; they do not establish real Feishu/Lark tenant compatibility.
 
@@ -183,9 +183,9 @@ BOT-E2E-GR-UI-01 (formal: `bots/feishu-bound-groups-ui.test.ts`, promoted 2026-0
 
 ## Private-chat continuous push-back
 
-| Case          | Status  | Spec                                                                                 | Evidence boundary                                                                                                                       |
-| ------------- | ------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| BOT-E2E-PS-01 | pending | `packages/desktop/test/e2e/bots/manual-review/pending/bot-private-task-sync.test.ts` | controlled-stream, three-channel outbound HTTP, continuous desktop/mobile-source rounds and disable; real IM/phone unverified          |
+| Case          | Status  | Spec                                                                                 | Evidence boundary                                                                                                             |
+| ------------- | ------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| BOT-E2E-PS-01 | pending | `packages/desktop/test/e2e/bots/manual-review/pending/bot-private-task-sync.test.ts` | controlled-stream, three-channel outbound HTTP, continuous desktop/mobile-source rounds and disable; real IM/phone unverified |
 
 Service additions: multi-target shared subscription, automation task dedup, Weixin token update / read after restart / explicit retry, rebind isolation. UI additions: the retry button only fires explicitly, is disabled while sending, hidden on success, and errors stay visible. None replace real-channel manual acceptance. `conversation-session-bot-continuous-worker.test.ts` (formal) covers real IM first round and desktop service continuation each pushed back once, and natural promotion of a queued group request quoting the right message (GR-02 normal promotion / PS-01).
 
@@ -197,6 +197,7 @@ Service additions: multi-target shared subscription, automation task dedup, Weix
 - Evidence of 2026-10-08 promotion: MN-01/MN-03 Feishu/Lark x group/topic 4 cases promoted to the formal entry `bots/feishu-channel-mention.test.ts` with the Bot-domain `fixtures/bots/feishu-channel-mention.json` synthetic/fast-text contract; no real model request, platform HTTP recorded and asserted in-case; promotion of a synthetic environment is not real tenant or mobile verification. Isolated common-only replay and default replay both 4 passing; default Desktop WDIO is the formal entry, no Docker admission; builds for E2E need the test switch (a plain dev build does not start tests).
 
 <a id="2026-09-23-用户确认转正"></a>
+
 ## 2026-09-23 user-confirmed promotion
 
 After user confirmation, four new specs (six tests) moved into the formal directories:
@@ -212,13 +213,13 @@ Post-promotion verification: explicit isolated-fixture replay and default replay
 
 Branch coverage state at the time of promotion (accepted-branch acceptance table in the case catalog):
 
-| Case                           | Evidence                                                                                                                                                    | Conclusion               |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| MN-02 / FN-01                  | `conversation-session-bot-channel-worker.test.ts` (above)                                                                                                    | passed, formal           |
-| TP-04 / TP-05                  | `conversation-session-bot-topic-worker.test.ts` (above)                                                                                                      | passed, formal           |
-| GR-02 normal promotion / PS-01 | `conversation-session-bot-continuous-worker.test.ts`                                                                                                         | passed, formal           |
-| GR-UI-01                       | `feishu-bound-groups-ui.test.ts`                                                                                                                             | passed, formal           |
-| TP-03                          | Feishu/Lark x mentioned-or-not, four scenarios                                                                                                               | passed, pending          |
+| Case                           | Evidence                                                                                                                                                                                     | Conclusion                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| MN-02 / FN-01                  | `conversation-session-bot-channel-worker.test.ts` (above)                                                                                                                                    | passed, formal               |
+| TP-04 / TP-05                  | `conversation-session-bot-topic-worker.test.ts` (above)                                                                                                                                      | passed, formal               |
+| GR-02 normal promotion / PS-01 | `conversation-session-bot-continuous-worker.test.ts`                                                                                                                                         | passed, formal               |
+| GR-UI-01                       | `feishu-bound-groups-ui.test.ts`                                                                                                                                                             | passed, formal               |
+| TP-03                          | Feishu/Lark x mentioned-or-not, four scenarios                                                                                                                                               | passed, pending              |
 | GR-02/04 old Desktop runtime   | v3 state file, career onboarding and new Provider grouping fixtures updated; queue display, cancel, source details and "received" action pass; group draft `/mode yolo` fails (open issue 1) | failed, not a full-case pass |
 
 New worker cases live in `packages/desktop/test/e2e/conversation-session/manual-review/pending/` before promotion; other candidates in `packages/desktop/test/e2e/bots/manual-review/pending/`. The fixture checker's result-marker warnings do not mean missing input matchers.

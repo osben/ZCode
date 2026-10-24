@@ -78,30 +78,30 @@ target file changed / renamed / recreated
 
 ### Boundary Decisions
 
-| Boundary | Decision |
-| --- | --- |
-| Watch target | Watch the parent directory, not a file handle, to support PowerPoint/WPS temp-file plus atomic-rename saves |
-| Target filter | `FileWatchEvent.changedPath` is optional; ignore when it clearly names another file; old Hosts or unknown-path events reload conservatively |
-| First read | Establish the watcher subscription before reading, so a save before the subscription cannot leave the preview on an old version |
-| Concurrency | Watcher events only bump the reload generation; old range reads, parses and renders must not commit state |
-| State reset | After new bytes are accepted: back to page 1, 100% zoom, leave element selection, clear the selected element and unconfirmed AI edit draft |
-| Composer references | Structured references already in the Composer or history keep their original fingerprint and are not deleted or rewritten by a reload |
-| Local/remote | Keep selecting the existing Host watcher/file service through `useWorkspaceServices(workspacePath, remoteSessionId, workspaceIdentity)` |
-| Delivery | Preview reload is a renderer-local projection and does not enter the desktop continuous or web remote replayable message flow |
-| PDF export | The export transaction is unchanged; a document generation being exported is not reused by async watcher callbacks, and failures use the existing export error path |
+| Boundary            | Decision                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Watch target        | Watch the parent directory, not a file handle, to support PowerPoint/WPS temp-file plus atomic-rename saves                                                         |
+| Target filter       | `FileWatchEvent.changedPath` is optional; ignore when it clearly names another file; old Hosts or unknown-path events reload conservatively                         |
+| First read          | Establish the watcher subscription before reading, so a save before the subscription cannot leave the preview on an old version                                     |
+| Concurrency         | Watcher events only bump the reload generation; old range reads, parses and renders must not commit state                                                           |
+| State reset         | After new bytes are accepted: back to page 1, 100% zoom, leave element selection, clear the selected element and unconfirmed AI edit draft                          |
+| Composer references | Structured references already in the Composer or history keep their original fingerprint and are not deleted or rewritten by a reload                               |
+| Local/remote        | Keep selecting the existing Host watcher/file service through `useWorkspaceServices(workspacePath, remoteSessionId, workspaceIdentity)`                             |
+| Delivery            | Preview reload is a renderer-local projection and does not enter the desktop continuous or web remote replayable message flow                                       |
+| PDF export          | The export transaction is unchanged; a document generation being exported is not reused by async watcher callbacks, and failures use the existing export error path |
 
 ### State Combinations and Pruning
 
-| Case ID | Setup | Event | Expected result | Status |
-| --- | --- | --- | --- | --- |
-| PPTX-RELOAD-01 | Local PPTX tab open | Same file saved | Re-read and show from default state in a brand-new viewer generation | accepted |
-| PPTX-RELOAD-02 | SSH/WSL/Docker or mobile `/remote` attached to an existing Host | Same remote file saved | Only the matching workspace-scoped watcher/file service is called; the local same-path file is not read | accepted |
-| PPTX-RELOAD-03 | PPTX open | Another file in the same directory changes, event carries `changedPath` | PPTX not re-read | accepted |
-| PPTX-RELOAD-04 | Old Host or platform watcher gives no concrete changed path | Directory event received | Conservatively re-read the current PPTX | accepted |
-| PPTX-RELOAD-05 | Consecutive saves or multiple events during a write | Several concurrent reads | Only the latest reload generation may commit bytes, errors and loading state | accepted |
-| PPTX-RELOAD-06 | File deleted while the tab stays open | Deleted then recreated | Missing error first; parent-directory watcher kept; preview recovers after recreate | accepted |
-| PPTX-RELOAD-07 | Existing Composer PPTX reference | Source file reloads | Viewer-local selection cleared, Composer reference keeps its original fingerprint | accepted |
-| PPTX-RELOAD-08 | Not opened or tab closed | File changes | No watcher exists, no read triggered | pruned: no visible preview owner |
+| Case ID        | Setup                                                           | Event                                                                   | Expected result                                                                                         | Status                           |
+| -------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| PPTX-RELOAD-01 | Local PPTX tab open                                             | Same file saved                                                         | Re-read and show from default state in a brand-new viewer generation                                    | accepted                         |
+| PPTX-RELOAD-02 | SSH/WSL/Docker or mobile `/remote` attached to an existing Host | Same remote file saved                                                  | Only the matching workspace-scoped watcher/file service is called; the local same-path file is not read | accepted                         |
+| PPTX-RELOAD-03 | PPTX open                                                       | Another file in the same directory changes, event carries `changedPath` | PPTX not re-read                                                                                        | accepted                         |
+| PPTX-RELOAD-04 | Old Host or platform watcher gives no concrete changed path     | Directory event received                                                | Conservatively re-read the current PPTX                                                                 | accepted                         |
+| PPTX-RELOAD-05 | Consecutive saves or multiple events during a write             | Several concurrent reads                                                | Only the latest reload generation may commit bytes, errors and loading state                            | accepted                         |
+| PPTX-RELOAD-06 | File deleted while the tab stays open                           | Deleted then recreated                                                  | Missing error first; parent-directory watcher kept; preview recovers after recreate                     | accepted                         |
+| PPTX-RELOAD-07 | Existing Composer PPTX reference                                | Source file reloads                                                     | Viewer-local selection cleared, Composer reference keeps its original fingerprint                       | accepted                         |
+| PPTX-RELOAD-08 | Not opened or tab closed                                        | File changes                                                            | No watcher exists, no read triggered                                                                    | pruned: no visible preview owner |
 
 This capability involves no conversation/session state combinations, so no conversation E2E case catalog
 or coverage matrix is added. Automation covers service, hook and viewer lifecycle; real Office save
@@ -425,14 +425,14 @@ reference from prompt
 
 ### Write-Back State Combinations and Pruning
 
-| Case ID | Setup | Event | Expected result | Status |
-| --- | --- | --- | --- | --- |
-| PPTX-WRITE-01 | One or several same-revision structured element references | User states no save policy | One batch with `--replace-source`; atomic overwrite of `sourcePath` after temp-file validation | accepted |
-| PPTX-WRITE-02 | Structured element reference | User explicitly asks to save as, keep original or name a new path | Write a new `.pptx` with `--output`; source unchanged | accepted |
-| PPTX-WRITE-03 | Source changed after reference capture | Fingerprint mismatch when update starts | No trusted output; ask to reopen the preview and reselect | accepted |
-| PPTX-WRITE-04 | Initial check passed, source saved externally while temp output was generated | Fingerprint changes again before replace-source commit | Delete temp output, keep the external new revision, return a stable conflict | accepted |
-| PPTX-WRITE-05 | Same source revision contains several references | Model performs the edit | Only one `update-texts` batch; no one-by-one overwrite losing earlier edits | accepted |
-| PPTX-WRITE-06 | Ordinary PPTX creation, conversion, PDF export or a future native editor | No Preview Pane structured reference | Does not inherit this overwrite default; follows its own artifact/save contract | pruned: separate product boundary |
+| Case ID       | Setup                                                                         | Event                                                             | Expected result                                                                                | Status                            |
+| ------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | --------------------------------- |
+| PPTX-WRITE-01 | One or several same-revision structured element references                    | User states no save policy                                        | One batch with `--replace-source`; atomic overwrite of `sourcePath` after temp-file validation | accepted                          |
+| PPTX-WRITE-02 | Structured element reference                                                  | User explicitly asks to save as, keep original or name a new path | Write a new `.pptx` with `--output`; source unchanged                                          | accepted                          |
+| PPTX-WRITE-03 | Source changed after reference capture                                        | Fingerprint mismatch when update starts                           | No trusted output; ask to reopen the preview and reselect                                      | accepted                          |
+| PPTX-WRITE-04 | Initial check passed, source saved externally while temp output was generated | Fingerprint changes again before replace-source commit            | Delete temp output, keep the external new revision, return a stable conflict                   | accepted                          |
+| PPTX-WRITE-05 | Same source revision contains several references                              | Model performs the edit                                           | Only one `update-texts` batch; no one-by-one overwrite losing earlier edits                    | accepted                          |
+| PPTX-WRITE-06 | Ordinary PPTX creation, conversion, PDF export or a future native editor      | No Preview Pane structured reference                              | Does not inherit this overwrite default; follows its own artifact/save contract                | pruned: separate product boundary |
 
 ## Data and Process Boundary
 

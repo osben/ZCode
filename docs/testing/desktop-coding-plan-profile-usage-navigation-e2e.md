@@ -11,10 +11,10 @@ These cases verify navigation semantics only, not Coding Plan entitlements, quot
 
 ## Cases
 
-| Case | Precondition | Action | Expected |
-| --- | --- | --- | --- |
-| ECR-usage-01 | Desktop default workspace is open | Click `使用统计` in the workspace avatar menu | Settings opens with the `usage` section selected |
-| ECR-usage-02 | Desktop default workspace is open; settings is already on the `general` section | Click `使用统计` in the settings avatar menu | Stays on settings and switches to the `usage` section; does not return to the workspace |
+| Case         | Precondition                                                                    | Action                                        | Expected                                                                                |
+| ------------ | ------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| ECR-usage-01 | Desktop default workspace is open                                               | Click `使用统计` in the workspace avatar menu | Settings opens with the `usage` section selected                                        |
+| ECR-usage-02 | Desktop default workspace is open; settings is already on the `general` section | Click `使用统计` in the settings avatar menu  | Stays on settings and switches to the `usage` section; does not return to the workspace |
 
 ## Test placement
 

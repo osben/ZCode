@@ -6,12 +6,12 @@ Product requirement: [PRD] add plugin and context entries to the composer add bu
 
 The `+` on the left of the composer opens a Popover as wide as the composer, reusing MentionPanel and the candidate row component.
 
-| Order | Category | Content and selection behavior |
-| ---- | ---- | ---- |
-| 1 | Add | Attachment calls the existing attachmentAction. Goal appears only in a new conversation with empty input and inserts the same command tag as `/goal`. Workflow follows goal, appears in any conversation with empty input when the CLI slash catalog contains `workflow`, and inserts the same command tag as `/workflow` |
-| 2 | Plugins | Same catalog, ordering and enabled filter as an empty `@`; conflicting items stay unselectable |
-| 3 | Files | Current workspace, files first, same kind sorted by relative path, at most 10 items for an empty query |
-| 4 | Conversations | Current workspace, updatedAt descending, createdAt descending, then title; does not extend to the cross-project scope of `#` |
+| Order | Category      | Content and selection behavior                                                                                                                                                                                                                                                                                            |
+| ----- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Add           | Attachment calls the existing attachmentAction. Goal appears only in a new conversation with empty input and inserts the same command tag as `/goal`. Workflow follows goal, appears in any conversation with empty input when the CLI slash catalog contains `workflow`, and inserts the same command tag as `/workflow` |
+| 2     | Plugins       | Same catalog, ordering and enabled filter as an empty `@`; conflicting items stay unselectable                                                                                                                                                                                                                            |
+| 3     | Files         | Current workspace, files first, same kind sorted by relative path, at most 10 items for an empty query                                                                                                                                                                                                                    |
+| 4     | Conversations | Current workspace, updatedAt descending, createdAt descending, then title; does not extend to the cross-project scope of `#`                                                                                                                                                                                              |
 
 Files and conversations are hidden when there are no candidates and no loading/error state. Plugins keep an empty state. Whiteboards are not in this menu. A new draft reads the workspace's current plugin catalog and an existing session reads the session-owned catalog, with the lifecycle of `@`.
 
@@ -65,12 +65,12 @@ The frontend does not truncate sessions-index candidates, but it does not read a
 
 Interview decisions:
 
-| Question | Decision | Boundary fixed |
-| --- | --- | --- |
-| Source of the workflow item | **CLI slash catalog decides**: it appears only when the workspace's `slashCommands` contains `workflow` | Follows the existing ruling that the command catalog is authoritative from the CLI; the UI hard-codes no second command source. Goal stays hard-coded as before (it has a session-level semantic gate unrelated to the catalog) |
-| When offered | **Empty draft, any conversation** (new drafts and existing sessions) | `/workflow` expands only at the start of the message, so a strictly empty-string draft is required (same criterion as goal); unlike goal it is not limited to new conversations because starting a workflow mid-conversation is legitimate |
-| `/` panel order | **CLI catalog assembly side**: `workflow` is a built-in command, and `APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES` puts it after `goal` | Single data source: desktop, Web and mobile remote control see the same order; the UI adds no ordering allowlist (an earlier bugfix removed the UI-side command allowlist). Only the order changes, not source, de-dup or reserved rules |
-| `/workflow` tag icon in the editor | **lucide `Workflow`** (`WORKFLOW_COMMAND_MENTION_ICON_NODE`) | Same icon as the `+` menu item and the rest of dwf UI; the dedicated-icon mechanism of `/goal` and `/compact` is copied |
+| Question                           | Decision                                                                                                                                     | Boundary fixed                                                                                                                                                                                                                             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source of the workflow item        | **CLI slash catalog decides**: it appears only when the workspace's `slashCommands` contains `workflow`                                      | Follows the existing ruling that the command catalog is authoritative from the CLI; the UI hard-codes no second command source. Goal stays hard-coded as before (it has a session-level semantic gate unrelated to the catalog)            |
+| When offered                       | **Empty draft, any conversation** (new drafts and existing sessions)                                                                         | `/workflow` expands only at the start of the message, so a strictly empty-string draft is required (same criterion as goal); unlike goal it is not limited to new conversations because starting a workflow mid-conversation is legitimate |
+| `/` panel order                    | **CLI catalog assembly side**: `workflow` is a built-in command, and `APP_PROTOCOL_VISIBLE_BUILTIN_SLASH_COMMAND_NAMES` puts it after `goal` | Single data source: desktop, Web and mobile remote control see the same order; the UI adds no ordering allowlist (an earlier bugfix removed the UI-side command allowlist). Only the order changes, not source, de-dup or reserved rules   |
+| `/workflow` tag icon in the editor | **lucide `Workflow`** (`WORKFLOW_COMMAND_MENTION_ICON_NODE`)                                                                                 | Same icon as the `+` menu item and the rest of dwf UI; the dedicated-icon mechanism of `/goal` and `/compact` is copied                                                                                                                    |
 
 Data flow:
 

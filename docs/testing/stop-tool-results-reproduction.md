@@ -73,12 +73,12 @@ The lock only creates a real storage fault; it never edits session rows, model h
 
 Full supplementary run `desktop-e2e-20260924070659985-p94983-c3e14a5ec032c9c8` (macOS local Electron): of 4 groups, 2 passed and 2 reproduced the failure. It reused the same production code of the earlier formal build with `ZCODE_E2E_SKIP_BUILD=1 ZCODE_E2E_SKIP_AGENT_BUILD=1`; the Electron test itself was not skipped.
 
-| Input / fault                          | Result                                                    | Next actual network request       |
-| -------------------------------------- | --------------------------------------------------------- | --------------------------------- |
-| three text Reads + Stop                | pass                                                      | 3 calls and 3 unique results      |
-| first Read PNG + Stop                  | fail: MissingToolResults, 3 results missing               | none; SDK rejects before HTTP     |
-| text-only Bash, no lock, no Stop       | pass                                                      | Bash result paired, normal reply  |
-| same Bash, lock held at result write, no Stop | fail: first database is locked, then MissingToolResults | none; SDK rejects before HTTP |
+| Input / fault                                 | Result                                                  | Next actual network request      |
+| --------------------------------------------- | ------------------------------------------------------- | -------------------------------- |
+| three text Reads + Stop                       | pass                                                    | 3 calls and 3 unique results     |
+| first Read PNG + Stop                         | fail: MissingToolResults, 3 results missing             | none; SDK rejects before HTTP    |
+| text-only Bash, no lock, no Stop              | pass                                                    | Bash result paired, normal reply |
+| same Bash, lock held at result write, no Stop | fail: first database is locked, then MissingToolResults | none; SDK rejects before HTTP    |
 
 Database group timeline (UTC):
 
@@ -127,11 +127,11 @@ Based on the working-tree diff on `0e40230d34`. Formal macOS Electron run `deskt
 
 The first post-fix run passed 3/4: the image continuation succeeded but the new image wire assertion failed, because the replay model is text-only by default and, per the existing model-capability rule, downgrades images to a hint. The final version only declares image input capability for this spec's replay model to accept real provider image content directly; production model capability is untouched and the image assertion is not loosened.
 
-| Scenario              | Final provider input and execution facts                                                                  |
-| --------------------- | --------------------------------------------------------------------------------------------------------- |
-| text Read + Stop      | 3 calls and 3 unique results, first real text, the other two cancelled; no automatic model resume after Stop |
-| image Read + Stop     | 3 unique call/result pairs; first `is_error=false` with a 67-byte `image/png`, the other two `is_error=true` |
-| Bash without lock     | Initial turn and continuation succeed, original `E2E_STOP_RESULTS_DB_OUTPUT`, executed once              |
+| Scenario               | Final provider input and execution facts                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| text Read + Stop       | 3 calls and 3 unique results, first real text, the other two cancelled; no automatic model resume after Stop                                           |
+| image Read + Stop      | 3 unique call/result pairs; first `is_error=false` with a 67-byte `image/png`, the other two `is_error=true`                                           |
+| Bash without lock      | Initial turn and continuation succeed, original `E2E_STOP_RESULTS_DB_OUTPUT`, executed once                                                            |
 | real SQLite write lock | First turn keeps `database is locked`; after releasing the lock the continuation succeeds, original Bash output and success marker kept, executed once |
 
 Image session: `sess_7c4a78f6-0613-49c1-858c-afca02ac3e4b`; network image SHA-256: `f19fe636a57e6c5076413efab51d1c36e87686c79f461b7ad8913fe7de4c964e`. Database group session: `sess_02fe91d4-b4a8-4834-9e8b-60ed497f4d2f`; UTC `08:11:24.543` lock acquired, `08:11:39.741` the original database exception caused `turn.failed`, `08:11:39.750` lock released; the group has only two main requests (tool declaration and user continuation) and one Bash `tool.call.started`. None of the four groups shows MissingToolResults.

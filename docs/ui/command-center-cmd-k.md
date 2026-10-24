@@ -76,10 +76,10 @@ mouse move / keyboard up-down -> cmdk keeps a unique row value -> only the targe
 
 ### Regression cases
 
-| ID | Setup and action | Assertion |
-| ------------ | ----------------------------------------------------------- | ---------------------------------------------------------------- |
-| CC-SELECT-01 | Recent tasks has three same-named tasks in one workspace; hover, up/down keys, Enter in turn | Always only the target row is selected, and the target task opens |
-| CC-SELECT-02 | Search returns different tasks with the same title, workspace display name and body snippet | Each row can be selected independently; different remote identities and different snippets of one task can also be selected independently |
+| ID           | Setup and action                                                                             | Assertion                                                                                                                                 |
+| ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| CC-SELECT-01 | Recent tasks has three same-named tasks in one workspace; hover, up/down keys, Enter in turn | Always only the target row is selected, and the target task opens                                                                         |
+| CC-SELECT-02 | Search returns different tasks with the same title, workspace display name and body snippet  | Each row can be selected independently; different remote identities and different snippets of one task can also be selected independently |
 
 Component regression: `packages/ui/test/commandCenterSelection.test.ts`. Desktop interaction candidate: `packages/desktop/test/e2e/ui-shell/manual-review/pending/command-center-selection.test.ts`, verifying the real indexed list and cmdk mouse/keyboard interaction; no model request is sent.
 

@@ -4,26 +4,26 @@ This document defines the runtime telemetry differential between `z-code-2` and 
 
 ## Summary
 
-| Field | Decision |
-| --- | --- |
-| Nature | Compatibility restore and regression protection after the V4 conversation refactor |
-| Baseline | Actual desktop runtime behavior of `~/workspace/z-code-2`; confirmed V4 spec exceptions win |
-| Surfaces | V4 composer, session pane, assistant feedback, quota banner, error banner |
-| Reporting ends | `/event/report` and ARMS custom events |
-| Client scope | Desktop `desktop-continuous` reports; Web/mobile only verify no-op and isolation |
+| Field          | Decision                                                                                                                                                             |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Nature         | Compatibility restore and regression protection after the V4 conversation refactor                                                                                   |
+| Baseline       | Actual desktop runtime behavior of `~/workspace/z-code-2`; confirmed V4 spec exceptions win                                                                          |
+| Surfaces       | V4 composer, session pane, assistant feedback, quota banner, error banner                                                                                            |
+| Reporting ends | `/event/report` and ARMS custom events                                                                                                                               |
+| Client scope   | Desktop `desktop-continuous` reports; Web/mobile only verify no-op and isolation                                                                                     |
 | Provider scope | Generic telemetry uses any scripted provider; quota uses the Start Plan equivalence class; the official-build safety-check case uses the `zcode-plan` endpoint class |
-| Non-goals | Purchase product/cycle/payment/result, launch performance, input lag, ARMS global stability/resource/network |
+| Non-goals      | Purchase product/cycle/payment/result, launch performance, input lag, ARMS global stability/resource/network                                                         |
 
 ## Clarification record
 
-| Round | Question | Confirmed | Fixed boundary |
-| --- | --- | --- | --- |
-| 1 | Run legacy and current apps on the same case and compare final reports? | Yes | Runtime differential, not static code intersection |
-| 2 | Must dynamic values (timestamps, versions) be equal? | No | Field presence, type and relations must be right; only explicit dynamic values are normalized |
-| 3 | Build covering cases first? | Yes | Case catalog and pruning precede the differential runner and E2E code |
-| 4 | Restore the purchase flow? | No, conversation entry points only | Quota verifies only the conversation banner, submit guard, opening the Upgrade panel and context handoff |
-| 5 | Must GLM be used? | No | Core telemetry is provider-neutral; only quota and the official-build safety check use business equivalence classes |
-| 6 | Must regression code remain? | Yes, unit or E2E | Every accepted case binds at least one automated contract layer |
+| Round | Question                                                                | Confirmed                          | Fixed boundary                                                                                                      |
+| ----- | ----------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1     | Run legacy and current apps on the same case and compare final reports? | Yes                                | Runtime differential, not static code intersection                                                                  |
+| 2     | Must dynamic values (timestamps, versions) be equal?                    | No                                 | Field presence, type and relations must be right; only explicit dynamic values are normalized                       |
+| 3     | Build covering cases first?                                             | Yes                                | Case catalog and pruning precede the differential runner and E2E code                                               |
+| 4     | Restore the purchase flow?                                              | No, conversation entry points only | Quota verifies only the conversation banner, submit guard, opening the Upgrade panel and context handoff            |
+| 5     | Must GLM be used?                                                       | No                                 | Core telemetry is provider-neutral; only quota and the official-build safety check use business equivalence classes |
+| 6     | Must regression code remain?                                            | Yes, unit or E2E                   | Every accepted case binds at least one automated contract layer                                                     |
 
 ## Scope
 
@@ -77,71 +77,71 @@ case-local provider fixture / synthetic fault
         approved legacy golden + regression tests
 ```
 
-| State/fact | Authoritative owner | Mirror/cache | Regression evidence |
-| --- | --- | --- | --- |
-| session/turn/tool/terminal | CLI V4 runtime | host live fact, renderer supervisor | provider replay, protocol fact, final payload |
-| prompt seed/sourceCommandId | renderer workspace supervisor | memory only | command ACK, talk/message relation, exactly-once |
-| foreground session refs | renderer workspace supervisor | pane visibility refs | UI/pane state, ARMS present/absent |
-| `/event/report` body | telemetry service final fetch | no business persistence | Electron `net.fetch` mock calls |
-| ARMS custom body | desktop main IPC bridge | E2E-only bounded buffer | `armsRum.sendCustom` call arguments |
-| feedback | assistant row + CLI persistence | UI optimistic state | command ACK, row, reopen, event body |
-| quota | usage entitlement service + session provider/error | hook-local dismiss state | banner DOM, composer guard, dialog context |
+| State/fact                  | Authoritative owner                                | Mirror/cache                        | Regression evidence                              |
+| --------------------------- | -------------------------------------------------- | ----------------------------------- | ------------------------------------------------ |
+| session/turn/tool/terminal  | CLI V4 runtime                                     | host live fact, renderer supervisor | provider replay, protocol fact, final payload    |
+| prompt seed/sourceCommandId | renderer workspace supervisor                      | memory only                         | command ACK, talk/message relation, exactly-once |
+| foreground session refs     | renderer workspace supervisor                      | pane visibility refs                | UI/pane state, ARMS present/absent               |
+| `/event/report` body        | telemetry service final fetch                      | no business persistence             | Electron `net.fetch` mock calls                  |
+| ARMS custom body            | desktop main IPC bridge                            | E2E-only bounded buffer             | `armsRum.sendCustom` call arguments              |
+| feedback                    | assistant row + CLI persistence                    | UI optimistic state                 | command ACK, row, reopen, event body             |
+| quota                       | usage entitlement service + session provider/error | hook-local dismiss state            | banner DOM, composer guard, dialog context       |
 
 ## State dimensions and equivalence classes
 
-| Dimension | Included values/classes | Pruning |
-| --- | --- | --- |
-| prompt admission | draft create ACK, direct, queued, promotion, rejected | rejected produces no send; promotion merges with the original command |
-| terminal | success, failed, interrupted, stop without terminal | stop without terminal is a zero-report negative case only |
-| stream shape | text, thought, generation, tool success, tool failed, permission wait, parented child chunk | tool names not permuted; lifecycle/perf classes represent them |
-| visibility | foreground, background, pane closed, split pane | multiple panes of one session collapse to one; different sessions can be foreground independently |
-| delivery | live, duplicate live, initial, hydration, recovery | only live can produce a fact |
-| timing | negative first token, stall 3000/3001, tool clears stall, permission wait | exact boundaries use fake clock / recorded stream; not every duration value |
-| model network | started, completed, failed, retry_scheduled, stream_stalled | never inferred from accepted/queued/apiRetry |
-| provider | generic, custom hostname, Start Plan, `zcode-plan` endpoint | not permuted by model name or vendor brand |
-| compaction | success, failed, interrupted, non-terminal, duplicate | terminal status gets golden; foreground/background gets a representative E2E |
-| error banner | visible, suppressed, same-key duplicate, new key, 3007 | dedupe within a mount; invisible does not report |
-| workspace | local, same path with different identity/remoteSession, service generation replacement | path display is not mixed with identity isolation |
-| client | desktop continuous, web remote replayable | Web/mobile only get no-op / not-subscribable negative proof |
+| Dimension        | Included values/classes                                                                     | Pruning                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| prompt admission | draft create ACK, direct, queued, promotion, rejected                                       | rejected produces no send; promotion merges with the original command                             |
+| terminal         | success, failed, interrupted, stop without terminal                                         | stop without terminal is a zero-report negative case only                                         |
+| stream shape     | text, thought, generation, tool success, tool failed, permission wait, parented child chunk | tool names not permuted; lifecycle/perf classes represent them                                    |
+| visibility       | foreground, background, pane closed, split pane                                             | multiple panes of one session collapse to one; different sessions can be foreground independently |
+| delivery         | live, duplicate live, initial, hydration, recovery                                          | only live can produce a fact                                                                      |
+| timing           | negative first token, stall 3000/3001, tool clears stall, permission wait                   | exact boundaries use fake clock / recorded stream; not every duration value                       |
+| model network    | started, completed, failed, retry_scheduled, stream_stalled                                 | never inferred from accepted/queued/apiRetry                                                      |
+| provider         | generic, custom hostname, Start Plan, `zcode-plan` endpoint                                 | not permuted by model name or vendor brand                                                        |
+| compaction       | success, failed, interrupted, non-terminal, duplicate                                       | terminal status gets golden; foreground/background gets a representative E2E                      |
+| error banner     | visible, suppressed, same-key duplicate, new key, 3007                                      | dedupe within a mount; invisible does not report                                                  |
+| workspace        | local, same path with different identity/remoteSession, service generation replacement      | path display is not mixed with identity isolation                                                 |
+| client           | desktop continuous, web remote replayable                                                   | Web/mobile only get no-op / not-subscribable negative proof                                       |
 
 ## Pruning decisions
 
-| ID | Pruned combination | Invariant/reason | Representative coverage |
-| --- | --- | --- | --- |
-| TDP-P01 | all concrete providers x all models | conversation telemetry has no business guard on model brand | generic + custom hostname; quota/official-build safety-check equivalence classes |
-| TDP-P02 | theme x locale x terminal | does not change the event state machine; locale/timezone fields covered by builder golden | one E2E locale, context golden |
-| TDP-P03 | OS x every Electron case | payload platform fields owned by the shared normalizer | current-platform E2E + shared unit test / CI platform matrix |
-| TDP-P04 | all tool-family permutations | telemetry only cares about lifecycle, permission, perf allowlist, parent/child relation | tool success/fail/permission/parented representatives |
-| TDP-P05 | Web/mobile repeating all desktop cases | legacy behavior does not report from Web/mobile networks | reporter no-op + telemetry subscription guard |
-| TDP-P06 | purchase product/cycle/pay/result | purchase implementation is not missing; not part of the conversation-refactor restore | stop at the quota dialog context handoff |
-| TDP-P07 | background UI ARMS, background compaction | confirmed legacy behavior is zero reports | dedicated negative case |
-| TDP-P08 | inferring `plan_request` from accepted/queued | the V4 spec explicitly consumes only real model-network states | network status case + auxiliary states report zero |
+| ID      | Pruned combination                            | Invariant/reason                                                                          | Representative coverage                                                          |
+| ------- | --------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| TDP-P01 | all concrete providers x all models           | conversation telemetry has no business guard on model brand                               | generic + custom hostname; quota/official-build safety-check equivalence classes |
+| TDP-P02 | theme x locale x terminal                     | does not change the event state machine; locale/timezone fields covered by builder golden | one E2E locale, context golden                                                   |
+| TDP-P03 | OS x every Electron case                      | payload platform fields owned by the shared normalizer                                    | current-platform E2E + shared unit test / CI platform matrix                     |
+| TDP-P04 | all tool-family permutations                  | telemetry only cares about lifecycle, permission, perf allowlist, parent/child relation   | tool success/fail/permission/parented representatives                            |
+| TDP-P05 | Web/mobile repeating all desktop cases        | legacy behavior does not report from Web/mobile networks                                  | reporter no-op + telemetry subscription guard                                    |
+| TDP-P06 | purchase product/cycle/pay/result             | purchase implementation is not missing; not part of the conversation-refactor restore     | stop at the quota dialog context handoff                                         |
+| TDP-P07 | background UI ARMS, background compaction     | confirmed legacy behavior is zero reports                                                 | dedicated negative case                                                          |
+| TDP-P08 | inferring `plan_request` from accepted/queued | the V4 spec explicitly consumes only real model-network states                            | network status case + auxiliary states report zero                               |
 
 ## Accepted regression cases
 
 `TDP` cases are the atomic execution cases of `TEL01-TEL09`. On 2026-07-18 each of TDP01-TDP19 was run on two real Electron instances (legacy and current) with the same controlled fact sequence, comparing the final `/event/report` HTTP body and the main ARMS payload. "Verified" here is not formal E2E promotion: the new differential specs remain in pending review.
 
-| ID | TEL | Setup / Action | Key assertions | Automated contract |
-| --- | --- | --- | --- | --- |
-| TDP01 | TEL01 | First send from a new draft; plain-text completion after create ACK | send keeps the original action time; talkId is fixed after the ACK; send/completion/step share sourceCommandId; one each | Electron E2E + full-payload golden |
-| TDP02 | TEL01 | Two consecutive plain-text turns in one session | same talkId, different messageId; second turn's step/count does not accumulate the first | legacy/current differential Electron E2E; reuse the TEL01 fixture |
-| TDP03 | TEL03 | Submit a queued prompt while running, then promotion | send only once at first admission; promotion does not resend; no completion before terminal | controlled-stream E2E + supervisor fake clock |
-| TDP04 | TEL01 | Prompt success with usage/model request/text terminal | completion success with full legacy fields; token/model/provider/hostname correct | builder golden + service integration |
-| TDP05 | TEL01 | Prompt failed; terminal with/without usage and error detail | fail fields, empty strings and accumulated usage match legacy; no success-only field pollution | full-payload golden |
-| TDP06 | TEL01 | Interrupted terminal; separately, stop with no terminal | interrupted completion per legacy; no synthesized completion without terminal | full-payload golden + controlled-stream E2E |
-| TDP07 | TEL05 | thought -> text -> terminal | reasoning and generation step order, loop_index, duration, tail finalize correct | fake-clock golden |
-| TDP08 | TEL05 | tool-first, tool success, tool failed, permission wait, parented child text/thought, terminal | first main tool can be first token; tool step status/waiting; completion summary; tool detail only with perf; parented text is not generation but keeps legacy TTFT/stall; parented thought keeps legacy reasoning/TTFT/stall | fake-clock golden + representative tool E2E |
-| TDP09 | TEL02 | A streams, switch to B, close A pane, exceed keep-warm, A terminal, reopen | completion/step once each in background; UI ARMS zero; reopen initial does not back-fill | controlled-stream Electron E2E |
-| TDP10 | TEL05 | text/tool/no-token first token, 3000/3001ms gap, tool clear, split pane | negative first token clamps to 0; legacy `-1` without token still mirrors UI value=0 but sends no plan TTFT; 3000 not reported, 3001 reported; tool clears tracker; multiple panes of one session report once | fake-clock + recorded-stream Electron E2E |
-| TDP11 | TEL04 | compact success/failed/interrupted/non-terminal/duplicate; custom model; compactReason only; foreground/background switch | full payload for the three terminals; custom model uses legacy UI encoding; compactReason does not back-fill legacy reason; non-terminal/duplicate/background add zero events | full-payload golden + representative Electron E2E |
-| TDP12 | TEL05/TEL09 | Five real model-network statuses, arriving foreground and background; auxiliary accepted/queued/apiRetry | `plan_request` count, status/value/redacted hostname correct; auxiliary states report zero | full-payload golden + host live integration |
-| TDP13 | TEL05 | plan TTFT normal, negative, provider missing, background | only valid foreground values report; negative / missing provider / background do not | fake-clock golden |
-| TDP14 | TEL06 | Ordinary error visible, suppressed by quota/local error, same-key rerender, new key | reported once when actually visible; suppressed zero; same mount same key once; trace/detail truncation and types correct | component test + Electron E2E |
-| TDP15 | TEL07 | like, dislike, same-reaction toggle none, command failure, reopen | immediate legacy payload; entityId is messageId; failure rolls back; success persists | component + command/projection integration + reopen E2E |
-| TDP16 | TEL08 | Start Plan quota snapshot/error triggers banner; dismiss, blocking/non-blocking, refresh, Upgrade | thresholds/priority match legacy; dialog really opens; `upgradeSource=session_quota_alert`; downstream purchase events not verified | state/component integration + Electron E2E |
-| TDP17 | TEL06 | Built-in Start Plan model call returns 3007 (official-build safety-check rejection) | official builds only; assertions follow the official-build safety-check spec | adapter/service integration + fault-stream E2E |
-| TDP18 | TEL09 | live coexists with duplicate/initial/hydration/recovery; renderer reload | live exactly-once; other sources report zero; reload does not replay historical seed/terminal | gateway/service integration + Electron reload E2E |
-| TDP19 | TEL09 | Same workspacePath with different identity/remoteSession; service generation replace; Web reporter | supervisor isolation, old generation destroyed; Web/mobile reporter no-op and cannot subscribe to the real feed | service integration + desktop/remote boundary test |
+| ID    | TEL         | Setup / Action                                                                                                            | Key assertions                                                                                                                                                                                                                | Automated contract                                                |
+| ----- | ----------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| TDP01 | TEL01       | First send from a new draft; plain-text completion after create ACK                                                       | send keeps the original action time; talkId is fixed after the ACK; send/completion/step share sourceCommandId; one each                                                                                                      | Electron E2E + full-payload golden                                |
+| TDP02 | TEL01       | Two consecutive plain-text turns in one session                                                                           | same talkId, different messageId; second turn's step/count does not accumulate the first                                                                                                                                      | legacy/current differential Electron E2E; reuse the TEL01 fixture |
+| TDP03 | TEL03       | Submit a queued prompt while running, then promotion                                                                      | send only once at first admission; promotion does not resend; no completion before terminal                                                                                                                                   | controlled-stream E2E + supervisor fake clock                     |
+| TDP04 | TEL01       | Prompt success with usage/model request/text terminal                                                                     | completion success with full legacy fields; token/model/provider/hostname correct                                                                                                                                             | builder golden + service integration                              |
+| TDP05 | TEL01       | Prompt failed; terminal with/without usage and error detail                                                               | fail fields, empty strings and accumulated usage match legacy; no success-only field pollution                                                                                                                                | full-payload golden                                               |
+| TDP06 | TEL01       | Interrupted terminal; separately, stop with no terminal                                                                   | interrupted completion per legacy; no synthesized completion without terminal                                                                                                                                                 | full-payload golden + controlled-stream E2E                       |
+| TDP07 | TEL05       | thought -> text -> terminal                                                                                               | reasoning and generation step order, loop_index, duration, tail finalize correct                                                                                                                                              | fake-clock golden                                                 |
+| TDP08 | TEL05       | tool-first, tool success, tool failed, permission wait, parented child text/thought, terminal                             | first main tool can be first token; tool step status/waiting; completion summary; tool detail only with perf; parented text is not generation but keeps legacy TTFT/stall; parented thought keeps legacy reasoning/TTFT/stall | fake-clock golden + representative tool E2E                       |
+| TDP09 | TEL02       | A streams, switch to B, close A pane, exceed keep-warm, A terminal, reopen                                                | completion/step once each in background; UI ARMS zero; reopen initial does not back-fill                                                                                                                                      | controlled-stream Electron E2E                                    |
+| TDP10 | TEL05       | text/tool/no-token first token, 3000/3001ms gap, tool clear, split pane                                                   | negative first token clamps to 0; legacy `-1` without token still mirrors UI value=0 but sends no plan TTFT; 3000 not reported, 3001 reported; tool clears tracker; multiple panes of one session report once                 | fake-clock + recorded-stream Electron E2E                         |
+| TDP11 | TEL04       | compact success/failed/interrupted/non-terminal/duplicate; custom model; compactReason only; foreground/background switch | full payload for the three terminals; custom model uses legacy UI encoding; compactReason does not back-fill legacy reason; non-terminal/duplicate/background add zero events                                                 | full-payload golden + representative Electron E2E                 |
+| TDP12 | TEL05/TEL09 | Five real model-network statuses, arriving foreground and background; auxiliary accepted/queued/apiRetry                  | `plan_request` count, status/value/redacted hostname correct; auxiliary states report zero                                                                                                                                    | full-payload golden + host live integration                       |
+| TDP13 | TEL05       | plan TTFT normal, negative, provider missing, background                                                                  | only valid foreground values report; negative / missing provider / background do not                                                                                                                                          | fake-clock golden                                                 |
+| TDP14 | TEL06       | Ordinary error visible, suppressed by quota/local error, same-key rerender, new key                                       | reported once when actually visible; suppressed zero; same mount same key once; trace/detail truncation and types correct                                                                                                     | component test + Electron E2E                                     |
+| TDP15 | TEL07       | like, dislike, same-reaction toggle none, command failure, reopen                                                         | immediate legacy payload; entityId is messageId; failure rolls back; success persists                                                                                                                                         | component + command/projection integration + reopen E2E           |
+| TDP16 | TEL08       | Start Plan quota snapshot/error triggers banner; dismiss, blocking/non-blocking, refresh, Upgrade                         | thresholds/priority match legacy; dialog really opens; `upgradeSource=session_quota_alert`; downstream purchase events not verified                                                                                           | state/component integration + Electron E2E                        |
+| TDP17 | TEL06       | Built-in Start Plan model call returns 3007 (official-build safety-check rejection)                                       | official builds only; assertions follow the official-build safety-check spec                                                                                                                                                  | adapter/service integration + fault-stream E2E                    |
+| TDP18 | TEL09       | live coexists with duplicate/initial/hydration/recovery; renderer reload                                                  | live exactly-once; other sources report zero; reload does not replay historical seed/terminal                                                                                                                                 | gateway/service integration + Electron reload E2E                 |
+| TDP19 | TEL09       | Same workspacePath with different identity/remoteSession; service generation replace; Web reporter                        | supervisor isolation, old generation destroyed; Web/mobile reporter no-op and cannot subscribe to the real feed                                                                                                               | service integration + desktop/remote boundary test                |
 
 ## Provider and account policy
 

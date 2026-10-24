@@ -22,9 +22,9 @@
 - If a send-time switch notice is added in the future, it must reuse SessionPane's same `showModelChangeNotice`
   entry and de-duplicate there, never starting another notification path.
 
-| ID | Action | Must observe |
-| --- | --- | --- |
-| MT01 | Choose a different model in an existing Session | One switch Toast immediately; the Composer still shows the chosen model |
-| MT02 | Send after MT01 and it is admitted | Still only the one Toast from MT01 |
-| MT03 | After MT01, automatic fallback switches to another model | The fallback switch is notified as usual |
-| MT04 | Choose a model in a new draft | No Toast |
+| ID   | Action                                                   | Must observe                                                            |
+| ---- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
+| MT01 | Choose a different model in an existing Session          | One switch Toast immediately; the Composer still shows the chosen model |
+| MT02 | Send after MT01 and it is admitted                       | Still only the one Toast from MT01                                      |
+| MT03 | After MT01, automatic fallback switches to another model | The fallback switch is notified as usual                                |
+| MT04 | Choose a model in a new draft                            | No Toast                                                                |

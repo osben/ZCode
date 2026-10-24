@@ -6,13 +6,13 @@ The case writes the E2E provider through the desktop settings page, adds the mai
 
 ## Environment variables
 
-| Variable | Purpose | When unset |
-| --- | --- | --- |
-| `E2E_PROVIDER_BASE_URL` | Upstream provider address | Error in capture mode; not needed for replay |
-| `E2E_PROVIDER_API_KEY` | Upstream API key | Error in capture mode; replay always uses `e2e-fixture-key` |
-| `E2E_PROVIDER_MODEL` | Main model name | The replay fixture's recorded model |
-| `E2E_PROVIDER_SECONDARY_MODEL` | Second model name (model switching, fallback provider and similar cases) | The replay fixture's recorded model |
-| `E2E_PROVIDER_PRESET` | `env` (default, the four variables above) / `glmhighspeed` / `bigmodel53` / `stagingmodel` | `env` |
+| Variable                       | Purpose                                                                                    | When unset                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| `E2E_PROVIDER_BASE_URL`        | Upstream provider address                                                                  | Error in capture mode; not needed for replay                |
+| `E2E_PROVIDER_API_KEY`         | Upstream API key                                                                           | Error in capture mode; replay always uses `e2e-fixture-key` |
+| `E2E_PROVIDER_MODEL`           | Main model name                                                                            | The replay fixture's recorded model                         |
+| `E2E_PROVIDER_SECONDARY_MODEL` | Second model name (model switching, fallback provider and similar cases)                   | The replay fixture's recorded model                         |
+| `E2E_PROVIDER_PRESET`          | `env` (default, the four variables above) / `glmhighspeed` / `bigmodel53` / `stagingmodel` | `env`                                                       |
 
 - The recorded model is defined once in `packages/desktop/test/e2e/helpers/upstream-recorded-models.ts`. Built-in product model rules match thinking levels and request shape by model ID and the fixture is captured for the recorded model, so changing the default model requires re-recording the fixture.
 - `E2E_PROVIDER_RUNTIME_BASE_URL` is the effective address WDIO writes to each test process (it points at the local replay server during replay); do not set it manually.

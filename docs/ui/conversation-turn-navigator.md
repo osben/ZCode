@@ -20,16 +20,16 @@ CLI full projection
 
 ## Change boundary and confirmation record
 
-| Decision | Product semantics |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Navigation granularity | Each timeline-visible `UserInputRow(origin=realUser)` gets its own item; an ordinary query and an accepted steer/guide are equivalent |
-| Same product turn | The initial query, guide 1 and guide 2 may share `turnId` / `unitIndex` but must have different `rowId`, navigation items and landing points |
-| Tooltip | The first section shows that user query; the second keeps the owning product turn's assistant text excerpt or the running/empty-result fallback; the body of tool, reasoning, subagent or marker is not concatenated |
-| Queue boundary | An input still in the pending queue has no timeline row/anchor and does not enter navigation; it enters only after being consumed and projected as a visible real user row |
-| Full directory | User confirmed 2026-07-24: the directory cannot cover only the current tail window; it must complete all rows of the current effective branch until `window[0].rowId === firstRowId` |
-| Virtualization | The full directory mounts only the buttons inside the rail viewport and overscan; `data-item-count` means the total query count, and the DOM button count no longer equals the directory total |
+| Decision                | Product semantics                                                                                                                                                                                                                                                                               |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Navigation granularity  | Each timeline-visible `UserInputRow(origin=realUser)` gets its own item; an ordinary query and an accepted steer/guide are equivalent                                                                                                                                                           |
+| Same product turn       | The initial query, guide 1 and guide 2 may share `turnId` / `unitIndex` but must have different `rowId`, navigation items and landing points                                                                                                                                                    |
+| Tooltip                 | The first section shows that user query; the second keeps the owning product turn's assistant text excerpt or the running/empty-result fallback; the body of tool, reasoning, subagent or marker is not concatenated                                                                            |
+| Queue boundary          | An input still in the pending queue has no timeline row/anchor and does not enter navigation; it enters only after being consumed and projected as a visible real user row                                                                                                                      |
+| Full directory          | User confirmed 2026-07-24: the directory cannot cover only the current tail window; it must complete all rows of the current effective branch until `window[0].rowId === firstRowId`                                                                                                            |
+| Virtualization          | The full directory mounts only the buttons inside the rail viewport and overscan; `data-item-count` means the total query count, and the DOM button count no longer equals the directory total                                                                                                  |
 | Cross-platform boundary | desktop continuous and web remote replayable share the existing `rows/range` read-only query; no cross-platform FIFO, snapshot field or recovery state is added; at `conversation < 864px` no request is sent, and on a wide screen it probes backward when the tail has fewer than two queries |
-| Composer hit | A rail sitting in the transparent left margin of the sticky composer must still hover/click; the transparent outer shell of the composer dock must not capture events, and the real composer content stays interactive |
+| Composer hit            | A rail sitting in the transparent left margin of the sticky composer must still hover/click; the transparent outer shell of the composer dock must not capture events, and the real composer content stays interactive                                                                          |
 
 ## Scope
 
@@ -98,14 +98,14 @@ Coverage is registered in the `TN` group of `docs/conversation-session-case-cata
 
 ## Impact brief and pruning
 
-| Field | Conclusion |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Change layer | `presentation + recovery(read-only pagination)` |
-| UI surface | `ConversationTimeline -> ConversationTurnNavigator` |
-| Display owner | renderer `ConversationProjectionStore` and the React virtualizer |
-| Authoritative owner | CLI `ProductProjection`; the directory does not become a new source of facts |
-| commit/effect | No write command; calls only the existing `v4/conversation/rowsRange` |
-| Downstream to inspect | scroll prepend anchoring, conversation find, active query, sticky composer hit, wide/narrow pane gate |
-| Isolation invariants | Do not enlarge the wire snapshot; do not modify queue/owner/lease; do not confuse continuous/replayable; zero requests in a narrow pane; the tail's partial query count is not used as the full-branch count |
+| Field                 | Conclusion                                                                                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Change layer          | `presentation + recovery(read-only pagination)`                                                                                                                                                              |
+| UI surface            | `ConversationTimeline -> ConversationTurnNavigator`                                                                                                                                                          |
+| Display owner         | renderer `ConversationProjectionStore` and the React virtualizer                                                                                                                                             |
+| Authoritative owner   | CLI `ProductProjection`; the directory does not become a new source of facts                                                                                                                                 |
+| commit/effect         | No write command; calls only the existing `v4/conversation/rowsRange`                                                                                                                                        |
+| Downstream to inspect | scroll prepend anchoring, conversation find, active query, sticky composer hit, wide/narrow pane gate                                                                                                        |
+| Isolation invariants  | Do not enlarge the wire snapshot; do not modify queue/owner/lease; do not confuse continuous/replayable; zero requests in a narrow pane; the tail's partial query count is not used as the full-branch count |
 
 Pruning conclusion: a large completed conversation is the representative for full and virtualized; running only adds the epoch/cursor concurrency guard and is not crossed with model/provider, queue, goal, compact, theme, locale. Desktop wide is the pointer hit-test representative; plain Web and mobile share DOM/CSS, and narrow mobile is pruned by the hydration eligibility gate. Remote only verifies reuse of the existing `rows/range` and the epoch boundary and does not duplicate a directory business state.

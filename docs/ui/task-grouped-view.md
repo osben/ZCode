@@ -125,18 +125,18 @@ reconnect.
 
 ### Recovery Acceptance
 
-| Case  | Setup -> Action -> Assertion                                                                                           | Evidence           |
-| ----- | ---------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| GRP01 | Old group / empty group / system group / mixed-device fixture -> upgrade twice -> groups kept, no Group project, workspace projects normal | SQLite hash/ledger |
-| GRP02 | Three views -> switch/reload -> preference and collapse restored, project order and current task unchanged             | GUI/localStorage   |
-| GRP03 | Create/rename/recolor/ungroup -> restart -> persisted, no task deleted                                                 | GUI/SQLite         |
-| GRP04 | Top-level / in-group / empty group and invisible members -> menu/drag -> only target nodes change, execution scope unchanged | GUI/Host           |
-| GRP05 | In-group task -> pin/archive/restore/delete -> no duplicates, position restored, explicit delete clears references    | GUI/SQLite         |
-| GRP06 | Warm draft -> first send / switch group / switch project / ungroup / delayed ACK -> one session, placement does not cross groups | GUI/create calls   |
-| GRP07 | Scheduled/idle first mark -> sync/move out/restart -> admitted once, respects organization                             | Host/GUI           |
-| GRP08 | Different Hosts with same path and taskId -> mixed group / offline / reconnect / identity migration -> no cross-wiring, no lost members | identity/GUI       |
-| GRP09 | Two windows/phone move concurrently -> interleaved commits -> unrelated nodes not overwritten, stale anchors rejected  | two connections/SQLite |
-| GRP10 | Large list / continuous activity / split drag -> scroll and switch -> no blank flash, split does not change order      | GUI/runtime        |
+| Case  | Setup -> Action -> Assertion                                                                                                               | Evidence               |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+| GRP01 | Old group / empty group / system group / mixed-device fixture -> upgrade twice -> groups kept, no Group project, workspace projects normal | SQLite hash/ledger     |
+| GRP02 | Three views -> switch/reload -> preference and collapse restored, project order and current task unchanged                                 | GUI/localStorage       |
+| GRP03 | Create/rename/recolor/ungroup -> restart -> persisted, no task deleted                                                                     | GUI/SQLite             |
+| GRP04 | Top-level / in-group / empty group and invisible members -> menu/drag -> only target nodes change, execution scope unchanged               | GUI/Host               |
+| GRP05 | In-group task -> pin/archive/restore/delete -> no duplicates, position restored, explicit delete clears references                         | GUI/SQLite             |
+| GRP06 | Warm draft -> first send / switch group / switch project / ungroup / delayed ACK -> one session, placement does not cross groups           | GUI/create calls       |
+| GRP07 | Scheduled/idle first mark -> sync/move out/restart -> admitted once, respects organization                                                 | Host/GUI               |
+| GRP08 | Different Hosts with same path and taskId -> mixed group / offline / reconnect / identity migration -> no cross-wiring, no lost members    | identity/GUI           |
+| GRP09 | Two windows/phone move concurrently -> interleaved commits -> unrelated nodes not overwritten, stale anchors rejected                      | two connections/SQLite |
+| GRP10 | Large list / continuous activity / split drag -> scroll and switch -> no blank flash, split does not change order                          | GUI/runtime            |
 
 Acceptance covers desktop and mobile shared-host, light/dark themes and zh/en; narrow-screen screenshots
 do not replace phone evidence. New GUI cases enter manual-review/pending first, and actual runs and

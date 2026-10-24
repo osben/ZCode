@@ -18,7 +18,7 @@ Related documents:
 - Product-decision backfill plan: [conversation-session-decision-backfill-plan.md](./conversation-session-decision-backfill-plan.md)
 - Product-decision workflow board: [conversation-session-decision-workflow-board.md](./conversation-session-decision-workflow-board.md)
 
-Full history: `git show 6c0f4203:docs/testing/conversation-session-case-coverage-audit.md`.
+Full history: `git show 45f808f7:docs/testing/conversation-session-case-coverage-audit.md`.
 
 ## Mechanical basis
 
@@ -198,61 +198,61 @@ Rejected items are in `formalAdmission.formal.rejected[]`. Each item has a repo-
 
 This is not the product completion definition, only a baseline against statistics drift:
 
-| Metric                                           | Current value |
-| ------------------------------------------------ | ------------: |
-| Main-path A-J cases                              |           163 |
-| Main-path accepted                               |           163 |
-| Main-path undefined                              |             0 |
-| Main-path covered                                |           113 |
-| Automation abbreviations                         |            93 |
-| Specs referenced by the coverage matrix          |            62 |
-| Specs with test declarations                     |            93 |
-| Referenced spec skip/only                        |             0 |
-| New external fault product cases                 |            37 |
-| External fault aliases                           |             3 |
-| External fault infra cases                       |             4 |
-| Fault coverage matrix rows                       |            40 |
-| Fault coverage matrix covered                    |             0 |
-| Fault coverage matrix decision-needed            |            37 |
-| Fault coverage matrix missing accepted           |             3 |
-| Decision backlog rows                            |            37 |
-| Decision E2E roadmap rows                        |            87 |
-| Decision E2E roadmap expected rows               |            87 |
-| Decision E2E roadmap blocked-by-product-decision |            37 |
-| Decision E2E roadmap ready-to-write              |            29 |
-| Decision E2E roadmap implemented                 |            21 |
-| Decision worksheet covered rows                  |            37 |
-| Total protocol questions                         |            37 |
-| Protocol questions answered                      |             0 |
-| Protocol questions unanswered                    |            37 |
-| Answer draft rows                                |            37 |
-| Answer draft answered                            |             0 |
-| Answer draft pending placeholder                 |            37 |
-| Answer draft missing question rows               |             0 |
-| Answer draft ready-to-backfill cases             |             0 |
-| Answer draft placeholder-only cases              |            37 |
-| Answer draft partial cases                       |             0 |
-| Answer draft missing cases                       |             0 |
-| Backfill workflow draft-ready cases              |             0 |
-| Backfill workflow worksheet-ready cases          |             0 |
-| Backfill workflow source-backfill-needed cases   |             0 |
-| Decision workflow board cases                    |            37 |
-| Decision ready cases                             |             0 |
-| Decision blocked cases                           |            37 |
-| Review queue cases                               |            37 |
-| Review queue next                                | N01, N02, N03 |
-| Generated Markdown docs                          |             6 |
-| Generated Markdown stale                         |             0 |
-| Generated Markdown missing                       |             0 |
-| Compact P0 protocol questions                    |             0 |
-| Network/SSE protocol questions                   |            16 |
-| Recovery/Isolation protocol questions            |            21 |
-| Merged and de-duplicated product cases           |           200 |
-| Merged and de-duplicated covered                 |           113 |
-| Merged and de-duplicated pending decision / automation | 87      |
-| Completion gate required                         |            no |
-| Completion gate coverage complete                |            no |
-| Completion gate covered                          |       113/200 |
-| Completion gate decision-needed                  |            37 |
+| Metric                                                 | Current value |
+| ------------------------------------------------------ | ------------: |
+| Main-path A-J cases                                    |           163 |
+| Main-path accepted                                     |           163 |
+| Main-path undefined                                    |             0 |
+| Main-path covered                                      |           113 |
+| Automation abbreviations                               |            93 |
+| Specs referenced by the coverage matrix                |            62 |
+| Specs with test declarations                           |            93 |
+| Referenced spec skip/only                              |             0 |
+| New external fault product cases                       |            37 |
+| External fault aliases                                 |             3 |
+| External fault infra cases                             |             4 |
+| Fault coverage matrix rows                             |            40 |
+| Fault coverage matrix covered                          |             0 |
+| Fault coverage matrix decision-needed                  |            37 |
+| Fault coverage matrix missing accepted                 |             3 |
+| Decision backlog rows                                  |            37 |
+| Decision E2E roadmap rows                              |            87 |
+| Decision E2E roadmap expected rows                     |            87 |
+| Decision E2E roadmap blocked-by-product-decision       |            37 |
+| Decision E2E roadmap ready-to-write                    |            29 |
+| Decision E2E roadmap implemented                       |            21 |
+| Decision worksheet covered rows                        |            37 |
+| Total protocol questions                               |            37 |
+| Protocol questions answered                            |             0 |
+| Protocol questions unanswered                          |            37 |
+| Answer draft rows                                      |            37 |
+| Answer draft answered                                  |             0 |
+| Answer draft pending placeholder                       |            37 |
+| Answer draft missing question rows                     |             0 |
+| Answer draft ready-to-backfill cases                   |             0 |
+| Answer draft placeholder-only cases                    |            37 |
+| Answer draft partial cases                             |             0 |
+| Answer draft missing cases                             |             0 |
+| Backfill workflow draft-ready cases                    |             0 |
+| Backfill workflow worksheet-ready cases                |             0 |
+| Backfill workflow source-backfill-needed cases         |             0 |
+| Decision workflow board cases                          |            37 |
+| Decision ready cases                                   |             0 |
+| Decision blocked cases                                 |            37 |
+| Review queue cases                                     |            37 |
+| Review queue next                                      | N01, N02, N03 |
+| Generated Markdown docs                                |             6 |
+| Generated Markdown stale                               |             0 |
+| Generated Markdown missing                             |             0 |
+| Compact P0 protocol questions                          |             0 |
+| Network/SSE protocol questions                         |            16 |
+| Recovery/Isolation protocol questions                  |            21 |
+| Merged and de-duplicated product cases                 |           200 |
+| Merged and de-duplicated covered                       |           113 |
+| Merged and de-duplicated pending decision / automation |            87 |
+| Completion gate required                               |            no |
+| Completion gate coverage complete                      |            no |
+| Completion gate covered                                |       113/200 |
+| Completion gate decision-needed                        |            37 |
 
 When new product semantics are added, they must first enter the catalog and let this audit report the new gap; update the coverage matrix only after the matching E2E or product decision is filled in. As long as a case cannot yet carry a stable assertion, it must also appear in the decision backlog, to ease product review and pruning.

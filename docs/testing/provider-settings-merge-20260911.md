@@ -23,15 +23,15 @@ Root `pnpm typecheck` passed; adapter `pnpm typecheck` passed after rebuilding t
 
 Both sides had duplicate Todo115-Todo122. By user request the original branch's numbers stay and the merged branch's eight items moved to Todo125-Todo132 (file names, titles, directories and cross references updated):
 
-| Merged branch original | Current | Topic |
-| --- | --- | --- |
-| Todo115 | Todo125 | Model settings page question-mark help and final copy |
-| Todo116 | Todo126 | GLM-5.3-Flash PDF and Coding Plan API Turbo default config |
-| Todo117 | Todo127 | Built-in config online publish and update chain fix |
-| Todo118 | Todo128 | Provider startup contract and off-peak entitlement refresh fix |
-| Todo119 | Todo129 | Provider telemetry adaptation and Team plan recognition fix |
-| Todo120 | Todo130 | Smart config switch and manual config field boundary correction |
-| Todo121 | Todo131 | Smart config position in the model settings page and the "Restore" button |
-| Todo122 | Todo132 | Model option background feedback and provider name edit fix |
+| Merged branch original | Current | Topic                                                                     |
+| ---------------------- | ------- | ------------------------------------------------------------------------- |
+| Todo115                | Todo125 | Model settings page question-mark help and final copy                     |
+| Todo116                | Todo126 | GLM-5.3-Flash PDF and Coding Plan API Turbo default config                |
+| Todo117                | Todo127 | Built-in config online publish and update chain fix                       |
+| Todo118                | Todo128 | Provider startup contract and off-peak entitlement refresh fix            |
+| Todo119                | Todo129 | Provider telemetry adaptation and Team plan recognition fix               |
+| Todo120                | Todo130 | Smart config switch and manual config field boundary correction           |
+| Todo121                | Todo131 | Smart config position in the model settings page and the "Restore" button |
+| Todo122                | Todo132 | Model option background feedback and provider name edit fix               |
 
 Original-branch Todo115-Todo124 are unchanged. Only document identities were tidied; requirements and implementation status are unchanged, and existing case-tracking IDs such as M120 / R121 / T119 stay stable. This record does not promise to fix the recorded Provider, migration, Subagent, capacity or connection-test problems, nor to implement the todos newly added by the target branch.

@@ -79,19 +79,19 @@ not leak into other sections.
 
 ## Acceptance
 
-| ID | Setup | Action | Assertions |
-| --- | --- | --- | --- |
-| SHB01 | Settings General | Open settings | No breadcrumb in the top bar; drag area and right safe margin kept |
-| SHB02 | Memory project list | Open Memory | No breadcrumb in the top bar |
-| SHB03 | Memory project detail | Click a project | Shows `Memory > project name` |
-| SHB04 | Memory file body | Click a file | Appends the file name |
-| SHB05 | Memory detail | Go back or switch section | Breadcrumb shrinks in sync, no old level left |
-| SHB06 | Memory file body | Click the project button | Returns to the project file list, breadcrumb shrinks to two levels |
-| SHB07 | Any second-level page | Click the section button | Reuses that section's back action to the first-level page |
-| SHB08 | Any second-level page | Enter details | Hides the outer section title, no duplicate Back |
-| SHB09 | Model Settings | Switch provider or plan | No breadcrumb in the top bar; the large title stays in the content |
-| SHB10 | Usage Stats | Switch usage tab | No breadcrumb in the top bar; the large title stays in the content |
-| SHB11 | Settings plugin list | Open plugin details | Shows `Plugins > Example Plugin` |
-| SHB12 | Plugin market | Open market plugin details | Shows `Plugin Marketplace > Example Plugin` |
-| SHB13 | Plugin market | Click manage installed | Shows `Plugin Marketplace > Plugins`; content keeps the `Plugins` title |
+| ID    | Setup                            | Action                               | Assertions                                                                                             |
+| ----- | -------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| SHB01 | Settings General                 | Open settings                        | No breadcrumb in the top bar; drag area and right safe margin kept                                     |
+| SHB02 | Memory project list              | Open Memory                          | No breadcrumb in the top bar                                                                           |
+| SHB03 | Memory project detail            | Click a project                      | Shows `Memory > project name`                                                                          |
+| SHB04 | Memory file body                 | Click a file                         | Appends the file name                                                                                  |
+| SHB05 | Memory detail                    | Go back or switch section            | Breadcrumb shrinks in sync, no old level left                                                          |
+| SHB06 | Memory file body                 | Click the project button             | Returns to the project file list, breadcrumb shrinks to two levels                                     |
+| SHB07 | Any second-level page            | Click the section button             | Reuses that section's back action to the first-level page                                              |
+| SHB08 | Any second-level page            | Enter details                        | Hides the outer section title, no duplicate Back                                                       |
+| SHB09 | Model Settings                   | Switch provider or plan              | No breadcrumb in the top bar; the large title stays in the content                                     |
+| SHB10 | Usage Stats                      | Switch usage tab                     | No breadcrumb in the top bar; the large title stays in the content                                     |
+| SHB11 | Settings plugin list             | Open plugin details                  | Shows `Plugins > Example Plugin`                                                                       |
+| SHB12 | Plugin market                    | Open market plugin details           | Shows `Plugin Marketplace > Example Plugin`                                                            |
+| SHB13 | Plugin market                    | Click manage installed               | Shows `Plugin Marketplace > Plugins`; content keeps the `Plugins` title                                |
 | SHB14 | Market-sourced plugin management | Open a plugin, MCP or Skill sub-page | Shows `Plugin Marketplace > Plugins > current page`; clicking `Plugins` returns to the management page |

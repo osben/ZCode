@@ -10,7 +10,7 @@ kubectl proxy and custom Kube config the built-in terminal is closer to opening 
   captured from the login shell and merged into the later ZCode Agent/terminal child process environment.
 - Font: at terminal creation the font resolves in the order "explicit user override > system terminal config
   > ZCode fallback font stack". System terminal config currently covers Windows Terminal, VS Code, iTerm2,
-  macOS Terminal, Kitty and Alacritty.
+  > macOS Terminal, Kitty and Alacritty.
 - Colors: terminal background, default text color and cursor color are always controlled by the current ZCode
   app theme; a system terminal profile may only add terminal detail colors such as the ANSI palette and
   selection. So inheriting an iTerm2 / Terminal profile on macOS does not bring a dark background into a light

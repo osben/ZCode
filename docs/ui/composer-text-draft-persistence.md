@@ -59,22 +59,22 @@ Verification: the I23/I24 desktop E2E cover an empty config, history read, savin
 - **Changing only the thinking level (C-4)**: a thinking-level change is not a model selection, writes no flag, and with no body is not persisted, consistent with the above.
 - **Delete or archive (C-2)**: the Session's draft record is not cleaned. The UI has no unified session delete/archive draft hook (permanent delete covers only the archive management page). A session is recoverable after archiving, so the record is kept; a record after permanent deletion is an orphan, at most one small record per Session.
 
-| ID | Setup and action | Must observe |
-| ---- | ----------------------------------------------------- | -------------------------------------------------------- |
-| MP01 | Existing Session with empty body, pick model B; switch to another task and return | Model is still B; body empty; record exists with the flag |
-| MP02 | Same as MP01, refresh the window and reopen the Session | Model restored to B |
-| MP03 | Existing Session with empty body, change only permission or Plan | Nothing written; no record |
-| MP04 | Existing Session inheriting the Snapshot model, empty body, switch away and back | Nothing written; model follows the Snapshot |
-| MP05 | Pick B, send and be accepted, body empty | Flag cleared, record deleted; the model follows the Snapshot afterwards |
-| MP06 | Pick B, send fails | Flag and record kept; model still B |
-| MP07 | New Root blank page, pick only a model | Nothing written (rule above unchanged) |
-| MP08 | The chosen model becomes invalid in the Registry | Intent kept, no auto replacement (ISSUE-026 unchanged) |
-| MP09 | Same path, different workspaceIdentity, same Session id | Records are invisible to each other |
-| MP10 | After picking B (baseline A), the Session model is changed externally to C | Flag deleted; draft model is C; body kept; record deleted (if body empty) |
-| MP11 | Pick B and then pick A (the Session's current model) again | Flag and record cleared; draft model is A |
-| MP12 | Pick B and then change only the thinking level (no body) | Nothing written; no record |
-| MP13 | After picking B, the Session snapshot omits or changes the level while the model stays A | Flag kept; draft still B |
-| MP14 | Pick B (unresolvable in the Registry), then the Session moves to a resolvable C | Flag and model B kept; send stays blocked for the model reason |
+| ID   | Setup and action                                                                             | Must observe                                                                                               |
+| ---- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| MP01 | Existing Session with empty body, pick model B; switch to another task and return            | Model is still B; body empty; record exists with the flag                                                  |
+| MP02 | Same as MP01, refresh the window and reopen the Session                                      | Model restored to B                                                                                        |
+| MP03 | Existing Session with empty body, change only permission or Plan                             | Nothing written; no record                                                                                 |
+| MP04 | Existing Session inheriting the Snapshot model, empty body, switch away and back             | Nothing written; model follows the Snapshot                                                                |
+| MP05 | Pick B, send and be accepted, body empty                                                     | Flag cleared, record deleted; the model follows the Snapshot afterwards                                    |
+| MP06 | Pick B, send fails                                                                           | Flag and record kept; model still B                                                                        |
+| MP07 | New Root blank page, pick only a model                                                       | Nothing written (rule above unchanged)                                                                     |
+| MP08 | The chosen model becomes invalid in the Registry                                             | Intent kept, no auto replacement (ISSUE-026 unchanged)                                                     |
+| MP09 | Same path, different workspaceIdentity, same Session id                                      | Records are invisible to each other                                                                        |
+| MP10 | After picking B (baseline A), the Session model is changed externally to C                   | Flag deleted; draft model is C; body kept; record deleted (if body empty)                                  |
+| MP11 | Pick B and then pick A (the Session's current model) again                                   | Flag and record cleared; draft model is A                                                                  |
+| MP12 | Pick B and then change only the thinking level (no body)                                     | Nothing written; no record                                                                                 |
+| MP13 | After picking B, the Session snapshot omits or changes the level while the model stays A     | Flag kept; draft still B                                                                                   |
+| MP14 | Pick B (unresolvable in the Registry), then the Session moves to a resolvable C              | Flag and model B kept; send stays blocked for the model reason                                             |
 | MP15 | The pick happens before the first snapshot, then moves away after the first snapshot arrives | The first snapshot becomes the baseline; after moving away it expires and the draft model is the new model |
 
 ## Ownership of editor content on scope switch (ISSUE-060, 2026-10-23)
@@ -88,24 +88,24 @@ When one pane switches from an existing Session to a new draft (or switches proj
 - The write barrier is raised in the commit phase (layout effect), earlier than the scope effect; a send during the barrier is ignored and the old body in the editor is not sent. If the workspace switches again during the barrier and the draft is transferred, what transfers is the pending-restore scope's own draft, not the editor content.
 - No timer is used to mask this; the old scope's draft is covered by the immediate write on body change, and the scope switch itself writes nothing extra to the old scope.
 
-| ID | Setup and action | Must observe |
-| ----- | ------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| DL01 | Session A draft "qa draft A"; the same pane switches to a new draft, window blur before the next frame | New draft has no record; editor empty; A is still "qa draft A" |
-| DL02 | Same as DL01, type "qa draft new" before the next frame | New draft is "qa draft new" without "qa draft A"; A unchanged |
-| DL03 | Editor not ready at scope switch, window blur before it is ready, then the editor becomes ready | No write to the new draft; after ready it shows the new scope's draft, not "qa draft A" |
-| DL03b | Same as DL03, but the editor becomes ready without the Composer re-rendering | The new scope's draft is restored on the next frame; later input writes normally |
-| DL04 | Trigger send while the editor is not ready | Not sent; A unchanged |
-| DL05 | The new draft is transferred to another workspace while a restore is pending | The target workspace gets "qa draft new", not "qa draft A" |
+| ID    | Setup and action                                                                                       | Must observe                                                                            |
+| ----- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| DL01  | Session A draft "qa draft A"; the same pane switches to a new draft, window blur before the next frame | New draft has no record; editor empty; A is still "qa draft A"                          |
+| DL02  | Same as DL01, type "qa draft new" before the next frame                                                | New draft is "qa draft new" without "qa draft A"; A unchanged                           |
+| DL03  | Editor not ready at scope switch, window blur before it is ready, then the editor becomes ready        | No write to the new draft; after ready it shows the new scope's draft, not "qa draft A" |
+| DL03b | Same as DL03, but the editor becomes ready without the Composer re-rendering                           | The new scope's draft is restored on the next frame; later input writes normally        |
+| DL04  | Trigger send while the editor is not ready                                                             | Not sent; A unchanged                                                                   |
+| DL05  | The new draft is transferred to another workspace while a restore is pending                           | The target workspace gets "qa draft new", not "qa draft A"                              |
 
 ## State ownership and impact
 
-| Scenario / entry | Sole owner / commit path | Persistence and initialization | Impact level |
-| ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ | -------------- |
-| New / current Session input | useDraftConfigControl -> Submission -> CLI admission | composerDraftStore saves text only; Recent updates only on accepted | must-inspect |
-| New Task / project and group menu | workspace UI store `draftProjectId` / `draftTaskGroupId` | The current creation intent stays in memory; with text it is saved with the draft, and mobile cold restore reads only text drafts | must-inspect |
-| First share import | navigation params -> Composer owner | One-time initial config in memory only; no fake disk draft and no Recent change | must-inspect |
-| Offline page and refresh | read-only result of composerDraftStore | Restores only text drafts, adds no offline queue | should-inspect |
-| Automation, sub-agents, accepted queue | original record / CLI owner | Does not consume the Composer draft or change the frozen Submission | invariant-only |
+| Scenario / entry                       | Sole owner / commit path                                 | Persistence and initialization                                                                                                    | Impact level   |
+| -------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| New / current Session input            | useDraftConfigControl -> Submission -> CLI admission     | composerDraftStore saves text only; Recent updates only on accepted                                                               | must-inspect   |
+| New Task / project and group menu      | workspace UI store `draftProjectId` / `draftTaskGroupId` | The current creation intent stays in memory; with text it is saved with the draft, and mobile cold restore reads only text drafts | must-inspect   |
+| First share import                     | navigation params -> Composer owner                      | One-time initial config in memory only; no fake disk draft and no Recent change                                                   | must-inspect   |
+| Offline page and refresh               | read-only result of composerDraftStore                   | Restores only text drafts, adds no offline queue                                                                                  | should-inspect |
+| Automation, sub-agents, accepted queue | original record / CLI owner                              | Does not consume the Composer draft or change the frozen Submission                                                               | invariant-only |
 
 The shared behavior is draft read/write and effective model resolution; a new draft reads Recent, an existing Session reads its own Snapshot, and the two are not unified into a global config. Permission/Plan restore follows the current Session Snapshot; historical grants are used only to recognize new changes during this open period and are not stored in the draft. Workspace isolation always uses `workspaceIdentity?.trim() || workspacePath`; desktop continuous and mobile replayable transport, shared-host, owner/lease and queue protocol are unchanged. No new Host/Agent state or synchronization timer is added.
 
@@ -113,16 +113,16 @@ Recent's scope is unchanged: a new draft in the same project/workspace inherits 
 
 ## Cases and pruning
 
-| ID | Setup and action | Assertion | Layer / status |
-| ---- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- |
-| TD01 | Fresh input, pick only yolo + A, then switch away/refresh | The in-memory current selection works; localStorage has no draft, and reopening initializes from the default source | storage + Hook / accepted |
-| TD02 | First send yolo + A; open a blank page once; return to the original Session, change build + B and submit; then New | Recent is build + B; the new page has the same value and no blank persistent record; real buttons and model switch | Desktop E2E / accepted pending |
-| TD03 | Type text and change permission and model, switch Session and return/refresh | Text and model restored; an existing Session's permission/Plan use the current snapshot; Recent unchanged | Hook + Desktop E2E / accepted pending |
-| TD04 | Empty the text or leave only spaces and New again | The old persistent record is deleted, the new page uses the latest Recent; a repeated New Task in the same pane keeps no empty config | storage + Hook + Desktop E2E / accepted pending |
-| TD05 | Send succeeds, fails, or a late ACK arrives after the user typed the next one | Success clears only the original submit; failure keeps body and config; the old ACK does not overwrite the new scope/new text | existing submission tests + Hook / accepted |
-| TD06 | Existing empty records and text records of a different remote with the same path | Only empty records are cleared; remote identity is isolated; a text record with a broken model is kept for correction | storage / accepted |
-| TD07 | Pick a project/group before typing, then type and send first | An empty page writes nothing, the first send still goes to the chosen project/group; a text draft can cold-restore | store + navigation tests / accepted |
-| TD08 | First share import, delayed View, existing Session reused | Navigation initialization writes no empty draft, import still follows new-draft initialization; user re-selection takes priority, reused does not reset | Hook / accepted |
+| ID   | Setup and action                                                                                                   | Assertion                                                                                                                                               | Layer / status                                  |
+| ---- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| TD01 | Fresh input, pick only yolo + A, then switch away/refresh                                                          | The in-memory current selection works; localStorage has no draft, and reopening initializes from the default source                                     | storage + Hook / accepted                       |
+| TD02 | First send yolo + A; open a blank page once; return to the original Session, change build + B and submit; then New | Recent is build + B; the new page has the same value and no blank persistent record; real buttons and model switch                                      | Desktop E2E / accepted pending                  |
+| TD03 | Type text and change permission and model, switch Session and return/refresh                                       | Text and model restored; an existing Session's permission/Plan use the current snapshot; Recent unchanged                                               | Hook + Desktop E2E / accepted pending           |
+| TD04 | Empty the text or leave only spaces and New again                                                                  | The old persistent record is deleted, the new page uses the latest Recent; a repeated New Task in the same pane keeps no empty config                   | storage + Hook + Desktop E2E / accepted pending |
+| TD05 | Send succeeds, fails, or a late ACK arrives after the user typed the next one                                      | Success clears only the original submit; failure keeps body and config; the old ACK does not overwrite the new scope/new text                           | existing submission tests + Hook / accepted     |
+| TD06 | Existing empty records and text records of a different remote with the same path                                   | Only empty records are cleared; remote identity is isolated; a text record with a broken model is kept for correction                                   | storage / accepted                              |
+| TD07 | Pick a project/group before typing, then type and send first                                                       | An empty page writes nothing, the first send still goes to the chosen project/group; a text draft can cold-restore                                      | store + navigation tests / accepted             |
+| TD08 | First share import, delayed View, existing Session reused                                                          | Navigation initialization writes no empty draft, import still follows new-draft initialization; user re-selection takes priority, reused does not reset | Hook / accepted                                 |
 
 Pure style, theme and i18n are unchanged and reuse shared controls, so no full appearance cross product is enumerated. Two legal models of the same provider are the model representative; yolo/build are the permission representative. Queue admission and execution config stay frozen; only the send-draft boundary is verified and queue features are not extended. Attachments currently have no cross-restart draft persistence and none is added.
 

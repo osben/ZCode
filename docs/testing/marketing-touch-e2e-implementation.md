@@ -185,14 +185,14 @@ rechecked against current source.
 
 ## Clarification Log / Boundary Decisions
 
-| Decision                          | Status               | Scope                                                                                                                                 |
-| --------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Fix existing failures, add P0/P1  | accepted             | The user asked the Goal to continue to completion, including necessary product defects, not only assertion edits                       |
-| Coverage                          | accepted             | The user lowered it to 90%, excluding Lottie; current Renderer 90.07%, not posing as a cross-domain overall result; functions/branches listed separately, no unit-test padding |
-| Action capability                 | accepted             | Keep close/open_url/claim/navigate/copy_text; no task creation, no model switch, no automatic install/payment                          |
-| Old API migration                 | bug-candidate -> fix | Use providerSettingsService.refresh and the current providerId/connection structure; do not restore the retired service               |
-| Test lifecycle                    | accepted             | Case-local scenarios and cleanup; promote after the goal is reached and everything passes (user authorized); verify on local Electron only, no Docker, no push |
-| Third party / platform            | pruned combinations  | Official-version security checks use deterministic callback stand-ins; real purchases / production eligibility are not executed. A macOS run cannot replace Windows/Linux/real phones |
+| Decision                         | Status               | Scope                                                                                                                                                                                 |
+| -------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fix existing failures, add P0/P1 | accepted             | The user asked the Goal to continue to completion, including necessary product defects, not only assertion edits                                                                      |
+| Coverage                         | accepted             | The user lowered it to 90%, excluding Lottie; current Renderer 90.07%, not posing as a cross-domain overall result; functions/branches listed separately, no unit-test padding        |
+| Action capability                | accepted             | Keep close/open_url/claim/navigate/copy_text; no task creation, no model switch, no automatic install/payment                                                                         |
+| Old API migration                | bug-candidate -> fix | Use providerSettingsService.refresh and the current providerId/connection structure; do not restore the retired service                                                               |
+| Test lifecycle                   | accepted             | Case-local scenarios and cleanup; promote after the goal is reached and everything passes (user authorized); verify on local Electron only, no Docker, no push                        |
+| Third party / platform           | pruned combinations  | Official-version security checks use deterministic callback stand-ins; real purchases / production eligibility are not executed. A macOS run cannot replace Windows/Linux/real phones |
 
 ## Domain Scope / Concept Map / State Owners
 
@@ -205,14 +205,14 @@ Controller state directly.
 
 ## Dimensions / High-Risk Cross-Products
 
-| Dimension | Equivalence classes                        | Risky combination                        |
-| --------- | ------------------------------------------ | ---------------------------------------- |
-| Slot      | Banner / Popup / success_popup             | close X reporting; result X x new standalone popup |
-| Action    | close / copy / navigate / claim / open_url | in flight x double click / account change / late response |
-| Network   | normal / empty / failure / timeout / slow  | poll x action settling; report x credential change |
-| Media     | image / video / bundle                     | ready/error/timeout x fallback/no fallback |
-| Navigation | settings/marketplace/upgrade              | target loading/missing/active x no side effects |
-| UI        | light/dark, zh/en, narrow/desktop, keyboard | font style / clipping / focus x text length |
+| Dimension  | Equivalence classes                         | Risky combination                                         |
+| ---------- | ------------------------------------------- | --------------------------------------------------------- |
+| Slot       | Banner / Popup / success_popup              | close X reporting; result X x new standalone popup        |
+| Action     | close / copy / navigate / claim / open_url  | in flight x double click / account change / late response |
+| Network    | normal / empty / failure / timeout / slow   | poll x action settling; report x credential change        |
+| Media      | image / video / bundle                      | ready/error/timeout x fallback/no fallback                |
+| Navigation | settings/marketplace/upgrade                | target loading/missing/active x no side effects           |
+| UI         | light/dark, zh/en, narrow/desktop, keyboard | font style / clipping / focus x text length               |
 
 ```text
 case reset -> isolated HTTP scenario -> real App GET / resource / RPC
@@ -228,28 +228,28 @@ claim success -> parallel entitlement snapshot + providerSettingsService.refresh
 All are accepted scenarios of the existing contract; implementation status lives in the verification
 records and these rows do not claim coverage.
 
-| ID     | Setup                                                  | Action                      | Assertions                                                                 | Evidence             |
-| ------ | ------------------------------------------------------ | --------------------------- | -------------------------------------------------------------------------- | -------------------- |
-| MTE-01 | Any earlier failure / residual modal                   | reset the scenario and run independently | Same as combined run; no old delivery / ledger pollution       | App/HTTP             |
-| MTE-02 | Current provider family/account/custom with a valid connection snapshot | navigate to a given provider | Target selected; connection/model/task unchanged; missing target fails explicitly | App/persisted config |
-| MTE-03 | claim succeeds; refresh normal / rejected              | click claim                 | Current provider refresh really called, failure still succeeds; connection unchanged | App/RPC/service regression |
-| MTE-04 | Standalone / result Popup                              | X/Esc/overlay/content close | Standalone cancel once; result not reported again; focus usable            | App/ledger           |
-| MTE-05 | anonymous/logged in, security check normal/cancel/fail | click claim repeatedly      | One claim, cancel recovers, no automatic retry                             | App/HTTP             |
-| MTE-06 | Same-ID delivery, slow GET/resource, pending action    | late old result after close/success | Old content does not revive; new delivery can show and report again | App/HTTP             |
-| MTE-07 | normal/failure/hidden, identity/locale change          | poll and event refresh      | 30s/600s environment policy; serialization, recovery, backoff, empty takedown | App/timer boundary |
-| MTE-08 | Service process first, failure, concurrent requests    | GET/POST, switch account/language | seq starts at 0, increments without duplicates; POST not counted; required / anonymous headers | App/redacted HTTP ledger |
-| MTE-09 | report 500 / disconnect / account change               | close / success             | UI not blocked, no retry, an old event is not reported with a new credential | App/HTTP           |
-| MTE-10 | ZIP cold/warm cache, different hash, invalid package/source | show / take down / redeliver | Verified unpack reuse, lease release, bad resource not shown           | App/Host/file evidence |
-| MTE-11 | bundle ready/error/not ready/forged source or instance | receive messages / switch theme / hide / close | Show only after a trusted handshake; fallback or hide; action boundary | App/real iframe |
-| MTE-12 | Server translation, empty/illegal message, claim inside a Popup | fail and close the prompt | Plain text, no msg, original Popup restored; no retry/report              | App/HTTP             |
-| MTE-13 | Copy normal / permission failure / timeout / late      | repeated click, close       | Exact text, feedback and report after success, failure recovery, no task creation | App/clipboard |
-| MTE-14 | Settings default / each section, market home/detail/missing | navigate               | Confirm after the target takes over, reuse existing target, no install, no false confirm across identity | App/config |
-| MTE-15 | Upgrade page real fixture ready/fail/hang              | open, close early / time out | No confirm before ready; failure recovers; original upgrade entry unchanged | App/real webview   |
-| MTE-16 | HTML/Markdown/plaintext + class/style/theme            | show and click              | Safe style, no nested interactives, links handled per platform, theme and narrow screen usable | App/DOM/screenshot |
-| MTE-17 | image dark / video, decode failure / reduced motion    | show / hide / recover       | Theme resource chosen, pause and resume, fallback, Banner 96px             | App/media            |
-| MTE-18 | New / old entitlement / current structured connection  | refresh and explicit user connection switch | Entitlement presentation linked with Subagent candidates, not overwritten by marketing navigation | App/HTTP/settings |
-| MTE-19 | provider view error                                    | show the Root error prompt and retry | No crash from a missing icon import; retry goes through the original service | App/component regression |
-| MTE-20 | App lifecycle / Web support boundary                   | dispose / exit / Web bundle | Resources released; Web fallback, no bypass of shared-host; no spread of task semantics | Host/cross-client representative |
+| ID     | Setup                                                                   | Action                                         | Assertions                                                                                               | Evidence                         |
+| ------ | ----------------------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| MTE-01 | Any earlier failure / residual modal                                    | reset the scenario and run independently       | Same as combined run; no old delivery / ledger pollution                                                 | App/HTTP                         |
+| MTE-02 | Current provider family/account/custom with a valid connection snapshot | navigate to a given provider                   | Target selected; connection/model/task unchanged; missing target fails explicitly                        | App/persisted config             |
+| MTE-03 | claim succeeds; refresh normal / rejected                               | click claim                                    | Current provider refresh really called, failure still succeeds; connection unchanged                     | App/RPC/service regression       |
+| MTE-04 | Standalone / result Popup                                               | X/Esc/overlay/content close                    | Standalone cancel once; result not reported again; focus usable                                          | App/ledger                       |
+| MTE-05 | anonymous/logged in, security check normal/cancel/fail                  | click claim repeatedly                         | One claim, cancel recovers, no automatic retry                                                           | App/HTTP                         |
+| MTE-06 | Same-ID delivery, slow GET/resource, pending action                     | late old result after close/success            | Old content does not revive; new delivery can show and report again                                      | App/HTTP                         |
+| MTE-07 | normal/failure/hidden, identity/locale change                           | poll and event refresh                         | 30s/600s environment policy; serialization, recovery, backoff, empty takedown                            | App/timer boundary               |
+| MTE-08 | Service process first, failure, concurrent requests                     | GET/POST, switch account/language              | seq starts at 0, increments without duplicates; POST not counted; required / anonymous headers           | App/redacted HTTP ledger         |
+| MTE-09 | report 500 / disconnect / account change                                | close / success                                | UI not blocked, no retry, an old event is not reported with a new credential                             | App/HTTP                         |
+| MTE-10 | ZIP cold/warm cache, different hash, invalid package/source             | show / take down / redeliver                   | Verified unpack reuse, lease release, bad resource not shown                                             | App/Host/file evidence           |
+| MTE-11 | bundle ready/error/not ready/forged source or instance                  | receive messages / switch theme / hide / close | Show only after a trusted handshake; fallback or hide; action boundary                                   | App/real iframe                  |
+| MTE-12 | Server translation, empty/illegal message, claim inside a Popup         | fail and close the prompt                      | Plain text, no msg, original Popup restored; no retry/report                                             | App/HTTP                         |
+| MTE-13 | Copy normal / permission failure / timeout / late                       | repeated click, close                          | Exact text, feedback and report after success, failure recovery, no task creation                        | App/clipboard                    |
+| MTE-14 | Settings default / each section, market home/detail/missing             | navigate                                       | Confirm after the target takes over, reuse existing target, no install, no false confirm across identity | App/config                       |
+| MTE-15 | Upgrade page real fixture ready/fail/hang                               | open, close early / time out                   | No confirm before ready; failure recovers; original upgrade entry unchanged                              | App/real webview                 |
+| MTE-16 | HTML/Markdown/plaintext + class/style/theme                             | show and click                                 | Safe style, no nested interactives, links handled per platform, theme and narrow screen usable           | App/DOM/screenshot               |
+| MTE-17 | image dark / video, decode failure / reduced motion                     | show / hide / recover                          | Theme resource chosen, pause and resume, fallback, Banner 96px                                           | App/media                        |
+| MTE-18 | New / old entitlement / current structured connection                   | refresh and explicit user connection switch    | Entitlement presentation linked with Subagent candidates, not overwritten by marketing navigation        | App/HTTP/settings                |
+| MTE-19 | provider view error                                                     | show the Root error prompt and retry           | No crash from a missing icon import; retry goes through the original service                             | App/component regression         |
+| MTE-20 | App lifecycle / Web support boundary                                    | dispose / exit / Web bundle                    | Resources released; Web fallback, no bypass of shared-host; no spread of task semantics                  | Host/cross-client representative |
 
 ### Scenario details and event order (implemented, local Electron, pending-state unless noted)
 

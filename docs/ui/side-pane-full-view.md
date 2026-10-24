@@ -14,13 +14,13 @@ back, forward, new conversation) stay as is.
 
 ## Entry and Exit
 
-| Action | Result |
-| --- | --- |
+| Action                                                                                                         | Result                                                                                  |
+| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | The panel top-right "进入完整视图" (Enter full view) button (left of the panel toggle), `⇧⌘F` / `Ctrl+Shift+F` | Enter full view; the current tab stays a panel tab and the floating window is collapsed |
-| The same button (now "退出完整视图", Exit full view), the same shortcut | Exit full view and return to the original three-column layout |
-| Panel toggle ◫ | Close the panel and exit full view; reopening the panel does not return to full view |
-| Close the last panel tab | The panel collapses by existing rules and full view exits |
-| Press the shortcut while the panel is closed | Open the panel and enter full view |
+| The same button (now "退出完整视图", Exit full view), the same shortcut                                        | Exit full view and return to the original three-column layout                           |
+| Panel toggle ◫                                                                                                 | Close the panel and exit full view; reopening the panel does not return to full view    |
+| Close the last panel tab                                                                                       | The panel collapses by existing rules and full view exits                               |
+| Press the shortcut while the panel is closed                                                                   | Open the panel and enter full view                                                      |
 
 - The shortcut command id is `toggleSidePaneFullView`, rebindable in settings; Web registers no handler and
   does not show it in settings.

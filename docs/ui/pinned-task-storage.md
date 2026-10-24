@@ -23,7 +23,7 @@
 - Pin state no longer relies on old local task scanning; Header / Sidebar both come from the sqlite list
   queries.
 - The task snapshot path is always the `{taskId}.json` returned by `getTaskSessionFilePath(workspacePath,
-  taskId)`. Startup migration renames historical `_pinned.json` / `_archived.json` back to `{taskId}.json`.
+taskId)`. Startup migration renames historical `_pinned.json` / `_archived.json` back to `{taskId}.json`.
 
 ## Frontend Cache Rules
 

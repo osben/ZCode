@@ -55,13 +55,13 @@ request.
 
 ## Feature Summary
 
-| Field | Value |
-| --- | --- |
-| Change | The second-level "Projects / Tasks" sections in `Project + By project` support drag reordering with the user order persisted; the order is shared across devices while each device collapses/expands independently |
-| User-visible surfaces | Desktop and shared Web workspace sidebar; the shared task-purpose label is synced to "任务 / Tasks" |
-| Existing docs | `docs/ui/sidebar-task-view-switcher.md`, `docs/superpowers/specs/2026-07-10-non-project-conversation-workspace-design.md` |
-| State owner | Renderer-local `zcode-sidebar-purpose-section-preferences` |
-| Out of scope | Mobile `/remote` drag layout, cross-window live sync, Host/Agent/protocol state, other "对话" copy |
+| Field                 | Value                                                                                                                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Change                | The second-level "Projects / Tasks" sections in `Project + By project` support drag reordering with the user order persisted; the order is shared across devices while each device collapses/expands independently |
+| User-visible surfaces | Desktop and shared Web workspace sidebar; the shared task-purpose label is synced to "任务 / Tasks"                                                                                                                |
+| Existing docs         | `docs/ui/sidebar-task-view-switcher.md`, `docs/superpowers/specs/2026-07-10-non-project-conversation-workspace-design.md`                                                                                          |
+| State owner           | Renderer-local `zcode-sidebar-purpose-section-preferences`                                                                                                                                                         |
+| Out of scope          | Mobile `/remote` drag layout, cross-window live sync, Host/Agent/protocol state, other "对话" copy                                                                                                                 |
 
 The internal `workspacePurpose=conversation` semantics are unchanged; the shared task-purpose section/workspace
 label and the desktop sidebar empty-state and create-entry copy change from "对话 / Conversations" to "任务 /
@@ -105,36 +105,36 @@ click server:A / projects
 
 ## Domain Scope and Dimensions
 
-| Dimension | Values | Decision |
-| --- | --- | --- |
-| Input | mouse pointer / touch pointer / keyboard | accepted, all through the drag handle |
-| Section content | non-empty / empty | accepted, both draggable |
-| Section expansion | expanded / collapsed | accepted, persisted per device independently; the section moves as a whole keeping each device's expand state |
-| Initial preference | missing / legacy / valid / corrupt | accepted; missing, legacy, corrupt use the default `projects -> conversations` |
-| Surface | Desktop / shared Web / mobile `/remote` | first two accepted for drag; one shared order across devices; mobile accepts shared copy only, drag pruned, keeping its independent layout |
-| Window | current / another open renderer / remount | current updates immediately; live sync of another window pruned; remount restore accepted |
-| Runtime delivery | desktop-continuous / web-remote-replayable | ignored; sorting does not enter runtime/realtime chains |
-| Theme / locale | Zai Light / Zai Dark; zh-CN / en-US | accepted; existing semantic tokens and bilingual copy |
+| Dimension          | Values                                     | Decision                                                                                                                                   |
+| ------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Input              | mouse pointer / touch pointer / keyboard   | accepted, all through the drag handle                                                                                                      |
+| Section content    | non-empty / empty                          | accepted, both draggable                                                                                                                   |
+| Section expansion  | expanded / collapsed                       | accepted, persisted per device independently; the section moves as a whole keeping each device's expand state                              |
+| Initial preference | missing / legacy / valid / corrupt         | accepted; missing, legacy, corrupt use the default `projects -> conversations`                                                             |
+| Surface            | Desktop / shared Web / mobile `/remote`    | first two accepted for drag; one shared order across devices; mobile accepts shared copy only, drag pruned, keeping its independent layout |
+| Window             | current / another open renderer / remount  | current updates immediately; live sync of another window pruned; remount restore accepted                                                  |
+| Runtime delivery   | desktop-continuous / web-remote-replayable | ignored; sorting does not enter runtime/realtime chains                                                                                    |
+| Theme / locale     | Zai Light / Zai Dark; zh-CN / en-US        | accepted; existing semantic tokens and bilingual copy                                                                                      |
 
 ## Candidate and Pruning Decisions
 
-| Candidate | Setup / action | Expected result | Status |
-| --- | --- | --- | --- |
-| SPO01 | View the sidebar with default preferences | Projects above Tasks, both sections expanded | accepted |
-| SPO02 | Drag from the Tasks handle above Projects | The whole Tasks section swaps, expand state and content unchanged, order written to the local preference | accepted |
-| SPO03 | Refresh or restart the renderer | Tasks above Projects restored | accepted |
-| SPO04 | Drag after collapsing or with an empty section | Still swappable; cache, workspace/task order or expand state not cleaned | accepted |
-| SPO05 | Keyboard focus the handle and sort | Same result as pointer sorting, the handle has a readable `aria-label` | accepted |
-| SPO06 | Observe the order in another open window | No live change required; that window reads the persisted value at next mount | pruned, renderer-local preference adds no broadcast |
-| SPO07 | View or drag on mobile `/remote` | The task-purpose label shows "任务", but no drag entry, no change to replayable recovery | copy accepted; drag pruned, independent mobile layout |
-| SPO08 | Change other "对话" copy across the product | Original copy kept | ignored, this change adjusts only the sidebar purpose section |
-| SPO09 | Drag project/task order inside any device | All devices use the same order synchronously, no per-device sort preference added | accepted, single renderer-local owner kept |
-| SPO10 | Collapse Projects or Tasks inside any device | Only that device's section collapses; other devices' expand state unchanged and persisted independently | accepted, isolated by Source group key |
+| Candidate | Setup / action                                 | Expected result                                                                                          | Status                                                        |
+| --------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| SPO01     | View the sidebar with default preferences      | Projects above Tasks, both sections expanded                                                             | accepted                                                      |
+| SPO02     | Drag from the Tasks handle above Projects      | The whole Tasks section swaps, expand state and content unchanged, order written to the local preference | accepted                                                      |
+| SPO03     | Refresh or restart the renderer                | Tasks above Projects restored                                                                            | accepted                                                      |
+| SPO04     | Drag after collapsing or with an empty section | Still swappable; cache, workspace/task order or expand state not cleaned                                 | accepted                                                      |
+| SPO05     | Keyboard focus the handle and sort             | Same result as pointer sorting, the handle has a readable `aria-label`                                   | accepted                                                      |
+| SPO06     | Observe the order in another open window       | No live change required; that window reads the persisted value at next mount                             | pruned, renderer-local preference adds no broadcast           |
+| SPO07     | View or drag on mobile `/remote`               | The task-purpose label shows "任务", but no drag entry, no change to replayable recovery                 | copy accepted; drag pruned, independent mobile layout         |
+| SPO08     | Change other "对话" copy across the product    | Original copy kept                                                                                       | ignored, this change adjusts only the sidebar purpose section |
+| SPO09     | Drag project/task order inside any device      | All devices use the same order synchronously, no per-device sort preference added                        | accepted, single renderer-local owner kept                    |
+| SPO10     | Collapse Projects or Tasks inside any device   | Only that device's section collapses; other devices' expand state unchanged and persisted independently  | accepted, isolated by Source group key                        |
 
 ## Accepted Case and Evidence
 
-| Case | Setup | Action | Assertions | Evidence | E2E |
-| --- | --- | --- | --- | --- | --- |
+| Case             | Setup                                              | Action                                                   | Assertions                                                                                                                                                            | Evidence                                                 | E2E                                                                                            |
+| ---------------- | -------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | CWP02 / SPO01-05 | fresh profile, conversation backing workspace only | View, collapse, drag "Tasks" above "Projects" and reload | Bilingual section semantics correct; action outside the collapse trigger; handle accessible; order and expand state persisted independently; no project workspace row | DOM order + `aria-expanded` + localStorage + remount DOM | Update the existing `conversation-session-conversation-workspace.test.ts`; no provider request |
 
 ## E2E Handoff

@@ -223,7 +223,7 @@ Second Run Now (first run not terminal)
 - Hour and minute options in the time picker follow menu interaction semantics: hover and selected
   states both use `bg-menu-hover` and `text-foreground`, matching the frequency dropdown's hover /
   selected items in Light and Dark; the selected time must not render as a black `bg-primary
-  text-primary-foreground` primary button.
+text-primary-foreground` primary button.
 - Operable popovers (time, frequency, permission, model) must sit above auxiliary tooltips when open;
   tooltips must not cover options or block pointer operations. This is ensured by the layering of the
   shared Popover, Select, Dropdown Menu and Context Menu, not by local z-index in Automations pages.

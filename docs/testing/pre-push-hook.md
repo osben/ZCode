@@ -52,13 +52,13 @@ analysis. The thin entry only handles the Git baseline, the Push worktree check,
 and result messages; it maintains no own dependency graph, baseline consumer graph, source filtering
 or Node test selection.
 
-| Entry                                        | Official selection scope                                                                                          |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `pnpm test:unit:affected`                    | `changed: true`, including staged, unstaged and untracked files                                                    |
-| `pnpm test:unit:affected --base <commit>`    | `changed: <SHA>`, including commits after the task start and current uncommitted changes                          |
-| `pnpm test:unit:affected --scope push`       | Explicit baseline first; by default the hook remote SHA, and for a first push the merge-base of HEAD and origin/staging |
-| `pnpm test:unit:affected --files <files...>` | Official related, for explicit file entries such as lint-staged                                                   |
-| The above plus `--dry-run` / `--dry-run --json` | Preview the officially selected test files; JSON contains only the test list                                   |
+| Entry                                           | Official selection scope                                                                                                |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `pnpm test:unit:affected`                       | `changed: true`, including staged, unstaged and untracked files                                                         |
+| `pnpm test:unit:affected --base <commit>`       | `changed: <SHA>`, including commits after the task start and current uncommitted changes                                |
+| `pnpm test:unit:affected --scope push`          | Explicit baseline first; by default the hook remote SHA, and for a first push the merge-base of HEAD and origin/staging |
+| `pnpm test:unit:affected --files <files...>`    | Official related, for explicit file entries such as lint-staged                                                         |
+| The above plus `--dry-run` / `--dry-run --json` | Preview the officially selected test files; JSON contains only the test list                                            |
 
 The task records HEAD SHA once at the start and uses that start at the end. Uncommitted changes that
 existed before the start are all included; no initial patch is saved or subtracted. Official changed

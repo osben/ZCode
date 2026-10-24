@@ -22,7 +22,7 @@ fork and rewind state combinations are out of scope.
    when the image path is actually inside the source workspace; an image outside the workspace keeps its
    absolute path even if a same-named file exists inside. A local file in an unbound or different local
    workspace's draft uses an absolute reference. With a remote Host, `workspaceIdentity?.trim() ||
-   workspacePath` must match; with a different remote identity or no source path, the reference entry is
+workspacePath` must match; with a different remote identity or no source path, the reference entry is
    disabled and a remote path is never inserted as a local path.
 6. Download extensions cover the preview-supported PNG/JPEG/APNG/AVIF/BMP/GIF/ICO/SVG/WebP. With an
    unknown MIME, the image extension of a trusted source filename is kept; a known MIME takes priority so
@@ -82,13 +82,13 @@ replayable recovery boundaries. Not extended to the fullscreen session image gal
 
 ## Verification Cases
 
-| ID     | Precondition and action                  | Assertion                                          |
-| ------ | ---------------------------------------- | -------------------------------------------------- |
-| PIC-01 | Right-click copy after PNG loads         | Native clipboard holds an image, pixel size equals the original |
-| PIC-02 | Right-click copy after SVG preview       | Native clipboard holds PNG, pasteable as an image  |
-| PIC-03 | Narrow screen, open image actions, copy  | Same path as right-click, no horizontal overflow   |
-| PIC-04 | Loading, decode failure or clipboard rejection | Entry disabled or explicit failure, no success shown |
-| PIC-05 | Light/dark theme, zh/en, keyboard menu   | Text visible, menu operable, preview layout unchanged |
+| ID     | Precondition and action                        | Assertion                                                       |
+| ------ | ---------------------------------------------- | --------------------------------------------------------------- |
+| PIC-01 | Right-click copy after PNG loads               | Native clipboard holds an image, pixel size equals the original |
+| PIC-02 | Right-click copy after SVG preview             | Native clipboard holds PNG, pasteable as an image               |
+| PIC-03 | Narrow screen, open image actions, copy        | Same path as right-click, no horizontal overflow                |
+| PIC-04 | Loading, decode failure or clipboard rejection | Entry disabled or explicit failure, no success shown            |
+| PIC-05 | Light/dark theme, zh/en, keyboard menu         | Text visible, menu operable, preview layout unchanged           |
 
 E2E candidate: `packages/desktop/test/e2e/manual-review/pending/preview-pane-image-copy.test.ts` (goes only
 through the file tree and image preview, no session state change; stays pending until manual review). It

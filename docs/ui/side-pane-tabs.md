@@ -165,7 +165,7 @@ flowchart LR
   render as body text, supporting inspecting headings, lists, workspace file links and external-link jumps
   directly in the side pane.
 - The Code Viewer top shows a compact path breadcrumb: by the current workspace first `workspace -> directory
-  -> file`, with a file-type icon on the final file node; an overly long path scrolls horizontally.
+-> file`, with a file-type icon on the final file node; an overly long path scrolls horizontally.
 - The Code Viewer top right has `More + Open` buttons; closing still goes through the tab's own close entry,
   and the `More` menu carries only file-type view switching: markdown preview/source, SVG preview/code, and the
   word-wrap switch of ordinary code files.

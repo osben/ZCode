@@ -6,15 +6,15 @@ This document records the desktop UI E2E semantics of the Side Pane Tab strip: r
 
 ## State Dimensions and Pruning
 
-| Dimension     | Equivalence classes                                                          | Decision                                                                                                   |
-| ------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Available width | fits 156px / must shrink between 156px and 60px / 60px still does not fit | All three covered                                                                                          |
-| Tab type      | Browser / Terminal / Diff / Code Viewer / session-scoped tab                 | A repeatedly creatable Terminal represents the shared `SidePaneTabTrigger`; type-specific content is not repeated here |
-| Tab state     | active / inactive                                                            | Covered together by the close-button case                                                                  |
-| Tooltip hover | under 1500ms / 1500ms reached / across Tabs                                  | All three covered                                                                                          |
-| Client        | Desktop / mobile Web touch                                                   | Desktop covered; touch does not rely on hover so Tooltip is pruned; mobile layout is covered by component-level responsive tests |
-| Middle click  | active / inactive tab                                                        | Desktop covered; a middle click closes without activating the target tab and prevents the browser's default middle-click scroll |
-| Other interaction | drag, right click, tab overview                                          | Not part of this change; existing component tests, not repeated here                                       |
+| Dimension         | Equivalence classes                                                       | Decision                                                                                                                         |
+| ----------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Available width   | fits 156px / must shrink between 156px and 60px / 60px still does not fit | All three covered                                                                                                                |
+| Tab type          | Browser / Terminal / Diff / Code Viewer / session-scoped tab              | A repeatedly creatable Terminal represents the shared `SidePaneTabTrigger`; type-specific content is not repeated here           |
+| Tab state         | active / inactive                                                         | Covered together by the close-button case                                                                                        |
+| Tooltip hover     | under 1500ms / 1500ms reached / across Tabs                               | All three covered                                                                                                                |
+| Client            | Desktop / mobile Web touch                                                | Desktop covered; touch does not rely on hover so Tooltip is pruned; mobile layout is covered by component-level responsive tests |
+| Middle click      | active / inactive tab                                                     | Desktop covered; a middle click closes without activating the target tab and prevents the browser's default middle-click scroll  |
+| Other interaction | drag, right click, tab overview                                           | Not part of this change; existing component tests, not repeated here                                                             |
 
 ## Accepted Cases
 
@@ -111,15 +111,15 @@ SPT-E2E-009 addition: after the last tab is closed the panel collapses with no r
 
 ### State dimensions and pruning
 
-| Dimension      | Equivalence classes                                        | Decision                                                                                          |
-| -------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Entry          | button / shortcut                                          | Both cover enter and exit                                                                         |
-| surface        | conversation tab / panel tab / no visible panel tab        | First two covered; with no visible tab the launch page is handled by component logic, not covered separately |
-| Float form     | collapsed / collapsed + action bar / expanded / minimized  | All covered                                                                                       |
-| Exit           | button / shortcut / ◫ / close the last tab      | First three covered; closing the last tab reuses the existing collapse logic, covered by owner-memory unit tests |
-| owner          | switch back to the same session / different session        | Covered by the provider case                                                                      |
-| Blocking interaction | appears when collapsed / appears when minimized      | Appearing when minimized is covered (also proves the card is inside the float)                    |
-| Client         | desktop / Web / phone remote                               | Desktop only; Web and remote do not render the entry, covered by component condition unit tests   |
+| Dimension            | Equivalence classes                                       | Decision                                                                                                         |
+| -------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Entry                | button / shortcut                                         | Both cover enter and exit                                                                                        |
+| surface              | conversation tab / panel tab / no visible panel tab       | First two covered; with no visible tab the launch page is handled by component logic, not covered separately     |
+| Float form           | collapsed / collapsed + action bar / expanded / minimized | All covered                                                                                                      |
+| Exit                 | button / shortcut / ◫ / close the last tab                | First three covered; closing the last tab reuses the existing collapse logic, covered by owner-memory unit tests |
+| owner                | switch back to the same session / different session       | Covered by the provider case                                                                                     |
+| Blocking interaction | appears when collapsed / appears when minimized           | Appearing when minimized is covered (also proves the card is inside the float)                                   |
+| Client               | desktop / Web / phone remote                              | Desktop only; Web and remote do not render the entry, covered by component condition unit tests                  |
 
 ### SPFV-E2E-001 Enter, exit and single instance
 
