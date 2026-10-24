@@ -197,6 +197,7 @@ describe("desktopApplicationMenu endpoint submenu", () => {
     rebuildApplicationMenu({
       currentApplicationLocale: "en-US",
       zcodeEndpointSelection: "test",
+      zcodeTestEndpointAvailable: true,
       executeDesktopCommand: vi.fn(),
     });
 
@@ -206,6 +207,33 @@ describe("desktopApplicationMenu endpoint submenu", () => {
     const testItem = findMenuItem(template, undefined, HELP_ZCODE_ENDPOINT_TEST_MENU_ID);
     expect(endpointItem).toBeTruthy();
     expect(testItem?.checked).toBe(true);
+  });
+
+  it("ZTE-01: test 环境没有独立 test origin 时隐藏 Test 选项，保留 Production/Custom/Reset", async () => {
+    // Spec: specs/zcode-test-endpoint-menu.md
+    envMock.value = "test";
+    const {
+      HELP_ZCODE_ENDPOINT_TEST_MENU_ID,
+      HELP_ZCODE_ENDPOINT_PRODUCTION_MENU_ID,
+      rebuildApplicationMenu,
+    } = await import("../src/main/desktopApplicationMenu.js");
+
+    rebuildApplicationMenu({
+      currentApplicationLocale: "en-US",
+      zcodeEndpointSelection: "production",
+      zcodeTestEndpointAvailable: false,
+      executeDesktopCommand: vi.fn(),
+    });
+
+    const template = buildFromTemplateMock.mock
+      .calls[0]?.[0] as Electron.MenuItemConstructorOptions[];
+    expect(findMenuItem(template, "ZCode Endpoint")).toBeTruthy();
+    expect(findMenuItem(template, undefined, HELP_ZCODE_ENDPOINT_TEST_MENU_ID)).toBeUndefined();
+    expect(findMenuItem(template, undefined, HELP_ZCODE_ENDPOINT_PRODUCTION_MENU_ID)?.checked).toBe(
+      true,
+    );
+    expect(findMenuItem(template, "Custom...")).toBeTruthy();
+    expect(findMenuItem(template, "Reset to Default")).toBeTruthy();
   });
 
   it("production 环境隐藏 endpoint 子菜单", async () => {

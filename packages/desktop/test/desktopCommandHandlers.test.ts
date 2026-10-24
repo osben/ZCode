@@ -338,9 +338,10 @@ describe("desktopCommandHandlers resolveFeedbackUrl", () => {
     await executeDesktopCommand({
       ...commandOptions,
       command: DesktopCommandIds.SetZCodeEndpointTest,
+      zcodeTestEndpointOrigin: "https://test.example.com",
     });
     expect(commandOptions.settingService.update).toHaveBeenLastCalledWith({
-      zcodeEndpointOrigin: "https://zcode.z.ai",
+      zcodeEndpointOrigin: "https://test.example.com",
     });
 
     await executeDesktopCommand({
@@ -351,6 +352,25 @@ describe("desktopCommandHandlers resolveFeedbackUrl", () => {
       zcodeEndpointOrigin: undefined,
     });
     expect(onZCodeEndpointChanged).toHaveBeenCalledTimes(2);
+  });
+
+  it("ZTE-05: the Test endpoint command saves nothing when no distinct test origin is available", async () => {
+    // Spec: specs/zcode-test-endpoint-menu.md. The scrubbed TEST constant equals production, so the
+    // command must not silently write the production origin as "test".
+    const { executeDesktopCommand } = await import("../src/main/desktopCommandHandlers.js");
+    const onZCodeEndpointChanged = vi.fn();
+    const commandOptions = createCommandOptions({ onZCodeEndpointChanged });
+
+    await executeDesktopCommand({
+      ...commandOptions,
+      command: DesktopCommandIds.SetZCodeEndpointTest,
+    });
+
+    expect(commandOptions.settingService.update).not.toHaveBeenCalled();
+    expect(onZCodeEndpointChanged).not.toHaveBeenCalled();
+    expect(commandOptions.logger.warn).toHaveBeenCalledWith(
+      "[desktop-command] test endpoint unavailable: ZCODE_TEST_BASE_URL is not set to a non-production origin",
+    );
   });
 
   it("Custom endpoint 菜单打开主进程输入窗并保存提交值", async () => {

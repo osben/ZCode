@@ -459,3 +459,46 @@ export function rewriteZCodeEndpointUrl(input: string | URL, endpointOrigin: str
   target.hash = parsed.hash;
   return target.toString();
 }
+
+type ZCodeTestEndpointEnvSource = Record<string, string | undefined>;
+
+export type ZCodeEndpointMenuEntry = "production" | "test" | "custom";
+
+/**
+ * Test origin offered by the Help → ZCode Endpoint menu (spec: specs/zcode-test-endpoint-menu.md).
+ * The open-source import set TEST_ZCODE_ENDPOINT_ORIGIN to the production origin, so a distinct test
+ * endpoint exists only when ZCODE_TEST_BASE_URL points somewhere else.
+ */
+export function resolveZCodeTestEndpointOrigin(options: {
+  processEnv: ZCodeTestEndpointEnvSource;
+  localEnv: ZCodeTestEndpointEnvSource;
+}): string | undefined {
+  const configured =
+    options.processEnv["ZCODE_TEST_BASE_URL"]?.trim() ||
+    options.localEnv["ZCODE_TEST_BASE_URL"]?.trim() ||
+    TEST_ZCODE_ENDPOINT_ORIGIN;
+  let origin: string;
+  try {
+    origin = normalizeZCodeEndpointOrigin(configured);
+  } catch {
+    return undefined;
+  }
+  return origin === DEFAULT_ZCODE_ENDPOINT_ORIGIN ? undefined : origin;
+}
+
+export function selectZCodeEndpointMenuEntry(options: {
+  zcodeEnv: ZCodeEnv;
+  currentOrigin: string;
+  testOrigin: string | undefined;
+}): ZCodeEndpointMenuEntry {
+  if (options.zcodeEnv === "production") {
+    return "production";
+  }
+  if (options.currentOrigin === DEFAULT_ZCODE_ENDPOINT_ORIGIN) {
+    return "production";
+  }
+  if (options.testOrigin !== undefined && options.currentOrigin === options.testOrigin) {
+    return "test";
+  }
+  return "custom";
+}

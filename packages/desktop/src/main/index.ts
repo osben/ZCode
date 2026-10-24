@@ -73,8 +73,10 @@ import {
   ZCODE_PRODUCT_FLAVOR,
   ZCODE_AUTO_UPDATE_ENABLED,
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+  resolveZCodeTestEndpointOrigin,
+  selectZCodeEndpointMenuEntry,
+  type ZCodeEndpointMenuEntry,
   DEFAULT_LOCALE,
-  TEST_ZCODE_ENDPOINT_ORIGIN,
   ZCODE_VERSION,
   ZCODE_WEB_REMOTE_CONTROL_RELAY_IDENTITY_MODE_DEFAULT,
   ZCODE_WEB_REMOTE_CONTROL_RELAY_WS_URL_DEFAULT,
@@ -607,6 +609,11 @@ mainMemoryDiagnosticsRegistry.register("app", () => ({
   willDownloadListeners: session.defaultSession.listenerCount("will-download"),
 }));
 const hostProcessLocalEnv = loadHostProcessEnvFromLocalFiles();
+// Distinct test origin for Help → ZCode Endpoint; undefined while TEST_* equals production (specs/zcode-test-endpoint-menu.md).
+const zcodeTestEndpointOrigin = resolveZCodeTestEndpointOrigin({
+  processEnv: process.env,
+  localEnv: hostProcessLocalEnv,
+});
 interface RuntimeProcessEnvPreparation {
   patchPromise: Promise<Record<string, string>>;
   fallbackPatch: Record<string, string>;
@@ -1692,6 +1699,7 @@ async function executeDesktopCommandForApp(
     settingService: mainSettingService,
     onZCodeEndpointChanged: handleZCodeEndpointChanged,
     zcodeEndpointEnvBaseOrigin: resolveZCodeEndpointEnvBaseOrigin(hostProcessLocalEnv),
+    zcodeTestEndpointOrigin,
     onRelaunchApp: async () => {
       await prepareAppQuit("desktop-command-relaunch");
       app.relaunch();
@@ -1702,18 +1710,15 @@ async function executeDesktopCommandForApp(
   });
 }
 
-async function resolveZCodeEndpointSelection(): Promise<"production" | "test" | "custom"> {
+async function resolveZCodeEndpointSelection(): Promise<ZCodeEndpointMenuEntry> {
   if (ZCODE_ENV === "production") {
     return "production";
   }
-  const origin = await resolveCurrentZCodeEndpointOrigin();
-  if (origin === DEFAULT_ZCODE_ENDPOINT_ORIGIN) {
-    return "production";
-  }
-  if (origin === TEST_ZCODE_ENDPOINT_ORIGIN) {
-    return "test";
-  }
-  return "custom";
+  return selectZCodeEndpointMenuEntry({
+    zcodeEnv: ZCODE_ENV,
+    currentOrigin: await resolveCurrentZCodeEndpointOrigin(),
+    testOrigin: zcodeTestEndpointOrigin,
+  });
 }
 
 async function handleZCodeEndpointChanged() {
@@ -1763,6 +1768,7 @@ function rebuildMenu() {
       rebuildApplicationMenu({
         currentApplicationLocale,
         zcodeEndpointSelection,
+        zcodeTestEndpointAvailable: zcodeTestEndpointOrigin !== undefined,
         executeDesktopCommand: executeDesktopCommandForApp,
         currentZoomLevel: resolveFocusedDesktopZoomLevel(),
         // Menu accelerators follow user shortcut settings (shortcutBindings overrides).

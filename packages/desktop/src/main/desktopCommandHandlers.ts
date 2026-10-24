@@ -6,7 +6,6 @@ import {
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   DesktopCommandIds,
   REWARDS_PARTITION,
-  TEST_ZCODE_ENDPOINT_ORIGIN,
   getCommunityUrlFromConfigs,
   getFeedbackUrlFromConfig,
   normalizeZCodeEndpointOrigin,
@@ -507,6 +506,8 @@ export async function executeDesktopCommand(options: {
     ): Promise<void>;
   };
   zcodeEndpointEnvBaseOrigin?: string | null;
+  /** Distinct test origin for the endpoint menu; undefined when none is configured (spec: specs/zcode-test-endpoint-menu.md). */
+  zcodeTestEndpointOrigin?: string;
   credentialsDir: string;
   currentApplicationLocale: Locale;
 }) {
@@ -646,8 +647,16 @@ export async function executeDesktopCommand(options: {
       });
       return;
     case DesktopCommandIds.SetZCodeEndpointTest:
+      // TEST_ZCODE_ENDPOINT_ORIGIN equals production since the open-source import; saving it as
+      // "test" made the menu snap back to Production, so only a distinct configured origin is saved.
+      if (!options.zcodeTestEndpointOrigin) {
+        options.logger.warn(
+          "[desktop-command] test endpoint unavailable: ZCODE_TEST_BASE_URL is not set to a non-production origin",
+        );
+        return;
+      }
       await setZCodeEndpointOverride({
-        value: TEST_ZCODE_ENDPOINT_ORIGIN,
+        value: options.zcodeTestEndpointOrigin,
         settingService: options.settingService,
         onZCodeEndpointChanged: options.onZCodeEndpointChanged,
         logger: options.logger,

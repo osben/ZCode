@@ -89,6 +89,8 @@ function resolveMenuAccelerator(
 function buildApplicationMenuTemplate(options: {
   currentApplicationLocale: Locale;
   zcodeEndpointSelection?: "production" | "test" | "custom";
+  /** A distinct test origin exists (spec: specs/zcode-test-endpoint-menu.md); without it the Test radio is hidden. */
+  zcodeTestEndpointAvailable?: boolean;
   executeDesktopCommand: (
     command: DesktopCommandId,
     senderWindow?: BrowserWindow | null,
@@ -314,14 +316,20 @@ function buildApplicationMenuTemplate(options: {
                         DesktopCommandIds.SetZCodeEndpointProduction,
                       ),
                   },
-                  {
-                    id: HELP_ZCODE_ENDPOINT_TEST_MENU_ID,
-                    label: getLabel(desktopMenuMessageIds.helpZCodeEndpointTest),
-                    type: "radio" as const,
-                    checked: options.zcodeEndpointSelection === "test",
-                    click: () =>
-                      void options.executeDesktopCommand(DesktopCommandIds.SetZCodeEndpointTest),
-                  },
+                  ...(options.zcodeTestEndpointAvailable
+                    ? [
+                        {
+                          id: HELP_ZCODE_ENDPOINT_TEST_MENU_ID,
+                          label: getLabel(desktopMenuMessageIds.helpZCodeEndpointTest),
+                          type: "radio" as const,
+                          checked: options.zcodeEndpointSelection === "test",
+                          click: () =>
+                            void options.executeDesktopCommand(
+                              DesktopCommandIds.SetZCodeEndpointTest,
+                            ),
+                        },
+                      ]
+                    : []),
                   { type: "separator" as const },
                   {
                     label: getLabel(desktopMenuMessageIds.helpZCodeEndpointCustom),
@@ -371,6 +379,8 @@ function buildApplicationMenuTemplate(options: {
 export function rebuildApplicationMenu(options: {
   currentApplicationLocale: Locale;
   zcodeEndpointSelection?: "production" | "test" | "custom";
+  /** A distinct test origin exists (spec: specs/zcode-test-endpoint-menu.md); without it the Test radio is hidden. */
+  zcodeTestEndpointAvailable?: boolean;
   executeDesktopCommand: (
     command: DesktopCommandId,
     senderWindow?: BrowserWindow | null,
@@ -385,6 +395,7 @@ export function rebuildApplicationMenu(options: {
       buildApplicationMenuTemplate({
         currentApplicationLocale: options.currentApplicationLocale,
         zcodeEndpointSelection: options.zcodeEndpointSelection,
+        zcodeTestEndpointAvailable: options.zcodeTestEndpointAvailable,
         executeDesktopCommand: options.executeDesktopCommand,
         currentZoomLevel: options.currentZoomLevel,
         shortcutBindings: options.shortcutBindings,
