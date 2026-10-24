@@ -1,12 +1,10 @@
 # Execution worktree model context
 
-Status: implemented (2026-10-15; amended same day: Task-tool subagent children build an explicit config field list rather than spreading the parent `AgentRuntimeConfig`, so the worktree fact is passed to the child explicitly and threaded through `SubagentContextBuilderConfig`).
+Status: implemented (2026-10-15).
 
 ## Problem
 
 Worktree sessions execute in a linked worktree while the session's listing identity stays on the parent workspace. The model sees the worktree path as `Primary working directory` and the worktree branch as `Current branch` (git detection runs in cwd), but nothing says this is a _linked worktree_ of the parent workspace, nor that file changes stay isolated there until merged. The agent can plausibly believe it is editing the main checkout: it may suggest switching branches in the "main" tree, commit on the assumption its edits are shared, or fail to tell the user where the changes live.
-
-Precedent: deepseek-harness deliberately pushes working-directory facts to the model as user-context snapshots ("directory context never enters the system prompt" there; ours already lives in a system `Environment` section, which is the equivalent owner). PI-Desktop instead keeps the renderer/agent runtime ignorant by design — not applicable to us, where the agent itself must reason about isolation.
 
 ## Contract
 
@@ -20,7 +18,7 @@ Precedent: deepseek-harness deliberately pushes working-directory facts to the m
 ### Rendering — both env builders
 
 - Main agent: `buildEnvInfoSection` (`apps/zcode-cli/packages/core/src/context/sections/env-info.ts`) gains an optional third parameter with the worktree fact; `ContextBuilder` (`apps/zcode-cli/packages/core/src/context/builder.ts:168`) passes `this.config.executionWorktree`.
-- Subagents: `buildSubagentEnvironmentContext` (`apps/zcode-cli/packages/core/src/subagent/system-prompt.ts`, rendered via `subagent/context-builder.ts:137-142`) gains the same optional parameter, and the bullet is inserted inside the subagent `<env>` block right after `Working directory:` (the analogous slot to the main agent's `Primary working directory`). Plumbing note (verified 2026-10-15): Task-tool subagent children do NOT spread the parent `AgentRuntimeConfig` — `methods/subagent.ts` builds an explicit field list — so the child config must gain `executionWorktree: this.config.executionWorktree` explicitly, and `SubagentContextBuilderConfig` (assembled in `runtime/methods/context.ts`) threads it to the builder. The `context.ts:116` spread comment applies to legacy workflow children only. Subagents must know about isolation as much as the main agent.
+- Subagents: `buildSubagentEnvironmentContext` (`apps/zcode-cli/packages/core/src/subagent/system-prompt.ts`, rendered via `subagent/context-builder.ts:137-142`) gains the same optional parameter, and the bullet is inserted inside the subagent `<env>` block right after `Working directory:` (the analogous slot to the main agent's `Primary working directory`). Task-tool subagent children do NOT spread the parent `AgentRuntimeConfig` — `methods/subagent.ts` builds an explicit field list — so the child config carries `executionWorktree: this.config.executionWorktree` explicitly, and `SubagentContextBuilderConfig` (assembled in `runtime/methods/context.ts`) threads it to the builder. The `context.ts:116` spread applies to legacy workflow children only. Subagents must know about isolation as much as the main agent.
 - Healthy worktree session — one extra bullet in the `Environment` section, after `Primary working directory`:
 
   `- Execution worktree: this session runs in a linked git worktree of <workspacePath> (branch <branchName>); file changes stay in the worktree until they are merged.`
@@ -35,7 +33,7 @@ Precedent: deepseek-harness deliberately pushes working-directory facts to the m
 
 ## Why
 
-One line removes a whole class of agent mistakes (branch confusion, "where are my changes" answers) for the price of a config read. It also makes the fail-closed state model-visible, so the agent can explain that history remains available while filesystem actions wait for worktree restoration.
+One line removes a whole class of agent mistakes (branch confusion, "where are my changes" answers) for the price of a config read, and makes the fail-closed state model-visible so the agent can explain that history remains available while filesystem actions wait for worktree restoration.
 
 ## Acceptance scenarios
 
@@ -55,6 +53,6 @@ One line removes a whole class of agent mistakes (branch confusion, "where are m
 
 ## Out of scope
 
-- Directory-change notices mid-session (our worktree is fixed for the session lifetime; deepseek's `working_directory` tool has no counterpart here).
+- Directory-change notices mid-session (the worktree is fixed for the session lifetime).
 - Putting the fact into the git system-context block (branch label there already reflects the worktree branch).
 - Any UI rendering of this line (UI surfaces are owned by execution-worktree-missing-handling.md).

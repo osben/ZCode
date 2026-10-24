@@ -235,17 +235,3 @@ fix stay hidden from reads but keep growing counts and backups.
 Unit/component results do not prove Desktop rendering latency or restart behavior.
 Pending E2E cases remain candidates until executed and human-reviewed; no automatic
 fixture promotion or Docker admission is implied.
-
-## Implementation order
-
-1. Record this contract and failing focused regressions, preserving unrelated work.
-2. Extend the existing reservation/materialization boundary to submitted ordinary
-   and incognito sessions; retain frozen profile, cwd and attempt ownership.
-3. Add immediate first-submission presentation and identity reconciliation using
-   existing draft/recovery owners. Render message above preparation.
-4. Preserve failed reserved sessions and implement explicit same-session recovery.
-5. Run focused UI/CLI regressions, `pnpm typecheck`, `pnpm lint`, architecture check
-   and relevant E2E when available. Report actual failures and unexecuted coverage.
-
-No commit, push, PR, migration application or persistent user-data deletion is
-authorized by this implementation plan.
