@@ -437,11 +437,11 @@ packages/services/src/storage/
 Worker boundary (keeps the host event loop idle):
 
 ```text
-desktop/src/host/storageScanWorker.ts   (new tsup entry "host/storageScanWorker")
+desktop/src/main/storageScanWorker.ts   (new tsup entry "main/storageScanWorker")
    └─ import { walk } from services/storage/adapters/fsWalker
       import { classify, fold } from services/storage/domain/*     ← pure functions can run inside the Worker
       every 300ms postMessage(partial snapshot); stops on an abort message
-desktop/src/host/storageScanWorkerClient.ts  implements ScanRunnerPort: new Worker(new URL(...)) + terminate on abort
+desktop/src/main/storageScanWorkerClient.ts  implements ScanRunnerPort: new Worker(new URL(...)) + terminate on abort
 desktop/src/main/zcodeDataSizeWorker.ts      imports services' fsWalker (removes the duplicate walk implementation in main)
 ```
 
@@ -470,8 +470,8 @@ aggregated snapshots and no per-file cross-thread messages. In-process tests use
 | `packages/client/src/remoteServiceAccess.ts`                                                      | `ProxyChannel.toService<IStorageService>`                                                                                                                                                       |
 | `packages/desktop/src/host/index.ts`                                                              | assemble near `createSettingService()`: roots resolver, Worker scan runner, fs cleaner, volume probe                                                                                            |
 | `packages/desktop/src/main/resourceManagerStorage.ts`                                             | Main-owned `IStorageService` instance exposed over IPC to the Resource Manager window (no host RPC registration)                                                                                |
-| `packages/desktop/src/host/storageScanWorker.ts` + `storageScanWorkerClient.ts`                   | Worker entry and ScanRunnerPort implementation                                                                                                                                                  |
-| `packages/desktop/tsup.config.ts`                                                                 | add the `"host/storageScanWorker"` entry to host                                                                                                                                                |
+| `packages/desktop/src/main/storageScanWorker.ts` + `storageScanWorkerClient.ts`                   | Worker entry and ScanRunnerPort implementation                                                                                                                                                  |
+| `packages/desktop/tsup.config.ts`                                                                 | add the `"main/storageScanWorker"` entry to main                                                                                                                                                |
 | `packages/desktop/src/main/zcodeDataSizeWorker.ts` / `zcodeDataSizeScanner.ts`                    | walk implementation moves to services; main keeps only the Worker entry                                                                                                                         |
 | `packages/ui/src/hooks/useStorageUsage.ts`                                                        | subscribe `onScanProgress`, `startScan` on mount, `cancelScan` on unmount / 60 s blur, filter by jobId                                                                                          |
 | `packages/ui/src/settings/storage/`                                                               | `StorageSection.tsx`, `StorageDiskCard.tsx`, `StorageCategoryList.tsx`, `StorageCategoryDetail.tsx`, `StorageCleanConfirmDialog.tsx`, `storageCategoryPresentation.ts` (icon / copy id / color) |
