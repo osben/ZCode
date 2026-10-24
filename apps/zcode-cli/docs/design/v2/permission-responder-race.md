@@ -1,94 +1,97 @@
-# PermissionRequest Hook 与审批交互竞速（Permission Responder Race）
+# PermissionRequest Hook and Approval Interaction Race (Permission Responder Race)
 
-成熟度：`L3 Implementation Contract`。本文修订 `hooks.md` 决策优先级第 7/8 条与
-`permission-broker.md` 运行时流程第 4 步的执行时序；两处旧文以本文为准。
+Maturity: `L3 Implementation Contract`. This document revises the execution order of decision priority
+items 7/8 of `hooks.md` and step 4 of the runtime flow in `permission-broker.md`; this document wins over
+both.
 
-## 背景（事故根因）
+## Background (incident root cause)
 
-2026-08-26 实机事故：用户配置了同步 `PermissionRequest` command hook（vibe-island
-桥接，matcher `.*`），该 hook 的实现是把权限请求转投到外部 UI 并**阻塞等待外部点击**。
-旧时序下这是死锁：
+Incident on a real machine, 2026-08-26: the user configured a synchronous `PermissionRequest` command
+hook (vibe-island bridge, matcher `.*`) that forwards the permission request to an external UI and
+**blocks until the external click**. Under the old order this deadlocked:
 
 ```
 core (permission-flow)            UI (v4)                     hook (vibe-island)
 ──────────────────────            ───────                     ──────────────────
-emitPermissionRequested ────────► 确认窗已渲染
-                                  （应答通道尚未建立）
-await runPermissionRequestHooks ────────────────────────────► 外部 UI 展示，阻塞等待
-        │                         用户点击 Start
-        │                         resolveInteraction ──► ✗ no pending interaction（静默丢弃）
+emitPermissionRequested ────────► confirmation window rendered
+                                  (reply channel not yet set up)
+await runPermissionRequestHooks ────────────────────────────► external UI shown, blocks
+        │                         user clicks Start
+        │                         resolveInteraction ──► ✗ no pending interaction (silently dropped)
         ▼
-（仅当 hook 无决定返回后）
-permissionBroker.requestPermission ► 注册应答 deferred        ← 通道到这里才建立
+(only after the hook returns with no decision)
+permissionBroker.requestPermission ► registers reply deferred  ← channel only set up here
 ```
 
-三个叠加缺陷：
+Three stacked defects:
 
-1. **时序缺陷（本文修复）**：确认窗对用户可见（`emitPermissionRequested` 已发出）与
-   应答通道建立（broker 注册 interaction deferred）之间，串行夹着一个无上界的第三方
-   hook。窗口期内的所有应答都被 `resolveInteraction` 按幂等语义静默丢弃。
-2. hook 卡死时无任何逃逸：确认窗永久死亡，turn 永久挂起。`alwaysAsk` 的工具
-   （`CreateWorkflow`）在任何权限模式下都走 ask 路径，因此必然暴露。
-3. 残余风险（本文不修，见文末）：runner 在执行 hook 回调前 `await` 发出
-   `HookRunStarted` 事件（`runner.ts`），该 await 不受 hook 超时保护；事件管线
-   卡死时 60s 超时也救不回来。
+1. **Ordering defect (fixed here)**: between the confirmation window becoming visible
+   (`emitPermissionRequested` sent) and the reply channel being set up (broker registers the interaction
+   deferred), an unbounded third-party hook sat in series. Every reply inside that window was silently
+   dropped by `resolveInteraction` under idempotent semantics.
+2. A stuck hook has no escape: the confirmation window is dead forever and the turn hangs forever. Tools
+   with `alwaysAsk` (`CreateWorkflow`) take the ask path in every permission mode, so they always
+   expose it.
+3. Residual risk (not fixed here, see the end): the runner `await`s the `HookRunStarted` event before
+   running the hook callback (`runner.ts`); that await is not covered by the hook timeout, so a stuck
+   event pipeline defeats even the 60s timeout.
 
-## 设计决策
+## Design decisions
 
-| 分叉 | 决策 |
+| Fork | Decision |
 |---|---|
-| hook 语义 | 保留决定能力（allow/deny/modify），**不**改成纯通知的 async hook——那会让外部 UI 的点击永远无法回传决定 |
-| 执行时序 | hook 链与 broker 等待**并发竞速**，先到的决定生效 |
-| 首个决定 | 单一 settled 闩；晚到方的结果作废 |
-| 败者处理 | 立即 abort（AbortSignal 传播到 hook 子进程 / broker 反向 RPC），**不等待**其收尾——等待会把卡死的 hook 重新变成阻塞点 |
-| hook 链失败/超时 | 视为「该应答方退赛」：warn 日志 + 继续等 broker，**不再**转成 deny。辅助应答方的故障不应替用户做拒绝决定 |
-| 无 hook 配置 | 竞速退化为 broker 单边等待，行为与旧路径逐字节等价 |
-| 策略型强制拒绝 | 归属 `PreToolUse` hook（在确认窗出现前即可 deny，不参与竞速）；`PermissionRequest` hook 的定位收敛为「另一个应答面」 |
-| 败者外部 UI 收尾 | v1 仅靠 abort → 子进程终止；外部集成应把「被终止」理解为「已在别处应答」。独立的 `PermissionResolved` 通知型 hook 事件留作后续 |
+| Hook semantics | Keep decision power (allow/deny/modify); do **not** turn it into a notification-only async hook, because the click in an external UI could then never return a decision |
+| Execution order | The hook chain and the broker wait **race concurrently**; the first decision wins |
+| First decision | A single settled latch; the late side's result is void |
+| Loser handling | Abort immediately (AbortSignal propagates to the hook child process / broker reverse RPC) and **do not wait** for its cleanup; waiting would make a stuck hook a blocking point again |
+| Hook chain failure/timeout | Treated as "that responder withdraws": warn log and keep waiting for the broker; it is **no longer** turned into deny. A fault in an auxiliary responder must not make the deny decision for the user |
+| No hook configured | The race degrades to a one-sided broker wait, byte-for-byte equivalent to the old path |
+| Policy-type forced deny | Belongs to the `PreToolUse` hook (can deny before the confirmation window appears and takes no part in the race); the `PermissionRequest` hook is narrowed to "another reply surface" |
+| Loser external UI cleanup | v1 relies on abort → child process termination only; external integrations should read "terminated" as "already answered elsewhere". A separate notification-type `PermissionResolved` hook event is left for later |
 
-## 新时序
+## New order
 
 ```
-core (permission-flow)            UI (v4 / TUI)               hook (外部应答面)
+core (permission-flow)            UI (v4 / TUI)               hook (external reply surface)
 ──────────────────────            ─────────────               ──────────────────
-emitPermissionRequested ────────► 确认窗渲染
+emitPermissionRequested ────────► confirmation window rendered
         │
-        ├─ 并发启动 broker 等待 ─► 应答 deferred 已注册（点击随时可达）
-        ├─ 并发启动 hook 链 ──────────────────────────────────► 外部 UI 展示
+        ├─ start broker wait concurrently ─► reply deferred registered (clicks reach it at any time)
+        ├─ start hook chain concurrently ─────────────────────► external UI shown
         │
-        └─ await 先到者 {hook 决定, broker 应答, broker 超时/取消}
-                                  用户点击 Start
-                                  resolveInteraction ──► ✓ 命中 deferred，竞速收口
-        abort 败者 ───────────────────────────────────────────► hook 子进程收到 abort
-emitPermissionResolved ─────────► 确认窗消除                   （外部 UI 应自行消除）
+        └─ await first of {hook decision, broker reply, broker timeout/cancel}
+                                  user clicks Start
+                                  resolveInteraction ──► ✓ hits the deferred, race closes
+        abort loser ──────────────────────────────────────────► hook child process receives abort
+emitPermissionResolved ─────────► confirmation window removed  (the external UI should dismiss itself)
 ```
 
-状态机（单次 ask 的竞速闩）：
+State machine (race latch of one ask):
 
 ```
             ┌─────────────── racing ───────────────┐
             │  hookPending: true   brokerPending: true │
             └──┬───────────┬───────────┬────────────┘
-   hook 决定先到│   broker 应答先到│    broker 拒绝/超时/取消│
+ hook decision first│ broker reply first│ broker reject/timeout/cancel│
                ▼               ▼                     ▼
-        settled(hook)    settled(broker)      throw（沿用旧 catch → deny）
+        settled(hook)    settled(broker)      throw (old catch → deny)
         abort broker     abort hook           abort hook
                │               │
-   hook 无决定/失败：不迁移状态，仅剩 broker 单边等待（hookPending: false）
+   hook no decision/failure: no transition, only the broker wait remains (hookPending: false)
 ```
 
-## 契约
+## Contract
 
-新增 core 内部模块 `packages/core/src/tool/executor/permission-responder-race.ts`：
+New core-internal module `packages/core/src/tool/executor/permission-responder-race.ts`:
 
 ```ts
 interface PermissionResponderRaceInput {
-  /** hook 链：resolve undefined 表示无决定（退赛）；抛错同样按退赛处理并回调 onHookFailure。 */
+  /** Hook chain: resolving undefined means no decision (withdraw); throwing is also a withdrawal and calls onHookFailure. */
   runHooks: (signal: AbortSignal) => Promise<PermissionBrokerResult | undefined>;
-  /** broker 等待：注册应答 deferred 必须在本函数调用内同步完成（既有契约）。 */
+  /** Broker wait: registering the reply deferred must finish synchronously inside this call (existing contract). */
   requestBroker: (signal: AbortSignal) => Promise<PermissionBrokerResult>;
-  signal?: AbortSignal;          // 外层 turn 取消，abort 双方
-  onHookFailure?: (error: unknown) => void;   // hook 链抛错且 broker 仍在等待时回调（warn 日志）
+  signal?: AbortSignal;          // outer turn cancellation, aborts both sides
+  onHookFailure?: (error: unknown) => void;   // called when the hook chain throws while the broker still waits (warn log)
 }
 
 interface PermissionResponderRaceOutcome {
@@ -97,55 +100,61 @@ interface PermissionResponderRaceOutcome {
 }
 ```
 
-语义细则：
+Detailed semantics:
 
-- `requestBroker` 拒绝（超时、取消、无 broker fail-closed）且 hook 尚未胜出时，
-  原样上抛并 abort hook 链——与旧路径的 catch → deny 错误形态一致。
-- hook 胜出后 broker 被 abort 产生的拒绝必须吞掉（那是我们自己的取消）；反之亦然。
-- 败者的 promise 不被 await：必须挂 `catch` 防 unhandled rejection，其收尾由
-  hook 超时（60s 默认）与 abort 传播兜底。
-- `modify` 决定只可能来自 hook 胜出（broker 的 modify 走既有路径），沿用
-  `recheckPermissionHookModifiedInput` 的修改后输入重校验。
+- When `requestBroker` rejects (timeout, cancel, no-broker fail-closed) and the hook has not won, the
+  rejection is rethrown unchanged and the hook chain is aborted; the error shape matches the old
+  catch → deny path.
+- A rejection produced by aborting the broker after the hook wins must be swallowed (it is our own
+  cancellation); the same holds in reverse.
+- The loser's promise is not awaited: a `catch` must be attached to prevent unhandled rejection; its
+  cleanup is bounded by the hook timeout (60s default) and abort propagation.
+- A `modify` decision can come only from a winning hook (the broker's modify uses the existing path) and
+  reuses the post-modification input recheck of `recheckPermissionHookModifiedInput`.
 
-## 兼容性与行为变化
+## Compatibility and behavior changes
 
-1. **hook 链抛错不再 deny**（行为变化，有意）：旧路径 `runPermissionRequestHooks`
-   抛错 → catch → 整次调用按 deny 失败。新路径记 warn 后继续等用户。理由：
-   runner 已经把单 hook 失败/超时收敛为「无决定」，能抛到这一层的只剩基础设施
-   故障（事件管线、admission 崩溃），它们与用户的审批意愿无关。
-2. **TUI 提示可能先出现再被 hook 决定消除**：旧路径 hook 先行，hook 有决定时 TUI
-   永远看不到提示；新路径 broker 立即启动，提示先出现、hook 决定到达后按
-   `PermissionResolved` 消除。v4 桌面端本来就先渲染（事件先发），故此行为只是把
-   两类客户端拉齐。broker 实现必须继续遵守「支持 AbortSignal、abort 清理 pending
-   提示」的既有契约（`permission-broker.md`）。
-3. **策略语义**：用户点击可能快于 hook 的 deny 决定。需要「用户不可越过」的强制
-   拒绝必须用 `PreToolUse` hook（在 ask 之前生效）或 permission deny rule 表达；
-   `PermissionRequest` hook 从此不保证先于用户应答。
+1. **A hook chain error no longer denies** (intentional behavior change): the old
+   `runPermissionRequestHooks` throwing → catch → the whole call failed as deny. The new path logs warn
+   and keeps waiting for the user. Reason: the runner already collapses a single hook failure/timeout
+   into "no decision"; what can still throw to this layer is infrastructure faults (event pipeline,
+   admission crash), unrelated to the user's approval intent.
+2. **The TUI prompt may appear first and then be dismissed by a hook decision**: in the old path the hook
+   ran first, so with a hook decision the TUI never saw a prompt. In the new path the broker starts
+   immediately; the prompt appears first and is dismissed by `PermissionResolved` once a hook decision
+   arrives. The v4 desktop already rendered first (event sent first), so this only aligns both client
+   types. The broker implementation must keep honoring the existing contract "support AbortSignal, abort
+   cleans the pending prompt" (`permission-broker.md`).
+3. **Policy semantics**: a user click may beat a hook's deny decision. A forced deny the user must not be
+   able to override has to use a `PreToolUse` hook (effective before ask) or a permission deny rule; the
+   `PermissionRequest` hook no longer guarantees to precede the user's reply.
 
-## 测试要求
+## Test requirements
 
-executor 级（`packages/core/tests/permission-responder-race.test.ts`）：
+Executor level (`packages/core/tests/permission-responder-race.test.ts`):
 
-- hook 链永不返回时，broker 的 `requestPermission` 仍被立即调用（应答通道先于
-  hook 完成建立——事故场景的直接回归）。
-- hook 未决出期间 broker 应答 allow：工具执行，hook 链收到 abort。
-- hook 决定 allow/deny 先到：broker 收到 abort，结果按 hook 决定收口，
-  `PermissionResolved` 事件正常发出。
-- hook 决定 modify 先到：修改后输入生效（沿用重校验路径）。
-- hook 链无决定（返回 undefined）：完全退化为 broker 单边等待。
-- hook 链抛错：warn 回调触发，broker 应答仍然生效，不产生 deny。
-- broker 拒绝（无 broker fail-closed / 超时 / 外层取消）：错误形态与旧路径一致，
-  hook 链收到 abort。
-- 双方同 tick 决出：仅一个胜者，无重复 `PermissionResolved`。
+- When the hook chain never returns, the broker `requestPermission` is still called immediately (the
+  reply channel is set up before the hook finishes; direct regression of the incident).
+- Broker replies allow while the hook is undecided: the tool runs and the hook chain receives abort.
+- Hook decision allow/deny first: the broker receives abort, the result closes per the hook decision,
+  and the `PermissionResolved` event is emitted normally.
+- Hook decision modify first: the modified input takes effect (reusing the recheck path).
+- Hook chain with no decision (returns undefined): fully degrades to the one-sided broker wait.
+- Hook chain throws: the warn callback fires, the broker reply still takes effect, no deny is produced.
+- Broker rejection (no-broker fail-closed / timeout / outer cancel): error shape matches the old path
+  and the hook chain receives abort.
+- Both sides decide in the same tick: only one winner, no duplicate `PermissionResolved`.
 
-runner 级（既有覆盖，不新增）：hook 超时/取消区分已由
-`hook-runner-lifecycle.test.ts` 钉住。
+Runner level (existing coverage, nothing new): hook timeout/cancel distinction is pinned by
+`hook-runner-lifecycle.test.ts`.
 
-## 残余风险（记录在案，本文不修）
+## Residual risk (recorded, not fixed here)
 
-- `InMemoryHookRunner.run` 在 hook 回调前 `await emitHookEvent(HookRunStarted)`，
-  该 await 不受 hook 超时保护；事件管线卡死时 hook 链整体冻结。竞速让它不再
-  冻结确认窗（broker 单边照常工作），但 hook 链自身的可观测性事件会缺失。
-  后续可把 lifecycle 事件发射改为有界或非阻塞。
-- 外部应答面（vibe-island 类）在败者路径只收到进程终止信号，没有结构化的
-  「已在别处应答」通知；`PermissionResolved` 通知型 hook 事件留作后续提案。
+- `InMemoryHookRunner.run` does `await emitHookEvent(HookRunStarted)` before the hook callback; the
+  await is not covered by the hook timeout, so a stuck event pipeline freezes the whole hook chain. The
+  race keeps the confirmation window from freezing (the broker side works as usual), but the hook
+  chain's own observability events go missing. Lifecycle event emission can later be made bounded or
+  non-blocking.
+- External reply surfaces (vibe-island type) get only a process termination signal on the loser path,
+  with no structured "already answered elsewhere" notification; a notification-type `PermissionResolved`
+  hook event is left as a later proposal.

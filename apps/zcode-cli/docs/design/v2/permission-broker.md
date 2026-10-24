@@ -1,133 +1,204 @@
-# Permission Broker 设计 v2
+# Permission Broker Design v2
 
-## 背景
+## Background
 
-早期权限层已经能把一次 tool 调用判定为 `allow`、`ask` 或 `deny`，但 `ask` 只能产出 `permission_requested` 事件，随后把 tool 视为被拒绝。当前核对确认该缺口已经落地：core 会把 `ask` 交给 `PermissionBrokerPort` 等待客户端选择，并根据 `allow`、`modify`、`deny`、`escalate` 继续或终止 tool 执行。
+The early permission layer could judge a tool call as `allow`, `ask` or `deny`, but `ask` only emitted a
+`permission_requested` event and then treated the tool as denied. That gap is closed: core hands `ask`
+to `PermissionBrokerPort` to wait for the client's choice, and continues or ends tool execution based
+on `allow`, `modify`, `deny` or `escalate`.
 
-权限记忆第一版只支持 project 级规则。用户侧只暴露：
+Permission memory supports project-level rules only. The user-facing choices are:
 
-- `Allow once`：本次 tool 调用通过，不写入规则。
-- `Always allow in this project`：写入当前 project 的 permission ruleset，后续同 project 命中规则时直接通过。
-- `Deny`：本次拒绝，不写入规则。
+- `Allow once`: this tool call passes; no rule is written.
+- `Always allow in this project`: writes into the current project's permission ruleset; later calls in
+  the same project that hit the rule pass directly.
+- `Deny`: this call is rejected; no rule is written.
 
-第一版不做 session 级和 global 级持久化，也不在审批 UI 中展示 scope 列表。后续如果要支持 user/global settings，可以在不改变 `Allow once` 语义的前提下扩展新的 destination。
+No session-level or global-level persistence, and no scope list in the approval UI. User/global
+settings may later add a new destination without changing `Allow once` semantics.
 
-v2 将 `PermissionService` 和 `PermissionBroker` 明确拆开：
+v2 separates `PermissionService` from `PermissionBroker`:
 
-- `PermissionService` 只做同步策略判断：基于 mode、tool capability、allow/deny 规则、风险级别和副作用范围返回 `allow`、`ask`、`deny`。
-- `PermissionBroker` 只处理异步客户端协商：把 `ask` 请求发布给客户端，等待 `allow`、`deny` 或 `modify`，并支持取消、超时和可观测事件。
-- `edit` permission mode 是 `build` 的窄自动化变体：project deny/ask、project allow 和 allowedTools 仍按既有优先级处理；如果 tool capability 声明 `permission: "edit"` 且副作用范围是 `workspace`，同步判定直接 `allow`；其它操作回落到 `build` 策略。
+- `PermissionService` makes only synchronous policy decisions from mode, tool capability, allow/deny
+  rules, risk level and side-effect scope, returning `allow`, `ask` or `deny`.
+- `PermissionBroker` handles only asynchronous client negotiation: it publishes `ask` requests to the
+  client, waits for `allow`, `deny` or `modify`, and supports cancellation, timeout and observable
+  events.
+- The `edit` permission mode is a narrow automation variant of `build`: project deny/ask, project allow
+  and allowedTools keep their existing precedence; if the tool capability declares `permission: "edit"`
+  and the side-effect scope is `workspace`, the synchronous decision is `allow`; everything else falls
+  back to the `build` policy.
 
-## 当前实现核对
+## Current implementation (verified 2026-05-08)
 
-本轮核对时间：2026-05-08。以下主线已经实现，不应再按“待实现 broker”重复建设：
+The following is implemented; do not rebuild it as a "pending broker":
 
-- Contract：`packages/contracts/src/interfaces/permission.port.ts` 定义 `PermissionBrokerPort`、`PermissionBrokerRequest`、`PermissionBrokerResult`、project 级 `PermissionUpdate` 和 `PermissionRuleset`。
-- Core service：`packages/core/src/permission/service.ts` 负责同步 `allow` / `ask` / `deny` 判断，并支持 project `allow` / `ask` / `deny` 规则匹配。
-- Core broker：`packages/core/src/permission/broker.ts` 提供默认 fail-closed `DenyPermissionBroker` 和可检查、可手动 resolve 的 `ManualPermissionBroker`，覆盖 pending、timeout、abort cleanup。
-- Tool executor：`packages/core/src/tool/executor.ts` 在 `ask` 时发布 `permission_requested`，等待 broker 或 `PermissionRequest` hook，发布 `permission_resolved`，支持 `allow` 执行、`modify` 替换完整 input、`deny` 结构化失败、`escalate` 失败，以及 `permissionUpdates` 写入 project permission ruleset。
-- Runtime/TUI：`packages/core/src/runtime/agent-runtime.ts` 把 broker 注入 executor；`packages/tui/src/app-permission.ts` 使用队列式 approval UI，支持 `Allow once`、`Always allow in this project`、`Deny`，并为 `AskUserQuestion` 复用同一 broker 通道展示澄清问题。`packages/cli/src/tui-command.ts` 必须在 `submitPrompt` 和 `sendInput` 两条路径都把当前 TUI `requestPermission` 回调挂到 broker 上，避免忙时输入、resume 后 continuation 或排队输入启动新 turn 时审批 UI 丢失。
-- TUI 渲染：普通 approval prompt 优先展示 tool input 中的 `description` 作为用户可读说明；命令类 input 预览只展示 `command` 值，不展示完整 JSON，也不在面板中展示 risk/mode 策略元数据。说明和命令预览必须按当前面板宽度 word wrap，并按渲染行数扩展面板高度，避免窄终端中权限文本覆盖决策选项或帮助行。
-- ZCode app-server：`apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts` 注入 ZCode app-server broker，普通 tool 通过 ZCode app-server `requestPermission` 转成 `Allow once`、`Always allow in this project` 或 `Deny`；project allow 会返回 `permissionUpdates` 交给 core 写入当前 project ruleset；`AskUserQuestion` 当前走 `zcode.dev` elicitation 扩展请求。
+- Contract: `packages/contracts/src/interfaces/permission.port.ts` defines `PermissionBrokerPort`,
+  `PermissionBrokerRequest`, `PermissionBrokerResult`, project-level `PermissionUpdate` and
+  `PermissionRuleset`.
+- Core service: `packages/core/src/permission/service.ts` makes the synchronous `allow` / `ask` /
+  `deny` decision and matches project `allow` / `ask` / `deny` rules.
+- Core broker: `packages/core/src/permission/broker.ts` provides the default fail-closed
+  `DenyPermissionBroker` and the inspectable, manually resolvable `ManualPermissionBroker`, covering
+  pending, timeout and abort cleanup.
+- Tool executor: `packages/core/src/tool/executor.ts` publishes `permission_requested` on `ask`, waits
+  for the broker or the `PermissionRequest` hook, publishes `permission_resolved`, supports `allow`
+  execution, `modify` replacing the full input, `deny` structured failure, `escalate` failure, and
+  `permissionUpdates` written into the project permission ruleset.
+- Runtime/TUI: `packages/core/src/runtime/agent-runtime.ts` injects the broker into the executor;
+  `packages/tui/src/app-permission.ts` uses a queued approval UI with `Allow once`,
+  `Always allow in this project` and `Deny`, and reuses the same broker channel for `AskUserQuestion`
+  clarification questions. `packages/cli/src/tui-command.ts` must attach the current TUI
+  `requestPermission` callback to the broker on both the `submitPrompt` and `sendInput` paths, so that
+  busy-time input, post-resume continuation or queued input that starts a new turn does not lose the
+  approval UI.
+- TUI rendering: the normal approval prompt shows the `description` from the tool input as the
+  human-readable explanation; for command-like input the preview shows only the `command` value, not
+  the full JSON, and the panel shows no risk/mode policy metadata. Explanation and command preview must
+  word-wrap to the current panel width and grow the panel height by rendered lines, so permission text
+  never covers the decision options or help line in narrow terminals.
+- ZCode app-server: `apps/zcode-cli/packages/bootstrap/src/zcode-protocol-entrypoint.ts` injects the
+  ZCode app-server broker; normal tools are turned into `Allow once`, `Always allow in this project` or
+  `Deny` through the ZCode app-server `requestPermission`; a project allow returns `permissionUpdates`
+  for core to write into the current project ruleset; `AskUserQuestion` currently goes through the
+  `zcode.dev` elicitation extension request.
 
-已有测试覆盖：
+Existing tests:
 
-- `packages/core/tests/permission-broker.test.ts`：pending request、client resolution、timeout cleanup、abort cleanup。
-- `packages/core/tests/permission-service.test.ts`：build/plan/yolo 模式、project rules、user-interaction tool 的权限判断。
-- `packages/core/tests/tool-executor-trace.test.ts`：默认无 broker fail closed、broker allow 后执行、project `permissionUpdates` 落盘并被后续调用命中、broker `modify` 替换输入、hook allow/deny。
-- `packages/core/tests/runtime-tool-loop.test.ts`：runtime 等待 broker approval 后才执行 side-effecting tool，并保证 `permission_resolved` 早于 `tool_call_started`。
-- `packages/cli/tests/cli.unit.test.ts`：TUI `submitPrompt` 和 `sendInput` 都会把 approval request 接入 runtime permission broker，防止 approval handler 丢失后 fail-closed。
-- `packages/tui/tests/tui.unit.test.ts`：TUI approval UI、project allow update、Esc/关闭/取消等交互路径。
+- `packages/core/tests/permission-broker.test.ts`: pending request, client resolution, timeout cleanup,
+  abort cleanup.
+- `packages/core/tests/permission-service.test.ts`: build/plan/yolo modes, project rules, permission
+  decisions for user-interaction tools.
+- `packages/core/tests/tool-executor-trace.test.ts`: default fail-closed without a broker, execution
+  after broker allow, project `permissionUpdates` persisted and hit by later calls, broker `modify`
+  replacing input, hook allow/deny.
+- `packages/core/tests/runtime-tool-loop.test.ts`: the runtime executes a side-effecting tool only after
+  broker approval and `permission_resolved` precedes `tool_call_started`.
+- `packages/cli/tests/cli.unit.test.ts`: TUI `submitPrompt` and `sendInput` both attach the approval
+  request to the runtime permission broker, preventing fail-closed after the approval handler is lost.
+- `packages/tui/tests/tui.unit.test.ts`: TUI approval UI, project allow update, and Esc/close/cancel
+  interaction paths.
 
-剩余边界：session/global 级 permission ruleset 仍不在第一版范围内；ZCode app-server 和 TUI 当前都只暴露 project 级 remember allow，不暴露 reject always；更细粒度的 Bash/WebFetch 规则建议仍应由后续 tool policy 提供。
+Remaining boundary: session/global permission rulesets are out of scope for the first version; the ZCode
+app-server and the TUI currently expose only project-level remember allow and no reject-always; finer
+Bash/WebFetch rule suggestions should still come from a later tool policy.
 
-## 运行时流程
+## Runtime flow
 
-Tool 执行前的权限流程：
+Permission flow before tool execution:
 
-1. `ToolExecutor` 调用 `PermissionService.checkPermission`。
-2. 返回 `allow`：直接执行 tool。
-3. 返回 `deny`：记录 `permission_denied`，tool 不执行。
-4. 返回 `ask`：记录 `permission_requested`，随后 `PermissionBroker.requestPermission`
-   与 `PermissionRequest` hooks 并发竞速，先到的决定生效（见
-   `permission-responder-race.md`；broker 必须在 `requestPermission` 调用内同步建立
-   应答通道，abort 时清理 pending 提示）。
-5. 客户端返回：
-   - `allow`：记录 `permission_resolved`，用原始输入执行 tool。
-   - `modify`：记录 `permission_resolved`，用 `modifiedInput` 执行 tool。
-   - `deny`：记录 `permission_resolved`，tool 不执行，返回结构化 `permission_denied` 错误。
-6. 如果客户端返回 `permissionUpdates`，core 在执行 tool 前先写入 project permission ruleset，并更新当前权限判断上下文。
+1. `ToolExecutor` calls `PermissionService.checkPermission`.
+2. `allow`: execute the tool.
+3. `deny`: record `permission_denied`; the tool does not run.
+4. `ask`: record `permission_requested`, then `PermissionBroker.requestPermission` races concurrently
+   with `PermissionRequest` hooks and the first decision wins (see `permission-responder-race.md`; the
+   broker must establish the reply channel synchronously inside the `requestPermission` call and clean
+   the pending prompt on abort).
+5. The client returns:
+   - `allow`: record `permission_resolved`; execute the tool with the original input.
+   - `modify`: record `permission_resolved`; execute the tool with `modifiedInput`.
+   - `deny`: record `permission_resolved`; the tool does not run; return a structured
+     `permission_denied` error.
+6. If the client returns `permissionUpdates`, core writes them into the project permission ruleset
+   before executing the tool and updates the current permission context.
 
-`ask` 不是错误态。只有客户端拒绝、请求超时、执行被取消或 broker 自身失败时，才转换成 tool error。
+`ask` is not an error state. It becomes a tool error only when the client denies, the request times out,
+execution is cancelled or the broker itself fails.
 
-## Broker 契约
+## Broker contract
 
-`PermissionBrokerPort` 属于客户端边界契约，输入必须包含可展示、可审计、可恢复的信息：
+`PermissionBrokerPort` is a client-boundary contract; its input must be displayable, auditable and
+recoverable:
 
-- `requestId`：本次权限请求 ID。
-- `sessionId`、`turnId`、`traceId`、`toolCallId`：完整调用链标识。
-- `toolName`、`input`：原始 tool 调用。
-- `mode`、`ruleId`、`reason`：策略来源和用户可见原因。
-- `riskLevel`、`sideEffectScope`：风险和副作用范围。
-- `requestedAt`：进入 pending 状态的时间。
+- `requestId`: ID of this permission request.
+- `sessionId`, `turnId`, `traceId`, `toolCallId`: full call-chain identifiers.
+- `toolName`, `input`: the original tool call.
+- `mode`, `ruleId`, `reason`: policy source and user-visible reason.
+- `riskLevel`, `sideEffectScope`: risk and side-effect scope.
+- `requestedAt`: time of entering the pending state.
 
-返回值：
+Result:
 
-- `decision`：`allow`、`deny`、`modify` 或保留的 `escalate`。
-- `reason`：客户端可选说明。
-- `modifiedInput`：仅 `modify` 有意义，必须作为完整替代输入，而不是 patch。
-- `permissionUpdates`：可选 project 级规则更新。第一版只支持 `addRules`，用于表达“本项目以后允许/询问/拒绝这类调用”。
-- `resolvedAt`：客户端响应时间；缺省时由 core 填充。
+- `decision`: `allow`, `deny`, `modify` or the reserved `escalate`.
+- `reason`: optional client note.
+- `modifiedInput`: meaningful only for `modify`; it must be a full replacement input, not a patch.
+- `permissionUpdates`: optional project-level rule updates. The first version supports only `addRules`,
+  to express "from now on allow/ask/deny this kind of call in this project".
+- `resolvedAt`: client response time; core fills it when absent.
 
-Broker 必须支持 `AbortSignal`。如果 turn 被取消，pending permission 也必须被清理，避免后台悬挂 promise。超时由调用方显式传入；没有配置超时时，broker 可以一直等待客户端。
+The broker must support `AbortSignal`. If the turn is cancelled, the pending permission is also cleaned
+so no promise dangles in the background. The caller passes the timeout explicitly; with no timeout
+configured the broker may wait for the client indefinitely.
 
-## 事件与状态
+## Events and state
 
-事件语义：
+Event semantics:
 
-- `permission_requested`：进入 broker 前记录，projection 将请求加入 `pendingPermissions`。
-- `permission_resolved`：客户端对 `ask` 的最终回复，projection 移除 pending；`deny` 会把 tool 状态标为 denied。
-- `permission_denied`：同步策略直接拒绝，或 broker 无法进入 pending 的不可恢复拒绝。
+- `permission_requested`: recorded before entering the broker; projection adds the request to
+  `pendingPermissions`.
+- `permission_resolved`: the client's final reply to `ask`; projection removes the pending entry; `deny`
+  marks the tool status denied.
+- `permission_denied`: the synchronous policy rejects directly, or the broker hits an unrecoverable
+  rejection before it can become pending.
 
-工具状态语义：
+Tool state semantics:
 
 - `scheduled` -> `waiting_permission` -> `running` -> `completed`
 - `scheduled` -> `waiting_permission` -> `permission_denied`
-- 同步 `deny` 可以直接进入 `permission_denied`
+- A synchronous `deny` can go directly to `permission_denied`.
 
-## 默认行为
+## Default behavior
 
-没有客户端 broker 时，默认 broker 必须 fail closed：立即返回 `deny`，理由说明没有配置可交互权限客户端。这保证 headless CLI、测试和后台任务不会无界等待。
+Without a client broker the default broker must fail closed: it returns `deny` immediately with a reason
+saying no interactive permission client is configured. This guarantees headless CLI, tests and
+background tasks never wait without bound.
 
-客户端需要交互权限时，应显式注入 broker：
+A client needing interactive permission injects a broker explicitly:
 
-- TUI/IDE：展示请求，用户点击允许/拒绝后调用 resolver。
-- SDK：把请求暴露成事件或 callback，由宿主进程回复。
-- 自动化：可以实现 policy broker，根据外部规则自动 allow/deny，但仍要记录 `permission_resolved`。
+- TUI/IDE: show the request; after the user allows/denies, call the resolver.
+- SDK: expose the request as an event or callback and let the host process reply.
+- Automation: may implement a policy broker that auto allows/denies by external rules, but must still
+  record `permission_resolved`.
 
-## TUI 最小交互
+## Minimal TUI interaction
 
-TUI 作为第一版交互客户端时，只实现 `ask` 请求的最小可用 UI：
+The TUI, as the first interactive client, implements only the minimal usable UI for `ask` requests:
 
-- runtime 仍通过 `PermissionBrokerPort.requestPermission` 等待结果，TUI 不直接执行 tool。
-- TUI 在当前 turn busy 状态下展示审批框，包含 `toolName`、`riskLevel`、`sideEffectScope`、`reason` 和截断后的 `input` 预览。
-- 键盘操作使用显式选择确认：审批框展示 `Allow once`、`Always allow in this project` 和 `Deny`。默认选中 `Deny`；`Up`/`Down` 在选项间移动，`Enter` 返回当前选项，`Escape` 返回 `deny`；`Ctrl-C` 继续取消当前 TUI 会话并通过 abort signal 清理 pending。
-- `Always allow in this project` 只返回 project 级 `permissionUpdates`。第一版可以先生成 tool-only 规则；Bash/WebFetch 等更细粒度规则由 tool policy 后续提供建议。
-- TUI 同一时间只展示队首审批请求；如果后续支持并发请求，应在 TUI 层排队，不改变 broker 契约。
-- `--prompt`、后台任务和没有交互客户端的入口继续使用默认 deny broker，避免无界等待。
+- The runtime still waits on `PermissionBrokerPort.requestPermission`; the TUI never executes the tool.
+- While the turn is busy the TUI shows an approval box with `toolName`, `riskLevel`, `sideEffectScope`,
+  `reason` and a truncated `input` preview.
+- Keyboard use is explicit select-and-confirm: the box shows `Allow once`,
+  `Always allow in this project` and `Deny`. `Deny` is selected by default; `Up`/`Down` move between
+  options, `Enter` returns the current option, `Escape` returns `deny`; `Ctrl-C` still cancels the
+  current TUI session and cleans pending requests through the abort signal.
+- `Always allow in this project` returns only project-level `permissionUpdates`. The first version may
+  generate tool-only rules; finer Bash/WebFetch rules come from a later tool policy.
+- The TUI shows only the head-of-queue approval request at a time; if concurrent requests are supported
+  later, queue them in the TUI layer without changing the broker contract.
+- `--prompt`, background tasks and entries without an interactive client keep the default deny broker,
+  to avoid unbounded waits.
 
-## 测试要求
+## Test requirements
 
-新增或修改权限能力时至少覆盖：
+Changes to permission capability cover at least:
 
-- `ask` 后客户端 `allow`，tool 确实执行。
-- `ask` 后客户端 `allow` 且携带 project `permissionUpdates`，规则写入 project ruleset，后续同 project 命中规则不再 ask。
-- `edit` mode 下 `Write`、`Edit`、`ApplyPatch` 这类文件编辑工具直接 allow，而 Bash、MCP、用户交互、网络或系统级操作不因 `edit` mode 自动通过。
-- `ask` 后客户端 `modify`，tool 收到替代输入。
-- `ask` 后客户端 `deny`，tool 不执行，并移除 pending。
-- 没有 broker 时默认拒绝，不悬挂。
-- 取消或超时会清理 pending，并保留 traceId。
+- `ask` then client `allow`: the tool really runs.
+- `ask` then client `allow` with project `permissionUpdates`: the rule is written into the project
+  ruleset and later calls in the same project that hit the rule no longer ask.
+- Under `edit` mode, file-editing tools such as `Write`, `Edit`, `ApplyPatch` are allowed directly,
+  while Bash, MCP, user-interaction, network or system-level operations are not auto-approved by
+  `edit` mode.
+- `ask` then client `modify`: the tool receives the replacement input.
+- `ask` then client `deny`: the tool does not run and the pending entry is removed.
+- Without a broker the default is deny and nothing hangs.
+- Cancellation or timeout cleans pending and keeps the traceId.
 
 ## Group session isolation (2026-09)
 
-The project-only restriction above has one scoped extension: a trusted group input initializes `SessionInfo.permission.scope = "session"` before tools execute. Executor rule loading and remembered updates use that session's permission object, never `ProjectPermission`. Initialization drops inherited rules once; subsequent turns and cold resumes keep the task's own grants. Normal tasks without this marker retain project behavior. The marker is protocol metadata, not interpreted prompt text. See the root `docs/permission-project-approval.md` and `docs/bots-feishu-group-collaboration.md` for group authorization and client boundaries.
+The project-only restriction above has one scoped extension: a trusted group input initializes
+`SessionInfo.permission.scope = "session"` before tools execute. Executor rule loading and remembered
+updates use that session's permission object, never `ProjectPermission`. Initialization drops inherited
+rules once; subsequent turns and cold resumes keep the task's own grants. Normal tasks without this
+marker retain project behavior. The marker is protocol metadata, not interpreted prompt text. See the
+root `docs/permission-project-approval.md` and `docs/bots-feishu-group-collaboration.md` for group
+authorization and client boundaries.

@@ -1,191 +1,256 @@
 # SEA Cross-Target Packaging
 
-## 背景
+## Background
 
-ZCode 的默认发布形态仍然是标准 Node.js CLI 包：`dist/zcode.cjs` 加 `bin.zcode`。SEA 只是可选的单文件分发路径，用于给没有预装 Node.js 的环境提供独立二进制。
+The default release form of ZCode remains the standard Node.js CLI package: `dist/zcode.cjs` plus
+`bin.zcode`. SEA is an optional single-file distribution path that gives environments without a
+preinstalled Node.js a standalone binary.
 
-当前 SEA 脚本只复制 `process.execPath`，因此在 macOS arm64 上只能生成 `zcode-darwin-arm64`。这不符合项目面向 Windows、macOS、Linux 的发布目标。
+The SEA script originally copied only `process.execPath`, so on macOS arm64 it could only produce
+`zcode-darwin-arm64`, which does not fit the Windows, macOS and Linux release goal.
 
-## 目标
+## Goals
 
-- 支持从一个 host 机器生成多个 SEA target 产物。
-- 默认 target 保持当前 host，避免破坏已有 `npm run sea` 行为。
-- 通过 CLI 参数显式选择 target，不新增环境变量。
-- 从官方 Node.js release 下载目标平台 Node 二进制，版本必须等于当前运行脚本的 Node.js 版本。
-- 复用同一个 bundled CommonJS entry，避免每个平台重复业务构建。
-- 发布签名、notarization 和证书管理暂不进入本轮 scope。macOS 开发期 ad-hoc 签名属于 Mach-O 注入后的可执行性修复，不视为发布签名。
+- Produce several SEA target artifacts from one host machine.
+- The default target stays the current host, so the existing `npm run sea` behavior is not broken.
+- Select targets explicitly through CLI parameters; add no environment variable.
+- Download the target-platform Node binary from the official Node.js release; its version must equal the
+  Node.js version running the script.
+- Reuse the same bundled CommonJS entry, avoiding a business rebuild per platform.
+- Release signing, notarization and certificate management are out of scope. The macOS ad-hoc signature
+  during development is an executability repair after Mach-O injection, not a release signature.
 
-## 非目标
+## Non-goals
 
-- 不实现完整 release pipeline、上传、压缩归档或包管理器发布。
-- 不实现 Windows Authenticode、macOS Developer ID、公证或 Linux 包格式。
-- 不支持 Alpine/musl 作为首批 SEA target。
-- 不把 target 配置做成 `ZCODE_` 环境变量。
+- No full release pipeline, upload, archive compression or package-manager publishing.
+- No Windows Authenticode, macOS Developer ID, notarization or Linux package formats.
+- No Alpine/musl as a first SEA target.
+- No `ZCODE_` environment variable for target configuration.
 
-## Target 契约
+## Target contract
 
-首批 target：
+First targets: `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `win-arm64`, `win-x64`.
 
-- `darwin-arm64`
-- `darwin-x64`
-- `linux-arm64`
-- `linux-x64`
-- `win-arm64`
-- `win-x64`
-
-产物命名：
+Artifact names:
 
 - Unix-like: `dist/zcode-<platform>-<arch>`
 - Windows: `dist/zcode-windows-<arch>.exe`
 
-用户接口：
+User interface:
 
-- `pnpm run build:sea`：从仓库根依赖中解析 Turbo，并通过
-  `--cwd apps/zcode-cli` 在 CLI workspace 内用 `--force` 重建 CLI 之外的 package，
-  再直接重建 CLI bundle，最后构建首批全部 target；仓库包含嵌套 pnpm workspace，
-  因此 package 脚本不能用 `--workspace-root` 解析 Turbo，否则会错误限定到缺少该
-  binary 的内层 workspace。该流程既避免复用旧 package `dist`，也不把已有 SEA
-  产物写入 CLI build cache。
-- 根目录 `pnpm build:sea:all`：安装依赖后转发到同一个 all-target `build:sea` 入口。
-- `pnpm run sea -- <target 参数>`：只封装当前已有的 `dist/zcode.cjs` 和 runtime
-  assets，不负责重新编译 workspace。
-- `node scripts/build-sea.mjs`：构建当前 host target。
-- `node scripts/build-sea.mjs --target linux-x64 --target win-x64`：构建指定 target。
-- `node scripts/build-sea.mjs --targets linux-x64,win-x64`：构建逗号分隔 target。
-- `node scripts/build-sea.mjs --all`：构建首批全部 target。
-- `node scripts/build-sea.mjs --node-binary linux-x64=/abs/path/node`：使用用户提供的目标 Node 二进制，跳过该 target 的下载解析。
+- `pnpm run build:sea`: resolves Turbo from the repository root dependencies and, through
+  `--cwd apps/zcode-cli`, rebuilds the packages other than the CLI with `--force` inside the CLI
+  workspace, then rebuilds the CLI bundle directly, and finally builds all first targets. The repository
+  contains a nested pnpm workspace, so the package script must not resolve Turbo with
+  `--workspace-root`, which would wrongly scope to the inner workspace lacking that binary. This flow
+  avoids reusing stale package `dist` and keeps existing SEA artifacts out of the CLI build cache.
+- Root `pnpm build:sea:all`: installs dependencies and forwards to the same all-target `build:sea`
+  entry.
+- `pnpm run sea -- <target args>`: only wraps the existing `dist/zcode.cjs` and runtime assets; it does
+  not recompile the workspace.
+- `node scripts/build-sea.mjs`: builds the current host target.
+- `node scripts/build-sea.mjs --target linux-x64 --target win-x64`: builds the given targets.
+- `node scripts/build-sea.mjs --targets linux-x64,win-x64`: builds comma-separated targets.
+- `node scripts/build-sea.mjs --all`: builds all first targets.
+- `node scripts/build-sea.mjs --node-binary linux-x64=/abs/path/node`: uses a user-provided target Node
+  binary and skips download resolution for that target.
 
-target 参数使用 release 命名里的平台名；Windows 输入使用 `win-x64` / `win-arm64`。Windows 产物发布文件名使用 `windows`，对齐旧 GLM agent 下载契约；内部平台 key 和 host 判断仍使用 Node.js `process.platform` 风格的 `win32`。
+Target parameters use the platform names of release naming; Windows input is `win-x64` / `win-arm64`.
+Windows artifact file names use `windows`, aligned with the old GLM agent download contract; the
+internal platform key and host checks still use the Node.js `process.platform` style `win32`.
 
-## Target Runtime Assets
+## Target runtime assets
 
-SEA 可以在一个 host 上下载并注入其它 target 的官方 Node.js binary。`bfs`、`ugrep` 必须先由对应目标平台的 producer 构建、验证并发布到统一依赖源；macOS x64/arm64、Linux x64/arm64 与 Windows x64/arm64 的 `rg` 全部使用固定 SHA-256 的 Microsoft `ripgrep-prebuilt v14.1.1-1` 原始归档，并从同一内网依赖源的 `native-search-tools/ripgrep-v14.1.1-1` 镜像目录下载。所选 macOS 归档的 deployment target 不得高于既有 macOS 12.0 下限；Linux `rg` 必须使用不引入 glibc 依赖的 musl 归档，`bfs` / `ugrep` producer 固定 Node 26.11.1、glibc 2.28、GCC 12 与 G++ 12，并通过最终 ELF 的 GLIBC 2.28 ceiling、版本、feature、架构和动态依赖校验；Windows 两个架构必须拒绝动态 CRT、PCRE2 与构建契约要求静态链接的压缩库依赖。SEA 构建按 target 复用同一份 native-search release plan 和下载器，将两类预编译产物校验并准备到 `packages/desktop/bundled-tools/<platform>-<arch>/`。SEA 不在 foreign target 构建期间交叉编译、切换来源或降级省略工具。
+SEA can download and inject the official Node.js binary of another target on one host. `bfs` and `ugrep`
+must first be built, verified and published to the unified dependency source by the producer of the
+corresponding target platform. The `rg` of macOS x64/arm64, Linux x64/arm64 and Windows x64/arm64 all
+use the original archives of Microsoft `ripgrep-prebuilt v14.1.1-1` with a pinned SHA-256, downloaded
+from the `native-search-tools/ripgrep-v14.1.1-1` mirror directory of the same internal dependency
+source. The selected macOS archive deployment target must not exceed the existing macOS 12.0 floor.
+Linux `rg` must use a musl archive that introduces no glibc dependency. The `bfs` / `ugrep` producer
+pins Node 26.11.1, glibc 2.28, GCC 12 and G++ 12 and verifies the final ELF for the GLIBC 2.28 ceiling,
+version, features, architecture and dynamic dependencies. Both Windows architectures must reject
+dynamic CRT, PCRE2 and compression-library dependencies that the build contract requires to be linked
+statically. The SEA build reuses, per target, the same native-search release plan and downloader to
+verify and prepare both kinds of prebuilt artifacts into
+`packages/desktop/bundled-tools/<platform>-<arch>/`. SEA does not cross-compile during a foreign target
+build, switch sources or silently omit tools.
 
-公开 `build:sea` 的既有契约始终是 all-target，不能因为某个平台的 native search 尚未接入而降级成 host-only。构建会为每个 target 自动准备并收集对应的 runtime assets；预编译归档缺失、下载失败或目标格式与架构校验失败时，必须在生成该 target SEA 前终止，不能产出 provider-visible embedded search 已启用、执行层却缺少包内工具的正式二进制。
+The existing contract of public `build:sea` is always all-target; it must not degrade to host-only
+because native search of some platform is not yet wired in. The build prepares and collects the runtime
+assets of every target automatically. If a prebuilt archive is missing, a download fails or target
+format/architecture verification fails, the build must stop before generating that target SEA; it must
+not produce an official binary whose provider-visible embedded search is enabled while the execution
+layer lacks the bundled tools.
 
-当前 macOS、Linux、Windows 的 x64/arm64 native-search release plan 均已启用。macOS/Linux target 准备 `bfs`、`ugrep`、`rg`，Windows target 准备 `ugrep.exe`、`rg.exe`，Windows `find` 继续回退 Git Bash/system。工具最终布局与 SEA manifest 不暴露 producer/Microsoft 来源差异；SEA asset collector 只按统一 release plan 取目标工具。host-only 开发和 E2E 使用 `sea` 或显式 `--target`。
+The native-search release plans for x64/arm64 of macOS, Linux and Windows are all enabled. macOS/Linux
+targets prepare `bfs`, `ugrep`, `rg`; Windows targets prepare `ugrep.exe`, `rg.exe`, and Windows `find`
+keeps falling back to Git Bash/system. The final tool layout and the SEA manifest do not expose the
+difference between producer and Microsoft sources; the SEA asset collector takes target tools only by
+the unified release plan. Host-only development and E2E use `sea` or an explicit `--target`.
 
-## Node 二进制来源
+## Node binary source
 
-默认从 `https://nodejs.org/dist/v<process.versions.node>/` 获取：
+Downloaded by default from `https://nodejs.org/dist/v<process.versions.node>/`:
 
 - macOS: `node-v<version>-darwin-<arch>.tar.gz`
 - Linux: `node-v<version>-linux-<arch>.tar.xz`
 - Windows: `win-<arch>/node.exe`
 
-下载的文件必须用同版本 `SHASUMS256.txt` 校验 sha256。校验失败时中止构建，不继续注入。
+Downloaded files must be verified against the same-version `SHASUMS256.txt` sha256; on failure the build
+aborts without injecting.
 
-缓存位置是 `packages/cli/dist/sea-node-cache/v<version>/...`。缓存是构建产物，不参与源码提交。
+The cache location is `packages/cli/dist/sea-node-cache/v<version>/...`. The cache is a build artifact
+and not committed.
 
-## Node 26 SEA 基线
+## Node 26 SEA baseline
 
-ZCode 以 Node.js `26.11.1` 作为本仓库开发、构建和发布基线。CLI 的 SEA blob 由当前 Node 26 runtime 生成，发布产物也必须嵌入同版本 Node 26 runtime。兼容旧版操作系统不再要求 SEA 保持 Node 24；开发机、CI、Docker 和 SEA 发布必须使用同一 26.x 基线。
+ZCode uses Node.js `26.11.1` as the development, build and release baseline of this repository. The CLI
+SEA blob is produced by the current Node 26 runtime, and release artifacts must embed the same-version
+Node 26 runtime. SEA is no longer required to stay on Node 24 for old-OS compatibility; dev machines, CI,
+Docker and SEA release must use the same 26.x baseline.
 
-SEA 构建路径是 `node --experimental-sea-config <config>` 生成 preparation blob，然后把该 blob 用 `postject` 注入目标平台官方 Node.js 二进制。脚本必须继续从官方 Node release 下载同版本目标二进制，或接受用户用 `--node-binary <target>=<path>` 显式提供的二进制。
+The SEA build path is `node --experimental-sea-config <config>` producing a preparation blob, which is
+injected with `postject` into the official Node.js binary of the target platform. The script must keep
+downloading the same-version target binary from the official Node release, or accept a binary the user
+provides with `--node-binary <target>=<path>`.
 
-SEA config 必须显式写入：
+The SEA config must explicitly write:
 
-- `main`: bundled CLI entry，当前为 `dist/zcode.cjs`，相对 `packages/cli` 执行目录解析。
-- `output`: preparation blob，当前为 `dist/zcode.sea.blob`。
-- `disableExperimentalSEAWarning`: `true`。
-- `assets`: OpenTUI runtime assets, bundled official plugin assets and the
-  bundled skill pack. Official plugins are stored as raw files in the SEA blob,
-  then extracted on startup into
-  `~/.zcode/cli/plugins/cache/zcode-plugins-official/<plugin>/<version>/`.
-  They must not be imported into the ZCode main bundle. Seeded official plugin
-  manifests are rewritten to use the hidden `__zcode-plugin-host` entrypoint so
-  the cached MCP server runs on the SEA-embedded Node.js runtime. Third-party
-  plugins are not automatically rewritten and keep their own declared command.
-  The bundled skill pack (`packages/bundled-skills/skills/**`, collected by
-  `scripts/sea-bundled-skill-assets.mjs` under the `zcode-bundled-skills/`
-  prefix) is not a plugin: its manifest hash names the extraction directory
-  `~/.zcode/cli/bundled-skills/<hash>/`, every required file must be present or
-  the build aborts, and a runtime hash mismatch refuses the pack.
-- `useCodeCache`: `false`。
-- `useSnapshot`: `false`。
+- `main`: the bundled CLI entry, currently `dist/zcode.cjs`, resolved relative to the `packages/cli`
+  execution directory.
+- `output`: the preparation blob, currently `dist/zcode.sea.blob`.
+- `disableExperimentalSEAWarning`: `true`.
+- `assets`: OpenTUI runtime assets, bundled official plugin assets and the bundled skill pack.
+  Official plugins are stored as raw files in the SEA blob and extracted on startup into
+  `~/.zcode/cli/plugins/cache/zcode-plugins-official/<plugin>/<version>/`. They must not be imported
+  into the ZCode main bundle. Seeded official plugin manifests are rewritten to use the hidden
+  `__zcode-plugin-host` entrypoint so the cached MCP server runs on the SEA-embedded Node.js runtime.
+  Third-party plugins are not rewritten automatically and keep their own declared command. The bundled
+  skill pack (`packages/bundled-skills/skills/**`, collected by `scripts/sea-bundled-skill-assets.mjs`
+  under the `zcode-bundled-skills/` prefix) is not a plugin: its manifest hash names the extraction
+  directory `~/.zcode/cli/bundled-skills/<hash>/`, every required file must be present or the build
+  aborts, and a runtime hash mismatch refuses the pack.
+- `useCodeCache`: `false`.
+- `useSnapshot`: `false`.
 
-SEA blob 由当前运行脚本的 Node.js 生成，target Node 版本必须与当前 Node 版本一致。跨平台构建时必须关闭：
+The SEA blob is produced by the Node.js running the script, and the target Node version must equal the
+current Node version. Cross-platform builds must disable `useCodeCache` and `useSnapshot`, because V8
+code cache and snapshot load only on the same platform and may crash at startup after cross-platform
+injection.
 
-- `useCodeCache`
-- `useSnapshot`
+The image processing adapter must avoid depending on platform-native `.node` addons by default. The SEA
+runtime uses the pure-JS Jimp adapter for resize-to-fit of PNG/JPEG/GIF and similar formats; WebP is
+passed through unchanged for now, and no sharp, NAPI addon or external `.wasm` resource is introduced in
+the SEA package. If a WASM/native image processor is adopted later, first specify asset injection,
+runtime location, temp-file policy and a cross-platform smoke test.
 
-原因是 V8 code cache 和 snapshot 只能在同平台加载；跨平台注入后可能启动崩溃。
+## Zod runtime version and dedupe
 
-图片处理 adapter 必须避免默认依赖平台原生 `.node` addon。SEA 默认运行时使用 Jimp 纯 JS adapter 做 PNG/JPEG/GIF 等格式的 resize-to-fit；WebP 暂时原样透传，不在 SEA 包里引入 sharp、NAPI addon 或外置 `.wasm` 资源。后续如改用 WASM/native 图片处理器，必须先补充 asset 注入、运行时定位、临时文件策略和跨平台 smoke test。
+JS builds shared by the CLI, the desktop built-in Agent and SEA must use Zod v4 `4.6.5` uniformly, to
+avoid the old version creating all method closures of every schema at startup. The exact version in
+`packages/shared/package.json` is the source of truth of the build gate; other direct dependency
+declarations and the root lockfile must match it. A global override that would rewrite the dual-major
+peer range is not used. Zod v3 tool contracts and `zod-to-json-schema` keep their major; there is no
+cross-major replacement.
 
-## Zod 运行时版本与去重
+Dedupe is done by the CLI esbuild entry: it first picks the package version and exports by the
+consumer's original resolution rules, then merges different install directories of the same version into
+one implementation. Subentries and the actual ESM/CommonJS target files are kept; a global `zod` alias
+must not redirect v3 to v4. After the build the metafile is checked: if the same version appears with
+several actual package roots, or v4 does not match the unified version, the build fails and lists the
+source paths. The ordinary CLI, desktop-agent and SEA share this gate.
 
-CLI、桌面内置 Agent 和 SEA 共用的 JS 构建必须统一使用 Zod v4 `4.6.5`，
-以避免旧版在启动时为每个 schema 提前创建全部方法闭包。`packages/shared/package.json` 的精确版本是构建门禁的事实源，
-其余直接依赖声明与根 lockfile 必须与它一致；不使用会改写双 major peer 范围的全局 override。Zod v3 工具契约
-及 `zod-to-json-schema` 保持原有 major，不做跨 major 替换。
+Acceptance: nested duplicate install dedupe, v3/v4 coexistence, unchanged import/require export
+conditions, correct subentry resolution, and existing resolution regressions of shared/provider/CLI/MCP.
+Memory verification compares after GC under the same runtime and the same module/startup scenario; a
+module experiment cannot replace a full CLI snapshot, and bundle file size is not used directly as heap
+or RSS.
 
-去重由 CLI 的 esbuild 构建入口负责：先按消费者原有解析规则选择 package
-版本和导出，再把同版本的不同安装目录归并到一份实现。保留子入口及
-ESM/CommonJS 的实际目标文件，不能用全局 `zod` alias 把 v3 重定向到 v4。
-构建结束检查 metafile：同版本出现多个实际 package 根，或 v4 不符合统一
-版本时，构建失败并列出来源路径。普通 CLI、desktop-agent 和 SEA 使用同一门禁。
+## CLI version source
 
-验收包括：嵌套重复安装去重、v3/v4 共存、import/require 导出条件不变、
-子入口正确解析，以及 shared/provider/CLI/MCP 的既有解析回归。内存验证在
-相同运行时与相同模块/启动场景下 GC 后比较；模块实验不能替代完整 CLI
-快照，也不把 bundle 文件大小直接当作堆内存或 RSS。
+The ordinary Node CLI bundle and the SEA binary must inject `__CLI_VERSION__` from the `version` of the
+repository root `package.json`. `packages/cli/package.json` is workspace subpackage metadata only and
+must not be the source of `zcode --version`, `zcode version`, `zcode doctor --json`, the ZCode app-server
+initialization version field, the MCP client initialize `version`, or `session.version`.
 
-## CLI 版本来源
+If the build script fails to read the root `package.json`, or `version` is not a non-empty string, it
+aborts the build and reports the root version metadata anomaly. In source test environments that did not
+go through bundle injection, the runtime keeps a `0.0.0` fallback so `packages/cli/src/run.ts` can be
+tested directly.
 
-普通 Node CLI bundle 和 SEA binary 必须使用仓库根目录 `package.json` 的 `version` 注入 `__CLI_VERSION__`。`packages/cli/package.json` 只是 workspace 子包元数据，不能作为 `zcode --version`、`zcode version`、`zcode doctor --json`、ZCode app-server 初始化版本字段、MCP client initialize `version`，或 `session.version` 的来源。
+## Injection and signing contract
 
-构建脚本读取根 `package.json` 失败，或 `version` 不是非空字符串时，应中止构建并报告根版本元数据异常。源码测试环境未经过 bundle 注入时，运行时仍保留 `0.0.0` fallback，便于直接测试 `packages/cli/src/run.ts`。
+The injection tool is the `postject` already installed in the repo. The script must add parameters by
+target binary format:
 
-## 注入与签名契约
+- Mach-O: add `--macho-segment-name NODE_SEA`
+- ELF: no extra section parameter
+- PE: no extra section parameter
 
-注入工具使用 repo 已安装的 `postject`。脚本必须根据目标二进制格式添加参数：
+Official macOS Node binaries are normally signed; when building a macOS target on a macOS host the
+script must remove the signature first so injection works. Right after `postject` modifies the Mach-O it
+must run `codesign --force --sign - <binary>` for an ad-hoc signature; otherwise other dev machines may
+kill the process when loading executable pages because of an inconsistent signature state. This
+signature is not bound to a Developer ID, is not notarized and does not represent a release signature.
 
-- Mach-O: 加 `--macho-segment-name NODE_SEA`
-- ELF: 不加额外 section 参数
-- PE: 不加额外 section 参数
+The official Windows `node.exe` normally carries an Authenticode signature. When building a Windows
+target the script must remove the original Authenticode signature before `postject` injection;
+otherwise the Security Directory of the PE points to the pre-modification signature data and a later
+official signing service may report `0x800700c1` or judge the artifact not a valid Win32 application.
+The removal must run cross-platform and must not depend on the Windows-only `signtool`: parse the
+`IMAGE_DIRECTORY_ENTRY_SECURITY` of the PE optional header (the `VirtualAddress` of this entry is a file
+offset, not an RVA), zero that directory entry, and truncate the certificate table data when the table
+is at the end of the file. An unsigned Windows binary is a no-op; if the directory points outside the
+file range the build aborts and reports a PE signature directory anomaly. Official Authenticode signing
+is still out of scope of this script and must happen after SEA injection.
 
-macOS 官方 Node 二进制通常带签名；脚本在 macOS host 上构建 macOS target 时必须先移除签名，以便注入。`postject` 修改 Mach-O 之后必须立即执行 `codesign --force --sign - <binary>` 做 ad-hoc 签名，否则其它开发机可能在加载可执行页时因为签名状态不一致直接终止进程。该签名不绑定 Developer ID、不公证，也不代表正式发布签名。
+## Verification contract
 
-Windows 官方 `node.exe` 通常带 Authenticode 签名。脚本构建 Windows target 时必须在 `postject` 注入前移除原始 Authenticode 签名，否则 PE 的 Security Directory 会指向被修改前的签名数据，后续正式签名服务可能报 `0x800700c1` 或判定产物不是有效 Win32 应用。该移除逻辑必须跨平台可执行，不能依赖 Windows-only `signtool`：解析 PE optional header 的 `IMAGE_DIRECTORY_ENTRY_SECURITY`，注意该 entry 的 `VirtualAddress` 是文件偏移而不是 RVA；将该 directory entry 清零，并在证书表位于文件末尾时 truncate 掉证书表数据。无签名的 Windows 二进制是 no-op；directory 指向文件范围外时中止构建并报告 PE 签名目录异常。正式 Authenticode 签名仍不属于本脚本 scope，必须发生在 SEA 注入完成之后。
+- After a host target build, run a `--version` smoke test.
+- Foreign targets are not executed on the host; only check that the binary was generated and the
+  injection flow finished.
+- The OpenTUI SEA asset manifest must contain the complete runtime dependency closure of `@zcode/tui`,
+  including the `package.json` and `dist` of workspace packages; see `tui-opentui-sea-packaging.md`.
+- When a macOS host builds a macOS target, the ad-hoc signature finishes before the smoke test.
+- Windows targets finish Authenticode removal before injection; official signing is handled by the
+  release/signing pipeline after injection.
+- CI can later use a matrix to run the smoke test of the matching artifact on each OS.
 
-## 验证契约
+## Error behavior
 
-- host target 构建完成后运行 `--version` smoke test。
-- foreign target 不在 host 上执行，只检查二进制已生成并完成注入流程。
-- OpenTUI SEA asset manifest 必须包含 `@zcode/tui` 的完整 runtime dependency
-  closure，包括 workspace package 的 `package.json` 与 `dist`；具体契约见
-  `tui-opentui-sea-packaging.md`。
-- macOS host 构建 macOS target 时，在 smoke test 前完成 ad-hoc 签名。
-- Windows target 在注入前完成 Authenticode 签名移除；最终正式签名由 release/signing pipeline 在注入后处理。
-- CI 后续可以用 matrix 在每个 OS 上对对应产物执行 smoke test。
+- `dist/zcode.cjs` not found: suggest running `pnpm build` first.
+- `postject` not found: suggest running `pnpm install` first.
+- Unsupported target: list the supported targets.
+- Target runtime tool missing: abort and suggest that the matching platform prepare and aggregate the
+  runtime assets first.
+- Download failure or checksum mismatch: abort and name the URL or file name.
+- Missing `tar`, so macOS/Linux Node archives cannot be unpacked: abort and suggest
+  `--node-binary <target>=<path>`.
+- The target Node binary has no SEA fuse marker: abort and suggest an official Node with SEA support.
+- Corrupt or out-of-range Windows PE signature directory: abort without injecting or producing a
+  signable artifact.
 
-## 错误行为
+## Test coverage
 
-- 未找到 `dist/zcode.cjs`：提示先运行 `pnpm build`。
-- 未找到 `postject`：提示先运行 `pnpm install`。
-- target 不支持：列出支持 target。
-- 缺少 target runtime tool：中止，并提示先由对应平台准备并聚合 runtime assets。
-- 下载失败或 checksum 不匹配：中止，并指明 URL 或文件名。
-- 缺少 `tar` 导致无法解包 macOS/Linux Node archive：中止，并提示使用 `--node-binary <target>=<path>`。
-- 目标 Node 二进制没有 SEA fuse marker：中止，并提示使用官方带 SEA 支持的 Node。
-- Windows PE 签名目录损坏或越界：中止，不继续注入或生成可签名产物。
-
-## 测试覆盖
-
-- target 参数解析，包括 repeated target、CSV target、`--all` 和非法 target。
-- package scripts 保证 `build:sea` 始终显式传入 `--all`，根目录 `build:sea:all` 转发到该既有入口。
-- target 到 release artifact、下载 URL、产物名的映射。
-- postject 参数按目标平台生成。
-- host target smoke 判断只匹配当前 platform 和 arch。
-- macOS ad-hoc 签名只在 macOS host 构建 macOS target 时执行，并使用 `codesign --force --sign -`。
-- Windows Authenticode 移除覆盖 PE32/PE32+、未签名 no-op、尾部证书表 truncate 和越界目录报错。
-- OpenTUI runtime asset manifest 覆盖 `@zcode/tui`、`@zcode/i18n`、
-  `@zcode/contracts` 的 workspace runtime closure，并排除 workspace 源文件。
-- CLI bundle 版本注入读取仓库根 `package.json`，即使 `packages/cli/package.json` 版本不同也不改变 `zcode --version` 的构建时版本。
-- `build:sea` workspace 脚本必须在 `build-sea.mjs --all` 前通过 Turbo `--force`
-  重建 CLI 之外的 workspace，再通过 package-local `pnpm build` 直接重建 CLI；
-  CLI 必须排除在 Turbo build 外，避免把同目录中的已有 SEA 产物写入 `dist/**` cache。
-- package 脚本必须从仓库根解析 Turbo，但将 Turbo 的工作目录保持为
-  `apps/zcode-cli`；dry-run 回归测试需证明命令可执行、任务集合非空且不包含
-  `@zcode/cli`。
+- Target parameter parsing: repeated target, CSV target, `--all` and illegal targets.
+- Package scripts guarantee that `build:sea` always passes `--all` explicitly, and the root
+  `build:sea:all` forwards to that existing entry.
+- Mapping of target to release artifact, download URL and artifact name.
+- postject parameters are generated per target platform.
+- The host target smoke check matches only the current platform and arch.
+- The macOS ad-hoc signature runs only when a macOS host builds a macOS target and uses
+  `codesign --force --sign -`.
+- Windows Authenticode removal covers PE32/PE32+, unsigned no-op, trailing certificate table truncation
+  and out-of-range directory errors.
+- The OpenTUI runtime asset manifest covers the workspace runtime closure of `@zcode/tui`,
+  `@zcode/i18n`, `@zcode/contracts` and excludes workspace source files.
+- CLI bundle version injection reads the repository root `package.json`; a different version in
+  `packages/cli/package.json` does not change the build-time version of `zcode --version`.
+- The `build:sea` workspace script must rebuild the workspaces other than the CLI through Turbo `--force`
+  before `build-sea.mjs --all`, then rebuild the CLI directly through package-local `pnpm build`; the
+  CLI must be excluded from the Turbo build to avoid writing the existing SEA artifacts of the same
+  directory into the `dist/**` cache.
+- The package script must resolve Turbo from the repository root while keeping the Turbo working
+  directory at `apps/zcode-cli`; the dry-run regression test must prove the command is executable, the
+  task set is non-empty and does not contain `@zcode/cli`.

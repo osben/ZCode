@@ -1,8 +1,8 @@
 # SEA SMB Upload
 
-## 背景
+## Background
 
-`docs/design/v2/sea-cross-target-packaging.md` 已经定义首批 6 个 SEA binary：
+`docs/design/v2/sea-cross-target-packaging.md` defines the first 6 SEA binaries:
 
 - `zcode-darwin-arm64`
 - `zcode-darwin-x64`
@@ -11,28 +11,34 @@
 - `zcode-windows-arm64.exe`
 - `zcode-windows-x64.exe`
 
-这些文件生成在 `packages/cli/dist`，发布时需要上传到内部 SMB 共享的
-`zcode/deps/zcode-cli-<version>` 目录。`<version>` 必须来自仓库根 `package.json`
-的 `version`，与 CLI 版本来源保持一致。
+They are generated in `packages/cli/dist` and must be uploaded at release time to the
+`zcode/deps/zcode-cli-<version>` directory of the internal SMB share. `<version>` must come from the
+`version` of the repository root `package.json`, the same source as the CLI version.
 
-## 目标
+## Goals
 
-- 提供一个可单独运行的 Node.js 脚本上传 6 个 SEA binary。
-- 默认上传到已挂载的 SMB 目录 `/Volumes/shared/zcode/deps/zcode-cli-<version>`。
-- 上传前检查目标版本目录是否已存在。
-- 目标版本已存在且未传 `--force` 时，交互提示用户放弃或强制更新。
-- 上传过程中显示文件级和总量级进度。
-- 支持通过参数覆盖 dist 目录、目标根目录、SMB URL 标签和版本号，便于测试与临时发布。
-- 不新增 `ZCODE_*` 环境变量，不把 SMB 密码写入仓库、日志、命令行示例或测试 fixture。
+- A standalone Node.js script uploads the 6 SEA binaries.
+- Default destination is the mounted SMB directory `/Volumes/shared/zcode/deps/zcode-cli-<version>`.
+- Check whether the target version directory already exists before uploading.
+- If the target version exists and `--force` is not given, interactively prompt the user to abandon or
+  force the update.
+- Show file-level and total progress during upload.
+- Parameters override the dist directory, destination root, SMB URL label and version, for testing and
+  temporary releases.
+- No new `ZCODE_*` environment variable; never write the SMB password into the repository, logs, command
+  examples or test fixtures.
 
-## 非目标
+## Non-goals
 
-- 不实现完整 release pipeline、签名、校验和清单或包管理器发布。
-- 不实现 SMB 协议客户端。脚本只通过 Node.js 文件系统 API 写入已挂载的共享目录。
-- 不自动保存、读取或打印 SMB 密码。凭据交给操作系统 SMB 挂载、钥匙串或管理员流程处理。
-- 不在默认路径缺少 `/Volumes/shared` 时自动创建本地同名目录，避免误把产物复制到本机假挂载点。
+- No full release pipeline, signing, checksum manifest or package-manager publishing.
+- No SMB protocol client. The script writes into the mounted share through Node.js file system APIs
+  only.
+- Never save, read or print the SMB password. Credentials are handled by the OS SMB mount, keychain or
+  an administrator flow.
+- When the default `/Volumes/shared` is missing, do not create a same-named local directory, to avoid
+  copying artifacts to a fake local mount point.
 
-## 用户接口
+## User interface
 
 - `node packages/cli/scripts/upload-sea-smb.mjs`
 - `node packages/cli/scripts/upload-sea-smb.mjs --force`
@@ -41,65 +47,72 @@
 - `node packages/cli/scripts/upload-sea-smb.mjs --version 0.12.3`
 - `pnpm --filter @zcode/cli upload:sea`
 
-默认值：
+Defaults:
 
-- SMB URL 标签：`smb://10.0.0.100/shared`（可通过 `INTRANET_MACHINE_HOST` 覆盖 host）
-- 挂载根：`/Volumes/shared`
-- 目标根目录：`/Volumes/shared/zcode/deps`
-- 版本目录：`zcode-cli-<root package version>`
+- SMB URL label: `smb://10.0.0.100/shared` (host overridable via `INTRANET_MACHINE_HOST`)
+- Mount root: `/Volumes/shared`
+- Destination root: `/Volumes/shared/zcode/deps`
+- Version directory: `zcode-cli-<root package version>`
 
-`--smb-url` 只用于错误提示和日志里的目标说明，不参与认证，也不包含密码。
+`--smb-url` is used only in error messages and the target description in logs; it plays no part in
+authentication and carries no password.
 
-## 上传契约
+## Upload contract
 
-脚本必须从 `supportedTargets` 和 `outputBinaryName()` 得到完整文件列表，避免手写 6
-个产物名后与打包契约漂移。
+The script must derive the full file list from `supportedTargets` and `outputBinaryName()`, so that
+hand-written artifact names cannot drift from the packaging contract.
 
-上传流程：
+Upload flow:
 
-1. 读取根 `package.json` 的 `version`，或使用 `--version`。
-2. 校验版本字符串不能为空，不能包含路径分隔符或 `.` / `..` 目录名。
-3. 校验 `packages/cli/dist` 下 6 个 SEA binary 均存在且是普通文件。
-4. 校验默认挂载根 `/Volumes/shared` 已存在；自定义 `--dest-root` 可以按需创建。
-5. 创建目标根目录。
-6. 如果 `zcode-cli-<version>` 已存在：
-   - `--force`：继续强制更新。
-   - 交互 TTY：提示用户选择 `abandon` 或 `force`。
-   - 非交互：中止并提示使用 `--force`。
-7. 先复制到同一目标根目录下的临时 staging 目录。
-8. staging 复制完成后再替换目标版本目录，降低半成品暴露时间。
-9. 上传完成后输出目标目录、文件数量和总字节数。
+1. Read the root `package.json` `version`, or use `--version`.
+2. Validate the version string: non-empty, no path separators, no `.` / `..` directory names.
+3. Validate that all 6 SEA binaries exist under `packages/cli/dist` and are regular files.
+4. Validate that the default mount root `/Volumes/shared` exists; a custom `--dest-root` may be created
+   on demand.
+5. Create the destination root.
+6. If `zcode-cli-<version>` already exists:
+   - `--force`: continue with a forced update.
+   - Interactive TTY: prompt the user to choose `abandon` or `force`.
+   - Non-interactive: abort and suggest `--force`.
+7. Copy first into a temporary staging directory under the same destination root.
+8. Replace the target version directory only after the staging copy completes, to shorten exposure of a
+   half-finished upload.
+9. After upload, print the target directory, file count and total bytes.
 
-强制更新的替换策略是删除已有版本目录后把 staging 目录 rename 到最终目录。
-删除范围必须限制在 `zcode-cli-<version>` 目录，不允许删除目标根目录或任意上级目录。
+The forced-update replacement deletes the existing version directory and renames the staging directory
+to the final directory. Deletion is restricted to the `zcode-cli-<version>` directory; deleting the
+destination root or any ancestor is not allowed.
 
-## 进度契约
+## Progress contract
 
-复制时必须基于 stream chunk 统计字节数，输出：
+Copying counts bytes from stream chunks and prints:
 
-- 当前文件序号和文件名。
-- 当前文件已复制字节数 / 文件大小。
-- 总已复制字节数 / 总大小。
-- 总百分比。
+- Current file index and file name.
+- Bytes copied of the current file / file size.
+- Total bytes copied / total size.
+- Total percentage.
 
-TTY 下可以复用单行刷新；非 TTY 下输出离散进度行，避免长时间无输出。
+A TTY may reuse a single refreshed line; a non-TTY prints discrete progress lines so long runs do not
+look silent.
 
-## 错误行为
+## Error behavior
 
-- 根 `package.json` 不存在、无法解析或 `version` 无效：中止。
-- 缺少任一 SEA binary：中止，并提示先运行 `pnpm --filter @zcode/cli build:sea`。
-- 默认 SMB 挂载根不存在：中止，并提示先挂载 `smb://10.0.0.100/shared`。
-- 目标版本已存在且用户选择放弃：不修改目标目录，退出成功。
-- 目标版本已存在且非交互又未传 `--force`：中止。
-- staging 复制失败：清理 staging 目录，保留已有版本目录。
-- rename 或删除失败：向上抛出原始错误原因，由 CLI 边界格式化。
+- Root `package.json` missing, unparsable or `version` invalid: abort.
+- Any SEA binary missing: abort and suggest running `pnpm --filter @zcode/cli build:sea` first.
+- Default SMB mount root missing: abort and suggest mounting `smb://10.0.0.100/shared` first.
+- Target version exists and the user chooses abandon: leave the target directory untouched, exit
+  successfully.
+- Target version exists, non-interactive and no `--force`: abort.
+- Staging copy fails: clean the staging directory and keep the existing version directory.
+- Rename or delete fails: rethrow the original cause; the CLI boundary formats it.
 
-## 测试覆盖
+## Test coverage
 
-- 参数解析，包括默认值、`--force`、`--dest-root`、`--dist`、`--version` 和未知参数。
-- 版本目录名来自根 `package.json`，并拒绝路径穿越版本。
-- SEA binary 列表来自 `supportedTargets` 映射，缺失文件时报错。
-- 已有版本目录选择 `abandon` 时不复制文件。
-- 已有版本目录选择 `force` 或传 `--force` 时替换目标目录。
-- 复制过程发出进度事件，并保留文件内容。
-- 默认挂载根缺失时不创建 `/Volumes/shared` 假目录。
+- Argument parsing: defaults, `--force`, `--dest-root`, `--dist`, `--version` and unknown arguments.
+- The version directory name comes from the root `package.json`, and path-traversal versions are
+  rejected.
+- The SEA binary list comes from the `supportedTargets` mapping; a missing file errors.
+- Choosing `abandon` for an existing version directory copies no files.
+- Choosing `force` or passing `--force` replaces the target directory.
+- Copying emits progress events and preserves file contents.
+- A missing default mount root does not create a fake `/Volumes/shared` directory.
